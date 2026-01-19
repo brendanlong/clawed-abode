@@ -36,7 +36,6 @@ cp .env.example .env
 
 Edit `.env` and set:
 
-- `JWT_SECRET`: Generate with `openssl rand -base64 32`
 - `GITHUB_TOKEN`: Your GitHub Personal Access Token
 - `CLAUDE_AUTH_PATH`: Path to your Claude Code auth (usually `~/.claude`)
 
@@ -66,7 +65,6 @@ Visit `http://localhost:3000` to access the application.
 
 ```bash
 # Set environment variables
-export JWT_SECRET=$(openssl rand -base64 32)
 export GITHUB_TOKEN=your_github_token
 export CLAUDE_AUTH_PATH=~/.claude
 
@@ -92,14 +90,13 @@ docker compose up -d
 
 ### Environment Variables
 
-| Variable           | Description                          | Default                  |
-| ------------------ | ------------------------------------ | ------------------------ |
-| `DATABASE_URL`     | SQLite database path                 | `file:./data/dev.db`     |
-| `JWT_SECRET`       | Secret for JWT tokens (min 32 chars) | Required                 |
-| `GITHUB_TOKEN`     | GitHub Personal Access Token         | Required for repo access |
-| `CLAUDE_AUTH_PATH` | Path to Claude Code auth directory   | `/root/.claude`          |
-| `DATA_DIR`         | Directory for repos and worktrees    | `/data`                  |
-| `NODE_ENV`         | Node environment                     | `development`            |
+| Variable           | Description                        | Default                  |
+| ------------------ | ---------------------------------- | ------------------------ |
+| `DATABASE_URL`     | SQLite database path               | `file:./data/dev.db`     |
+| `GITHUB_TOKEN`     | GitHub Personal Access Token       | Required for repo access |
+| `CLAUDE_AUTH_PATH` | Path to Claude Code auth directory | `/root/.claude`          |
+| `DATA_DIR`         | Directory for repos and worktrees  | `/data`                  |
+| `NODE_ENV`         | Node environment                   | `development`            |
 
 ### GPU Support
 
@@ -162,7 +159,7 @@ npm start
 
 ## Security Considerations
 
-- The application uses JWT tokens for authentication
+- The application uses database-backed sessions with random tokens for authentication
 - First user to register becomes the admin (registration is then disabled)
 - Claude Code runs with `--dangerously-skip-permissions` inside isolated containers
 - Each session has its own container with a separate git worktree

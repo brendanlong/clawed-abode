@@ -1,8 +1,29 @@
 import { z } from 'zod';
 import { router, publicProcedure, protectedProcedure } from '../trpc';
 import { prisma } from '@/lib/prisma';
-import { hashPassword, verifyPassword, createToken, loginSchema } from '@/lib/auth';
+import {
+  hashPassword,
+  verifyPassword,
+  generateSessionToken,
+  loginSchema,
+  SESSION_DURATION_MS,
+} from '@/lib/auth';
 import { TRPCError } from '@trpc/server';
+
+async function createAuthSession(userId: string): Promise<string> {
+  const token = generateSessionToken();
+  const expiresAt = new Date(Date.now() + SESSION_DURATION_MS);
+
+  await prisma.authSession.create({
+    data: {
+      token,
+      userId,
+      expiresAt,
+    },
+  });
+
+  return token;
+}
 
 export const authRouter = router({
   login: publicProcedure.input(loginSchema).mutation(async ({ input }) => {
@@ -26,10 +47,7 @@ export const authRouter = router({
       });
     }
 
-    const token = createToken({
-      userId: user.id,
-      username: user.username,
-    });
+    const token = await createAuthSession(user.id);
 
     return { token, user: { id: user.id, username: user.username } };
   }),
@@ -71,13 +89,19 @@ export const authRouter = router({
         },
       });
 
-      const token = createToken({
-        userId: user.id,
-        username: user.username,
-      });
+      const token = await createAuthSession(user.id);
 
       return { token, user: { id: user.id, username: user.username } };
     }),
+
+  logout: protectedProcedure.mutation(async ({ ctx }) => {
+    // Delete all sessions for this user (logs out everywhere)
+    await prisma.authSession.deleteMany({
+      where: { userId: ctx.user.userId },
+    });
+
+    return { success: true };
+  }),
 
   me: protectedProcedure.query(async ({ ctx }) => {
     const user = await prisma.user.findUnique({
