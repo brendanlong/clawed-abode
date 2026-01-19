@@ -1,10 +1,15 @@
 import { z } from 'zod';
+import { resolve } from 'path';
 
 const envSchema = z.object({
   DATABASE_URL: z.string().default('file:./data/dev.db'),
   GITHUB_TOKEN: z.string().optional(),
   CLAUDE_AUTH_PATH: z.string().default('/root/.claude'),
-  DATA_DIR: z.string().default('/data'),
+  // Always resolve to absolute path so Docker volume binds work correctly
+  DATA_DIR: z
+    .string()
+    .default('/data')
+    .transform((p) => resolve(p)),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
 });
 
