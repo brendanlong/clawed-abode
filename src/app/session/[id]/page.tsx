@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useMemo, use } from 'react';
+import { useState, useCallback, useMemo, useEffect, use } from 'react';
 import Link from 'next/link';
 import { AuthGuard } from '@/components/AuthGuard';
 import { Header } from '@/components/Header';
@@ -101,8 +101,6 @@ function SessionHeader({
 function SessionView({ sessionId }: { sessionId: string }) {
   // Live messages from subscription
   const [liveMessages, setLiveMessages] = useState<Message[]>([]);
-  // Track subscription cursor (updated as messages arrive)
-  const [subscriptionCursor, setSubscriptionCursor] = useState<number | null>(null);
 
   // Fetch session details
   const {
@@ -148,29 +146,31 @@ function SessionView({ sessionId }: { sessionId: string }) {
     return allMessages;
   }, [historyData]);
 
-  // Compute initial subscription sequence from history (no effect needed)
-  const initialSubscriptionSequence = useMemo(() => {
-    if (historyLoading) return null;
-    if (historyMessages.length > 0) {
-      return Math.max(...historyMessages.map((m) => m.sequence));
+  // Track the subscription start sequence - set once when history first loads
+  const [subscriptionStartSequence, setSubscriptionStartSequence] = useState<number | null>(null);
+
+  // Set the start sequence once when history loads (intentional one-time state update)
+  useEffect(() => {
+    if (subscriptionStartSequence === null && !historyLoading) {
+      if (historyMessages.length > 0) {
+        setSubscriptionStartSequence(Math.max(...historyMessages.map((m) => m.sequence)));
+      } else {
+        setSubscriptionStartSequence(-1); // No messages, start from beginning
+      }
     }
-    return -1; // No messages, start from beginning
-  }, [historyMessages, historyLoading]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally only run once when history loads
+  }, [historyLoading, historyMessages.length]);
 
-  // Effective cursor: use live cursor if available, otherwise initial from history
-  const effectiveCursor = subscriptionCursor ?? initialSubscriptionSequence;
-
-  // Subscribe to new messages
+  // Subscribe to new messages - the server tracks cursor internally, we just need the starting point
   trpc.claude.subscribe.useSubscription(
-    { sessionId, afterSequence: effectiveCursor ?? undefined },
+    { sessionId, afterSequence: subscriptionStartSequence ?? undefined },
     {
-      enabled: effectiveCursor !== null,
+      enabled: subscriptionStartSequence !== null,
       onData: (message) => {
         setLiveMessages((prev) => {
           if (prev.some((m) => m.id === message.id)) return prev;
           return [...prev, message];
         });
-        setSubscriptionCursor(message.sequence);
       },
       onError: (err) => {
         console.error('Subscription error:', err);

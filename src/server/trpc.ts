@@ -39,6 +39,15 @@ export async function createContext(opts: { headers: Headers }): Promise<Context
 
 const t = initTRPC.context<Context>().create({
   transformer: superjson,
+  sse: {
+    ping: {
+      enabled: true,
+      intervalMs: 2000,
+    },
+    client: {
+      reconnectAfterInactivityMs: 5000,
+    },
+  },
 });
 
 export const router = t.router;

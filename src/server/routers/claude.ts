@@ -118,6 +118,8 @@ export const claudeRouter = router({
         sessionId: z.string().uuid(),
         // For infinite query, cursor comes from React Query's pageParam
         cursor: z.number().int().optional(),
+        // tRPC adds direction for infinite queries, we ignore it (always paginate backwards)
+        direction: z.enum(['forward', 'backward']).optional(),
         limit: z.number().int().min(1).max(100).default(50),
       })
     )
