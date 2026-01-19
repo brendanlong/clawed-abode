@@ -1,0 +1,163 @@
+# Claude Code Web - Architecture Diagram
+
+direction: right
+
+# External clients
+mobile: Mobile/Web Browser
+
+# Cloudflare
+cloudflare: Cloudflare Tunnel {
+  style.fill: "#F6821F"
+}
+
+# Home Server
+server: Home Server {
+  style.fill: "#E8F4FD"
+
+  app: Next.js + tRPC {
+    style.fill: "#0070F3"
+    style.font-color: white
+
+    auth: Auth
+    session_mgmt: Session Management
+    websocket: WebSocket/SSE
+  }
+
+  docker: Docker Containers {
+    style.fill: "#2496ED"
+    style.font-color: white
+
+    container1: Session Container {
+      claude: Claude Code
+      worktree: Git Worktree
+      gpu: GPU Access
+    }
+
+    container2: Session Container {
+      claude2: Claude Code
+      worktree2: Git Worktree
+      gpu2: GPU Access
+    }
+  }
+
+  storage: Storage {
+    style.fill: "#4DB33D"
+    style.font-color: white
+
+    sqlite: SQLite {
+      sessions: Sessions
+      messages: Messages
+      users: Users
+    }
+
+    filesystem: Filesystem {
+      repos: /data/repos
+      worktrees: /data/worktrees
+    }
+  }
+
+  app -> docker: docker exec
+  app -> storage.sqlite: Prisma
+  docker -> storage.filesystem: mount
+}
+
+# Connections
+mobile -> cloudflare: HTTPS
+cloudflare -> server.app: Encrypted tunnel
+
+# Data Model
+data_model: Data Model {
+  style.fill: "#FFF3CD"
+
+  session: Session {
+    shape: sql_table
+    id: string {constraint: primary_key}
+    name: string
+    repoUrl: string
+    branch: string
+    worktreePath: string
+    containerId: string | null
+    status: enum
+    createdAt: timestamp
+    updatedAt: timestamp
+  }
+
+  message: Message {
+    shape: sql_table
+    id: string {constraint: primary_key}
+    sessionId: string {constraint: foreign_key}
+    sequence: int
+    type: enum
+    content: jsonb
+    createdAt: timestamp
+  }
+
+  user: User {
+    shape: sql_table
+    id: string {constraint: primary_key}
+    username: string
+    passwordHash: string
+    totpSecret: string | null
+  }
+
+  session.id <- message.sessionId
+}
+
+# API Routes
+api: tRPC API {
+  style.fill: "#E9ECEF"
+
+  auth_routes: auth {
+    login: login()
+    verify: verifyTwoFactor()
+    logout: logout()
+  }
+
+  session_routes: sessions {
+    create: create()
+    list: list()
+    get: get()
+    start: start()
+    stop: stop()
+    delete: delete()
+  }
+
+  claude_routes: claude {
+    send: send() → Stream
+    interrupt: interrupt()
+    getHistory: getHistory()
+  }
+
+  github_routes: github {
+    listRepos: listRepos()
+    listBranches: listBranches()
+  }
+}
+
+# Session Lifecycle
+lifecycle: Session Lifecycle {
+  style.fill: "#F8D7DA"
+  direction: down
+
+  creating: Creating {
+    style.fill: "#FFC107"
+  }
+  running: Running {
+    style.fill: "#28A745"
+    style.font-color: white
+  }
+  stopped: Stopped {
+    style.fill: "#6C757D"
+    style.font-color: white
+  }
+  error: Error {
+    style.fill: "#DC3545"
+    style.font-color: white
+  }
+
+  creating -> running: Container started
+  running -> stopped: User stops
+  stopped -> running: User starts
+  running -> error: Failure
+  creating -> error: Failure
+}

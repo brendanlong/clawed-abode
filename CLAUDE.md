@@ -2,7 +2,7 @@
 - Always validate inputs using libraries like Zod
 - Always factor out shared logic
 - Don't maintain backwards compatbility, always delete code we're not using
-- Read the design doc and keep it up-to-date @doc/DESIGN.md
+- Read the design doc and keep it up-to-date @doc/DESIGN.md and @doc/architecture.d2
 - Avoid N+1 queries, and check-then-set patterns; prefer to do joins or inserts with on conflict
 - Design as much code as possible to be unit-testable with pure functions
 - Prefer to use real versions of necessary systems for integration tests (i.e. actually run git in a tmp dir, actually run SQLite on an in-memory DB)
