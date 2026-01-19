@@ -3,21 +3,13 @@ import { prisma } from '@/lib/prisma';
 import type { MessageType } from '@/lib/types';
 import { v4 as uuid } from 'uuid';
 
-export interface ClaudeMessage {
-  id: string;
-  type: MessageType;
-  content: unknown;
-  sequence: number;
-}
-
 // Track running Claude processes per session
 const runningProcesses = new Map<string, { containerId: string; pid: number | null }>();
 
 export async function runClaudeCommand(
   sessionId: string,
   containerId: string,
-  prompt: string,
-  onMessage: (message: ClaudeMessage) => void
+  prompt: string
 ): Promise<void> {
   // Check if session already has a running process
   if (runningProcesses.has(sessionId)) {
@@ -34,7 +26,7 @@ export async function runClaudeCommand(
   let sequence = (lastMessage?.sequence ?? -1) + 1;
 
   // Store the user prompt first
-  const userMessage = await prisma.message.create({
+  await prisma.message.create({
     data: {
       id: uuid(),
       sessionId,
@@ -42,13 +34,6 @@ export async function runClaudeCommand(
       type: 'user',
       content: JSON.stringify({ type: 'user', content: prompt }),
     },
-  });
-
-  onMessage({
-    id: userMessage.id,
-    type: 'user',
-    content: { type: 'user', content: prompt },
-    sequence: userMessage.sequence,
   });
 
   // Build the Claude command
@@ -77,7 +62,7 @@ export async function runClaudeCommand(
       }
     }, 500);
 
-    await processClaudeStream(stream, sessionId, sequence, onMessage);
+    await processClaudeStream(stream, sessionId, sequence);
   } finally {
     runningProcesses.delete(sessionId);
   }
@@ -86,8 +71,7 @@ export async function runClaudeCommand(
 async function processClaudeStream(
   stream: NodeJS.ReadableStream,
   sessionId: string,
-  startSequence: number,
-  onMessage: (message: ClaudeMessage) => void
+  startSequence: number
 ): Promise<void> {
   let sequence = startSequence;
   let buffer = '';
@@ -110,7 +94,7 @@ async function processClaudeStream(
           const parsed = JSON.parse(line);
           const messageType = mapClaudeMessageType(parsed.type);
 
-          const message = await prisma.message.create({
+          await prisma.message.create({
             data: {
               id: parsed.id || uuid(),
               sessionId,
@@ -119,15 +103,7 @@ async function processClaudeStream(
               content: line,
             },
           });
-
-          onMessage({
-            id: message.id,
-            type: messageType,
-            content: parsed,
-            sequence: message.sequence,
-          });
         } catch {
-          // Non-JSON output, treat as system message
           console.error('Failed to parse Claude output:', line);
         }
       }

@@ -12,7 +12,7 @@ export const claudeRouter = router({
         prompt: z.string().min(1).max(100000),
       })
     )
-    .subscription(async function* ({ input }) {
+    .mutation(async ({ input }) => {
       const session = await prisma.session.findUnique({
         where: { id: input.sessionId },
       });
@@ -38,44 +38,58 @@ export const claudeRouter = router({
         });
       }
 
-      // Create a queue to store messages
-      const messageQueue: Array<{
-        id: string;
-        type: string;
-        content: unknown;
-        sequence: number;
-      }> = [];
-      let isComplete = false;
-      let error: unknown = null;
+      // Start Claude in the background - don't await
+      runClaudeCommand(input.sessionId, session.containerId, input.prompt).catch((err) => {
+        console.error('Claude command failed:', err);
+      });
 
-      // Start the Claude process (runs in background while we yield messages)
-      runClaudeCommand(input.sessionId, session.containerId, input.prompt, (message) => {
-        messageQueue.push(message);
+      return { success: true };
+    }),
+
+  subscribe: protectedProcedure
+    .input(
+      z.object({
+        sessionId: z.string().uuid(),
+        afterSequence: z.number().int().optional(),
       })
-        .then(() => {
-          isComplete = true;
-        })
-        .catch((err) => {
-          error = err;
-          isComplete = true;
-        });
+    )
+    .subscription(async function* ({ input }) {
+      const session = await prisma.session.findUnique({
+        where: { id: input.sessionId },
+      });
 
-      // Yield messages as they arrive
-      while (!isComplete || messageQueue.length > 0) {
-        if (messageQueue.length > 0) {
-          const message = messageQueue.shift()!;
-          yield message;
-        } else {
-          // Wait a bit for more messages
-          await new Promise((resolve) => setTimeout(resolve, 50));
-        }
+      if (!session) {
+        throw new TRPCError({
+          code: 'NOT_FOUND',
+          message: 'Session not found',
+        });
       }
 
-      if (error) {
-        throw new TRPCError({
-          code: 'INTERNAL_SERVER_ERROR',
-          message: error instanceof Error ? error.message : 'Unknown error',
+      let cursor = input.afterSequence ?? -1;
+
+      while (true) {
+        const messages = await prisma.message.findMany({
+          where: {
+            sessionId: input.sessionId,
+            sequence: { gt: cursor },
+          },
+          orderBy: { sequence: 'asc' },
+          take: 100,
         });
+
+        for (const msg of messages) {
+          yield {
+            id: msg.id,
+            type: msg.type,
+            content: JSON.parse(msg.content),
+            sequence: msg.sequence,
+            createdAt: msg.createdAt,
+          };
+          cursor = msg.sequence;
+        }
+
+        // Poll interval
+        await new Promise((r) => setTimeout(r, 100));
       }
     }),
 
@@ -102,8 +116,8 @@ export const claudeRouter = router({
     .input(
       z.object({
         sessionId: z.string().uuid(),
+        // For infinite query, cursor comes from React Query's pageParam
         cursor: z.number().int().optional(),
-        direction: z.enum(['before', 'after']).default('before'),
         limit: z.number().int().min(1).max(100).default(50),
       })
     )
@@ -119,27 +133,22 @@ export const claudeRouter = router({
         });
       }
 
+      // Paginate backwards (load older messages)
       const whereClause: {
         sessionId: string;
-        sequence?: { lt?: number; gt?: number };
+        sequence?: { lt: number };
       } = {
         sessionId: input.sessionId,
       };
 
       if (input.cursor !== undefined) {
-        if (input.direction === 'before') {
-          whereClause.sequence = { lt: input.cursor };
-        } else {
-          whereClause.sequence = { gt: input.cursor };
-        }
+        whereClause.sequence = { lt: input.cursor };
       }
 
       const messages = await prisma.message.findMany({
         where: whereClause,
-        orderBy: {
-          sequence: input.direction === 'before' ? 'desc' : 'asc',
-        },
-        take: input.limit + 1, // Get one extra to check if there are more
+        orderBy: { sequence: 'desc' },
+        take: input.limit + 1,
       });
 
       const hasMore = messages.length > input.limit;
@@ -147,23 +156,16 @@ export const claudeRouter = router({
         messages.pop();
       }
 
-      // Parse content JSON for each message
       const parsedMessages = messages.map((m) => ({
         ...m,
         content: JSON.parse(m.content),
       }));
 
-      // Reverse if we fetched in DESC order so client gets chronological order
-      if (input.direction === 'before') {
-        parsedMessages.reverse();
-      }
+      // Reverse so client gets chronological order (oldest first)
+      parsedMessages.reverse();
 
-      const nextCursor =
-        parsedMessages.length > 0
-          ? input.direction === 'before'
-            ? parsedMessages[0].sequence
-            : parsedMessages[parsedMessages.length - 1].sequence
-          : undefined;
+      // Next cursor is the oldest message's sequence (for loading even older)
+      const nextCursor = parsedMessages.length > 0 ? parsedMessages[0].sequence : undefined;
 
       return {
         messages: parsedMessages,

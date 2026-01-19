@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, use } from 'react';
+import { useState, useCallback, useMemo, use } from 'react';
 import Link from 'next/link';
 import { AuthGuard } from '@/components/AuthGuard';
 import { Header } from '@/components/Header';
@@ -99,11 +99,10 @@ function SessionHeader({
 }
 
 function SessionView({ sessionId }: { sessionId: string }) {
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [isClaudeRunning, setIsClaudeRunning] = useState(false);
-  const [oldestCursor, setOldestCursor] = useState<number | undefined>(undefined);
-  const [hasMore, setHasMore] = useState(true);
-  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  // Live messages from subscription
+  const [liveMessages, setLiveMessages] = useState<Message[]>([]);
+  // Track subscription cursor (updated as messages arrive)
+  const [subscriptionCursor, setSubscriptionCursor] = useState<number | null>(null);
 
   // Fetch session details
   const {
@@ -112,17 +111,71 @@ function SessionView({ sessionId }: { sessionId: string }) {
     refetch: refetchSession,
   } = trpc.sessions.get.useQuery({ sessionId });
 
-  // Fetch initial message history
-  const { data: historyData, isLoading: historyLoading } = trpc.claude.getHistory.useQuery({
-    sessionId,
-    limit: 50,
-    direction: 'before',
-  });
+  // Infinite query for message history (paginating backwards)
+  const {
+    data: historyData,
+    isLoading: historyLoading,
+    isFetchingNextPage,
+    hasNextPage,
+    fetchNextPage,
+  } = trpc.claude.getHistory.useInfiniteQuery(
+    { sessionId, limit: 50 },
+    {
+      getNextPageParam: (lastPage) => (lastPage.hasMore ? lastPage.nextCursor : undefined),
+    }
+  );
 
   // Check if Claude is running
   const { data: runningData } = trpc.claude.isRunning.useQuery(
     { sessionId },
     { refetchInterval: 2000 }
+  );
+
+  // Extract messages from infinite query pages
+  const historyMessages = useMemo(() => {
+    if (!historyData?.pages) return [];
+    const allMessages: Message[] = [];
+    for (const page of historyData.pages) {
+      for (const msg of page.messages) {
+        allMessages.push({
+          id: msg.id,
+          type: msg.type,
+          content: msg.content,
+          sequence: msg.sequence,
+        });
+      }
+    }
+    return allMessages;
+  }, [historyData]);
+
+  // Compute initial subscription sequence from history (no effect needed)
+  const initialSubscriptionSequence = useMemo(() => {
+    if (historyLoading) return null;
+    if (historyMessages.length > 0) {
+      return Math.max(...historyMessages.map((m) => m.sequence));
+    }
+    return -1; // No messages, start from beginning
+  }, [historyMessages, historyLoading]);
+
+  // Effective cursor: use live cursor if available, otherwise initial from history
+  const effectiveCursor = subscriptionCursor ?? initialSubscriptionSequence;
+
+  // Subscribe to new messages
+  trpc.claude.subscribe.useSubscription(
+    { sessionId, afterSequence: effectiveCursor ?? undefined },
+    {
+      enabled: effectiveCursor !== null,
+      onData: (message) => {
+        setLiveMessages((prev) => {
+          if (prev.some((m) => m.id === message.id)) return prev;
+          return [...prev, message];
+        });
+        setSubscriptionCursor(message.sequence);
+      },
+      onError: (err) => {
+        console.error('Subscription error:', err);
+      },
+    }
   );
 
   // Mutations
@@ -135,176 +188,39 @@ function SessionView({ sessionId }: { sessionId: string }) {
   });
 
   const interruptMutation = trpc.claude.interrupt.useMutation();
+  const sendMutation = trpc.claude.send.useMutation();
 
-  // Update messages from initial history
-  useEffect(() => {
-    if (historyData?.messages) {
-      const newMessages = historyData.messages.map((msg) => ({
-        id: msg.id,
-        type: msg.type,
-        content: msg.content,
-        sequence: msg.sequence,
-      }));
-      setMessages(newMessages);
-      setHasMore(historyData.hasMore);
-      if (newMessages.length > 0) {
-        setOldestCursor(newMessages[0].sequence);
-      }
-    }
-  }, [historyData]);
-
-  // Update running state
-  useEffect(() => {
-    setIsClaudeRunning(runningData?.running ?? false);
-  }, [runningData]);
+  // Merge history + live messages, sorted by sequence, deduplicated
+  const allMessages = useMemo(() => {
+    const combined = [...historyMessages, ...liveMessages];
+    const seen = new Set<string>();
+    const deduped = combined.filter((msg) => {
+      if (seen.has(msg.id)) return false;
+      seen.add(msg.id);
+      return true;
+    });
+    return deduped.sort((a, b) => a.sequence - b.sequence);
+  }, [historyMessages, liveMessages]);
 
   const handleSendPrompt = useCallback(
-    async (prompt: string) => {
+    (prompt: string) => {
       if (!sessionData?.session || sessionData.session.status !== 'running') {
         return;
       }
-
-      setIsClaudeRunning(true);
-
-      // Note: In a full implementation, you would use tRPC subscription here
-      // For now, we'll use a polling approach after sending
-      try {
-        // The actual streaming would happen via subscription
-        // This is a simplified version that just polls for updates
-        const response = await fetch('/api/trpc/claude.send', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${localStorage.getItem('auth_token')}`,
-          },
-          body: JSON.stringify({
-            json: { sessionId, prompt },
-          }),
-        });
-
-        if (!response.ok) {
-          throw new Error('Failed to send message');
-        }
-
-        // Poll for new messages
-        const pollForMessages = async () => {
-          const latestSeq = messages.length > 0 ? messages[messages.length - 1].sequence : 0;
-
-          const newMessagesResponse = await fetch(
-            `/api/trpc/claude.getHistory?batch=1&input=${encodeURIComponent(
-              JSON.stringify({
-                '0': {
-                  json: {
-                    sessionId,
-                    cursor: latestSeq,
-                    direction: 'after',
-                    limit: 100,
-                  },
-                },
-              })
-            )}`,
-            {
-              headers: {
-                Authorization: `Bearer ${localStorage.getItem('auth_token')}`,
-              },
-            }
-          );
-
-          if (newMessagesResponse.ok) {
-            const data = await newMessagesResponse.json();
-            const newMessages = data[0]?.result?.data?.json?.messages || [];
-
-            if (newMessages.length > 0) {
-              setMessages((prev) => {
-                const combined = [...prev];
-                for (const msg of newMessages) {
-                  if (!combined.find((m) => m.id === msg.id)) {
-                    combined.push({
-                      id: msg.id,
-                      type: msg.type,
-                      content: msg.content,
-                      sequence: msg.sequence,
-                    });
-                  }
-                }
-                return combined.sort((a, b) => a.sequence - b.sequence);
-              });
-            }
-          }
-        };
-
-        // Poll every second for 60 seconds
-        const interval = setInterval(pollForMessages, 1000);
-        setTimeout(() => {
-          clearInterval(interval);
-          setIsClaudeRunning(false);
-        }, 60000);
-
-        // Also check immediately
-        await pollForMessages();
-      } catch (error) {
-        console.error('Error sending message:', error);
-        setIsClaudeRunning(false);
-      }
+      sendMutation.mutate({ sessionId, prompt });
     },
-    [sessionId, sessionData, messages]
+    [sessionId, sessionData, sendMutation]
   );
 
   const handleInterrupt = useCallback(() => {
     interruptMutation.mutate({ sessionId });
   }, [sessionId, interruptMutation]);
 
-  const handleLoadMore = useCallback(async () => {
-    if (!hasMore || isLoadingMore || !oldestCursor) return;
-
-    setIsLoadingMore(true);
-    try {
-      const response = await fetch(
-        `/api/trpc/claude.getHistory?batch=1&input=${encodeURIComponent(
-          JSON.stringify({
-            '0': {
-              json: {
-                sessionId,
-                cursor: oldestCursor,
-                direction: 'before',
-                limit: 50,
-              },
-            },
-          })
-        )}`,
-        {
-          headers: {
-            Authorization: `Bearer ${localStorage.getItem('auth_token')}`,
-          },
-        }
-      );
-
-      if (response.ok) {
-        const data = await response.json();
-        const olderMessages = data[0]?.result?.data?.json?.messages || [];
-        const moreAvailable = data[0]?.result?.data?.json?.hasMore ?? false;
-
-        if (olderMessages.length > 0) {
-          setMessages((prev) => {
-            const combined = [...olderMessages, ...prev];
-            // Dedupe by id
-            const seen = new Set<string>();
-            return combined.filter((msg) => {
-              if (seen.has(msg.id)) return false;
-              seen.add(msg.id);
-              return true;
-            });
-          });
-          setOldestCursor(olderMessages[0].sequence);
-        }
-        setHasMore(moreAvailable);
-      }
-    } catch (error) {
-      console.error('Error loading more messages:', error);
-    } finally {
-      setIsLoadingMore(false);
+  const handleLoadMore = useCallback(() => {
+    if (hasNextPage && !isFetchingNextPage) {
+      fetchNextPage();
     }
-  }, [sessionId, oldestCursor, hasMore, isLoadingMore]);
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
   if (sessionLoading) {
     return (
@@ -326,6 +242,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
   }
 
   const session = sessionData.session;
+  const isClaudeRunning = runningData?.running ?? false;
 
   return (
     <div className="flex-1 flex flex-col">
@@ -338,9 +255,9 @@ function SessionView({ sessionId }: { sessionId: string }) {
       />
 
       <MessageList
-        messages={messages}
-        isLoading={historyLoading || isLoadingMore}
-        hasMore={hasMore}
+        messages={allMessages}
+        isLoading={historyLoading || isFetchingNextPage}
+        hasMore={hasNextPage ?? false}
         onLoadMore={handleLoadMore}
       />
 

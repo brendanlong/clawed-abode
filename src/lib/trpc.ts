@@ -1,7 +1,8 @@
 'use client';
 
 import { createTRPCReact } from '@trpc/react-query';
-import { httpBatchLink, splitLink, unstable_httpSubscriptionLink } from '@trpc/client';
+import { httpBatchLink, httpSubscriptionLink, splitLink } from '@trpc/client';
+import { EventSourcePolyfill } from 'event-source-polyfill';
 import superjson from 'superjson';
 import type { AppRouter } from '@/server/routers';
 
@@ -24,9 +25,17 @@ export function createTRPCClient() {
     links: [
       splitLink({
         condition: (op) => op.type === 'subscription',
-        true: unstable_httpSubscriptionLink({
+        true: httpSubscriptionLink({
           url: `${getBaseUrl()}/api/trpc`,
           transformer: superjson,
+          EventSource: EventSourcePolyfill,
+          eventSourceOptions: async () => {
+            const token = getAuthToken();
+            if (!token) return {};
+            return {
+              headers: { authorization: `Bearer ${token}` },
+            };
+          },
         }),
         false: httpBatchLink({
           url: `${getBaseUrl()}/api/trpc`,
