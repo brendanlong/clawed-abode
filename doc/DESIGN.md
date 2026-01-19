@@ -314,7 +314,7 @@ ORDER BY sequence ASC;
 1. **Cloudflare Tunnel** — Traffic encrypted, no exposed ports
 2. **Optional: Cloudflare Access** — Additional auth layer at edge
 3. **NextAuth.js** — Application-level auth with:
-   - Username/password (bcrypt hashed)
+   - Username/password (argon2 hashed)
    - Rate limiting on login attempts
    - Secure session cookies (httpOnly, secure, sameSite)
 

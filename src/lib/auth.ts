@@ -1,8 +1,7 @@
 import { randomBytes } from 'crypto';
-import bcrypt from 'bcrypt';
+import * as argon2 from 'argon2';
 import { z } from 'zod';
 
-const SALT_ROUNDS = 12;
 const TOKEN_LENGTH = 32; // 256 bits of entropy
 export const SESSION_DURATION_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
@@ -14,11 +13,11 @@ export const loginSchema = z.object({
 export type LoginInput = z.infer<typeof loginSchema>;
 
 export async function hashPassword(password: string): Promise<string> {
-  return bcrypt.hash(password, SALT_ROUNDS);
+  return argon2.hash(password);
 }
 
 export async function verifyPassword(password: string, hash: string): Promise<boolean> {
-  return bcrypt.compare(password, hash);
+  return argon2.verify(hash, password);
 }
 
 export function generateSessionToken(): string {
