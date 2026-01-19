@@ -1,0 +1,67 @@
+# Dependencies - reinstalled in container
+node_modules/
+
+# Git
+.git/
+.gitignore
+
+# Build outputs
+.next/
+out/
+dist/
+
+# Environment files (secrets)
+.env
+.env.*
+!.env.example
+
+# IDE and editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# CI/CD and tooling
+.github/
+.husky/
+.claude/
+
+# Documentation (not needed at runtime)
+doc/
+*.md
+!README.md
+
+# Linting and formatting configs
+.eslintrc.json
+.eslintcache
+.prettierrc.json
+.prettierignore
+.lintstagedrc.json
+
+# Test and coverage
+coverage/
+.nyc_output/
+*.lcov
+
+# Prisma local data (not the schema)
+prisma/*.db
+prisma/*.db-journal
+prisma/data/
+
+# Local data directory
+data/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Docker files (avoid recursive context)
+docker/
+Dockerfile*
+
+# Misc
+.DS_Store
+*.tgz
+.direnv/
+.envrc
