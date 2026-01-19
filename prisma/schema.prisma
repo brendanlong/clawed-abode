@@ -1,0 +1,45 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(uuid())
+  username     String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model Session {
+  id           String    @id @default(uuid())
+  name         String
+  repoUrl      String
+  branch       String
+  worktreePath String
+  containerId  String?
+  status       String    @default("creating") // creating, running, stopped, error
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  messages     Message[]
+
+  @@index([status])
+}
+
+model Message {
+  id        String   @id @default(uuid())
+  sessionId String
+  sequence  Int
+  type      String   // system, user, assistant, result
+  content   String   // JSON stored as string
+  createdAt DateTime @default(now())
+
+  session   Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, sequence])
+  @@index([sessionId, sequence])
+}
