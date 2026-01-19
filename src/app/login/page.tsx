@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { trpc } from '@/lib/trpc';
 import { useAuth } from '@/lib/auth-context';
@@ -11,9 +11,11 @@ export default function LoginPage() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
-  const [isRegistering, setIsRegistering] = useState(false);
 
   const { data: setupData, isLoading: setupLoading } = trpc.auth.needsSetup.useQuery();
+
+  // If no users exist yet, show registration form
+  const isRegistering = useMemo(() => setupData?.needsSetup ?? false, [setupData]);
 
   const loginMutation = trpc.auth.login.useMutation({
     onSuccess: (data) => {
@@ -40,12 +42,6 @@ export default function LoginPage() {
       router.push('/');
     }
   }, [user, router]);
-
-  useEffect(() => {
-    if (setupData?.needsSetup) {
-      setIsRegistering(true);
-    }
-  }, [setupData]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
