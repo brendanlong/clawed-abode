@@ -7,7 +7,6 @@ services:
       - '3000:3000'
     environment:
       - DATABASE_URL=file:/data/db/prod.db
-      - JWT_SECRET=${JWT_SECRET}
       - GITHUB_TOKEN=${GITHUB_TOKEN}
       - CLAUDE_AUTH_PATH=/claude-auth
       - DATA_DIR=/data

@@ -1,10 +1,10 @@
-import jwt from 'jsonwebtoken';
+import { randomBytes } from 'crypto';
 import bcrypt from 'bcrypt';
 import { z } from 'zod';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'development-secret-change-me';
-const TOKEN_EXPIRY = '7d';
 const SALT_ROUNDS = 12;
+const TOKEN_LENGTH = 32; // 256 bits of entropy
+export const SESSION_DURATION_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 export const loginSchema = z.object({
   username: z.string().min(1, 'Username is required'),
@@ -12,11 +12,6 @@ export const loginSchema = z.object({
 });
 
 export type LoginInput = z.infer<typeof loginSchema>;
-
-export interface JWTPayload {
-  userId: string;
-  username: string;
-}
 
 export async function hashPassword(password: string): Promise<string> {
   return bcrypt.hash(password, SALT_ROUNDS);
@@ -26,16 +21,8 @@ export async function verifyPassword(password: string, hash: string): Promise<bo
   return bcrypt.compare(password, hash);
 }
 
-export function createToken(payload: JWTPayload): string {
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: TOKEN_EXPIRY });
-}
-
-export function verifyToken(token: string): JWTPayload | null {
-  try {
-    return jwt.verify(token, JWT_SECRET) as JWTPayload;
-  } catch {
-    return null;
-  }
+export function generateSessionToken(): string {
+  return randomBytes(TOKEN_LENGTH).toString('hex');
 }
 
 export function parseAuthHeader(authHeader: string | null): string | null {

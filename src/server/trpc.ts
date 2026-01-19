@@ -1,18 +1,40 @@
 import { initTRPC, TRPCError } from '@trpc/server';
 import superjson from 'superjson';
-import type { JWTPayload } from '@/lib/auth';
-import { verifyToken, parseAuthHeader } from '@/lib/auth';
+import { parseAuthHeader } from '@/lib/auth';
+import { prisma } from '@/lib/prisma';
 
-export interface Context {
-  user: JWTPayload | null;
+export interface AuthUser {
+  userId: string;
+  username: string;
 }
 
-export function createContext(opts: { headers: Headers }): Context {
+export interface Context {
+  user: AuthUser | null;
+}
+
+export async function createContext(opts: { headers: Headers }): Promise<Context> {
   const authHeader = opts.headers.get('authorization');
   const token = parseAuthHeader(authHeader);
-  const user = token ? verifyToken(token) : null;
 
-  return { user };
+  if (!token) {
+    return { user: null };
+  }
+
+  const session = await prisma.authSession.findUnique({
+    where: { token },
+    include: { user: { select: { id: true, username: true } } },
+  });
+
+  if (!session || session.expiresAt < new Date()) {
+    return { user: null };
+  }
+
+  return {
+    user: {
+      userId: session.user.id,
+      username: session.user.username,
+    },
+  };
 }
 
 const t = initTRPC.context<Context>().create({

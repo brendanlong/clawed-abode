@@ -2,7 +2,6 @@ import { z } from 'zod';
 
 const envSchema = z.object({
   DATABASE_URL: z.string().default('file:./data/dev.db'),
-  JWT_SECRET: z.string().default('development-secret-change-in-production'),
   GITHUB_TOKEN: z.string().optional(),
   CLAUDE_AUTH_PATH: z.string().default('/root/.claude'),
   DATA_DIR: z.string().default('/data'),
@@ -25,14 +24,6 @@ function validateEnv(): Env {
       return envSchema.parse({});
     }
     throw new Error('Invalid environment variables');
-  }
-
-  // Warn about insecure defaults in production runtime (not build time)
-  if (parsed.data.NODE_ENV === 'production' && !isBuildTime) {
-    if (parsed.data.JWT_SECRET === 'development-secret-change-in-production') {
-      console.error('ERROR: JWT_SECRET must be set in production!');
-      throw new Error('JWT_SECRET must be set in production');
-    }
   }
 
   return parsed.data;
