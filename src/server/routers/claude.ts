@@ -50,7 +50,7 @@ export const claudeRouter = router({
     .input(
       z.object({
         sessionId: z.string().uuid(),
-        afterSequence: z.number().int().optional(),
+        afterCursor: z.number().int().optional(),
       })
     )
     .subscription(async function* ({ input }) {
@@ -65,7 +65,7 @@ export const claudeRouter = router({
         });
       }
 
-      let cursor = input.afterSequence ?? -1;
+      let cursor = input.afterCursor ?? -1;
 
       while (true) {
         const messages = await prisma.message.findMany({
@@ -78,14 +78,15 @@ export const claudeRouter = router({
         });
 
         for (const msg of messages) {
+          cursor = msg.sequence;
           yield {
             id: msg.id,
             type: msg.type,
             content: JSON.parse(msg.content),
             sequence: msg.sequence,
+            cursor, // Include cursor for client to track
             createdAt: msg.createdAt,
           };
-          cursor = msg.sequence;
         }
 
         // Poll interval
@@ -116,10 +117,8 @@ export const claudeRouter = router({
     .input(
       z.object({
         sessionId: z.string().uuid(),
-        // For infinite query, cursor comes from React Query's pageParam
         cursor: z.number().int().optional(),
-        // tRPC adds direction for infinite queries, we ignore it (always paginate backwards)
-        direction: z.enum(['forward', 'backward']).optional(),
+        direction: z.enum(['forward', 'backward']).default('backward'),
         limit: z.number().int().min(1).max(100).default(50),
       })
     )
@@ -135,21 +134,27 @@ export const claudeRouter = router({
         });
       }
 
-      // Paginate backwards (load older messages)
+      const isBackward = input.direction === 'backward';
+
+      // Build where clause based on direction
       const whereClause: {
         sessionId: string;
-        sequence?: { lt: number };
+        sequence?: { lt: number } | { gt: number };
       } = {
         sessionId: input.sessionId,
       };
 
       if (input.cursor !== undefined) {
-        whereClause.sequence = { lt: input.cursor };
+        // backward: load older (sequence < cursor)
+        // forward: load newer (sequence > cursor)
+        whereClause.sequence = isBackward ? { lt: input.cursor } : { gt: input.cursor };
       }
 
       const messages = await prisma.message.findMany({
         where: whereClause,
-        orderBy: { sequence: 'desc' },
+        // backward: newest first (so we get the N most recent before cursor)
+        // forward: oldest first (so we get the N oldest after cursor)
+        orderBy: { sequence: isBackward ? 'desc' : 'asc' },
         take: input.limit + 1,
       });
 
@@ -163,11 +168,20 @@ export const claudeRouter = router({
         content: JSON.parse(m.content),
       }));
 
-      // Reverse so client gets chronological order (oldest first)
-      parsedMessages.reverse();
+      // For backward pagination, reverse so client gets chronological order
+      if (isBackward) {
+        parsedMessages.reverse();
+      }
 
-      // Next cursor is the oldest message's sequence (for loading even older)
-      const nextCursor = parsedMessages.length > 0 ? parsedMessages[0].sequence : undefined;
+      // Cursor for next page depends on direction:
+      // backward: oldest message's sequence (to load even older)
+      // forward: newest message's sequence (to load even newer)
+      const nextCursor =
+        parsedMessages.length > 0
+          ? isBackward
+            ? parsedMessages[0].sequence
+            : parsedMessages[parsedMessages.length - 1].sequence
+          : undefined;
 
       return {
         messages: parsedMessages,

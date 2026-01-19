@@ -99,8 +99,7 @@ function SessionHeader({
 }
 
 function SessionView({ sessionId }: { sessionId: string }) {
-  // Live messages from subscription
-  const [liveMessages, setLiveMessages] = useState<Message[]>([]);
+  const utils = trpc.useUtils();
 
   // Fetch session details
   const {
@@ -129,47 +128,76 @@ function SessionView({ sessionId }: { sessionId: string }) {
     { refetchInterval: 2000 }
   );
 
-  // Extract messages from infinite query pages
-  const historyMessages = useMemo(() => {
-    if (!historyData?.pages) return [];
-    const allMessages: Message[] = [];
-    for (const page of historyData.pages) {
-      for (const msg of page.messages) {
-        allMessages.push({
-          id: msg.id,
-          type: msg.type,
-          content: msg.content,
-          sequence: msg.sequence,
-        });
-      }
-    }
-    return allMessages;
-  }, [historyData]);
+  // Stable cursor for subscription - set once when history first loads, never changes after
+  const [subscriptionCursor, setSubscriptionCursor] = useState<number | null>(null);
 
-  // Track the subscription start sequence - set once when history first loads
-  const [subscriptionStartSequence, setSubscriptionStartSequence] = useState<number | null>(null);
-
-  // Set the start sequence once when history loads (intentional one-time state update)
+  // Set subscription cursor once when history first loads (intentional one-time state update)
   useEffect(() => {
-    if (subscriptionStartSequence === null && !historyLoading) {
-      if (historyMessages.length > 0) {
-        setSubscriptionStartSequence(Math.max(...historyMessages.map((m) => m.sequence)));
-      } else {
-        setSubscriptionStartSequence(-1); // No messages, start from beginning
-      }
+    if (subscriptionCursor !== null || historyLoading) {
+      return; // Already set or still loading
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally only run once when history loads
-  }, [historyLoading, historyMessages.length]);
+    const firstPage = historyData?.pages?.[0];
+    if (firstPage && firstPage.messages.length > 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional one-time initialization
+      setSubscriptionCursor(Math.max(...firstPage.messages.map((m) => m.sequence)));
+    } else {
+      setSubscriptionCursor(-1); // No messages, start from beginning
+    }
+  }, [subscriptionCursor, historyLoading, historyData?.pages]);
 
-  // Subscribe to new messages - the server tracks cursor internally, we just need the starting point
+  // Track latest cursor for polling fallback / reconnection (initialized from subscriptionCursor)
+  const [latestCursor, setLatestCursor] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (latestCursor === null && subscriptionCursor !== null) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional one-time initialization
+      setLatestCursor(subscriptionCursor);
+    }
+  }, [subscriptionCursor, latestCursor]);
+
+  // Subscribe to new messages and push into React Query cache
   trpc.claude.subscribe.useSubscription(
-    { sessionId, afterSequence: subscriptionStartSequence ?? undefined },
+    { sessionId, afterCursor: subscriptionCursor ?? undefined },
     {
-      enabled: subscriptionStartSequence !== null,
+      enabled: subscriptionCursor !== null,
       onData: (message) => {
-        setLiveMessages((prev) => {
-          if (prev.some((m) => m.id === message.id)) return prev;
-          return [...prev, message];
+        // Update latest cursor for polling fallback
+        setLatestCursor(message.cursor);
+
+        // Push message into infinite query cache
+        utils.claude.getHistory.setInfiniteData({ sessionId, limit: 50 }, (oldData) => {
+          if (!oldData) return oldData;
+
+          // Check if message already exists in any page
+          for (const page of oldData.pages) {
+            if (page.messages.some((m) => m.id === message.id)) {
+              return oldData; // Already have it, no update needed
+            }
+          }
+
+          // Add to the first page (most recent messages)
+          const newPages = [...oldData.pages];
+          if (newPages.length > 0) {
+            newPages[0] = {
+              ...newPages[0],
+              messages: [
+                ...newPages[0].messages,
+                {
+                  id: message.id,
+                  type: message.type,
+                  content: message.content,
+                  sequence: message.sequence,
+                  sessionId,
+                  createdAt: message.createdAt,
+                },
+              ],
+            };
+          }
+
+          return {
+            ...oldData,
+            pages: newPages,
+          };
         });
       },
       onError: (err) => {
@@ -190,17 +218,25 @@ function SessionView({ sessionId }: { sessionId: string }) {
   const interruptMutation = trpc.claude.interrupt.useMutation();
   const sendMutation = trpc.claude.send.useMutation();
 
-  // Merge history + live messages, sorted by sequence, deduplicated
+  // Extract all messages from infinite query pages (already in chronological order)
   const allMessages = useMemo(() => {
-    const combined = [...historyMessages, ...liveMessages];
-    const seen = new Set<string>();
-    const deduped = combined.filter((msg) => {
-      if (seen.has(msg.id)) return false;
-      seen.add(msg.id);
-      return true;
-    });
-    return deduped.sort((a, b) => a.sequence - b.sequence);
-  }, [historyMessages, liveMessages]);
+    if (!historyData?.pages) return [];
+    const messages: Message[] = [];
+    // Pages are in reverse order (newest page first), but messages within each page are chronological
+    // We need to reverse pages to get oldest-first, then flatten
+    const reversedPages = [...historyData.pages].reverse();
+    for (const page of reversedPages) {
+      for (const msg of page.messages) {
+        messages.push({
+          id: msg.id,
+          type: msg.type,
+          content: msg.content,
+          sequence: msg.sequence,
+        });
+      }
+    }
+    return messages;
+  }, [historyData]);
 
   const handleSendPrompt = useCallback(
     (prompt: string) => {
