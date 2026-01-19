@@ -1,5 +1,6 @@
 'use client';
 
+import { skipToken } from '@tanstack/react-query';
 import { useState, useCallback, useMemo, useEffect, use } from 'react';
 import Link from 'next/link';
 import { AuthGuard } from '@/components/AuthGuard';
@@ -99,8 +100,6 @@ function SessionHeader({
 }
 
 function SessionView({ sessionId }: { sessionId: string }) {
-  const utils = trpc.useUtils();
-
   // Fetch session details
   const {
     data: sessionData,
@@ -145,59 +144,25 @@ function SessionView({ sessionId }: { sessionId: string }) {
     }
   }, [subscriptionCursor, historyLoading, historyData?.pages]);
 
-  // Track latest cursor for polling fallback / reconnection (initialized from subscriptionCursor)
-  const [latestCursor, setLatestCursor] = useState<number | null>(null);
+  // Local state for messages received via subscription
+  const [newMessages, setNewMessages] = useState<Message[]>([]);
 
-  useEffect(() => {
-    if (latestCursor === null && subscriptionCursor !== null) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional one-time initialization
-      setLatestCursor(subscriptionCursor);
-    }
-  }, [subscriptionCursor, latestCursor]);
-
-  // Subscribe to new messages and push into React Query cache
+  // Subscribe to new messages
   trpc.claude.subscribe.useSubscription(
-    { sessionId, afterCursor: subscriptionCursor ?? undefined },
+    subscriptionCursor !== null ? { sessionId, afterCursor: subscriptionCursor } : skipToken,
     {
-      enabled: subscriptionCursor !== null,
       onData: (message) => {
-        // Update latest cursor for polling fallback
-        setLatestCursor(message.cursor);
-
-        // Push message into infinite query cache
-        utils.claude.getHistory.setInfiniteData({ sessionId, limit: 50 }, (oldData) => {
-          if (!oldData) return oldData;
-
-          // Check if message already exists in any page
-          for (const page of oldData.pages) {
-            if (page.messages.some((m) => m.id === message.id)) {
-              return oldData; // Already have it, no update needed
-            }
-          }
-
-          // Add to the first page (most recent messages)
-          const newPages = [...oldData.pages];
-          if (newPages.length > 0) {
-            newPages[0] = {
-              ...newPages[0],
-              messages: [
-                ...newPages[0].messages,
-                {
-                  id: message.id,
-                  type: message.type,
-                  content: message.content,
-                  sequence: message.sequence,
-                  sessionId,
-                  createdAt: message.createdAt,
-                },
-              ],
-            };
-          }
-
-          return {
-            ...oldData,
-            pages: newPages,
-          };
+        setNewMessages((prev) => {
+          if (prev.some((m) => m.id === message.id)) return prev;
+          return [
+            ...prev,
+            {
+              id: message.id,
+              type: message.type,
+              content: message.content,
+              sequence: message.sequence,
+            },
+          ];
         });
       },
       onError: (err) => {
@@ -218,25 +183,30 @@ function SessionView({ sessionId }: { sessionId: string }) {
   const interruptMutation = trpc.claude.interrupt.useMutation();
   const sendMutation = trpc.claude.send.useMutation();
 
-  // Extract all messages from infinite query pages (already in chronological order)
+  // Merge history + new messages from subscription, with deduplication
   const allMessages = useMemo(() => {
-    if (!historyData?.pages) return [];
-    const messages: Message[] = [];
-    // Pages are in reverse order (newest page first), but messages within each page are chronological
-    // We need to reverse pages to get oldest-first, then flatten
-    const reversedPages = [...historyData.pages].reverse();
-    for (const page of reversedPages) {
-      for (const msg of page.messages) {
-        messages.push({
-          id: msg.id,
-          type: msg.type,
-          content: msg.content,
-          sequence: msg.sequence,
-        });
+    const fromHistory: Message[] = [];
+    if (historyData?.pages) {
+      // Pages are in reverse order (newest page first), but messages within each page are chronological
+      // We need to reverse pages to get oldest-first, then flatten
+      for (const page of [...historyData.pages].reverse()) {
+        for (const msg of page.messages) {
+          fromHistory.push({
+            id: msg.id,
+            type: msg.type,
+            content: msg.content,
+            sequence: msg.sequence,
+          });
+        }
       }
     }
-    return messages;
-  }, [historyData]);
+
+    // Filter out any new messages that already appear in history
+    const historyIds = new Set(fromHistory.map((m) => m.id));
+    const uniqueNew = newMessages.filter((m) => !historyIds.has(m.id));
+
+    return [...fromHistory, ...uniqueNew];
+  }, [historyData, newMessages]);
 
   const handleSendPrompt = useCallback(
     (prompt: string) => {
