@@ -1,0 +1,44 @@
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - DATABASE_URL=file:/data/db/prod.db
+      - JWT_SECRET=${JWT_SECRET}
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - CLAUDE_AUTH_PATH=/claude-auth
+      - DATA_DIR=/data
+      - NODE_ENV=production
+    volumes:
+      - app-data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${CLAUDE_AUTH_PATH:-~/.claude}:/claude-auth:ro
+    restart: unless-stopped
+    depends_on:
+      - init-db
+
+  init-db:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    command: npx prisma migrate deploy
+    environment:
+      - DATABASE_URL=file:/data/db/prod.db
+    volumes:
+      - app-data:/data
+
+  # Cloudflare Tunnel (optional)
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    restart: unless-stopped
+    profiles:
+      - tunnel
+
+volumes:
+  app-data:
