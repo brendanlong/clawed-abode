@@ -76,8 +76,10 @@ export async function createWorktree(
 
   const git = simpleGit(repoPath);
 
-  // Create worktree for the branch
-  await git.raw(['worktree', 'add', worktreePath, branch]);
+  // Create a per-session branch based on the source branch
+  // This allows multiple sessions to work on the same source branch
+  const sessionBranch = `${env.SESSION_BRANCH_PREFIX}${sessionId}`;
+  await git.raw(['worktree', 'add', '-b', sessionBranch, worktreePath, branch]);
 
   return { worktreePath };
 }
@@ -95,11 +97,19 @@ export async function removeWorktree(sessionId: string): Promise<void> {
   const { readdir } = await import('fs/promises');
   const repos = await readdir(reposDir);
 
+  const sessionBranch = `${env.SESSION_BRANCH_PREFIX}${sessionId}`;
+
   for (const repo of repos) {
     const repoPath = join(reposDir, repo);
     try {
       const git = simpleGit(repoPath);
       await git.raw(['worktree', 'remove', worktreePath, '--force']);
+      // Also delete the session branch
+      try {
+        await git.raw(['branch', '-D', sessionBranch]);
+      } catch {
+        // Branch may not exist or already deleted
+      }
       return;
     } catch {
       // Not the right repo, continue

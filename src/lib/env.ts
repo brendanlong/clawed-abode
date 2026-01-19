@@ -11,6 +11,8 @@ const envSchema = z.object({
     .default('/data')
     .transform((p) => resolve(p)),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
+  // Prefix for session branches in worktrees (e.g., "claude/" creates "claude/{sessionId}")
+  SESSION_BRANCH_PREFIX: z.string().default('claude/'),
 });
 
 export type Env = z.infer<typeof envSchema>;
