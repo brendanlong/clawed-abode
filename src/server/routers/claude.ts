@@ -3,6 +3,7 @@ import { router, protectedProcedure } from '../trpc';
 import { prisma } from '@/lib/prisma';
 import { TRPCError } from '@trpc/server';
 import { runClaudeCommand, interruptClaude, isClaudeRunningAsync } from '../services/claude-runner';
+import { estimateTokenUsage } from '@/lib/token-estimation';
 
 export const claudeRouter = router({
   send: protectedProcedure
@@ -148,5 +149,40 @@ export const claudeRouter = router({
     .input(z.object({ sessionId: z.string().uuid() }))
     .query(async ({ input }) => {
       return { running: await isClaudeRunningAsync(input.sessionId) };
+    }),
+
+  getTokenUsage: protectedProcedure
+    .input(z.object({ sessionId: z.string().uuid() }))
+    .query(async ({ input }) => {
+      const session = await prisma.session.findUnique({
+        where: { id: input.sessionId },
+      });
+
+      if (!session) {
+        throw new TRPCError({
+          code: 'NOT_FOUND',
+          message: 'Session not found',
+        });
+      }
+
+      // Fetch all result messages for the session (they contain aggregated token usage per turn)
+      // We only need result messages since they contain the cumulative stats
+      const messages = await prisma.message.findMany({
+        where: {
+          sessionId: input.sessionId,
+          type: { in: ['result', 'system'] },
+        },
+        select: {
+          type: true,
+          content: true,
+        },
+      });
+
+      const parsedMessages = messages.map((m) => ({
+        type: m.type,
+        content: JSON.parse(m.content),
+      }));
+
+      return estimateTokenUsage(parsedMessages);
     }),
 });
