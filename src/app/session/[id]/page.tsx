@@ -1,7 +1,6 @@
 'use client';
 
-import { skipToken } from '@tanstack/react-query';
-import { useState, useCallback, useMemo, useEffect, use } from 'react';
+import { useCallback, useMemo, useEffect, use } from 'react';
 import Link from 'next/link';
 import { AuthGuard } from '@/components/AuthGuard';
 import { Header } from '@/components/Header';
@@ -125,47 +124,23 @@ function SessionView({ sessionId }: { sessionId: string }) {
     { refetchInterval: 2000 }
   );
 
-  // Stable cursor for subscription - set once when history first loads, never changes after
-  const [subscriptionCursor, setSubscriptionCursor] = useState<number | null>(null);
-
-  // Set subscription cursor once when history first loads (intentional one-time state update)
-  useEffect(() => {
-    if (subscriptionCursor !== null || historyLoading) {
-      return; // Already set or still loading
-    }
+  // Compute cursor for polling new messages from history data
+  const historyCursor = useMemo(() => {
     const firstPage = historyData?.pages?.[0];
-    if (firstPage && firstPage.messages.length > 0) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional one-time initialization
-      setSubscriptionCursor(Math.max(...firstPage.messages.map((m) => m.sequence)));
-    } else {
-      setSubscriptionCursor(-1); // No messages, start from beginning
-    }
-  }, [subscriptionCursor, historyLoading, historyData?.pages]);
+    if (!firstPage || firstPage.messages.length === 0) return undefined;
+    return Math.max(...firstPage.messages.map((m) => m.sequence));
+  }, [historyData?.pages]);
 
-  // Local state for messages received via subscription
-  const [newMessages, setNewMessages] = useState<Message[]>([]);
-
-  // Subscribe to new messages
-  trpc.claude.subscribe.useSubscription(
-    subscriptionCursor !== null ? { sessionId, afterCursor: subscriptionCursor } : skipToken,
+  // Poll for new messages (forward from history cursor)
+  const { data: newMessagesData } = trpc.claude.getHistory.useQuery(
+    historyCursor !== undefined
+      ? { sessionId, cursor: historyCursor, direction: 'forward', limit: 100 }
+      : { sessionId, direction: 'backward', limit: 100 },
     {
-      onData: (message) => {
-        setNewMessages((prev) => {
-          if (prev.some((m) => m.id === message.id)) return prev;
-          return [
-            ...prev,
-            {
-              id: message.id,
-              type: message.type,
-              content: message.content,
-              sequence: message.sequence,
-            },
-          ];
-        });
-      },
-      onError: (err) => {
-        console.error('Subscription error:', err);
-      },
+      // Poll faster when Claude is running
+      refetchInterval: runningData?.running ? 500 : 5000,
+      // Don't start polling until history has loaded
+      enabled: !historyLoading,
     }
   );
 
@@ -181,7 +156,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
   const interruptMutation = trpc.claude.interrupt.useMutation();
   const sendMutation = trpc.claude.send.useMutation();
 
-  // Merge history + new messages from subscription, with deduplication
+  // Merge history + polled new messages, with deduplication
   const allMessages = useMemo(() => {
     const fromHistory: Message[] = [];
     if (historyData?.pages) {
@@ -199,12 +174,19 @@ function SessionView({ sessionId }: { sessionId: string }) {
       }
     }
 
-    // Filter out any new messages that already appear in history
+    // Add new messages from polling
     const historyIds = new Set(fromHistory.map((m) => m.id));
-    const uniqueNew = newMessages.filter((m) => !historyIds.has(m.id));
+    const newMessages = (newMessagesData?.messages ?? [])
+      .filter((m) => !historyIds.has(m.id))
+      .map((m) => ({
+        id: m.id,
+        type: m.type,
+        content: m.content,
+        sequence: m.sequence,
+      }));
 
-    return [...fromHistory, ...uniqueNew];
-  }, [historyData, newMessages]);
+    return [...fromHistory, ...newMessages];
+  }, [historyData, newMessagesData]);
 
   const handleSendPrompt = useCallback(
     (prompt: string) => {

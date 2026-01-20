@@ -46,54 +46,6 @@ export const claudeRouter = router({
       return { success: true };
     }),
 
-  subscribe: protectedProcedure
-    .input(
-      z.object({
-        sessionId: z.string().uuid(),
-        afterCursor: z.number().int().optional(),
-      })
-    )
-    .subscription(async function* ({ input }) {
-      const session = await prisma.session.findUnique({
-        where: { id: input.sessionId },
-      });
-
-      if (!session) {
-        throw new TRPCError({
-          code: 'NOT_FOUND',
-          message: 'Session not found',
-        });
-      }
-
-      let cursor = input.afterCursor ?? -1;
-
-      while (true) {
-        const messages = await prisma.message.findMany({
-          where: {
-            sessionId: input.sessionId,
-            sequence: { gt: cursor },
-          },
-          orderBy: { sequence: 'asc' },
-          take: 100,
-        });
-
-        for (const msg of messages) {
-          cursor = msg.sequence;
-          yield {
-            id: msg.id,
-            type: msg.type,
-            content: JSON.parse(msg.content),
-            sequence: msg.sequence,
-            cursor, // Include cursor for client to track
-            createdAt: msg.createdAt,
-          };
-        }
-
-        // Poll interval
-        await new Promise((r) => setTimeout(r, 100));
-      }
-    }),
-
   interrupt: protectedProcedure
     .input(z.object({ sessionId: z.string().uuid() }))
     .mutation(async ({ input }) => {
