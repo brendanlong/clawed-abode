@@ -139,11 +139,11 @@ function SessionView({ sessionId }: { sessionId: string }) {
       // For loading NEWER messages (polling)
       getPreviousPageParam: (firstPage) => {
         // Use newest message's sequence as cursor to fetch even newer
-        // If no messages yet, use sequence 0 to poll for any new messages
+        // If no messages yet, omit sequence to fetch all messages
         const newestSequence =
           firstPage.messages.length > 0
             ? Math.max(...firstPage.messages.map((m) => m.sequence))
-            : 0;
+            : undefined;
         return { sequence: newestSequence, direction: 'forward' as const };
       },
     }
