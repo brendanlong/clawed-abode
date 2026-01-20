@@ -70,9 +70,10 @@ export const claudeRouter = router({
       z.object({
         sessionId: z.string().uuid(),
         // Cursor encodes both position and direction for bidirectional pagination
+        // sequence is optional - when missing, no bound is applied (fetch from start/end)
         cursor: z
           .object({
-            sequence: z.number().int(),
+            sequence: z.number().int().optional(),
             direction: z.enum(['forward', 'backward']),
           })
           .optional(),
@@ -102,7 +103,7 @@ export const claudeRouter = router({
         sessionId: input.sessionId,
       };
 
-      if (input.cursor !== undefined) {
+      if (input.cursor?.sequence !== undefined) {
         // backward: load older (sequence < cursor)
         // forward: load newer (sequence > cursor)
         whereClause.sequence = isBackward
