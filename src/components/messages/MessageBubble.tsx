@@ -10,6 +10,7 @@ import { RawJsonDisplay } from './RawJsonDisplay';
 import { EditDisplay } from './EditDisplay';
 import { TodoWriteDisplay } from './TodoWriteDisplay';
 import { GlobDisplay } from './GlobDisplay';
+import { WebSearchDisplay } from './WebSearchDisplay';
 import { ToolCallDisplay } from './ToolCallDisplay';
 import { ToolResultDisplay } from './ToolResultDisplay';
 import { SystemInitDisplay } from './SystemInitDisplay';
@@ -107,6 +108,10 @@ function renderContentBlocks(
 
             if (block.name === 'Edit') {
               return <EditDisplay key={block.id} tool={tool} />;
+            }
+
+            if (block.name === 'WebSearch') {
+              return <WebSearchDisplay key={block.id} tool={tool} />;
             }
 
             return <ToolCallDisplay key={block.id} tool={tool} />;
