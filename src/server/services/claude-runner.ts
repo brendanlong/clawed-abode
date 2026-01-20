@@ -47,6 +47,57 @@ Never leave uncommitted or unpushed changes - the user cannot see them otherwise
 
 const log = createLogger('claude-runner');
 
+/**
+ * Result of attempting to save a message line to the database.
+ */
+type SaveMessageResult =
+  | { saved: true; sequence: number; message: { id: string; sessionId: string; sequence: number; type: string; content: unknown } }
+  | { saved: false; reason: 'parse_error' | 'duplicate' };
+
+/**
+ * Parse a JSON line and save it as a message if it doesn't already exist.
+ * Returns the saved message with parsed content if saved, or info about why it was skipped.
+ */
+async function saveMessageIfNotExists(
+  sessionId: string,
+  line: string,
+  sequence: number
+): Promise<SaveMessageResult> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    return { saved: false, reason: 'parse_error' };
+  }
+
+  const messageType = getMessageType(parsed);
+  const msgId =
+    (parsed as { uuid?: string; id?: string }).uuid ||
+    (parsed as { uuid?: string; id?: string }).id ||
+    uuid();
+
+  // Check if message already exists (can happen after server restart)
+  const existing = await prisma.message.findUnique({
+    where: { id: msgId },
+    select: { id: true },
+  });
+  if (existing) {
+    return { saved: false, reason: 'duplicate' };
+  }
+
+  const message = await prisma.message.create({
+    data: {
+      id: msgId,
+      sessionId,
+      sequence,
+      type: messageType,
+      content: line,
+    },
+  });
+
+  return { saved: true, sequence, message: { ...message, content: parsed } };
+}
+
 function getOutputFileName(sessionId: string): string {
   return `${OUTPUT_FILE_PREFIX}${sessionId}.jsonl`;
 }
@@ -190,42 +241,22 @@ export async function runClaudeCommand(
           if (!line.trim()) continue;
           totalLines++;
 
-          let parsed: unknown;
-          try {
-            parsed = JSON.parse(line);
-          } catch {
+          const result = await saveMessageIfNotExists(sessionId, line, sequence);
+          if (result.saved) {
+            sequence = result.sequence + 1;
+            log.debug('runClaudeCommand: Saved message', { sessionId, sequence: result.sequence });
+            // Emit new message event
+            sseEvents.emitNewMessage(sessionId, result.message);
+            // Update last processed sequence for recovery
+            await prisma.claudeProcess
+              .update({ where: { sessionId }, data: { lastSequence: result.sequence } })
+              .catch(() => {});
+          } else if (result.reason === 'parse_error') {
             log.warn('runClaudeCommand: Failed to parse JSON', {
               sessionId,
               line: line.slice(0, 100),
             });
-            continue;
           }
-
-          const messageType = getMessageType(parsed);
-          const msgId =
-            (parsed as { uuid?: string; id?: string }).uuid ||
-            (parsed as { uuid?: string; id?: string }).id ||
-            uuid();
-
-          log.debug('runClaudeCommand: Saving message', { sessionId, sequence, messageType });
-
-          const message = await prisma.message.create({
-            data: {
-              id: msgId,
-              sessionId,
-              sequence: sequence++,
-              type: messageType,
-              content: line,
-            },
-          });
-
-          // Emit new message event
-          sseEvents.emitNewMessage(sessionId, { ...message, content: parsed });
-
-          // Update last processed sequence for recovery
-          await prisma.claudeProcess
-            .update({ where: { sessionId }, data: { lastSequence: sequence - 1 } })
-            .catch(() => {});
         }
       });
 
@@ -247,30 +278,12 @@ export async function runClaudeCommand(
 
             for (let i = totalLines; i < allLines.length; i++) {
               const line = allLines[i];
-              let parsed: unknown;
-              try {
-                parsed = JSON.parse(line);
-              } catch {
-                continue;
+              const result = await saveMessageIfNotExists(sessionId, line, sequence);
+              if (result.saved) {
+                sequence = result.sequence + 1;
+                // Emit new message event
+                sseEvents.emitNewMessage(sessionId, result.message);
               }
-              const messageType = getMessageType(parsed);
-              const msgId =
-                (parsed as { uuid?: string; id?: string }).uuid ||
-                (parsed as { uuid?: string; id?: string }).id ||
-                uuid();
-
-              const message = await prisma.message.create({
-                data: {
-                  id: msgId,
-                  sessionId,
-                  sequence: sequence++,
-                  type: messageType,
-                  content: line,
-                },
-              });
-
-              // Emit new message event
-              sseEvents.emitNewMessage(sessionId, { ...message, content: parsed });
               totalLines++;
             }
 
@@ -416,9 +429,8 @@ async function catchUpFromOutputFile(
   for (const line of lines) {
     if (!line.trim()) continue;
 
-    let parsed: unknown;
     try {
-      parsed = JSON.parse(line);
+      JSON.parse(line);
     } catch {
       // Generate deterministic ID from content so we can detect duplicates
       const errorId = uuidv5(`${sessionId}:error:${line}`, ERROR_LINE_NAMESPACE);
@@ -449,52 +461,13 @@ async function catchUpFromOutputFile(
       continue;
     }
 
-    const messageType = getMessageType(parsed);
-    const msgId =
-      (parsed as { uuid?: string; id?: string }).uuid ||
-      (parsed as { uuid?: string; id?: string }).id ||
-      uuid();
-
-    // Check if this message already exists by ID (could have been processed before)
-    const existingById = await prisma.message.findUnique({
-      where: { id: msgId },
-      select: { id: true },
-    });
-    if (existingById) {
-      // Already processed, skip
+    const result = await saveMessageIfNotExists(sessionId, line, sequence);
+    if (result.saved) {
+      sequence = result.sequence + 1;
+      linesProcessed++;
+    } else if (result.reason === 'duplicate') {
       linesSkipped++;
-      continue;
     }
-
-    // Check if a message exists at this sequence (could be from a different processing run)
-    const existingBySequence = await prisma.message.findUnique({
-      where: { sessionId_sequence: { sessionId, sequence } },
-      select: { id: true },
-    });
-    if (existingBySequence) {
-      // Sequence already taken, increment and try again
-      sequence++;
-      // Re-check at new sequence
-      const existingAtNewSeq = await prisma.message.findUnique({
-        where: { sessionId_sequence: { sessionId, sequence } },
-        select: { id: true },
-      });
-      if (existingAtNewSeq) {
-        // Skip this line, sequence tracking is off
-        continue;
-      }
-    }
-
-    await prisma.message.create({
-      data: {
-        id: msgId,
-        sessionId,
-        sequence: sequence++,
-        type: messageType,
-        content: line,
-      },
-    });
-    linesProcessed++;
   }
 
   log.info('catchUpFromOutputFile: Complete', {
@@ -552,26 +525,13 @@ async function processOutputFileWithExecId(
           if (!line.trim()) continue;
           totalLines++;
 
-          let parsed: unknown;
-          try {
-            parsed = JSON.parse(line);
-          } catch {
-            continue;
+          const result = await saveMessageIfNotExists(sessionId, line, sequence);
+          if (result.saved) {
+            sequence = result.sequence + 1;
+            // Emit new message event
+            sseEvents.emitNewMessage(sessionId, result.message);
+            await updateLastSequence(sessionId, result.sequence);
           }
-
-          const messageType = getMessageType(parsed);
-          const msgId =
-            (parsed as { uuid?: string; id?: string }).uuid ||
-            (parsed as { uuid?: string; id?: string }).id ||
-            uuid();
-
-          const message = await prisma.message.create({
-            data: { id: msgId, sessionId, sequence: sequence++, type: messageType, content: line },
-          });
-
-          // Emit new message event
-          sseEvents.emitNewMessage(sessionId, { ...message, content: parsed });
-          await updateLastSequence(sessionId, sequence - 1);
         }
       });
 
@@ -592,30 +552,12 @@ async function processOutputFileWithExecId(
 
             for (let i = totalLines; i < allLines.length; i++) {
               const line = allLines[i];
-              let parsed: unknown;
-              try {
-                parsed = JSON.parse(line);
-              } catch {
-                continue;
+              const result = await saveMessageIfNotExists(sessionId, line, sequence);
+              if (result.saved) {
+                sequence = result.sequence + 1;
+                // Emit new message event
+                sseEvents.emitNewMessage(sessionId, result.message);
               }
-              const messageType = getMessageType(parsed);
-              const msgId =
-                (parsed as { uuid?: string; id?: string }).uuid ||
-                (parsed as { uuid?: string; id?: string }).id ||
-                uuid();
-
-              const message = await prisma.message.create({
-                data: {
-                  id: msgId,
-                  sessionId,
-                  sequence: sequence++,
-                  type: messageType,
-                  content: line,
-                },
-              });
-
-              // Emit new message event
-              sseEvents.emitNewMessage(sessionId, { ...message, content: parsed });
               totalLines++;
             }
 
