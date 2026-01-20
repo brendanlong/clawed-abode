@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { router, protectedProcedure } from '../trpc';
 import { prisma } from '@/lib/prisma';
 import { TRPCError } from '@trpc/server';
-import { runClaudeCommand, interruptClaude, isClaudeRunning } from '../services/claude-runner';
+import { runClaudeCommand, interruptClaude, isClaudeRunningAsync } from '../services/claude-runner';
 
 export const claudeRouter = router({
   send: protectedProcedure
@@ -31,7 +31,7 @@ export const claudeRouter = router({
         });
       }
 
-      if (isClaudeRunning(input.sessionId)) {
+      if (await isClaudeRunningAsync(input.sessionId)) {
         throw new TRPCError({
           code: 'CONFLICT',
           message: 'Claude is already running for this session',
@@ -144,7 +144,7 @@ export const claudeRouter = router({
 
   isRunning: protectedProcedure
     .input(z.object({ sessionId: z.string().uuid() }))
-    .query(({ input }) => {
-      return { running: isClaudeRunning(input.sessionId) };
+    .query(async ({ input }) => {
+      return { running: await isClaudeRunningAsync(input.sessionId) };
     }),
 });
