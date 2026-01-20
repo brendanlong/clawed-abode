@@ -45,6 +45,7 @@ export async function runClaudeCommand(
     sessionId,
     '--output-format',
     'stream-json',
+    '--verbose',
     '--dangerously-skip-permissions',
   ];
 
