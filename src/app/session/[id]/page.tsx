@@ -155,20 +155,26 @@ function SessionView({ sessionId }: { sessionId: string }) {
     { refetchInterval: 2000 }
   );
 
+  // Track fetching state in a ref to avoid stale closure in interval
+  const isFetchingPreviousPageRef = useRef(isFetchingPreviousPage);
+  useEffect(() => {
+    isFetchingPreviousPageRef.current = isFetchingPreviousPage;
+  }, [isFetchingPreviousPage]);
+
   // Poll for new messages by calling fetchPreviousPage on an interval
   useEffect(() => {
     if (historyLoading) return;
 
     const pollInterval = runningData?.running ? 500 : 5000;
     const intervalId = setInterval(() => {
-      // Only poll if not already fetching
-      if (!isFetchingPreviousPage) {
+      // Only poll if not already fetching (use ref to get current value)
+      if (!isFetchingPreviousPageRef.current) {
         fetchPreviousPage();
       }
     }, pollInterval);
 
     return () => clearInterval(intervalId);
-  }, [historyLoading, runningData?.running, isFetchingPreviousPage, fetchPreviousPage]);
+  }, [historyLoading, runningData?.running, fetchPreviousPage]);
 
   // Mutations
   const startMutation = trpc.sessions.start.useMutation({
@@ -190,10 +196,14 @@ function SessionView({ sessionId }: { sessionId: string }) {
   const allMessages = useMemo(() => {
     if (!historyData?.pages) return [];
 
+    const seen = new Set<string>();
     const messages: Message[] = [];
     // Reverse pages to get oldest-first, then flatten
+    // Deduplicate by ID in case of overlapping fetches
     for (const page of [...historyData.pages].reverse()) {
       for (const msg of page.messages) {
+        if (seen.has(msg.id)) continue;
+        seen.add(msg.id);
         messages.push({
           id: msg.id,
           type: msg.type,
