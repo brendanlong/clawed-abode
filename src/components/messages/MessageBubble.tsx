@@ -7,6 +7,7 @@ import { MarkdownContent } from '@/components/MarkdownContent';
 
 import { CopyButton } from './CopyButton';
 import { RawJsonDisplay } from './RawJsonDisplay';
+import { EditDisplay } from './EditDisplay';
 import { TodoWriteDisplay } from './TodoWriteDisplay';
 import { GlobDisplay } from './GlobDisplay';
 import { ToolCallDisplay } from './ToolCallDisplay';
@@ -102,6 +103,10 @@ function renderContentBlocks(
 
             if (block.name === 'Glob') {
               return <GlobDisplay key={block.id} tool={tool} />;
+            }
+
+            if (block.name === 'Edit') {
+              return <EditDisplay key={block.id} tool={tool} />;
             }
 
             return <ToolCallDisplay key={block.id} tool={tool} />;

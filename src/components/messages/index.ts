@@ -3,6 +3,7 @@
 
 export { MessageBubble } from './MessageBubble';
 export { CopyButton } from './CopyButton';
+export { EditDisplay } from './EditDisplay';
 export { RawJsonDisplay } from './RawJsonDisplay';
 export { TodoWriteDisplay } from './TodoWriteDisplay';
 export { ToolCallDisplay } from './ToolCallDisplay';
