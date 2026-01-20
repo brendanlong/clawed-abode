@@ -72,6 +72,23 @@ USER claudeuser
 ENV HOME=/home/claudeuser
 ENV PATH="/home/claudeuser/.local/bin:${PATH}"
 
+# Install Android SDK
+ENV ANDROID_HOME=/home/claudeuser/Android/Sdk
+ENV PATH="${ANDROID_HOME}/cmdline-tools/latest/bin:${ANDROID_HOME}/platform-tools:${PATH}"
+
+# Download and install Android command-line tools
+RUN mkdir -p ${ANDROID_HOME}/cmdline-tools && \
+    cd ${ANDROID_HOME}/cmdline-tools && \
+    curl -sSL "https://dl.google.com/android/repository/commandlinetools-linux-13114758_latest.zip" -o cmdline-tools.zip && \
+    unzip -q cmdline-tools.zip && \
+    mv cmdline-tools latest && \
+    rm cmdline-tools.zip && \
+    chmod +x ${ANDROID_HOME}/cmdline-tools/latest/bin/*
+
+# Accept Android SDK licenses and install common components
+RUN yes | sdkmanager --licenses > /dev/null 2>&1 && \
+    sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+
 # Configure pnpm to use shared store if mounted at /pnpm-store
 # The store supports concurrent access with atomic operations
 ENV PNPM_HOME="/home/claudeuser/.local/share/pnpm"
