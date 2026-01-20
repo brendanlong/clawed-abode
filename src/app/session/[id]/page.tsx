@@ -7,6 +7,7 @@ import { AuthGuard } from '@/components/AuthGuard';
 import { Header } from '@/components/Header';
 import { MessageList } from '@/components/MessageList';
 import { PromptInput } from '@/components/PromptInput';
+import { ClaudeStatusIndicator } from '@/components/ClaudeStatusIndicator';
 import { trpc } from '@/lib/trpc';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -75,6 +76,7 @@ function SessionHeader({
         </div>
 
         <div className="flex items-center gap-3">
+          <span className="text-sm text-muted-foreground">Container:</span>
           <Badge variant={statusVariants[session.status as SessionStatus] || 'secondary'}>
             {session.status}
           </Badge>
@@ -224,6 +226,29 @@ function SessionView({ sessionId }: { sessionId: string }) {
     }
   }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
+  const session = sessionData?.session;
+  const isClaudeRunning = runningData?.running ?? false;
+
+  // Dynamic page title based on Claude running state
+  useEffect(() => {
+    if (!session) return;
+    const baseTitle = `${session.name} - Claude Code Local Web`;
+    document.title = isClaudeRunning ? `Working - ${baseTitle}` : baseTitle;
+  }, [session, isClaudeRunning]);
+
+  // Dynamic favicon based on Claude running state
+  useEffect(() => {
+    const faviconPath = isClaudeRunning ? '/favicon-working.svg' : '/favicon.svg';
+    let link = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
+    if (!link) {
+      link = document.createElement('link');
+      link.rel = 'icon';
+      link.type = 'image/svg+xml';
+      document.head.appendChild(link);
+    }
+    link.href = faviconPath;
+  }, [isClaudeRunning]);
+
   if (sessionLoading) {
     return (
       <div className="flex-1 flex items-center justify-center">
@@ -232,7 +257,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
     );
   }
 
-  if (!sessionData?.session) {
+  if (!session) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center">
         <p className="text-muted-foreground">Session not found</p>
@@ -242,9 +267,6 @@ function SessionView({ sessionId }: { sessionId: string }) {
       </div>
     );
   }
-
-  const session = sessionData.session;
-  const isClaudeRunning = runningData?.running ?? false;
 
   return (
     <div className="flex-1 flex flex-col min-h-0">
@@ -262,6 +284,8 @@ function SessionView({ sessionId }: { sessionId: string }) {
         hasMore={hasNextPage ?? false}
         onLoadMore={handleLoadMore}
       />
+
+      <ClaudeStatusIndicator isRunning={isClaudeRunning} containerStatus={session.status} />
 
       <PromptInput
         onSubmit={handleSendPrompt}
