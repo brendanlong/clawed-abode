@@ -33,8 +33,10 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | d
     apt-get install -y gh && \
     rm -rf /var/lib/apt/lists/*
 
-# Install pnpm and Claude Code
-RUN npm install -g pnpm @anthropic-ai/claude-code
+# Enable corepack for pnpm (built into Node.js) and install Claude Code
+RUN corepack enable && \
+    corepack prepare pnpm@latest --activate && \
+    npm install -g @anthropic-ai/claude-code
 
 # Create a non-root user with UID 1000 (common default for host user)
 # Add to docker group for docker-in-docker capability
