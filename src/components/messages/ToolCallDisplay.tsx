@@ -73,9 +73,7 @@ export function ToolCallDisplay({ tool }: { tool: ToolCall }) {
                 <div className="text-muted-foreground text-xs mt-1 truncate">{description}</div>
               )}
             </div>
-            <span className="text-muted-foreground ml-2 flex-shrink-0">
-              {expanded ? '−' : '+'}
-            </span>
+            <span className="text-muted-foreground ml-2 flex-shrink-0">{expanded ? '−' : '+'}</span>
           </CollapsibleTrigger>
 
           <CollapsibleContent>
