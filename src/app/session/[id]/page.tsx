@@ -129,21 +129,36 @@ function SessionView({ sessionId }: { sessionId: string }) {
   } = trpc.claude.getHistory.useInfiniteQuery(
     { sessionId, limit: 50 },
     {
+      // Limit stored pages to prevent memory growth from polling empty results
+      // With 50 messages per page, this keeps up to 5000 messages in memory
+      maxPages: 100,
       // For loading OLDER messages (user scrolls up)
-      getNextPageParam: (lastPage) => {
-        if (!lastPage.hasMore || lastPage.messages.length === 0) return undefined;
-        // Use oldest message's sequence as cursor to fetch even older
-        const oldestSequence = Math.min(...lastPage.messages.map((m) => m.sequence));
+      getNextPageParam: (lastPage, allPages) => {
+        if (!lastPage.hasMore) return undefined;
+        // Find the oldest sequence across ALL pages (not just lastPage, which might be empty)
+        let oldestSequence: number | undefined;
+        for (const page of allPages) {
+          for (const msg of page.messages) {
+            if (oldestSequence === undefined || msg.sequence < oldestSequence) {
+              oldestSequence = msg.sequence;
+            }
+          }
+        }
+        if (oldestSequence === undefined) return undefined;
         return { sequence: oldestSequence, direction: 'backward' as const };
       },
       // For loading NEWER messages (polling)
-      getPreviousPageParam: (firstPage) => {
-        // Use newest message's sequence as cursor to fetch even newer
-        // If no messages yet, omit sequence to fetch all messages
-        const newestSequence =
-          firstPage.messages.length > 0
-            ? Math.max(...firstPage.messages.map((m) => m.sequence))
-            : undefined;
+      getPreviousPageParam: (_firstPage, allPages) => {
+        // Find the newest sequence across ALL pages (not just firstPage, which might be empty)
+        // This prevents refetching everything if an empty page was prepended
+        let newestSequence: number | undefined;
+        for (const page of allPages) {
+          for (const msg of page.messages) {
+            if (newestSequence === undefined || msg.sequence > newestSequence) {
+              newestSequence = msg.sequence;
+            }
+          }
+        }
         return { sequence: newestSequence, direction: 'forward' as const };
       },
     }
