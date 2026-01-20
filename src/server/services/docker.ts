@@ -1,7 +1,15 @@
 import Docker from 'dockerode';
+import { Readable } from 'stream';
 import { env } from '@/lib/env';
 
 const docker = new Docker();
+
+// Logging helper for debugging
+function log(context: string, message: string, data?: Record<string, unknown>): void {
+  const timestamp = new Date().toISOString();
+  const dataStr = data ? ` ${JSON.stringify(data)}` : '';
+  console.log(`[${timestamp}] [docker:${context}] ${message}${dataStr}`);
+}
 
 const CLAUDE_CODE_IMAGE = 'claude-code-runner:latest';
 
@@ -160,7 +168,7 @@ export async function removeContainer(containerId: string): Promise<void> {
 export async function execInContainer(
   containerId: string,
   command: string[]
-): Promise<{ stream: NodeJS.ReadableStream; execId: string }> {
+): Promise<{ stream: Readable; execId: string }> {
   const container = docker.getContainer(containerId);
 
   const exec = await container.exec({
@@ -172,7 +180,7 @@ export async function execInContainer(
 
   const stream = await exec.start({ Detach: false, Tty: false });
 
-  return { stream: stream, execId: exec.id };
+  return { stream: stream as unknown as Readable, execId: exec.id };
 }
 
 export async function getContainerStatus(
@@ -203,14 +211,47 @@ export async function sendSignalToExec(
   await exec.start({ Detach: false });
 }
 
-export async function findProcessInContainer(
+/**
+ * Kill all processes matching a pattern in a container using pkill.
+ * Useful for cleaning up background processes like tail -f.
+ */
+export async function killProcessesByPattern(containerId: string, pattern: string): Promise<void> {
+  await signalProcessesByPattern(containerId, pattern, 'TERM');
+}
+
+/**
+ * Send a signal to all processes matching a pattern in a container.
+ */
+export async function signalProcessesByPattern(
   containerId: string,
-  processName: string
-): Promise<number | null> {
+  pattern: string,
+  signal: string = 'TERM'
+): Promise<void> {
   const container = docker.getContainer(containerId);
 
   const exec = await container.exec({
-    Cmd: ['pgrep', '-f', processName],
+    Cmd: ['pkill', `-${signal}`, '-f', pattern],
+    AttachStdout: true,
+    AttachStderr: true,
+  });
+
+  const stream = await exec.start({ Detach: false, Tty: false });
+  stream.resume(); // Consume stream so it ends
+  await new Promise<void>((resolve) => {
+    stream.on('end', resolve);
+    stream.on('error', resolve);
+  });
+}
+
+export async function findProcessInContainer(
+  containerId: string,
+  processPattern: string
+): Promise<number | null> {
+  const container = docker.getContainer(containerId);
+
+  // Use pgrep -f to match against the full command line
+  const exec = await container.exec({
+    Cmd: ['pgrep', '-f', processPattern],
     AttachStdout: true,
     AttachStderr: true,
   });
@@ -220,12 +261,225 @@ export async function findProcessInContainer(
   return new Promise((resolve) => {
     let output = '';
     stream.on('data', (chunk: Buffer) => {
-      output += chunk.toString();
+      // Strip Docker stream header if present
+      output += stripDockerStreamHeader(chunk);
     });
     stream.on('end', () => {
       const pid = parseInt(output.trim().split('\n')[0], 10);
-      resolve(isNaN(pid) ? null : pid);
+      const result = isNaN(pid) ? null : pid;
+      log('findProcessInContainer', 'Search complete', {
+        containerId,
+        processPattern,
+        pid: result,
+        rawOutput: output.trim().slice(0, 100),
+      });
+      resolve(result);
     });
-    stream.on('error', () => resolve(null));
+    stream.on('error', () => {
+      log('findProcessInContainer', 'Stream error', { containerId, processPattern });
+      resolve(null);
+    });
   });
+}
+
+/**
+ * Check if a specific process is running in a container
+ */
+export async function isProcessRunning(containerId: string, processName: string): Promise<boolean> {
+  const pid = await findProcessInContainer(containerId, processName);
+  return pid !== null;
+}
+
+/**
+ * Execute a command in the background that writes output to a file.
+ * Returns the exec ID which can be used with getExecStatus() to check completion.
+ */
+export async function execInContainerWithOutputFile(
+  containerId: string,
+  command: string[],
+  outputFile: string
+): Promise<{ execId: string }> {
+  log('execInContainerWithOutputFile', 'Starting', { containerId, command, outputFile });
+  const container = docker.getContainer(containerId);
+
+  // Wrap the command to redirect output to a file
+  // Use sh -c to handle the redirection
+  const wrappedCommand = [
+    'sh',
+    '-c',
+    `${command.map(escapeShellArg).join(' ')} > "${outputFile}" 2>&1`,
+  ];
+  log('execInContainerWithOutputFile', 'Wrapped command', { wrappedCommand });
+
+  const exec = await container.exec({
+    Cmd: wrappedCommand,
+    AttachStdout: false,
+    AttachStderr: false,
+    Tty: false,
+  });
+
+  // Start in detached mode
+  await exec.start({ Detach: true, Tty: false });
+  log('execInContainerWithOutputFile', 'Started in detached mode', { execId: exec.id });
+
+  return { execId: exec.id };
+}
+
+/**
+ * Check the status of a Docker exec by its ID.
+ * Returns running state and exit code (if finished).
+ */
+export async function getExecStatus(
+  execId: string
+): Promise<{ running: boolean; exitCode: number | null }> {
+  const exec = docker.getExec(execId);
+  const info = await exec.inspect();
+  return {
+    running: info.Running,
+    exitCode: info.Running ? null : info.ExitCode,
+  };
+}
+
+/**
+ * Tail a file in a container, streaming new content as it's written.
+ * Returns a readable stream of the file content.
+ */
+export async function tailFileInContainer(
+  containerId: string,
+  filePath: string,
+  startLine: number = 0
+): Promise<{ stream: Readable; execId: string }> {
+  log('tailFileInContainer', 'Starting', { containerId, filePath, startLine });
+  const container = docker.getContainer(containerId);
+
+  // Use tail -f to follow the file, starting from line N
+  // +1 because tail uses 1-based line numbers and we want to skip 'startLine' lines
+  const tailCmd = ['tail', '-n', `+${startLine + 1}`, '-f', filePath];
+  log('tailFileInContainer', 'Running tail command', { tailCmd });
+
+  const exec = await container.exec({
+    Cmd: tailCmd,
+    AttachStdout: true,
+    AttachStderr: true,
+    Tty: false,
+  });
+
+  const stream = await exec.start({ Detach: false, Tty: false });
+  log('tailFileInContainer', 'Tail stream started', { execId: exec.id });
+
+  return { stream: stream as unknown as Readable, execId: exec.id };
+}
+
+/**
+ * Read the current contents of a file in a container.
+ * Useful for catching up on missed output after reconnecting.
+ */
+export async function readFileInContainer(containerId: string, filePath: string): Promise<string> {
+  const container = docker.getContainer(containerId);
+
+  const exec = await container.exec({
+    Cmd: ['cat', filePath],
+    AttachStdout: true,
+    AttachStderr: true,
+    Tty: false,
+  });
+
+  const stream = await exec.start({ Detach: false, Tty: false });
+
+  return new Promise((resolve, reject) => {
+    let output = '';
+    stream.on('data', (chunk: Buffer) => {
+      // Strip Docker header if present
+      output += stripDockerStreamHeader(chunk);
+    });
+    stream.on('end', () => resolve(output));
+    stream.on('error', reject);
+  });
+}
+
+/**
+ * Count lines in a file in a container
+ */
+export async function countLinesInContainer(
+  containerId: string,
+  filePath: string
+): Promise<number> {
+  const container = docker.getContainer(containerId);
+
+  const exec = await container.exec({
+    Cmd: ['wc', '-l', filePath],
+    AttachStdout: true,
+    AttachStderr: true,
+    Tty: false,
+  });
+
+  const stream = await exec.start({ Detach: false, Tty: false });
+
+  return new Promise((resolve, reject) => {
+    let output = '';
+    stream.on('data', (chunk: Buffer) => {
+      output += stripDockerStreamHeader(chunk);
+    });
+    stream.on('end', () => {
+      const lineCount = parseInt(output.trim().split(/\s+/)[0], 10);
+      resolve(isNaN(lineCount) ? 0 : lineCount);
+    });
+    stream.on('error', reject);
+  });
+}
+
+/**
+ * Check if a file exists in a container
+ */
+export async function fileExistsInContainer(
+  containerId: string,
+  filePath: string
+): Promise<boolean> {
+  const container = docker.getContainer(containerId);
+
+  const exec = await container.exec({
+    Cmd: ['test', '-f', filePath],
+    AttachStdout: true,
+    AttachStderr: true,
+    Tty: false,
+  });
+
+  const stream = await exec.start({ Detach: false, Tty: false });
+
+  return new Promise((resolve) => {
+    stream.on('end', async () => {
+      try {
+        const info = await exec.inspect();
+        const exists = info.ExitCode === 0;
+        log('fileExistsInContainer', 'Check complete', { containerId, filePath, exists });
+        resolve(exists);
+      } catch {
+        log('fileExistsInContainer', 'Check failed', { containerId, filePath });
+        resolve(false);
+      }
+    });
+    stream.on('error', () => {
+      log('fileExistsInContainer', 'Stream error', { containerId, filePath });
+      resolve(false);
+    });
+    stream.resume(); // Consume the stream so 'end' event fires
+  });
+}
+
+function escapeShellArg(arg: string): string {
+  // Escape single quotes and wrap in single quotes
+  return `'${arg.replace(/'/g, "'\\''")}'`;
+}
+
+function stripDockerStreamHeader(chunk: Buffer): string {
+  // Docker multiplexed streams have an 8-byte header
+  // [stream type (1), 0, 0, 0, size (4 bytes big-endian)]
+  if (chunk.length > 8) {
+    const streamType = chunk[0];
+    if (streamType === 1 || streamType === 2) {
+      // stdout or stderr
+      return chunk.slice(8).toString('utf-8');
+    }
+  }
+  return chunk.toString('utf-8');
 }
