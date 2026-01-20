@@ -3,23 +3,14 @@ import { mkdir, rm, access } from 'fs/promises';
 import { join } from 'path';
 import { env } from '@/lib/env';
 
-const REPOS_DIR = join(env.DATA_DIR, 'repos');
-const WORKTREES_DIR = join(env.DATA_DIR, 'worktrees');
+const WORKSPACES_DIR = join(env.DATA_DIR, 'workspaces');
 
 export interface CloneResult {
-  repoPath: string;
+  workspacePath: string;
 }
 
-export interface WorktreeResult {
-  worktreePath: string;
-}
-
-function getRepoPath(repoFullName: string): string {
-  return join(REPOS_DIR, repoFullName.replace('/', '_'));
-}
-
-function getWorktreePath(sessionId: string): string {
-  return join(WORKTREES_DIR, sessionId);
+function getWorkspacePath(sessionId: string): string {
+  return join(WORKSPACES_DIR, sessionId);
 }
 
 async function ensureDir(dir: string): Promise<void> {
@@ -39,114 +30,87 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
-export async function cloneOrFetchRepo(
+export async function cloneRepo(
   repoFullName: string,
+  branch: string,
+  sessionId: string,
   githubToken?: string
 ): Promise<CloneResult> {
-  await ensureDir(REPOS_DIR);
+  await ensureDir(WORKSPACES_DIR);
 
-  const repoPath = getRepoPath(repoFullName);
+  const workspacePath = getWorkspacePath(sessionId);
+
+  // Build the clone URL with token if provided
   const repoUrl = githubToken
     ? `https://${githubToken}@github.com/${repoFullName}.git`
     : `https://github.com/${repoFullName}.git`;
 
-  if (await pathExists(repoPath)) {
-    // Repo exists, fetch latest
-    const git = simpleGit(repoPath);
-    await git.fetch(['--all', '--prune']);
-    return { repoPath };
-  }
-
-  // Clone fresh
   const git = simpleGit();
-  await git.clone(repoUrl, repoPath, ['--bare']);
+  await git.clone(repoUrl, workspacePath, ['--branch', branch, '--single-branch']);
 
-  return { repoPath };
+  // Configure the remote URL without the token for security
+  // The credential helper will provide the token when needed
+  const workspaceGit = simpleGit(workspacePath);
+  await workspaceGit.remote(['set-url', 'origin', `https://github.com/${repoFullName}.git`]);
+
+  return { workspacePath };
 }
 
-export async function createWorktree(
-  repoFullName: string,
-  branch: string,
-  sessionId: string
-): Promise<WorktreeResult> {
-  await ensureDir(WORKTREES_DIR);
+export async function removeWorkspace(sessionId: string): Promise<void> {
+  const workspacePath = getWorkspacePath(sessionId);
 
-  const repoPath = getRepoPath(repoFullName);
-  const worktreePath = getWorktreePath(sessionId);
-
-  const git = simpleGit(repoPath);
-
-  // Create a per-session branch based on the source branch
-  // This allows multiple sessions to work on the same source branch
-  const sessionBranch = `${env.SESSION_BRANCH_PREFIX}${sessionId}`;
-  await git.raw(['worktree', 'add', '-b', sessionBranch, worktreePath, branch]);
-
-  return { worktreePath };
-}
-
-export async function removeWorktree(sessionId: string): Promise<void> {
-  const worktreePath = getWorktreePath(sessionId);
-
-  if (!(await pathExists(worktreePath))) {
+  if (!(await pathExists(workspacePath))) {
     return;
   }
 
-  // Find the parent repo by checking worktree list
-  // Since we use bare repos, we need to find which repo owns this worktree
-  const reposDir = REPOS_DIR;
-  const { readdir } = await import('fs/promises');
-  const repos = await readdir(reposDir);
-
-  const sessionBranch = `${env.SESSION_BRANCH_PREFIX}${sessionId}`;
-
-  for (const repo of repos) {
-    const repoPath = join(reposDir, repo);
-    try {
-      const git = simpleGit(repoPath);
-      await git.raw(['worktree', 'remove', worktreePath, '--force']);
-      // Also delete the session branch
-      try {
-        await git.raw(['branch', '-D', sessionBranch]);
-      } catch {
-        // Branch may not exist or already deleted
-      }
-      return;
-    } catch {
-      // Not the right repo, continue
-    }
-  }
-
-  // Fallback: just delete the directory
-  await rm(worktreePath, { recursive: true, force: true });
+  await rm(workspacePath, { recursive: true, force: true });
 }
 
-export async function getDefaultBranch(repoPath: string): Promise<string> {
-  const git = simpleGit(repoPath);
+export async function getDefaultBranch(
+  repoFullName: string,
+  githubToken?: string
+): Promise<string> {
+  // Use git ls-remote to get the default branch without cloning
+  const git = simpleGit();
+  const repoUrl = githubToken
+    ? `https://${githubToken}@github.com/${repoFullName}.git`
+    : `https://github.com/${repoFullName}.git`;
 
   try {
-    // Try to get the HEAD reference
-    const result = await git.raw(['symbolic-ref', '--short', 'HEAD']);
-    return result.trim();
+    const result = await git.listRemote(['--symref', repoUrl, 'HEAD']);
+    // Parse output like: ref: refs/heads/main  HEAD
+    const match = result.match(/ref: refs\/heads\/(\S+)/);
+    if (match) {
+      return match[1];
+    }
   } catch {
-    // Fallback to main or master
-    const branches = await git.branch();
-    if (branches.all.includes('main')) return 'main';
-    if (branches.all.includes('master')) return 'master';
-    return branches.all[0] || 'main';
+    // Fallback
   }
+
+  return 'main';
 }
 
-export async function listBranches(repoPath: string): Promise<string[]> {
-  const git = simpleGit(repoPath);
-  const branches = await git.branch(['-a']);
+export async function listBranches(repoFullName: string, githubToken?: string): Promise<string[]> {
+  const git = simpleGit();
+  const repoUrl = githubToken
+    ? `https://${githubToken}@github.com/${repoFullName}.git`
+    : `https://github.com/${repoFullName}.git`;
 
-  // Filter and clean branch names
-  return branches.all
-    .map((b) => b.replace(/^remotes\/origin\//, ''))
-    .filter((b) => !b.includes('HEAD'))
-    .filter((v, i, a) => a.indexOf(v) === i); // Unique
+  const result = await git.listRemote(['--heads', repoUrl]);
+
+  // Parse output like: abc123  refs/heads/main
+  const branches = result
+    .split('\n')
+    .filter((line) => line.includes('refs/heads/'))
+    .map((line) => {
+      const match = line.match(/refs\/heads\/(.+)$/);
+      return match ? match[1] : null;
+    })
+    .filter((b): b is string => b !== null);
+
+  return branches;
 }
 
-export function buildWorktreePath(sessionId: string): string {
-  return getWorktreePath(sessionId);
+export function buildWorkspacePath(sessionId: string): string {
+  return getWorkspacePath(sessionId);
 }

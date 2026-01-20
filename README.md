@@ -6,7 +6,7 @@ A self-hosted web application that provides mobile-friendly access to Claude Cod
 
 - Run Claude Code sessions from any device with a web browser
 - Access local GPU resources for AI workloads
-- Persistent sessions tied to git worktrees
+- Persistent sessions with isolated git clones
 - Simple password-based authentication (single user)
 - Session tracking with IP addresses and login history
 - Clean session lifecycle management
@@ -16,7 +16,7 @@ A self-hosted web application that provides mobile-friendly access to Claude Cod
 
 - Node.js 20+
 - Docker with NVIDIA Container Toolkit (for GPU support)
-- A GitHub Personal Access Token (with `repo` scope)
+- A GitHub Fine-grained Personal Access Token (recommended for security)
 - Claude Code installed and authenticated on your host machine
 
 ## Quick Start
@@ -38,8 +38,20 @@ cp .env.example .env
 Edit `.env` and set:
 
 - `PASSWORD_HASH`: Argon2-hashed password for authentication (see below)
-- `GITHUB_TOKEN`: Your GitHub Personal Access Token
+- `GITHUB_TOKEN`: Your GitHub Fine-grained Personal Access Token (see below)
 - `CLAUDE_AUTH_PATH`: Path to your Claude Code auth (usually `~/.claude`)
+
+### Generate GitHub Token
+
+For security, use a **Fine-grained Personal Access Token** instead of a classic token:
+
+1. Go to https://github.com/settings/personal-access-tokens/new
+2. Select "Fine-grained personal access token"
+3. Under "Repository access", select "Only select repositories" and choose the repos you want to use
+4. Under "Permissions" → "Repository permissions", set:
+   - **Contents**: Read and write (for push/pull)
+   - **Metadata**: Read-only (automatically included)
+5. Generate the token and add it to your `.env` file
 
 ### Generate Password Hash
 
@@ -108,14 +120,14 @@ docker compose up -d
 
 ### Environment Variables
 
-| Variable           | Description                        | Default                  |
-| ------------------ | ---------------------------------- | ------------------------ |
-| `PASSWORD_HASH`    | Argon2-hashed password for auth    | None (required)          |
-| `DATABASE_URL`     | SQLite database path               | `file:./data/dev.db`     |
-| `GITHUB_TOKEN`     | GitHub Personal Access Token       | Required for repo access |
-| `CLAUDE_AUTH_PATH` | Path to Claude Code auth directory | `/root/.claude`          |
-| `DATA_DIR`         | Directory for repos and worktrees  | `/data`                  |
-| `NODE_ENV`         | Node environment                   | `development`            |
+| Variable           | Description                             | Default              |
+| ------------------ | --------------------------------------- | -------------------- |
+| `PASSWORD_HASH`    | Argon2-hashed password for auth         | None (required)      |
+| `DATABASE_URL`     | SQLite database path                    | `file:./data/dev.db` |
+| `GITHUB_TOKEN`     | GitHub Fine-grained PAT for repo access | Required             |
+| `CLAUDE_AUTH_PATH` | Path to Claude Code auth directory      | `/root/.claude`      |
+| `DATA_DIR`         | Directory for session workspaces        | `/data`              |
+| `NODE_ENV`         | Node environment                        | `development`        |
 
 ### GPU Support
 
@@ -169,7 +181,7 @@ The application uses NVIDIA Container Toolkit for GPU access. Ensure you have:
                                                 │  │  Docker Containers  │    │
                                                 │  │  ┌───────────────┐  │    │
                                                 │  │  │ Claude Code   │  │    │
-                                                │  │  │ + Worktree    │  │    │
+                                                │  │  │ + Git Clone   │  │    │
                                                 │  │  │ + GPU access  │  │    │
                                                 │  │  └───────────────┘  │    │
                                                 │  └─────────────────────┘    │
@@ -201,7 +213,8 @@ pnpm start
 - Database-backed sessions with random tokens (256-bit entropy)
 - Session tracking includes IP addresses and user agents for audit purposes
 - Claude Code runs with `--dangerously-skip-permissions` inside isolated containers
-- Each session has its own container with a separate git worktree
+- Each session has its own container with an isolated git clone
+- Use Fine-grained PATs scoped to specific repos with minimal permissions
 - Docker socket access is provided for docker-in-docker capability
 - Use Cloudflare Tunnel or similar for secure remote access (don't expose port 3000 directly)
 

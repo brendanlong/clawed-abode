@@ -2,14 +2,14 @@
 
 ## Overview
 
-A self-hosted web application that provides mobile-friendly access to Claude Code running on local machines with GPU support. The system exposes Claude Code sessions through a web interface, with persistent sessions tied to git worktrees in Docker containers.
+A self-hosted web application that provides mobile-friendly access to Claude Code running on local machines with GPU support. The system exposes Claude Code sessions through a web interface, with persistent sessions tied to git clones in Docker containers.
 
 ## Goals
 
 - Run Claude Code sessions from mobile devices without a terminal
 - Access local GPU resources not available in Claude Code Web
 - Persistent sessions that survive disconnections
-- Clean session lifecycle tied to git worktrees
+- Clean session lifecycle tied to git clones
 - Secure access without VPN
 
 ## Architecture
@@ -28,7 +28,7 @@ A self-hosted web application that provides mobile-friendly access to Claude Cod
                                                 │  │  Docker Containers  │    │
                                                 │  │  ┌───────────────┐  │    │
                                                 │  │  │ Claude Code   │  │    │
-                                                │  │  │ + Worktree    │  │    │
+                                                │  │  │ + Git Clone   │  │    │
                                                 │  │  │ + GPU access  │  │    │
                                                 │  │  └───────────────┘  │    │
                                                 │  └─────────────────────┘    │
@@ -45,9 +45,10 @@ interface Session {
   name: string; // User-provided name
   repoUrl: string; // GitHub clone URL
   branch: string; // Branch name
-  worktreePath: string; // Path on host filesystem
+  workspacePath: string; // Path to cloned repo on host filesystem
   containerId: string | null; // Docker container ID when running
   status: 'creating' | 'running' | 'stopped' | 'error';
+  statusMessage: string | null; // Progress message during creation or error details
   createdAt: Date;
   updatedAt: Date;
 }
@@ -124,7 +125,9 @@ sessions.create({
   branch: string
 })
   → { session: Session }
-  // Internally: clones repo, creates worktree, builds/starts container
+  // Returns immediately with session in "creating" status
+  // Cloning and container setup continues in background
+  // UI polls session.get() to track progress via statusMessage
 
 sessions.list({ status?: SessionStatus })
   → { sessions: Session[] }
@@ -138,11 +141,11 @@ sessions.start({ sessionId: string })
 
 sessions.stop({ sessionId: string })
   → { session: Session }
-  // Stops container but preserves worktree
+  // Stops container but preserves workspace
 
 sessions.delete({ sessionId: string })
   → { success: true }
-  // Stops container, deletes worktree
+  // Stops container, deletes workspace
 ```
 
 ### Claude Interaction
@@ -172,15 +175,17 @@ claude.getHistory({
 
 1. User selects repo and branch from UI
 2. Server calls `sessions.create()`
-3. Server clones repo (or fetches if exists) to `/data/repos/{repoName}`
-4. Server creates worktree at `/data/worktrees/{sessionId}` for the branch
-5. Server builds/pulls Docker image with Claude Code
-6. Server starts container with:
-   - Worktree mounted at `/workspace`
+3. Server creates session record with status `creating` and returns immediately
+4. UI navigates to session page, polls for status updates
+5. Background: Server clones repo to `/data/workspaces/{sessionId}`
+6. Background: Server starts container with:
+   - Workspace mounted at `/workspace`
    - GPU access (`--gpus all`)
-   - Claude auth copied/mounted from host
+   - Claude auth mounted from host
    - Docker socket mounted (for docker-in-docker)
-7. Session status → `running`
+   - GITHUB_TOKEN env var for push/pull access
+   - Git credential helper configured automatically
+7. Session status → `running`, statusMessage → null
 
 ### Interaction Flow
 
@@ -218,7 +223,7 @@ claude.getHistory({
 1. User deletes session
 2. Server stops container if running
 3. Server removes container
-4. Server deletes worktree: `git worktree remove /data/worktrees/{sessionId}`
+4. Server deletes workspace directory at `/data/workspaces/{sessionId}`
 5. Server deletes messages from database
 6. Server deletes session record
 
@@ -266,15 +271,16 @@ CMD ["tail", "-f", "/dev/null"]
 ### Container Launch
 
 ```typescript
-async function startSessionContainer(session: Session): Promise<string> {
-  const containerId = await docker.createContainer({
+async function startSessionContainer(session: Session, githubToken?: string): Promise<string> {
+  const container = await docker.createContainer({
     Image: 'claude-code-runner:latest',
     name: `claude-session-${session.id}`,
+    Env: githubToken ? [`GITHUB_TOKEN=${githubToken}`] : [],
     HostConfig: {
       Binds: [
-        `${session.worktreePath}:/workspace`,
+        `${session.workspacePath}:/workspace`,
         `/var/run/docker.sock:/var/run/docker.sock`,
-        `${CLAUDE_AUTH_PATH}:/home/claudeuser/.claude:ro`,
+        `${CLAUDE_AUTH_PATH}:/home/claudeuser/.claude`,
       ],
       DeviceRequests: [
         {
@@ -287,8 +293,14 @@ async function startSessionContainer(session: Session): Promise<string> {
     WorkingDir: '/workspace',
   });
 
-  await docker.startContainer(containerId);
-  return containerId;
+  await container.start();
+
+  // Configure git credential helper if token is provided
+  if (githubToken) {
+    await configureGitCredentials(container.id);
+  }
+
+  return container.id;
 }
 ```
 
@@ -354,12 +366,21 @@ ORDER BY sequence ASC;
 ### Container Isolation
 
 - Each session runs in its own container
-- Containers can't access each other's worktrees
+- Containers can't access each other's workspaces
 - Docker socket access is intentional for docker-in-docker capability
 - `--dangerously-skip-permissions` is acceptable because:
   - Only authenticated user can access
   - Container provides isolation boundary
-  - Worktree is disposable
+  - Workspace is disposable
+
+### GitHub Token Security
+
+- Use a **fine-grained Personal Access Token** for minimum required permissions
+- Scope the token to only the repositories you want to use
+- Grant only "Contents: Read and write" permission (for push/pull)
+- Create at: https://github.com/settings/personal-access-tokens/new
+- The token is passed as an environment variable to containers
+- A git credential helper is configured automatically inside containers
 
 ## UI Screens
 
@@ -448,10 +469,10 @@ claude-code-web/
 
 ## Open Questions
 
-1. **Git worktree vs fresh clone** — Worktrees are faster but require a base clone. May want periodic garbage collection of old clones.
+1. **Container reuse** — Keep one container per session always running, or start/stop on demand? Leaning toward always-running for simplicity (low resource cost when idle).
 
-2. **Container reuse** — Keep one container per session always running, or start/stop on demand? Leaning toward always-running for simplicity (low resource cost when idle).
+2. **Claude auth refresh** — Monitor for auth failures and surface in UI, or try to automate re-auth? Starting with manual re-auth on host seems fine.
 
-3. **Claude auth refresh** — Monitor for auth failures and surface in UI, or try to automate re-auth? Starting with manual re-auth on host seems fine.
+3. **Message retention** — Keep forever, or prune old sessions? Probably configurable per-session or global setting.
 
-4. **Message retention** — Keep forever, or prune old sessions? Probably configurable per-session or global setting.
+4. **Workspace cleanup** — Consider periodic cleanup of old workspaces for deleted sessions that weren't cleaned up properly.

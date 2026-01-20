@@ -135,7 +135,7 @@ function SessionList() {
                           <AlertDialogTitle>Delete session?</AlertDialogTitle>
                           <AlertDialogDescription>
                             This will permanently delete the session &quot;{session.name}&quot; and
-                            its worktree. This action cannot be undone.
+                            its workspace. This action cannot be undone.
                           </AlertDialogDescription>
                         </AlertDialogHeader>
                         <AlertDialogFooter>

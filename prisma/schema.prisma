@@ -20,16 +20,17 @@ model AuthSession {
 }
 
 model Session {
-  id           String    @id @default(uuid())
-  name         String
-  repoUrl      String
-  branch       String
-  worktreePath String
-  containerId  String?
-  status       String    @default("creating") // creating, running, stopped, error
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
-  messages     Message[]
+  id            String    @id @default(uuid())
+  name          String
+  repoUrl       String
+  branch        String
+  workspacePath String    // Path to cloned repo on host
+  containerId   String?
+  status        String    @default("creating") // creating, running, stopped, error
+  statusMessage String?   // Human-readable progress message during creation
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  messages      Message[]
 
   @@index([status])
 }

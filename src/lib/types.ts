@@ -24,9 +24,10 @@ export interface Session {
   name: string;
   repoUrl: string;
   branch: string;
-  worktreePath: string;
+  workspacePath: string;
   containerId: string | null;
   status: SessionStatus;
+  statusMessage: string | null;
   createdAt: Date;
   updatedAt: Date;
 }

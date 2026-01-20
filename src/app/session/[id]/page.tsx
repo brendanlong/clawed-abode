@@ -34,6 +34,7 @@ function SessionHeader({
     repoUrl: string;
     branch: string;
     status: string;
+    statusMessage?: string | null;
   };
   onStart: () => void;
   onStop: () => void;
@@ -97,12 +98,21 @@ function SessionHeader({
 }
 
 function SessionView({ sessionId }: { sessionId: string }) {
-  // Fetch session details
+  // Fetch session details (poll while creating)
   const {
     data: sessionData,
     isLoading: sessionLoading,
     refetch: refetchSession,
-  } = trpc.sessions.get.useQuery({ sessionId });
+  } = trpc.sessions.get.useQuery(
+    { sessionId },
+    {
+      // Poll every second while session is being created
+      refetchInterval: (query) => {
+        const status = query.state.data?.session?.status;
+        return status === 'creating' ? 1000 : false;
+      },
+    }
+  );
 
   // Infinite query for message history (paginating backwards)
   const {
@@ -246,6 +256,42 @@ function SessionView({ sessionId }: { sessionId: string }) {
         <Button variant="link" asChild className="mt-4">
           <Link href="/">Back to sessions</Link>
         </Button>
+      </div>
+    );
+  }
+
+  // Show creation progress or error state
+  if (session.status === 'creating' || session.status === 'error') {
+    return (
+      <div className="flex-1 flex flex-col min-h-0">
+        <SessionHeader
+          session={session}
+          onStart={() => {}}
+          onStop={() => {}}
+          isStarting={false}
+          isStopping={false}
+        />
+        <div className="flex-1 flex flex-col items-center justify-center gap-4">
+          {session.status === 'creating' && (
+            <>
+              <Spinner size="lg" />
+              <p className="text-muted-foreground">
+                {session.statusMessage || 'Setting up session...'}
+              </p>
+            </>
+          )}
+          {session.status === 'error' && (
+            <>
+              <div className="text-destructive text-lg">Setup Failed</div>
+              <p className="text-muted-foreground max-w-md text-center">
+                {session.statusMessage || 'An unknown error occurred'}
+              </p>
+              <Button variant="outline" asChild className="mt-4">
+                <Link href="/">Back to sessions</Link>
+              </Button>
+            </>
+          )}
+        </div>
       </div>
     );
   }

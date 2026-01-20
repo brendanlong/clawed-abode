@@ -29,13 +29,13 @@ server: Home Server {
 
     container1: Session Container {
       claude: Claude Code
-      worktree: Git Worktree
+      workspace: Git Clone
       gpu: GPU Access
     }
 
     container2: Session Container {
       claude2: Claude Code
-      worktree2: Git Worktree
+      workspace2: Git Clone
       gpu2: GPU Access
     }
   }
@@ -51,8 +51,7 @@ server: Home Server {
     }
 
     filesystem: Filesystem {
-      repos: /data/repos
-      worktrees: /data/worktrees
+      workspaces: /data/workspaces
     }
   }
 
@@ -75,9 +74,10 @@ data_model: Data Model {
     name: string
     repoUrl: string
     branch: string
-    worktreePath: string
+    workspacePath: string
     containerId: string | null
     status: enum
+    statusMessage: string | null
     createdAt: timestamp
     updatedAt: timestamp
   }

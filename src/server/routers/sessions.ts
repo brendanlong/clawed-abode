@@ -3,7 +3,7 @@ import { router, protectedProcedure } from '../trpc';
 import { prisma } from '@/lib/prisma';
 import { TRPCError } from '@trpc/server';
 import type { SessionStatus } from '@/lib/types';
-import { cloneOrFetchRepo, createWorktree, removeWorktree } from '../services/git';
+import { cloneRepo, removeWorkspace } from '../services/git';
 import {
   createAndStartContainer,
   stopContainer,
@@ -12,6 +12,57 @@ import {
 } from '../services/docker';
 
 const sessionStatusSchema = z.enum(['creating', 'running', 'stopped', 'error']);
+
+// Background session setup - runs after create mutation returns
+async function setupSession(
+  sessionId: string,
+  repoFullName: string,
+  branch: string,
+  githubToken?: string
+): Promise<void> {
+  const updateStatus = async (message: string) => {
+    await prisma.session.update({
+      where: { id: sessionId },
+      data: { statusMessage: message },
+    });
+  };
+
+  try {
+    // Clone the repository
+    const { workspacePath } = await cloneRepo(repoFullName, branch, sessionId, githubToken);
+
+    // Update status
+    await updateStatus('Starting container...');
+
+    // Start container with GitHub token for push/pull access
+    const containerId = await createAndStartContainer({
+      sessionId,
+      workspacePath,
+      githubToken,
+    });
+
+    // Update session with container info
+    await prisma.session.update({
+      where: { id: sessionId },
+      data: {
+        workspacePath,
+        containerId,
+        status: 'running',
+        statusMessage: null,
+      },
+    });
+  } catch (error) {
+    // Mark session as error with message
+    const errorMessage = error instanceof Error ? error.message : 'Failed to create session';
+    await prisma.session.update({
+      where: { id: sessionId },
+      data: {
+        status: 'error',
+        statusMessage: errorMessage,
+      },
+    });
+  }
+}
 
 export const sessionsRouter = router({
   create: protectedProcedure
@@ -23,54 +74,27 @@ export const sessionsRouter = router({
       })
     )
     .mutation(async ({ input }) => {
+      const githubToken = process.env.GITHUB_TOKEN;
+
       // Create session record first
       const session = await prisma.session.create({
         data: {
           name: input.name,
           repoUrl: `https://github.com/${input.repoFullName}.git`,
           branch: input.branch,
-          worktreePath: '', // Will be updated after worktree creation
+          workspacePath: '', // Will be updated after clone
           status: 'creating',
+          statusMessage: 'Cloning repository...',
         },
       });
 
-      try {
-        // Clone or fetch the repo
-        const githubToken = process.env.GITHUB_TOKEN;
-        await cloneOrFetchRepo(input.repoFullName, githubToken);
+      // Start setup in background (don't await)
+      setupSession(session.id, input.repoFullName, input.branch, githubToken).catch((error) => {
+        console.error('Session setup failed:', error);
+      });
 
-        // Create worktree
-        const { worktreePath } = await createWorktree(input.repoFullName, input.branch, session.id);
-
-        // Start container
-        const containerId = await createAndStartContainer({
-          sessionId: session.id,
-          worktreePath,
-        });
-
-        // Update session with container info
-        const updatedSession = await prisma.session.update({
-          where: { id: session.id },
-          data: {
-            worktreePath,
-            containerId,
-            status: 'running',
-          },
-        });
-
-        return { session: updatedSession };
-      } catch (error) {
-        // Mark session as error
-        await prisma.session.update({
-          where: { id: session.id },
-          data: { status: 'error' },
-        });
-
-        throw new TRPCError({
-          code: 'INTERNAL_SERVER_ERROR',
-          message: error instanceof Error ? error.message : 'Failed to create session',
-        });
-      }
+      // Return immediately so UI can navigate to session page
+      return { session };
     }),
 
   list: protectedProcedure
@@ -150,9 +174,11 @@ export const sessionsRouter = router({
       }
 
       try {
+        const githubToken = process.env.GITHUB_TOKEN;
         const containerId = await createAndStartContainer({
           sessionId: session.id,
-          worktreePath: session.worktreePath,
+          workspacePath: session.workspacePath,
+          githubToken,
         });
 
         const updatedSession = await prisma.session.update({
@@ -217,8 +243,8 @@ export const sessionsRouter = router({
         await removeContainer(session.containerId);
       }
 
-      // Remove worktree
-      await removeWorktree(session.id);
+      // Remove workspace
+      await removeWorkspace(session.id);
 
       // Delete session (messages will cascade)
       await prisma.session.delete({

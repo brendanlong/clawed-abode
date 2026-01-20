@@ -7,7 +7,8 @@ const CLAUDE_CODE_IMAGE = 'claude-code-runner:latest';
 
 export interface ContainerConfig {
   sessionId: string;
-  worktreePath: string;
+  workspacePath: string;
+  githubToken?: string;
 }
 
 export async function createAndStartContainer(config: ContainerConfig): Promise<string> {
@@ -28,12 +29,19 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
     return existing.Id;
   }
 
+  // Build environment variables
+  const envVars: string[] = [];
+  if (config.githubToken) {
+    envVars.push(`GITHUB_TOKEN=${config.githubToken}`);
+  }
+
   const container = await docker.createContainer({
     Image: CLAUDE_CODE_IMAGE,
     name: containerName,
+    Env: envVars,
     HostConfig: {
       Binds: [
-        `${config.worktreePath}:/workspace`,
+        `${config.workspacePath}:/workspace`,
         `/var/run/docker.sock:/var/run/docker.sock`,
         `${env.CLAUDE_AUTH_PATH}:/home/claudeuser/.claude`,
       ],
@@ -49,7 +57,76 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
   });
 
   await container.start();
+
+  // Configure git credential helper if token is provided
+  if (config.githubToken) {
+    await configureGitCredentials(container.id);
+  }
+
   return container.id;
+}
+
+async function configureGitCredentials(containerId: string): Promise<void> {
+  const container = docker.getContainer(containerId);
+
+  // Configure git to use a credential helper that reads from GITHUB_TOKEN env var
+  // This script echoes the token for GitHub URLs
+  const credentialHelper = `#!/bin/sh
+if [ "$1" = "get" ]; then
+  read -r line
+  if echo "$line" | grep -q "github.com"; then
+    echo "protocol=https"
+    echo "host=github.com"
+    echo "username=x-access-token"
+    echo "password=$GITHUB_TOKEN"
+  fi
+fi`;
+
+  // Write credential helper script
+  const writeExec = await container.exec({
+    Cmd: [
+      'sh',
+      '-c',
+      `cat > /home/claudeuser/.git-credential-helper << 'SCRIPT'\n${credentialHelper}\nSCRIPT`,
+    ],
+    AttachStdout: true,
+    AttachStderr: true,
+    User: 'claudeuser',
+  });
+  await execAndWait(writeExec);
+
+  // Make it executable
+  const chmodExec = await container.exec({
+    Cmd: ['chmod', '+x', '/home/claudeuser/.git-credential-helper'],
+    AttachStdout: true,
+    AttachStderr: true,
+    User: 'claudeuser',
+  });
+  await execAndWait(chmodExec);
+
+  // Configure git to use the credential helper
+  const gitConfigExec = await container.exec({
+    Cmd: [
+      'git',
+      'config',
+      '--global',
+      'credential.helper',
+      '/home/claudeuser/.git-credential-helper',
+    ],
+    AttachStdout: true,
+    AttachStderr: true,
+    User: 'claudeuser',
+  });
+  await execAndWait(gitConfigExec);
+}
+
+async function execAndWait(exec: Docker.Exec): Promise<void> {
+  const stream = await exec.start({ Detach: false, Tty: false });
+  await new Promise<void>((resolve) => {
+    stream.on('end', resolve);
+    stream.on('error', resolve);
+    stream.resume(); // Consume the stream
+  });
 }
 
 export async function stopContainer(containerId: string): Promise<void> {
