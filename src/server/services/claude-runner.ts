@@ -612,9 +612,15 @@ async function updateLastSequence(sessionId: string, sequence: number): Promise<
 }
 
 export async function interruptClaude(sessionId: string): Promise<boolean> {
+  log('interruptClaude', 'Interrupt requested', { sessionId });
+
   // Check in-memory first
   const process = runningProcesses.get(sessionId);
   if (process) {
+    log('interruptClaude', 'Found in-memory process', {
+      sessionId,
+      containerId: process.containerId,
+    });
     await signalProcessesByPattern(process.containerId, CLAUDE_PROCESS_PATTERN, 'INT');
     return true;
   }
@@ -624,9 +630,14 @@ export async function interruptClaude(sessionId: string): Promise<boolean> {
     where: { sessionId },
   });
   if (!processRecord) {
+    log('interruptClaude', 'No process found', { sessionId });
     return false;
   }
 
+  log('interruptClaude', 'Found DB process record', {
+    sessionId,
+    containerId: processRecord.containerId,
+  });
   // Send SIGINT to the Claude process
   await signalProcessesByPattern(processRecord.containerId, CLAUDE_PROCESS_PATTERN, 'INT');
   return true;
