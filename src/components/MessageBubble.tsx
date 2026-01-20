@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils';
 import { Card, CardContent } from '@/components/ui/card';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Badge } from '@/components/ui/badge';
+import { MarkdownContent } from '@/components/MarkdownContent';
 
 // Map of tool_use_id -> result content
 export type ToolResultMap = Map<string, { content?: string; is_error?: boolean }>;
@@ -367,7 +368,7 @@ function renderContentBlocks(blocks: ContentBlock[], toolResults?: ToolResultMap
 
   return (
     <>
-      {textBlocks.length > 0 && <div className="whitespace-pre-wrap">{textBlocks.join('\n')}</div>}
+      {textBlocks.length > 0 && <MarkdownContent content={textBlocks.join('\n')} />}
       {toolUseBlocks.length > 0 && (
         <div className="mt-2 space-y-2">
           {toolUseBlocks.map((block) => {
@@ -394,7 +395,7 @@ function renderContentBlocks(blocks: ContentBlock[], toolResults?: ToolResultMap
 
 function renderContent(content: unknown, toolResults?: ToolResultMap): React.ReactNode {
   if (typeof content === 'string') {
-    return <p className="whitespace-pre-wrap">{content}</p>;
+    return <MarkdownContent content={content} />;
   }
 
   if (Array.isArray(content)) {
