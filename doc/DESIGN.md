@@ -84,7 +84,7 @@ interface AuthSession {
 
 ### Authentication
 
-Single-user authentication using password stored in `PASSWORD_HASH` environment variable (Argon2-hashed).
+Single-user authentication using password stored in `PASSWORD_HASH` environment variable (base64-encoded Argon2 hash).
 
 ```typescript
 auth.login({ password })
@@ -358,7 +358,7 @@ ORDER BY sequence ASC;
 1. **Cloudflare Tunnel** — Traffic encrypted, no exposed ports
 2. **Optional: Cloudflare Access** — Additional auth layer at edge
 3. **Password Authentication** — Single-user auth with:
-   - Password stored as Argon2 hash in `PASSWORD_HASH` env var
+   - Password stored as base64-encoded Argon2 hash in `PASSWORD_HASH` env var
    - Database-backed sessions with 256-bit random tokens
    - 7-day session expiration
    - Session tracking (IP address, user agent) for audit
