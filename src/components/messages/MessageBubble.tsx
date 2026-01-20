@@ -8,6 +8,7 @@ import { MarkdownContent } from '@/components/MarkdownContent';
 import { CopyButton } from './CopyButton';
 import { RawJsonDisplay } from './RawJsonDisplay';
 import { TodoWriteDisplay } from './TodoWriteDisplay';
+import { GlobDisplay } from './GlobDisplay';
 import { ToolCallDisplay } from './ToolCallDisplay';
 import { ToolResultDisplay } from './ToolResultDisplay';
 import { SystemInitDisplay } from './SystemInitDisplay';
@@ -97,6 +98,10 @@ function renderContentBlocks(
                   }}
                 />
               );
+            }
+
+            if (block.name === 'Glob') {
+              return <GlobDisplay key={block.id} tool={tool} />;
             }
 
             return <ToolCallDisplay key={block.id} tool={tool} />;
