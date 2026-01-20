@@ -10,7 +10,10 @@ import {
 } from './docker';
 import { prisma } from '@/lib/prisma';
 import { getMessageType } from '@/lib/claude-messages';
-import { v4 as uuid } from 'uuid';
+import { v4 as uuid, v5 as uuidv5 } from 'uuid';
+
+// Namespace UUID for generating deterministic IDs from error line content
+const ERROR_LINE_NAMESPACE = '6ba7b810-9dad-11d1-80b4-00c04fd430c8';
 
 // Track running Claude processes per session (in-memory for quick lookups)
 // The DB is the source of truth; this is for performance
@@ -281,12 +284,7 @@ export async function reconnectToClaudeProcess(
   const containerStatus = await getContainerStatus(containerId);
   if (containerStatus !== 'running') {
     // Container stopped - just read remaining output
-    await catchUpFromOutputFile(
-      sessionId,
-      containerId,
-      getOutputFilePath(sessionId),
-      processRecord.lastSequence
-    );
+    await catchUpFromOutputFile(sessionId, containerId, getOutputFilePath(sessionId));
     await prisma.claudeProcess.delete({ where: { sessionId } });
     return { reconnected: false, stillRunning: false };
   }
@@ -303,12 +301,7 @@ export async function reconnectToClaudeProcess(
 
   if (!claudeRunning) {
     // Process finished - just read remaining output
-    await catchUpFromOutputFile(
-      sessionId,
-      containerId,
-      getOutputFilePath(sessionId),
-      processRecord.lastSequence
-    );
+    await catchUpFromOutputFile(sessionId, containerId, getOutputFilePath(sessionId));
     await prisma.claudeProcess.delete({ where: { sessionId } });
     return { reconnected: false, stillRunning: false };
   }
@@ -348,8 +341,7 @@ export async function reconnectToClaudeProcess(
 async function catchUpFromOutputFile(
   sessionId: string,
   containerId: string,
-  outputFile: string,
-  lastProcessedSequence: number
+  outputFile: string
 ): Promise<void> {
   // Check if file exists
   const fileExists = await fileExistsInContainer(containerId, outputFile);
@@ -361,34 +353,42 @@ async function catchUpFromOutputFile(
   const fileContent = await readFileInContainer(containerId, outputFile);
   const lines = fileContent.split('\n').filter((line) => line.trim());
 
-  // Get current max sequence from DB to know where to start
+  // Get current max sequence from DB to know where to start new messages
   const lastMessage = await prisma.message.findFirst({
     where: { sessionId },
     orderBy: { sequence: 'desc' },
     select: { sequence: true },
   });
 
-  let sequence = (lastMessage?.sequence ?? lastProcessedSequence) + 1;
+  let sequence = (lastMessage?.sequence ?? -1) + 1;
   let linesProcessed = 0;
+  let linesSkipped = 0;
 
-  // We need to figure out which lines we haven't processed yet.
-  // Since lines don't have sequence numbers, we count from the last known sequence.
-  // This is approximate but should work for catch-up scenarios.
-  const linesToProcess = lines.slice(
-    Math.max(0, (lastMessage?.sequence ?? 0) - lastProcessedSequence)
-  );
-
-  for (const line of linesToProcess) {
+  // Process all lines and skip any that are already in the DB (by message ID).
+  // This is more robust than trying to calculate which lines to skip based on
+  // sequence numbers, since sequence numbers don't map 1:1 to file line numbers.
+  for (const line of lines) {
     if (!line.trim()) continue;
 
     let parsed: unknown;
     try {
       parsed = JSON.parse(line);
     } catch {
+      // Generate deterministic ID from content so we can detect duplicates
+      const errorId = uuidv5(`${sessionId}:error:${line}`, ERROR_LINE_NAMESPACE);
+      const existingError = await prisma.message.findUnique({
+        where: { id: errorId },
+        select: { id: true },
+      });
+      if (existingError) {
+        linesSkipped++;
+        continue;
+      }
+
       // Save as error
       await prisma.message.create({
         data: {
-          id: uuid(),
+          id: errorId,
           sessionId,
           sequence: sequence++,
           type: 'system',
@@ -409,13 +409,38 @@ async function catchUpFromOutputFile(
       (parsed as { uuid?: string; id?: string }).id ||
       uuid();
 
-    // Use upsert to avoid duplicate key errors
-    await prisma.message.upsert({
-      where: {
-        sessionId_sequence: { sessionId, sequence },
-      },
-      update: {},
-      create: {
+    // Check if this message already exists by ID (could have been processed before)
+    const existingById = await prisma.message.findUnique({
+      where: { id: msgId },
+      select: { id: true },
+    });
+    if (existingById) {
+      // Already processed, skip
+      linesSkipped++;
+      continue;
+    }
+
+    // Check if a message exists at this sequence (could be from a different processing run)
+    const existingBySequence = await prisma.message.findUnique({
+      where: { sessionId_sequence: { sessionId, sequence } },
+      select: { id: true },
+    });
+    if (existingBySequence) {
+      // Sequence already taken, increment and try again
+      sequence++;
+      // Re-check at new sequence
+      const existingAtNewSeq = await prisma.message.findUnique({
+        where: { sessionId_sequence: { sessionId, sequence } },
+        select: { id: true },
+      });
+      if (existingAtNewSeq) {
+        // Skip this line, sequence tracking is off
+        continue;
+      }
+    }
+
+    await prisma.message.create({
+      data: {
         id: msgId,
         sessionId,
         sequence: sequence++,
@@ -426,7 +451,9 @@ async function catchUpFromOutputFile(
     linesProcessed++;
   }
 
-  console.log(`Caught up ${linesProcessed} messages for session ${sessionId}`);
+  console.log(
+    `Caught up for session ${sessionId}: ${linesProcessed} new, ${linesSkipped} skipped (already in DB)`
+  );
 }
 
 /**
