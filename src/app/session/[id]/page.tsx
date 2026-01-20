@@ -52,6 +52,10 @@ function SessionView({ sessionId }: { sessionId: string }) {
       // Limit stored pages to prevent memory growth from polling empty results
       // With 10 messages per page, this keeps up to 5000 messages in memory
       maxPages: 500,
+      initialCursor: {
+        direction: 'backward',
+        sequence: undefined,
+      },
       // For loading OLDER messages (user scrolls up)
       getNextPageParam: (lastPage, allPages) => {
         if (!lastPage.hasMore) return undefined;
@@ -82,6 +86,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
       },
     }
   );
+  console.log({ historyData });
 
   // Check if Claude is running
   const { data: runningData } = trpc.claude.isRunning.useQuery(
