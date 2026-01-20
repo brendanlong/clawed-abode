@@ -59,7 +59,9 @@ export function ToolCallDisplay({ tool }: { tool: ToolCall }) {
             <div>
               <div className="text-muted-foreground mb-1">Input:</div>
               <pre className="bg-muted p-2 rounded overflow-x-auto">
-                {JSON.stringify(tool.input, null, 2)}
+                {tool.name === 'Bash' && inputObj?.command
+                  ? String(inputObj.command)
+                  : JSON.stringify(tool.input, null, 2)}
               </pre>
             </div>
             {hasOutput && (
