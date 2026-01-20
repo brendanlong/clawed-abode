@@ -44,6 +44,10 @@ USER claudeuser
 ENV HOME=/home/claudeuser
 ENV PATH="/home/claudeuser/.local/bin:${PATH}"
 
+# Configure git identity for commits
+RUN git config --global user.email "claude@anthropic.com" && \
+    git config --global user.name "Claude"
+
 # Install uv package manager for Python
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 
