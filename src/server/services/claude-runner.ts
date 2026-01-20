@@ -21,6 +21,13 @@ const activeStreamProcessors = new Set<string>();
 
 const OUTPUT_FILE_PREFIX = '.claude-output-';
 
+// Logging helper for debugging
+function log(context: string, message: string, data?: Record<string, unknown>): void {
+  const timestamp = new Date().toISOString();
+  const dataStr = data ? ` ${JSON.stringify(data)}` : '';
+  console.log(`[${timestamp}] [claude-runner:${context}] ${message}${dataStr}`);
+}
+
 function getOutputFileName(sessionId: string): string {
   return `${OUTPUT_FILE_PREFIX}${sessionId}.jsonl`;
 }
@@ -34,8 +41,11 @@ export async function runClaudeCommand(
   containerId: string,
   prompt: string
 ): Promise<void> {
+  log('runClaudeCommand', 'Starting', { sessionId, containerId, promptLength: prompt.length });
+
   // Check if session already has a running process (in-memory check first for speed)
   if (runningProcesses.has(sessionId)) {
+    log('runClaudeCommand', 'Process already running in memory', { sessionId });
     throw new Error('A Claude process is already running for this session');
   }
 
@@ -100,10 +110,13 @@ export async function runClaudeCommand(
   });
 
   runningProcesses.set(sessionId, { containerId, pid: null });
+  log('runClaudeCommand', 'Process registered in memory', { sessionId });
 
   try {
     // Start Claude with output redirected to file
+    log('runClaudeCommand', 'Executing command in container', { command, outputFile });
     await execInContainerWithOutputFile(containerId, command, outputFile);
+    log('runClaudeCommand', 'Command started (detached)', { sessionId });
 
     // Small delay to let the file be created
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -111,6 +124,7 @@ export async function runClaudeCommand(
     // Try to find the PID of the claude process
     setTimeout(async () => {
       const pid = await findProcessInContainer(containerId, 'claude');
+      log('runClaudeCommand', 'PID lookup result', { sessionId, pid });
       const process = runningProcesses.get(sessionId);
       if (process && pid) {
         process.pid = pid;
@@ -118,9 +132,16 @@ export async function runClaudeCommand(
     }, 500);
 
     // Tail the output file and process it
+    log('runClaudeCommand', 'Starting output file processing', {
+      sessionId,
+      outputFile,
+      startSequence: sequence,
+    });
     await processOutputFile(sessionId, containerId, outputFile, sequence);
+    log('runClaudeCommand', 'Output file processing completed', { sessionId });
   } finally {
     runningProcesses.delete(sessionId);
+    log('runClaudeCommand', 'Process cleanup', { sessionId });
     // Clean up the persistent record
     await prisma.claudeProcess.delete({ where: { sessionId } }).catch(() => {}); // Ignore if already deleted
   }
@@ -305,7 +326,10 @@ async function processOutputFile(
   outputFile: string,
   startSequence: number
 ): Promise<void> {
+  log('processOutputFile', 'Starting', { sessionId, outputFile, startSequence });
+
   if (activeStreamProcessors.has(sessionId)) {
+    log('processOutputFile', 'Stream processor already active', { sessionId });
     throw new Error('Stream processor already active for this session');
   }
 
@@ -313,6 +337,8 @@ async function processOutputFile(
   let sequence = startSequence;
   let buffer = '';
   let errorLines: string[] = [];
+  let totalChunks = 0;
+  let totalLines = 0;
 
   // Helper to save an error message
   const saveErrorMessage = async (errorText: string) => {
@@ -345,19 +371,36 @@ async function processOutputFile(
 
   try {
     // Wait for file to exist (with timeout)
+    log('processOutputFile', 'Waiting for output file to exist', { sessionId, outputFile });
     let attempts = 0;
     while (attempts < 50) {
       const exists = await fileExistsInContainer(containerId, outputFile);
-      if (exists) break;
+      if (exists) {
+        log('processOutputFile', 'Output file found', { sessionId, attempts });
+        break;
+      }
       await new Promise((resolve) => setTimeout(resolve, 100));
       attempts++;
     }
+    if (attempts >= 50) {
+      log('processOutputFile', 'Timeout waiting for output file', { sessionId, attempts });
+    }
 
+    log('processOutputFile', 'Starting tail', { sessionId, outputFile });
     const { stream } = await tailFileInContainer(containerId, outputFile, 0);
+    log('processOutputFile', 'Tail started, listening for data', { sessionId });
 
     return new Promise((resolve, reject) => {
       stream.on('data', async (chunk: Buffer) => {
+        totalChunks++;
         const data = stripDockerHeader(chunk);
+        log('processOutputFile', 'Received chunk', {
+          sessionId,
+          chunkNumber: totalChunks,
+          rawLength: chunk.length,
+          strippedLength: data.length,
+          preview: data.slice(0, 100),
+        });
         buffer += data;
 
         // Process complete lines
@@ -366,12 +409,17 @@ async function processOutputFile(
 
         for (const line of lines) {
           if (!line.trim()) continue;
+          totalLines++;
 
           let parsed: unknown;
           try {
             parsed = JSON.parse(line);
           } catch {
             // Accumulate unparseable lines to batch them together
+            log('processOutputFile', 'Failed to parse line as JSON', {
+              sessionId,
+              line: line.slice(0, 200),
+            });
             errorLines.push(line);
             continue;
           }
@@ -393,6 +441,13 @@ async function processOutputFile(
             (parsed as { uuid?: string; id?: string }).id ||
             uuid();
 
+          log('processOutputFile', 'Saving message to DB', {
+            sessionId,
+            sequence,
+            messageType,
+            msgId,
+          });
+
           await prisma.message.create({
             data: {
               id: msgId,
@@ -409,9 +464,23 @@ async function processOutputFile(
       });
 
       // Poll for process completion since tail -f won't end on its own
+      let pollCount = 0;
       const pollInterval = setInterval(async () => {
+        pollCount++;
         const stillRunning = await isProcessRunning(containerId, 'claude');
+        log('processOutputFile', 'Process poll', {
+          sessionId,
+          pollCount,
+          stillRunning,
+          totalChunks,
+          totalLines,
+        });
         if (!stillRunning) {
+          log('processOutputFile', 'Process finished, cleaning up', {
+            sessionId,
+            totalChunks,
+            totalLines,
+          });
           clearInterval(pollInterval);
           // Give a moment for final output to be written
           await new Promise((r) => setTimeout(r, 500));
@@ -423,6 +492,7 @@ async function processOutputFile(
       }, 1000);
 
       stream.on('error', async (err) => {
+        log('processOutputFile', 'Stream error', { sessionId, error: err.message });
         clearInterval(pollInterval);
         await flushErrorLines();
         await saveErrorMessage(`Stream error: ${err.message}`);
@@ -430,12 +500,14 @@ async function processOutputFile(
       });
 
       stream.on('close', async () => {
+        log('processOutputFile', 'Stream closed', { sessionId, totalChunks, totalLines });
         clearInterval(pollInterval);
         await flushErrorLines();
         resolve();
       });
     });
   } finally {
+    log('processOutputFile', 'Finished', { sessionId, totalChunks, totalLines });
     activeStreamProcessors.delete(sessionId);
   }
 }
