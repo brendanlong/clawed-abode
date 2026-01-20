@@ -15,6 +15,7 @@ import { getMessageType } from '@/lib/claude-messages';
 import { DockerStreamDemuxer } from './docker-stream-demuxer';
 import { v4 as uuid, v5 as uuidv5 } from 'uuid';
 import { sseEvents } from './events';
+import { createLogger, toError } from '@/lib/logger';
 
 // Namespace UUID for generating deterministic IDs from error line content
 const ERROR_LINE_NAMESPACE = '6ba7b810-9dad-11d1-80b4-00c04fd430c8';
@@ -44,12 +45,7 @@ const SYSTEM_PROMPT = `IMPORTANT: The user is accessing this session remotely th
 
 Never leave uncommitted or unpushed changes - the user cannot see them otherwise.`;
 
-// Logging helper for debugging
-function log(context: string, message: string, data?: Record<string, unknown>): void {
-  const timestamp = new Date().toISOString();
-  const dataStr = data ? ` ${JSON.stringify(data)}` : '';
-  console.log(`[${timestamp}] [claude-runner:${context}] ${message}${dataStr}`);
-}
+const log = createLogger('claude-runner');
 
 function getOutputFileName(sessionId: string): string {
   return `${OUTPUT_FILE_PREFIX}${sessionId}.jsonl`;
@@ -64,11 +60,11 @@ export async function runClaudeCommand(
   containerId: string,
   prompt: string
 ): Promise<void> {
-  log('runClaudeCommand', 'Starting', { sessionId, containerId, promptLength: prompt.length });
+  log.info('runClaudeCommand: Starting', { sessionId, containerId, promptLength: prompt.length });
 
   // Check if session already has a running process (in-memory check first for speed)
   if (runningProcesses.has(sessionId)) {
-    log('runClaudeCommand', 'Process already running in memory', { sessionId });
+    log.warn('runClaudeCommand: Process already running in memory', { sessionId });
     throw new Error('A Claude process is already running for this session');
   }
 
@@ -128,9 +124,9 @@ export async function runClaudeCommand(
   const outputFile = getOutputFilePath(sessionId);
 
   // Start Claude with output to file (for recovery) and get exec ID (for status checking)
-  log('runClaudeCommand', 'Executing command in container', { command, outputFile });
+  log.info('runClaudeCommand: Executing command in container', { command, outputFile });
   const { execId } = await execInContainerWithOutputFile(containerId, command, outputFile);
-  log('runClaudeCommand', 'Command started', { sessionId, execId });
+  log.info('runClaudeCommand: Command started', { sessionId, execId });
 
   // Create persistent record for crash recovery
   await prisma.claudeProcess.create({
@@ -144,7 +140,7 @@ export async function runClaudeCommand(
   });
 
   runningProcesses.set(sessionId, { containerId, pid: null });
-  log('runClaudeCommand', 'Process registered', { sessionId });
+  log.info('runClaudeCommand: Process registered', { sessionId });
 
   // Emit Claude running event
   sseEvents.emitClaudeRunning(sessionId, true);
@@ -162,18 +158,18 @@ export async function runClaudeCommand(
     // Find and store the PID of the Claude process for direct signal delivery
     const pid = await findProcessInContainer(containerId, CLAUDE_PROCESS_PATTERN);
     if (pid) {
-      log('runClaudeCommand', 'Found Claude process PID', { sessionId, pid });
+      log.debug('runClaudeCommand: Found Claude process PID', { sessionId, pid });
       runningProcesses.set(sessionId, { containerId, pid });
       await prisma.claudeProcess.update({
         where: { sessionId },
         data: { pid },
       });
     } else {
-      log('runClaudeCommand', 'Could not find Claude process PID', { sessionId });
+      log.warn('runClaudeCommand: Could not find Claude process PID', { sessionId });
     }
 
     // Tail the output file for real-time streaming
-    log('runClaudeCommand', 'Starting tail', { sessionId, outputFile });
+    log.debug('runClaudeCommand: Starting tail', { sessionId, outputFile });
     const { stream } = await tailFileInContainer(containerId, outputFile, 0);
     const demuxer = new DockerStreamDemuxer();
 
@@ -198,7 +194,7 @@ export async function runClaudeCommand(
           try {
             parsed = JSON.parse(line);
           } catch {
-            log('runClaudeCommand', 'Failed to parse JSON', {
+            log.warn('runClaudeCommand: Failed to parse JSON', {
               sessionId,
               line: line.slice(0, 100),
             });
@@ -211,7 +207,7 @@ export async function runClaudeCommand(
             (parsed as { uuid?: string; id?: string }).id ||
             uuid();
 
-          log('runClaudeCommand', 'Saving message', { sessionId, sequence, messageType });
+          log.debug('runClaudeCommand: Saving message', { sessionId, sequence, messageType });
 
           const message = await prisma.message.create({
             data: {
@@ -237,7 +233,7 @@ export async function runClaudeCommand(
       const pollInterval = setInterval(async () => {
         try {
           const status = await getExecStatus(execId);
-          log('runClaudeCommand', 'Exec status', { sessionId, ...status, totalLines });
+          log.debug('runClaudeCommand: Exec status', { sessionId, ...status, totalLines });
 
           if (!status.running) {
             clearInterval(pollInterval);
@@ -278,7 +274,7 @@ export async function runClaudeCommand(
               totalLines++;
             }
 
-            log('runClaudeCommand', 'Completed', {
+            log.info('runClaudeCommand: Completed', {
               sessionId,
               totalLines,
               exitCode: status.exitCode,
@@ -303,7 +299,7 @@ export async function runClaudeCommand(
 
     // Emit Claude stopped event
     sseEvents.emitClaudeRunning(sessionId, false);
-    log('runClaudeCommand', 'Cleanup complete', { sessionId });
+    log.debug('runClaudeCommand: Cleanup complete', { sessionId });
   }
 }
 
@@ -378,7 +374,7 @@ export async function reconnectToClaudeProcess(
       sseEvents.emitClaudeRunning(sessionId, false);
     })
     .catch((err) => {
-      console.error(`Error processing reconnected Claude output for ${sessionId}:`, err);
+      log.error('Error processing reconnected Claude output', toError(err), { sessionId });
     });
 
   return { reconnected: true, stillRunning: true };
@@ -396,7 +392,7 @@ async function catchUpFromOutputFile(
   // Check if file exists
   const fileExists = await fileExistsInContainer(containerId, outputFile);
   if (!fileExists) {
-    console.log(`Output file ${outputFile} not found for session ${sessionId}`);
+    log.info('catchUpFromOutputFile: Output file not found', { sessionId, outputFile });
     return;
   }
 
@@ -501,9 +497,11 @@ async function catchUpFromOutputFile(
     linesProcessed++;
   }
 
-  console.log(
-    `Caught up for session ${sessionId}: ${linesProcessed} new, ${linesSkipped} skipped (already in DB)`
-  );
+  log.info('catchUpFromOutputFile: Complete', {
+    sessionId,
+    linesProcessed,
+    linesSkipped,
+  });
 }
 
 /**
@@ -517,7 +515,7 @@ async function processOutputFileWithExecId(
   outputFile: string,
   startSequence: number
 ): Promise<void> {
-  log('processOutputFile', 'Starting', { sessionId, execId, outputFile, startSequence });
+  log.info('processOutputFile: Starting', { sessionId, execId, outputFile, startSequence });
 
   if (activeStreamProcessors.has(sessionId)) {
     throw new Error('Stream processor already active for this session');
@@ -581,7 +579,7 @@ async function processOutputFileWithExecId(
       const pollInterval = setInterval(async () => {
         try {
           const status = await getExecStatus(execId);
-          log('processOutputFile', 'Exec status', { sessionId, ...status, totalLines });
+          log.debug('processOutputFile: Exec status', { sessionId, ...status, totalLines });
 
           if (!status.running) {
             clearInterval(pollInterval);
@@ -621,7 +619,7 @@ async function processOutputFileWithExecId(
               totalLines++;
             }
 
-            log('processOutputFile', 'Completed', { sessionId, totalLines });
+            log.info('processOutputFile: Completed', { sessionId, totalLines });
             resolve();
           }
         } catch (err) {
@@ -651,12 +649,12 @@ async function updateLastSequence(sessionId: string, sequence: number): Promise<
 }
 
 export async function interruptClaude(sessionId: string): Promise<boolean> {
-  log('interruptClaude', 'Interrupt requested', { sessionId });
+  log.info('interruptClaude: Interrupt requested', { sessionId });
 
   // Check in-memory first
   const process = runningProcesses.get(sessionId);
   if (process) {
-    log('interruptClaude', 'Found in-memory process', {
+    log.debug('interruptClaude: Found in-memory process', {
       sessionId,
       containerId: process.containerId,
       pid: process.pid,
@@ -676,11 +674,11 @@ export async function interruptClaude(sessionId: string): Promise<boolean> {
     where: { sessionId },
   });
   if (!processRecord) {
-    log('interruptClaude', 'No process found', { sessionId });
+    log.info('interruptClaude: No process found', { sessionId });
     return false;
   }
 
-  log('interruptClaude', 'Found DB process record', {
+  log.debug('interruptClaude: Found DB process record', {
     sessionId,
     containerId: processRecord.containerId,
     pid: processRecord.pid,
@@ -731,19 +729,19 @@ export async function reconcileOrphanedProcesses(): Promise<{
   let cleaned = 0;
 
   for (const processRecord of orphanedProcesses) {
-    console.log(`Reconciling orphaned process for session ${processRecord.sessionId}`);
+    log.info('Reconciling orphaned process', { sessionId: processRecord.sessionId });
 
     try {
       const result = await reconnectToClaudeProcess(processRecord.sessionId);
       if (result.reconnected) {
         reconnected++;
-        console.log(`Reconnected to running process for session ${processRecord.sessionId}`);
+        log.info('Reconnected to running process', { sessionId: processRecord.sessionId });
       } else {
         cleaned++;
-        console.log(`Cleaned up finished process for session ${processRecord.sessionId}`);
+        log.info('Cleaned up finished process', { sessionId: processRecord.sessionId });
       }
     } catch (err) {
-      console.error(`Error reconciling session ${processRecord.sessionId}:`, err);
+      log.error('Error reconciling session', toError(err), { sessionId: processRecord.sessionId });
       // Clean up the record to avoid infinite retry
       await prisma.claudeProcess.delete({ where: { id: processRecord.id } }).catch(() => {});
       cleaned++;
