@@ -5,10 +5,6 @@ const nextConfig = {
   serverExternalPackages: ['dockerode', 'ssh2', 'simple-git'],
   // Empty turbopack config to acknowledge Turbopack is enabled by default
   turbopack: {},
-  // Enable instrumentation hook for server startup tasks
-  experimental: {
-    instrumentationHook: true,
-  },
 };
 
 module.exports = nextConfig;
