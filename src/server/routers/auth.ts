@@ -38,7 +38,16 @@ export const authRouter = router({
         });
       }
 
-      const valid = await verifyPassword(input.password, env.PASSWORD_HASH);
+      let valid: boolean;
+      try {
+        valid = await verifyPassword(input.password, env.PASSWORD_HASH);
+      } catch (error) {
+        console.error('Password verification error:', error);
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: 'Invalid PASSWORD_HASH format. Generate with: pnpm hash-password <yourpassword>',
+        });
+      }
 
       if (!valid) {
         throw new TRPCError({

@@ -13,9 +13,13 @@ const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   // Prefix for session branches (e.g., "claude/" creates branches like "claude/{sessionId}")
   SESSION_BRANCH_PREFIX: z.string().default('claude/'),
-  // Argon2-hashed password for authentication (generate with: node -e "require('argon2').hash('yourpassword').then(console.log)")
+  // Base64-encoded Argon2 hash for authentication (generate with: pnpm hash-password <yourpassword>)
+  // The hash is base64-encoded to avoid issues with $ characters in dotenv
   // No default - logins will fail if not set
-  PASSWORD_HASH: z.string().optional(),
+  PASSWORD_HASH: z
+    .string()
+    .optional()
+    .transform((val) => (val ? Buffer.from(val, 'base64').toString('utf-8') : undefined)),
 });
 
 export type Env = z.infer<typeof envSchema>;

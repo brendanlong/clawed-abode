@@ -37,7 +37,7 @@ cp .env.example .env
 
 Edit `.env` and set:
 
-- `PASSWORD_HASH`: Argon2-hashed password for authentication (see below)
+- `PASSWORD_HASH`: Base64-encoded Argon2 hash for authentication (see below)
 - `GITHUB_TOKEN`: Your GitHub Fine-grained Personal Access Token (see below)
 - `CLAUDE_AUTH_PATH`: Path to your Claude Code auth (usually `~/.claude`)
 
@@ -55,17 +55,19 @@ For security, use a **Fine-grained Personal Access Token** instead of a classic 
 
 ### Generate Password Hash
 
-Generate an Argon2 hash of your password:
+Generate a base64-encoded Argon2 hash of your password:
 
 ```bash
-node -e "require('argon2').hash('your-secure-password').then(console.log)"
+pnpm hash-password your-secure-password
 ```
 
 Add the output to your `.env` file:
 
 ```bash
-PASSWORD_HASH='$argon2id$v=19$m=65536,t=3,p=4$...'
+PASSWORD_HASH="JGFyZ29uMmlkJHY9MTkkbT02NTUzNix0PTMscD00JC4uLg=="
 ```
+
+The hash is base64-encoded to avoid issues with `$` characters in dotenv.
 
 **Note:** Logins will fail if `PASSWORD_HASH` is not set.
 
@@ -195,7 +197,7 @@ This adds authentication before traffic reaches your server, providing defense i
 
 | Variable           | Description                             | Default              |
 | ------------------ | --------------------------------------- | -------------------- |
-| `PASSWORD_HASH`    | Argon2-hashed password for auth         | None (required)      |
+| `PASSWORD_HASH`    | Base64-encoded Argon2 hash for auth     | None (required)      |
 | `DATABASE_URL`     | SQLite database path                    | `file:./data/dev.db` |
 | `GITHUB_TOKEN`     | GitHub Fine-grained PAT for repo access | Required             |
 | `CLAUDE_AUTH_PATH` | Path to Claude Code auth directory      | `/root/.claude`      |
