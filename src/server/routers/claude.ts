@@ -97,7 +97,7 @@ export const claudeRouter = router({
       // Get the oldest data in each page for forward cursors
       // No cursor is a special case since we want the newest data
       // paging backward
-      const getNewest = isBackward || input.cursor == null;
+      const getNewest = isBackward || input.cursor?.sequence == null;
 
       // Build where clause based on direction
       const whereClause: {
