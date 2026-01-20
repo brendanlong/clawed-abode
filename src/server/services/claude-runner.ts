@@ -10,6 +10,7 @@ import {
 } from './docker';
 import { prisma } from '@/lib/prisma';
 import { getMessageType } from '@/lib/claude-messages';
+import { DockerStreamDemuxer } from './docker-stream-demuxer';
 import { v4 as uuid, v5 as uuidv5 } from 'uuid';
 
 // Namespace UUID for generating deterministic IDs from error line content
@@ -141,6 +142,7 @@ export async function runClaudeCommand(
     // Tail the output file for real-time streaming
     log('runClaudeCommand', 'Starting tail', { sessionId, outputFile });
     const { stream } = await tailFileInContainer(containerId, outputFile, 0);
+    const demuxer = new DockerStreamDemuxer();
 
     let buffer = '';
     let totalLines = 0;
@@ -148,7 +150,8 @@ export async function runClaudeCommand(
     // Process output and poll for completion
     await new Promise<void>((resolve, reject) => {
       stream.on('data', async (chunk: Buffer) => {
-        const data = stripDockerHeader(chunk);
+        // Demux the Docker multiplexed stream to extract actual content
+        const data = demuxer.push(chunk);
         buffer += data;
 
         const lines = buffer.split('\n');
@@ -489,10 +492,12 @@ async function processOutputFileWithExecId(
     }
 
     const { stream } = await tailFileInContainer(containerId, outputFile, 0);
+    const demuxer = new DockerStreamDemuxer();
 
     await new Promise<void>((resolve, reject) => {
       stream.on('data', async (chunk: Buffer) => {
-        const data = stripDockerHeader(chunk);
+        // Demux the Docker multiplexed stream to extract actual content
+        const data = demuxer.push(chunk);
         buffer += data;
 
         const lines = buffer.split('\n');
@@ -590,19 +595,6 @@ async function updateLastSequence(sessionId: string, sequence: number): Promise<
       data: { lastSequence: sequence },
     })
     .catch(() => {}); // Ignore if record doesn't exist
-}
-
-function stripDockerHeader(chunk: Buffer): string {
-  // Docker multiplexed streams have an 8-byte header
-  // [stream type (1), 0, 0, 0, size (4 bytes big-endian)]
-  if (chunk.length > 8) {
-    const streamType = chunk[0];
-    if (streamType === 1 || streamType === 2) {
-      // stdout or stderr
-      return chunk.slice(8).toString('utf-8');
-    }
-  }
-  return chunk.toString('utf-8');
 }
 
 export async function interruptClaude(sessionId: string): Promise<boolean> {
