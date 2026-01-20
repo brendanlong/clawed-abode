@@ -320,6 +320,17 @@ USER claudeuser
 ENV HOME=/home/claudeuser
 ENV PATH="/home/claudeuser/.local/bin:${PATH}"
 
+# Install Android SDK
+ENV ANDROID_HOME=/home/claudeuser/Android/Sdk
+ENV PATH="${ANDROID_HOME}/cmdline-tools/latest/bin:${ANDROID_HOME}/platform-tools:${PATH}"
+
+RUN mkdir -p ${ANDROID_HOME}/cmdline-tools && \
+    cd ${ANDROID_HOME}/cmdline-tools && \
+    curl -sSL "https://dl.google.com/android/repository/commandlinetools-linux-13114758_latest.zip" -o cmdline-tools.zip && \
+    unzip -q cmdline-tools.zip && mv cmdline-tools latest && rm cmdline-tools.zip && \
+    yes | sdkmanager --licenses > /dev/null 2>&1 && \
+    sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+
 # Configure git identity for commits
 RUN git config --global user.email "claude@anthropic.com" && \
     git config --global user.name "Claude"
