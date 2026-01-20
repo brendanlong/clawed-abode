@@ -166,9 +166,17 @@ export function AskUserQuestionDisplay({
     onSendResponse(selectedLabels.join(', '));
   };
 
-  // Check if an option is selected (for multi-select)
+  // Check if an option is selected (for multi-select during selection)
   const isOptionSelected = (questionIndex: number, optionIndex: number) => {
     return selectedOptions.get(questionIndex)?.has(optionIndex) ?? false;
+  };
+
+  // Check if an option was the answered option (match output with option label)
+  const isAnsweredOption = (option: QuestionOption) => {
+    if (isPending || !hasOutput || typeof tool.output !== 'string') return false;
+    const output = tool.output.trim();
+    // Check if this option's label matches the output (or is contained in multi-select output)
+    return output === option.label || output.split(', ').includes(option.label);
   };
 
   return (
@@ -230,6 +238,7 @@ export function AskUserQuestionDisplay({
                   <div className="space-y-1.5 ml-1">
                     {question.options.map((option, oIndex) => {
                       const isSelected = isOptionSelected(qIndex, oIndex);
+                      const wasAnswered = isAnsweredOption(option);
                       const canClick = isPending && !isClaudeRunning && onSendResponse;
 
                       return (
@@ -245,13 +254,14 @@ export function AskUserQuestionDisplay({
                               ? 'bg-muted/50 hover:bg-purple-100 dark:hover:bg-purple-900/50 cursor-pointer'
                               : 'bg-muted/50',
                             isSelected &&
-                              'bg-purple-100 dark:bg-purple-900/50 ring-1 ring-purple-400'
+                              'bg-purple-100 dark:bg-purple-900/50 ring-1 ring-purple-400',
+                            wasAnswered && 'bg-green-100 dark:bg-green-900/50 ring-1 ring-green-400'
                           )}
                         >
                           {question.multiSelect ? (
-                            <CheckboxIcon checked={isSelected} />
+                            <CheckboxIcon checked={isSelected || wasAnswered} />
                           ) : (
-                            <RadioIcon selected={isSelected} />
+                            <RadioIcon selected={isSelected || wasAnswered} />
                           )}
                           <div className="flex-1 min-w-0">
                             <div className="font-medium text-foreground">{option.label}</div>
