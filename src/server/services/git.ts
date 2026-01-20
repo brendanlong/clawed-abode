@@ -53,6 +53,10 @@ export async function cloneRepo(
   const workspaceGit = simpleGit(workspacePath);
   await workspaceGit.remote(['set-url', 'origin', `https://github.com/${repoFullName}.git`]);
 
+  // Create and check out a session-specific branch to avoid working directly on main/master
+  const sessionBranch = `${env.SESSION_BRANCH_PREFIX}${sessionId}`;
+  await workspaceGit.checkoutLocalBranch(sessionBranch);
+
   return { workspacePath };
 }
 
