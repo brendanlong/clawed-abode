@@ -214,20 +214,39 @@ claude.getHistory({
 ### Base Image (Dockerfile.claude-code)
 
 ```dockerfile
-FROM nvidia/cuda:12.1-base-ubuntu22.04
+FROM nvidia/cuda:12.1.0-base-ubuntu22.04
 
-# Install dependencies
+# Install dependencies including Python, pip, and JDK
 RUN apt-get update && apt-get install -y \
-    curl git docker.io nodejs \
-    && rm -rf /var/lib/apt/lists/*
+    curl git docker.io ca-certificates gnupg \
+    python3 python3-pip python3-venv \
+    openjdk-17-jdk-headless \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -sf /usr/bin/python3 /usr/bin/python
 
-# Install Claude Code globally via npm (npm comes with nodejs)
-RUN npm install -g @anthropic-ai/claude-code
+# Install Node.js 20.x and Claude Code
+RUN mkdir -p /etc/apt/keyrings && \
+    curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | \
+      gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg && \
+    echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" | \
+      tee /etc/apt/sources.list.d/nodesource.list && \
+    apt-get update && apt-get install -y nodejs && \
+    npm install -g @anthropic-ai/claude-code
 
-# Working directory
+# Create non-root user with docker group access
+RUN useradd -m -s /bin/bash -u 1000 claudeuser && \
+    usermod -aG docker claudeuser
+
 WORKDIR /workspace
+RUN chown claudeuser:claudeuser /workspace
 
-# Entry point that keeps container alive
+USER claudeuser
+ENV HOME=/home/claudeuser
+ENV PATH="/home/claudeuser/.local/bin:${PATH}"
+
+# Install uv package manager for Python
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+
 CMD ["tail", "-f", "/dev/null"]
 ```
 
@@ -242,7 +261,7 @@ async function startSessionContainer(session: Session): Promise<string> {
       Binds: [
         `${session.worktreePath}:/workspace`,
         `/var/run/docker.sock:/var/run/docker.sock`,
-        `${CLAUDE_AUTH_PATH}:/root/.claude:ro`,
+        `${CLAUDE_AUTH_PATH}:/home/claudeuser/.claude:ro`,
       ],
       DeviceRequests: [
         {

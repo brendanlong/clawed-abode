@@ -3,14 +3,19 @@ FROM nvidia/cuda:12.1.0-base-ubuntu22.04
 # Avoid prompts from apt
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install dependencies
+# Install dependencies including Python, pip, and JDK
 RUN apt-get update && apt-get install -y \
     curl \
     git \
     docker.io \
     ca-certificates \
     gnupg \
-    && rm -rf /var/lib/apt/lists/*
+    python3 \
+    python3-pip \
+    python3-venv \
+    openjdk-17-jdk-headless \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -sf /usr/bin/python3 /usr/bin/python
 
 # Install Node.js 20.x
 RUN mkdir -p /etc/apt/keyrings && \
@@ -34,6 +39,13 @@ RUN chown claudeuser:claudeuser /workspace
 
 # Switch to non-root user
 USER claudeuser
+
+# Set HOME explicitly and add user bin directories to PATH
+ENV HOME=/home/claudeuser
+ENV PATH="/home/claudeuser/.local/bin:${PATH}"
+
+# Install uv package manager for Python
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # Entry point that keeps container alive
 CMD ["tail", "-f", "/dev/null"]
