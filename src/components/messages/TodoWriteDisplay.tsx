@@ -1,0 +1,115 @@
+'use client';
+
+import { useState } from 'react';
+import { cn } from '@/lib/utils';
+import { Card, CardContent } from '@/components/ui/card';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { Badge } from '@/components/ui/badge';
+import type { ToolCall, TodoItem } from './types';
+
+/**
+ * Specialized display for TodoWrite tool calls.
+ * Shows a checklist-style view with status indicators.
+ */
+export function TodoWriteDisplay({ tool }: { tool: ToolCall }) {
+  const [expanded, setExpanded] = useState(true);
+  const inputObj = tool.input as { todos?: TodoItem[] } | undefined;
+  const todos = inputObj?.todos ?? [];
+
+  const completedCount = todos.filter((t) => t.status === 'completed').length;
+  const inProgressCount = todos.filter((t) => t.status === 'in_progress').length;
+  const totalCount = todos.length;
+
+  const getStatusIcon = (status: TodoItem['status']) => {
+    switch (status) {
+      case 'completed':
+        return (
+          <svg
+            className="w-4 h-4 text-green-600 dark:text-green-400 flex-shrink-0"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            strokeWidth={2}
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+          </svg>
+        );
+      case 'in_progress':
+        return (
+          <svg
+            className="w-4 h-4 text-blue-600 dark:text-blue-400 flex-shrink-0 animate-spin"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            strokeWidth={2}
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+            />
+          </svg>
+        );
+      case 'pending':
+        return (
+          <svg
+            className="w-4 h-4 text-muted-foreground flex-shrink-0"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            strokeWidth={2}
+          >
+            <circle cx="12" cy="12" r="9" />
+          </svg>
+        );
+    }
+  };
+
+  return (
+    <Collapsible open={expanded} onOpenChange={setExpanded}>
+      <Card className="mt-2 border-blue-200 dark:border-blue-800">
+        <CollapsibleTrigger className="w-full px-3 py-2 text-left flex items-center justify-between text-sm hover:bg-muted/50 rounded-t-xl">
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-primary">TodoWrite</span>
+            <Badge
+              variant="outline"
+              className="text-xs border-blue-500 text-blue-700 dark:text-blue-400"
+            >
+              {completedCount}/{totalCount} done
+            </Badge>
+            {inProgressCount > 0 && (
+              <Badge
+                variant="outline"
+                className="text-xs border-amber-500 text-amber-700 dark:text-amber-400"
+              >
+                {inProgressCount} active
+              </Badge>
+            )}
+          </div>
+          <span className="text-muted-foreground ml-2 flex-shrink-0">{expanded ? '−' : '+'}</span>
+        </CollapsibleTrigger>
+
+        <CollapsibleContent>
+          <CardContent className="p-3 pt-0">
+            <ul className="space-y-1.5">
+              {todos.map((todo, index) => (
+                <li
+                  key={index}
+                  className={cn('flex items-start gap-2 py-1 px-2 rounded text-sm', {
+                    'text-muted-foreground line-through': todo.status === 'completed',
+                    'bg-blue-50 dark:bg-blue-950/50 font-medium': todo.status === 'in_progress',
+                  })}
+                >
+                  {getStatusIcon(todo.status)}
+                  <span className="flex-1">
+                    {todo.status === 'in_progress' ? todo.activeForm : todo.content}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </CollapsibleContent>
+      </Card>
+    </Collapsible>
+  );
+}

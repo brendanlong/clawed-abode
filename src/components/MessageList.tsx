@@ -1,7 +1,7 @@
 'use client';
 
 import { useRef, useEffect, useCallback, useMemo } from 'react';
-import { MessageBubble, ToolResultMap } from './MessageBubble';
+import { MessageBubble, type ToolResultMap } from './messages';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
 
