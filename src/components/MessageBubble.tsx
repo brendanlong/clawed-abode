@@ -6,10 +6,15 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Badge } from '@/components/ui/badge';
 
+// Map of tool_use_id -> result content
+export type ToolResultMap = Map<string, { content?: string; is_error?: boolean }>;
+
 interface ToolCall {
   name: string;
+  id?: string;
   input: unknown;
   output?: unknown;
+  is_error?: boolean;
 }
 
 interface ContentBlock {
@@ -20,6 +25,7 @@ interface ContentBlock {
   input?: unknown;
   tool_use_id?: string;
   content?: string;
+  is_error?: boolean;
 }
 
 interface AssistantMessage {
@@ -63,12 +69,35 @@ interface MessageContent {
 
 function ToolCallDisplay({ tool }: { tool: ToolCall }) {
   const [expanded, setExpanded] = useState(false);
+  const hasOutput = tool.output !== undefined;
+  const isPending = !hasOutput;
 
   return (
     <Collapsible open={expanded} onOpenChange={setExpanded}>
-      <Card className="mt-2">
+      <Card
+        className={cn(
+          'mt-2',
+          tool.is_error && 'border-red-300 dark:border-red-700',
+          isPending && 'border-yellow-300 dark:border-yellow-700'
+        )}
+      >
         <CollapsibleTrigger className="w-full px-3 py-2 text-left flex items-center justify-between text-sm hover:bg-muted/50 rounded-t-xl">
-          <span className="font-mono text-primary">{tool.name}</span>
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-primary">{tool.name}</span>
+            {isPending && (
+              <Badge
+                variant="outline"
+                className="text-xs border-yellow-500 text-yellow-700 dark:text-yellow-400"
+              >
+                Running...
+              </Badge>
+            )}
+            {tool.is_error && (
+              <Badge variant="destructive" className="text-xs">
+                Error
+              </Badge>
+            )}
+          </div>
           <span className="text-muted-foreground">{expanded ? '−' : '+'}</span>
         </CollapsibleTrigger>
 
@@ -80,16 +109,74 @@ function ToolCallDisplay({ tool }: { tool: ToolCall }) {
                 {JSON.stringify(tool.input, null, 2)}
               </pre>
             </div>
-            {tool.output !== undefined && (
+            {hasOutput && (
               <div>
                 <div className="text-muted-foreground mb-1">Output:</div>
-                <pre className="bg-muted p-2 rounded overflow-x-auto max-h-48 overflow-y-auto">
+                <pre
+                  className={cn(
+                    'p-2 rounded overflow-x-auto max-h-48 overflow-y-auto',
+                    tool.is_error
+                      ? 'bg-red-50 dark:bg-red-950 text-red-800 dark:text-red-200'
+                      : 'bg-muted'
+                  )}
+                >
                   {typeof tool.output === 'string'
                     ? tool.output
                     : JSON.stringify(tool.output, null, 2)}
                 </pre>
               </div>
             )}
+          </CardContent>
+        </CollapsibleContent>
+      </Card>
+    </Collapsible>
+  );
+}
+
+function ToolResultDisplay({ results }: { results: ContentBlock[] }) {
+  const [expanded, setExpanded] = useState(false);
+
+  // Check if any result is an error
+  const hasError = results.some((r) => r.is_error);
+
+  return (
+    <Collapsible open={expanded} onOpenChange={setExpanded}>
+      <Card className={cn('border', hasError && 'border-red-300 dark:border-red-700')}>
+        <CollapsibleTrigger className="w-full px-3 py-2 text-left flex items-center justify-between text-sm hover:bg-muted/50 rounded-t-xl">
+          <div className="flex items-center gap-2">
+            <Badge variant={hasError ? 'destructive' : 'secondary'}>
+              Tool Result{results.length > 1 ? 's' : ''}
+            </Badge>
+            <span className="text-muted-foreground text-xs">
+              {results.length} result{results.length > 1 ? 's' : ''}
+            </span>
+          </div>
+          <span className="text-muted-foreground">{expanded ? '−' : '+'}</span>
+        </CollapsibleTrigger>
+
+        <CollapsibleContent>
+          <CardContent className="p-3 space-y-2 text-xs">
+            {results.map((result, index) => (
+              <div key={result.tool_use_id || index}>
+                {result.tool_use_id && (
+                  <div className="text-muted-foreground mb-1 font-mono text-xs">
+                    {result.tool_use_id}
+                  </div>
+                )}
+                <pre
+                  className={cn(
+                    'p-2 rounded overflow-x-auto max-h-48 overflow-y-auto',
+                    result.is_error
+                      ? 'bg-red-50 dark:bg-red-950 text-red-800 dark:text-red-200'
+                      : 'bg-muted'
+                  )}
+                >
+                  {typeof result.content === 'string'
+                    ? result.content
+                    : JSON.stringify(result.content, null, 2)}
+                </pre>
+              </div>
+            ))}
           </CardContent>
         </CollapsibleContent>
       </Card>
@@ -214,7 +301,7 @@ function ResultDisplay({ content }: { content: MessageContent }) {
   );
 }
 
-function renderContentBlocks(blocks: ContentBlock[]): React.ReactNode {
+function renderContentBlocks(blocks: ContentBlock[], toolResults?: ToolResultMap): React.ReactNode {
   const textBlocks: string[] = [];
   const toolUseBlocks: ContentBlock[] = [];
 
@@ -231,38 +318,70 @@ function renderContentBlocks(blocks: ContentBlock[]): React.ReactNode {
       {textBlocks.length > 0 && <div className="whitespace-pre-wrap">{textBlocks.join('\n')}</div>}
       {toolUseBlocks.length > 0 && (
         <div className="mt-2 space-y-2">
-          {toolUseBlocks.map((block) => (
-            <ToolCallDisplay
-              key={block.id}
-              tool={{
-                name: block.name || 'Unknown',
-                input: block.input,
-              }}
-            />
-          ))}
+          {toolUseBlocks.map((block) => {
+            // Look up the result for this tool_use
+            const result = block.id ? toolResults?.get(block.id) : undefined;
+            return (
+              <ToolCallDisplay
+                key={block.id}
+                tool={{
+                  name: block.name || 'Unknown',
+                  id: block.id,
+                  input: block.input,
+                  output: result?.content,
+                  is_error: result?.is_error,
+                }}
+              />
+            );
+          })}
         </div>
       )}
     </>
   );
 }
 
-function renderContent(content: unknown): React.ReactNode {
+function renderContent(content: unknown, toolResults?: ToolResultMap): React.ReactNode {
   if (typeof content === 'string') {
     return <p className="whitespace-pre-wrap">{content}</p>;
   }
 
   if (Array.isArray(content)) {
-    return renderContentBlocks(content as ContentBlock[]);
+    return renderContentBlocks(content as ContentBlock[], toolResults);
   }
 
   return null;
 }
 
-export function MessageBubble({ message }: { message: { type: string; content: unknown } }) {
+// Check if a message is a tool result (comes as type "user" but contains tool_result content)
+function isToolResultMessage(content: MessageContent): boolean {
+  const innerContent = content.message?.content;
+  if (Array.isArray(innerContent)) {
+    return innerContent.some((block) => block.type === 'tool_result');
+  }
+  return false;
+}
+
+// Extract tool results from a message
+function getToolResults(content: MessageContent): ContentBlock[] {
+  const innerContent = content.message?.content;
+  if (Array.isArray(innerContent)) {
+    return innerContent.filter((block) => block.type === 'tool_result');
+  }
+  return [];
+}
+
+export function MessageBubble({
+  message,
+  toolResults,
+}: {
+  message: { type: string; content: unknown };
+  toolResults?: ToolResultMap;
+}) {
   const { type } = message;
   const content = (message.content || {}) as MessageContent;
 
-  const isUser = type === 'user';
+  const isToolResult = type === 'user' && isToolResultMessage(content);
+  const isUser = type === 'user' && !isToolResult;
   const isAssistant = type === 'assistant';
   const isSystem = type === 'system';
   const isResult = type === 'result';
@@ -283,6 +402,16 @@ export function MessageBubble({ message }: { message: { type: string; content: u
     return (
       <div className="w-full max-w-[85%]">
         <ResultDisplay content={content} />
+      </div>
+    );
+  }
+
+  // Tool result messages get their own compact display
+  if (isToolResult) {
+    const toolResultBlocks = getToolResults(content);
+    return (
+      <div className="w-full max-w-[85%]">
+        <ToolResultDisplay results={toolResultBlocks} />
       </div>
     );
   }
@@ -321,7 +450,7 @@ export function MessageBubble({ message }: { message: { type: string; content: u
       )}
 
       {/* Render content (works for both regular messages and errors now) */}
-      {renderContent(displayContent)}
+      {renderContent(displayContent, toolResults)}
 
       {content.tool_calls && content.tool_calls.length > 0 && (
         <div className="mt-2 space-y-2">
