@@ -122,16 +122,15 @@ function SessionView({ sessionId }: { sessionId: string }) {
     data: historyData,
     isLoading: historyLoading,
     isFetchingNextPage,
-    isFetchingPreviousPage,
     hasNextPage,
     fetchNextPage,
     fetchPreviousPage,
   } = trpc.claude.getHistory.useInfiniteQuery(
-    { sessionId, limit: 50 },
+    { sessionId, limit: 10 },
     {
       // Limit stored pages to prevent memory growth from polling empty results
-      // With 50 messages per page, this keeps up to 5000 messages in memory
-      maxPages: 100,
+      // With 10 messages per page, this keeps up to 5000 messages in memory
+      maxPages: 500,
       // For loading OLDER messages (user scrolls up)
       getNextPageParam: (lastPage, allPages) => {
         if (!lastPage.hasMore) return undefined;
@@ -159,6 +158,8 @@ function SessionView({ sessionId }: { sessionId: string }) {
             }
           }
         }
+        // Don't page forward until we have our first page from the backward cursor
+        if (newestSequence === undefined) return undefined;
         return { sequence: newestSequence, direction: 'forward' as const };
       },
     }
@@ -170,22 +171,13 @@ function SessionView({ sessionId }: { sessionId: string }) {
     { refetchInterval: 2000 }
   );
 
-  // Track fetching state in a ref to avoid stale closure in interval
-  const isFetchingPreviousPageRef = useRef(isFetchingPreviousPage);
-  useEffect(() => {
-    isFetchingPreviousPageRef.current = isFetchingPreviousPage;
-  }, [isFetchingPreviousPage]);
-
   // Poll for new messages by calling fetchPreviousPage on an interval
   useEffect(() => {
     if (historyLoading) return;
 
     const pollInterval = runningData?.running ? 500 : 5000;
     const intervalId = setInterval(() => {
-      // Only poll if not already fetching (use ref to get current value)
-      if (!isFetchingPreviousPageRef.current) {
-        fetchPreviousPage();
-      }
+      fetchPreviousPage();
     }, pollInterval);
 
     return () => clearInterval(intervalId);
@@ -211,14 +203,10 @@ function SessionView({ sessionId }: { sessionId: string }) {
   const allMessages = useMemo(() => {
     if (!historyData?.pages) return [];
 
-    const seen = new Set<string>();
     const messages: Message[] = [];
     // Reverse pages to get oldest-first, then flatten
-    // Deduplicate by ID in case of overlapping fetches
     for (const page of [...historyData.pages].reverse()) {
       for (const msg of page.messages) {
-        if (seen.has(msg.id)) continue;
-        seen.add(msg.id);
         messages.push({
           id: msg.id,
           type: msg.type,
@@ -243,12 +231,6 @@ function SessionView({ sessionId }: { sessionId: string }) {
   const handleInterrupt = useCallback(() => {
     interruptMutation.mutate({ sessionId });
   }, [sessionId, interruptMutation]);
-
-  const handleLoadMore = useCallback(() => {
-    if (hasNextPage && !isFetchingNextPage) {
-      fetchNextPage();
-    }
-  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
   const session = sessionData?.session;
   const isClaudeRunning = runningData?.running ?? false;
@@ -373,7 +355,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
         messages={allMessages}
         isLoading={historyLoading || isFetchingNextPage}
         hasMore={hasNextPage ?? false}
-        onLoadMore={handleLoadMore}
+        onLoadMore={fetchNextPage}
       />
 
       <ClaudeStatusIndicator isRunning={isClaudeRunning} containerStatus={session.status} />

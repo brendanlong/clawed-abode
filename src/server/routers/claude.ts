@@ -92,8 +92,12 @@ export const claudeRouter = router({
         });
       }
 
-      // Default to backward (loading older messages) when no cursor
-      const isBackward = input.cursor?.direction !== 'forward';
+      const isBackward = input.cursor?.direction === 'backward';
+      // Get the newest data in each page for backward cursors
+      // Get the oldest data in each page for forward cursors
+      // No cursor is a special case since we want the newest data
+      // paging backward
+      const getNewest = isBackward || input.cursor == null;
 
       // Build where clause based on direction
       const whereClause: {
@@ -115,7 +119,7 @@ export const claudeRouter = router({
         where: whereClause,
         // backward: newest first (so we get the N most recent before cursor)
         // forward: oldest first (so we get the N oldest after cursor)
-        orderBy: { sequence: isBackward ? 'desc' : 'asc' },
+        orderBy: { sequence: getNewest ? 'desc' : 'asc' },
         take: input.limit + 1,
       });
 
@@ -129,8 +133,8 @@ export const claudeRouter = router({
         content: JSON.parse(m.content),
       }));
 
-      // For backward pagination, reverse so client gets chronological order
-      if (isBackward) {
+      // For newest first, reverse so client gets chronological order
+      if (getNewest) {
         parsedMessages.reverse();
       }
 
