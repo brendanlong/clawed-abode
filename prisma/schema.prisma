@@ -54,7 +54,8 @@ model ClaudeProcess {
   id             String   @id @default(uuid())
   sessionId      String   @unique
   containerId    String
-  outputFile     String   // path to output file in worktree (relative to /workspace)
+  execId         String   // Docker exec ID for checking completion status
+  outputFile     String   // path to output file in container (relative to /workspace)
   lastSequence   Int      // last sequence number we've processed
   startedAt      DateTime @default(now())
 

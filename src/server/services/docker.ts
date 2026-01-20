@@ -211,14 +211,47 @@ export async function sendSignalToExec(
   await exec.start({ Detach: false });
 }
 
-export async function findProcessInContainer(
+/**
+ * Kill all processes matching a pattern in a container using pkill.
+ * Useful for cleaning up background processes like tail -f.
+ */
+export async function killProcessesByPattern(containerId: string, pattern: string): Promise<void> {
+  await signalProcessesByPattern(containerId, pattern, 'TERM');
+}
+
+/**
+ * Send a signal to all processes matching a pattern in a container.
+ */
+export async function signalProcessesByPattern(
   containerId: string,
-  processName: string
-): Promise<number | null> {
+  pattern: string,
+  signal: string = 'TERM'
+): Promise<void> {
   const container = docker.getContainer(containerId);
 
   const exec = await container.exec({
-    Cmd: ['pgrep', '-f', processName],
+    Cmd: ['pkill', `-${signal}`, '-f', pattern],
+    AttachStdout: true,
+    AttachStderr: true,
+  });
+
+  const stream = await exec.start({ Detach: false, Tty: false });
+  stream.resume(); // Consume stream so it ends
+  await new Promise<void>((resolve) => {
+    stream.on('end', resolve);
+    stream.on('error', resolve);
+  });
+}
+
+export async function findProcessInContainer(
+  containerId: string,
+  processPattern: string
+): Promise<number | null> {
+  const container = docker.getContainer(containerId);
+
+  // Use pgrep -f to match against the full command line
+  const exec = await container.exec({
+    Cmd: ['pgrep', '-f', processPattern],
     AttachStdout: true,
     AttachStderr: true,
   });
@@ -228,21 +261,22 @@ export async function findProcessInContainer(
   return new Promise((resolve) => {
     let output = '';
     stream.on('data', (chunk: Buffer) => {
-      output += chunk.toString();
+      // Strip Docker stream header if present
+      output += stripDockerStreamHeader(chunk);
     });
     stream.on('end', () => {
       const pid = parseInt(output.trim().split('\n')[0], 10);
       const result = isNaN(pid) ? null : pid;
       log('findProcessInContainer', 'Search complete', {
         containerId,
-        processName,
+        processPattern,
         pid: result,
-        rawOutput: output.trim().slice(0, 50),
+        rawOutput: output.trim().slice(0, 100),
       });
       resolve(result);
     });
     stream.on('error', () => {
-      log('findProcessInContainer', 'Stream error', { containerId, processName });
+      log('findProcessInContainer', 'Stream error', { containerId, processPattern });
       resolve(null);
     });
   });
@@ -258,7 +292,7 @@ export async function isProcessRunning(containerId: string, processName: string)
 
 /**
  * Execute a command in the background that writes output to a file.
- * Returns the exec ID for reference.
+ * Returns the exec ID which can be used with getExecStatus() to check completion.
  */
 export async function execInContainerWithOutputFile(
   containerId: string,
@@ -289,6 +323,21 @@ export async function execInContainerWithOutputFile(
   log('execInContainerWithOutputFile', 'Started in detached mode', { execId: exec.id });
 
   return { execId: exec.id };
+}
+
+/**
+ * Check the status of a Docker exec by its ID.
+ * Returns running state and exit code (if finished).
+ */
+export async function getExecStatus(
+  execId: string
+): Promise<{ running: boolean; exitCode: number | null }> {
+  const exec = docker.getExec(execId);
+  const info = await exec.inspect();
+  return {
+    running: info.Running,
+    exitCode: info.Running ? null : info.ExitCode,
+  };
 }
 
 /**
@@ -413,6 +462,7 @@ export async function fileExistsInContainer(
       log('fileExistsInContainer', 'Stream error', { containerId, filePath });
       resolve(false);
     });
+    stream.resume(); // Consume the stream so 'end' event fires
   });
 }
 
