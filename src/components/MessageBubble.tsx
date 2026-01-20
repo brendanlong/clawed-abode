@@ -1,11 +1,44 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { cn } from '@/lib/utils';
 import { Card, CardContent } from '@/components/ui/card';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { MarkdownContent } from '@/components/MarkdownContent';
+
+/**
+ * Copy button component that shows a brief "Copied!" feedback.
+ */
+function CopyButton({ getText, className }: { getText: () => string; className?: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = useCallback(async () => {
+    try {
+      const text = getText();
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+    }
+  }, [getText]);
+
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      onClick={handleCopy}
+      className={cn(
+        'h-6 px-2 text-xs opacity-0 group-hover:opacity-100 transition-opacity',
+        className
+      )}
+    >
+      {copied ? 'Copied!' : 'Copy'}
+    </Button>
+  );
+}
 
 // Map of tool_use_id -> result content
 export type ToolResultMap = Map<string, { content?: string; is_error?: boolean }>;
@@ -69,45 +102,77 @@ interface MessageContent {
 }
 
 /**
+ * Extract text content from message content blocks.
+ * For user/assistant messages, returns the raw markdown text.
+ */
+function extractTextContent(content: MessageContent): string | null {
+  // For assistant messages, extract text from content.message.content
+  if (content.message?.content && Array.isArray(content.message.content)) {
+    const textBlocks = content.message.content
+      .filter(
+        (block): block is ContentBlock => block.type === 'text' && typeof block.text === 'string'
+      )
+      .map((block) => block.text!);
+    if (textBlocks.length > 0) {
+      return textBlocks.join('\n');
+    }
+  }
+  // For simple content strings
+  if (typeof content.content === 'string') {
+    return content.content;
+  }
+  return null;
+}
+
+/**
+ * Format content as JSON string for copying.
+ */
+function formatAsJson(content: unknown): string {
+  try {
+    return JSON.stringify(content, null, 2);
+  } catch {
+    return String(content);
+  }
+}
+
+/**
  * Display component for raw/unrecognized JSON messages.
  * Shows collapsed by default to avoid cluttering the UI.
  */
 function RawJsonDisplay({ content, label }: { content: unknown; label?: string }) {
   const [expanded, setExpanded] = useState(false);
-
-  const formatJson = (data: unknown): string => {
-    try {
-      return JSON.stringify(data, null, 2);
-    } catch {
-      return String(data);
-    }
-  };
+  const getJsonText = useCallback(() => formatAsJson(content), [content]);
 
   return (
-    <Collapsible open={expanded} onOpenChange={setExpanded}>
-      <Card className="border-dashed border-amber-300 dark:border-amber-700">
-        <CollapsibleTrigger className="w-full px-3 py-2 text-left flex items-center justify-between text-sm hover:bg-muted/50 rounded-t-xl">
-          <div className="flex items-center gap-2">
-            <Badge
-              variant="outline"
-              className="text-xs border-amber-500 text-amber-700 dark:text-amber-400"
-            >
-              {label || 'Raw Message'}
-            </Badge>
-            <span className="text-muted-foreground text-xs">Click to expand JSON</span>
-          </div>
-          <span className="text-muted-foreground">{expanded ? '−' : '+'}</span>
-        </CollapsibleTrigger>
+    <div className="group">
+      <Collapsible open={expanded} onOpenChange={setExpanded}>
+        <Card className="border-dashed border-amber-300 dark:border-amber-700">
+          <CollapsibleTrigger className="w-full px-3 py-2 text-left flex items-center justify-between text-sm hover:bg-muted/50 rounded-t-xl">
+            <div className="flex items-center gap-2">
+              <Badge
+                variant="outline"
+                className="text-xs border-amber-500 text-amber-700 dark:text-amber-400"
+              >
+                {label || 'Raw Message'}
+              </Badge>
+              <span className="text-muted-foreground text-xs">Click to expand JSON</span>
+            </div>
+            <span className="text-muted-foreground">{expanded ? '−' : '+'}</span>
+          </CollapsibleTrigger>
 
-        <CollapsibleContent>
-          <CardContent className="p-3">
-            <pre className="bg-muted p-2 rounded overflow-x-auto max-h-96 overflow-y-auto text-xs font-mono">
-              {formatJson(content)}
-            </pre>
-          </CardContent>
-        </CollapsibleContent>
-      </Card>
-    </Collapsible>
+          <CollapsibleContent>
+            <CardContent className="p-3">
+              <pre className="bg-muted p-2 rounded overflow-x-auto max-h-96 overflow-y-auto text-xs font-mono">
+                {formatAsJson(content)}
+              </pre>
+            </CardContent>
+          </CollapsibleContent>
+        </Card>
+      </Collapsible>
+      <div className="mt-1">
+        <CopyButton getText={getJsonText} />
+      </div>
+    </div>
   );
 }
 
@@ -188,100 +253,113 @@ function ToolCallDisplay({ tool }: { tool: ToolCall }) {
 
 function ToolResultDisplay({ results }: { results: ContentBlock[] }) {
   const [expanded, setExpanded] = useState(false);
+  const getJsonText = useCallback(() => formatAsJson(results), [results]);
 
   // Check if any result is an error
   const hasError = results.some((r) => r.is_error);
 
   return (
-    <Collapsible open={expanded} onOpenChange={setExpanded}>
-      <Card className={cn('border', hasError && 'border-red-300 dark:border-red-700')}>
-        <CollapsibleTrigger className="w-full px-3 py-2 text-left flex items-center justify-between text-sm hover:bg-muted/50 rounded-t-xl">
-          <div className="flex items-center gap-2">
-            <Badge variant={hasError ? 'destructive' : 'secondary'}>
-              Tool Result{results.length > 1 ? 's' : ''}
-            </Badge>
-            <span className="text-muted-foreground text-xs">
-              {results.length} result{results.length > 1 ? 's' : ''}
-            </span>
-          </div>
-          <span className="text-muted-foreground">{expanded ? '−' : '+'}</span>
-        </CollapsibleTrigger>
+    <div className="group">
+      <Collapsible open={expanded} onOpenChange={setExpanded}>
+        <Card className={cn('border', hasError && 'border-red-300 dark:border-red-700')}>
+          <CollapsibleTrigger className="w-full px-3 py-2 text-left flex items-center justify-between text-sm hover:bg-muted/50 rounded-t-xl">
+            <div className="flex items-center gap-2">
+              <Badge variant={hasError ? 'destructive' : 'secondary'}>
+                Tool Result{results.length > 1 ? 's' : ''}
+              </Badge>
+              <span className="text-muted-foreground text-xs">
+                {results.length} result{results.length > 1 ? 's' : ''}
+              </span>
+            </div>
+            <span className="text-muted-foreground">{expanded ? '−' : '+'}</span>
+          </CollapsibleTrigger>
 
-        <CollapsibleContent>
-          <CardContent className="p-3 space-y-2 text-xs">
-            {results.map((result, index) => (
-              <div key={result.tool_use_id || index}>
-                {result.tool_use_id && (
-                  <div className="text-muted-foreground mb-1 font-mono text-xs">
-                    {result.tool_use_id}
-                  </div>
-                )}
-                <pre
-                  className={cn(
-                    'p-2 rounded overflow-x-auto max-h-48 overflow-y-auto',
-                    result.is_error
-                      ? 'bg-red-50 dark:bg-red-950 text-red-800 dark:text-red-200'
-                      : 'bg-muted'
+          <CollapsibleContent>
+            <CardContent className="p-3 space-y-2 text-xs">
+              {results.map((result, index) => (
+                <div key={result.tool_use_id || index}>
+                  {result.tool_use_id && (
+                    <div className="text-muted-foreground mb-1 font-mono text-xs">
+                      {result.tool_use_id}
+                    </div>
                   )}
-                >
-                  {typeof result.content === 'string'
-                    ? result.content
-                    : JSON.stringify(result.content, null, 2)}
-                </pre>
-              </div>
-            ))}
-          </CardContent>
-        </CollapsibleContent>
-      </Card>
-    </Collapsible>
+                  <pre
+                    className={cn(
+                      'p-2 rounded overflow-x-auto max-h-48 overflow-y-auto',
+                      result.is_error
+                        ? 'bg-red-50 dark:bg-red-950 text-red-800 dark:text-red-200'
+                        : 'bg-muted'
+                    )}
+                  >
+                    {typeof result.content === 'string'
+                      ? result.content
+                      : JSON.stringify(result.content, null, 2)}
+                  </pre>
+                </div>
+              ))}
+            </CardContent>
+          </CollapsibleContent>
+        </Card>
+      </Collapsible>
+      <div className="mt-1">
+        <CopyButton getText={getJsonText} />
+      </div>
+    </div>
   );
 }
 
 function SystemInitDisplay({ content }: { content: MessageContent }) {
   const [expanded, setExpanded] = useState(false);
+  const getJsonText = useCallback(() => formatAsJson(content), [content]);
 
   return (
-    <Collapsible open={expanded} onOpenChange={setExpanded}>
-      <CollapsibleTrigger className="w-full text-left flex items-center gap-2 text-sm hover:bg-muted/50 rounded p-2">
-        <Badge variant="secondary">Session Started</Badge>
-        <span className="text-muted-foreground text-xs">
-          {content.model} · v{content.claude_code_version}
-        </span>
-        <span className="text-muted-foreground ml-auto">{expanded ? '−' : '+'}</span>
-      </CollapsibleTrigger>
+    <div className="group">
+      <Collapsible open={expanded} onOpenChange={setExpanded}>
+        <CollapsibleTrigger className="w-full text-left flex items-center gap-2 text-sm hover:bg-muted/50 rounded p-2">
+          <Badge variant="secondary">Session Started</Badge>
+          <span className="text-muted-foreground text-xs">
+            {content.model} · v{content.claude_code_version}
+          </span>
+          <span className="text-muted-foreground ml-auto">{expanded ? '−' : '+'}</span>
+        </CollapsibleTrigger>
 
-      <CollapsibleContent>
-        <div className="p-3 space-y-2 text-xs bg-muted/50 rounded mt-1">
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <span className="text-muted-foreground">Session ID:</span>
-              <span className="ml-2 font-mono">{content.session_id}</span>
-            </div>
-            <div>
-              <span className="text-muted-foreground">Working Dir:</span>
-              <span className="ml-2 font-mono">{content.cwd}</span>
-            </div>
-          </div>
-          {content.tools && content.tools.length > 0 && (
-            <div>
-              <span className="text-muted-foreground">Tools:</span>
-              <div className="flex flex-wrap gap-1 mt-1">
-                {content.tools.map((tool) => (
-                  <Badge key={tool} variant="outline" className="text-xs">
-                    {tool}
-                  </Badge>
-                ))}
+        <CollapsibleContent>
+          <div className="p-3 space-y-2 text-xs bg-muted/50 rounded mt-1">
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <span className="text-muted-foreground">Session ID:</span>
+                <span className="ml-2 font-mono">{content.session_id}</span>
+              </div>
+              <div>
+                <span className="text-muted-foreground">Working Dir:</span>
+                <span className="ml-2 font-mono">{content.cwd}</span>
               </div>
             </div>
-          )}
-        </div>
-      </CollapsibleContent>
-    </Collapsible>
+            {content.tools && content.tools.length > 0 && (
+              <div>
+                <span className="text-muted-foreground">Tools:</span>
+                <div className="flex flex-wrap gap-1 mt-1">
+                  {content.tools.map((tool) => (
+                    <Badge key={tool} variant="outline" className="text-xs">
+                      {tool}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </CollapsibleContent>
+      </Collapsible>
+      <div className="mt-1">
+        <CopyButton getText={getJsonText} />
+      </div>
+    </div>
   );
 }
 
 function ResultDisplay({ content }: { content: MessageContent }) {
   const [expanded, setExpanded] = useState(false);
+  const getJsonText = useCallback(() => formatAsJson(content), [content]);
 
   const formatCost = (cost?: number) => {
     if (cost === undefined) return 'N/A';
@@ -294,63 +372,68 @@ function ResultDisplay({ content }: { content: MessageContent }) {
   };
 
   return (
-    <Collapsible open={expanded} onOpenChange={setExpanded}>
-      <CollapsibleTrigger className="w-full text-left flex items-center gap-2 text-sm hover:bg-muted/50 rounded p-2">
-        <Badge
-          variant="outline"
-          className={cn(
-            content.subtype === 'success'
-              ? 'border-green-500 text-green-700 dark:text-green-400'
-              : 'border-red-500 text-red-700 dark:text-red-400'
-          )}
-        >
-          {content.subtype === 'success' ? 'Turn Complete' : 'Error'}
-        </Badge>
-        <span className="text-muted-foreground text-xs">
-          {formatCost(content.total_cost_usd)} · {content.num_turns} turn
-          {content.num_turns !== 1 ? 's' : ''}
-        </span>
-        <span className="text-muted-foreground ml-auto">{expanded ? '−' : '+'}</span>
-      </CollapsibleTrigger>
+    <div className="group">
+      <Collapsible open={expanded} onOpenChange={setExpanded}>
+        <CollapsibleTrigger className="w-full text-left flex items-center gap-2 text-sm hover:bg-muted/50 rounded p-2">
+          <Badge
+            variant="outline"
+            className={cn(
+              content.subtype === 'success'
+                ? 'border-green-500 text-green-700 dark:text-green-400'
+                : 'border-red-500 text-red-700 dark:text-red-400'
+            )}
+          >
+            {content.subtype === 'success' ? 'Turn Complete' : 'Error'}
+          </Badge>
+          <span className="text-muted-foreground text-xs">
+            {formatCost(content.total_cost_usd)} · {content.num_turns} turn
+            {content.num_turns !== 1 ? 's' : ''}
+          </span>
+          <span className="text-muted-foreground ml-auto">{expanded ? '−' : '+'}</span>
+        </CollapsibleTrigger>
 
-      <CollapsibleContent>
-        <div className="p-3 space-y-2 text-xs bg-muted/50 rounded mt-1">
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <span className="text-muted-foreground">Duration:</span>
-              <span className="ml-2">
-                {content.duration_ms ? `${(content.duration_ms / 1000).toFixed(1)}s` : 'N/A'}
-              </span>
-            </div>
-            <div>
-              <span className="text-muted-foreground">Cost:</span>
-              <span className="ml-2">{formatCost(content.total_cost_usd)}</span>
-            </div>
-          </div>
-          {content.usage && (
+        <CollapsibleContent>
+          <div className="p-3 space-y-2 text-xs bg-muted/50 rounded mt-1">
             <div className="grid grid-cols-2 gap-2">
               <div>
-                <span className="text-muted-foreground">Input tokens:</span>
-                <span className="ml-2">{formatTokens(content.usage.input_tokens)}</span>
+                <span className="text-muted-foreground">Duration:</span>
+                <span className="ml-2">
+                  {content.duration_ms ? `${(content.duration_ms / 1000).toFixed(1)}s` : 'N/A'}
+                </span>
               </div>
               <div>
-                <span className="text-muted-foreground">Output tokens:</span>
-                <span className="ml-2">{formatTokens(content.usage.output_tokens)}</span>
+                <span className="text-muted-foreground">Cost:</span>
+                <span className="ml-2">{formatCost(content.total_cost_usd)}</span>
               </div>
-              {content.usage.cache_read_input_tokens !== undefined &&
-                content.usage.cache_read_input_tokens > 0 && (
-                  <div>
-                    <span className="text-muted-foreground">Cache read:</span>
-                    <span className="ml-2">
-                      {formatTokens(content.usage.cache_read_input_tokens)}
-                    </span>
-                  </div>
-                )}
             </div>
-          )}
-        </div>
-      </CollapsibleContent>
-    </Collapsible>
+            {content.usage && (
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <span className="text-muted-foreground">Input tokens:</span>
+                  <span className="ml-2">{formatTokens(content.usage.input_tokens)}</span>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Output tokens:</span>
+                  <span className="ml-2">{formatTokens(content.usage.output_tokens)}</span>
+                </div>
+                {content.usage.cache_read_input_tokens !== undefined &&
+                  content.usage.cache_read_input_tokens > 0 && (
+                    <div>
+                      <span className="text-muted-foreground">Cache read:</span>
+                      <span className="ml-2">
+                        {formatTokens(content.usage.cache_read_input_tokens)}
+                      </span>
+                    </div>
+                  )}
+              </div>
+            )}
+          </div>
+        </CollapsibleContent>
+      </Collapsible>
+      <div className="mt-1">
+        <CopyButton getText={getJsonText} />
+      </div>
+    </div>
   );
 }
 
@@ -510,10 +593,23 @@ export function MessageBubble({
   toolResults?: ToolResultMap;
 }) {
   const { type } = message;
-  const content = (message.content || {}) as MessageContent;
+  const content = useMemo(() => (message.content || {}) as MessageContent, [message.content]);
 
   // Check if we can properly display this message
-  const recognition = isRecognizedMessage(type, content);
+  const recognition = useMemo(() => isRecognizedMessage(type, content), [type, content]);
+
+  const category = recognition.recognized ? recognition.category : null;
+  const isUser = category === 'user';
+  const isAssistant = category === 'assistant';
+
+  // Compute copy text - for user/assistant, copy raw text; for others, copy JSON
+  const getCopyText = useCallback(() => {
+    if (isUser || isAssistant) {
+      const text = extractTextContent(content);
+      return text ?? formatAsJson(content);
+    }
+    return formatAsJson(content);
+  }, [content, isUser, isAssistant]);
 
   // Unrecognized messages get the raw JSON display (collapsed by default)
   if (!recognition.recognized) {
@@ -523,8 +619,6 @@ export function MessageBubble({
       </div>
     );
   }
-
-  const { category } = recognition;
 
   // System init messages get their own compact display
   if (category === 'systemInit') {
@@ -565,42 +659,45 @@ export function MessageBubble({
   };
 
   const displayContent = getDisplayContent();
-  const isUser = category === 'user';
-  const isAssistant = category === 'assistant';
   const isSystem = category === 'system';
   const isError = category === 'systemError';
 
   return (
-    <div
-      className={cn('max-w-[85%] rounded-lg p-4', {
-        'bg-primary text-primary-foreground ml-auto': isUser,
-        'bg-card border': isAssistant,
-        'bg-muted text-muted-foreground text-sm': isSystem && !isError,
-        'bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 text-red-800 dark:text-red-200 text-sm':
-          isError,
-      })}
-    >
-      {isSystem && !isError && (
-        <Badge variant="secondary" className="mb-2">
-          System
-        </Badge>
-      )}
-      {isError && (
-        <Badge variant="destructive" className="mb-2">
-          Error
-        </Badge>
-      )}
+    <div className="group max-w-[85%]">
+      <div
+        className={cn('rounded-lg p-4', {
+          'bg-primary text-primary-foreground ml-auto': isUser,
+          'bg-card border': isAssistant,
+          'bg-muted text-muted-foreground text-sm': isSystem && !isError,
+          'bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 text-red-800 dark:text-red-200 text-sm':
+            isError,
+        })}
+      >
+        {isSystem && !isError && (
+          <Badge variant="secondary" className="mb-2">
+            System
+          </Badge>
+        )}
+        {isError && (
+          <Badge variant="destructive" className="mb-2">
+            Error
+          </Badge>
+        )}
 
-      {/* Render content (works for both regular messages and errors now) */}
-      {renderContent(displayContent, toolResults)}
+        {/* Render content (works for both regular messages and errors now) */}
+        {renderContent(displayContent, toolResults)}
 
-      {content.tool_calls && content.tool_calls.length > 0 && (
-        <div className="mt-2 space-y-2">
-          {content.tool_calls.map((tool, index) => (
-            <ToolCallDisplay key={index} tool={tool} />
-          ))}
-        </div>
-      )}
+        {content.tool_calls && content.tool_calls.length > 0 && (
+          <div className="mt-2 space-y-2">
+            {content.tool_calls.map((tool, index) => (
+              <ToolCallDisplay key={index} tool={tool} />
+            ))}
+          </div>
+        )}
+      </div>
+      <div className="mt-1">
+        <CopyButton getText={getCopyText} />
+      </div>
     </div>
   );
 }
