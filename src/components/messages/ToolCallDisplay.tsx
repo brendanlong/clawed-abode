@@ -1,12 +1,13 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { cn } from '@/lib/utils';
 import { Card, CardContent } from '@/components/ui/card';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Badge } from '@/components/ui/badge';
 import { CopyButton } from './CopyButton';
 import { formatAsJson, buildToolMessages } from './types';
+import { processTerminalOutput, isTerminalOutput } from '@/lib/terminal-output';
 import type { ToolCall } from './types';
 
 /**
@@ -27,6 +28,18 @@ export function ToolCallDisplay({ tool }: { tool: ToolCall }) {
     const messages = buildToolMessages(tool);
     return formatAsJson(messages);
   }, [tool]);
+
+  // Process terminal output (ANSI codes, progress bars) for Bash commands
+  const processedOutput = useMemo(() => {
+    if (typeof tool.output !== 'string') {
+      return null;
+    }
+    // Only process if it looks like terminal output
+    if (isTerminalOutput(tool.output)) {
+      return processTerminalOutput(tool.output);
+    }
+    return null;
+  }, [tool.output]);
 
   return (
     <div className="group">
@@ -60,7 +73,9 @@ export function ToolCallDisplay({ tool }: { tool: ToolCall }) {
                 <div className="text-muted-foreground text-xs mt-1 truncate">{description}</div>
               )}
             </div>
-            <span className="text-muted-foreground ml-2 flex-shrink-0">{expanded ? '−' : '+'}</span>
+            <span className="text-muted-foreground ml-2 flex-shrink-0">
+              {expanded ? '−' : '+'}
+            </span>
           </CollapsibleTrigger>
 
           <CollapsibleContent>
@@ -76,18 +91,28 @@ export function ToolCallDisplay({ tool }: { tool: ToolCall }) {
               {hasOutput && (
                 <div>
                   <div className="text-muted-foreground mb-1">Output:</div>
-                  <pre
-                    className={cn(
-                      'p-2 rounded overflow-x-auto max-h-48 overflow-y-auto',
-                      tool.is_error
-                        ? 'bg-red-50 dark:bg-red-950 text-red-800 dark:text-red-200'
-                        : 'bg-muted'
-                    )}
-                  >
-                    {typeof tool.output === 'string'
-                      ? tool.output
-                      : JSON.stringify(tool.output, null, 2)}
-                  </pre>
+                  {processedOutput ? (
+                    <pre
+                      className={cn(
+                        'p-2 rounded overflow-x-auto max-h-48 overflow-y-auto terminal-output',
+                        tool.is_error ? 'bg-red-50 dark:bg-red-950' : 'bg-muted'
+                      )}
+                      dangerouslySetInnerHTML={{ __html: processedOutput }}
+                    />
+                  ) : (
+                    <pre
+                      className={cn(
+                        'p-2 rounded overflow-x-auto max-h-48 overflow-y-auto',
+                        tool.is_error
+                          ? 'bg-red-50 dark:bg-red-950 text-red-800 dark:text-red-200'
+                          : 'bg-muted'
+                      )}
+                    >
+                      {typeof tool.output === 'string'
+                        ? tool.output
+                        : JSON.stringify(tool.output, null, 2)}
+                    </pre>
+                  )}
                 </div>
               )}
             </CardContent>
