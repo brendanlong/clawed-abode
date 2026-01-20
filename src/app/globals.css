@@ -54,6 +54,26 @@ body {
     --chart-4: 43 74% 66%;
     --chart-5: 27 87% 67%;
     --radius: 0.5rem;
+
+    /* Terminal / ANSI color variables */
+    --terminal-fg: #333;
+    --terminal-bg: transparent;
+    --ansi-black: #000;
+    --ansi-red: #c41a16;
+    --ansi-green: #007400;
+    --ansi-yellow: #a06a00;
+    --ansi-blue: #0451a5;
+    --ansi-magenta: #bc05bc;
+    --ansi-cyan: #0598bc;
+    --ansi-white: #777;
+    --ansi-bright-black: #666;
+    --ansi-bright-red: #f14c4c;
+    --ansi-bright-green: #23d18b;
+    --ansi-bright-yellow: #f5f543;
+    --ansi-bright-blue: #3b8eea;
+    --ansi-bright-magenta: #d670d6;
+    --ansi-bright-cyan: #29b8db;
+    --ansi-bright-white: #fff;
   }
   .dark {
     --background: 0 0% 3.9%;
@@ -80,6 +100,26 @@ body {
     --chart-3: 30 80% 55%;
     --chart-4: 280 65% 60%;
     --chart-5: 340 75% 55%;
+
+    /* Terminal / ANSI color variables (dark mode) */
+    --terminal-fg: #d4d4d4;
+    --terminal-bg: transparent;
+    --ansi-black: #1e1e1e;
+    --ansi-red: #f14c4c;
+    --ansi-green: #23d18b;
+    --ansi-yellow: #f5f543;
+    --ansi-blue: #3b8eea;
+    --ansi-magenta: #d670d6;
+    --ansi-cyan: #29b8db;
+    --ansi-white: #e5e5e5;
+    --ansi-bright-black: #666;
+    --ansi-bright-red: #f14c4c;
+    --ansi-bright-green: #23d18b;
+    --ansi-bright-yellow: #f5f543;
+    --ansi-bright-blue: #3b8eea;
+    --ansi-bright-magenta: #d670d6;
+    --ansi-bright-cyan: #29b8db;
+    --ansi-bright-white: #fff;
   }
 }
 
@@ -205,4 +245,10 @@ body {
 
 .bg-primary .markdown-content th {
   @apply bg-primary-foreground/20;
+}
+
+/* Terminal output styles */
+.terminal-output {
+  @apply font-mono text-xs whitespace-pre-wrap break-words;
+  color: var(--terminal-fg);
 }
