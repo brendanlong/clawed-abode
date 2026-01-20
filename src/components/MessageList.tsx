@@ -3,6 +3,8 @@
 import { useRef, useEffect, useCallback, useMemo, useState } from 'react';
 import { MessageBubble, type ToolResultMap } from './messages';
 import { Spinner } from '@/components/ui/spinner';
+import { ContextUsageIndicator } from '@/components/ContextUsageIndicator';
+import type { TokenUsageStats } from '@/lib/token-estimation';
 
 interface ContentBlock {
   type: string;
@@ -127,9 +129,16 @@ interface MessageListProps {
   isLoading: boolean;
   hasMore: boolean;
   onLoadMore: () => void;
+  tokenUsage?: TokenUsageStats | null;
 }
 
-export function MessageList({ messages, isLoading, hasMore, onLoadMore }: MessageListProps) {
+export function MessageList({
+  messages,
+  isLoading,
+  hasMore,
+  onLoadMore,
+  tokenUsage,
+}: MessageListProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const topSentinelRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -216,51 +225,59 @@ export function MessageList({ messages, isLoading, hasMore, onLoadMore }: Messag
   }, []);
 
   return (
-    <div
-      ref={containerRef}
-      onScroll={handleScroll}
-      className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4"
-    >
-      {/* Sentinel for triggering infinite scroll - placed before messages */}
-      {/* overflow-anchor:none prevents browser from anchoring to these elements */}
-      {/* so when new messages load above, the view stays on current messages */}
-      <div ref={topSentinelRef} className="h-1" style={{ overflowAnchor: 'none' }} />
+    <div className="relative flex-1 min-h-0">
+      <div
+        ref={containerRef}
+        onScroll={handleScroll}
+        className="h-full overflow-y-auto p-4 space-y-4"
+      >
+        {/* Sentinel for triggering infinite scroll - placed before messages */}
+        {/* overflow-anchor:none prevents browser from anchoring to these elements */}
+        {/* so when new messages load above, the view stays on current messages */}
+        <div ref={topSentinelRef} className="h-1" style={{ overflowAnchor: 'none' }} />
 
-      {hasMore && isLoading && (
-        <div className="text-center py-2" style={{ overflowAnchor: 'none' }}>
-          <Spinner size="sm" className="mx-auto" />
-        </div>
-      )}
-
-      {visibleMessages.length === 0 && !isLoading && (
-        <div className="text-center text-muted-foreground py-12" style={{ overflowAnchor: 'none' }}>
-          No messages yet. Start a conversation with Claude!
-        </div>
-      )}
-
-      {visibleMessages.map((message) => {
-        // Only right-align actual user messages, not tool results
-        const isUserMessage = message.type === 'user' && !isToolResultMessage(message);
-        return (
-          <div
-            key={message.id}
-            className={`flex ${isUserMessage ? 'justify-end' : 'justify-start'}`}
-          >
-            <MessageBubble
-              message={{
-                type: message.type,
-                content: message.content,
-              }}
-              toolResults={resultMap}
-              latestTodoWriteId={latestTodoWriteId}
-              manuallyToggledTodoIds={manuallyToggledTodoIds}
-              onTodoManualToggle={handleTodoManualToggle}
-            />
+        {hasMore && isLoading && (
+          <div className="text-center py-2" style={{ overflowAnchor: 'none' }}>
+            <Spinner size="sm" className="mx-auto" />
           </div>
-        );
-      })}
+        )}
 
-      <div ref={bottomRef} style={{ overflowAnchor: 'none' }} />
+        {visibleMessages.length === 0 && !isLoading && (
+          <div
+            className="text-center text-muted-foreground py-12"
+            style={{ overflowAnchor: 'none' }}
+          >
+            No messages yet. Start a conversation with Claude!
+          </div>
+        )}
+
+        {visibleMessages.map((message) => {
+          // Only right-align actual user messages, not tool results
+          const isUserMessage = message.type === 'user' && !isToolResultMessage(message);
+          return (
+            <div
+              key={message.id}
+              className={`flex ${isUserMessage ? 'justify-end' : 'justify-start'}`}
+            >
+              <MessageBubble
+                message={{
+                  type: message.type,
+                  content: message.content,
+                }}
+                toolResults={resultMap}
+                latestTodoWriteId={latestTodoWriteId}
+                manuallyToggledTodoIds={manuallyToggledTodoIds}
+                onTodoManualToggle={handleTodoManualToggle}
+              />
+            </div>
+          );
+        })}
+
+        <div ref={bottomRef} style={{ overflowAnchor: 'none' }} />
+      </div>
+
+      {/* Context usage indicator - positioned in bottom right */}
+      <ContextUsageIndicator stats={tokenUsage} className="absolute bottom-3 right-3 shadow-sm" />
     </div>
   );
 }

@@ -27,7 +27,7 @@ export function SessionList() {
     );
   }
 
-  const sessions: Session[] = data?.sessions || [];
+  const sessions: Session[] = data?.sessions ?? [];
 
   if (sessions.length === 0) {
     return (
