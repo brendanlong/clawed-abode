@@ -105,8 +105,12 @@ docker compose up -d
 
 ### With Cloudflare Tunnel (for secure remote access)
 
-1. Create a Cloudflare Tunnel at https://one.dash.cloudflare.com/
-2. Get your tunnel token
+Cloudflare Tunnels allow secure remote access without exposing ports or requiring a VPN.
+
+#### Option A: Using Docker Compose (recommended)
+
+1. Create a Cloudflare Tunnel at https://one.dash.cloudflare.com/ → Networks → Tunnels
+2. Copy the tunnel token
 3. Add to your environment:
    ```bash
    export CLOUDFLARE_TUNNEL_TOKEN=your_tunnel_token
@@ -115,6 +119,75 @@ docker compose up -d
    ```bash
    docker compose --profile tunnel up -d
    ```
+
+#### Option B: Manual Setup with cloudflared
+
+1. **Install cloudflared:**
+
+   ```bash
+   # On Ubuntu/Debian
+   curl -L --output cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+   sudo dpkg -i cloudflared.deb
+   ```
+
+2. **Authenticate with Cloudflare:**
+
+   ```bash
+   cloudflared tunnel login
+   ```
+
+   This opens a browser to authenticate and creates a certificate at `~/.cloudflared/cert.pem`.
+
+3. **Create a tunnel:**
+
+   ```bash
+   cloudflared tunnel create claude-code-web
+   ```
+
+   Note the tunnel ID from the output. This also creates credentials at `~/.cloudflared/<TUNNEL_ID>.json`.
+
+4. **Configure the tunnel:**
+
+   Create `~/.cloudflared/config.yml`:
+
+   ```yaml
+   tunnel: <TUNNEL_ID>
+   credentials-file: /home/<user>/.cloudflared/<TUNNEL_ID>.json
+
+   ingress:
+     - hostname: claude-code.yourdomain.com
+       service: http://localhost:3000
+     - service: http_status:404
+   ```
+
+5. **Create DNS record:**
+
+   ```bash
+   cloudflared tunnel route dns claude-code-web claude-code.yourdomain.com
+   ```
+
+6. **Run the tunnel:**
+
+   ```bash
+   # Test manually
+   cloudflared tunnel run claude-code-web
+
+   # Or install as a systemd service
+   sudo cloudflared service install
+   sudo systemctl enable cloudflared
+   sudo systemctl start cloudflared
+   ```
+
+#### Optional: Add Cloudflare Access
+
+For an additional authentication layer at the edge:
+
+1. Go to Cloudflare Zero Trust dashboard → Access → Applications
+2. Click "Add an application" → "Self-hosted"
+3. Enter your hostname (e.g., `claude-code.yourdomain.com`)
+4. Configure an access policy (e.g., email allowlist, one-time PIN)
+
+This adds authentication before traffic reaches your server, providing defense in depth.
 
 ## Configuration
 
