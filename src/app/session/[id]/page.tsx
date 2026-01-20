@@ -8,6 +8,9 @@ import { Header } from '@/components/Header';
 import { MessageList } from '@/components/MessageList';
 import { PromptInput } from '@/components/PromptInput';
 import { trpc } from '@/lib/trpc';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Spinner } from '@/components/ui/spinner';
 
 interface Message {
   id: string;
@@ -15,6 +18,8 @@ interface Message {
   content: unknown;
   sequence: number;
 }
+
+type SessionStatus = 'running' | 'stopped' | 'creating' | 'error';
 
 function SessionHeader({
   session,
@@ -37,61 +42,52 @@ function SessionHeader({
 }) {
   const repoName = session.repoUrl.replace('https://github.com/', '').replace('.git', '');
 
-  const statusColors: Record<string, string> = {
-    running: 'bg-green-100 text-green-800',
-    stopped: 'bg-gray-100 text-gray-800',
-    creating: 'bg-yellow-100 text-yellow-800',
-    error: 'bg-red-100 text-red-800',
-  };
+  const statusVariants: Record<SessionStatus, 'default' | 'secondary' | 'destructive' | 'outline'> =
+    {
+      running: 'default',
+      stopped: 'secondary',
+      creating: 'outline',
+      error: 'destructive',
+    };
 
   return (
-    <div className="border-b bg-white px-4 py-3">
+    <div className="border-b bg-background px-4 py-3">
       <div className="flex items-center justify-between">
-        <div className="flex items-center space-x-4">
-          <Link href="/" className="text-gray-400 hover:text-gray-600">
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M15 19l-7-7 7-7"
-              />
-            </svg>
-          </Link>
+        <div className="flex items-center gap-4">
+          <Button variant="ghost" size="icon" asChild>
+            <Link href="/">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M15 19l-7-7 7-7"
+                />
+              </svg>
+            </Link>
+          </Button>
           <div>
-            <h1 className="font-semibold text-gray-900">{session.name}</h1>
-            <p className="text-sm text-gray-500">
-              {repoName} • {session.branch}
+            <h1 className="font-semibold">{session.name}</h1>
+            <p className="text-sm text-muted-foreground">
+              {repoName} · {session.branch}
             </p>
           </div>
         </div>
 
-        <div className="flex items-center space-x-3">
-          <span
-            className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-              statusColors[session.status] || statusColors.stopped
-            }`}
-          >
+        <div className="flex items-center gap-3">
+          <Badge variant={statusVariants[session.status as SessionStatus] || 'secondary'}>
             {session.status}
-          </span>
+          </Badge>
 
           {session.status === 'stopped' && (
-            <button
-              onClick={onStart}
-              disabled={isStarting}
-              className="px-3 py-1 text-sm bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50"
-            >
+            <Button size="sm" onClick={onStart} disabled={isStarting}>
               {isStarting ? 'Starting...' : 'Start'}
-            </button>
+            </Button>
           )}
           {session.status === 'running' && (
-            <button
-              onClick={onStop}
-              disabled={isStopping}
-              className="px-3 py-1 text-sm bg-yellow-600 text-white rounded hover:bg-yellow-700 disabled:opacity-50"
-            >
+            <Button variant="secondary" size="sm" onClick={onStop} disabled={isStopping}>
               {isStopping ? 'Stopping...' : 'Stop'}
-            </button>
+            </Button>
           )}
         </div>
       </div>
@@ -231,7 +227,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
   if (sessionLoading) {
     return (
       <div className="flex-1 flex items-center justify-center">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+        <Spinner size="lg" />
       </div>
     );
   }
@@ -239,10 +235,10 @@ function SessionView({ sessionId }: { sessionId: string }) {
   if (!sessionData?.session) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center">
-        <p className="text-gray-500">Session not found</p>
-        <Link href="/" className="mt-4 text-blue-600 hover:underline">
-          Back to sessions
-        </Link>
+        <p className="text-muted-foreground">Session not found</p>
+        <Button variant="link" asChild className="mt-4">
+          <Link href="/">Back to sessions</Link>
+        </Button>
       </div>
     );
   }
@@ -282,7 +278,7 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
 
   return (
     <AuthGuard>
-      <div className="min-h-screen bg-gray-50 flex flex-col">
+      <div className="min-h-screen bg-background flex flex-col">
         <Header />
         <SessionView sessionId={resolvedParams.id} />
       </div>

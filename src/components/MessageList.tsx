@@ -2,6 +2,8 @@
 
 import { useRef, useEffect, useCallback } from 'react';
 import { MessageBubble } from './MessageBubble';
+import { Button } from '@/components/ui/button';
+import { Spinner } from '@/components/ui/spinner';
 
 interface Message {
   id: string;
@@ -55,18 +57,18 @@ export function MessageList({ messages, isLoading, hasMore, onLoadMore }: Messag
     >
       {hasMore && (
         <div className="text-center py-2">
-          <button
-            onClick={onLoadMore}
-            disabled={isLoading}
-            className="text-sm text-blue-600 hover:text-blue-800 disabled:opacity-50"
-          >
-            {isLoading ? 'Loading...' : 'Load older messages'}
-          </button>
+          {isLoading ? (
+            <Spinner size="sm" className="mx-auto" />
+          ) : (
+            <Button variant="link" onClick={onLoadMore}>
+              Load older messages
+            </Button>
+          )}
         </div>
       )}
 
       {messages.length === 0 && !isLoading && (
-        <div className="text-center text-gray-500 py-12">
+        <div className="text-center text-muted-foreground py-12">
           No messages yet. Start a conversation with Claude!
         </div>
       )}

@@ -1,11 +1,25 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { AuthGuard } from '@/components/AuthGuard';
 import { Header } from '@/components/Header';
 import { trpc } from '@/lib/trpc';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Spinner } from '@/components/ui/spinner';
+import { cn } from '@/lib/utils';
 
 interface Repo {
   id: number;
@@ -44,54 +58,56 @@ function RepoSelector({
 
   return (
     <div className="space-y-4">
-      <div>
-        <label className="block text-sm font-medium text-gray-700">Search repositories</label>
-        <input
+      <div className="space-y-2">
+        <Label>Search repositories</Label>
+        <Input
           type="text"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search your repositories..."
-          className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
         />
       </div>
 
-      <div className="border border-gray-200 rounded-lg max-h-64 overflow-y-auto">
+      <div className="border rounded-lg max-h-64 overflow-y-auto">
         {isLoading ? (
           <div className="flex justify-center py-8">
-            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
+            <Spinner />
           </div>
         ) : repos.length === 0 ? (
-          <div className="text-center py-8 text-gray-500">No repositories found</div>
+          <div className="text-center py-8 text-muted-foreground">No repositories found</div>
         ) : (
-          <ul className="divide-y divide-gray-200">
+          <ul className="divide-y divide-border">
             {repos.map((repo) => (
               <li
                 key={repo.id}
                 onClick={() => onSelect(repo)}
-                className={`px-4 py-3 cursor-pointer hover:bg-gray-50 ${
-                  selectedRepo?.id === repo.id ? 'bg-blue-50' : ''
-                }`}
+                className={cn(
+                  'px-4 py-3 cursor-pointer hover:bg-muted/50 transition-colors',
+                  selectedRepo?.id === repo.id && 'bg-primary/10'
+                )}
               >
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-medium text-gray-900">{repo.fullName}</p>
+                    <p className="text-sm font-medium">{repo.fullName}</p>
                     {repo.description && (
-                      <p className="text-xs text-gray-500 truncate max-w-md">{repo.description}</p>
+                      <p className="text-xs text-muted-foreground truncate max-w-md">
+                        {repo.description}
+                      </p>
                     )}
                   </div>
-                  {repo.private && <span className="text-xs text-gray-400">Private</span>}
+                  {repo.private && <span className="text-xs text-muted-foreground">Private</span>}
                 </div>
               </li>
             ))}
             {hasNextPage && (
               <li className="px-4 py-3 text-center">
-                <button
+                <Button
+                  variant="link"
                   onClick={() => fetchNextPage()}
                   disabled={isFetchingNextPage}
-                  className="text-sm text-blue-600 hover:text-blue-800"
                 >
                   {isFetchingNextPage ? 'Loading...' : 'Load more'}
-                </button>
+                </Button>
               </li>
             )}
           </ul>
@@ -115,16 +131,23 @@ function BranchSelector({
     { enabled: !!repoFullName }
   );
 
+  const handleSelect = useCallback(
+    (branch: string) => {
+      onSelect(branch);
+    },
+    [onSelect]
+  );
+
   useEffect(() => {
     if (data?.defaultBranch && !selectedBranch) {
-      onSelect(data.defaultBranch);
+      handleSelect(data.defaultBranch);
     }
-  }, [data, selectedBranch, onSelect]);
+  }, [data, selectedBranch, handleSelect]);
 
   if (isLoading) {
     return (
-      <div className="flex items-center space-x-2 text-gray-500">
-        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+      <div className="flex items-center gap-2 text-muted-foreground">
+        <Spinner size="sm" />
         <span>Loading branches...</span>
       </div>
     );
@@ -133,20 +156,21 @@ function BranchSelector({
   const branches = data?.branches || [];
 
   return (
-    <div>
-      <label className="block text-sm font-medium text-gray-700">Branch</label>
-      <select
-        value={selectedBranch}
-        onChange={(e) => onSelect(e.target.value)}
-        className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-      >
-        {branches.map((branch) => (
-          <option key={branch.name} value={branch.name}>
-            {branch.name}
-            {branch.name === data?.defaultBranch ? ' (default)' : ''}
-          </option>
-        ))}
-      </select>
+    <div className="space-y-2">
+      <Label>Branch</Label>
+      <Select value={selectedBranch} onValueChange={onSelect}>
+        <SelectTrigger>
+          <SelectValue placeholder="Select a branch" />
+        </SelectTrigger>
+        <SelectContent>
+          {branches.map((branch) => (
+            <SelectItem key={branch.name} value={branch.name}>
+              {branch.name}
+              {branch.name === data?.defaultBranch ? ' (default)' : ''}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
     </div>
   );
 }
@@ -191,9 +215,9 @@ function NewSessionForm() {
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
       {error && (
-        <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-lg text-sm">
-          {error}
-        </div>
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
       )}
 
       <RepoSelector selectedRepo={selectedRepo} onSelect={setSelectedRepo} />
@@ -206,35 +230,36 @@ function NewSessionForm() {
             onSelect={setSelectedBranch}
           />
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700">
-              Session name (optional)
-            </label>
-            <input
+          <div className="space-y-2">
+            <Label htmlFor="sessionName">Session name (optional)</Label>
+            <Input
+              id="sessionName"
               type="text"
               value={sessionName}
               onChange={(e) => setSessionName(e.target.value)}
               placeholder={`${selectedRepo.name} - ${selectedBranch || 'branch'}`}
-              className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
             />
           </div>
         </>
       )}
 
-      <div className="flex justify-end space-x-3">
-        <Link
-          href="/"
-          className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50"
-        >
-          Cancel
-        </Link>
-        <button
+      <div className="flex justify-end gap-3">
+        <Button variant="outline" asChild>
+          <Link href="/">Cancel</Link>
+        </Button>
+        <Button
           type="submit"
           disabled={!selectedRepo || !selectedBranch || createMutation.isPending}
-          className="px-4 py-2 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          {createMutation.isPending ? 'Creating...' : 'Create Session'}
-        </button>
+          {createMutation.isPending ? (
+            <span className="flex items-center gap-2">
+              <Spinner size="sm" className="text-primary-foreground" />
+              Creating...
+            </span>
+          ) : (
+            'Create Session'
+          )}
+        </Button>
       </div>
     </form>
   );
@@ -243,16 +268,21 @@ function NewSessionForm() {
 export default function NewSessionPage() {
   return (
     <AuthGuard>
-      <div className="min-h-screen bg-gray-50">
+      <div className="min-h-screen bg-background">
         <Header />
 
         <main className="max-w-2xl mx-auto py-6 sm:px-6 lg:px-8">
           <div className="px-4 py-6 sm:px-0">
-            <h1 className="text-2xl font-bold text-gray-900 mb-6">New Session</h1>
+            <h1 className="text-2xl font-bold mb-6">New Session</h1>
 
-            <div className="bg-white shadow rounded-lg p-6">
-              <NewSessionForm />
-            </div>
+            <Card>
+              <CardHeader>
+                <CardTitle>Create a new session</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <NewSessionForm />
+              </CardContent>
+            </Card>
           </div>
         </main>
       </div>

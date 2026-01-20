@@ -9,3 +9,4 @@
 - Try to do work in commit-sized chunks and commit when each piece is complete
 - Always use cursor-based pagination and never offset
 - Use pnpm instead of npm
+- Always use shadcn/ui components

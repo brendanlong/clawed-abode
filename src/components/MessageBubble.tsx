@@ -1,6 +1,10 @@
 'use client';
 
 import { useState } from 'react';
+import { cn } from '@/lib/utils';
+import { Card, CardContent } from '@/components/ui/card';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { Badge } from '@/components/ui/badge';
 
 interface ToolCall {
   name: string;
@@ -20,36 +24,35 @@ function ToolCallDisplay({ tool }: { tool: ToolCall }) {
   const [expanded, setExpanded] = useState(false);
 
   return (
-    <div className="mt-2 border border-gray-200 rounded-lg overflow-hidden">
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="w-full px-3 py-2 bg-gray-50 text-left flex items-center justify-between text-sm hover:bg-gray-100"
-      >
-        <span className="font-mono text-blue-600">{tool.name}</span>
-        <span className="text-gray-400">{expanded ? '−' : '+'}</span>
-      </button>
+    <Collapsible open={expanded} onOpenChange={setExpanded}>
+      <Card className="mt-2">
+        <CollapsibleTrigger className="w-full px-3 py-2 text-left flex items-center justify-between text-sm hover:bg-muted/50 rounded-t-xl">
+          <span className="font-mono text-primary">{tool.name}</span>
+          <span className="text-muted-foreground">{expanded ? '−' : '+'}</span>
+        </CollapsibleTrigger>
 
-      {expanded && (
-        <div className="p-3 space-y-2 text-xs">
-          <div>
-            <div className="text-gray-500 mb-1">Input:</div>
-            <pre className="bg-gray-50 p-2 rounded overflow-x-auto">
-              {JSON.stringify(tool.input, null, 2)}
-            </pre>
-          </div>
-          {tool.output !== undefined && (
+        <CollapsibleContent>
+          <CardContent className="p-3 space-y-2 text-xs">
             <div>
-              <div className="text-gray-500 mb-1">Output:</div>
-              <pre className="bg-gray-50 p-2 rounded overflow-x-auto max-h-48 overflow-y-auto">
-                {typeof tool.output === 'string'
-                  ? tool.output
-                  : JSON.stringify(tool.output, null, 2)}
+              <div className="text-muted-foreground mb-1">Input:</div>
+              <pre className="bg-muted p-2 rounded overflow-x-auto">
+                {JSON.stringify(tool.input, null, 2)}
               </pre>
             </div>
-          )}
-        </div>
-      )}
-    </div>
+            {tool.output !== undefined && (
+              <div>
+                <div className="text-muted-foreground mb-1">Output:</div>
+                <pre className="bg-muted p-2 rounded overflow-x-auto max-h-48 overflow-y-auto">
+                  {typeof tool.output === 'string'
+                    ? tool.output
+                    : JSON.stringify(tool.output, null, 2)}
+                </pre>
+              </div>
+            )}
+          </CardContent>
+        </CollapsibleContent>
+      </Card>
+    </Collapsible>
   );
 }
 
@@ -90,20 +93,26 @@ export function MessageBubble({ message }: { message: { type: string; content: u
   const isSystem = type === 'system';
   const isResult = type === 'result';
 
-  const bubbleClass = isUser
-    ? 'bg-blue-600 text-white ml-auto'
-    : isAssistant
-      ? 'bg-white border border-gray-200'
-      : isSystem
-        ? 'bg-gray-100 text-gray-600 text-sm'
-        : isResult
-          ? 'bg-green-50 border border-green-200 text-green-800 text-sm'
-          : 'bg-gray-100';
-
   return (
-    <div className={`max-w-[85%] rounded-lg p-4 ${bubbleClass}`}>
-      {isSystem && <div className="text-xs font-medium text-gray-500 mb-1">System</div>}
-      {isResult && <div className="text-xs font-medium text-green-600 mb-1">Result</div>}
+    <div
+      className={cn('max-w-[85%] rounded-lg p-4', {
+        'bg-primary text-primary-foreground ml-auto': isUser,
+        'bg-card border': isAssistant,
+        'bg-muted text-muted-foreground text-sm': isSystem,
+        'bg-green-50 dark:bg-green-950 border border-green-200 dark:border-green-800 text-green-800 dark:text-green-200 text-sm':
+          isResult,
+      })}
+    >
+      {isSystem && (
+        <Badge variant="secondary" className="mb-2">
+          System
+        </Badge>
+      )}
+      {isResult && (
+        <Badge className="mb-2 bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200 hover:bg-green-100">
+          Result
+        </Badge>
+      )}
 
       {renderContent(content.content)}
 
@@ -116,7 +125,7 @@ export function MessageBubble({ message }: { message: { type: string; content: u
       )}
 
       {isResult && content.result !== undefined && (
-        <pre className="mt-2 bg-white p-2 rounded text-xs overflow-x-auto">
+        <pre className="mt-2 bg-background p-2 rounded text-xs overflow-x-auto">
           {String(
             typeof content.result === 'string'
               ? content.result
