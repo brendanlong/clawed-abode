@@ -242,14 +242,23 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/* \
     && ln -sf /usr/bin/python3 /usr/bin/python
 
-# Install Node.js 20.x, pnpm, and Claude Code
+# Install Node.js 20.x
 RUN mkdir -p /etc/apt/keyrings && \
     curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | \
       gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg && \
     echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" | \
       tee /etc/apt/sources.list.d/nodesource.list && \
-    apt-get update && apt-get install -y nodejs && \
-    npm install -g pnpm @anthropic-ai/claude-code
+    apt-get update && apt-get install -y nodejs
+
+# Install GitHub CLI (gh)
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | \
+      dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | \
+      tee /etc/apt/sources.list.d/github-cli.list && \
+    apt-get update && apt-get install -y gh
+
+# Install pnpm and Claude Code
+RUN npm install -g pnpm @anthropic-ai/claude-code
 
 # Create non-root user with docker group access
 RUN useradd -m -s /bin/bash -u 1000 claudeuser && \
