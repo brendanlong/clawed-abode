@@ -37,12 +37,13 @@ export async function runClaudeCommand(
   });
 
   // Build the Claude command
+  // Use --resume for subsequent messages, --session-id for the first
+  const isFirstMessage = !lastMessage;
   const command = [
     'claude',
     '-p',
     prompt,
-    '--session-id',
-    sessionId,
+    ...(isFirstMessage ? ['--session-id', sessionId] : ['--resume', sessionId]),
     '--output-format',
     'stream-json',
     '--verbose',
