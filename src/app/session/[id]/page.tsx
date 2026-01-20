@@ -115,17 +115,37 @@ function SessionView({ sessionId }: { sessionId: string }) {
     }
   );
 
-  // Infinite query for message history (paginating backwards)
+  // Bidirectional infinite query for message history
+  // - fetchNextPage: loads older messages (backward) when user scrolls up
+  // - fetchPreviousPage: loads newer messages (forward) for polling
   const {
     data: historyData,
     isLoading: historyLoading,
     isFetchingNextPage,
+    isFetchingPreviousPage,
     hasNextPage,
     fetchNextPage,
+    fetchPreviousPage,
   } = trpc.claude.getHistory.useInfiniteQuery(
     { sessionId, limit: 50 },
     {
-      getNextPageParam: (lastPage) => (lastPage.hasMore ? lastPage.nextCursor : undefined),
+      // For loading OLDER messages (user scrolls up)
+      getNextPageParam: (lastPage) => {
+        if (!lastPage.hasMore || lastPage.messages.length === 0) return undefined;
+        // Use oldest message's sequence as cursor to fetch even older
+        const oldestSequence = Math.min(...lastPage.messages.map((m) => m.sequence));
+        return { sequence: oldestSequence, direction: 'backward' as const };
+      },
+      // For loading NEWER messages (polling)
+      getPreviousPageParam: (firstPage) => {
+        // Use newest message's sequence as cursor to fetch even newer
+        // If no messages yet, use sequence 0 to poll for any new messages
+        const newestSequence =
+          firstPage.messages.length > 0
+            ? Math.max(...firstPage.messages.map((m) => m.sequence))
+            : 0;
+        return { sequence: newestSequence, direction: 'forward' as const };
+      },
     }
   );
 
@@ -135,25 +155,20 @@ function SessionView({ sessionId }: { sessionId: string }) {
     { refetchInterval: 2000 }
   );
 
-  // Compute cursor for polling new messages from history data
-  const historyCursor = useMemo(() => {
-    const firstPage = historyData?.pages?.[0];
-    if (!firstPage || firstPage.messages.length === 0) return undefined;
-    return Math.max(...firstPage.messages.map((m) => m.sequence));
-  }, [historyData?.pages]);
+  // Poll for new messages by calling fetchPreviousPage on an interval
+  useEffect(() => {
+    if (historyLoading) return;
 
-  // Poll for new messages (forward from history cursor)
-  const { data: newMessagesData } = trpc.claude.getHistory.useQuery(
-    historyCursor !== undefined
-      ? { sessionId, cursor: historyCursor, direction: 'forward', limit: 100 }
-      : { sessionId, direction: 'backward', limit: 100 },
-    {
-      // Poll faster when Claude is running
-      refetchInterval: runningData?.running ? 500 : 5000,
-      // Don't start polling until history has loaded
-      enabled: !historyLoading,
-    }
-  );
+    const pollInterval = runningData?.running ? 500 : 5000;
+    const intervalId = setInterval(() => {
+      // Only poll if not already fetching
+      if (!isFetchingPreviousPage) {
+        fetchPreviousPage();
+      }
+    }, pollInterval);
+
+    return () => clearInterval(intervalId);
+  }, [historyLoading, runningData?.running, isFetchingPreviousPage, fetchPreviousPage]);
 
   // Mutations
   const startMutation = trpc.sessions.start.useMutation({
@@ -167,37 +182,28 @@ function SessionView({ sessionId }: { sessionId: string }) {
   const interruptMutation = trpc.claude.interrupt.useMutation();
   const sendMutation = trpc.claude.send.useMutation();
 
-  // Merge history + polled new messages, with deduplication
+  // Flatten bidirectional pages into chronological order
+  // Pages array structure:
+  // - pages[0] = newest (from fetchPreviousPage, or initial if no previous fetched)
+  // - pages[n-1] = oldest (from fetchNextPage)
+  // Each page's messages are already in chronological order
   const allMessages = useMemo(() => {
-    const fromHistory: Message[] = [];
-    if (historyData?.pages) {
-      // Pages are in reverse order (newest page first), but messages within each page are chronological
-      // We need to reverse pages to get oldest-first, then flatten
-      for (const page of [...historyData.pages].reverse()) {
-        for (const msg of page.messages) {
-          fromHistory.push({
-            id: msg.id,
-            type: msg.type,
-            content: msg.content,
-            sequence: msg.sequence,
-          });
-        }
+    if (!historyData?.pages) return [];
+
+    const messages: Message[] = [];
+    // Reverse pages to get oldest-first, then flatten
+    for (const page of [...historyData.pages].reverse()) {
+      for (const msg of page.messages) {
+        messages.push({
+          id: msg.id,
+          type: msg.type,
+          content: msg.content,
+          sequence: msg.sequence,
+        });
       }
     }
-
-    // Add new messages from polling
-    const historyIds = new Set(fromHistory.map((m) => m.id));
-    const newMessages = (newMessagesData?.messages ?? [])
-      .filter((m) => !historyIds.has(m.id))
-      .map((m) => ({
-        id: m.id,
-        type: m.type,
-        content: m.content,
-        sequence: m.sequence,
-      }));
-
-    return [...fromHistory, ...newMessages];
-  }, [historyData, newMessagesData]);
+    return messages;
+  }, [historyData]);
 
   const handleSendPrompt = useCallback(
     (prompt: string) => {

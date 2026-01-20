@@ -69,8 +69,13 @@ export const claudeRouter = router({
     .input(
       z.object({
         sessionId: z.string().uuid(),
-        cursor: z.number().int().optional(),
-        direction: z.enum(['forward', 'backward']).default('backward'),
+        // Cursor encodes both position and direction for bidirectional pagination
+        cursor: z
+          .object({
+            sequence: z.number().int(),
+            direction: z.enum(['forward', 'backward']),
+          })
+          .optional(),
         limit: z.number().int().min(1).max(100).default(50),
       })
     )
@@ -86,7 +91,8 @@ export const claudeRouter = router({
         });
       }
 
-      const isBackward = input.direction === 'backward';
+      // Default to backward (loading older messages) when no cursor
+      const isBackward = input.cursor?.direction !== 'forward';
 
       // Build where clause based on direction
       const whereClause: {
@@ -99,7 +105,9 @@ export const claudeRouter = router({
       if (input.cursor !== undefined) {
         // backward: load older (sequence < cursor)
         // forward: load newer (sequence > cursor)
-        whereClause.sequence = isBackward ? { lt: input.cursor } : { gt: input.cursor };
+        whereClause.sequence = isBackward
+          ? { lt: input.cursor.sequence }
+          : { gt: input.cursor.sequence };
       }
 
       const messages = await prisma.message.findMany({
@@ -125,19 +133,8 @@ export const claudeRouter = router({
         parsedMessages.reverse();
       }
 
-      // Cursor for next page depends on direction:
-      // backward: oldest message's sequence (to load even older)
-      // forward: newest message's sequence (to load even newer)
-      const nextCursor =
-        parsedMessages.length > 0
-          ? isBackward
-            ? parsedMessages[0].sequence
-            : parsedMessages[parsedMessages.length - 1].sequence
-          : undefined;
-
       return {
         messages: parsedMessages,
-        nextCursor,
         hasMore,
       };
     }),
