@@ -1,22 +1,11 @@
 'use client';
 
-import { useMemo } from 'react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import {
-  estimateTokenUsage,
-  formatTokenCount,
-  formatPercentage,
-  type TokenUsageStats,
-} from '@/lib/token-estimation';
+import { formatTokenCount, formatPercentage, type TokenUsageStats } from '@/lib/token-estimation';
 import { cn } from '@/lib/utils';
 
-interface Message {
-  type: string;
-  content: unknown;
-}
-
 interface ContextUsageIndicatorProps {
-  messages: Message[];
+  stats: TokenUsageStats | null | undefined;
   className?: string;
 }
 
@@ -62,11 +51,9 @@ function formatTooltipContent(stats: TokenUsageStats): string {
  * Displays estimated context usage as a percentage indicator.
  * Shows in the bottom-right corner of the messages area.
  */
-export function ContextUsageIndicator({ messages, className }: ContextUsageIndicatorProps) {
-  const stats = useMemo(() => estimateTokenUsage(messages), [messages]);
-
+export function ContextUsageIndicator({ stats, className }: ContextUsageIndicatorProps) {
   // Don't show if there's no usage yet
-  if (stats.totalTokens === 0) {
+  if (!stats || stats.totalTokens === 0) {
     return null;
   }
 

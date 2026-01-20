@@ -84,6 +84,15 @@ function SessionView({ sessionId }: { sessionId: string }) {
   // Initial fetch of Claude running state
   const { data: runningData } = trpc.claude.isRunning.useQuery({ sessionId });
 
+  // Fetch token usage stats (computed server-side from all messages)
+  const { data: tokenUsageData, refetch: refetchTokenUsage } = trpc.claude.getTokenUsage.useQuery(
+    { sessionId },
+    {
+      // Refetch less frequently since it's just for display
+      refetchOnWindowFocus: false,
+    }
+  );
+
   // Use SSE override if available, otherwise use query data
   const isClaudeRunning = claudeRunningOverride ?? runningData?.running ?? false;
 
@@ -108,6 +117,8 @@ function SessionView({ sessionId }: { sessionId: string }) {
       onData: () => {
         // Fetch new messages when we get a new message event
         fetchPreviousPage();
+        // Also refetch token usage since new messages affect the total
+        refetchTokenUsage();
       },
       onError: (err) => {
         console.error('Message SSE error:', err);
@@ -303,6 +314,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
         isLoading={historyLoading || isFetchingNextPage}
         hasMore={hasNextPage ?? false}
         onLoadMore={fetchNextPage}
+        tokenUsage={tokenUsageData}
       />
 
       <ClaudeStatusIndicator isRunning={isClaudeRunning} containerStatus={session.status} />

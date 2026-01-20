@@ -4,6 +4,7 @@ import { useRef, useEffect, useCallback, useMemo, useState } from 'react';
 import { MessageBubble, type ToolResultMap } from './messages';
 import { Spinner } from '@/components/ui/spinner';
 import { ContextUsageIndicator } from '@/components/ContextUsageIndicator';
+import type { TokenUsageStats } from '@/lib/token-estimation';
 
 interface ContentBlock {
   type: string;
@@ -128,9 +129,16 @@ interface MessageListProps {
   isLoading: boolean;
   hasMore: boolean;
   onLoadMore: () => void;
+  tokenUsage?: TokenUsageStats | null;
 }
 
-export function MessageList({ messages, isLoading, hasMore, onLoadMore }: MessageListProps) {
+export function MessageList({
+  messages,
+  isLoading,
+  hasMore,
+  onLoadMore,
+  tokenUsage,
+}: MessageListProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const topSentinelRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -269,7 +277,7 @@ export function MessageList({ messages, isLoading, hasMore, onLoadMore }: Messag
       </div>
 
       {/* Context usage indicator - positioned in bottom right */}
-      <ContextUsageIndicator messages={messages} className="absolute bottom-3 right-3 shadow-sm" />
+      <ContextUsageIndicator stats={tokenUsage} className="absolute bottom-3 right-3 shadow-sm" />
     </div>
   );
 }
