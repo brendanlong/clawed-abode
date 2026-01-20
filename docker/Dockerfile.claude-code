@@ -3,7 +3,7 @@ FROM nvidia/cuda:12.1.0-base-ubuntu22.04
 # Avoid prompts from apt
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install dependencies including Python, pip, and JDK
+# Install dependencies including Python, pip, JDK, and common development tools
 RUN apt-get update && apt-get install -y \
     curl \
     git \
@@ -14,6 +14,24 @@ RUN apt-get update && apt-get install -y \
     python3-pip \
     python3-venv \
     openjdk-17-jdk-headless \
+    # Standard development tools
+    build-essential \
+    # Common utilities (includes yes, head, tail, etc.)
+    coreutils \
+    # Archive tools
+    unzip \
+    zip \
+    tar \
+    # File inspection tools
+    file \
+    tree \
+    # Text processing tools
+    jq \
+    less \
+    vim \
+    # Network tools
+    wget \
+    openssh-client \
     && rm -rf /var/lib/apt/lists/* \
     && ln -sf /usr/bin/python3 /usr/bin/python
 

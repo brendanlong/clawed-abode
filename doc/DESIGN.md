@@ -281,11 +281,13 @@ This ensures users can see all changes through GitHub, which is their only way t
 ```dockerfile
 FROM nvidia/cuda:12.1.0-base-ubuntu22.04
 
-# Install dependencies including Python, pip, and JDK
+# Install dependencies including Python, pip, JDK, and common dev tools
 RUN apt-get update && apt-get install -y \
     curl git docker.io ca-certificates gnupg \
     python3 python3-pip python3-venv \
     openjdk-17-jdk-headless \
+    build-essential coreutils unzip zip tar \
+    file tree jq less vim wget openssh-client \
     && rm -rf /var/lib/apt/lists/* \
     && ln -sf /usr/bin/python3 /usr/bin/python
 
