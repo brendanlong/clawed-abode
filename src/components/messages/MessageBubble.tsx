@@ -11,6 +11,7 @@ import { EditDisplay } from './EditDisplay';
 import { TodoWriteDisplay } from './TodoWriteDisplay';
 import { GlobDisplay } from './GlobDisplay';
 import { WebSearchDisplay } from './WebSearchDisplay';
+import { AskUserQuestionDisplay } from './AskUserQuestionDisplay';
 import { ToolCallDisplay } from './ToolCallDisplay';
 import { ToolResultDisplay } from './ToolResultDisplay';
 import { SystemInitDisplay } from './SystemInitDisplay';
@@ -112,6 +113,10 @@ function renderContentBlocks(
 
             if (block.name === 'WebSearch') {
               return <WebSearchDisplay key={block.id} tool={tool} />;
+            }
+
+            if (block.name === 'AskUserQuestion') {
+              return <AskUserQuestionDisplay key={block.id} tool={tool} />;
             }
 
             return <ToolCallDisplay key={block.id} tool={tool} />;
