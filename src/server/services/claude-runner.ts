@@ -75,6 +75,7 @@ async function processClaudeStream(
 ): Promise<void> {
   let sequence = startSequence;
   let buffer = '';
+  let errorLines: string[] = [];
 
   // Helper to save an error message
   const saveErrorMessage = async (errorText: string) => {
@@ -94,6 +95,16 @@ async function processClaudeStream(
     });
   };
 
+  // Flush accumulated error lines as a single message
+  const flushErrorLines = async () => {
+    if (errorLines.length > 0) {
+      const combinedError = errorLines.join('\n');
+      console.error('Failed to parse Claude output:', combinedError);
+      await saveErrorMessage(combinedError);
+      errorLines = [];
+    }
+  };
+
   return new Promise((resolve, reject) => {
     stream.on('data', async (chunk: Buffer) => {
       // Docker multiplexed stream has 8-byte header
@@ -110,6 +121,10 @@ async function processClaudeStream(
 
         try {
           const parsed = JSON.parse(line);
+
+          // Flush any accumulated errors before saving valid message
+          await flushErrorLines();
+
           const messageType = mapClaudeMessageType(parsed.type);
 
           await prisma.message.create({
@@ -122,18 +137,20 @@ async function processClaudeStream(
             },
           });
         } catch {
-          // Save unparseable output as an error message visible to the user
-          console.error('Failed to parse Claude output:', line);
-          await saveErrorMessage(line);
+          // Accumulate unparseable lines to batch them together
+          errorLines.push(line);
         }
       }
     });
 
-    stream.on('end', () => {
+    stream.on('end', async () => {
+      // Flush any remaining error lines
+      await flushErrorLines();
       resolve();
     });
 
     stream.on('error', async (err) => {
+      await flushErrorLines();
       await saveErrorMessage(`Stream error: ${err.message}`);
       reject(err);
     });
