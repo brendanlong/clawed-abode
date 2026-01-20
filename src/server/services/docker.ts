@@ -4,6 +4,13 @@ import { env } from '@/lib/env';
 
 const docker = new Docker();
 
+// Logging helper for debugging
+function log(context: string, message: string, data?: Record<string, unknown>): void {
+  const timestamp = new Date().toISOString();
+  const dataStr = data ? ` ${JSON.stringify(data)}` : '';
+  console.log(`[${timestamp}] [docker:${context}] ${message}${dataStr}`);
+}
+
 const CLAUDE_CODE_IMAGE = 'claude-code-runner:latest';
 
 export interface ContainerConfig {
@@ -225,9 +232,19 @@ export async function findProcessInContainer(
     });
     stream.on('end', () => {
       const pid = parseInt(output.trim().split('\n')[0], 10);
-      resolve(isNaN(pid) ? null : pid);
+      const result = isNaN(pid) ? null : pid;
+      log('findProcessInContainer', 'Search complete', {
+        containerId,
+        processName,
+        pid: result,
+        rawOutput: output.trim().slice(0, 50),
+      });
+      resolve(result);
     });
-    stream.on('error', () => resolve(null));
+    stream.on('error', () => {
+      log('findProcessInContainer', 'Stream error', { containerId, processName });
+      resolve(null);
+    });
   });
 }
 
@@ -248,6 +265,7 @@ export async function execInContainerWithOutputFile(
   command: string[],
   outputFile: string
 ): Promise<{ execId: string }> {
+  log('execInContainerWithOutputFile', 'Starting', { containerId, command, outputFile });
   const container = docker.getContainer(containerId);
 
   // Wrap the command to redirect output to a file
@@ -257,6 +275,7 @@ export async function execInContainerWithOutputFile(
     '-c',
     `${command.map(escapeShellArg).join(' ')} > "${outputFile}" 2>&1`,
   ];
+  log('execInContainerWithOutputFile', 'Wrapped command', { wrappedCommand });
 
   const exec = await container.exec({
     Cmd: wrappedCommand,
@@ -267,6 +286,7 @@ export async function execInContainerWithOutputFile(
 
   // Start in detached mode
   await exec.start({ Detach: true, Tty: false });
+  log('execInContainerWithOutputFile', 'Started in detached mode', { execId: exec.id });
 
   return { execId: exec.id };
 }
@@ -280,18 +300,23 @@ export async function tailFileInContainer(
   filePath: string,
   startLine: number = 0
 ): Promise<{ stream: Readable; execId: string }> {
+  log('tailFileInContainer', 'Starting', { containerId, filePath, startLine });
   const container = docker.getContainer(containerId);
 
   // Use tail -f to follow the file, starting from line N
   // +1 because tail uses 1-based line numbers and we want to skip 'startLine' lines
+  const tailCmd = ['tail', '-n', `+${startLine + 1}`, '-f', filePath];
+  log('tailFileInContainer', 'Running tail command', { tailCmd });
+
   const exec = await container.exec({
-    Cmd: ['tail', '-n', `+${startLine + 1}`, '-f', filePath],
+    Cmd: tailCmd,
     AttachStdout: true,
     AttachStderr: true,
     Tty: false,
   });
 
   const stream = await exec.start({ Detach: false, Tty: false });
+  log('tailFileInContainer', 'Tail stream started', { execId: exec.id });
 
   return { stream: stream as unknown as Readable, execId: exec.id };
 }
@@ -376,12 +401,18 @@ export async function fileExistsInContainer(
     stream.on('end', async () => {
       try {
         const info = await exec.inspect();
-        resolve(info.ExitCode === 0);
+        const exists = info.ExitCode === 0;
+        log('fileExistsInContainer', 'Check complete', { containerId, filePath, exists });
+        resolve(exists);
       } catch {
+        log('fileExistsInContainer', 'Check failed', { containerId, filePath });
         resolve(false);
       }
     });
-    stream.on('error', () => resolve(false));
+    stream.on('error', () => {
+      log('fileExistsInContainer', 'Stream error', { containerId, filePath });
+      resolve(false);
+    });
   });
 }
 
