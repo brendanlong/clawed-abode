@@ -1,15 +1,10 @@
 import Docker from 'dockerode';
 import { Readable } from 'stream';
 import { env } from '@/lib/env';
+import { createLogger, toError } from '@/lib/logger';
 
 const docker = new Docker();
-
-// Logging helper for debugging
-function log(context: string, message: string, data?: Record<string, unknown>): void {
-  const timestamp = new Date().toISOString();
-  const dataStr = data ? ` ${JSON.stringify(data)}` : '';
-  console.log(`[${timestamp}] [docker:${context}] ${message}${dataStr}`);
-}
+const log = createLogger('docker');
 
 const CLAUDE_CODE_IMAGE = 'claude-code-runner:latest';
 
@@ -21,71 +16,97 @@ export interface ContainerConfig {
 
 export async function createAndStartContainer(config: ContainerConfig): Promise<string> {
   const containerName = `claude-session-${config.sessionId}`;
+  log.info('Creating container', { sessionId: config.sessionId, containerName });
 
-  // Check if container already exists
-  const existingContainers = await docker.listContainers({
-    all: true,
-    filters: { name: [containerName] },
-  });
+  try {
+    // Check if container already exists
+    const existingContainers = await docker.listContainers({
+      all: true,
+      filters: { name: [containerName] },
+    });
 
-  if (existingContainers.length > 0) {
-    const existing = existingContainers[0];
-    if (existing.State !== 'running') {
-      const container = docker.getContainer(existing.Id);
-      await container.start();
+    if (existingContainers.length > 0) {
+      const existing = existingContainers[0];
+      log.info('Found existing container', {
+        sessionId: config.sessionId,
+        containerId: existing.Id,
+        state: existing.State,
+      });
+      if (existing.State !== 'running') {
+        const container = docker.getContainer(existing.Id);
+        await container.start();
+        log.info('Started existing container', {
+          sessionId: config.sessionId,
+          containerId: existing.Id,
+        });
+      }
+      return existing.Id;
     }
-    return existing.Id;
+
+    // Build environment variables
+    const envVars: string[] = [];
+    if (config.githubToken) {
+      envVars.push(`GITHUB_TOKEN=${config.githubToken}`);
+    }
+
+    // Build volume binds
+    const binds = [
+      `${config.workspacePath}:/workspace`,
+      `/var/run/docker.sock:/var/run/docker.sock`,
+      `${env.CLAUDE_AUTH_PATH}:/home/claudeuser/.claude`,
+    ];
+
+    // Mount shared pnpm store if configured
+    // pnpm's store is safe for concurrent access (atomic operations)
+    if (env.PNPM_STORE_PATH) {
+      binds.push(`${env.PNPM_STORE_PATH}:/pnpm-store`);
+    }
+
+    log.info('Creating new container', {
+      sessionId: config.sessionId,
+      image: CLAUDE_CODE_IMAGE,
+      binds,
+    });
+
+    const container = await docker.createContainer({
+      Image: CLAUDE_CODE_IMAGE,
+      name: containerName,
+      Env: envVars,
+      HostConfig: {
+        Binds: binds,
+        DeviceRequests: [
+          {
+            Driver: 'nvidia',
+            Count: -1, // all GPUs
+            Capabilities: [['gpu']],
+          },
+        ],
+      },
+      WorkingDir: '/workspace',
+    });
+
+    await container.start();
+    log.info('Container started', { sessionId: config.sessionId, containerId: container.id });
+
+    // Configure git credential helper if token is provided
+    if (config.githubToken) {
+      await configureGitCredentials(container.id);
+    }
+
+    // Configure pnpm to use shared store if mounted
+    if (env.PNPM_STORE_PATH) {
+      await configurePnpmStore(container.id);
+    }
+
+    return container.id;
+  } catch (error) {
+    log.error('Failed to create/start container', toError(error), {
+      sessionId: config.sessionId,
+      containerName,
+      image: CLAUDE_CODE_IMAGE,
+    });
+    throw error;
   }
-
-  // Build environment variables
-  const envVars: string[] = [];
-  if (config.githubToken) {
-    envVars.push(`GITHUB_TOKEN=${config.githubToken}`);
-  }
-
-  // Build volume binds
-  const binds = [
-    `${config.workspacePath}:/workspace`,
-    `/var/run/docker.sock:/var/run/docker.sock`,
-    `${env.CLAUDE_AUTH_PATH}:/home/claudeuser/.claude`,
-  ];
-
-  // Mount shared pnpm store if configured
-  // pnpm's store is safe for concurrent access (atomic operations)
-  if (env.PNPM_STORE_PATH) {
-    binds.push(`${env.PNPM_STORE_PATH}:/pnpm-store`);
-  }
-
-  const container = await docker.createContainer({
-    Image: CLAUDE_CODE_IMAGE,
-    name: containerName,
-    Env: envVars,
-    HostConfig: {
-      Binds: binds,
-      DeviceRequests: [
-        {
-          Driver: 'nvidia',
-          Count: -1, // all GPUs
-          Capabilities: [['gpu']],
-        },
-      ],
-    },
-    WorkingDir: '/workspace',
-  });
-
-  await container.start();
-
-  // Configure git credential helper if token is provided
-  if (config.githubToken) {
-    await configureGitCredentials(container.id);
-  }
-
-  // Configure pnpm to use shared store if mounted
-  if (env.PNPM_STORE_PATH) {
-    await configurePnpmStore(container.id);
-  }
-
-  return container.id;
 }
 
 async function configureGitCredentials(containerId: string): Promise<void> {
@@ -169,7 +190,7 @@ async function configurePnpmStore(containerId: string): Promise<void> {
   });
   await execAndWait(configExec);
 
-  log('configurePnpmStore', 'Configured pnpm store-dir', { containerId });
+  log.info('Configured pnpm store-dir', { containerId });
 }
 
 export async function stopContainer(containerId: string): Promise<void> {
@@ -353,7 +374,7 @@ export async function findProcessInContainer(
     stream.on('end', () => {
       const pid = parseInt(output.trim().split('\n')[0], 10);
       const result = isNaN(pid) ? null : pid;
-      log('findProcessInContainer', 'Search complete', {
+      log.debug('findProcessInContainer: Search complete', {
         containerId,
         processPattern,
         pid: result,
@@ -362,7 +383,7 @@ export async function findProcessInContainer(
       resolve(result);
     });
     stream.on('error', () => {
-      log('findProcessInContainer', 'Stream error', { containerId, processPattern });
+      log.warn('findProcessInContainer: Stream error', { containerId, processPattern });
       resolve(null);
     });
   });
@@ -385,7 +406,7 @@ export async function execInContainerWithOutputFile(
   command: string[],
   outputFile: string
 ): Promise<{ execId: string }> {
-  log('execInContainerWithOutputFile', 'Starting', { containerId, command, outputFile });
+  log.debug('execInContainerWithOutputFile: Starting', { containerId, command, outputFile });
   const container = docker.getContainer(containerId);
 
   // Wrap the command to redirect output to a file
@@ -396,7 +417,7 @@ export async function execInContainerWithOutputFile(
     '-c',
     `exec ${command.map(escapeShellArg).join(' ')} > "${outputFile}" 2>&1`,
   ];
-  log('execInContainerWithOutputFile', 'Wrapped command', { wrappedCommand });
+  log.debug('execInContainerWithOutputFile: Wrapped command', { wrappedCommand });
 
   const exec = await container.exec({
     Cmd: wrappedCommand,
@@ -407,7 +428,7 @@ export async function execInContainerWithOutputFile(
 
   // Start in detached mode
   await exec.start({ Detach: true, Tty: false });
-  log('execInContainerWithOutputFile', 'Started in detached mode', { execId: exec.id });
+  log.debug('execInContainerWithOutputFile: Started in detached mode', { execId: exec.id });
 
   return { execId: exec.id };
 }
@@ -436,13 +457,13 @@ export async function tailFileInContainer(
   filePath: string,
   startLine: number = 0
 ): Promise<{ stream: Readable; execId: string }> {
-  log('tailFileInContainer', 'Starting', { containerId, filePath, startLine });
+  log.debug('tailFileInContainer: Starting', { containerId, filePath, startLine });
   const container = docker.getContainer(containerId);
 
   // Use tail -f to follow the file, starting from line N
   // +1 because tail uses 1-based line numbers and we want to skip 'startLine' lines
   const tailCmd = ['tail', '-n', `+${startLine + 1}`, '-f', filePath];
-  log('tailFileInContainer', 'Running tail command', { tailCmd });
+  log.debug('tailFileInContainer: Running tail command', { tailCmd });
 
   const exec = await container.exec({
     Cmd: tailCmd,
@@ -452,7 +473,7 @@ export async function tailFileInContainer(
   });
 
   const stream = await exec.start({ Detach: false, Tty: false });
-  log('tailFileInContainer', 'Tail stream started', { execId: exec.id });
+  log.debug('tailFileInContainer: Tail stream started', { execId: exec.id });
 
   return { stream: stream as unknown as Readable, execId: exec.id };
 }
@@ -538,15 +559,15 @@ export async function fileExistsInContainer(
       try {
         const info = await exec.inspect();
         const exists = info.ExitCode === 0;
-        log('fileExistsInContainer', 'Check complete', { containerId, filePath, exists });
+        log.debug('fileExistsInContainer: Check complete', { containerId, filePath, exists });
         resolve(exists);
       } catch {
-        log('fileExistsInContainer', 'Check failed', { containerId, filePath });
+        log.warn('fileExistsInContainer: Check failed', { containerId, filePath });
         resolve(false);
       }
     });
     stream.on('error', () => {
-      log('fileExistsInContainer', 'Stream error', { containerId, filePath });
+      log.warn('fileExistsInContainer: Stream error', { containerId, filePath });
       resolve(false);
     });
     stream.resume(); // Consume the stream so 'end' event fires

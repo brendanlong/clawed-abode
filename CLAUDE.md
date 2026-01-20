@@ -11,3 +11,4 @@
 - Always use cursor-based pagination and never offset
 - Use pnpm instead of npm
 - Always use shadcn/ui components
+- Use the centralized logger (`createLogger` from `@/lib/logger`) for all backend logging, especially errors

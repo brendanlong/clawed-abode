@@ -11,6 +11,9 @@ import {
   getContainerStatus,
 } from '../services/docker';
 import { sseEvents } from '../services/events';
+import { createLogger, toError } from '@/lib/logger';
+
+const log = createLogger('sessions');
 
 const sessionStatusSchema = z.enum(['creating', 'running', 'stopped', 'error']);
 
@@ -21,6 +24,8 @@ async function setupSession(
   branch: string,
   githubToken?: string
 ): Promise<void> {
+  log.info('Starting session setup', { sessionId, repoFullName, branch });
+
   const updateStatus = async (message: string) => {
     const session = await prisma.session.update({
       where: { id: sessionId },
@@ -31,17 +36,21 @@ async function setupSession(
 
   try {
     // Clone the repository
+    log.info('Cloning repository', { sessionId, repoFullName, branch });
     const { workspacePath } = await cloneRepo(repoFullName, branch, sessionId, githubToken);
+    log.info('Repository cloned', { sessionId, workspacePath });
 
     // Update status
     await updateStatus('Starting container...');
 
     // Start container with GitHub token for push/pull access
+    log.info('Starting container', { sessionId });
     const containerId = await createAndStartContainer({
       sessionId,
       workspacePath,
       githubToken,
     });
+    log.info('Container started', { sessionId, containerId });
 
     // Update session with container info
     const session = await prisma.session.update({
@@ -54,7 +63,12 @@ async function setupSession(
       },
     });
     sseEvents.emitSessionUpdate(sessionId, session);
+
+    log.info('Session setup complete', { sessionId });
   } catch (error) {
+    // Log the full error with stack trace
+    log.error('Session setup failed', toError(error), { sessionId, repoFullName, branch });
+
     // Mark session as error with message
     const errorMessage = error instanceof Error ? error.message : 'Failed to create session';
     const session = await prisma.session.update({
@@ -95,8 +109,10 @@ export const sessionsRouter = router({
       });
 
       // Start setup in background (don't await)
+      // Note: setupSession already logs errors internally, but we catch here
+      // to prevent unhandled promise rejections
       setupSession(session.id, input.repoFullName, input.branch, githubToken).catch((error) => {
-        console.error('Session setup failed:', error);
+        log.error('Unhandled error in session setup', toError(error), { sessionId: session.id });
       });
 
       // Return immediately so UI can navigate to session page

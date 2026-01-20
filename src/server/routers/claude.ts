@@ -4,6 +4,9 @@ import { prisma } from '@/lib/prisma';
 import { TRPCError } from '@trpc/server';
 import { runClaudeCommand, interruptClaude, isClaudeRunningAsync } from '../services/claude-runner';
 import { estimateTokenUsage } from '@/lib/token-estimation';
+import { createLogger, toError } from '@/lib/logger';
+
+const log = createLogger('claude');
 
 export const claudeRouter = router({
   send: protectedProcedure
@@ -41,7 +44,7 @@ export const claudeRouter = router({
 
       // Start Claude in the background - don't await
       runClaudeCommand(input.sessionId, session.containerId, input.prompt).catch((err) => {
-        console.error('Claude command failed:', err);
+        log.error('Claude command failed', toError(err), { sessionId: input.sessionId });
       });
 
       return { success: true };

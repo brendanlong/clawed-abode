@@ -4,6 +4,9 @@ import { prisma } from '@/lib/prisma';
 import { verifyPassword, generateSessionToken, loginSchema, SESSION_DURATION_MS } from '@/lib/auth';
 import { env } from '@/lib/env';
 import { TRPCError } from '@trpc/server';
+import { createLogger, toError } from '@/lib/logger';
+
+const log = createLogger('auth');
 
 async function createAuthSession(ipAddress?: string, userAgent?: string): Promise<string> {
   const token = generateSessionToken();
@@ -42,7 +45,7 @@ export const authRouter = router({
       try {
         valid = await verifyPassword(input.password, env.PASSWORD_HASH);
       } catch (error) {
-        console.error('Password verification error:', error);
+        log.error('Password verification error', toError(error));
         throw new TRPCError({
           code: 'INTERNAL_SERVER_ERROR',
           message: 'Invalid PASSWORD_HASH format. Generate with: pnpm hash-password <yourpassword>',
