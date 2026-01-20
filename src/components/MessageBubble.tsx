@@ -115,6 +115,10 @@ function ToolCallDisplay({ tool }: { tool: ToolCall }) {
   const hasOutput = tool.output !== undefined;
   const isPending = !hasOutput;
 
+  // Extract description from input if present (e.g., Bash tool)
+  const inputObj = tool.input as Record<string, unknown> | undefined;
+  const description = inputObj?.description as string | undefined;
+
   return (
     <Collapsible open={expanded} onOpenChange={setExpanded}>
       <Card
@@ -125,23 +129,28 @@ function ToolCallDisplay({ tool }: { tool: ToolCall }) {
         )}
       >
         <CollapsibleTrigger className="w-full px-3 py-2 text-left flex items-center justify-between text-sm hover:bg-muted/50 rounded-t-xl">
-          <div className="flex items-center gap-2">
-            <span className="font-mono text-primary">{tool.name}</span>
-            {isPending && (
-              <Badge
-                variant="outline"
-                className="text-xs border-yellow-500 text-yellow-700 dark:text-yellow-400"
-              >
-                Running...
-              </Badge>
-            )}
-            {tool.is_error && (
-              <Badge variant="destructive" className="text-xs">
-                Error
-              </Badge>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="font-mono text-primary">{tool.name}</span>
+              {isPending && (
+                <Badge
+                  variant="outline"
+                  className="text-xs border-yellow-500 text-yellow-700 dark:text-yellow-400"
+                >
+                  Running...
+                </Badge>
+              )}
+              {tool.is_error && (
+                <Badge variant="destructive" className="text-xs">
+                  Error
+                </Badge>
+              )}
+            </div>
+            {description && (
+              <div className="text-muted-foreground text-xs mt-1 truncate">{description}</div>
             )}
           </div>
-          <span className="text-muted-foreground">{expanded ? '−' : '+'}</span>
+          <span className="text-muted-foreground ml-2 flex-shrink-0">{expanded ? '−' : '+'}</span>
         </CollapsibleTrigger>
 
         <CollapsibleContent>
