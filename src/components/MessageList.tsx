@@ -1,8 +1,8 @@
 'use client';
 
 import { useRef, useEffect, useCallback, useMemo, useState } from 'react';
+import { useInView } from 'react-intersection-observer';
 import { MessageBubble, type ToolResultMap } from './messages';
-import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
 
 interface ContentBlock {
@@ -138,6 +138,20 @@ export function MessageList({ messages, isLoading, hasMore, onLoadMore }: Messag
   // Track which TodoWrite components have been manually toggled by the user
   const [manuallyToggledTodoIds, setManuallyToggledTodoIds] = useState<Set<string>>(new Set());
 
+  // Intersection observer for loading older messages when scrolling up
+  // rootMargin triggers load when sentinel is within 50% of viewport height from being visible
+  const { ref: topSentinelRef, inView: topInView } = useInView({
+    threshold: 0,
+    rootMargin: '50% 0px 0px 0px',
+  });
+
+  // Trigger load more when top sentinel becomes visible
+  useEffect(() => {
+    if (topInView && hasMore && !isLoading) {
+      onLoadMore();
+    }
+  }, [topInView, hasMore, isLoading, onLoadMore]);
+
   // Build the tool result map and determine which messages to hide
   const { resultMap, pairedMessageIds } = useMemo(() => buildToolResultMap(messages), [messages]);
 
@@ -169,19 +183,14 @@ export function MessageList({ messages, isLoading, hasMore, onLoadMore }: Messag
     }
   }, [messages, scrollToBottom]);
 
-  // Track if user is at bottom
+  // Track if user is at bottom (for auto-scroll on new messages)
   const handleScroll = useCallback(() => {
     const container = containerRef.current;
     if (!container) return;
 
     const { scrollTop, scrollHeight, clientHeight } = container;
     isAtBottomRef.current = scrollHeight - scrollTop - clientHeight < 50;
-
-    // Load more when scrolled near top
-    if (scrollTop < 100 && hasMore && !isLoading) {
-      onLoadMore();
-    }
-  }, [hasMore, isLoading, onLoadMore]);
+  }, []);
 
   return (
     <div
@@ -189,15 +198,12 @@ export function MessageList({ messages, isLoading, hasMore, onLoadMore }: Messag
       onScroll={handleScroll}
       className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4"
     >
-      {hasMore && (
+      {/* Sentinel for triggering infinite scroll - placed before messages */}
+      <div ref={topSentinelRef} className="h-1" />
+
+      {hasMore && isLoading && (
         <div className="text-center py-2">
-          {isLoading ? (
-            <Spinner size="sm" className="mx-auto" />
-          ) : (
-            <Button variant="link" onClick={onLoadMore}>
-              Load older messages
-            </Button>
-          )}
+          <Spinner size="sm" className="mx-auto" />
         </div>
       )}
 
