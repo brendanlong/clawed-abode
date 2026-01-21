@@ -549,6 +549,30 @@ claude-code-web/
 └── package.json
 ```
 
+## Testing
+
+### Test Categories
+
+- **Unit tests** (`*.test.ts`): Pure functions and isolated logic. Run with `pnpm test:unit`.
+- **Integration tests** (`*.integration.test.ts`): Tests using real external systems (git, SQLite). Run with `pnpm test:integration`.
+
+### Test File Locations
+
+Tests are co-located with source files:
+
+- `src/lib/auth.ts` → `src/lib/auth.test.ts`
+- `src/server/services/git.ts` → `src/server/services/git.integration.test.ts`
+
+### Running Tests
+
+```bash
+pnpm test          # Watch mode
+pnpm test:run      # Single run
+pnpm test:unit     # Unit tests only
+pnpm test:integration  # Integration tests only
+pnpm test:coverage # With coverage report
+```
+
 ## Implementation Phases
 
 ### Phase 1: Core MVP
