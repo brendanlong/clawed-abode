@@ -1,7 +1,7 @@
 {
-  "name": "claude-code-local-web",
+  "name": "clawed-burrow",
   "version": "1.0.0",
-  "description": "Self-hosted web interface for Claude Code with GPU support",
+  "description": "A place for clawed creatures run far from the cloud",
   "private": true,
   "scripts": {
     "dev": "next dev",

@@ -1,4 +1,4 @@
-# Claude Code Web - Design Document
+# Clawed Burrow - Design Document
 
 ## Overview
 

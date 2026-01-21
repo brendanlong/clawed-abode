@@ -3,8 +3,8 @@ import { Providers } from '@/components/Providers';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Claude Code Local Web',
-  description: 'Self-hosted web interface for Claude Code',
+  title: 'Clawed Burrow',
+  description: 'A place for clawed creatures that run far from the cloud',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
