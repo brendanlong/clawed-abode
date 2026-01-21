@@ -489,6 +489,8 @@ export async function isProcessRunning(containerId: string, processName: string)
 /**
  * Execute a command in the background that writes output to a file.
  * Returns the exec ID which can be used with getExecStatus() to check completion.
+ *
+ * @deprecated Use execInContainerWithTee instead for better error visibility
  */
 export async function execInContainerWithOutputFile(
   containerId: string,
@@ -521,6 +523,57 @@ export async function execInContainerWithOutputFile(
   log.debug('execInContainerWithOutputFile: Started in detached mode', { execId: exec.id });
 
   return { execId: exec.id };
+}
+
+/**
+ * Execute a command in attached mode, streaming output while also writing to a file for recovery.
+ * Uses `tee` to write to both stdout (which we capture) and a file (for crash recovery).
+ * Uses `stdbuf -oL` to disable buffering so output flows immediately.
+ *
+ * Returns:
+ * - stream: Readable stream of stdout/stderr (Docker multiplexed format)
+ * - execId: ID for checking exec status
+ *
+ * Advantages over execInContainerWithOutputFile:
+ * - Immediate output including startup errors (no waiting for file creation)
+ * - File backup for crash recovery still available
+ * - No need for separate tail process
+ */
+export async function execInContainerWithTee(
+  containerId: string,
+  command: string[],
+  outputFile: string
+): Promise<{ stream: Readable; execId: string }> {
+  log.debug('execInContainerWithTee: Starting', { containerId, command, outputFile });
+  const container = docker.getContainer(containerId);
+
+  // Build the command with tee and line-buffered output:
+  // stdbuf -oL: Line buffer stdout so output flows immediately
+  // 2>&1: Merge stderr into stdout before tee
+  // tee: Write to file while also passing through to stdout
+  //
+  // Note: We don't use `exec` here because we need the shell to set up the pipeline.
+  // Signal handling is done by finding the claude PID separately.
+  const wrappedCommand = [
+    'sh',
+    '-c',
+    `stdbuf -oL ${command.map(escapeShellArg).join(' ')} 2>&1 | tee "${outputFile}"`,
+  ];
+  log.debug('execInContainerWithTee: Wrapped command', { wrappedCommand });
+
+  const exec = await container.exec({
+    Cmd: wrappedCommand,
+    AttachStdout: true,
+    AttachStderr: true,
+    Tty: false,
+    User: 'claudeuser',
+  });
+
+  // Start in attached mode to get the output stream
+  const stream = await exec.start({ Detach: false, Tty: false });
+  log.debug('execInContainerWithTee: Started in attached mode', { execId: exec.id });
+
+  return { stream: stream as unknown as Readable, execId: exec.id };
 }
 
 /**
