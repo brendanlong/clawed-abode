@@ -9,6 +9,23 @@ const log = createLogger('docker');
 // Use env variable if set, otherwise default to local build
 const CLAUDE_CODE_IMAGE = env.CLAUDE_RUNNER_IMAGE;
 
+/**
+ * Convert a container path to a host path for Docker bind mounts.
+ * In Docker-in-Docker setups, DATA_DIR is the path inside this container,
+ * but we need the host path for bind mounts in session containers.
+ */
+function toHostPath(containerPath: string): string {
+  if (!env.DATA_HOST_PATH) {
+    // No host path configured, use the path as-is (local dev mode)
+    return containerPath;
+  }
+  // Replace the DATA_DIR prefix with DATA_HOST_PATH
+  if (containerPath.startsWith(env.DATA_DIR)) {
+    return containerPath.replace(env.DATA_DIR, env.DATA_HOST_PATH);
+  }
+  return containerPath;
+}
+
 // Track which images we've already pulled in this process lifetime
 const pulledImages = new Set<string>();
 
@@ -117,8 +134,9 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
     }
 
     // Build volume binds
+    // Use toHostPath() to convert container paths to host paths for Docker-in-Docker
     const binds = [
-      `${config.workspacePath}:/workspace`,
+      `${toHostPath(config.workspacePath)}:/workspace`,
       `/var/run/docker.sock:/var/run/docker.sock`,
       `${env.CLAUDE_AUTH_PATH}:/home/claudeuser/.claude`,
     ];

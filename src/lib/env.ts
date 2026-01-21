@@ -5,11 +5,14 @@ const envSchema = z.object({
   DATABASE_URL: z.string().default('file:./data/dev.db'),
   GITHUB_TOKEN: z.string().optional(),
   CLAUDE_AUTH_PATH: z.string().default('/root/.claude'),
-  // Always resolve to absolute path so Docker volume binds work correctly
+  // Path inside the container where data is mounted (for filesystem operations)
   DATA_DIR: z
     .string()
     .default('/data')
     .transform((p) => resolve(p)),
+  // Host path to data directory - used for bind mounts when creating session containers
+  // In Docker-in-Docker setups, this must be the path on the Docker host, not inside this container
+  DATA_HOST_PATH: z.string().optional(),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   // Prefix for session branches (e.g., "claude/" creates branches like "claude/{sessionId}")
   SESSION_BRANCH_PREFIX: z.string().default('claude/'),

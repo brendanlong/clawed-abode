@@ -7,9 +7,11 @@ services:
       - DATABASE_URL=file:/data/db/prod.db
       - GITHUB_TOKEN=${GITHUB_TOKEN}
       # Host path to Claude auth directory - used for bind mounts in session containers
-      # Must be an absolute path on the Docker host (not inside this container)
-      - CLAUDE_AUTH_PATH=${CLAUDE_AUTH_PATH:-${HOME}/.claude}
+      - CLAUDE_AUTH_PATH=${HOME}/.claude
+      # Path inside this container where data is mounted (for filesystem operations)
       - DATA_DIR=/data
+      # Host path to data directory - used for bind mounts when creating session containers
+      - DATA_HOST_PATH=${HOME}/.clawed-burrow
       - NODE_ENV=production
       - PASSWORD_HASH=${PASSWORD_HASH}
       # Tell the app which runner image to use for Claude sessions
@@ -19,10 +21,9 @@ services:
       # Optional: shared Gradle cache path on host (for faster builds)
       - GRADLE_USER_HOME=${GRADLE_USER_HOME:-}
     volumes:
-      - app-data:/data
+      - ${HOME}/.clawed-burrow:/data
       - /var/run/docker.sock:/var/run/docker.sock
-      # Mount claude auth so app can verify it exists (the actual path is passed via CLAUDE_AUTH_PATH env var)
-      - ${CLAUDE_AUTH_PATH:-${HOME}/.claude}:/claude-auth
+      - ${HOME}/.claude:/claude-auth
     restart: unless-stopped
     depends_on:
       - migrate
@@ -33,7 +34,7 @@ services:
     environment:
       - DATABASE_URL=file:/data/db/prod.db
     volumes:
-      - app-data:/data
+      - ${HOME}/.clawed-burrow:/data
 
   # Watchtower - automatically updates containers when new images are pushed
   watchtower:
@@ -54,5 +55,4 @@ services:
   # For remote access, we recommend using Tailscale Funnel on the host
   # See: https://tailscale.com/kb/1223/funnel
 
-volumes:
-  app-data:
+# Data is stored in ~/.clawed-burrow on the host
