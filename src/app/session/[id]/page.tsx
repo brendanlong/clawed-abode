@@ -237,7 +237,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
   // Dynamic page title based on Claude running state
   useEffect(() => {
     if (!session) return;
-    const baseTitle = `${session.name} - Claude Code Local Web`;
+    const baseTitle = `${session.name} - Clawed Burrow`;
     document.title = isClaudeRunning ? `Working - ${baseTitle}` : baseTitle;
   }, [session, isClaudeRunning]);
 

@@ -14,7 +14,7 @@ export function Header() {
         <div className="flex justify-between items-center h-16">
           <Link href="/" className="flex items-center space-x-2">
             <span className="text-xl font-bold">
-              Claude Code
+              Clawed Burrow
               <TooltipProvider>
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -28,7 +28,6 @@ export function Header() {
                   </TooltipContent>
                 </Tooltip>
               </TooltipProvider>{' '}
-              Local Web
             </span>
           </Link>
 
