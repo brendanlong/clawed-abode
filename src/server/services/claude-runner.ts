@@ -96,17 +96,26 @@ async function saveMessageIfNotExists(
     return { saved: false, reason: 'duplicate' };
   }
 
-  const message = await prisma.message.create({
-    data: {
-      id: msgId,
-      sessionId,
-      sequence,
-      type: messageType,
-      content: line,
-    },
-  });
+  try {
+    const message = await prisma.message.create({
+      data: {
+        id: msgId,
+        sessionId,
+        sequence,
+        type: messageType,
+        content: line,
+      },
+    });
 
-  return { saved: true, sequence, message: { ...message, content: parsed } };
+    return { saved: true, sequence, message: { ...message, content: parsed } };
+  } catch (err) {
+    // Handle unique constraint violation on (sessionId, sequence)
+    // This can happen in race conditions when processing the same output file
+    if (err && typeof err === 'object' && 'code' in err && err.code === 'P2002') {
+      return { saved: false, reason: 'duplicate' };
+    }
+    throw err;
+  }
 }
 
 function getOutputFileName(sessionId: string): string {
