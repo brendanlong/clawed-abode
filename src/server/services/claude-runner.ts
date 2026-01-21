@@ -601,6 +601,105 @@ async function updateLastSequence(sessionId: string, sequence: number): Promise<
     .catch(() => {}); // Ignore if record doesn't exist
 }
 
+/**
+ * Mark the last non-user message as potentially interrupted and add an interrupt indicator message.
+ * Called after successfully sending SIGINT to the Claude process.
+ */
+export async function markLastMessageAsInterrupted(sessionId: string): Promise<void> {
+  log.info('markLastMessageAsInterrupted: Marking message as interrupted', { sessionId });
+
+  // Get the last message to find the current max sequence
+  const lastMessage = await prisma.message.findFirst({
+    where: { sessionId },
+    orderBy: { sequence: 'desc' },
+    select: { id: true, sequence: true, type: true, content: true },
+  });
+
+  if (!lastMessage) {
+    log.warn('markLastMessageAsInterrupted: No messages found', { sessionId });
+    return;
+  }
+
+  // Find the last non-user message to mark as interrupted
+  // This could be assistant, result, or system type
+  const lastNonUserMessage = await prisma.message.findFirst({
+    where: {
+      sessionId,
+      type: { not: 'user' },
+    },
+    orderBy: { sequence: 'desc' },
+    select: { id: true, sequence: true, type: true, content: true },
+  });
+
+  if (lastNonUserMessage) {
+    // Parse the content, add interrupted flag, and save back
+    try {
+      const content = JSON.parse(lastNonUserMessage.content);
+      content.interrupted = true;
+      await prisma.message.update({
+        where: { id: lastNonUserMessage.id },
+        data: { content: JSON.stringify(content) },
+      });
+      log.debug('markLastMessageAsInterrupted: Marked message as interrupted', {
+        sessionId,
+        messageId: lastNonUserMessage.id,
+        type: lastNonUserMessage.type,
+      });
+
+      // Emit update for the modified message
+      sseEvents.emitNewMessage(sessionId, {
+        id: lastNonUserMessage.id,
+        sessionId,
+        sequence: lastNonUserMessage.sequence,
+        type: lastNonUserMessage.type,
+        content,
+        createdAt: new Date(),
+      });
+    } catch (err) {
+      log.warn('markLastMessageAsInterrupted: Failed to parse message content', {
+        sessionId,
+        messageId: lastNonUserMessage.id,
+        error: toError(err).message,
+      });
+    }
+  }
+
+  // Add an interrupt indicator message
+  const interruptMessageId = uuid();
+  const interruptSequence = lastMessage.sequence + 1;
+  const interruptContent = {
+    type: 'user',
+    subtype: 'interrupt',
+    content: 'Interrupted',
+  };
+
+  await prisma.message.create({
+    data: {
+      id: interruptMessageId,
+      sessionId,
+      sequence: interruptSequence,
+      type: 'user',
+      content: JSON.stringify(interruptContent),
+    },
+  });
+
+  log.info('markLastMessageAsInterrupted: Added interrupt message', {
+    sessionId,
+    messageId: interruptMessageId,
+    sequence: interruptSequence,
+  });
+
+  // Emit the new interrupt message
+  sseEvents.emitNewMessage(sessionId, {
+    id: interruptMessageId,
+    sessionId,
+    sequence: interruptSequence,
+    type: 'user',
+    content: interruptContent,
+    createdAt: new Date(),
+  });
+}
+
 export async function interruptClaude(sessionId: string): Promise<boolean> {
   log.info('interruptClaude: Interrupt requested', { sessionId });
 
