@@ -48,15 +48,8 @@ services:
       - com.centurylinklabs.watchtower.scope=clawed-burrow
     restart: unless-stopped
 
-  # Cloudflare Tunnel (optional)
-  cloudflared:
-    image: cloudflare/cloudflared:latest
-    command: tunnel --no-autoupdate run
-    environment:
-      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
-    restart: unless-stopped
-    profiles:
-      - tunnel
+  # For remote access, we recommend using Tailscale Funnel on the host
+  # See: https://tailscale.com/kb/1223/funnel
 
 volumes:
   app-data:

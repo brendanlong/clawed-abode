@@ -109,91 +109,23 @@ cd docker
 docker compose up -d
 ```
 
-### With Cloudflare Tunnel (for secure remote access)
+### With Tailscale Funnel (for secure remote access)
 
-Cloudflare Tunnels allow secure remote access without exposing ports or requiring a VPN.
+Tailscale Funnel allows secure remote access without exposing ports or requiring traditional VPN setup.
 
-#### Option A: Using Docker Compose (recommended)
+1. **Install Tailscale** on your server: https://tailscale.com/download
 
-1. Create a Cloudflare Tunnel at https://one.dash.cloudflare.com/ → Networks → Tunnels
-2. Copy the tunnel token
-3. Add to your environment:
-   ```bash
-   export CLOUDFLARE_TUNNEL_TOKEN=your_tunnel_token
-   ```
-4. Start with the tunnel profile:
-   ```bash
-   docker compose --profile tunnel up -d
-   ```
-
-#### Option B: Manual Setup with cloudflared
-
-1. **Install cloudflared:**
+2. **Enable Funnel** for your machine:
 
    ```bash
-   # On Ubuntu/Debian
-   curl -L --output cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
-   sudo dpkg -i cloudflared.deb
+   # Enable HTTPS and Funnel in Tailscale admin console first
+   # Then expose your app:
+   tailscale funnel 3000
    ```
 
-2. **Authenticate with Cloudflare:**
+3. **Access your app** at `https://<machine-name>.<tailnet-name>.ts.net`
 
-   ```bash
-   cloudflared tunnel login
-   ```
-
-   This opens a browser to authenticate and creates a certificate at `~/.cloudflared/cert.pem`.
-
-3. **Create a tunnel:**
-
-   ```bash
-   cloudflared tunnel create claude-code-web
-   ```
-
-   Note the tunnel ID from the output. This also creates credentials at `~/.cloudflared/<TUNNEL_ID>.json`.
-
-4. **Configure the tunnel:**
-
-   Create `~/.cloudflared/config.yml`:
-
-   ```yaml
-   tunnel: <TUNNEL_ID>
-   credentials-file: /home/<user>/.cloudflared/<TUNNEL_ID>.json
-
-   ingress:
-     - hostname: claude-code.yourdomain.com
-       service: http://localhost:3000
-     - service: http_status:404
-   ```
-
-5. **Create DNS record:**
-
-   ```bash
-   cloudflared tunnel route dns claude-code-web claude-code.yourdomain.com
-   ```
-
-6. **Run the tunnel:**
-
-   ```bash
-   # Test manually
-   cloudflared tunnel run claude-code-web
-
-   # Or install as a systemd service
-   sudo cloudflared service install
-   sudo systemctl enable cloudflared
-   sudo systemctl start cloudflared
-   ```
-
-#### Optional: Add Cloudflare Access
-
-For an additional authentication layer at the edge:
-
-1. Go to Cloudflare Zero Trust dashboard → Access → Applications
-2. Click "Add an application" → "Self-hosted"
-3. Enter your hostname (e.g., `claude-code.yourdomain.com`)
-4. Configure an access policy (e.g., email allowlist, one-time PIN)
-
-This adds authentication before traffic reaches your server, providing defense in depth.
+For persistent Funnel configuration, see the [Tailscale Funnel documentation](https://tailscale.com/kb/1223/funnel).
 
 ## Configuration
 
@@ -248,8 +180,8 @@ The application uses NVIDIA Container Toolkit for GPU access. Ensure you have:
 
 ```
 ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────────────────┐
-│   Mobile/Web    │     │   Cloudflare    │     │      Home Server            │
-│   Browser       │────►│   Tunnel        │────►│  ┌─────────────────────┐    │
+│   Mobile/Web    │     │   Tailscale     │     │      Home Server            │
+│   Browser       │────►│   Funnel        │────►│  ┌─────────────────────┐    │
 │                 │     │                 │     │  │   Next.js + tRPC    │    │
 └─────────────────┘     └─────────────────┘     │  │   - Auth            │    │
                                                 │  │   - Session mgmt    │    │
@@ -295,7 +227,7 @@ pnpm start
 - Each session has its own container with an isolated git clone
 - Use Fine-grained PATs scoped to specific repos with minimal permissions
 - Docker socket access is provided for docker-in-docker capability
-- Use Cloudflare Tunnel or similar for secure remote access (don't expose port 3000 directly)
+- Use Tailscale Funnel or similar for secure remote access (don't expose port 3000 directly)
 
 ## Troubleshooting
 

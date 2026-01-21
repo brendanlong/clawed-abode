@@ -5,9 +5,9 @@ direction: right
 # External clients
 mobile: Mobile/Web Browser
 
-# Cloudflare
-cloudflare: Cloudflare Tunnel {
-  style.fill: "#F6821F"
+# Tailscale
+tailscale: Tailscale Funnel {
+  style.fill: "#4A5568"
 }
 
 # Home Server
@@ -61,8 +61,8 @@ server: Home Server {
 }
 
 # Connections
-mobile -> cloudflare: HTTPS
-cloudflare -> server.app: Encrypted tunnel
+mobile -> tailscale: HTTPS
+tailscale -> server.app: Encrypted tunnel
 
 # Data Model
 data_model: Data Model {
