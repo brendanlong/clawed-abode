@@ -6,7 +6,8 @@ import { createLogger, toError } from '@/lib/logger';
 const docker = new Docker();
 const log = createLogger('docker');
 
-const CLAUDE_CODE_IMAGE = 'claude-code-runner:latest';
+// Use env variable if set, otherwise default to local build
+const CLAUDE_CODE_IMAGE = env.CLAUDE_RUNNER_IMAGE;
 
 export interface ContainerConfig {
   sessionId: string;

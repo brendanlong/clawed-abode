@@ -28,6 +28,9 @@ const envSchema = z.object({
   // Gradle's cache is safe for concurrent access (file locking)
   // Example: /home/user/.gradle
   GRADLE_USER_HOME: z.string().optional(),
+  // Docker image to use for Claude Code runner containers
+  // Defaults to local build, but can be set to GHCR image for production
+  CLAUDE_RUNNER_IMAGE: z.string().default('claude-code-runner:latest'),
 });
 
 export type Env = z.infer<typeof envSchema>;
