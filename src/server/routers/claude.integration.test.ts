@@ -1,18 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
-import {
-  setupTestDatabase,
-  teardownTestDatabase,
-  getTestPrisma,
-  clearTestDatabase,
-} from '@/test/setup-prisma';
-
-let realPrisma: ReturnType<typeof getTestPrisma>;
-
-vi.mock('@/lib/prisma', () => ({
-  get prisma() {
-    return realPrisma;
-  },
-}));
+import { setupTestDb, teardownTestDb, testPrisma, clearTestDb } from '@/test/setup-test-db';
 
 // Mock claude-runner service (has real Docker dependencies)
 const mockRunClaudeCommand = vi.hoisted(() => vi.fn());
@@ -41,8 +28,9 @@ vi.mock('@/lib/logger', () => ({
   toError: (e: unknown) => (e instanceof Error ? e : new Error(String(e))),
 }));
 
-import { claudeRouter } from './claude';
-import { router } from '../trpc';
+// These will be set in beforeAll after the test DB is set up
+let claudeRouter: Awaited<typeof import('./claude')>['claudeRouter'];
+let router: Awaited<typeof import('../trpc')>['router'];
 
 const createCaller = (sessionId: string | null) => {
   const testRouter = router({
@@ -53,21 +41,28 @@ const createCaller = (sessionId: string | null) => {
 
 describe('claudeRouter integration', () => {
   beforeAll(async () => {
-    realPrisma = await setupTestDatabase();
+    // Set up the test database BEFORE importing the router
+    await setupTestDb();
+
+    // Now dynamically import the router (which imports prisma)
+    const claudeModule = await import('./claude');
+    const trpcModule = await import('../trpc');
+    claudeRouter = claudeModule.claudeRouter;
+    router = trpcModule.router;
   });
 
   afterAll(async () => {
-    await teardownTestDatabase();
+    await teardownTestDb();
   });
 
   beforeEach(async () => {
-    await clearTestDatabase();
+    await clearTestDb();
     vi.clearAllMocks();
   });
 
   describe('send', () => {
     it('should send a prompt to Claude for a running session', async () => {
-      const session = await realPrisma.session.create({
+      const session = await testPrisma.session.create({
         data: {
           name: 'Test Session',
           repoUrl: 'https://github.com/owner/repo.git',
@@ -110,7 +105,7 @@ describe('claudeRouter integration', () => {
     });
 
     it('should throw PRECONDITION_FAILED if session is not running', async () => {
-      const session = await realPrisma.session.create({
+      const session = await testPrisma.session.create({
         data: {
           name: 'Stopped Session',
           repoUrl: 'https://github.com/owner/repo.git',
@@ -134,7 +129,7 @@ describe('claudeRouter integration', () => {
     });
 
     it('should throw CONFLICT if Claude is already running', async () => {
-      const session = await realPrisma.session.create({
+      const session = await testPrisma.session.create({
         data: {
           name: 'Running Session',
           repoUrl: 'https://github.com/owner/repo.git',
@@ -187,7 +182,7 @@ describe('claudeRouter integration', () => {
 
   describe('interrupt', () => {
     it('should interrupt Claude successfully', async () => {
-      const session = await realPrisma.session.create({
+      const session = await testPrisma.session.create({
         data: {
           name: 'Running Session',
           repoUrl: 'https://github.com/owner/repo.git',
@@ -210,7 +205,7 @@ describe('claudeRouter integration', () => {
     });
 
     it('should return false if no process to interrupt', async () => {
-      const session = await realPrisma.session.create({
+      const session = await testPrisma.session.create({
         data: {
           name: 'Idle Session',
           repoUrl: 'https://github.com/owner/repo.git',
@@ -253,7 +248,7 @@ describe('claudeRouter integration', () => {
 
   describe('getHistory', () => {
     it('should get message history from the database', async () => {
-      const session = await realPrisma.session.create({
+      const session = await testPrisma.session.create({
         data: {
           name: 'Session with history',
           repoUrl: 'https://github.com/owner/repo.git',
@@ -264,7 +259,7 @@ describe('claudeRouter integration', () => {
       });
 
       // Create messages in the database
-      await realPrisma.message.createMany({
+      await testPrisma.message.createMany({
         data: [
           {
             sessionId: session.id,
@@ -301,7 +296,7 @@ describe('claudeRouter integration', () => {
     });
 
     it('should support backward pagination', async () => {
-      const session = await realPrisma.session.create({
+      const session = await testPrisma.session.create({
         data: {
           name: 'Session with many messages',
           repoUrl: 'https://github.com/owner/repo.git',
@@ -318,7 +313,7 @@ describe('claudeRouter integration', () => {
         type: i % 2 === 0 ? 'user' : 'assistant',
         content: JSON.stringify({ type: i % 2 === 0 ? 'user' : 'assistant', seq: i }),
       }));
-      await realPrisma.message.createMany({ data: messages });
+      await testPrisma.message.createMany({ data: messages });
 
       const caller = createCaller('auth-session-id');
 
@@ -337,7 +332,7 @@ describe('claudeRouter integration', () => {
     });
 
     it('should support forward pagination', async () => {
-      const session = await realPrisma.session.create({
+      const session = await testPrisma.session.create({
         data: {
           name: 'Session with messages',
           repoUrl: 'https://github.com/owner/repo.git',
@@ -354,7 +349,7 @@ describe('claudeRouter integration', () => {
         type: 'user',
         content: JSON.stringify({ type: 'user', seq: i }),
       }));
-      await realPrisma.message.createMany({ data: messages });
+      await testPrisma.message.createMany({ data: messages });
 
       const caller = createCaller('auth-session-id');
 
@@ -428,7 +423,7 @@ describe('claudeRouter integration', () => {
 
   describe('getTokenUsage', () => {
     it('should calculate token usage from messages in the database', async () => {
-      const session = await realPrisma.session.create({
+      const session = await testPrisma.session.create({
         data: {
           name: 'Session with usage',
           repoUrl: 'https://github.com/owner/repo.git',
@@ -439,7 +434,7 @@ describe('claudeRouter integration', () => {
       });
 
       // Create a result message with usage data
-      await realPrisma.message.create({
+      await testPrisma.message.create({
         data: {
           sessionId: session.id,
           sequence: 0,
@@ -468,7 +463,7 @@ describe('claudeRouter integration', () => {
     });
 
     it('should aggregate usage from multiple result messages', async () => {
-      const session = await realPrisma.session.create({
+      const session = await testPrisma.session.create({
         data: {
           name: 'Session with multiple turns',
           repoUrl: 'https://github.com/owner/repo.git',
@@ -479,7 +474,7 @@ describe('claudeRouter integration', () => {
       });
 
       // Create multiple result messages (each turn)
-      await realPrisma.message.createMany({
+      await testPrisma.message.createMany({
         data: [
           {
             sessionId: session.id,

@@ -1,18 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
-import {
-  setupTestDatabase,
-  teardownTestDatabase,
-  getTestPrisma,
-  clearTestDatabase,
-} from '@/test/setup-prisma';
-
-let realPrisma: ReturnType<typeof getTestPrisma>;
-
-vi.mock('@/lib/prisma', () => ({
-  get prisma() {
-    return realPrisma;
-  },
-}));
+import { setupTestDb, teardownTestDb, testPrisma, clearTestDb } from '@/test/setup-test-db';
 
 // Mock external services that have real dependencies (Docker, git)
 const mockCloneRepo = vi.hoisted(() => vi.fn());
@@ -54,8 +41,9 @@ vi.mock('@/lib/logger', () => ({
   toError: (e: unknown) => (e instanceof Error ? e : new Error(String(e))),
 }));
 
-import { sessionsRouter } from './sessions';
-import { router } from '../trpc';
+// These will be set in beforeAll after the test DB is set up
+let sessionsRouter: Awaited<typeof import('./sessions')>['sessionsRouter'];
+let router: Awaited<typeof import('../trpc')>['router'];
 
 const createCaller = (sessionId: string | null) => {
   const testRouter = router({
@@ -66,16 +54,24 @@ const createCaller = (sessionId: string | null) => {
 
 describe('sessionsRouter integration', () => {
   beforeAll(async () => {
-    realPrisma = await setupTestDatabase();
+    // Set up the test database BEFORE importing the router
+    await setupTestDb();
+
+    // Now dynamically import the router (which imports prisma)
+    const sessionsModule = await import('./sessions');
+    const trpcModule = await import('../trpc');
+    sessionsRouter = sessionsModule.sessionsRouter;
+    router = trpcModule.router;
+
     process.env.GITHUB_TOKEN = 'test-github-token';
   });
 
   afterAll(async () => {
-    await teardownTestDatabase();
+    await teardownTestDb();
   });
 
   beforeEach(async () => {
-    await clearTestDatabase();
+    await clearTestDb();
     vi.clearAllMocks();
   });
 
@@ -94,7 +90,7 @@ describe('sessionsRouter integration', () => {
       expect(result.session.branch).toBe('main');
 
       // Verify in database
-      const dbSession = await realPrisma.session.findUnique({
+      const dbSession = await testPrisma.session.findUnique({
         where: { id: result.session.id },
       });
       expect(dbSession).toBeDefined();
@@ -112,7 +108,7 @@ describe('sessionsRouter integration', () => {
 
       expect(result.session.initialPrompt).toBe('Fix the bug in issue #123');
 
-      const dbSession = await realPrisma.session.findUnique({
+      const dbSession = await testPrisma.session.findUnique({
         where: { id: result.session.id },
       });
       expect(dbSession!.initialPrompt).toBe('Fix the bug in issue #123');
@@ -148,7 +144,7 @@ describe('sessionsRouter integration', () => {
   describe('list', () => {
     it('should list all sessions from the database', async () => {
       // Create sessions directly in the database
-      await realPrisma.session.createMany({
+      await testPrisma.session.createMany({
         data: [
           {
             name: 'Session 1',
@@ -175,7 +171,7 @@ describe('sessionsRouter integration', () => {
     });
 
     it('should include lastMessage from the database', async () => {
-      const session = await realPrisma.session.create({
+      const session = await testPrisma.session.create({
         data: {
           name: 'Session with messages',
           repoUrl: 'https://github.com/owner/repo.git',
@@ -186,7 +182,7 @@ describe('sessionsRouter integration', () => {
       });
 
       // Add some messages
-      await realPrisma.message.createMany({
+      await testPrisma.message.createMany({
         data: [
           {
             sessionId: session.id,
@@ -212,7 +208,7 @@ describe('sessionsRouter integration', () => {
     });
 
     it('should filter by status', async () => {
-      await realPrisma.session.createMany({
+      await testPrisma.session.createMany({
         data: [
           {
             name: 'Running 1',
@@ -253,7 +249,7 @@ describe('sessionsRouter integration', () => {
 
   describe('get', () => {
     it('should get a session by ID from the database', async () => {
-      const session = await realPrisma.session.create({
+      const session = await testPrisma.session.create({
         data: {
           name: 'Test Session',
           repoUrl: 'https://github.com/owner/repo.git',
@@ -293,7 +289,7 @@ describe('sessionsRouter integration', () => {
 
   describe('start', () => {
     it('should start a stopped session and update the database', async () => {
-      const session = await realPrisma.session.create({
+      const session = await testPrisma.session.create({
         data: {
           name: 'Stopped Session',
           repoUrl: 'https://github.com/owner/repo.git',
@@ -313,13 +309,13 @@ describe('sessionsRouter integration', () => {
       expect(mockCreateAndStartContainer).toHaveBeenCalled();
 
       // Verify database was updated
-      const dbSession = await realPrisma.session.findUnique({ where: { id: session.id } });
+      const dbSession = await testPrisma.session.findUnique({ where: { id: session.id } });
       expect(dbSession!.status).toBe('running');
       expect(dbSession!.containerId).toBe('new-container-id');
     });
 
     it('should not start an already running session', async () => {
-      const session = await realPrisma.session.create({
+      const session = await testPrisma.session.create({
         data: {
           name: 'Running Session',
           repoUrl: 'https://github.com/owner/repo.git',
@@ -348,7 +344,7 @@ describe('sessionsRouter integration', () => {
 
   describe('stop', () => {
     it('should stop a running session and update the database', async () => {
-      const session = await realPrisma.session.create({
+      const session = await testPrisma.session.create({
         data: {
           name: 'Running Session',
           repoUrl: 'https://github.com/owner/repo.git',
@@ -368,12 +364,12 @@ describe('sessionsRouter integration', () => {
       expect(mockStopContainer).toHaveBeenCalledWith('container-123');
 
       // Verify database was updated
-      const dbSession = await realPrisma.session.findUnique({ where: { id: session.id } });
+      const dbSession = await testPrisma.session.findUnique({ where: { id: session.id } });
       expect(dbSession!.status).toBe('stopped');
     });
 
     it('should handle session without container', async () => {
-      const session = await realPrisma.session.create({
+      const session = await testPrisma.session.create({
         data: {
           name: 'Creating Session',
           repoUrl: 'https://github.com/owner/repo.git',
@@ -401,7 +397,7 @@ describe('sessionsRouter integration', () => {
 
   describe('delete', () => {
     it('should delete a session and clean up resources', async () => {
-      const session = await realPrisma.session.create({
+      const session = await testPrisma.session.create({
         data: {
           name: 'Session to delete',
           repoUrl: 'https://github.com/owner/repo.git',
@@ -413,7 +409,7 @@ describe('sessionsRouter integration', () => {
       });
 
       // Add some messages
-      await realPrisma.message.create({
+      await testPrisma.message.create({
         data: {
           sessionId: session.id,
           sequence: 0,
@@ -433,15 +429,15 @@ describe('sessionsRouter integration', () => {
       expect(mockRemoveWorkspace).toHaveBeenCalledWith(session.id);
 
       // Verify session and messages were deleted from database
-      const dbSession = await realPrisma.session.findUnique({ where: { id: session.id } });
+      const dbSession = await testPrisma.session.findUnique({ where: { id: session.id } });
       expect(dbSession).toBeNull();
 
-      const messages = await realPrisma.message.findMany({ where: { sessionId: session.id } });
+      const messages = await testPrisma.message.findMany({ where: { sessionId: session.id } });
       expect(messages).toHaveLength(0);
     });
 
     it('should handle session without container', async () => {
-      const session = await realPrisma.session.create({
+      const session = await testPrisma.session.create({
         data: {
           name: 'Session without container',
           repoUrl: 'https://github.com/owner/repo.git',
@@ -471,7 +467,7 @@ describe('sessionsRouter integration', () => {
 
   describe('syncStatus', () => {
     it('should sync status from container to database', async () => {
-      const session = await realPrisma.session.create({
+      const session = await testPrisma.session.create({
         data: {
           name: 'Session to sync',
           repoUrl: 'https://github.com/owner/repo.git',
@@ -490,12 +486,12 @@ describe('sessionsRouter integration', () => {
       expect(result.session?.status).toBe('running');
 
       // Verify database was updated
-      const dbSession = await realPrisma.session.findUnique({ where: { id: session.id } });
+      const dbSession = await testPrisma.session.findUnique({ where: { id: session.id } });
       expect(dbSession!.status).toBe('running');
     });
 
     it('should mark as stopped if container not found', async () => {
-      const session = await realPrisma.session.create({
+      const session = await testPrisma.session.create({
         data: {
           name: 'Session with missing container',
           repoUrl: 'https://github.com/owner/repo.git',
@@ -515,7 +511,7 @@ describe('sessionsRouter integration', () => {
     });
 
     it('should return session as-is if no container', async () => {
-      const session = await realPrisma.session.create({
+      const session = await testPrisma.session.create({
         data: {
           name: 'Session without container',
           repoUrl: 'https://github.com/owner/repo.git',

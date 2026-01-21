@@ -1,33 +1,7 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { TRPCError } from '@trpc/server';
-import {
-  setupTestDatabase,
-  teardownTestDatabase,
-  getTestPrisma,
-  clearTestDatabase,
-} from '@/test/setup-prisma';
+import { setupTestDb, teardownTestDb, testPrisma, clearTestDb } from '@/test/setup-test-db';
 import { hashPassword } from '@/lib/auth';
-
-// We need to mock the prisma import used by the router to use our test instance
-// But we'll use real auth functions (verifyPassword, generateSessionToken)
-const mockPrisma = {
-  authSession: {
-    create: null as unknown,
-    delete: null as unknown,
-    deleteMany: null as unknown,
-    findMany: null as unknown,
-    findUnique: null as unknown,
-  },
-};
-
-// This will be set up after database initialization
-let realPrisma: ReturnType<typeof getTestPrisma>;
-
-vi.mock('@/lib/prisma', () => ({
-  get prisma() {
-    return realPrisma || mockPrisma;
-  },
-}));
 
 // Mock env - we'll set the real hash in beforeAll
 const mockEnv = vi.hoisted(() => ({
@@ -38,7 +12,7 @@ vi.mock('@/lib/env', () => ({
   env: mockEnv,
 }));
 
-// Mock logger
+// Mock logger (just to reduce noise)
 vi.mock('@/lib/logger', () => ({
   createLogger: () => ({
     info: vi.fn(),
@@ -49,8 +23,9 @@ vi.mock('@/lib/logger', () => ({
   toError: (e: unknown) => (e instanceof Error ? e : new Error(String(e))),
 }));
 
-import { authRouter } from './auth';
-import { router } from '../trpc';
+// These will be set in beforeAll after the test DB is set up
+let authRouter: Awaited<typeof import('./auth')>['authRouter'];
+let router: Awaited<typeof import('../trpc')>['router'];
 
 const createCaller = (sessionId: string | null) => {
   const testRouter = router({
@@ -63,7 +38,15 @@ const TEST_PASSWORD = 'test-password-123';
 
 describe('authRouter integration', () => {
   beforeAll(async () => {
-    realPrisma = await setupTestDatabase();
+    // Set up the test database BEFORE importing the router
+    // This ensures @/lib/prisma connects to our test DB
+    await setupTestDb();
+
+    // Now dynamically import the router (which imports prisma)
+    const authModule = await import('./auth');
+    const trpcModule = await import('../trpc');
+    authRouter = authModule.authRouter;
+    router = trpcModule.router;
 
     // Create a real password hash for testing
     const hash = await hashPassword(TEST_PASSWORD);
@@ -71,11 +54,11 @@ describe('authRouter integration', () => {
   });
 
   afterAll(async () => {
-    await teardownTestDatabase();
+    await teardownTestDb();
   });
 
   beforeEach(async () => {
-    await clearTestDatabase();
+    await clearTestDb();
   });
 
   describe('login', () => {
@@ -93,7 +76,7 @@ describe('authRouter integration', () => {
       expect(result.token.length).toBeGreaterThan(32);
 
       // Verify session was created in the database
-      const sessions = await realPrisma.authSession.findMany();
+      const sessions = await testPrisma.authSession.findMany();
       expect(sessions).toHaveLength(1);
       expect(sessions[0].token).toBe(result.token);
       expect(sessions[0].ipAddress).toBe('127.0.0.1');
@@ -112,7 +95,7 @@ describe('authRouter integration', () => {
       });
 
       // Verify no session was created
-      const sessions = await realPrisma.authSession.findMany();
+      const sessions = await testPrisma.authSession.findMany();
       expect(sessions).toHaveLength(0);
     });
 
@@ -142,7 +125,7 @@ describe('authRouter integration', () => {
       expect(result2.token).not.toBe(result3.token);
 
       // Should have 3 sessions in database
-      const sessions = await realPrisma.authSession.findMany();
+      const sessions = await testPrisma.authSession.findMany();
       expect(sessions).toHaveLength(3);
     });
   });
@@ -154,7 +137,7 @@ describe('authRouter integration', () => {
       const loginResult = await loginCaller.auth.login({ password: TEST_PASSWORD });
 
       // Get the session ID from the database
-      const session = await realPrisma.authSession.findFirst({
+      const session = await testPrisma.authSession.findFirst({
         where: { token: loginResult.token },
       });
       expect(session).toBeDefined();
@@ -166,7 +149,7 @@ describe('authRouter integration', () => {
       expect(result).toEqual({ success: true });
 
       // Verify session was deleted
-      const remainingSessions = await realPrisma.authSession.findMany();
+      const remainingSessions = await testPrisma.authSession.findMany();
       expect(remainingSessions).toHaveLength(0);
     });
 
@@ -178,7 +161,7 @@ describe('authRouter integration', () => {
       const session2 = await loginCaller.auth.login({ password: TEST_PASSWORD });
       await loginCaller.auth.login({ password: TEST_PASSWORD });
 
-      const sessionToLogout = await realPrisma.authSession.findFirst({
+      const sessionToLogout = await testPrisma.authSession.findFirst({
         where: { token: session2.token },
       });
 
@@ -187,7 +170,7 @@ describe('authRouter integration', () => {
       await logoutCaller.auth.logout();
 
       // Should have 2 sessions remaining
-      const remaining = await realPrisma.authSession.findMany();
+      const remaining = await testPrisma.authSession.findMany();
       expect(remaining).toHaveLength(2);
       expect(remaining.find((s) => s.id === sessionToLogout!.id)).toBeUndefined();
     });
@@ -210,7 +193,7 @@ describe('authRouter integration', () => {
       await loginCaller.auth.login({ password: TEST_PASSWORD });
       await loginCaller.auth.login({ password: TEST_PASSWORD });
 
-      const currentSession = await realPrisma.authSession.findFirst({
+      const currentSession = await testPrisma.authSession.findFirst({
         where: { token: session1.token },
       });
 
@@ -221,7 +204,7 @@ describe('authRouter integration', () => {
       expect(result).toEqual({ success: true });
 
       // All sessions should be deleted
-      const remaining = await realPrisma.authSession.findMany();
+      const remaining = await testPrisma.authSession.findMany();
       expect(remaining).toHaveLength(0);
     });
 
@@ -255,7 +238,7 @@ describe('authRouter integration', () => {
         userAgent: 'Safari',
       });
 
-      const currentSession = await realPrisma.authSession.findFirst({
+      const currentSession = await testPrisma.authSession.findFirst({
         where: { token: session1.token },
       });
 
@@ -292,10 +275,10 @@ describe('authRouter integration', () => {
       const session1 = await loginCaller.auth.login({ password: TEST_PASSWORD });
       const session2 = await loginCaller.auth.login({ password: TEST_PASSWORD });
 
-      const currentSession = await realPrisma.authSession.findFirst({
+      const currentSession = await testPrisma.authSession.findFirst({
         where: { token: session1.token },
       });
-      const otherSession = await realPrisma.authSession.findFirst({
+      const otherSession = await testPrisma.authSession.findFirst({
         where: { token: session2.token },
       });
 
@@ -307,7 +290,7 @@ describe('authRouter integration', () => {
       expect(result).toEqual({ success: true });
 
       // Other session should be deleted
-      const remaining = await realPrisma.authSession.findMany();
+      const remaining = await testPrisma.authSession.findMany();
       expect(remaining).toHaveLength(1);
       expect(remaining[0].id).toBe(currentSession!.id);
     });
@@ -316,7 +299,7 @@ describe('authRouter integration', () => {
       const loginCaller = createCaller(null);
       const loginResult = await loginCaller.auth.login({ password: TEST_PASSWORD });
 
-      const currentSession = await realPrisma.authSession.findFirst({
+      const currentSession = await testPrisma.authSession.findFirst({
         where: { token: loginResult.token },
       });
 
@@ -330,7 +313,7 @@ describe('authRouter integration', () => {
       });
 
       // Session should still exist
-      const remaining = await realPrisma.authSession.findMany();
+      const remaining = await testPrisma.authSession.findMany();
       expect(remaining).toHaveLength(1);
     });
 
