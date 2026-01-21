@@ -9,8 +9,13 @@ services:
       - CLAUDE_AUTH_PATH=/claude-auth
       - DATA_DIR=/data
       - NODE_ENV=production
+      - PASSWORD_HASH=${PASSWORD_HASH}
       # Tell the app which runner image to use for Claude sessions
       - CLAUDE_RUNNER_IMAGE=ghcr.io/brendanlong/clawed-burrow-runner:latest
+      # Optional: shared pnpm store path on host (for faster installs)
+      - PNPM_STORE_PATH=${PNPM_STORE_PATH:-}
+      # Optional: shared Gradle cache path on host (for faster builds)
+      - GRADLE_USER_HOME=${GRADLE_USER_HOME:-}
     volumes:
       - app-data:/data
       - /var/run/docker.sock:/var/run/docker.sock
@@ -29,7 +34,7 @@ services:
 
   # Watchtower - automatically updates containers when new images are pushed
   watchtower:
-    image: containrrr/watchtower
+    image: nickfedor/watchtower
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
