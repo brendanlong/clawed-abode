@@ -16,8 +16,8 @@ A self-hosted web application that provides mobile-friendly access to Claude Cod
 
 ```
 ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────────────────┐
-│   Mobile/Web    │     │   Cloudflare    │     │      Home Server            │
-│   Browser       │────►│   Tunnel        │────►│  ┌─────────────────────┐    │
+│   Mobile/Web    │     │   Tailscale     │     │      Home Server            │
+│   Browser       │────►│   Funnel        │────►│  ┌─────────────────────┐    │
 │                 │     │                 │     │  │   Next.js + tRPC    │    │
 └─────────────────┘     └─────────────────┘     │  │   - Auth            │    │
                                                 │  │   - Session mgmt    │    │
@@ -446,9 +446,8 @@ ORDER BY sequence ASC;
 
 ### Authentication Layers
 
-1. **Cloudflare Tunnel** — Traffic encrypted, no exposed ports
-2. **Optional: Cloudflare Access** — Additional auth layer at edge
-3. **Password Authentication** — Single-user auth with:
+1. **Tailscale Funnel** — Traffic encrypted, no exposed ports
+2. **Password Authentication** — Single-user auth with:
    - Password stored as base64-encoded Argon2 hash in `PASSWORD_HASH` env var
    - Database-backed sessions with 256-bit random tokens
    - 7-day session expiration
@@ -559,7 +558,7 @@ claude-code-web/
 - Docker container lifecycle
 - Claude Code integration with streaming
 - Basic chat UI
-- Cloudflare Tunnel setup
+- Tailscale Funnel setup
 
 ### Phase 2: Polish
 
