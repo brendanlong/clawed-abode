@@ -6,6 +6,8 @@
 - Avoid N+1 queries, and check-then-set patterns; prefer to do joins or inserts with on conflict
 - Design as much code as possible to be unit-testable with pure functions
 - Prefer to use real versions of necessary systems for integration tests (i.e. actually run git in a tmp dir, actually run SQLite on an in-memory DB)
+- Co-locate test files with source (e.g., `auth.ts` → `auth.test.ts`, or `git.ts` → `git.integration.test.ts` for integration tests)
+- Run `pnpm test:run` to verify tests pass before committing
 - Try to do work in commit-sized chunks and commit when each piece is complete
 - Always commit changes when work is complete
 - Always use cursor-based pagination and never offset
