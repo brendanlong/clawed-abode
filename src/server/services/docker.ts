@@ -254,7 +254,7 @@ export async function sendSignalToExec(
   pid: number,
   signal: string = 'INT'
 ): Promise<void> {
-  log('sendSignalToExec', 'Sending signal to PID', { containerId, pid, signal });
+  log.debug('sendSignalToExec: Sending signal to PID', { containerId, pid, signal });
   const container = docker.getContainer(containerId);
 
   const exec = await container.exec({
@@ -269,19 +269,19 @@ export async function sendSignalToExec(
     stream.on('end', async () => {
       try {
         const info = await exec.inspect();
-        log('sendSignalToExec', 'Signal sent', {
+        log.debug('sendSignalToExec: Signal sent', {
           containerId,
           pid,
           signal,
           exitCode: info.ExitCode,
         });
       } catch {
-        log('sendSignalToExec', 'Could not get exit code', { containerId, pid, signal });
+        log.debug('sendSignalToExec: Could not get exit code', { containerId, pid, signal });
       }
       resolve();
     });
     stream.on('error', (err) => {
-      log('sendSignalToExec', 'Error sending signal', {
+      log.warn('sendSignalToExec: Error sending signal', {
         containerId,
         pid,
         signal,
@@ -308,7 +308,7 @@ export async function signalProcessesByPattern(
   pattern: string,
   signal: string = 'TERM'
 ): Promise<void> {
-  log('signalProcessesByPattern', 'Sending signal', { containerId, pattern, signal });
+  log.debug('signalProcessesByPattern: Sending signal', { containerId, pattern, signal });
   const container = docker.getContainer(containerId);
 
   const exec = await container.exec({
@@ -323,14 +323,14 @@ export async function signalProcessesByPattern(
     stream.on('end', async () => {
       try {
         const info = await exec.inspect();
-        log('signalProcessesByPattern', 'Signal sent', {
+        log.debug('signalProcessesByPattern: Signal sent', {
           containerId,
           pattern,
           signal,
           exitCode: info.ExitCode,
         });
       } catch {
-        log('signalProcessesByPattern', 'Could not get exit code', {
+        log.debug('signalProcessesByPattern: Could not get exit code', {
           containerId,
           pattern,
           signal,
@@ -339,7 +339,7 @@ export async function signalProcessesByPattern(
       resolve();
     });
     stream.on('error', (err) => {
-      log('signalProcessesByPattern', 'Error sending signal', {
+      log.warn('signalProcessesByPattern: Error sending signal', {
         containerId,
         pattern,
         signal,

@@ -51,7 +51,18 @@ const log = createLogger('claude-runner');
  * Result of attempting to save a message line to the database.
  */
 type SaveMessageResult =
-  | { saved: true; sequence: number; message: { id: string; sessionId: string; sequence: number; type: string; content: unknown } }
+  | {
+      saved: true;
+      sequence: number;
+      message: {
+        id: string;
+        sessionId: string;
+        sequence: number;
+        type: string;
+        content: unknown;
+        createdAt: Date;
+      };
+    }
   | { saved: false; reason: 'parse_error' | 'duplicate' };
 
 /**
