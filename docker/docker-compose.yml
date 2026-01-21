@@ -1,8 +1,6 @@
 services:
   app:
-    build:
-      context: ..
-      dockerfile: Dockerfile
+    image: ghcr.io/brendanlong/clawed-burrow:latest
     ports:
       - '3000:3000'
     environment:
@@ -11,23 +9,39 @@ services:
       - CLAUDE_AUTH_PATH=/claude-auth
       - DATA_DIR=/data
       - NODE_ENV=production
+      # Tell the app which runner image to use for Claude sessions
+      - CLAUDE_RUNNER_IMAGE=ghcr.io/brendanlong/clawed-burrow-runner:latest
     volumes:
       - app-data:/data
       - /var/run/docker.sock:/var/run/docker.sock
       - ${CLAUDE_AUTH_PATH:-~/.claude}:/claude-auth:ro
     restart: unless-stopped
     depends_on:
-      - init-db
+      - migrate
 
-  init-db:
-    build:
-      context: ..
-      dockerfile: Dockerfile
+  migrate:
+    image: ghcr.io/brendanlong/clawed-burrow:latest
     command: npx prisma migrate deploy
     environment:
       - DATABASE_URL=file:/data/db/prod.db
     volumes:
       - app-data:/data
+
+  # Watchtower - automatically updates containers when new images are pushed
+  watchtower:
+    image: containrrr/watchtower
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      # Check for updates every 5 minutes
+      - WATCHTOWER_POLL_INTERVAL=300
+      # Clean up old images after updating
+      - WATCHTOWER_CLEANUP=true
+      # Only update containers in this compose project
+      - WATCHTOWER_SCOPE=clawed-burrow
+    labels:
+      - com.centurylinklabs.watchtower.scope=clawed-burrow
+    restart: unless-stopped
 
   # Cloudflare Tunnel (optional)
   cloudflared:
