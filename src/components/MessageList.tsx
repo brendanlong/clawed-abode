@@ -5,13 +5,16 @@ import { MessageBubble, type ToolResultMap } from './messages';
 import { Spinner } from '@/components/ui/spinner';
 import { ContextUsageIndicator } from '@/components/ContextUsageIndicator';
 import type { TokenUsageStats } from '@/lib/token-estimation';
+import { useNotification } from '@/hooks/useNotification';
 
 interface ContentBlock {
   type: string;
   id?: string;
+  name?: string;
   tool_use_id?: string;
   content?: string;
   is_error?: boolean;
+  input?: unknown;
 }
 
 interface MessageContent {
@@ -124,12 +127,59 @@ function getTodoWriteIds(messages: Message[]): string[] {
   return ids;
 }
 
+interface AskUserQuestionInfo {
+  id: string;
+  header: string;
+  question: string;
+}
+
+// Extract pending AskUserQuestion tool calls (those without a result yet)
+function getPendingAskUserQuestions(
+  messages: Message[],
+  resultMap: ToolResultMap
+): AskUserQuestionInfo[] {
+  const pending: AskUserQuestionInfo[] = [];
+  const sortedMessages = [...messages].sort((a, b) => a.sequence - b.sequence);
+
+  for (const msg of sortedMessages) {
+    if (msg.type === 'assistant') {
+      const content = msg.content as MessageContent | undefined;
+      const blocks = content?.message?.content;
+      if (Array.isArray(blocks)) {
+        for (const block of blocks) {
+          if (
+            block.type === 'tool_use' &&
+            block.name === 'AskUserQuestion' &&
+            block.id &&
+            !resultMap.has(block.id) // No result yet = pending
+          ) {
+            const input = block.input as
+              | {
+                  questions?: Array<{ header?: string; question?: string }>;
+                }
+              | undefined;
+            const firstQuestion = input?.questions?.[0];
+            pending.push({
+              id: block.id,
+              header: firstQuestion?.header || 'Question',
+              question: firstQuestion?.question || 'Claude needs your input',
+            });
+          }
+        }
+      }
+    }
+  }
+  return pending;
+}
+
 interface MessageListProps {
   messages: Message[];
   isLoading: boolean;
   hasMore: boolean;
   onLoadMore: () => void;
   tokenUsage?: TokenUsageStats | null;
+  onSendResponse?: (response: string) => void;
+  isClaudeRunning?: boolean;
 }
 
 export function MessageList({
@@ -138,6 +188,8 @@ export function MessageList({
   hasMore,
   onLoadMore,
   tokenUsage,
+  onSendResponse,
+  isClaudeRunning,
 }: MessageListProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const topSentinelRef = useRef<HTMLDivElement>(null);
@@ -147,6 +199,12 @@ export function MessageList({
 
   // Track which TodoWrite components have been manually toggled by the user
   const [manuallyToggledTodoIds, setManuallyToggledTodoIds] = useState<Set<string>>(new Set());
+
+  // Track which AskUserQuestion IDs we've already notified about (using ref to avoid re-renders)
+  const notifiedQuestionIdsRef = useRef<Set<string>>(new Set());
+
+  // Notification hook for browser notifications
+  const { showNotification } = useNotification();
 
   // Manual IntersectionObserver to detect when sentinel enters viewport
   // Uses the scroll container as root so rootMargin works relative to the container
@@ -181,6 +239,31 @@ export function MessageList({
     const todoIds = getTodoWriteIds(messages);
     return todoIds.length > 0 ? todoIds[todoIds.length - 1] : null;
   }, [messages]);
+
+  // Find pending AskUserQuestion tool calls
+  const pendingQuestions = useMemo(
+    () => getPendingAskUserQuestions(messages, resultMap),
+    [messages, resultMap]
+  );
+
+  // Show browser notification for new pending AskUserQuestions (only when tab is not visible)
+  useEffect(() => {
+    for (const question of pendingQuestions) {
+      if (!notifiedQuestionIdsRef.current.has(question.id)) {
+        // Mark as notified (mutating ref doesn't cause re-render)
+        notifiedQuestionIdsRef.current.add(question.id);
+
+        // Only show notification if the page is not visible (user is on different tab/window minimized)
+        if (document.hidden) {
+          showNotification(`Claude: ${question.header}`, {
+            body: question.question,
+            tag: `ask-user-question-${question.id}`, // Prevents duplicate notifications
+            requireInteraction: true, // Keep notification visible until user interacts
+          });
+        }
+      }
+    }
+  }, [pendingQuestions, showNotification]);
 
   // Callback for when a TodoWrite is manually toggled
   const handleTodoManualToggle = useCallback((toolId: string) => {
@@ -268,6 +351,8 @@ export function MessageList({
                 latestTodoWriteId={latestTodoWriteId}
                 manuallyToggledTodoIds={manuallyToggledTodoIds}
                 onTodoManualToggle={handleTodoManualToggle}
+                onSendResponse={onSendResponse}
+                isClaudeRunning={isClaudeRunning}
               />
             </div>
           );
