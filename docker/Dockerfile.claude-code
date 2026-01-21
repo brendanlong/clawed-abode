@@ -89,6 +89,18 @@ RUN mkdir -p ${ANDROID_HOME}/cmdline-tools && \
 RUN yes | sdkmanager --licenses > /dev/null 2>&1 && \
     sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
+# Create Android debug keystore for debug builds
+RUN mkdir -p /home/claudeuser/.android && \
+    keytool -genkey -v \
+        -keystore /home/claudeuser/.android/debug.keystore \
+        -alias androiddebugkey \
+        -keyalg RSA \
+        -keysize 2048 \
+        -validity 10000 \
+        -storepass android \
+        -keypass android \
+        -dname "CN=Android Debug,O=Android,C=US"
+
 # Configure pnpm to use shared store if mounted at /pnpm-store
 # The store supports concurrent access with atomic operations
 ENV PNPM_HOME="/home/claudeuser/.local/share/pnpm"
