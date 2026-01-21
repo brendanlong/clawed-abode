@@ -2,7 +2,12 @@ import { z } from 'zod';
 import { router, protectedProcedure } from '../trpc';
 import { prisma } from '@/lib/prisma';
 import { TRPCError } from '@trpc/server';
-import { runClaudeCommand, interruptClaude, isClaudeRunningAsync } from '../services/claude-runner';
+import {
+  runClaudeCommand,
+  interruptClaude,
+  isClaudeRunningAsync,
+  markLastMessageAsInterrupted,
+} from '../services/claude-runner';
 import { estimateTokenUsage } from '@/lib/token-estimation';
 import { createLogger, toError } from '@/lib/logger';
 
@@ -65,6 +70,12 @@ export const claudeRouter = router({
       }
 
       const interrupted = await interruptClaude(input.sessionId);
+
+      if (interrupted) {
+        // Mark the last non-user message as potentially interrupted
+        // and add an interrupt indicator message
+        await markLastMessageAsInterrupted(input.sessionId);
+      }
 
       return { success: interrupted };
     }),

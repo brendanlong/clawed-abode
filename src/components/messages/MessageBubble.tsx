@@ -4,6 +4,7 @@ import { useCallback, useMemo } from 'react';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { MarkdownContent } from '@/components/MarkdownContent';
+import { OctagonX } from 'lucide-react';
 
 import { CopyButton } from './CopyButton';
 import { RawJsonDisplay } from './RawJsonDisplay';
@@ -169,6 +170,7 @@ function isRecognizedMessage(
       category:
         | 'assistant'
         | 'user'
+        | 'userInterrupt'
         | 'toolResult'
         | 'system'
         | 'systemInit'
@@ -188,6 +190,11 @@ function isRecognizedMessage(
   // User messages that are tool results
   if (type === 'user' && isToolResultMessage(content)) {
     return { recognized: true, category: 'toolResult' };
+  }
+
+  // User interrupt messages
+  if (type === 'user' && content.subtype === 'interrupt') {
+    return { recognized: true, category: 'userInterrupt' };
   }
 
   // Regular user messages (prompts) must have text content
@@ -371,6 +378,18 @@ export function MessageBubble({
     );
   }
 
+  // User interrupt messages get a special compact display
+  if (category === 'userInterrupt') {
+    return (
+      <div className="w-full max-w-[85%] ml-auto">
+        <div className="flex items-center gap-2 justify-end text-muted-foreground text-sm py-2">
+          <OctagonX className="h-4 w-4" />
+          <span>Interrupted</span>
+        </div>
+      </div>
+    );
+  }
+
   // Get the actual content to render
   // For assistant messages, content is in content.message.content
   // For user/system messages, content is in content.content
@@ -384,13 +403,15 @@ export function MessageBubble({
   const displayContent = getDisplayContent();
   const isSystem = category === 'system';
   const isError = category === 'systemError';
+  const isInterrupted = content.interrupted === true;
 
   return (
     <div className="group max-w-[85%]">
       <div
         className={cn('rounded-lg p-4', {
           'bg-primary text-primary-foreground ml-auto': isUser,
-          'bg-card border': isAssistant,
+          'bg-card border': isAssistant && !isInterrupted,
+          'bg-card border border-amber-300 dark:border-amber-700': isAssistant && isInterrupted,
           'bg-muted text-muted-foreground text-sm': isSystem && !isError,
           'bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 text-red-800 dark:text-red-200 text-sm':
             isError,
@@ -405,6 +426,12 @@ export function MessageBubble({
           <Badge variant="destructive" className="mb-2">
             Error
           </Badge>
+        )}
+        {isInterrupted && (
+          <div className="flex items-center gap-1 text-amber-600 dark:text-amber-400 text-xs mb-2">
+            <OctagonX className="h-3 w-3" />
+            <span>May be incomplete</span>
+          </div>
         )}
 
         {/* Render content (works for both regular messages and errors now) */}

@@ -36,7 +36,7 @@ export interface AssistantMessage {
 
 export interface MessageContent {
   type?: string;
-  subtype?: string; // 'init' | 'error' | 'success' etc.
+  subtype?: string; // 'init' | 'error' | 'success' | 'interrupt' etc.
   content?: string | ContentBlock[];
   // Assistant message wrapper
   message?: AssistantMessage;
@@ -58,6 +58,8 @@ export interface MessageContent {
     cache_read_input_tokens?: number;
     cache_creation_input_tokens?: number;
   };
+  // Interrupt flag - set when this message was interrupted by the user
+  interrupted?: boolean;
   [key: string]: unknown;
 }
 
