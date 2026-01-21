@@ -1,5 +1,5 @@
 import {
-  execInContainerWithOutputFile,
+  execInContainerWithTee,
   getExecStatus,
   tailFileInContainer,
   readFileInContainer,
@@ -201,10 +201,10 @@ export async function runClaudeCommand(
 
   const outputFile = getOutputFilePath(sessionId);
 
-  // Start Claude with output to file (for recovery) and get exec ID (for status checking)
+  // Start Claude with attached output stream (also writes to file for crash recovery)
   log.info('runClaudeCommand: Executing command in container', { command, outputFile });
-  const { execId } = await execInContainerWithOutputFile(containerId, command, outputFile);
-  log.info('runClaudeCommand: Command started', { sessionId, execId });
+  const { stream, execId } = await execInContainerWithTee(containerId, command, outputFile);
+  log.info('runClaudeCommand: Command started with attached stream', { sessionId, execId });
 
   // Create persistent record for crash recovery
   await prisma.claudeProcess.create({
@@ -224,17 +224,15 @@ export async function runClaudeCommand(
   sseEvents.emitClaudeRunning(sessionId, true);
 
   try {
-    // Wait for file to exist
-    let attempts = 0;
-    while (attempts < 50) {
-      const exists = await fileExistsInContainer(containerId, outputFile);
-      if (exists) break;
-      await new Promise((r) => setTimeout(r, 100));
-      attempts++;
+    // Find and store the PID of the Claude process for direct signal delivery
+    // Retry a few times since the process may take a moment to start
+    let pid: number | null = null;
+    for (let attempt = 0; attempt < 10; attempt++) {
+      pid = await findProcessInContainer(containerId, CLAUDE_PROCESS_PATTERN);
+      if (pid) break;
+      await new Promise((r) => setTimeout(r, 200));
     }
 
-    // Find and store the PID of the Claude process for direct signal delivery
-    const pid = await findProcessInContainer(containerId, CLAUDE_PROCESS_PATTERN);
     if (pid) {
       log.debug('runClaudeCommand: Found Claude process PID', { sessionId, pid });
       runningProcesses.set(sessionId, { containerId, pid });
@@ -246,15 +244,13 @@ export async function runClaudeCommand(
       log.warn('runClaudeCommand: Could not find Claude process PID', { sessionId });
     }
 
-    // Tail the output file for real-time streaming
-    log.debug('runClaudeCommand: Starting tail', { sessionId, outputFile });
-    const { stream } = await tailFileInContainer(containerId, outputFile, 0);
+    // Process output directly from the attached stream (no tailing needed)
     const demuxer = new DockerStreamDemuxer();
 
     let buffer = '';
     let totalLines = 0;
 
-    // Process output and poll for completion
+    // Process output - stream ends when process completes
     await new Promise<void>((resolve, reject) => {
       stream.on('data', async (chunk: Buffer) => {
         // Demux the Docker multiplexed stream to extract actual content
@@ -287,54 +283,42 @@ export async function runClaudeCommand(
         }
       });
 
-      // Poll exec status instead of pgrep (much more reliable)
-      const pollInterval = setInterval(async () => {
+      stream.on('end', async () => {
+        // Process any remaining buffered content
+        if (buffer.trim()) {
+          const result = await saveMessageIfNotExists(sessionId, buffer, sequence);
+          if (result.saved) {
+            sequence = result.sequence + 1;
+            sseEvents.emitNewMessage(sessionId, result.message);
+          }
+          totalLines++;
+        }
+
+        // Get final exit code for logging
         try {
           const status = await getExecStatus(execId);
-          log.debug('runClaudeCommand: Exec status', { sessionId, ...status, totalLines });
-
-          if (!status.running) {
-            clearInterval(pollInterval);
-            // Wait for final output to flush
-            await new Promise((r) => setTimeout(r, 500));
-            stream.destroy();
-
-            // Read any remaining content from file
-            const fileContent = await readFileInContainer(containerId, outputFile);
-            const allLines = fileContent.split('\n').filter((l) => l.trim());
-
-            for (let i = totalLines; i < allLines.length; i++) {
-              const line = allLines[i];
-              const result = await saveMessageIfNotExists(sessionId, line, sequence);
-              if (result.saved) {
-                sequence = result.sequence + 1;
-                // Emit new message event
-                sseEvents.emitNewMessage(sessionId, result.message);
-              }
-              totalLines++;
-            }
-
-            log.info('runClaudeCommand: Completed', {
-              sessionId,
-              totalLines,
-              exitCode: status.exitCode,
-            });
-            resolve();
-          }
-        } catch (err) {
-          clearInterval(pollInterval);
-          reject(err);
+          log.info('runClaudeCommand: Completed', {
+            sessionId,
+            totalLines,
+            exitCode: status.exitCode,
+          });
+        } catch {
+          log.info('runClaudeCommand: Completed (could not get exit code)', {
+            sessionId,
+            totalLines,
+          });
         }
-      }, 1000);
+
+        resolve();
+      });
 
       stream.on('error', (err) => {
-        clearInterval(pollInterval);
+        log.error('runClaudeCommand: Stream error', toError(err), { sessionId });
         reject(err);
       });
     });
   } finally {
     runningProcesses.delete(sessionId);
-    await killProcessesByPattern(containerId, outputFile).catch(() => {});
     await prisma.claudeProcess.delete({ where: { sessionId } }).catch(() => {});
 
     // Emit Claude stopped event
