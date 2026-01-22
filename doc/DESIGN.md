@@ -314,6 +314,12 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | \
       tee /etc/apt/sources.list.d/github-cli.list && \
     apt-get update && apt-get install -y gh
 
+# Install Docker Compose V2 plugin
+RUN DOCKER_CONFIG=/usr/lib/docker/cli-plugins && \
+    mkdir -p ${DOCKER_CONFIG} && \
+    curl -SL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-$(uname -m)" -o ${DOCKER_CONFIG}/docker-compose && \
+    chmod +x ${DOCKER_CONFIG}/docker-compose
+
 # Install pnpm and Claude Code
 RUN npm install -g pnpm @anthropic-ai/claude-code
 

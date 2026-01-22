@@ -51,6 +51,12 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | d
     apt-get install -y gh && \
     rm -rf /var/lib/apt/lists/*
 
+# Install Docker Compose V2 plugin
+RUN DOCKER_CONFIG=/usr/lib/docker/cli-plugins && \
+    mkdir -p ${DOCKER_CONFIG} && \
+    curl -SL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-$(uname -m)" -o ${DOCKER_CONFIG}/docker-compose && \
+    chmod +x ${DOCKER_CONFIG}/docker-compose
+
 # Enable corepack for pnpm (built into Node.js) and install Claude Code
 RUN corepack enable && \
     corepack prepare pnpm@latest --activate && \
