@@ -1,4 +1,12 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
+import { EventEmitter } from 'events';
+
+// Helper to create a mock stream that behaves like a Docker exec stream
+function createMockStream(): EventEmitter & { destroy: () => void } {
+  const stream = new EventEmitter() as EventEmitter & { destroy: () => void };
+  stream.destroy = vi.fn();
+  return stream;
+}
 
 // Helper to create a Docker multiplexed frame
 function createDockerFrame(streamType: number, data: string): Buffer {
@@ -82,6 +90,7 @@ vi.mock('uuid', () => ({
 
 // Import after mocks are set up
 import {
+  runClaudeCommand,
   interruptClaude,
   isClaudeRunning,
   isClaudeRunningAsync,
@@ -116,7 +125,8 @@ describe('claude-runner service', () => {
     mockDockerFunctions.readFileInContainer.mockResolvedValue('');
     mockDockerFunctions.killProcessesByPattern.mockResolvedValue(undefined);
     mockDockerFunctions.signalProcessesByPattern.mockResolvedValue(undefined);
-    mockDockerFunctions.findProcessInContainer.mockResolvedValue(null);
+    // Return a PID immediately to avoid 10x200ms retry loop in runClaudeCommand
+    mockDockerFunctions.findProcessInContainer.mockResolvedValue(12345);
     mockDockerFunctions.sendSignalToExec.mockResolvedValue(undefined);
   });
 
@@ -467,30 +477,421 @@ describe('claude-runner service', () => {
     });
   });
 
-  // The runClaudeCommand tests require fresh module state due to the in-memory
-  // runningProcesses Map. We test individual aspects in isolation.
-  describe('runClaudeCommand behavior (isolated tests)', () => {
-    // These tests are marked as skipped because runClaudeCommand maintains
-    // module-level state that persists across tests. The function is tested
-    // indirectly through integration tests.
-    //
-    // Key behaviors that should be tested:
-    // 1. Process already running check
-    // 2. Stale process cleanup
-    // 3. User message saving
-    // 4. SSE event emission
-    // 5. Command flag construction (--session-id vs --resume)
-    // 6. JSON message parsing
-    // 7. Duplicate message handling
-    // 8. Stream error handling
-    // 9. PID tracking
+  // runClaudeCommand tests use unique session IDs to avoid state conflicts
+  // between tests (the module maintains an in-memory runningProcesses Map)
+  describe('runClaudeCommand', () => {
+    it('should throw error if process is already running for session', async () => {
+      const sessionId = 'test-already-running-' + Date.now();
+      const mockStream = createMockStream();
 
-    it.skip('should throw error if process is already running for session', () => {
-      // This test would require mocking the in-memory Map or using module reset
+      mockDockerFunctions.execInContainerWithTee.mockResolvedValue({
+        stream: mockStream,
+        execId: 'exec-1',
+      });
+
+      // Start first command (don't await - we want it running)
+      const firstCommand = runClaudeCommand(sessionId, 'container-1', 'First prompt');
+
+      // Give it time to register in the map
+      await new Promise((r) => setTimeout(r, 10));
+
+      // Try to start second command with same session ID
+      await expect(runClaudeCommand(sessionId, 'container-1', 'Second prompt')).rejects.toThrow(
+        'A Claude process is already running for this session'
+      );
+
+      // Clean up: end the first stream so it cleans up properly
+      mockStream.emit('end');
+      await firstCommand;
     });
 
-    it.skip('should save user message to database before starting Claude', () => {
-      // This test would require fresh module state
+    it('should clean up stale process records before starting', async () => {
+      const sessionId = 'test-stale-cleanup-' + Date.now();
+      const mockStream = createMockStream();
+
+      // Mock a stale process record in DB
+      mockPrisma.claudeProcess.findUnique.mockResolvedValue({
+        sessionId,
+        execId: 'stale-exec-id',
+      });
+      // Exec not found means it's stale
+      mockDockerFunctions.getExecStatus.mockRejectedValue(new Error('exec not found'));
+
+      mockDockerFunctions.execInContainerWithTee.mockResolvedValue({
+        stream: mockStream,
+        execId: 'new-exec-id',
+      });
+
+      const commandPromise = runClaudeCommand(sessionId, 'container-1', 'Hello');
+
+      await new Promise((r) => setTimeout(r, 10));
+      mockStream.emit('end');
+      await commandPromise;
+
+      // Verify stale record was deleted
+      expect(mockPrisma.claudeProcess.delete).toHaveBeenCalledWith({
+        where: { sessionId },
+      });
+    });
+
+    it('should save user message to database before starting Claude', async () => {
+      const sessionId = 'test-user-msg-' + Date.now();
+      const mockStream = createMockStream();
+
+      mockDockerFunctions.execInContainerWithTee.mockResolvedValue({
+        stream: mockStream,
+        execId: 'exec-1',
+      });
+
+      const commandPromise = runClaudeCommand(sessionId, 'container-1', 'Hello Claude');
+
+      await new Promise((r) => setTimeout(r, 10));
+      mockStream.emit('end');
+      await commandPromise;
+
+      // Verify user message was created
+      expect(mockPrisma.message.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          sessionId,
+          type: 'user',
+          content: expect.stringContaining('Hello Claude'),
+        }),
+      });
+    });
+
+    it('should emit SSE events for user message and Claude running state', async () => {
+      const sessionId = 'test-sse-events-' + Date.now();
+      const mockStream = createMockStream();
+
+      mockDockerFunctions.execInContainerWithTee.mockResolvedValue({
+        stream: mockStream,
+        execId: 'exec-1',
+      });
+
+      const commandPromise = runClaudeCommand(sessionId, 'container-1', 'Hello');
+
+      await new Promise((r) => setTimeout(r, 10));
+      mockStream.emit('end');
+      await commandPromise;
+
+      // Verify SSE events were emitted
+      expect(mockSseEvents.emitNewMessage).toHaveBeenCalledWith(
+        sessionId,
+        expect.objectContaining({ type: 'user' })
+      );
+      expect(mockSseEvents.emitClaudeRunning).toHaveBeenCalledWith(sessionId, true);
+      expect(mockSseEvents.emitClaudeRunning).toHaveBeenCalledWith(sessionId, false);
+    });
+
+    it('should use --session-id flag for first message', async () => {
+      const sessionId = 'test-first-msg-' + Date.now();
+      const mockStream = createMockStream();
+
+      mockPrisma.message.findFirst.mockResolvedValue(null); // No existing messages
+
+      mockDockerFunctions.execInContainerWithTee.mockResolvedValue({
+        stream: mockStream,
+        execId: 'exec-1',
+      });
+
+      const commandPromise = runClaudeCommand(sessionId, 'container-1', 'First message');
+
+      await new Promise((r) => setTimeout(r, 10));
+      mockStream.emit('end');
+      await commandPromise;
+
+      // Verify command used --session-id
+      const [, command] = mockDockerFunctions.execInContainerWithTee.mock.calls[0];
+      expect(command).toContain('--session-id');
+      expect(command).toContain(sessionId);
+    });
+
+    it('should use --resume flag for subsequent messages', async () => {
+      const sessionId = 'test-resume-' + Date.now();
+      const mockStream = createMockStream();
+
+      mockPrisma.message.findFirst.mockResolvedValue({ sequence: 5 }); // Has existing messages
+
+      mockDockerFunctions.execInContainerWithTee.mockResolvedValue({
+        stream: mockStream,
+        execId: 'exec-1',
+      });
+
+      const commandPromise = runClaudeCommand(sessionId, 'container-1', 'Follow-up');
+
+      await new Promise((r) => setTimeout(r, 10));
+      mockStream.emit('end');
+      await commandPromise;
+
+      // Verify command used --resume
+      const [, command] = mockDockerFunctions.execInContainerWithTee.mock.calls[0];
+      expect(command).toContain('--resume');
+      expect(command).toContain(sessionId);
+    });
+
+    it('should parse and save streamed JSON messages', async () => {
+      const sessionId = 'test-parse-json-' + Date.now();
+      const mockStream = createMockStream();
+
+      mockDockerFunctions.execInContainerWithTee.mockResolvedValue({
+        stream: mockStream,
+        execId: 'exec-1',
+      });
+
+      const commandPromise = runClaudeCommand(sessionId, 'container-1', 'Hello');
+
+      await new Promise((r) => setTimeout(r, 10));
+
+      // Emit a valid Claude JSON message
+      const assistantMessage = JSON.stringify({
+        type: 'assistant',
+        uuid: 'assistant-uuid-parse-test',
+        session_id: sessionId,
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'Hello! How can I help?' }],
+        },
+      });
+
+      mockStream.emit('data', createDockerFrame(1, assistantMessage + '\n'));
+
+      await new Promise((r) => setTimeout(r, 10));
+      mockStream.emit('end');
+      await commandPromise;
+
+      // Verify assistant message was saved
+      expect(mockPrisma.message.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          id: 'assistant-uuid-parse-test',
+          sessionId,
+          type: 'assistant',
+        }),
+      });
+    });
+
+    it('should skip duplicate messages', async () => {
+      const sessionId = 'test-skip-dupes-' + Date.now();
+      const mockStream = createMockStream();
+
+      mockDockerFunctions.execInContainerWithTee.mockResolvedValue({
+        stream: mockStream,
+        execId: 'exec-1',
+      });
+
+      // Message already exists in DB
+      mockPrisma.message.findUnique.mockResolvedValue({ id: 'existing-msg-id' });
+
+      const commandPromise = runClaudeCommand(sessionId, 'container-1', 'Hello');
+
+      await new Promise((r) => setTimeout(r, 10));
+
+      const duplicateMessage = JSON.stringify({
+        type: 'assistant',
+        uuid: 'existing-msg-id',
+        session_id: sessionId,
+        message: { role: 'assistant', content: [] },
+      });
+
+      mockStream.emit('data', createDockerFrame(1, duplicateMessage + '\n'));
+
+      await new Promise((r) => setTimeout(r, 10));
+      mockStream.emit('end');
+      await commandPromise;
+
+      // Should not create a message with this ID (only user message should be created)
+      const assistantCalls = mockPrisma.message.create.mock.calls.filter(
+        (call) => call[0].data.id === 'existing-msg-id'
+      );
+      expect(assistantCalls).toHaveLength(0);
+    });
+
+    it('should create process record in database', async () => {
+      const sessionId = 'test-process-record-' + Date.now();
+      const mockStream = createMockStream();
+
+      mockDockerFunctions.execInContainerWithTee.mockResolvedValue({
+        stream: mockStream,
+        execId: 'test-exec-id',
+      });
+
+      const commandPromise = runClaudeCommand(sessionId, 'container-123', 'Hello');
+
+      await new Promise((r) => setTimeout(r, 10));
+      mockStream.emit('end');
+      await commandPromise;
+
+      expect(mockPrisma.claudeProcess.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          sessionId,
+          containerId: 'container-123',
+          execId: 'test-exec-id',
+        }),
+      });
+    });
+
+    it('should handle stream errors gracefully', async () => {
+      const sessionId = 'test-stream-error-' + Date.now();
+      const mockStream = createMockStream();
+
+      mockDockerFunctions.execInContainerWithTee.mockResolvedValue({
+        stream: mockStream,
+        execId: 'exec-1',
+      });
+
+      const commandPromise = runClaudeCommand(sessionId, 'container-1', 'Hello');
+
+      await new Promise((r) => setTimeout(r, 10));
+      mockStream.emit('error', new Error('Stream connection lost'));
+
+      await expect(commandPromise).rejects.toThrow('Stream connection lost');
+
+      // Verify cleanup happened
+      expect(mockSseEvents.emitClaudeRunning).toHaveBeenCalledWith(sessionId, false);
+    });
+
+    it('should attempt to find and store Claude process PID', async () => {
+      const sessionId = 'test-pid-tracking-' + Date.now();
+      const mockStream = createMockStream();
+
+      mockDockerFunctions.execInContainerWithTee.mockResolvedValue({
+        stream: mockStream,
+        execId: 'exec-1',
+      });
+
+      mockDockerFunctions.findProcessInContainer.mockResolvedValue(12345);
+
+      const commandPromise = runClaudeCommand(sessionId, 'container-1', 'Hello');
+
+      // Wait for PID search (retries up to 10 times with 200ms delay)
+      await new Promise((r) => setTimeout(r, 50));
+      mockStream.emit('end');
+      await commandPromise;
+
+      expect(mockDockerFunctions.findProcessInContainer).toHaveBeenCalledWith(
+        'container-1',
+        '/usr/bin/claude'
+      );
+
+      expect(mockPrisma.claudeProcess.update).toHaveBeenCalledWith({
+        where: { sessionId },
+        data: { pid: 12345 },
+      });
+    });
+
+    it('should include all required Claude CLI flags', async () => {
+      const sessionId = 'test-cli-flags-' + Date.now();
+      const mockStream = createMockStream();
+
+      mockDockerFunctions.execInContainerWithTee.mockResolvedValue({
+        stream: mockStream,
+        execId: 'exec-1',
+      });
+
+      const commandPromise = runClaudeCommand(sessionId, 'container-1', 'Test prompt');
+
+      await new Promise((r) => setTimeout(r, 10));
+      mockStream.emit('end');
+      await commandPromise;
+
+      const [, command] = mockDockerFunctions.execInContainerWithTee.mock.calls[0];
+
+      expect(command).toContain('claude');
+      expect(command).toContain('-p');
+      expect(command).toContain('Test prompt');
+      expect(command).toContain('--output-format');
+      expect(command).toContain('stream-json');
+      expect(command).toContain('--verbose');
+      expect(command).toContain('--dangerously-skip-permissions');
+      expect(command).toContain('--append-system-prompt');
+    });
+
+    it('should include system prompt with commit/push instructions', async () => {
+      const sessionId = 'test-system-prompt-' + Date.now();
+      const mockStream = createMockStream();
+
+      mockDockerFunctions.execInContainerWithTee.mockResolvedValue({
+        stream: mockStream,
+        execId: 'exec-1',
+      });
+
+      const commandPromise = runClaudeCommand(sessionId, 'container-1', 'Hello');
+
+      await new Promise((r) => setTimeout(r, 10));
+      mockStream.emit('end');
+      await commandPromise;
+
+      const [, command] = mockDockerFunctions.execInContainerWithTee.mock.calls[0];
+      const systemPromptIndex = command.indexOf('--append-system-prompt');
+      const systemPrompt = command[systemPromptIndex + 1];
+
+      expect(systemPrompt).toContain('commit');
+      expect(systemPrompt).toContain('push');
+      expect(systemPrompt).toContain('Pull Request');
+    });
+
+    it('should handle invalid JSON lines gracefully', async () => {
+      const sessionId = 'test-invalid-json-' + Date.now();
+      const mockStream = createMockStream();
+
+      mockDockerFunctions.execInContainerWithTee.mockResolvedValue({
+        stream: mockStream,
+        execId: 'exec-1',
+      });
+
+      const commandPromise = runClaudeCommand(sessionId, 'container-1', 'Hello');
+
+      await new Promise((r) => setTimeout(r, 10));
+
+      // Emit invalid JSON - should not throw
+      mockStream.emit('data', createDockerFrame(1, 'not valid json\n'));
+
+      await new Promise((r) => setTimeout(r, 10));
+      mockStream.emit('end');
+
+      // Should complete without throwing
+      await commandPromise;
+    });
+
+    it('should handle multiple JSON lines in a single chunk', async () => {
+      const sessionId = 'test-multi-lines-' + Date.now();
+      const mockStream = createMockStream();
+
+      mockDockerFunctions.execInContainerWithTee.mockResolvedValue({
+        stream: mockStream,
+        execId: 'exec-1',
+      });
+
+      const commandPromise = runClaudeCommand(sessionId, 'container-1', 'Hello');
+
+      await new Promise((r) => setTimeout(r, 10));
+
+      // Emit multiple JSON lines in one chunk
+      const line1 = JSON.stringify({
+        type: 'system',
+        subtype: 'init',
+        uuid: 'system-uuid-multi',
+        session_id: sessionId,
+      });
+      const line2 = JSON.stringify({
+        type: 'assistant',
+        uuid: 'assistant-uuid-multi',
+        session_id: sessionId,
+        message: { role: 'assistant', content: [] },
+      });
+
+      mockStream.emit('data', createDockerFrame(1, line1 + '\n' + line2 + '\n'));
+
+      await new Promise((r) => setTimeout(r, 10));
+      mockStream.emit('end');
+      await commandPromise;
+
+      // Both messages should be saved
+      expect(mockPrisma.message.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ id: 'system-uuid-multi' }),
+      });
+      expect(mockPrisma.message.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ id: 'assistant-uuid-multi' }),
+      });
     });
   });
 });
