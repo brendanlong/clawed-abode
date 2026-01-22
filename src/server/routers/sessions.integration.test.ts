@@ -170,43 +170,6 @@ describe('sessionsRouter integration', () => {
       expect(result.sessions.map((s) => s.name).sort()).toEqual(['Session 1', 'Session 2']);
     });
 
-    it('should include lastMessage from the database', async () => {
-      const session = await testPrisma.session.create({
-        data: {
-          name: 'Session with messages',
-          repoUrl: 'https://github.com/owner/repo.git',
-          branch: 'main',
-          workspacePath: '/workspace/test',
-          status: 'running',
-        },
-      });
-
-      // Add some messages
-      await testPrisma.message.createMany({
-        data: [
-          {
-            sessionId: session.id,
-            sequence: 0,
-            type: 'user',
-            content: '{"type":"user","content":"Hello"}',
-          },
-          {
-            sessionId: session.id,
-            sequence: 1,
-            type: 'assistant',
-            content: '{"type":"assistant","content":"Hi there"}',
-          },
-        ],
-      });
-
-      const caller = createCaller('auth-session-id');
-      const result = await caller.sessions.list();
-
-      expect(result.sessions).toHaveLength(1);
-      expect(result.sessions[0].lastMessage).toBeDefined();
-      expect(result.sessions[0].lastMessage!.sequence).toBe(1);
-    });
-
     it('should filter by status', async () => {
       await testPrisma.session.createMany({
         data: [

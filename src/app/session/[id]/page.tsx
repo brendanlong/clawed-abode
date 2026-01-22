@@ -24,29 +24,31 @@ function SessionView({ sessionId }: { sessionId: string }) {
   // Local state for Claude running status (overridden by SSE, initialized from query)
   const [claudeRunningOverride, setClaudeRunningOverride] = useState<boolean | null>(null);
 
+  // tRPC utils for direct cache updates
+  const utils = trpc.useUtils();
+
   // Fetch session details
-  const {
-    data: sessionData,
-    isLoading: sessionLoading,
-    refetch: refetchSession,
-  } = trpc.sessions.get.useQuery({ sessionId });
+  const { data: sessionData, isLoading: sessionLoading } = trpc.sessions.get.useQuery({
+    sessionId,
+  });
 
   // Bidirectional infinite query for message history
   // - fetchNextPage: loads older messages (backward) when user scrolls up
-  // - fetchPreviousPage: loads newer messages (forward) triggered by SSE
+  // - New messages arrive via SSE and are added directly to the cache
   const {
     data: historyData,
     isLoading: historyLoading,
     isFetchingNextPage,
     hasNextPage,
     fetchNextPage,
-    fetchPreviousPage,
   } = trpc.claude.getHistory.useInfiniteQuery(
     { sessionId, limit: 10 },
     {
       // Limit stored pages to prevent memory growth
       // With 10 messages per page, this keeps up to 5000 messages in memory
       maxPages: 500,
+      // Message data is immutable - never refetch automatically
+      staleTime: Infinity,
       initialCursor: {
         direction: 'backward',
         sequence: undefined,
@@ -64,20 +66,6 @@ function SessionView({ sessionId }: { sessionId: string }) {
           }
         }
         return { sequence: oldestSequence, direction: 'backward' as const };
-      },
-      // For loading NEWER messages (triggered by SSE)
-      getPreviousPageParam: (_firstPage, allPages) => {
-        // Find the newest sequence across ALL pages (not just firstPage, which might be empty)
-        // This prevents refetching everything if an empty page was prepended
-        let newestSequence: number | undefined;
-        for (const page of allPages) {
-          for (const msg of page.messages) {
-            if (newestSequence === undefined || msg.sequence > newestSequence) {
-              newestSequence = msg.sequence;
-            }
-          }
-        }
-        return { sequence: newestSequence, direction: 'forward' as const };
       },
     }
   );
@@ -97,13 +85,29 @@ function SessionView({ sessionId }: { sessionId: string }) {
   // Use SSE override if available, otherwise use query data
   const isClaudeRunning = claudeRunningOverride ?? runningData?.running ?? false;
 
-  // Subscribe to session updates via SSE
+  // Compute newest sequence from cache for SSE catch-up cursor
+  // This updates on every message, causing subscription to reconnect with new cursor
+  const newestSequence = useMemo(() => {
+    if (!historyData?.pages) return undefined;
+    let newest: number | undefined;
+    for (const page of historyData.pages) {
+      for (const msg of page.messages) {
+        if (newest === undefined || msg.sequence > newest) {
+          newest = msg.sequence;
+        }
+      }
+    }
+    return newest;
+  }, [historyData]);
+
+  // Subscribe to session updates via SSE - update cache directly
   trpc.sse.onSessionUpdate.useSubscription(
     { sessionId },
     {
-      onData: () => {
-        // Refetch session when we get an update event
-        refetchSession();
+      onData: (trackedData) => {
+        // Update session cache directly from SSE data
+        const session = trackedData.data.session as NonNullable<typeof sessionData>['session'];
+        utils.sessions.get.setData({ sessionId }, { session });
       },
       onError: (err) => {
         console.error('Session SSE error:', err);
@@ -111,14 +115,42 @@ function SessionView({ sessionId }: { sessionId: string }) {
     }
   );
 
-  // Subscribe to new messages via SSE
+  // Subscribe to new messages via SSE - update cache directly
+  // Pass cursor to catch up on missed messages when connecting/reconnecting
   trpc.sse.onNewMessage.useSubscription(
-    { sessionId },
+    { sessionId, afterSequence: newestSequence },
     {
-      onData: () => {
-        // Fetch new messages when we get a new message event
-        fetchPreviousPage();
-        // Also refetch token usage since new messages affect the total
+      onData: (trackedData) => {
+        const newMessage = trackedData.data.message;
+
+        // Add message directly to the infinite query cache
+        utils.claude.getHistory.setInfiniteData({ sessionId, limit: 10 }, (old) => {
+          if (!old) {
+            // No existing data - create initial page
+            return {
+              pages: [{ messages: [newMessage], hasMore: false }],
+              pageParams: [{ direction: 'backward' as const, sequence: undefined }],
+            };
+          }
+
+          // Check if message already exists (deduplication)
+          for (const page of old.pages) {
+            if (page.messages.some((m) => m.id === newMessage.id)) {
+              return old; // Already have this message
+            }
+          }
+
+          // Prepend message to the first page (newest messages)
+          const newPages = [...old.pages];
+          newPages[0] = {
+            ...newPages[0],
+            messages: [...newPages[0].messages, newMessage],
+          };
+
+          return { ...old, pages: newPages };
+        });
+
+        // Refetch token usage since new messages affect the total
         refetchTokenUsage();
       },
       onError: (err) => {
@@ -143,13 +175,17 @@ function SessionView({ sessionId }: { sessionId: string }) {
     }
   );
 
-  // Mutations
+  // Mutations - update cache directly from returned data
   const startMutation = trpc.sessions.start.useMutation({
-    onSuccess: () => refetchSession(),
+    onSuccess: (data) => {
+      utils.sessions.get.setData({ sessionId }, { session: data.session });
+    },
   });
 
   const stopMutation = trpc.sessions.stop.useMutation({
-    onSuccess: () => refetchSession(),
+    onSuccess: (data) => {
+      utils.sessions.get.setData({ sessionId }, { session: data.session });
+    },
   });
 
   const interruptMutation = trpc.claude.interrupt.useMutation();

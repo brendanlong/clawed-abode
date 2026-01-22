@@ -166,7 +166,7 @@ sessions.list({ status?: SessionStatus })
   → { sessions: Session[] }
 
 sessions.get({ sessionId: string })
-  → { session: Session, lastMessage?: Message }
+  → { session: Session }
 
 sessions.start({ sessionId: string })
   → { session: Session }
