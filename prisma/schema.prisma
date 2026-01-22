@@ -24,7 +24,8 @@ model Session {
   name          String
   repoUrl       String
   branch        String
-  workspacePath String         // Path to cloned repo on host
+  workspacePath String         // Path to workspace directory on host (contains the repo)
+  repoPath      String         @default("") // Path to repo relative to workspace (e.g., "my-repo")
   containerId   String?
   status        String         @default("creating") // creating, running, stopped, error
   statusMessage String?        // Human-readable progress message during creation

@@ -37,8 +37,13 @@ async function setupSession(
   try {
     // Clone the repository
     log.info('Cloning repository', { sessionId, repoFullName, branch });
-    const { workspacePath } = await cloneRepo(repoFullName, branch, sessionId, githubToken);
-    log.info('Repository cloned', { sessionId, workspacePath });
+    const { workspacePath, repoPath } = await cloneRepo(
+      repoFullName,
+      branch,
+      sessionId,
+      githubToken
+    );
+    log.info('Repository cloned', { sessionId, workspacePath, repoPath });
 
     // Update status
     await updateStatus('Starting container...');
@@ -48,6 +53,7 @@ async function setupSession(
     const containerId = await createAndStartContainer({
       sessionId,
       workspacePath,
+      repoPath,
       githubToken,
     });
     log.info('Container started', { sessionId, containerId });
@@ -57,6 +63,7 @@ async function setupSession(
       where: { id: sessionId },
       data: {
         workspacePath,
+        repoPath,
         containerId,
         status: 'running',
         statusMessage: null,
@@ -176,6 +183,7 @@ export const sessionsRouter = router({
         const containerId = await createAndStartContainer({
           sessionId: session.id,
           workspacePath: session.workspacePath,
+          repoPath: session.repoPath,
           githubToken,
         });
 

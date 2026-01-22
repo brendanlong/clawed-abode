@@ -146,6 +146,7 @@ async function ensureImagePulled(imageName: string): Promise<void> {
 export interface ContainerConfig {
   sessionId: string;
   workspacePath: string;
+  repoPath: string; // Relative path to repo within workspace (e.g., "my-repo")
   githubToken?: string;
 }
 
@@ -224,9 +225,13 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
       volumeArgs.push('-v', `${env.PODMAN_SOCKET_PATH}:/var/run/docker.sock`);
     }
 
+    // Working directory is the repo path inside the container workspace
+    const workingDir = config.repoPath ? `/workspace/${config.repoPath}` : '/workspace';
+
     log.info('Creating new container', {
       sessionId: config.sessionId,
       image: CLAUDE_CODE_IMAGE,
+      workingDir,
     });
 
     // Ensure the image is pulled before creating the container
@@ -245,7 +250,7 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
       '--device',
       'nvidia.com/gpu=all',
       '-w',
-      '/workspace',
+      workingDir,
       ...envArgs,
       ...volumeArgs,
       CLAUDE_CODE_IMAGE,

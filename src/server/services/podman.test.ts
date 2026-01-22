@@ -143,6 +143,7 @@ describe('podman service', () => {
       const containerId = await createAndStartContainer({
         sessionId: 'test-session',
         workspacePath: '/data/workspaces/test-session',
+        repoPath: 'my-repo',
       });
 
       expect(containerId).toBe('new-container-id');
@@ -153,17 +154,62 @@ describe('podman service', () => {
       expect(pullCall![1]).toContain('claude-code-runner:test');
       expect(pullCall![2]?.env?.CONTAINER_HOST).toBe('unix:///var/run/docker.sock');
 
-      // Verify create was called with correct args including --userns=keep-id
+      // Verify create was called with correct args including --userns=keep-id and working directory
       const createCall = mockSpawn.mock.calls.find((call) => call[1] && call[1].includes('create'));
       expect(createCall).toBeDefined();
       expect(createCall![1]).toContain('--userns=keep-id');
       expect(createCall![1]).toContain('--name');
       expect(createCall![1]).toContain('claude-session-test-session');
+      // Working directory should be set to /workspace/{repoPath}
+      const wIndex = createCall![1].indexOf('-w');
+      expect(createCall![1][wIndex + 1]).toBe('/workspace/my-repo');
 
       // When PODMAN_SOCKET_PATH is not set, should NOT include socket mount or CONTAINER_HOST env
       const createArgs = createCall![1] as string[];
       expect(createArgs).not.toContain('CONTAINER_HOST=unix:///var/run/docker.sock');
       expect(createArgs.join(' ')).not.toContain('/var/run/docker.sock');
+    });
+
+    it('should use /workspace as working dir when repoPath is empty', async () => {
+      // Note: pull may be skipped if recently pulled by another test
+      mockSpawn.mockImplementation((_cmd: string, args: string[]) => {
+        const proc = createMockProcess();
+
+        process.nextTick(() => {
+          if (args[0] === 'ps') {
+            // ps command - no existing container
+            proc.stdout.emit('data', Buffer.from(''));
+            proc.emit('close', 0);
+          } else if (args[0] === 'pull') {
+            // pull command
+            proc.emit('close', 0);
+          } else if (args[0] === 'create') {
+            // create command - return container ID
+            proc.stdout.emit('data', Buffer.from('new-container-id\n'));
+            proc.emit('close', 0);
+          } else if (args[0] === 'start') {
+            // start command
+            proc.emit('close', 0);
+          } else {
+            proc.emit('close', 0);
+          }
+        });
+
+        return proc;
+      });
+
+      const containerId = await createAndStartContainer({
+        sessionId: 'test-session',
+        workspacePath: '/data/workspaces/test-session',
+        repoPath: '',
+      });
+
+      expect(containerId).toBe('new-container-id');
+
+      const createCall = mockSpawn.mock.calls.find((call) => call[1] && call[1].includes('create'));
+      expect(createCall).toBeDefined();
+      const wIndex = createCall![1].indexOf('-w');
+      expect(createCall![1][wIndex + 1]).toBe('/workspace');
     });
 
     it('should return existing container ID if already running', async () => {
@@ -180,6 +226,7 @@ describe('podman service', () => {
       const containerId = await createAndStartContainer({
         sessionId: 'test-session',
         workspacePath: '/data/workspaces/test-session',
+        repoPath: 'my-repo',
       });
 
       expect(containerId).toBe('existing-id');
@@ -208,6 +255,7 @@ describe('podman service', () => {
       const containerId = await createAndStartContainer({
         sessionId: 'test-session',
         workspacePath: '/data/workspaces/test-session',
+        repoPath: 'my-repo',
       });
 
       expect(containerId).toBe('stopped-id');
