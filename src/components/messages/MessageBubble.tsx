@@ -10,6 +10,7 @@ import { CopyButton } from './CopyButton';
 import { RawJsonDisplay } from './RawJsonDisplay';
 import { EditDisplay } from './EditDisplay';
 import { ReadDisplay } from './ReadDisplay';
+import { WriteDisplay } from './WriteDisplay';
 import { TodoWriteDisplay } from './TodoWriteDisplay';
 import { GlobDisplay } from './GlobDisplay';
 import { WebSearchDisplay } from './WebSearchDisplay';
@@ -122,6 +123,10 @@ function renderContentBlocks(
 
             if (block.name === 'Read') {
               return <ReadDisplay key={block.id} tool={tool} />;
+            }
+
+            if (block.name === 'Write') {
+              return <WriteDisplay key={block.id} tool={tool} />;
             }
 
             if (block.name === 'WebSearch') {
