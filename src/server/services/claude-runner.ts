@@ -173,14 +173,27 @@ export async function runClaudeCommand(
   let sequence = (lastMessage?.sequence ?? -1) + 1;
 
   // Store the user prompt first
+  const userMessageId = uuid();
+  const userMessageSequence = sequence++;
+  const userMessageContent = { type: 'user', content: prompt };
   await prisma.message.create({
     data: {
-      id: uuid(),
+      id: userMessageId,
       sessionId,
-      sequence: sequence++,
+      sequence: userMessageSequence,
       type: 'user',
-      content: JSON.stringify({ type: 'user', content: prompt }),
+      content: JSON.stringify(userMessageContent),
     },
+  });
+
+  // Emit SSE event for the user message so client can update immediately
+  sseEvents.emitNewMessage(sessionId, {
+    id: userMessageId,
+    sessionId,
+    sequence: userMessageSequence,
+    type: 'user',
+    content: userMessageContent,
+    createdAt: new Date(),
   });
 
   // Build the Claude command

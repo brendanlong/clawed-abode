@@ -131,21 +131,9 @@ export const sessionsRouter = router({
       const sessions = await prisma.session.findMany({
         where: input?.status ? { status: input.status } : undefined,
         orderBy: { updatedAt: 'desc' },
-        include: {
-          messages: {
-            orderBy: { sequence: 'desc' },
-            take: 1,
-          },
-        },
       });
 
-      return {
-        sessions: sessions.map((s) => ({
-          ...s,
-          lastMessage: s.messages[0] || null,
-          messages: undefined,
-        })),
-      };
+      return { sessions };
     }),
 
   get: protectedProcedure
@@ -153,12 +141,6 @@ export const sessionsRouter = router({
     .query(async ({ input }) => {
       const session = await prisma.session.findUnique({
         where: { id: input.sessionId },
-        include: {
-          messages: {
-            orderBy: { sequence: 'desc' },
-            take: 1,
-          },
-        },
       });
 
       if (!session) {
@@ -168,13 +150,7 @@ export const sessionsRouter = router({
         });
       }
 
-      return {
-        session: {
-          ...session,
-          lastMessage: session.messages[0] || null,
-          messages: undefined,
-        },
-      };
+      return { session };
     }),
 
   start: protectedProcedure
