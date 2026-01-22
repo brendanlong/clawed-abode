@@ -5,6 +5,7 @@ export { MessageBubble } from './MessageBubble';
 export { CopyButton } from './CopyButton';
 export { EditDisplay } from './EditDisplay';
 export { ReadDisplay } from './ReadDisplay';
+export { WriteDisplay } from './WriteDisplay';
 export { GlobDisplay } from './GlobDisplay';
 export { RawJsonDisplay } from './RawJsonDisplay';
 export { TodoWriteDisplay } from './TodoWriteDisplay';
