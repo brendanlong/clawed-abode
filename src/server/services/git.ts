@@ -15,6 +15,7 @@ const WORKSPACES_DIR = join(env.DATA_DIR, 'workspaces');
 
 export interface CloneResult {
   workspacePath: string;
+  repoPath: string; // Relative path to repo within workspace (e.g., "my-repo")
 }
 
 function getWorkspacePath(sessionId: string): string {
@@ -46,7 +47,14 @@ export async function cloneRepo(
 ): Promise<CloneResult> {
   await ensureDir(WORKSPACES_DIR);
 
+  // Workspace is a directory that contains the repo, giving the agent space to create
+  // worktrees, temp files, etc. outside the repo
   const workspacePath = getWorkspacePath(sessionId);
+  await ensureDir(workspacePath);
+
+  // Extract repo name from full name (e.g., "owner/repo" -> "repo")
+  const repoName = repoFullName.split('/')[1];
+  const repoDir = join(workspacePath, repoName);
 
   // Build the clone URL with token if provided
   const repoUrl = githubToken
@@ -54,22 +62,22 @@ export async function cloneRepo(
     : `https://github.com/${repoFullName}.git`;
 
   const git = simpleGit();
-  await git.clone(repoUrl, workspacePath, ['--branch', branch, '--single-branch']);
+  await git.clone(repoUrl, repoDir, ['--branch', branch, '--single-branch']);
 
   // Configure the remote URL without the token for security
   // The credential helper will provide the token when needed
-  const workspaceGit = simpleGit(workspacePath);
-  await workspaceGit.remote(['set-url', 'origin', `https://github.com/${repoFullName}.git`]);
+  const repoGit = simpleGit(repoDir);
+  await repoGit.remote(['set-url', 'origin', `https://github.com/${repoFullName}.git`]);
 
   // Create and check out a session-specific branch to avoid working directly on main/master
   const sessionBranch = `${env.SESSION_BRANCH_PREFIX}${sessionId}`;
-  await workspaceGit.checkoutLocalBranch(sessionBranch);
+  await repoGit.checkoutLocalBranch(sessionBranch);
 
-  // Chown the workspace to claudeuser (UID 1000) so the session container can write to it
+  // Chown the entire workspace to claudeuser (UID 1000) so the session container can write to it
   // This is needed because the app container runs as root but session containers run as claudeuser
   await execAsync(`chown -R ${CLAUDEUSER_UID}:${CLAUDEUSER_GID} "${workspacePath}"`);
 
-  return { workspacePath };
+  return { workspacePath, repoPath: repoName };
 }
 
 export async function removeWorkspace(sessionId: string): Promise<void> {

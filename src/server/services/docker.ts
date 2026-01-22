@@ -86,6 +86,7 @@ async function ensureImagePulled(imageName: string): Promise<void> {
 export interface ContainerConfig {
   sessionId: string;
   workspacePath: string;
+  repoPath: string; // Relative path to repo within workspace (e.g., "my-repo")
   githubToken?: string;
 }
 
@@ -148,10 +149,14 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
       binds.push(`${env.GRADLE_USER_HOME}:/gradle-cache`);
     }
 
+    // Working directory is the repo path inside the container workspace
+    const workingDir = config.repoPath ? `/workspace/${config.repoPath}` : '/workspace';
+
     log.info('Creating new container', {
       sessionId: config.sessionId,
       image: CLAUDE_CODE_IMAGE,
       binds,
+      workingDir,
     });
 
     // Ensure the image is pulled before creating the container
@@ -171,7 +176,7 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
           },
         ],
       },
-      WorkingDir: '/workspace',
+      WorkingDir: workingDir,
     });
 
     await container.start();

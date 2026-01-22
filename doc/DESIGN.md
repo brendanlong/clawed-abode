@@ -45,7 +45,8 @@ interface Session {
   name: string; // User-provided name
   repoUrl: string; // GitHub clone URL
   branch: string; // Branch name
-  workspacePath: string; // Path to cloned repo on host filesystem
+  workspacePath: string; // Path to workspace directory on host (e.g., /data/workspaces/{sessionId})
+  repoPath: string; // Relative path to repo within workspace (e.g., "my-repo")
   containerId: string | null; // Docker container ID when running
   status: 'creating' | 'running' | 'stopped' | 'error';
   statusMessage: string | null; // Progress message during creation or error details
@@ -54,6 +55,23 @@ interface Session {
   updatedAt: Date;
 }
 ```
+
+### Workspace Structure
+
+Each session has a dedicated workspace directory that contains the cloned repository:
+
+```
+/data/workspaces/{sessionId}/
+├── {repo-name}/          # The cloned git repository (working directory)
+├── .worktrees/           # Optional: git worktrees for parallel work
+└── ...                   # Agent can create other files/directories as needed
+```
+
+Inside the container, this is mounted at `/workspace`, with the working directory set to `/workspace/{repo-name}`. This gives the agent:
+
+- Full write access to the workspace for worktrees, temp files, etc.
+- Clean separation between the repo and working files
+- The repo as the default working directory for Claude
 
 ### Message
 
@@ -210,9 +228,10 @@ claude.getHistory({
 2. Server calls `sessions.create()`
 3. Server creates session record with status `creating` and returns immediately
 4. UI navigates to session page, polls for status updates
-5. Background: Server clones repo to `/data/workspaces/{sessionId}`
+5. Background: Server clones repo to `/data/workspaces/{sessionId}/{repo-name}`
 6. Background: Server starts container with:
-   - Workspace mounted at `/workspace`
+   - Workspace mounted at `/workspace` (the session directory, not just the repo)
+   - Working directory set to `/workspace/{repo-name}` (the cloned repo)
    - GPU access (`--gpus all`)
    - Claude auth mounted from host
    - Docker socket mounted (for docker-in-docker)

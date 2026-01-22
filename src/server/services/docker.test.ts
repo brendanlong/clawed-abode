@@ -144,6 +144,7 @@ describe('docker service', () => {
       const containerId = await createAndStartContainer({
         sessionId: 'test-session',
         workspacePath: '/data/workspaces/test-session',
+        repoPath: 'my-repo',
       });
 
       expect(containerId).toBe('test-container-id');
@@ -151,10 +152,44 @@ describe('docker service', () => {
         expect.objectContaining({
           Image: 'claude-code-runner:test',
           name: 'claude-session-test-session',
-          WorkingDir: '/workspace',
+          WorkingDir: '/workspace/my-repo',
         })
       );
       expect(mockContainer.start).toHaveBeenCalled();
+    });
+
+    it('should use /workspace as working dir when repoPath is empty', async () => {
+      const mockStream = createMockStream();
+
+      mockDocker.pull.mockImplementation(
+        (_image: string, callback: (err: Error | null, stream: NodeJS.ReadableStream) => void) => {
+          callback(null, mockStream as unknown as NodeJS.ReadableStream);
+        }
+      );
+      mockDocker.modem.followProgress.mockImplementation(
+        (
+          _stream: NodeJS.ReadableStream,
+          onFinish: (err: Error | null) => void,
+          _onProgress: (event: { status?: string; progress?: string }) => void
+        ) => {
+          onFinish(null);
+        }
+      );
+
+      mockDocker.listContainers.mockResolvedValue([]);
+
+      const containerId = await createAndStartContainer({
+        sessionId: 'test-session',
+        workspacePath: '/data/workspaces/test-session',
+        repoPath: '',
+      });
+
+      expect(containerId).toBe('test-container-id');
+      expect(mockDocker.createContainer).toHaveBeenCalledWith(
+        expect.objectContaining({
+          WorkingDir: '/workspace',
+        })
+      );
     });
 
     it('should return existing container ID if already running', async () => {
@@ -168,6 +203,7 @@ describe('docker service', () => {
       const containerId = await createAndStartContainer({
         sessionId: 'test-session',
         workspacePath: '/data/workspaces/test-session',
+        repoPath: 'my-repo',
       });
 
       expect(containerId).toBe('existing-container-id');
@@ -191,6 +227,7 @@ describe('docker service', () => {
       const containerId = await createAndStartContainer({
         sessionId: 'test-session',
         workspacePath: '/data/workspaces/test-session',
+        repoPath: 'my-repo',
       });
 
       expect(containerId).toBe('stopped-container-id');
@@ -227,6 +264,7 @@ describe('docker service', () => {
       await createAndStartContainer({
         sessionId: 'test-session',
         workspacePath: '/data/workspaces/test-session',
+        repoPath: 'my-repo',
         githubToken: 'ghp_test_token',
       });
 
@@ -265,6 +303,7 @@ describe('docker service', () => {
         createAndStartContainer({
           sessionId: 'test-session',
           workspacePath: '/data/workspaces/test-session',
+          repoPath: 'my-repo',
         })
       ).rejects.toThrow('Docker API error');
     });
