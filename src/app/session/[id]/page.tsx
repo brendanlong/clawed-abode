@@ -20,24 +20,72 @@ interface Message {
   sequence: number;
 }
 
-function SessionView({ sessionId }: { sessionId: string }) {
-  // Local state for Claude running status (overridden by SSE, initialized from query)
-  const [claudeRunningOverride, setClaudeRunningOverride] = useState<boolean | null>(null);
-
-  // tRPC utils for direct cache updates
+/**
+ * Hook for managing session state: fetching session data, SSE updates, and start/stop mutations.
+ */
+function useSessionState(sessionId: string) {
   const utils = trpc.useUtils();
 
   // Fetch session details
-  const { data: sessionData, isLoading: sessionLoading } = trpc.sessions.get.useQuery({
-    sessionId,
+  const { data: sessionData, isLoading } = trpc.sessions.get.useQuery({ sessionId });
+
+  // Subscribe to session updates via SSE - update cache directly
+  trpc.sse.onSessionUpdate.useSubscription(
+    { sessionId },
+    {
+      onData: (trackedData) => {
+        const session = trackedData.data.session as NonNullable<typeof sessionData>['session'];
+        utils.sessions.get.setData({ sessionId }, { session });
+      },
+      onError: (err) => {
+        console.error('Session SSE error:', err);
+      },
+    }
+  );
+
+  // Mutations - update cache directly from returned data
+  const startMutation = trpc.sessions.start.useMutation({
+    onSuccess: (data) => {
+      utils.sessions.get.setData({ sessionId }, { session: data.session });
+    },
   });
+
+  const stopMutation = trpc.sessions.stop.useMutation({
+    onSuccess: (data) => {
+      utils.sessions.get.setData({ sessionId }, { session: data.session });
+    },
+  });
+
+  const start = useCallback(() => {
+    startMutation.mutate({ sessionId });
+  }, [sessionId, startMutation]);
+
+  const stop = useCallback(() => {
+    stopMutation.mutate({ sessionId });
+  }, [sessionId, stopMutation]);
+
+  return {
+    session: sessionData?.session,
+    isLoading,
+    start,
+    stop,
+    isStarting: startMutation.isPending,
+    isStopping: stopMutation.isPending,
+  };
+}
+
+/**
+ * Hook for managing message state: history pagination, SSE updates for new messages, and token usage.
+ */
+function useSessionMessages(sessionId: string) {
+  const utils = trpc.useUtils();
 
   // Bidirectional infinite query for message history
   // - fetchNextPage: loads older messages (backward) when user scrolls up
   // - New messages arrive via SSE and are added directly to the cache
   const {
     data: historyData,
-    isLoading: historyLoading,
+    isLoading,
     isFetchingNextPage,
     hasNextPage,
     fetchNextPage,
@@ -70,9 +118,6 @@ function SessionView({ sessionId }: { sessionId: string }) {
     }
   );
 
-  // Initial fetch of Claude running state
-  const { data: runningData } = trpc.claude.isRunning.useQuery({ sessionId });
-
   // Fetch token usage stats (computed server-side from all messages)
   const { data: tokenUsageData, refetch: refetchTokenUsage } = trpc.claude.getTokenUsage.useQuery(
     { sessionId },
@@ -82,11 +127,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
     }
   );
 
-  // Use SSE override if available, otherwise use query data
-  const isClaudeRunning = claudeRunningOverride ?? runningData?.running ?? false;
-
   // Compute newest sequence from cache for SSE catch-up cursor
-  // This updates on every message, causing subscription to reconnect with new cursor
   const newestSequence = useMemo(() => {
     if (!historyData?.pages) return undefined;
     let newest: number | undefined;
@@ -99,21 +140,6 @@ function SessionView({ sessionId }: { sessionId: string }) {
     }
     return newest;
   }, [historyData]);
-
-  // Subscribe to session updates via SSE - update cache directly
-  trpc.sse.onSessionUpdate.useSubscription(
-    { sessionId },
-    {
-      onData: (trackedData) => {
-        // Update session cache directly from SSE data
-        const session = trackedData.data.session as NonNullable<typeof sessionData>['session'];
-        utils.sessions.get.setData({ sessionId }, { session });
-      },
-      onError: (err) => {
-        console.error('Session SSE error:', err);
-      },
-    }
-  );
 
   // Subscribe to new messages via SSE - update cache directly
   // Pass cursor to catch up on missed messages when connecting/reconnecting
@@ -159,15 +185,55 @@ function SessionView({ sessionId }: { sessionId: string }) {
     }
   );
 
+  // Flatten bidirectional pages into chronological order
+  // Pages array structure:
+  // - pages[0] = newest (from fetchPreviousPage, or initial if no previous fetched)
+  // - pages[n-1] = oldest (from fetchNextPage)
+  // Each page's messages are already in chronological order
+  const messages = useMemo(() => {
+    if (!historyData?.pages) return [];
+
+    const result: Message[] = [];
+    // Reverse pages to get oldest-first, then flatten
+    for (const page of [...historyData.pages].reverse()) {
+      for (const msg of page.messages) {
+        result.push({
+          id: msg.id,
+          type: msg.type,
+          content: msg.content,
+          sequence: msg.sequence,
+        });
+      }
+    }
+    return result;
+  }, [historyData]);
+
+  return {
+    messages,
+    isLoading,
+    isFetchingMore: isFetchingNextPage,
+    hasMore: hasNextPage ?? false,
+    fetchMore: fetchNextPage,
+    tokenUsage: tokenUsageData,
+  };
+}
+
+/**
+ * Hook for managing Claude process state: running status, send prompts, and interrupt.
+ */
+function useClaudeState(sessionId: string) {
+  // Local state for Claude running status (overridden by SSE, initialized from query)
+  const [runningOverride, setRunningOverride] = useState<boolean | null>(null);
+
+  // Initial fetch of Claude running state
+  const { data: runningData } = trpc.claude.isRunning.useQuery({ sessionId });
+
   // Subscribe to Claude running state via SSE
   trpc.sse.onClaudeRunning.useSubscription(
     { sessionId },
     {
       onData: (trackedData) => {
-        // Update local state directly from SSE
-        // trackedData is wrapped by tracked() - access the data property
-        const data = trackedData.data;
-        setClaudeRunningOverride(data.running);
+        setRunningOverride(trackedData.data.running);
       },
       onError: (err) => {
         console.error('Claude running SSE error:', err);
@@ -175,21 +241,53 @@ function SessionView({ sessionId }: { sessionId: string }) {
     }
   );
 
-  // Mutations - update cache directly from returned data
-  const startMutation = trpc.sessions.start.useMutation({
-    onSuccess: (data) => {
-      utils.sessions.get.setData({ sessionId }, { session: data.session });
-    },
-  });
-
-  const stopMutation = trpc.sessions.stop.useMutation({
-    onSuccess: (data) => {
-      utils.sessions.get.setData({ sessionId }, { session: data.session });
-    },
-  });
-
-  const interruptMutation = trpc.claude.interrupt.useMutation();
   const sendMutation = trpc.claude.send.useMutation();
+  const interruptMutation = trpc.claude.interrupt.useMutation();
+
+  const send = useCallback(
+    (prompt: string) => {
+      sendMutation.mutate({ sessionId, prompt });
+    },
+    [sessionId, sendMutation]
+  );
+
+  const interrupt = useCallback(() => {
+    interruptMutation.mutate({ sessionId });
+  }, [sessionId, interruptMutation]);
+
+  // Use SSE override if available, otherwise use query data
+  const isRunning = runningOverride ?? runningData?.running ?? false;
+
+  return {
+    isRunning,
+    send,
+    interrupt,
+  };
+}
+
+function SessionView({ sessionId }: { sessionId: string }) {
+  // Session state: data, start/stop
+  const {
+    session,
+    isLoading: sessionLoading,
+    start,
+    stop,
+    isStarting,
+    isStopping,
+  } = useSessionState(sessionId);
+
+  // Message state: history, pagination, token usage
+  const {
+    messages,
+    isLoading: messagesLoading,
+    isFetchingMore,
+    hasMore,
+    fetchMore,
+    tokenUsage,
+  } = useSessionMessages(sessionId);
+
+  // Claude state: running, send, interrupt
+  const { isRunning: isClaudeRunning, send: sendPrompt, interrupt } = useClaudeState(sessionId);
 
   // Request notification permission on mount
   const { requestPermission, permission } = useNotification();
@@ -200,44 +298,15 @@ function SessionView({ sessionId }: { sessionId: string }) {
     }
   }, [permission, requestPermission]);
 
-  // Flatten bidirectional pages into chronological order
-  // Pages array structure:
-  // - pages[0] = newest (from fetchPreviousPage, or initial if no previous fetched)
-  // - pages[n-1] = oldest (from fetchNextPage)
-  // Each page's messages are already in chronological order
-  const allMessages = useMemo(() => {
-    if (!historyData?.pages) return [];
-
-    const messages: Message[] = [];
-    // Reverse pages to get oldest-first, then flatten
-    for (const page of [...historyData.pages].reverse()) {
-      for (const msg of page.messages) {
-        messages.push({
-          id: msg.id,
-          type: msg.type,
-          content: msg.content,
-          sequence: msg.sequence,
-        });
-      }
-    }
-    return messages;
-  }, [historyData]);
-
   const handleSendPrompt = useCallback(
     (prompt: string) => {
-      if (!sessionData?.session || sessionData.session.status !== 'running') {
+      if (!session || session.status !== 'running') {
         return;
       }
-      sendMutation.mutate({ sessionId, prompt });
+      sendPrompt(prompt);
     },
-    [sessionId, sessionData, sendMutation]
+    [session, sendPrompt]
   );
-
-  const handleInterrupt = useCallback(() => {
-    interruptMutation.mutate({ sessionId });
-  }, [sessionId, interruptMutation]);
-
-  const session = sessionData?.session;
 
   // Track whether we've already sent the initial prompt
   const initialPromptSentRef = useRef(false);
@@ -250,7 +319,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
     const wasCreating = prevStatusRef.current === 'creating';
     const isNowRunning = session.status === 'running';
     const hasInitialPrompt = !!session.initialPrompt;
-    const noMessagesSent = allMessages.length === 0;
+    const noMessagesSent = messages.length === 0;
 
     // Update previous status
     prevStatusRef.current = session.status;
@@ -266,9 +335,9 @@ function SessionView({ sessionId }: { sessionId: string }) {
       session.initialPrompt // TypeScript narrowing
     ) {
       initialPromptSentRef.current = true;
-      sendMutation.mutate({ sessionId, prompt: session.initialPrompt });
+      sendPrompt(session.initialPrompt);
     }
-  }, [session, allMessages.length, sessionId, sendMutation]);
+  }, [session, messages.length, sendPrompt]);
 
   // Dynamic page title based on Claude running state
   useEffect(() => {
@@ -349,18 +418,18 @@ function SessionView({ sessionId }: { sessionId: string }) {
     <div className="flex-1 flex flex-col min-h-0">
       <SessionHeader
         session={session}
-        onStart={() => startMutation.mutate({ sessionId })}
-        onStop={() => stopMutation.mutate({ sessionId })}
-        isStarting={startMutation.isPending}
-        isStopping={stopMutation.isPending}
+        onStart={start}
+        onStop={stop}
+        isStarting={isStarting}
+        isStopping={isStopping}
       />
 
       <MessageList
-        messages={allMessages}
-        isLoading={historyLoading || isFetchingNextPage}
-        hasMore={hasNextPage ?? false}
-        onLoadMore={fetchNextPage}
-        tokenUsage={tokenUsageData}
+        messages={messages}
+        isLoading={messagesLoading || isFetchingMore}
+        hasMore={hasMore}
+        onLoadMore={fetchMore}
+        tokenUsage={tokenUsage}
         onSendResponse={handleSendPrompt}
         isClaudeRunning={isClaudeRunning}
       />
@@ -369,7 +438,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
 
       <PromptInput
         onSubmit={handleSendPrompt}
-        onInterrupt={handleInterrupt}
+        onInterrupt={interrupt}
         isRunning={isClaudeRunning}
         disabled={session.status !== 'running'}
       />
