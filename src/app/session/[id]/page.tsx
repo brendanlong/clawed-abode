@@ -219,6 +219,43 @@ function useSessionMessages(sessionId: string) {
 }
 
 /**
+ * Hook for managing working indicator state: page title and favicon based on Claude running status.
+ * Includes cleanup to reset title and favicon when the component unmounts.
+ */
+function useWorkingIndicator(sessionName: string | undefined, isWorking: boolean) {
+  // Dynamic page title based on Claude running state
+  useEffect(() => {
+    if (!sessionName) return;
+    const baseTitle = `${sessionName} - Clawed Burrow`;
+    document.title = isWorking ? `Working - ${baseTitle}` : baseTitle;
+
+    return () => {
+      document.title = 'Clawed Burrow';
+    };
+  }, [sessionName, isWorking]);
+
+  // Dynamic favicon based on Claude running state
+  useEffect(() => {
+    const faviconPath = isWorking ? '/favicon-working.svg' : '/favicon.svg';
+    let link = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
+    if (!link) {
+      link = document.createElement('link');
+      link.rel = 'icon';
+      link.type = 'image/svg+xml';
+      document.head.appendChild(link);
+    }
+    link.href = faviconPath;
+
+    return () => {
+      const linkEl = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
+      if (linkEl) {
+        linkEl.href = '/favicon.svg';
+      }
+    };
+  }, [isWorking]);
+}
+
+/**
  * Hook for managing Claude process state: running status, send prompts, and interrupt.
  */
 function useClaudeState(sessionId: string) {
@@ -289,6 +326,9 @@ function SessionView({ sessionId }: { sessionId: string }) {
   // Claude state: running, send, interrupt
   const { isRunning: isClaudeRunning, send: sendPrompt, interrupt } = useClaudeState(sessionId);
 
+  // Working indicator: page title and favicon
+  useWorkingIndicator(session?.name, isClaudeRunning);
+
   // Request notification permission on mount
   const { requestPermission, permission } = useNotification();
   useEffect(() => {
@@ -338,26 +378,6 @@ function SessionView({ sessionId }: { sessionId: string }) {
       sendPrompt(session.initialPrompt);
     }
   }, [session, messages.length, sendPrompt]);
-
-  // Dynamic page title based on Claude running state
-  useEffect(() => {
-    if (!session) return;
-    const baseTitle = `${session.name} - Clawed Burrow`;
-    document.title = isClaudeRunning ? `Working - ${baseTitle}` : baseTitle;
-  }, [session, isClaudeRunning]);
-
-  // Dynamic favicon based on Claude running state
-  useEffect(() => {
-    const faviconPath = isClaudeRunning ? '/favicon-working.svg' : '/favicon.svg';
-    let link = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
-    if (!link) {
-      link = document.createElement('link');
-      link.rel = 'icon';
-      link.type = 'image/svg+xml';
-      document.head.appendChild(link);
-    }
-    link.href = faviconPath;
-  }, [isClaudeRunning]);
 
   if (sessionLoading) {
     return (
