@@ -336,11 +336,13 @@ USER claudeuser
 # ... (Android SDK, git config, uv, etc.)
 
 # Configure podman for rootless operation with fuse-overlayfs
+# ignore_chown_errors is required for nested Podman-in-Podman scenarios
 RUN mkdir -p /home/claudeuser/.config/containers && \
     echo '[storage]' > /home/claudeuser/.config/containers/storage.conf && \
     echo 'driver = "overlay"' >> /home/claudeuser/.config/containers/storage.conf && \
     echo '[storage.options.overlay]' >> /home/claudeuser/.config/containers/storage.conf && \
-    echo 'mount_program = "/usr/bin/fuse-overlayfs"' >> /home/claudeuser/.config/containers/storage.conf
+    echo 'mount_program = "/usr/bin/fuse-overlayfs"' >> /home/claudeuser/.config/containers/storage.conf && \
+    echo 'ignore_chown_errors = "true"' >> /home/claudeuser/.config/containers/storage.conf
 
 CMD ["tail", "-f", "/dev/null"]
 ```
