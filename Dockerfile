@@ -1,9 +1,10 @@
 FROM docker.io/node:24-slim
 
-# Install dependencies for Prisma and git for cloning repositories
+# Install dependencies for Prisma, git for cloning, and podman for container management
 RUN apt-get update && apt-get install -y \
     openssl \
     git \
+    podman \
     && rm -rf /var/lib/apt/lists/*
 
 # Enable corepack for pnpm
