@@ -2,7 +2,14 @@
 
 ## Overview
 
-A self-hosted web application that provides mobile-friendly access to Claude Code running on local machines with GPU support. The system exposes Claude Code sessions through a web interface, with persistent sessions tied to git clones in Docker containers.
+A self-hosted web application that provides mobile-friendly access to Claude Code running on local machines with GPU support. The system exposes Claude Code sessions through a web interface, with persistent sessions tied to git clones in Podman containers.
+
+The system uses **rootless Podman** for container management, which provides:
+
+- **Safe sudo access**: Claude Code agents have passwordless sudo inside containers without root on the host
+- **Container-in-container support**: Podman-in-Podman allows agents to build and run containers
+- **GPU access via CDI**: NVIDIA GPUs are exposed using Container Device Interface (CDI)
+- **No Docker daemon**: Podman runs daemonless, reducing attack surface
 
 ## Goals
 
@@ -25,11 +32,12 @@ A self-hosted web application that provides mobile-friendly access to Claude Cod
                                                 │  └──────────┬──────────┘    │
                                                 │             │               │
                                                 │  ┌──────────▼──────────┐    │
-                                                │  │  Docker Containers  │    │
+                                                │  │  Podman Containers  │    │
                                                 │  │  ┌───────────────┐  │    │
                                                 │  │  │ Claude Code   │  │    │
                                                 │  │  │ + Git Clone   │  │    │
-                                                │  │  │ + GPU access  │  │    │
+                                                │  │  │ + GPU (CDI)   │  │    │
+                                                │  │  │ + sudo access │  │    │
                                                 │  │  └───────────────┘  │    │
                                                 │  └─────────────────────┘    │
                                                 └─────────────────────────────┘
@@ -213,17 +221,18 @@ claude.getHistory({
 5. Background: Server clones repo to `/data/workspaces/{sessionId}`
 6. Background: Server starts container with:
    - Workspace mounted at `/workspace`
-   - GPU access (`--gpus all`)
+   - GPU access via CDI (`--device nvidia.com/gpu=all`)
    - Claude auth mounted from host
-   - Docker socket mounted (for docker-in-docker)
+   - Podman socket mounted (for podman-in-podman)
    - GITHUB_TOKEN env var for push/pull access
    - Git credential helper configured automatically
+   - Passwordless sudo for package installation
 7. Session status → `running`, statusMessage → null
 
 ### Interaction Flow
 
 1. User sends prompt via `claude.send()`
-2. Server `docker exec`s into container:
+2. Server executes command in container (via Podman's Docker-compatible API):
    ```bash
    claude -p "<prompt>" \
      --session-id <sessionId> \      # or --resume on subsequent
@@ -282,92 +291,69 @@ The system prompt also instructs Claude to report container issues (missing tool
 5. Server deletes messages from database
 6. Server deletes session record
 
-## Docker Setup
+## Podman Setup
 
 ### Base Image (Dockerfile.claude-code)
+
+The container image includes:
+
+- NVIDIA CUDA base for GPU workloads
+- Podman for container-in-container operations
+- Common development tools (Node.js, Python, JDK, Android SDK)
+- Passwordless sudo for package installation
+- Docker/docker-compose aliases pointing to Podman equivalents
 
 ```dockerfile
 FROM nvidia/cuda:12.1.0-base-ubuntu22.04
 
-# Install dependencies including Python, pip, JDK, and common dev tools
+# Install dependencies including Python, pip, JDK, Podman, and common dev tools
 RUN apt-get update && apt-get install -y \
-    curl git docker.io ca-certificates gnupg \
-    python3 python3-pip python3-venv \
-    openjdk-17-jdk-headless \
-    build-essential coreutils unzip zip tar \
-    file tree jq less vim wget openssh-client \
+    curl git podman fuse-overlayfs slirp4netns uidmap sudo \
+    ca-certificates gnupg python3 python3-pip python3-venv \
+    openjdk-17-jdk-headless build-essential coreutils \
+    unzip zip tar file tree jq less vim wget openssh-client \
     && rm -rf /var/lib/apt/lists/* \
     && ln -sf /usr/bin/python3 /usr/bin/python
 
-# Install Node.js 20.x
-RUN mkdir -p /etc/apt/keyrings && \
-    curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | \
-      gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg && \
-    echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" | \
-      tee /etc/apt/sources.list.d/nodesource.list && \
-    apt-get update && apt-get install -y nodejs
+# Install Node.js 20.x, GitHub CLI, pnpm, Claude Code
+# ... (see Dockerfile.claude-code for full details)
 
-# Install GitHub CLI (gh)
-RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | \
-      dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && \
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | \
-      tee /etc/apt/sources.list.d/github-cli.list && \
-    apt-get update && apt-get install -y gh
+# Install podman-compose and create docker aliases
+RUN pip3 install --break-system-packages podman-compose && \
+    ln -s /usr/bin/podman /usr/local/bin/docker && \
+    ln -s /usr/local/bin/podman-compose /usr/local/bin/docker-compose
 
-# Install Docker Compose V2 plugin
-RUN DOCKER_CONFIG=/usr/lib/docker/cli-plugins && \
-    mkdir -p ${DOCKER_CONFIG} && \
-    curl -SL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-$(uname -m)" -o ${DOCKER_CONFIG}/docker-compose && \
-    chmod +x ${DOCKER_CONFIG}/docker-compose
-
-# Install pnpm and Claude Code
-RUN npm install -g pnpm @anthropic-ai/claude-code
-
-# Create non-root user with docker group access
+# Create non-root user with passwordless sudo
 RUN useradd -m -s /bin/bash -u 1000 claudeuser && \
-    usermod -aG docker claudeuser
+    echo "claudeuser ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/claudeuser && \
+    chmod 0440 /etc/sudoers.d/claudeuser
 
-WORKDIR /workspace
-RUN chown claudeuser:claudeuser /workspace
+# Configure subuid/subgid for rootless podman
+RUN echo "claudeuser:100000:65536" >> /etc/subuid && \
+    echo "claudeuser:100000:65536" >> /etc/subgid
 
 USER claudeuser
-ENV HOME=/home/claudeuser
-ENV PATH="/home/claudeuser/.local/bin:${PATH}"
+# ... (Android SDK, git config, uv, etc.)
 
-# Install Android SDK
-ENV ANDROID_HOME=/home/claudeuser/Android/Sdk
-ENV PATH="${ANDROID_HOME}/cmdline-tools/latest/bin:${ANDROID_HOME}/platform-tools:${PATH}"
-
-RUN mkdir -p ${ANDROID_HOME}/cmdline-tools && \
-    cd ${ANDROID_HOME}/cmdline-tools && \
-    curl -sSL "https://dl.google.com/android/repository/commandlinetools-linux-13114758_latest.zip" -o cmdline-tools.zip && \
-    unzip -q cmdline-tools.zip && mv cmdline-tools latest && rm cmdline-tools.zip && \
-    yes | sdkmanager --licenses > /dev/null 2>&1 && \
-    sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
-
-# Create Android debug keystore for debug builds
-RUN mkdir -p /home/claudeuser/.android && \
-    keytool -genkey -v -keystore /home/claudeuser/.android/debug.keystore \
-      -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
-      -storepass android -keypass android -dname "CN=Android Debug,O=Android,C=US"
-
-# Configure git identity for commits
-RUN git config --global user.email "claude@anthropic.com" && \
-    git config --global user.name "Claude"
-
-# Install uv package manager for Python
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+# Configure podman for rootless operation with fuse-overlayfs
+RUN mkdir -p /home/claudeuser/.config/containers && \
+    echo '[storage]' > /home/claudeuser/.config/containers/storage.conf && \
+    echo 'driver = "overlay"' >> /home/claudeuser/.config/containers/storage.conf && \
+    echo '[storage.options.overlay]' >> /home/claudeuser/.config/containers/storage.conf && \
+    echo 'mount_program = "/usr/bin/fuse-overlayfs"' >> /home/claudeuser/.config/containers/storage.conf
 
 CMD ["tail", "-f", "/dev/null"]
 ```
 
 ### Container Launch
 
+The application uses the `dockerode` library to communicate with Podman via its Docker-compatible API socket.
+
 ```typescript
 async function startSessionContainer(session: Session, githubToken?: string): Promise<string> {
   const binds = [
     `${session.workspacePath}:/workspace`,
-    `/var/run/docker.sock:/var/run/docker.sock`,
+    `${PODMAN_SOCKET}:/var/run/docker.sock`, // Podman socket for container-in-container
     `${CLAUDE_AUTH_PATH}:/home/claudeuser/.claude`,
   ];
 
@@ -376,34 +362,30 @@ async function startSessionContainer(session: Session, githubToken?: string): Pr
     binds.push(`${PNPM_STORE_PATH}:/pnpm-store`);
   }
 
+  // Environment variables for GPU access (works with nvidia-container-toolkit)
+  const envVars = ['NVIDIA_VISIBLE_DEVICES=all', 'NVIDIA_DRIVER_CAPABILITIES=all'];
+  if (githubToken) {
+    envVars.push(`GITHUB_TOKEN=${githubToken}`);
+  }
+
   const container = await docker.createContainer({
     Image: 'claude-code-runner:latest',
     name: `claude-session-${session.id}`,
-    Env: githubToken ? [`GITHUB_TOKEN=${githubToken}`] : [],
+    Env: envVars,
     HostConfig: {
       Binds: binds,
-      DeviceRequests: [
-        {
-          Driver: 'nvidia',
-          Count: -1, // all GPUs
-          Capabilities: [['gpu']],
-        },
-      ],
+      // GPU access via CDI (Container Device Interface)
+      Devices: [{ PathOnHost: 'nvidia.com/gpu=all', PathInContainer: '', CgroupPermissions: '' }],
+      SecurityOpt: ['label=disable'], // Required for CDI
     },
     WorkingDir: '/workspace',
   });
 
   await container.start();
 
-  // Configure git credential helper if token is provided
-  if (githubToken) {
-    await configureGitCredentials(container.id);
-  }
-
-  // Configure pnpm to use shared store if mounted
-  if (PNPM_STORE_PATH) {
-    await configurePnpmStore(container.id);
-  }
+  // Configure git credential helper and pnpm store
+  if (githubToken) await configureGitCredentials(container.id);
+  if (PNPM_STORE_PATH) await configurePnpmStore(container.id);
 
   return container.id;
 }
@@ -471,7 +453,11 @@ ORDER BY sequence ASC;
 
 - Each session runs in its own container
 - Containers can't access each other's workspaces
-- Docker socket access is intentional for docker-in-docker capability
+- Podman socket access is intentional for podman-in-podman capability
+- **Rootless Podman**: Claude Code agents have passwordless sudo inside containers, but:
+  - The container user is not root on the host
+  - User namespace isolation prevents host privilege escalation
+  - This solves [issue #39](https://github.com/brendanlong/clawed-burrow/issues/39) (no sudo for package installation)
 - `--dangerously-skip-permissions` is acceptable because:
   - Only authenticated user can access
   - Container provides isolation boundary

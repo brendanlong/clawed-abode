@@ -1,8 +1,9 @@
 services:
   app:
     image: ghcr.io/brendanlong/clawed-burrow:latest
+    # Label for podman auto-update to check for new images
     labels:
-      - com.centurylinklabs.watchtower.scope=clawed-burrow
+      - io.containers.autoupdate=registry
     ports:
       - '3000:3000'
     environment:
@@ -24,27 +25,25 @@ services:
       - GRADLE_USER_HOME=${GRADLE_USER_HOME:-}
     volumes:
       - ${HOME}/.clawed-burrow:/data
-      - /var/run/docker.sock:/var/run/docker.sock
+      # Mount podman socket for container management
+      # For rootless podman: /run/user/$(id -u)/podman/podman.sock
+      # For rootful podman: /run/podman/podman.sock
+      - ${XDG_RUNTIME_DIR:-/run/user/1000}/podman/podman.sock:/var/run/docker.sock
       - ${HOME}/.claude:/claude-auth
+    # GPU access via CDI (Container Device Interface)
+    # Requires: sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
+    devices:
+      - nvidia.com/gpu=all
+    security_opt:
+      # Required for CDI GPU access
+      - label=disable
     restart: unless-stopped
 
-  # Watchtower - automatically updates containers when new images are pushed
-  watchtower:
-    image: nickfedor/watchtower
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    environment:
-      # Check for updates every 5 minutes
-      - WATCHTOWER_POLL_INTERVAL=300
-      # Clean up old images after updating
-      - WATCHTOWER_CLEANUP=true
-      # Only update containers in this compose project
-      - WATCHTOWER_SCOPE=clawed-burrow
-    labels:
-      - com.centurylinklabs.watchtower.scope=clawed-burrow
-    restart: unless-stopped
-
-  # For remote access, we recommend using Tailscale Funnel on the host
-  # See: https://tailscale.com/kb/1223/funnel
+# To enable automatic updates, use podman's built-in auto-update feature:
+# 1. Enable the systemd timer: systemctl --user enable --now podman-auto-update.timer
+# 2. Or run manually: podman auto-update
+#
+# For remote access, we recommend using Tailscale Funnel on the host
+# See: https://tailscale.com/kb/1223/funnel
 
 # Data is stored in ~/.clawed-burrow on the host

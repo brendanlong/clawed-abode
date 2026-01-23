@@ -1,4 +1,4 @@
-FROM node:20-slim
+FROM docker.io/node:24-slim
 
 # Install dependencies for Prisma and git for cloning repositories
 RUN apt-get update && apt-get install -y \

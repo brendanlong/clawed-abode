@@ -1,13 +1,20 @@
-FROM nvidia/cuda:12.1.0-base-ubuntu22.04
+FROM docker.io/nvidia/cuda:12.6.3-base-ubuntu24.04
 
 # Avoid prompts from apt
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install dependencies including Python, pip, JDK, and common development tools
+# Install dependencies including Python, pip, JDK, podman, and common development tools
 RUN apt-get update && apt-get install -y \
     curl \
     git \
-    docker.io \
+    # Podman for rootless container-in-container support
+    podman \
+    podman-compose \
+    fuse-overlayfs \
+    slirp4netns \
+    uidmap \
+    # sudo for package installation inside container
+    sudo \
     ca-certificates \
     gnupg \
     python3 \
@@ -51,11 +58,10 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | d
     apt-get install -y gh && \
     rm -rf /var/lib/apt/lists/*
 
-# Install Docker Compose V2 plugin
-RUN DOCKER_CONFIG=/usr/lib/docker/cli-plugins && \
-    mkdir -p ${DOCKER_CONFIG} && \
-    curl -SL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-$(uname -m)" -o ${DOCKER_CONFIG}/docker-compose && \
-    chmod +x ${DOCKER_CONFIG}/docker-compose
+# Create aliases for docker compatibility (Claude may use docker commands)
+# These are system-wide so they work regardless of shell
+RUN ln -s /usr/bin/podman /usr/local/bin/docker && \
+    ln -s /usr/bin/podman-compose /usr/local/bin/docker-compose
 
 # Enable corepack for pnpm (built into Node.js) and install Claude Code
 RUN corepack enable && \
@@ -63,9 +69,17 @@ RUN corepack enable && \
     npm install -g @anthropic-ai/claude-code
 
 # Create a non-root user with UID 1000 (common default for host user)
-# Add to docker group for docker-in-docker capability
-RUN useradd -m -s /bin/bash -u 1000 claudeuser && \
-    usermod -aG docker claudeuser
+# Ubuntu 24.04 has an 'ubuntu' user at UID 1000, so delete it first
+# Configure passwordless sudo for package installation and system administration
+RUN userdel -r ubuntu 2>/dev/null || true && \
+    useradd -m -s /bin/bash -u 1000 claudeuser && \
+    echo "claudeuser ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/claudeuser && \
+    chmod 0440 /etc/sudoers.d/claudeuser
+
+# Configure subuid/subgid for rootless podman
+# This allows podman to create user namespaces for nested containers
+RUN echo "claudeuser:100000:65536" >> /etc/subuid && \
+    echo "claudeuser:100000:65536" >> /etc/subgid
 
 # Set up working directory
 WORKDIR /workspace
@@ -118,6 +132,13 @@ RUN git config --global user.email "claude@anthropic.com" && \
 
 # Install uv package manager for Python
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Configure podman for rootless operation with fuse-overlayfs
+RUN mkdir -p /home/claudeuser/.config/containers && \
+    echo '[storage]' > /home/claudeuser/.config/containers/storage.conf && \
+    echo 'driver = "overlay"' >> /home/claudeuser/.config/containers/storage.conf && \
+    echo '[storage.options.overlay]' >> /home/claudeuser/.config/containers/storage.conf && \
+    echo 'mount_program = "/usr/bin/fuse-overlayfs"' >> /home/claudeuser/.config/containers/storage.conf
 
 # Entry point that keeps container alive
 CMD ["tail", "-f", "/dev/null"]

@@ -15,11 +15,12 @@ A self-hosted web application that provides mobile-friendly access to Claude Cod
 - Session tracking with IP addresses and login history
 - Clean session lifecycle management
 - Mobile-friendly interface
+- **Rootless containers** - Claude Code agents have sudo access inside containers without root on the host
 
 ## Prerequisites
 
 - Node.js 20+
-- Docker with NVIDIA Container Toolkit (for GPU support)
+- Podman with NVIDIA Container Toolkit (for GPU support)
 - A GitHub Fine-grained Personal Access Token (recommended for security)
 - Claude Code installed and authenticated on your host machine
 
@@ -97,17 +98,34 @@ Visit `http://localhost:3000` to access the application.
 
 ## Production Deployment
 
-### Using Docker Compose
+### Using Podman Compose
 
 ```bash
 # Set environment variables
 export GITHUB_TOKEN=your_github_token
-export CLAUDE_AUTH_PATH=~/.claude
+export PASSWORD_HASH="your_base64_hash"
+
+# Enable the Podman socket (required for container management)
+systemctl --user enable --now podman.socket
 
 # Start services
 cd docker
-docker compose up -d
+podman-compose up -d
 ```
+
+### Automatic Updates with Podman
+
+Instead of Watchtower, use Podman's built-in auto-update feature:
+
+```bash
+# Enable the auto-update timer (checks daily at midnight)
+systemctl --user enable --now podman-auto-update.timer
+
+# Or run updates manually
+podman auto-update
+```
+
+The compose file includes the `io.containers.autoupdate=registry` label which tells Podman to check for new images automatically.
 
 ### With Tailscale Funnel (for secure remote access)
 
@@ -142,11 +160,21 @@ For persistent Funnel configuration, see the [Tailscale Funnel documentation](ht
 
 ### GPU Support
 
-The application uses NVIDIA Container Toolkit for GPU access. Ensure you have:
+The application uses NVIDIA Container Toolkit with CDI (Container Device Interface) for GPU access. Ensure you have:
 
 1. **NVIDIA drivers installed** - verify with `nvidia-smi`
 
-2. **NVIDIA Container Toolkit installed:**
+2. **Podman installed:**
+
+   ```bash
+   # Ubuntu/Debian
+   sudo apt-get install -y podman fuse-overlayfs slirp4netns uidmap
+
+   # Fedora
+   sudo dnf install -y podman
+   ```
+
+3. **NVIDIA Container Toolkit installed:**
 
    ```bash
    # Add the NVIDIA container toolkit repository
@@ -160,21 +188,54 @@ The application uses NVIDIA Container Toolkit for GPU access. Ensure you have:
    # Install the toolkit
    sudo apt-get update
    sudo apt-get install -y nvidia-container-toolkit
-
-   # Configure Docker to use the NVIDIA runtime
-   sudo nvidia-ctk runtime configure --runtime=docker
-
-   # Restart Docker
-   sudo systemctl restart docker
    ```
 
-3. **Verify GPU access in Docker:**
+4. **Generate CDI specification for Podman:**
 
    ```bash
-   docker run --rm --gpus all nvidia/cuda:12.1.0-base-ubuntu22.04 nvidia-smi
+   # Generate CDI spec (must be run as root)
+   sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
+
+   # Verify the spec was created
+   ls -la /etc/cdi/nvidia.yaml
+   ```
+
+   **Note:** You need to regenerate the CDI spec after NVIDIA driver updates or GPU changes.
+
+5. **Verify GPU access in Podman:**
+
+   ```bash
+   podman run --rm --device nvidia.com/gpu=all --security-opt=label=disable \
+     nvidia/cuda:12.1.0-base-ubuntu22.04 nvidia-smi
    ```
 
    This should display your GPU information if everything is configured correctly.
+
+### Rootless Podman Setup
+
+For rootless operation (recommended for security):
+
+1. **Enable the user Podman socket:**
+
+   ```bash
+   systemctl --user enable --now podman.socket
+   ```
+
+2. **Verify the socket is running:**
+
+   ```bash
+   ls -la /run/user/$(id -u)/podman/podman.sock
+   ```
+
+3. **Configure subuid/subgid** (if not already done):
+
+   ```bash
+   # Check if your user has subuid/subgid ranges
+   grep $USER /etc/subuid /etc/subgid
+
+   # If not, add them:
+   sudo usermod --add-subuids 100000-165535 --add-subgids 100000-165535 $USER
+   ```
 
 ## Architecture
 
@@ -189,11 +250,12 @@ The application uses NVIDIA Container Toolkit for GPU access. Ensure you have:
                                                 │  └──────────┬──────────┘    │
                                                 │             │               │
                                                 │  ┌──────────▼──────────┐    │
-                                                │  │  Docker Containers  │    │
+                                                │  │  Podman Containers  │    │
                                                 │  │  ┌───────────────┐  │    │
                                                 │  │  │ Claude Code   │  │    │
                                                 │  │  │ + Git Clone   │  │    │
                                                 │  │  │ + GPU access  │  │    │
+                                                │  │  │ + sudo access │  │    │
                                                 │  │  └───────────────┘  │    │
                                                 │  └─────────────────────┘    │
                                                 └─────────────────────────────┘
@@ -226,17 +288,49 @@ pnpm start
 - Claude Code runs with `--dangerously-skip-permissions` inside isolated containers
 - Each session has its own container with an isolated git clone
 - Use Fine-grained PATs scoped to specific repos with minimal permissions
-- Docker socket access is provided for docker-in-docker capability
+- **Rootless Podman**: Claude Code agents have sudo access inside containers, but this doesn't grant root on the host
+- Podman socket access is provided for container-in-container capability
 - Use Tailscale Funnel or similar for secure remote access (don't expose port 3000 directly)
 
 ## Troubleshooting
 
 ### Container won't start with GPU
 
-Ensure NVIDIA Container Toolkit is properly installed:
+1. **Verify CDI spec exists:**
+
+   ```bash
+   ls -la /etc/cdi/nvidia.yaml
+   ```
+
+   If missing, generate it:
+
+   ```bash
+   sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
+   ```
+
+2. **Test GPU access directly:**
+
+   ```bash
+   podman run --rm --device nvidia.com/gpu=all --security-opt=label=disable \
+     nvidia/cuda:12.1.0-base-ubuntu22.04 nvidia-smi
+   ```
+
+3. **Check nvidia-container-toolkit version:**
+
+   ```bash
+   nvidia-ctk --version
+   ```
+
+   CDI support requires nvidia-container-toolkit 1.12.0 or later.
+
+### Podman socket not found
 
 ```bash
-docker run --rm --gpus all nvidia/cuda:12.1.0-base-ubuntu22.04 nvidia-smi
+# Enable and start the user socket
+systemctl --user enable --now podman.socket
+
+# Verify it's running
+systemctl --user status podman.socket
 ```
 
 ### Claude Code authentication errors
@@ -258,6 +352,26 @@ Reset the database:
 rm -rf prisma/data
 npx prisma migrate dev
 ```
+
+### Podman auto-update not working
+
+1. **Verify the container has the auto-update label:**
+
+   ```bash
+   podman inspect <container> | grep -A5 autoupdate
+   ```
+
+2. **Check the timer status:**
+
+   ```bash
+   systemctl --user status podman-auto-update.timer
+   ```
+
+3. **Run a dry-run to see what would be updated:**
+
+   ```bash
+   podman auto-update --dry-run
+   ```
 
 ## License
 

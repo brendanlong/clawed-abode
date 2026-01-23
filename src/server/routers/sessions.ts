@@ -9,7 +9,7 @@ import {
   stopContainer,
   removeContainer,
   getContainerStatus,
-} from '../services/docker';
+} from '../services/podman';
 import { sseEvents } from '../services/events';
 import { createLogger, toError } from '@/lib/logger';
 

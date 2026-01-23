@@ -9,10 +9,9 @@ import {
   signalProcessesByPattern,
   findProcessInContainer,
   sendSignalToExec,
-} from './docker';
+} from './podman';
 import { prisma } from '@/lib/prisma';
 import { getMessageType } from '@/lib/claude-messages';
-import { DockerStreamDemuxer } from './docker-stream-demuxer';
 import { v4 as uuid, v5 as uuidv5 } from 'uuid';
 import { sseEvents } from './events';
 import { createLogger, toError } from '@/lib/logger';
@@ -44,6 +43,8 @@ const SYSTEM_PROMPT = `IMPORTANT: The user is accessing this session remotely th
 4. If a PR already exists for the current branch, just push to update it
 
 Never leave uncommitted or unpushed changes - the user cannot see them otherwise.
+
+CONTAINER ENVIRONMENT: This container uses Podman for container operations (not Docker). Use \`podman\` and \`podman-compose\` commands for container management. Aliases for \`docker\` and \`docker-compose\` are available and will work, but prefer using the podman commands directly. You have passwordless sudo access for installing additional packages if needed.
 
 CONTAINER ISSUE REPORTING: This container should have all standard development tools pre-installed and properly configured. If you encounter missing tools, misconfigured environments, or other container setup issues that prevent you from completing tasks:
 
@@ -258,16 +259,14 @@ export async function runClaudeCommand(
     }
 
     // Process output directly from the attached stream (no tailing needed)
-    const demuxer = new DockerStreamDemuxer();
-
     let buffer = '';
     let totalLines = 0;
 
     // Process output - stream ends when process completes
     await new Promise<void>((resolve, reject) => {
       stream.on('data', async (chunk: Buffer) => {
-        // Demux the Docker multiplexed stream to extract actual content
-        const data = demuxer.push(chunk);
+        // With Podman CLI, output is plain text (no Docker multiplexing)
+        const data = chunk.toString('utf-8');
         buffer += data;
 
         const lines = buffer.split('\n');
@@ -534,12 +533,11 @@ async function processOutputFileWithExecId(
     }
 
     const { stream } = await tailFileInContainer(containerId, outputFile, 0);
-    const demuxer = new DockerStreamDemuxer();
 
     await new Promise<void>((resolve, reject) => {
       stream.on('data', async (chunk: Buffer) => {
-        // Demux the Docker multiplexed stream to extract actual content
-        const data = demuxer.push(chunk);
+        // With Podman CLI, output is plain text (no Docker multiplexing)
+        const data = chunk.toString('utf-8');
         buffer += data;
 
         const lines = buffer.split('\n');

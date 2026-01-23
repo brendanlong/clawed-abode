@@ -157,19 +157,23 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
     // Ensure the image is pulled before creating the container
     await ensureImagePulled(CLAUDE_CODE_IMAGE);
 
+    // Add NVIDIA environment variables for GPU access
+    // These work with nvidia-container-toolkit hooks (both Docker and Podman)
+    envVars.push('NVIDIA_VISIBLE_DEVICES=all');
+    envVars.push('NVIDIA_DRIVER_CAPABILITIES=all');
+
     const container = await docker.createContainer({
       Image: CLAUDE_CODE_IMAGE,
       name: containerName,
       Env: envVars,
       HostConfig: {
         Binds: binds,
-        DeviceRequests: [
-          {
-            Driver: 'nvidia',
-            Count: -1, // all GPUs
-            Capabilities: [['gpu']],
-          },
-        ],
+        // GPU access is handled via NVIDIA_VISIBLE_DEVICES env var and nvidia-container-toolkit hooks
+        // CDI device names (nvidia.com/gpu=all) don't work through Docker-compat API
+        SecurityOpt: ['label=disable'], // Required for rootless podman
+        // Use keep-id to preserve UID mapping: host UID 1000 = container UID 1000
+        // This ensures mounted files are accessible without chowning
+        UsernsMode: 'keep-id',
       },
       WorkingDir: '/workspace',
     });

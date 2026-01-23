@@ -1,20 +1,11 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { EventEmitter } from 'events';
 
-// Helper to create a mock stream that behaves like a Docker exec stream
+// Helper to create a mock stream that behaves like a Podman exec stream
 function createMockStream(): EventEmitter & { destroy: () => void } {
   const stream = new EventEmitter() as EventEmitter & { destroy: () => void };
   stream.destroy = vi.fn();
   return stream;
-}
-
-// Helper to create a Docker multiplexed frame
-function createDockerFrame(streamType: number, data: string): Buffer {
-  const payload = Buffer.from(data, 'utf-8');
-  const header = Buffer.alloc(8);
-  header[0] = streamType;
-  header.writeUInt32BE(payload.length, 4);
-  return Buffer.concat([header, payload]);
 }
 
 // Create mock objects that will be hoisted
@@ -57,8 +48,8 @@ const { mockDockerFunctions, mockPrisma, mockSseEvents } = vi.hoisted(() => {
   return { mockDockerFunctions, mockPrisma, mockSseEvents };
 });
 
-// Mock the docker service
-vi.mock('./docker', () => mockDockerFunctions);
+// Mock the podman service
+vi.mock('./podman', () => mockDockerFunctions);
 
 // Mock prisma
 vi.mock('@/lib/prisma', () => ({
@@ -653,7 +644,7 @@ describe('claude-runner service', () => {
         },
       });
 
-      mockStream.emit('data', createDockerFrame(1, assistantMessage + '\n'));
+      mockStream.emit('data', Buffer.from(assistantMessage + '\n'));
 
       await new Promise((r) => setTimeout(r, 10));
       mockStream.emit('end');
@@ -692,7 +683,7 @@ describe('claude-runner service', () => {
         message: { role: 'assistant', content: [] },
       });
 
-      mockStream.emit('data', createDockerFrame(1, duplicateMessage + '\n'));
+      mockStream.emit('data', Buffer.from(duplicateMessage + '\n'));
 
       await new Promise((r) => setTimeout(r, 10));
       mockStream.emit('end');
@@ -843,7 +834,7 @@ describe('claude-runner service', () => {
       await new Promise((r) => setTimeout(r, 10));
 
       // Emit invalid JSON - should not throw
-      mockStream.emit('data', createDockerFrame(1, 'not valid json\n'));
+      mockStream.emit('data', Buffer.from('not valid json\n'));
 
       await new Promise((r) => setTimeout(r, 10));
       mockStream.emit('end');
@@ -879,7 +870,7 @@ describe('claude-runner service', () => {
         message: { role: 'assistant', content: [] },
       });
 
-      mockStream.emit('data', createDockerFrame(1, line1 + '\n' + line2 + '\n'));
+      mockStream.emit('data', Buffer.from(line1 + '\n' + line2 + '\n'));
 
       await new Promise((r) => setTimeout(r, 10));
       mockStream.emit('end');
@@ -955,26 +946,6 @@ describe('claude-runner stream parsing logic', () => {
       const parsed = JSON.parse(toolUseMessage);
       expect(parsed.message.content).toHaveLength(2);
       expect(parsed.message.content[1].type).toBe('tool_use');
-    });
-  });
-
-  describe('Docker frame parsing', () => {
-    it('should correctly create Docker multiplexed frames', () => {
-      const data = 'test data';
-      const frame = createDockerFrame(1, data);
-
-      // Verify frame structure
-      expect(frame[0]).toBe(1); // stdout
-      expect(frame.readUInt32BE(4)).toBe(data.length);
-      expect(frame.slice(8).toString()).toBe(data);
-    });
-
-    it('should handle stdout and stderr frames', () => {
-      const stdoutFrame = createDockerFrame(1, 'stdout');
-      const stderrFrame = createDockerFrame(2, 'stderr');
-
-      expect(stdoutFrame[0]).toBe(1);
-      expect(stderrFrame[0]).toBe(2);
     });
   });
 
