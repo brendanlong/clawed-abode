@@ -139,6 +139,7 @@ podman run -d \
   -e DATA_HOST_PATH="$HOME/.clawed-burrow" \
   -e NODE_ENV=production \
   -e PASSWORD_HASH="$PASSWORD_HASH" \
+  -e PODMAN_SOCKET_PATH="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman/podman.sock" \
   -e CLAUDE_RUNNER_IMAGE=ghcr.io/brendanlong/clawed-burrow-runner:latest \
   ${PNPM_STORE_PATH:+-e PNPM_STORE_PATH="$PNPM_STORE_PATH"} \
   ${GRADLE_USER_HOME:+-e GRADLE_USER_HOME="$GRADLE_USER_HOME"} \
