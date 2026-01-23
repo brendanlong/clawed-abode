@@ -1,15 +1,10 @@
 import { spawn, ChildProcess } from 'child_process';
 import { Readable, PassThrough } from 'stream';
-import Docker from 'dockerode';
 import { env } from '@/lib/env';
 import { createLogger, toError } from '@/lib/logger';
 import { v4 as uuid } from 'uuid';
 
 const log = createLogger('podman');
-
-// Use dockerode for image pulls (goes through host's Podman socket)
-// This avoids UID/GID mapping issues when running in a container
-const docker = new Docker();
 
 // Use env variable if set, otherwise default to local build
 const CLAUDE_CODE_IMAGE = env.CLAUDE_RUNNER_IMAGE;
@@ -46,12 +41,23 @@ interface TrackedProcess {
 const trackedProcesses = new Map<string, TrackedProcess>();
 
 /**
+ * Environment for podman commands.
+ * Sets CONTAINER_HOST to use the Docker socket, which connects to the host's Podman.
+ * This is necessary for container-in-container setups where the inner Podman
+ * has limited UID/GID mappings.
+ */
+const podmanEnv = {
+  ...process.env,
+  CONTAINER_HOST: 'unix:///var/run/docker.sock',
+};
+
+/**
  * Run a podman command and return a promise that resolves with stdout.
  */
 async function runPodman(args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
     log.debug('runPodman: Executing', { args });
-    const proc = spawn('podman', args);
+    const proc = spawn('podman', args, { env: podmanEnv });
     let stdout = '';
     let stderr = '';
 
@@ -84,7 +90,7 @@ async function runPodman(args: string[]): Promise<string> {
 async function runPodmanIgnoreErrors(args: string[]): Promise<string> {
   return new Promise((resolve) => {
     log.debug('runPodmanIgnoreErrors: Executing', { args });
-    const proc = spawn('podman', args);
+    const proc = spawn('podman', args, { env: podmanEnv });
     let stdout = '';
 
     proc.stdout.on('data', (data: Buffer) => {
@@ -104,9 +110,6 @@ async function runPodmanIgnoreErrors(args: string[]): Promise<string> {
 /**
  * Ensure an image is up-to-date by pulling it.
  * Pulls are rate-limited to once per 5 minutes per image to avoid excessive pulls.
- *
- * Uses dockerode (socket API) for pulls to work around UID/GID mapping issues
- * when running Podman-in-Podman. The socket delegates to the host's Podman.
  */
 async function ensureImagePulled(imageName: string): Promise<void> {
   const lastPull = lastPullTime.get(imageName);
@@ -120,40 +123,14 @@ async function ensureImagePulled(imageName: string): Promise<void> {
 
   log.info('Pulling image', { imageName });
 
-  return new Promise((resolve, reject) => {
-    docker.pull(imageName, (err: Error | null, stream: NodeJS.ReadableStream) => {
-      if (err) {
-        log.error('Failed to pull image', err, { imageName });
-        reject(err);
-        return;
-      }
-
-      // Follow the pull progress and wait for completion
-      docker.modem.followProgress(
-        stream,
-        (pullErr: Error | null) => {
-          if (pullErr) {
-            log.error('Image pull failed', pullErr, { imageName });
-            reject(pullErr);
-          } else {
-            log.info('Image pull complete', { imageName });
-            lastPullTime.set(imageName, Date.now());
-            resolve();
-          }
-        },
-        (event: { status?: string; progress?: string }) => {
-          // Log progress periodically
-          if (event.status && event.progress) {
-            log.debug('Pull progress', {
-              imageName,
-              status: event.status,
-              progress: event.progress,
-            });
-          }
-        }
-      );
-    });
-  });
+  try {
+    await runPodman(['pull', imageName]);
+    log.info('Image pull complete', { imageName });
+    lastPullTime.set(imageName, Date.now());
+  } catch (error) {
+    log.error('Failed to pull image', toError(error), { imageName });
+    throw error;
+  }
 }
 
 export interface ContainerConfig {
@@ -362,7 +339,7 @@ export async function execInContainer(
   const execId = uuid();
   log.debug('execInContainer: Starting', { containerId, command, execId });
 
-  const proc = spawn('podman', ['exec', containerId, ...command]);
+  const proc = spawn('podman', ['exec', containerId, ...command], { env: podmanEnv });
 
   // Combine stdout and stderr into a single stream
   const combinedStream = new PassThrough();
@@ -515,7 +492,9 @@ export async function execInContainerWithOutputFile(
   // Wrap the command to redirect output to a file
   const wrappedCommand = `exec ${command.map(escapeShellArg).join(' ')} > "${outputFile}" 2>&1`;
 
-  const proc = spawn('podman', ['exec', '-d', containerId, 'sh', '-c', wrappedCommand]);
+  const proc = spawn('podman', ['exec', '-d', containerId, 'sh', '-c', wrappedCommand], {
+    env: podmanEnv,
+  });
 
   // Track the process
   const tracked: TrackedProcess = { process: proc, running: true, exitCode: null };
@@ -554,7 +533,9 @@ export async function execInContainerWithTee(
   const wrappedCommand = `stdbuf -oL ${command.map(escapeShellArg).join(' ')} 2>&1 | tee "${outputFile}"`;
   log.debug('execInContainerWithTee: Wrapped command', { wrappedCommand });
 
-  const proc = spawn('podman', ['exec', containerId, 'sh', '-c', wrappedCommand]);
+  const proc = spawn('podman', ['exec', containerId, 'sh', '-c', wrappedCommand], {
+    env: podmanEnv,
+  });
 
   // Track the process
   const tracked: TrackedProcess = { process: proc, running: true, exitCode: null };
@@ -608,15 +589,11 @@ export async function tailFileInContainer(
   const execId = uuid();
 
   // Use tail -f to follow the file, starting from line N
-  const proc = spawn('podman', [
-    'exec',
-    containerId,
-    'tail',
-    '-n',
-    `+${startLine + 1}`,
-    '-f',
-    filePath,
-  ]);
+  const proc = spawn(
+    'podman',
+    ['exec', containerId, 'tail', '-n', `+${startLine + 1}`, '-f', filePath],
+    { env: podmanEnv }
+  );
 
   // Track the process
   const tracked: TrackedProcess = { process: proc, running: true, exitCode: null };
