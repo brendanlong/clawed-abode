@@ -8,26 +8,6 @@ vi.mock('child_process', () => ({
   spawn: (...args: unknown[]) => mockSpawn(...args),
 }));
 
-// Create mock for dockerode (used for image pulls)
-// These are hoisted with vi.hoisted so they can be used in vi.mock
-const { mockFollowProgress, mockPull } = vi.hoisted(() => {
-  return {
-    mockFollowProgress: vi.fn(),
-    mockPull: vi.fn(),
-  };
-});
-
-vi.mock('dockerode', () => {
-  return {
-    default: class MockDocker {
-      pull = mockPull;
-      modem = {
-        followProgress: mockFollowProgress,
-      };
-    },
-  };
-});
-
 // Mock the env module
 vi.mock('@/lib/env', () => ({
   env: {
@@ -106,27 +86,14 @@ import {
   tailFileInContainer,
 } from './podman';
 
+// Helper matcher for podman commands that includes the CONTAINER_HOST env
+const podmanEnvMatcher = expect.objectContaining({
+  env: expect.objectContaining({ CONTAINER_HOST: 'unix:///var/run/docker.sock' }),
+});
+
 describe('podman service', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-
-    // Default mock for docker pull - success
-    mockPull.mockImplementation(
-      (_imageName: string, callback: (err: Error | null, stream: EventEmitter) => void) => {
-        const stream = new EventEmitter();
-        callback(null, stream as unknown as EventEmitter);
-      }
-    );
-    mockFollowProgress.mockImplementation(
-      (
-        _stream: EventEmitter,
-        onFinished: (err: Error | null) => void,
-        _onProgress: (event: unknown) => void
-      ) => {
-        // Simulate successful pull
-        process.nextTick(() => onFinished(null));
-      }
-    );
   });
 
   afterEach(() => {
@@ -136,8 +103,9 @@ describe('podman service', () => {
   describe('createAndStartContainer', () => {
     it('should create and start a new container when none exists', async () => {
       // First call: ps to check existing containers (empty result)
-      // Second call: create container (pull happens via dockerode, not CLI)
-      // Third call: start container
+      // Second call: pull image
+      // Third call: create container
+      // Fourth call: start container
       let callCount = 0;
       mockSpawn.mockImplementation(() => {
         callCount++;
@@ -150,10 +118,13 @@ describe('podman service', () => {
             proc.stdout.emit('data', Buffer.from(''));
             proc.emit('close', 0);
           } else if (callCount === 2) {
+            // pull command
+            proc.emit('close', 0);
+          } else if (callCount === 3) {
             // create command - return container ID
             proc.stdout.emit('data', Buffer.from('new-container-id\n'));
             proc.emit('close', 0);
-          } else if (callCount === 3) {
+          } else if (callCount === 4) {
             // start command
             proc.emit('close', 0);
           } else {
@@ -171,8 +142,11 @@ describe('podman service', () => {
 
       expect(containerId).toBe('new-container-id');
 
-      // Verify pull was called via dockerode
-      expect(mockPull).toHaveBeenCalledWith('claude-code-runner:test', expect.any(Function));
+      // Verify pull was called via CLI with CONTAINER_HOST env
+      const pullCall = mockSpawn.mock.calls.find((call) => call[1] && call[1].includes('pull'));
+      expect(pullCall).toBeDefined();
+      expect(pullCall![1]).toContain('claude-code-runner:test');
+      expect(pullCall![2]?.env?.CONTAINER_HOST).toBe('unix:///var/run/docker.sock');
 
       // Verify create was called with correct args including --userns=keep-id
       const createCall = mockSpawn.mock.calls.find((call) => call[1] && call[1].includes('create'));
@@ -246,7 +220,11 @@ describe('podman service', () => {
 
       await stopContainer('test-container-id');
 
-      expect(mockSpawn).toHaveBeenCalledWith('podman', ['stop', '-t', '10', 'test-container-id']);
+      expect(mockSpawn).toHaveBeenCalledWith(
+        'podman',
+        ['stop', '-t', '10', 'test-container-id'],
+        podmanEnvMatcher
+      );
     });
 
     it('should not throw if container is already stopped', async () => {
@@ -274,9 +252,17 @@ describe('podman service', () => {
 
       await removeContainer('test-container-id');
 
-      // Should call stop then rm
-      expect(mockSpawn).toHaveBeenCalledWith('podman', ['stop', '-t', '5', 'test-container-id']);
-      expect(mockSpawn).toHaveBeenCalledWith('podman', ['rm', '-f', 'test-container-id']);
+      // Should call stop then rm (with CONTAINER_HOST env)
+      expect(mockSpawn).toHaveBeenCalledWith(
+        'podman',
+        ['stop', '-t', '5', 'test-container-id'],
+        podmanEnvMatcher
+      );
+      expect(mockSpawn).toHaveBeenCalledWith(
+        'podman',
+        ['rm', '-f', 'test-container-id'],
+        podmanEnvMatcher
+      );
     });
   });
 
@@ -333,7 +319,11 @@ describe('podman service', () => {
 
       const result = await execInContainer('test-container', ['ls', '-la']);
 
-      expect(mockSpawn).toHaveBeenCalledWith('podman', ['exec', 'test-container', 'ls', '-la']);
+      expect(mockSpawn).toHaveBeenCalledWith(
+        'podman',
+        ['exec', 'test-container', 'ls', '-la'],
+        podmanEnvMatcher
+      );
       expect(result.stream).toBeTruthy();
       expect(result.execId).toBe('test-uuid-1234');
     });
@@ -401,13 +391,11 @@ describe('podman service', () => {
       const pid = await findProcessInContainer('test-container', 'claude');
       expect(pid).toBe(12345);
 
-      expect(mockSpawn).toHaveBeenCalledWith('podman', [
-        'exec',
-        'test-container',
-        'pgrep',
-        '-f',
-        'claude',
-      ]);
+      expect(mockSpawn).toHaveBeenCalledWith(
+        'podman',
+        ['exec', 'test-container', 'pgrep', '-f', 'claude'],
+        podmanEnvMatcher
+      );
     });
 
     it('should return null when process is not found', async () => {
@@ -435,13 +423,11 @@ describe('podman service', () => {
 
       await sendSignalToExec('test-container', 12345, 'INT');
 
-      expect(mockSpawn).toHaveBeenCalledWith('podman', [
-        'exec',
-        'test-container',
-        'kill',
-        '-INT',
-        '12345',
-      ]);
+      expect(mockSpawn).toHaveBeenCalledWith(
+        'podman',
+        ['exec', 'test-container', 'kill', '-INT', '12345'],
+        podmanEnvMatcher
+      );
     });
   });
 
@@ -455,14 +441,11 @@ describe('podman service', () => {
 
       await signalProcessesByPattern('test-container', 'claude', 'TERM');
 
-      expect(mockSpawn).toHaveBeenCalledWith('podman', [
-        'exec',
-        'test-container',
-        'pkill',
-        '-TERM',
-        '-f',
-        'claude',
-      ]);
+      expect(mockSpawn).toHaveBeenCalledWith(
+        'podman',
+        ['exec', 'test-container', 'pkill', '-TERM', '-f', 'claude'],
+        podmanEnvMatcher
+      );
     });
   });
 
@@ -476,14 +459,11 @@ describe('podman service', () => {
 
       await killProcessesByPattern('test-container', 'tail -f');
 
-      expect(mockSpawn).toHaveBeenCalledWith('podman', [
-        'exec',
-        'test-container',
-        'pkill',
-        '-TERM',
-        '-f',
-        'tail -f',
-      ]);
+      expect(mockSpawn).toHaveBeenCalledWith(
+        'podman',
+        ['exec', 'test-container', 'pkill', '-TERM', '-f', 'tail -f'],
+        podmanEnvMatcher
+      );
     });
   });
 
@@ -501,12 +481,11 @@ describe('podman service', () => {
       const contents = await readFileInContainer('test-container', '/tmp/test.txt');
 
       expect(contents).toBe('file contents here');
-      expect(mockSpawn).toHaveBeenCalledWith('podman', [
-        'exec',
-        'test-container',
-        'cat',
-        '/tmp/test.txt',
-      ]);
+      expect(mockSpawn).toHaveBeenCalledWith(
+        'podman',
+        ['exec', 'test-container', 'cat', '/tmp/test.txt'],
+        podmanEnvMatcher
+      );
     });
   });
 
@@ -521,13 +500,11 @@ describe('podman service', () => {
       const exists = await fileExistsInContainer('test-container', '/tmp/test.txt');
 
       expect(exists).toBe(true);
-      expect(mockSpawn).toHaveBeenCalledWith('podman', [
-        'exec',
-        'test-container',
-        'test',
-        '-f',
-        '/tmp/test.txt',
-      ]);
+      expect(mockSpawn).toHaveBeenCalledWith(
+        'podman',
+        ['exec', 'test-container', 'test', '-f', '/tmp/test.txt'],
+        podmanEnvMatcher
+      );
     });
 
     it('should return false when file does not exist', async () => {
@@ -557,13 +534,11 @@ describe('podman service', () => {
       const count = await countLinesInContainer('test-container', '/tmp/test.txt');
 
       expect(count).toBe(42);
-      expect(mockSpawn).toHaveBeenCalledWith('podman', [
-        'exec',
-        'test-container',
-        'wc',
-        '-l',
-        '/tmp/test.txt',
-      ]);
+      expect(mockSpawn).toHaveBeenCalledWith(
+        'podman',
+        ['exec', 'test-container', 'wc', '-l', '/tmp/test.txt'],
+        podmanEnvMatcher
+      );
     });
 
     it('should return 0 on error', async () => {
@@ -588,15 +563,11 @@ describe('podman service', () => {
 
       const result = await tailFileInContainer('test-container', '/tmp/output.txt', 10);
 
-      expect(mockSpawn).toHaveBeenCalledWith('podman', [
-        'exec',
-        'test-container',
-        'tail',
-        '-n',
-        '+11',
-        '-f',
-        '/tmp/output.txt',
-      ]);
+      expect(mockSpawn).toHaveBeenCalledWith(
+        'podman',
+        ['exec', 'test-container', 'tail', '-n', '+11', '-f', '/tmp/output.txt'],
+        podmanEnvMatcher
+      );
       expect(result.stream).toBeTruthy();
       expect(result.execId).toBe('test-uuid-1234');
     });
