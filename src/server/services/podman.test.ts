@@ -8,6 +8,26 @@ vi.mock('child_process', () => ({
   spawn: (...args: unknown[]) => mockSpawn(...args),
 }));
 
+// Create mock for dockerode (used for image pulls)
+// These are hoisted with vi.hoisted so they can be used in vi.mock
+const { mockFollowProgress, mockPull } = vi.hoisted(() => {
+  return {
+    mockFollowProgress: vi.fn(),
+    mockPull: vi.fn(),
+  };
+});
+
+vi.mock('dockerode', () => {
+  return {
+    default: class MockDocker {
+      pull = mockPull;
+      modem = {
+        followProgress: mockFollowProgress,
+      };
+    },
+  };
+});
+
 // Mock the env module
 vi.mock('@/lib/env', () => ({
   env: {
@@ -89,6 +109,24 @@ import {
 describe('podman service', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+
+    // Default mock for docker pull - success
+    mockPull.mockImplementation(
+      (_imageName: string, callback: (err: Error | null, stream: EventEmitter) => void) => {
+        const stream = new EventEmitter();
+        callback(null, stream as unknown as EventEmitter);
+      }
+    );
+    mockFollowProgress.mockImplementation(
+      (
+        _stream: EventEmitter,
+        onFinished: (err: Error | null) => void,
+        _onProgress: (event: unknown) => void
+      ) => {
+        // Simulate successful pull
+        process.nextTick(() => onFinished(null));
+      }
+    );
   });
 
   afterEach(() => {
@@ -98,9 +136,8 @@ describe('podman service', () => {
   describe('createAndStartContainer', () => {
     it('should create and start a new container when none exists', async () => {
       // First call: ps to check existing containers (empty result)
-      // Second call: pull image
-      // Third call: create container
-      // Fourth call: start container
+      // Second call: create container (pull happens via dockerode, not CLI)
+      // Third call: start container
       let callCount = 0;
       mockSpawn.mockImplementation(() => {
         callCount++;
@@ -113,13 +150,10 @@ describe('podman service', () => {
             proc.stdout.emit('data', Buffer.from(''));
             proc.emit('close', 0);
           } else if (callCount === 2) {
-            // pull command
-            proc.emit('close', 0);
-          } else if (callCount === 3) {
             // create command - return container ID
             proc.stdout.emit('data', Buffer.from('new-container-id\n'));
             proc.emit('close', 0);
-          } else if (callCount === 4) {
+          } else if (callCount === 3) {
             // start command
             proc.emit('close', 0);
           } else {
@@ -136,6 +170,9 @@ describe('podman service', () => {
       });
 
       expect(containerId).toBe('new-container-id');
+
+      // Verify pull was called via dockerode
+      expect(mockPull).toHaveBeenCalledWith('claude-code-runner:test', expect.any(Function));
 
       // Verify create was called with correct args including --userns=keep-id
       const createCall = mockSpawn.mock.calls.find((call) => call[1] && call[1].includes('create'));
