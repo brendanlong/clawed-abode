@@ -203,6 +203,8 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
     await ensureImagePulled(CLAUDE_CODE_IMAGE);
 
     // Create the container with --userns=keep-id for proper UID mapping
+    // GPU access via CDI (Container Device Interface) - requires nvidia-container-toolkit
+    // and CDI specs generated via: nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
     const createArgs = [
       'create',
       '--name',
@@ -210,6 +212,8 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
       '--userns=keep-id',
       '--security-opt',
       'label=disable',
+      '--device',
+      'nvidia.com/gpu=all',
       '-w',
       '/workspace',
       ...envArgs,
