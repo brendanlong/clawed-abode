@@ -79,6 +79,7 @@ import { createAndStartContainer } from './podman';
 describe('podman service with PODMAN_SOCKET_PATH', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockSpawn.mockReset();
   });
 
   afterEach(() => {
@@ -87,28 +88,25 @@ describe('podman service with PODMAN_SOCKET_PATH', () => {
 
   describe('createAndStartContainer', () => {
     it('should mount socket and set CONTAINER_HOST when PODMAN_SOCKET_PATH is configured', async () => {
-      // First call: ps to check existing containers (empty result)
-      // Second call: pull image
-      // Third call: create container
-      // Fourth call: start container
-      let callCount = 0;
-      mockSpawn.mockImplementation(() => {
-        callCount++;
+      // Use command-based mock responses instead of call count
+      // (to avoid issues with lastPullTime caching causing skipped pulls)
+      mockSpawn.mockImplementation((_cmd: string, args: string[]) => {
         const proc = createMockProcess();
+        const command = args[0];
 
         process.nextTick(() => {
-          if (callCount === 1) {
+          if (command === 'ps') {
             // ps command - no existing container
             proc.stdout.emit('data', Buffer.from(''));
             proc.emit('close', 0);
-          } else if (callCount === 2) {
+          } else if (command === 'pull') {
             // pull command
             proc.emit('close', 0);
-          } else if (callCount === 3) {
+          } else if (command === 'create') {
             // create command - return container ID
             proc.stdout.emit('data', Buffer.from('new-container-id\n'));
             proc.emit('close', 0);
-          } else if (callCount === 4) {
+          } else if (command === 'start') {
             // start command
             proc.emit('close', 0);
           } else {
@@ -122,6 +120,7 @@ describe('podman service with PODMAN_SOCKET_PATH', () => {
       const containerId = await createAndStartContainer({
         sessionId: 'test-session',
         workspacePath: '/data/workspaces/test-session',
+        repoPath: 'my-repo',
       });
 
       expect(containerId).toBe('new-container-id');
