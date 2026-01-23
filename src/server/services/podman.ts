@@ -549,17 +549,23 @@ export async function execInContainerWithTee(
   command: string[],
   outputFile: string
 ): Promise<{ stream: Readable; execId: string }> {
-  log.debug('execInContainerWithTee: Starting', { containerId, command, outputFile });
+  log.info('execInContainerWithTee: Starting', {
+    containerId,
+    command: command.slice(0, 3),
+    outputFile,
+  });
 
   const execId = uuid();
 
   // Build the command with tee and line-buffered output
   const wrappedCommand = `stdbuf -oL ${command.map(escapeShellArg).join(' ')} 2>&1 | tee "${outputFile}"`;
-  log.debug('execInContainerWithTee: Wrapped command', { wrappedCommand });
+  log.info('execInContainerWithTee: Spawning podman exec', { containerId, wrappedCommand });
 
   const proc = spawn('podman', ['exec', containerId, 'sh', '-c', wrappedCommand], {
     env: podmanEnv,
   });
+
+  log.info('execInContainerWithTee: Spawn returned', { execId, pid: proc.pid });
 
   // Track the process
   const tracked: TrackedProcess = { process: proc, running: true, exitCode: null };

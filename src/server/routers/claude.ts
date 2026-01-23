@@ -48,6 +48,10 @@ export const claudeRouter = router({
       }
 
       // Start Claude in the background - don't await
+      log.info('Starting Claude command', {
+        sessionId: input.sessionId,
+        containerId: session.containerId,
+      });
       runClaudeCommand(input.sessionId, session.containerId, input.prompt).catch((err) => {
         log.error('Claude command failed', toError(err), { sessionId: input.sessionId });
       });
