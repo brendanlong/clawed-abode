@@ -63,13 +63,9 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | d
 RUN ln -s /usr/bin/podman /usr/local/bin/docker && \
     ln -s /usr/bin/podman-compose /usr/local/bin/docker-compose
 
-# Enable corepack for pnpm (built into Node.js) and install Claude Code
-RUN corepack enable && \
-    corepack prepare pnpm@latest --activate && \
-    npm install -g @anthropic-ai/claude-code
-
 # Install Android SDK to /opt (system-wide, read-only for users)
 # Installing as root before creating user avoids chown overhead at container start
+# This is placed early because it's slow to download but rarely changes
 ENV ANDROID_HOME=/opt/android-sdk
 ENV PATH="${ANDROID_HOME}/cmdline-tools/latest/bin:${ANDROID_HOME}/platform-tools:${PATH}"
 
@@ -88,6 +84,13 @@ RUN yes | sdkmanager --licenses > /dev/null 2>&1 && \
 
 # Install uv package manager for Python (system-wide to avoid chown overhead)
 RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
+
+# Enable corepack for pnpm (built into Node.js) and install Claude Code
+# This is placed late because Claude Code updates frequently, and we want to
+# preserve cache for the slow Android SDK layers above
+RUN corepack enable && \
+    corepack prepare pnpm@latest --activate && \
+    npm install -g @anthropic-ai/claude-code
 
 # Create a non-root user with UID 1000 (common default for host user)
 # Ubuntu 24.04 has an 'ubuntu' user at UID 1000, so delete it first
