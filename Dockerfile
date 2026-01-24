@@ -7,6 +7,11 @@ RUN apt-get update && apt-get install -y \
     podman \
     && rm -rf /var/lib/apt/lists/*
 
+# Create corepack cache directory with proper permissions for rootless podman
+# This prevents "EACCES: permission denied, mkdir '/home/node/.cache/node/corepack/v1'" errors
+RUN mkdir -p /home/node/.cache/node/corepack && \
+    chown -R node:node /home/node/.cache
+
 # Enable corepack for pnpm
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
