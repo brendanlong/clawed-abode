@@ -273,6 +273,9 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
     // to appear with wrong ownership. The container user has sudo, so we can fix it.
     await fixHomeDirectoryOwnership(containerId);
 
+    // Fix sudo setuid bit - rootless podman can strip it, breaking sudo
+    await fixSudoSetuid(containerId);
+
     // Configure git credential helper if token is provided
     if (config.githubToken) {
       await configureGitCredentials(containerId);
@@ -311,6 +314,16 @@ async function fixHomeDirectoryOwnership(containerId: string): Promise<void> {
     '/home/claudeuser',
   ]);
   log.info('Fixed home directory ownership', { containerId });
+}
+
+/**
+ * Fix sudo setuid bit in the container.
+ * Rootless podman with --userns=keep-id can strip the setuid bit from sudo,
+ * making it fail with "effective uid is not 0". This restores it.
+ */
+async function fixSudoSetuid(containerId: string): Promise<void> {
+  await runPodman(['exec', '--user', 'root', containerId, 'chmod', 'u+s', '/usr/bin/sudo']);
+  log.info('Fixed sudo setuid bit', { containerId });
 }
 
 async function configureGitCredentials(containerId: string): Promise<void> {
