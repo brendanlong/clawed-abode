@@ -157,9 +157,15 @@ export async function cloneRepoInVolume(config: CloneConfig): Promise<CloneResul
     branch: config.branch,
   });
 
+  const volumeName = `clawed-burrow-workspace-${config.sessionId}`;
+
   try {
     // Ensure the image is pulled before creating the container
     await ensureImagePulled(CLAUDE_CODE_IMAGE);
+
+    // Create a dedicated volume for this session
+    await runPodman(['volume', 'create', volumeName]);
+    log.info('Created session volume', { sessionId: config.sessionId, volumeName });
 
     // Build the clone URL with token if provided
     const repoUrl = config.githubToken
@@ -169,17 +175,16 @@ export async function cloneRepoInVolume(config: CloneConfig): Promise<CloneResul
     // Extract repo name from full name (e.g., "owner/repo" -> "repo")
     const repoName = config.repoFullName.split('/')[1];
 
-    // Create a temporary container with the workspaces volume mounted
-    // We mount the whole volume first to create the session subdirectory
+    // Create a temporary container with the session's volume mounted
     const createArgs = [
       'create',
       '--name',
       containerName,
       '--rm', // Auto-remove when stopped
       '-v',
-      `${env.WORKSPACES_VOLUME}:/workspaces`,
+      `${volumeName}:/workspace`,
       '-w',
-      '/workspaces',
+      '/workspace',
       CLAUDE_CODE_IMAGE,
       'tail',
       '-f',
@@ -193,10 +198,7 @@ export async function cloneRepoInVolume(config: CloneConfig): Promise<CloneResul
     await runPodman(['start', containerId]);
 
     try {
-      // Create the session directory first
-      await runPodman(['exec', containerId, 'mkdir', '-p', config.sessionId]);
-
-      // Clone the repository into the session directory
+      // Clone the repository
       await runPodman([
         'exec',
         containerId,
@@ -206,17 +208,16 @@ export async function cloneRepoInVolume(config: CloneConfig): Promise<CloneResul
         config.branch,
         '--single-branch',
         repoUrl,
-        `${config.sessionId}/${repoName}`,
+        repoName,
       ]);
 
       // Configure the remote URL without the token for security
-      const repoDir = `${config.sessionId}/${repoName}`;
       await runPodman([
         'exec',
         containerId,
         'git',
         '-C',
-        repoDir,
+        repoName,
         'remote',
         'set-url',
         'origin',
@@ -225,7 +226,16 @@ export async function cloneRepoInVolume(config: CloneConfig): Promise<CloneResul
 
       // Create and check out a session-specific branch
       const sessionBranch = `${env.SESSION_BRANCH_PREFIX}${config.sessionId}`;
-      await runPodman(['exec', containerId, 'git', '-C', repoDir, 'checkout', '-b', sessionBranch]);
+      await runPodman([
+        'exec',
+        containerId,
+        'git',
+        '-C',
+        repoName,
+        'checkout',
+        '-b',
+        sessionBranch,
+      ]);
 
       log.info('Repo cloned successfully', {
         sessionId: config.sessionId,
@@ -244,50 +254,24 @@ export async function cloneRepoInVolume(config: CloneConfig): Promise<CloneResul
       sessionId: config.sessionId,
       repoFullName: config.repoFullName,
     });
+    // Clean up the volume if clone failed
+    await runPodmanIgnoreErrors(['volume', 'rm', volumeName]);
     throw error;
   }
 }
 
 /**
- * Remove a session's workspace from the volume.
+ * Remove a session's workspace volume.
  */
 export async function removeWorkspaceFromVolume(sessionId: string): Promise<void> {
-  const containerName = `cleanup-${sessionId}`;
-  log.info('Removing workspace from volume', { sessionId });
+  const volumeName = `clawed-burrow-workspace-${sessionId}`;
+  log.info('Removing workspace volume', { sessionId, volumeName });
 
   try {
-    // Ensure the image is pulled
-    await ensureImagePulled(CLAUDE_CODE_IMAGE);
-
-    // Create a temporary container with the workspaces volume mounted
-    const createArgs = [
-      'create',
-      '--name',
-      containerName,
-      '--rm',
-      '--mount',
-      `type=volume,source=${env.WORKSPACES_VOLUME},destination=/workspace,volume-subpath=${sessionId}`,
-      '-w',
-      '/workspace',
-      CLAUDE_CODE_IMAGE,
-      'tail',
-      '-f',
-      '/dev/null',
-    ];
-
-    const containerId = (await runPodman(createArgs)).trim();
-    await runPodman(['start', containerId]);
-
-    try {
-      // Remove all contents
-      await runPodman(['exec', containerId, 'sh', '-c', 'rm -rf /workspace/*']);
-      log.info('Workspace removed', { sessionId });
-    } finally {
-      await runPodmanIgnoreErrors(['stop', containerId]);
-      await runPodmanIgnoreErrors(['rm', '-f', containerId]);
-    }
+    await runPodman(['volume', 'rm', volumeName]);
+    log.info('Workspace volume removed', { sessionId, volumeName });
   } catch (error) {
-    log.error('Failed to remove workspace from volume', toError(error), { sessionId });
+    log.error('Failed to remove workspace volume', toError(error), { sessionId, volumeName });
     // Don't throw - cleanup failures shouldn't block session deletion
   }
 }
@@ -348,13 +332,9 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
     }
 
     // Build volume binds
-    // Mount only this session's subdirectory for isolation
-    // This prevents agents from accidentally interfering with other sessions
-    const volumeArgs: string[] = [
-      // Use named volume with subpath for workspace isolation
-      '--mount',
-      `type=volume,source=${env.WORKSPACES_VOLUME},destination=/workspace,volume-subpath=${config.sessionId}`,
-    ];
+    // Each session has its own dedicated volume for isolation
+    const volumeName = `clawed-burrow-workspace-${config.sessionId}`;
+    const volumeArgs: string[] = ['-v', `${volumeName}:/workspace`];
 
     // Mount shared pnpm store volume
     volumeArgs.push('-v', `${env.PNPM_STORE_VOLUME}:/pnpm-store`);

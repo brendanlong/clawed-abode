@@ -69,7 +69,7 @@ The system uses **named Docker volumes** to avoid permission issues with rootles
 
 1. **Database** (`clawed-burrow-db`): SQLite database for the service container at `/data/db`.
 
-2. **Workspaces** (`clawed-burrow-workspaces`): Session workspaces. Git clones and workspace operations happen inside containers with this volume mounted.
+2. **Session Workspaces** (`clawed-burrow-workspace-{sessionId}`): Each session gets its own dedicated volume. This provides complete isolation between sessions and makes cleanup trivial (just delete the volume).
 
 3. **pnpm Store** (`clawed-burrow-pnpm-store`): Shared pnpm cache at `/pnpm-store` in runner containers. Speeds up package installs.
 
@@ -84,16 +84,16 @@ Using named volumes instead of bind mounts:
 
 ### Workspace Structure
 
-Each session has a dedicated workspace directory that contains the cloned repository:
+Each session has a dedicated volume that contains the cloned repository:
 
 ```
-/data/workspaces/{sessionId}/
+/workspace/                # Session's volume mounted here
 ├── {repo-name}/          # The cloned git repository (working directory)
 ├── .worktrees/           # Optional: git worktrees for parallel work
 └── ...                   # Agent can create other files/directories as needed
 ```
 
-Inside the runner container, only the session's subdirectory is mounted at `/workspace` (using Podman's `volume-subpath` feature), with the working directory set to `/workspace/{repo-name}`. This provides session isolation - each agent can only access its own workspace. This gives the agent:
+Each runner container mounts only its own session's volume at `/workspace`, with the working directory set to `/workspace/{repo-name}`. This provides complete session isolation - each agent can only access its own workspace. This gives the agent:
 
 - Full write access to the workspace for worktrees, temp files, etc.
 - Clean separation between the repo and working files
@@ -254,11 +254,12 @@ claude.getHistory({
 2. Server calls `sessions.create()`
 3. Server creates session record with status `creating` and returns immediately
 4. UI navigates to session page, polls for status updates
-5. Background: Server spawns a temporary container with the workspaces volume mounted
-6. Background: Clone runs inside the container via `git clone` to `/workspace/{repo-name}`
-7. Background: Temporary container is removed
-8. Background: Server starts the session container with:
-   - Session's workspace mounted at `/workspace` (using `volume-subpath` for isolation)
+5. Background: Server creates a dedicated volume for the session (`clawed-burrow-workspace-{sessionId}`)
+6. Background: Server spawns a temporary container with the session's volume mounted
+7. Background: Clone runs inside the container via `git clone` to `/workspace/{repo-name}`
+8. Background: Temporary container is removed
+9. Background: Server starts the session container with:
+   - Session's volume mounted at `/workspace`
    - Working directory set to `/workspace/{repo-name}` (the cloned repo)
    - GPU access via CDI (`--device nvidia.com/gpu=all`)
    - Claude auth copied into container (not bind mounted)
@@ -266,7 +267,7 @@ claude.getHistory({
    - GITHUB_TOKEN env var for push/pull access
    - Git credential helper configured automatically
    - Passwordless sudo for package installation
-9. Session status → `running`, statusMessage → null
+10. Session status → `running`, statusMessage → null
 
 ### Interaction Flow
 
@@ -390,7 +391,7 @@ The application uses Podman CLI commands to manage containers, routing them thro
 
 Runner containers are created with:
 
-- **Workspace**: Session's subdirectory from named volume mounted at `/workspace` (using `volume-subpath` for isolation)
+- **Workspace**: Session's dedicated volume mounted at `/workspace`
 - **Claude auth**: Copied into container after start (not bind-mounted, for security and to avoid permission issues)
 - **Podman socket**: Bind-mounted for container-in-container support (read-only)
 - **pnpm store**: Named volume mounted at `/pnpm-store` for shared package cache
@@ -398,10 +399,11 @@ Runner containers are created with:
 
 ```typescript
 async function startSessionContainer(session: Session, githubToken?: string): Promise<string> {
-  // Mount only this session's workspace from the shared volume
+  // Each session has its own dedicated volume
+  const volumeName = `clawed-burrow-workspace-${session.id}`;
   const volumeArgs = [
-    '--mount',
-    `type=volume,source=clawed-burrow-workspaces,destination=/workspace,volume-subpath=${session.id}`,
+    '-v',
+    `${volumeName}:/workspace`,
     // Shared caches as named volumes
     '-v',
     'clawed-burrow-pnpm-store:/pnpm-store',
@@ -442,7 +444,6 @@ async function startSessionContainer(session: Session, githubToken?: string): Pr
 
   // Configure git credential helper and pnpm store
   if (githubToken) await configureGitCredentials(containerId);
-  if (PNPM_STORE_PATH) await configurePnpmStore(containerId);
 
   return containerId;
 }

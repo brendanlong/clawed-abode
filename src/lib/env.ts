@@ -1,20 +1,9 @@
 import { z } from 'zod';
-import { resolve } from 'path';
 
 const envSchema = z.object({
   DATABASE_URL: z.string().default('file:./data/dev.db'),
   GITHUB_TOKEN: z.string().optional(),
   CLAUDE_AUTH_PATH: z.string().default('/root/.claude'),
-  // Path inside the container where workspaces are stored (for filesystem operations)
-  // In production, this is /data/workspaces (mounted from WORKSPACES_VOLUME)
-  // The database uses a separate named volume at /data/db
-  DATA_DIR: z
-    .string()
-    .default('/data/workspaces')
-    .transform((p) => resolve(p)),
-  // Named volume for workspaces - shared between service and runner containers
-  // This avoids permission issues with bind mounts in rootless Podman
-  WORKSPACES_VOLUME: z.string().default('clawed-burrow-workspaces'),
   // Named volume for pnpm store - shared across all runner containers
   // Speeds up package installs by caching downloaded packages
   PNPM_STORE_VOLUME: z.string().default('clawed-burrow-pnpm-store'),
