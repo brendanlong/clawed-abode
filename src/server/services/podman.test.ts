@@ -22,6 +22,9 @@ vi.mock('@/lib/env', () => ({
     DATA_HOST_PATH: undefined,
     PNPM_STORE_PATH: undefined,
     GRADLE_USER_HOME: undefined,
+    GIT_CACHE_VOLUME: 'clawed-burrow-git-cache',
+    SESSION_BRANCH_PREFIX: 'claude/',
+    SKIP_IMAGE_PULL: true,
   },
 }));
 
@@ -88,6 +91,7 @@ import {
   readFileInContainer,
   fileExistsInContainer,
   tailFileInContainer,
+  cloneRepoInVolume,
 } from './podman';
 
 // Helper matcher for podman commands that includes the CONTAINER_HOST env
@@ -582,6 +586,182 @@ describe('podman service', () => {
       );
       expect(result.stream).toBeTruthy();
       expect(result.execId).toBe('test-uuid-1234');
+    });
+  });
+
+  describe('cloneRepoInVolume', () => {
+    it('should clone with --reference when cache update succeeds', async () => {
+      const commandLog: string[][] = [];
+
+      mockSpawn.mockImplementation((_cmd: string, args: string[]) => {
+        commandLog.push(args);
+        const proc = createMockProcess();
+
+        process.nextTick(() => {
+          // Handle different commands
+          if (args[0] === 'volume' && args[1] === 'inspect') {
+            // Cache volume exists
+            proc.emit('close', 0);
+          } else if (args[0] === 'volume' && args[1] === 'create') {
+            // Create volume succeeds
+            proc.emit('close', 0);
+          } else if (args[0] === 'create') {
+            // Create container - return ID
+            proc.stdout.emit('data', Buffer.from('container-id\n'));
+            proc.emit('close', 0);
+          } else if (args[0] === 'start') {
+            proc.emit('close', 0);
+          } else if (args[0] === 'stop' || args[0] === 'rm') {
+            proc.emit('close', 0);
+          } else if (args.includes('exec') && args.includes('ls')) {
+            // Check if cache exists - simulate it exists
+            proc.stdout.emit('data', Buffer.from('/cache/owner--repo.git\n'));
+            proc.emit('close', 0);
+          } else if (args.includes('exec') && args.includes('fetch')) {
+            // Git fetch succeeds
+            proc.emit('close', 0);
+          } else if (args.includes('exec') && args.includes('clone')) {
+            // Git clone succeeds
+            proc.emit('close', 0);
+          } else if (args.includes('exec') && args.includes('remote')) {
+            // Git remote set-url succeeds
+            proc.emit('close', 0);
+          } else if (args.includes('exec') && args.includes('checkout')) {
+            // Git checkout succeeds
+            proc.emit('close', 0);
+          } else {
+            proc.emit('close', 0);
+          }
+        });
+
+        return proc;
+      });
+
+      const result = await cloneRepoInVolume({
+        sessionId: 'test-session-123',
+        repoFullName: 'owner/repo',
+        branch: 'main',
+      });
+
+      expect(result.repoPath).toBe('repo');
+
+      // Find the clone command and verify it includes --reference
+      const cloneCmd = commandLog.find((args) => args.includes('exec') && args.includes('clone'));
+      expect(cloneCmd).toBeDefined();
+      expect(cloneCmd).toContain('--reference');
+      expect(cloneCmd).toContain('/cache/owner--repo.git');
+      expect(cloneCmd).toContain('--dissociate');
+    });
+
+    it('should clone without --reference when cache update fails', async () => {
+      const commandLog: string[][] = [];
+      let cacheContainerCreated = false;
+
+      mockSpawn.mockImplementation((_cmd: string, args: string[]) => {
+        commandLog.push(args);
+        const proc = createMockProcess();
+
+        process.nextTick(() => {
+          // Handle different commands
+          if (args[0] === 'volume' && args[1] === 'inspect') {
+            // Cache volume doesn't exist
+            proc.stderr.emit('data', Buffer.from('no such volume'));
+            proc.emit('close', 1);
+          } else if (args[0] === 'volume' && args[1] === 'create') {
+            // Create volume succeeds
+            proc.emit('close', 0);
+          } else if (args[0] === 'create') {
+            // Track if this is the cache container
+            if (!cacheContainerCreated) {
+              cacheContainerCreated = true;
+              // Create cache container - return ID
+              proc.stdout.emit('data', Buffer.from('cache-container-id\n'));
+              proc.emit('close', 0);
+            } else {
+              // Create clone container - return ID
+              proc.stdout.emit('data', Buffer.from('clone-container-id\n'));
+              proc.emit('close', 0);
+            }
+          } else if (args[0] === 'start') {
+            proc.emit('close', 0);
+          } else if (args[0] === 'stop' || args[0] === 'rm') {
+            proc.emit('close', 0);
+          } else if (args.includes('exec') && args.includes('mkdir')) {
+            // mkdir -p succeeds
+            proc.emit('close', 0);
+          } else if (args.includes('exec') && args.includes('clone') && args.includes('--bare')) {
+            // Git bare clone fails (simulate network error)
+            proc.stderr.emit('data', Buffer.from('fatal: unable to access'));
+            proc.emit('close', 1);
+          } else if (args.includes('exec') && args.includes('clone')) {
+            // Regular clone succeeds
+            proc.emit('close', 0);
+          } else if (args.includes('exec') && args.includes('remote')) {
+            proc.emit('close', 0);
+          } else if (args.includes('exec') && args.includes('checkout')) {
+            proc.emit('close', 0);
+          } else {
+            proc.emit('close', 0);
+          }
+        });
+
+        return proc;
+      });
+
+      const result = await cloneRepoInVolume({
+        sessionId: 'test-session-456',
+        repoFullName: 'owner/repo',
+        branch: 'main',
+      });
+
+      expect(result.repoPath).toBe('repo');
+
+      // Find the final clone command (not the --bare one) and verify it does NOT include --reference
+      const cloneCmds = commandLog.filter(
+        (args) => args.includes('exec') && args.includes('clone') && !args.includes('--bare')
+      );
+      expect(cloneCmds.length).toBe(1);
+      expect(cloneCmds[0]).not.toContain('--reference');
+      expect(cloneCmds[0]).not.toContain('--dissociate');
+    });
+
+    it('should use correct cache path format (owner--repo.git)', async () => {
+      const commandLog: string[][] = [];
+
+      mockSpawn.mockImplementation((_cmd: string, args: string[]) => {
+        commandLog.push(args);
+        const proc = createMockProcess();
+
+        process.nextTick(() => {
+          if (args[0] === 'volume') {
+            proc.emit('close', 0);
+          } else if (args[0] === 'create') {
+            proc.stdout.emit('data', Buffer.from('container-id\n'));
+            proc.emit('close', 0);
+          } else if (args[0] === 'start' || args[0] === 'stop' || args[0] === 'rm') {
+            proc.emit('close', 0);
+          } else if (args.includes('exec') && args.includes('ls')) {
+            // Cache exists
+            proc.stdout.emit('data', Buffer.from('/cache/my-org--my-repo.git\n'));
+            proc.emit('close', 0);
+          } else {
+            proc.emit('close', 0);
+          }
+        });
+
+        return proc;
+      });
+
+      await cloneRepoInVolume({
+        sessionId: 'test-session',
+        repoFullName: 'my-org/my-repo',
+        branch: 'main',
+      });
+
+      // Verify the cache check used the correct path format
+      const lsCmd = commandLog.find((args) => args.includes('ls') && args.includes('-d'));
+      expect(lsCmd).toBeDefined();
+      expect(lsCmd).toContain('/cache/my-org--my-repo.git');
     });
   });
 });
