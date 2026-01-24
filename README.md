@@ -140,7 +140,6 @@ podman run -d \
   -e PODMAN_SOCKET_PATH="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman/podman.sock" \
   -e CLAUDE_RUNNER_IMAGE=ghcr.io/brendanlong/clawed-burrow-runner:latest \
   -v clawed-burrow-db:/data/db \
-  -v clawed-burrow-workspaces:/data/workspaces \
   -v "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman/podman.sock:/var/run/docker.sock" \
   -v "$HOME/.claude:/claude-auth" \
   --device nvidia.com/gpu=all \
@@ -349,7 +348,6 @@ podman run -d \
   -e PODMAN_SOCKET_PATH="/run/user/$(id -u)/podman/podman.sock" \
   -e CLAUDE_RUNNER_IMAGE=ghcr.io/brendanlong/clawed-burrow-runner:latest \
   -v clawed-burrow-db:/data/db \
-  -v clawed-burrow-workspaces:/data/workspaces \
   -v "/run/user/$(id -u)/podman/podman.sock:/var/run/docker.sock" \
   -v "/home/clawedburrow/.claude:/claude-auth" \
   --device nvidia.com/gpu=all \
