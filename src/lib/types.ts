@@ -4,6 +4,7 @@ export const SessionStatus = {
   running: 'running',
   stopped: 'stopped',
   error: 'error',
+  archived: 'archived',
 } as const;
 
 export type SessionStatus = (typeof SessionStatus)[keyof typeof SessionStatus];
@@ -31,6 +32,7 @@ export interface Session {
   initialPrompt: string | null;
   createdAt: Date;
   updatedAt: Date;
+  archivedAt: Date | null;
 }
 
 // Message interface

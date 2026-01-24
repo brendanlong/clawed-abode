@@ -49,11 +49,11 @@ export async function reconcileSessionsWithPodman(): Promise<ReconciliationResul
 
   try {
     // Get all sessions from DB that have container IDs
-    // (ignore 'creating' sessions as they may be in the process of starting)
+    // (ignore 'creating' and 'archived' sessions - creating may be in progress, archived are inactive)
     const sessions = await prisma.session.findMany({
       where: {
         status: {
-          notIn: ['creating'],
+          notIn: ['creating', 'archived'],
         },
       },
     });
@@ -199,8 +199,8 @@ export async function syncSessionStatus(sessionId: string): Promise<SessionStatu
     return null;
   }
 
-  // Skip sessions in transitional states
-  if (session.status === 'creating') {
+  // Skip sessions in transitional or archived states
+  if (session.status === 'creating' || session.status === 'archived') {
     return null;
   }
 

@@ -15,7 +15,7 @@ import { createLogger, toError } from '@/lib/logger';
 
 const log = createLogger('sessions');
 
-const sessionStatusSchema = z.enum(['creating', 'running', 'stopped', 'error']);
+const sessionStatusSchema = z.enum(['creating', 'running', 'stopped', 'error', 'archived']);
 
 // Background session setup - runs after create mutation returns
 async function setupSession(
@@ -129,12 +129,19 @@ export const sessionsRouter = router({
       z
         .object({
           status: sessionStatusSchema.optional(),
+          includeArchived: z.boolean().optional(), // Default false - excludes archived sessions
         })
         .optional()
     )
     .query(async ({ input }) => {
+      const includeArchived = input?.includeArchived ?? false;
+
       const sessions = await prisma.session.findMany({
-        where: input?.status ? { status: input.status } : undefined,
+        where: {
+          ...(input?.status ? { status: input.status } : {}),
+          // By default, exclude archived sessions unless explicitly requested
+          ...(!includeArchived && !input?.status ? { status: { not: 'archived' } } : {}),
+        },
         orderBy: { updatedAt: 'desc' },
       });
 
@@ -254,6 +261,11 @@ export const sessionsRouter = router({
         });
       }
 
+      // If already archived, nothing to do
+      if (session.status === 'archived') {
+        return { success: true };
+      }
+
       // Stop and remove container
       if (session.containerId) {
         await removeContainer(session.containerId);
@@ -262,11 +274,17 @@ export const sessionsRouter = router({
       // Remove workspace from volume
       await removeWorkspaceFromVolume(session.id);
 
-      // Delete session (messages will cascade)
-      await prisma.session.delete({
+      // Archive session instead of deleting (keep messages for later viewing)
+      const updatedSession = await prisma.session.update({
         where: { id: session.id },
+        data: {
+          status: 'archived',
+          archivedAt: new Date(),
+          containerId: null, // Clear container ID since container is removed
+        },
       });
 
+      sseEvents.emitSessionUpdate(input.sessionId, updatedSession);
       return { success: true };
     }),
 

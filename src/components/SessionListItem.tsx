@@ -33,7 +33,7 @@ interface SessionListItemProps {
 }
 
 export function SessionListItem({ session, onMutationSuccess }: SessionListItemProps) {
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [archiveDialogOpen, setArchiveDialogOpen] = useState(false);
 
   const startMutation = trpc.sessions.start.useMutation({
     onSuccess: onMutationSuccess,
@@ -43,20 +43,21 @@ export function SessionListItem({ session, onMutationSuccess }: SessionListItemP
     onSuccess: onMutationSuccess,
   });
 
-  const deleteMutation = trpc.sessions.delete.useMutation({
+  const archiveMutation = trpc.sessions.delete.useMutation({
     onSuccess: () => {
-      setDeleteDialogOpen(false);
+      setArchiveDialogOpen(false);
       onMutationSuccess();
     },
   });
 
   const repoName = session.repoUrl.replace('https://github.com/', '').replace('.git', '');
 
-  const isDeleting = deleteMutation.isPending;
+  const isArchiving = archiveMutation.isPending;
+  const isArchived = session.status === 'archived';
 
   return (
     <li
-      className={`p-4 hover:bg-muted/50 transition-all ${isDeleting ? 'opacity-50 pointer-events-none' : ''}`}
+      className={`p-4 hover:bg-muted/50 transition-all ${isArchiving ? 'opacity-50 pointer-events-none' : ''}`}
     >
       <div className="flex items-center justify-between">
         <div className="flex-1 min-w-0">
@@ -76,57 +77,61 @@ export function SessionListItem({ session, onMutationSuccess }: SessionListItemP
           <SessionStatusBadge status={session.status} />
 
           <div className="flex items-center gap-2">
-            {session.status === 'stopped' && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => startMutation.mutate({ sessionId: session.id })}
-                disabled={startMutation.isPending}
-              >
-                {startMutation.isPending ? 'Starting...' : 'Start'}
-              </Button>
-            )}
-            {session.status === 'running' && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => stopMutation.mutate({ sessionId: session.id })}
-                disabled={stopMutation.isPending}
-              >
-                {stopMutation.isPending ? 'Stopping...' : 'Stop'}
-              </Button>
-            )}
-            {isDeleting ? (
-              <Button variant="ghost" size="sm" disabled className="text-destructive">
-                <Spinner size="sm" className="mr-2" />
-                Deleting...
-              </Button>
-            ) : (
-              <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-                <AlertDialogTrigger asChild>
-                  <Button variant="ghost" size="sm" className="text-destructive">
-                    Delete
+            {/* No controls for archived sessions - they're read-only */}
+            {!isArchived && (
+              <>
+                {session.status === 'stopped' && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => startMutation.mutate({ sessionId: session.id })}
+                    disabled={startMutation.isPending}
+                  >
+                    {startMutation.isPending ? 'Starting...' : 'Start'}
                   </Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>Delete session?</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      This will permanently delete the session &quot;{session.name}&quot; and its
-                      workspace. This action cannot be undone.
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel>Cancel</AlertDialogCancel>
-                    <AlertDialogAction
-                      onClick={() => deleteMutation.mutate({ sessionId: session.id })}
-                      className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                    >
-                      Delete
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
+                )}
+                {session.status === 'running' && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => stopMutation.mutate({ sessionId: session.id })}
+                    disabled={stopMutation.isPending}
+                  >
+                    {stopMutation.isPending ? 'Stopping...' : 'Stop'}
+                  </Button>
+                )}
+                {isArchiving ? (
+                  <Button variant="ghost" size="sm" disabled className="text-muted-foreground">
+                    <Spinner size="sm" className="mr-2" />
+                    Archiving...
+                  </Button>
+                ) : (
+                  <AlertDialog open={archiveDialogOpen} onOpenChange={setArchiveDialogOpen}>
+                    <AlertDialogTrigger asChild>
+                      <Button variant="ghost" size="sm" className="text-muted-foreground">
+                        Archive
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>Archive session?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          This will archive the session &quot;{session.name}&quot; and remove its
+                          workspace. You can still view the message history in archived sessions.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction
+                          onClick={() => archiveMutation.mutate({ sessionId: session.id })}
+                        >
+                          Archive
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                )}
+              </>
             )}
           </div>
         </div>

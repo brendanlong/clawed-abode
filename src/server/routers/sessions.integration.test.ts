@@ -200,6 +200,93 @@ describe('sessionsRouter integration', () => {
       expect(result.sessions.every((s) => s.status === 'running')).toBe(true);
     });
 
+    it('should exclude archived sessions by default', async () => {
+      await testPrisma.session.createMany({
+        data: [
+          {
+            name: 'Active Session',
+            repoUrl: 'https://github.com/owner/repo.git',
+            branch: 'main',
+            workspacePath: '/w/1',
+            status: 'running',
+          },
+          {
+            name: 'Archived Session',
+            repoUrl: 'https://github.com/owner/repo.git',
+            branch: 'main',
+            workspacePath: '/w/2',
+            status: 'archived',
+            archivedAt: new Date(),
+          },
+        ],
+      });
+
+      const caller = createCaller('auth-session-id');
+      const result = await caller.sessions.list();
+
+      expect(result.sessions).toHaveLength(1);
+      expect(result.sessions[0].name).toBe('Active Session');
+    });
+
+    it('should include archived sessions when includeArchived is true', async () => {
+      await testPrisma.session.createMany({
+        data: [
+          {
+            name: 'Active Session',
+            repoUrl: 'https://github.com/owner/repo.git',
+            branch: 'main',
+            workspacePath: '/w/1',
+            status: 'running',
+          },
+          {
+            name: 'Archived Session',
+            repoUrl: 'https://github.com/owner/repo.git',
+            branch: 'main',
+            workspacePath: '/w/2',
+            status: 'archived',
+            archivedAt: new Date(),
+          },
+        ],
+      });
+
+      const caller = createCaller('auth-session-id');
+      const result = await caller.sessions.list({ includeArchived: true });
+
+      expect(result.sessions).toHaveLength(2);
+      expect(result.sessions.map((s) => s.name).sort()).toEqual([
+        'Active Session',
+        'Archived Session',
+      ]);
+    });
+
+    it('should return only archived sessions when filtering by archived status', async () => {
+      await testPrisma.session.createMany({
+        data: [
+          {
+            name: 'Active Session',
+            repoUrl: 'https://github.com/owner/repo.git',
+            branch: 'main',
+            workspacePath: '/w/1',
+            status: 'running',
+          },
+          {
+            name: 'Archived Session',
+            repoUrl: 'https://github.com/owner/repo.git',
+            branch: 'main',
+            workspacePath: '/w/2',
+            status: 'archived',
+            archivedAt: new Date(),
+          },
+        ],
+      });
+
+      const caller = createCaller('auth-session-id');
+      const result = await caller.sessions.list({ status: 'archived' });
+
+      expect(result.sessions).toHaveLength(1);
+      expect(result.sessions[0].name).toBe('Archived Session');
+    });
+
     it('should require authentication', async () => {
       const caller = createCaller(null);
       await expect(caller.sessions.list()).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
@@ -354,11 +441,11 @@ describe('sessionsRouter integration', () => {
     });
   });
 
-  describe('delete', () => {
-    it('should delete a session and clean up resources', async () => {
+  describe('delete (archive)', () => {
+    it('should archive a session and clean up resources but keep messages', async () => {
       const session = await testPrisma.session.create({
         data: {
-          name: 'Session to delete',
+          name: 'Session to archive',
           repoUrl: 'https://github.com/owner/repo.git',
           branch: 'main',
           workspacePath: '/workspace/test',
@@ -387,12 +474,16 @@ describe('sessionsRouter integration', () => {
       expect(mockRemoveContainer).toHaveBeenCalledWith('container-123');
       expect(mockRemoveWorkspaceFromVolume).toHaveBeenCalledWith(session.id);
 
-      // Verify session and messages were deleted from database
+      // Verify session was archived (not deleted)
       const dbSession = await testPrisma.session.findUnique({ where: { id: session.id } });
-      expect(dbSession).toBeNull();
+      expect(dbSession).not.toBeNull();
+      expect(dbSession!.status).toBe('archived');
+      expect(dbSession!.archivedAt).not.toBeNull();
+      expect(dbSession!.containerId).toBeNull();
 
+      // Verify messages were preserved
       const messages = await testPrisma.message.findMany({ where: { sessionId: session.id } });
-      expect(messages).toHaveLength(0);
+      expect(messages).toHaveLength(1);
     });
 
     it('should handle session without container', async () => {
@@ -413,6 +504,31 @@ describe('sessionsRouter integration', () => {
 
       expect(result).toEqual({ success: true });
       expect(mockRemoveContainer).not.toHaveBeenCalled();
+
+      // Verify session was archived
+      const dbSession = await testPrisma.session.findUnique({ where: { id: session.id } });
+      expect(dbSession!.status).toBe('archived');
+    });
+
+    it('should be idempotent for already archived sessions', async () => {
+      const session = await testPrisma.session.create({
+        data: {
+          name: 'Already archived session',
+          repoUrl: 'https://github.com/owner/repo.git',
+          branch: 'main',
+          workspacePath: '/workspace/test',
+          status: 'archived',
+          archivedAt: new Date(),
+        },
+      });
+
+      const caller = createCaller('auth-session-id');
+      const result = await caller.sessions.delete({ sessionId: session.id });
+
+      expect(result).toEqual({ success: true });
+      // Should not attempt to remove container or workspace
+      expect(mockRemoveContainer).not.toHaveBeenCalled();
+      expect(mockRemoveWorkspaceFromVolume).not.toHaveBeenCalled();
     });
 
     it('should throw NOT_FOUND for non-existent session', async () => {

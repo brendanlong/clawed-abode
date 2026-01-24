@@ -28,11 +28,12 @@ model Session {
   workspacePath String         // Path to workspace directory on host (contains the repo)
   repoPath      String         @default("") // Path to repo relative to workspace (e.g., "my-repo")
   containerId   String?
-  status        String         @default("creating") // creating, running, stopped, error
+  status        String         @default("creating") // creating, running, stopped, error, archived
   statusMessage String?        // Human-readable progress message during creation
   initialPrompt String?        // Optional prompt to send when session starts (e.g., from GitHub issue)
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
+  archivedAt    DateTime?      // When the session was archived (null if not archived)
   messages      Message[]
   claudeProcess ClaudeProcess?
 
