@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { router, publicProcedure, protectedProcedure } from '../trpc';
 import { prisma } from '@/lib/prisma';
 import { verifyPassword, generateSessionToken, loginSchema, SESSION_DURATION_MS } from '@/lib/auth';
+import { loginRateLimiter } from '@/lib/rate-limiter';
 import { env } from '@/lib/env';
 import { TRPCError } from '@trpc/server';
 import { createLogger, toError } from '@/lib/logger';
@@ -33,6 +34,19 @@ export const authRouter = router({
       })
     )
     .mutation(async ({ input }) => {
+      // Rate limit by IP address (use 'unknown' if IP not provided)
+      const rateLimitKey = input.ipAddress ?? 'unknown';
+      const rateLimitCheck = loginRateLimiter.check(rateLimitKey);
+
+      if (!rateLimitCheck.allowed) {
+        const retryAfterMinutes = Math.ceil((rateLimitCheck.retryAfterMs ?? 0) / 60000);
+        log.warn('Login rate limited', { ip: input.ipAddress, retryAfterMinutes });
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: `Too many login attempts. Please try again in ${retryAfterMinutes} minute${retryAfterMinutes === 1 ? '' : 's'}.`,
+        });
+      }
+
       // Check if password hash is configured
       if (!env.PASSWORD_HASH) {
         throw new TRPCError({
@@ -53,11 +67,20 @@ export const authRouter = router({
       }
 
       if (!valid) {
+        // Record failed attempt for rate limiting
+        const failureResult = loginRateLimiter.recordFailure(rateLimitKey);
+        log.warn('Failed login attempt', {
+          ip: input.ipAddress,
+          remainingAttempts: failureResult.remainingAttempts,
+        });
         throw new TRPCError({
           code: 'UNAUTHORIZED',
           message: 'Invalid password',
         });
       }
+
+      // Record successful login (resets attempt counter)
+      loginRateLimiter.recordSuccess(rateLimitKey);
 
       const token = await createAuthSession(input.ipAddress, input.userAgent);
 
