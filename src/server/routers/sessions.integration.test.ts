@@ -2,20 +2,16 @@ import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vites
 import { setupTestDb, teardownTestDb, testPrisma, clearTestDb } from '@/test/setup-test-db';
 
 // Mock external services that have real dependencies (Docker, git)
-const mockCloneRepo = vi.hoisted(() => vi.fn());
-const mockRemoveWorkspace = vi.hoisted(() => vi.fn());
-
-vi.mock('../services/git', () => ({
-  cloneRepo: mockCloneRepo,
-  removeWorkspace: mockRemoveWorkspace,
-}));
-
+const mockCloneRepoInVolume = vi.hoisted(() => vi.fn());
+const mockRemoveWorkspaceFromVolume = vi.hoisted(() => vi.fn());
 const mockCreateAndStartContainer = vi.hoisted(() => vi.fn());
 const mockStopContainer = vi.hoisted(() => vi.fn());
 const mockRemoveContainer = vi.hoisted(() => vi.fn());
 const mockGetContainerStatus = vi.hoisted(() => vi.fn());
 
 vi.mock('../services/podman', () => ({
+  cloneRepoInVolume: mockCloneRepoInVolume,
+  removeWorkspaceFromVolume: mockRemoveWorkspaceFromVolume,
   createAndStartContainer: mockCreateAndStartContainer,
   stopContainer: mockStopContainer,
   removeContainer: mockRemoveContainer,
@@ -382,14 +378,14 @@ describe('sessionsRouter integration', () => {
       });
 
       mockRemoveContainer.mockResolvedValue(undefined);
-      mockRemoveWorkspace.mockResolvedValue(undefined);
+      mockRemoveWorkspaceFromVolume.mockResolvedValue(undefined);
 
       const caller = createCaller('auth-session-id');
       const result = await caller.sessions.delete({ sessionId: session.id });
 
       expect(result).toEqual({ success: true });
       expect(mockRemoveContainer).toHaveBeenCalledWith('container-123');
-      expect(mockRemoveWorkspace).toHaveBeenCalledWith(session.id);
+      expect(mockRemoveWorkspaceFromVolume).toHaveBeenCalledWith(session.id);
 
       // Verify session and messages were deleted from database
       const dbSession = await testPrisma.session.findUnique({ where: { id: session.id } });
@@ -410,7 +406,7 @@ describe('sessionsRouter integration', () => {
         },
       });
 
-      mockRemoveWorkspace.mockResolvedValue(undefined);
+      mockRemoveWorkspaceFromVolume.mockResolvedValue(undefined);
 
       const caller = createCaller('auth-session-id');
       const result = await caller.sessions.delete({ sessionId: session.id });
