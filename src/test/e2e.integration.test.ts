@@ -291,18 +291,18 @@ describe('E2E Integration Test', () => {
       console.log(`Failed to remove database volume: ${err}`);
     }
 
-    // Kill any runner containers that might have been created
-    try {
-      const runnerContainers = runCommandSafe(
-        `podman ps -a --filter "name=claude-session-" --format "{{.Names}}"`
-      );
-      for (const container of runnerContainers.split('\n').filter(Boolean)) {
-        console.log(`Removing runner container ${container}...`);
-        runCommandSafe(`podman stop -t 5 ${container}`);
-        runCommandSafe(`podman rm -f ${container}`);
+    // Clean up the runner container for this test's session only
+    // Do NOT clean up all claude-session-* containers as that would affect other running sessions
+    if (sessionId) {
+      try {
+        const containerName = `claude-session-${sessionId}`;
+        console.log(`Removing runner container ${containerName}...`);
+        runCommandSafe(`podman stop -t 5 ${containerName}`);
+        runCommandSafe(`podman rm -f ${containerName}`);
+        console.log('Runner container removed');
+      } catch (err) {
+        console.log(`Failed to cleanup runner container: ${err}`);
       }
-    } catch (err) {
-      console.log(`Failed to cleanup runner containers: ${err}`);
     }
 
     // Untag images (so they can be garbage collected)
