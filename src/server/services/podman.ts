@@ -1109,16 +1109,22 @@ export async function isProcessRunning(containerId: string, processName: string)
   return pid !== null;
 }
 /**
- * Execute a command in attached mode, streaming output while also writing to a file for recovery.
- * Uses `tee` to write to both stdout (which we capture) and a file (for crash recovery).
- * Uses `stdbuf -oL` to disable buffering so output flows immediately.
+ * Execute a command with output redirected to a file.
+ * This approach avoids the blocking issue where pipes back up when the service disconnects.
+ *
+ * The command runs as: `command > outputFile 2>&1`
+ *
+ * If the redirect fails (e.g., can't create file), the shell error goes to the exec's stderr.
+ * Otherwise, all command output goes to the file and the exec's stdout/stderr are empty.
+ *
+ * @returns execId for tracking, and errorStream for catching redirect/startup errors
  */
-export async function execInContainerWithTee(
+export async function execInContainerToFile(
   containerId: string,
   command: string[],
   outputFile: string
-): Promise<{ stream: Readable; execId: string }> {
-  log.info('execInContainerWithTee: Starting', {
+): Promise<{ execId: string; errorStream: Readable }> {
+  log.info('execInContainerToFile: Starting', {
     containerId,
     command: command.slice(0, 3),
     outputFile,
@@ -1126,15 +1132,16 @@ export async function execInContainerWithTee(
 
   const execId = uuid();
 
-  // Build the command with tee and line-buffered output
-  const wrappedCommand = `stdbuf -oL ${command.map(escapeShellArg).join(' ')} 2>&1 | tee "${outputFile}"`;
-  log.info('execInContainerWithTee: Spawning podman exec', { containerId, wrappedCommand });
+  // Build the command with output redirected to file
+  // Using stdbuf -oL for line-buffered output so the file gets written promptly
+  const wrappedCommand = `stdbuf -oL ${command.map(escapeShellArg).join(' ')} > "${outputFile}" 2>&1`;
+  log.info('execInContainerToFile: Spawning podman exec', { containerId, wrappedCommand });
 
   const proc = spawn('podman', ['exec', containerId, 'sh', '-c', wrappedCommand], {
     env: podmanEnv,
   });
 
-  log.info('execInContainerWithTee: Spawn returned', { execId, pid: proc.pid });
+  log.info('execInContainerToFile: Spawn returned', { execId, pid: proc.pid });
 
   // Track the process
   const tracked: TrackedProcess = { process: proc, running: true, exitCode: null };
@@ -1146,15 +1153,35 @@ export async function execInContainerWithTee(
   });
 
   proc.on('error', (err) => {
-    log.error('execInContainerWithTee: Process error', toError(err), { containerId, execId });
+    log.error('execInContainerToFile: Process error', toError(err), { containerId, execId });
     tracked.running = false;
     tracked.exitCode = 1;
   });
 
-  log.debug('execInContainerWithTee: Started', { execId });
+  log.debug('execInContainerToFile: Started', { execId });
 
-  // Return stdout as the stream (stderr is merged via 2>&1 in the command)
-  return { stream: proc.stdout, execId };
+  // Combine stdout and stderr - if the redirect fails, the error will appear here
+  const combinedStream = new PassThrough();
+  proc.stdout.pipe(combinedStream, { end: false });
+  proc.stderr.pipe(combinedStream, { end: false });
+
+  let stdoutEnded = false;
+  let stderrEnded = false;
+  const checkEnd = () => {
+    if (stdoutEnded && stderrEnded) {
+      combinedStream.end();
+    }
+  };
+  proc.stdout.on('end', () => {
+    stdoutEnded = true;
+    checkEnd();
+  });
+  proc.stderr.on('end', () => {
+    stderrEnded = true;
+    checkEnd();
+  });
+
+  return { execId, errorStream: combinedStream };
 }
 
 /**

@@ -1,5 +1,5 @@
 import {
-  execInContainerWithTee,
+  execInContainerToFile,
   getExecStatus,
   tailFileInContainer,
   readFileInContainer,
@@ -353,10 +353,17 @@ export async function runClaudeCommand(
 
   const outputFile = getOutputFilePath(sessionId);
 
-  // Start Claude with attached output stream (also writes to file for crash recovery)
+  // Start Claude with output redirected to file
+  // This avoids the blocking issue where pipes back up when the service disconnects
   log.info('runClaudeCommand: Executing command in container', { command, outputFile });
-  const { stream, execId } = await execInContainerWithTee(containerId, command, outputFile);
-  log.info('runClaudeCommand: Command started with attached stream', { sessionId, execId });
+  const { execId, errorStream } = await execInContainerToFile(containerId, command, outputFile);
+  log.info('runClaudeCommand: Command started with file redirect', { sessionId, execId });
+
+  // Collect any startup/redirect errors from the error stream
+  let startupError = '';
+  errorStream.on('data', (chunk: Buffer) => {
+    startupError += chunk.toString('utf-8');
+  });
 
   // Create persistent record for crash recovery
   await prisma.claudeProcess.create({
@@ -396,15 +403,38 @@ export async function runClaudeCommand(
       log.warn('runClaudeCommand: Could not find Claude process PID', { sessionId });
     }
 
-    // Process output directly from the attached stream (no tailing needed)
+    // Wait for output file to exist (with timeout)
+    let fileExists = false;
+    for (let attempt = 0; attempt < 50; attempt++) {
+      fileExists = await fileExistsInContainer(containerId, outputFile);
+      if (fileExists) break;
+
+      // Check for startup errors
+      if (startupError.trim()) {
+        throw new Error(`Claude command failed to start: ${startupError.trim()}`);
+      }
+
+      await new Promise((r) => setTimeout(r, 100));
+    }
+
+    if (!fileExists) {
+      // Check one more time for startup errors
+      if (startupError.trim()) {
+        throw new Error(`Claude command failed to start: ${startupError.trim()}`);
+      }
+      throw new Error('Output file was not created - command may have failed to start');
+    }
+
+    // Tail the output file for actual claude output
+    const { stream: tailStream } = await tailFileInContainer(containerId, outputFile, 0);
+
     let buffer = '';
     let totalLines = 0;
     let finalExitCode: number | null = null;
 
-    // Process output - stream ends when process completes
+    // Process output by tailing the file and polling exec status
     await new Promise<void>((resolve, reject) => {
-      stream.on('data', async (chunk: Buffer) => {
-        // With Podman CLI, output is plain text (no Docker multiplexing)
+      tailStream.on('data', async (chunk: Buffer) => {
         const data = chunk.toString('utf-8');
         buffer += data;
 
@@ -434,35 +464,58 @@ export async function runClaudeCommand(
         }
       });
 
-      stream.on('end', async () => {
-        // Process any remaining buffered content
-        if (buffer.trim()) {
-          const result = await saveMessageIfNotExists(sessionId, buffer, sequence);
-          if (result.saved) {
-            sequence = result.sequence + 1;
-            sseEvents.emitNewMessage(sessionId, result.message);
-          }
-          totalLines++;
-        }
-
-        // Get final exit code
-        const status = await getExecStatus(execId);
-        finalExitCode = status.exitCode;
-
-        log.info('runClaudeCommand: Completed', {
-          sessionId,
-          totalLines,
-          exitCode: finalExitCode,
-          execNotFound: status.notFound,
-        });
-
-        resolve();
-      });
-
-      stream.on('error', (err) => {
-        log.error('runClaudeCommand: Stream error', toError(err), { sessionId });
+      tailStream.on('error', (err) => {
+        log.error('runClaudeCommand: Tail stream error', toError(err), { sessionId });
         reject(err);
       });
+
+      // Poll exec status to detect when the command completes
+      const pollInterval = setInterval(async () => {
+        try {
+          const status = await getExecStatus(execId);
+
+          if (!status.running) {
+            clearInterval(pollInterval);
+            finalExitCode = status.exitCode;
+
+            // Give tail a moment to catch up with final output
+            await new Promise((r) => setTimeout(r, 500));
+            tailStream.destroy();
+
+            // Read any remaining content from the file
+            try {
+              const fileContent = await readFileInContainer(containerId, outputFile);
+              const allLines = fileContent.split('\n').filter((l) => l.trim());
+
+              for (let i = totalLines; i < allLines.length; i++) {
+                const line = allLines[i];
+                const result = await saveMessageIfNotExists(sessionId, line, sequence);
+                if (result.saved) {
+                  sequence = result.sequence + 1;
+                  sseEvents.emitNewMessage(sessionId, result.message);
+                }
+                totalLines++;
+              }
+            } catch (err) {
+              log.warn('runClaudeCommand: Failed to read remaining content', {
+                sessionId,
+                error: toError(err).message,
+              });
+            }
+
+            log.info('runClaudeCommand: Completed', {
+              sessionId,
+              totalLines,
+              exitCode: finalExitCode,
+            });
+
+            resolve();
+          }
+        } catch (err) {
+          clearInterval(pollInterval);
+          reject(err);
+        }
+      }, 1000);
     });
 
     // Check for process errors after stream completes
@@ -543,13 +596,34 @@ export async function reconnectToClaudeProcess(
 
   // Check if Claude exec is still running using the stored execId
   const status = await getExecStatus(processRecord.execId);
-  const claudeRunning = status.running;
+  let claudeRunning = status.running;
 
   if (status.notFound) {
     log.info('reconnectToClaudeProcess: Exec ID not found (server may have restarted)', {
       sessionId,
       execId: processRecord.execId,
     });
+
+    // Exec ID is invalid (server restarted), but the process might still be running
+    // Check by looking for the actual claude process in the container
+    const pid = await findProcessInContainer(containerId, CLAUDE_PROCESS_PATTERN);
+    claudeRunning = pid !== null;
+
+    if (claudeRunning) {
+      log.info('reconnectToClaudeProcess: Claude process still running (found by PID)', {
+        sessionId,
+        pid,
+      });
+      // Update the stored PID
+      await prisma.claudeProcess.update({
+        where: { sessionId },
+        data: { pid },
+      });
+    } else {
+      log.info('reconnectToClaudeProcess: Claude process not found in container', {
+        sessionId,
+      });
+    }
   }
 
   if (!claudeRunning) {
@@ -560,7 +634,7 @@ export async function reconnectToClaudeProcess(
       exitCode: status.exitCode,
     });
 
-    // Check if this was an error exit
+    // Check if this was an error exit (only if we have an exit code)
     if (isErrorExitCode(status.exitCode) && status.exitCode !== 130) {
       const containerLogs = await getContainerLogs(containerId, { tail: 30 });
       await createErrorMessage(
@@ -588,16 +662,16 @@ export async function reconnectToClaudeProcess(
     return { reconnected: true, stillRunning: true };
   }
 
-  runningProcesses.set(sessionId, { containerId, pid: null });
+  runningProcesses.set(sessionId, { containerId, pid: processRecord.pid });
 
   // Emit Claude running event for reconnection
   sseEvents.emitClaudeRunning(sessionId, true);
 
-  // Start processing the output file in the background using the stored execId
-  processOutputFileWithExecId(
+  // Start processing the output file in the background
+  // Use PID-based detection if exec ID is invalid
+  processOutputFileWithPid(
     sessionId,
     containerId,
-    processRecord.execId,
     getOutputFilePath(sessionId),
     processRecord.lastSequence + 1
   )
@@ -699,18 +773,26 @@ async function catchUpFromOutputFile(
   });
 }
 
+async function updateLastSequence(sessionId: string, sequence: number): Promise<void> {
+  await prisma.claudeProcess
+    .update({
+      where: { sessionId },
+      data: { lastSequence: sequence },
+    })
+    .catch(() => {}); // Ignore if record doesn't exist
+}
+
 /**
- * Process the output file by tailing it and saving messages to DB.
- * Uses execId to check for completion (more reliable than pgrep).
+ * Process the output file by tailing it and using PID-based process detection.
+ * Used for reconnection after server restart when exec ID is no longer valid.
  */
-async function processOutputFileWithExecId(
+async function processOutputFileWithPid(
   sessionId: string,
   containerId: string,
-  execId: string,
   outputFile: string,
   startSequence: number
 ): Promise<void> {
-  log.info('processOutputFile: Starting', { sessionId, execId, outputFile, startSequence });
+  log.info('processOutputFileWithPid: Starting', { sessionId, outputFile, startSequence });
 
   if (activeStreamProcessors.has(sessionId)) {
     throw new Error('Stream processor already active for this session');
@@ -720,13 +802,12 @@ async function processOutputFileWithExecId(
   let sequence = startSequence;
   let buffer = '';
   let totalLines = 0;
-  let finalExitCode: number | null = null;
 
   try {
     // First check if container is still running
     const containerStatus = await getContainerStatus(containerId);
     if (containerStatus !== 'running') {
-      log.warn('processOutputFile: Container not running at start', {
+      log.warn('processOutputFileWithPid: Container not running at start', {
         sessionId,
         containerId,
         containerStatus,
@@ -741,11 +822,10 @@ async function processOutputFileWithExecId(
       const exists = await fileExistsInContainer(containerId, outputFile);
       if (exists) break;
 
-      // Check if container is still running while waiting
       if (attempts % 10 === 0) {
         const status = await getContainerStatus(containerId);
         if (status !== 'running') {
-          log.warn('processOutputFile: Container stopped while waiting for output file', {
+          log.warn('processOutputFileWithPid: Container stopped while waiting for output file', {
             sessionId,
             containerId,
             status,
@@ -763,7 +843,6 @@ async function processOutputFileWithExecId(
 
     await new Promise<void>((resolve, reject) => {
       stream.on('data', async (chunk: Buffer) => {
-        // With Podman CLI, output is plain text (no Docker multiplexing)
         const data = chunk.toString('utf-8');
         buffer += data;
 
@@ -777,22 +856,21 @@ async function processOutputFileWithExecId(
           const result = await saveMessageIfNotExists(sessionId, line, sequence);
           if (result.saved) {
             sequence = result.sequence + 1;
-            // Emit new message event
             sseEvents.emitNewMessage(sessionId, result.message);
             await updateLastSequence(sessionId, result.sequence);
           }
         }
       });
 
-      // Poll exec status (much more reliable than pgrep)
+      // Poll process existence using PID pattern matching
       const pollInterval = setInterval(async () => {
         try {
-          // Also check container status periodically
+          // Check container status periodically
           const containerStatus = await getContainerStatus(containerId);
           if (containerStatus !== 'running') {
             clearInterval(pollInterval);
             stream.destroy();
-            log.warn('processOutputFile: Container stopped during processing', {
+            log.warn('processOutputFileWithPid: Container stopped during processing', {
               sessionId,
               containerId,
               containerStatus,
@@ -802,18 +880,19 @@ async function processOutputFileWithExecId(
             return;
           }
 
-          const status = await getExecStatus(execId);
-          log.debug('processOutputFile: Exec status', {
+          // Check if claude process is still running by pattern
+          const pid = await findProcessInContainer(containerId, CLAUDE_PROCESS_PATTERN);
+          const processRunning = pid !== null;
+
+          log.debug('processOutputFileWithPid: Process status', {
             sessionId,
-            running: status.running,
-            exitCode: status.exitCode,
-            notFound: status.notFound,
+            processRunning,
+            pid,
             totalLines,
           });
 
-          if (!status.running) {
+          if (!processRunning) {
             clearInterval(pollInterval);
-            finalExitCode = status.exitCode;
             await new Promise((r) => setTimeout(r, 500));
             stream.destroy();
 
@@ -827,22 +906,20 @@ async function processOutputFileWithExecId(
                 const result = await saveMessageIfNotExists(sessionId, line, sequence);
                 if (result.saved) {
                   sequence = result.sequence + 1;
-                  // Emit new message event
                   sseEvents.emitNewMessage(sessionId, result.message);
                 }
                 totalLines++;
               }
             } catch (err) {
-              log.warn('processOutputFile: Failed to read remaining content', {
+              log.warn('processOutputFileWithPid: Failed to read remaining content', {
                 sessionId,
                 error: toError(err).message,
               });
             }
 
-            log.info('processOutputFile: Completed', {
+            log.info('processOutputFileWithPid: Completed', {
               sessionId,
               totalLines,
-              exitCode: finalExitCode,
             });
             resolve();
           }
@@ -857,33 +934,10 @@ async function processOutputFileWithExecId(
         reject(err);
       });
     });
-
-    // Check for process errors after completion
-    if (isErrorExitCode(finalExitCode)) {
-      const containerHealthy = await checkContainerHealthAndReport(sessionId, containerId);
-      if (containerHealthy && finalExitCode !== 130) {
-        // Claude process error, not container failure
-        const containerLogs = await getContainerLogs(containerId, { tail: 30 });
-        await createErrorMessage(
-          sessionId,
-          `Claude process exited unexpectedly: ${describeExitCode(finalExitCode)}`,
-          { exitCode: finalExitCode, containerLogs }
-        );
-      }
-    }
   } finally {
     activeStreamProcessors.delete(sessionId);
     await killProcessesByPattern(containerId, outputFile).catch(() => {});
   }
-}
-
-async function updateLastSequence(sessionId: string, sequence: number): Promise<void> {
-  await prisma.claudeProcess
-    .update({
-      where: { sessionId },
-      data: { lastSequence: sequence },
-    })
-    .catch(() => {}); // Ignore if record doesn't exist
 }
 
 /**
