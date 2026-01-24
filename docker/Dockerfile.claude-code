@@ -86,6 +86,9 @@ RUN mkdir -p ${ANDROID_HOME}/cmdline-tools && \
 RUN yes | sdkmanager --licenses > /dev/null 2>&1 && \
     sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
+# Install uv package manager for Python (system-wide to avoid chown overhead)
+RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
+
 # Create a non-root user with UID 1000 (common default for host user)
 # Ubuntu 24.04 has an 'ubuntu' user at UID 1000, so delete it first
 # Configure passwordless sudo for package installation and system administration
@@ -130,9 +133,6 @@ RUN mkdir -p /home/claudeuser/.local/share/pnpm
 # Configure git identity for commits
 RUN git config --global user.email "claude@anthropic.com" && \
     git config --global user.name "Claude"
-
-# Install uv package manager for Python
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # Configure podman for rootless operation with fuse-overlayfs
 RUN mkdir -p /home/claudeuser/.config/containers && \
