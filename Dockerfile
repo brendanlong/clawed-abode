@@ -8,7 +8,8 @@ RUN apt-get update && apt-get install -y \
     podman \
     sudo \
     && rm -rf /var/lib/apt/lists/* \
-    && echo "node ALL=(ALL) NOPASSWD: /usr/bin/podman" > /etc/sudoers.d/node-podman \
+    && echo 'Defaults:node env_keep += "CONTAINER_HOST"' > /etc/sudoers.d/node-podman \
+    && echo "node ALL=(ALL) NOPASSWD: /usr/bin/podman" >> /etc/sudoers.d/node-podman \
     && chmod 0440 /etc/sudoers.d/node-podman
 
 # Create corepack cache directory with proper permissions for rootless podman

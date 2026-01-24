@@ -58,12 +58,9 @@ async function runPodman(args: string[], useSudo = false): Promise<string> {
       // When using sudo, we need to preserve CONTAINER_HOST so sudo's podman
       // talks to the same Podman instance (via the socket) as the non-sudo commands.
       // Without this, sudo podman would use root's separate Podman instance.
+      // The sudoers config allows CONTAINER_HOST via env_keep.
       command = 'sudo';
-      if (podmanEnv.CONTAINER_HOST) {
-        finalArgs = [`CONTAINER_HOST=${podmanEnv.CONTAINER_HOST}`, 'podman', ...args];
-      } else {
-        finalArgs = ['podman', ...args];
-      }
+      finalArgs = ['--preserve-env=CONTAINER_HOST', 'podman', ...args];
     } else {
       command = 'podman';
       finalArgs = args;
