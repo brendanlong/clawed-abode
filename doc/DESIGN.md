@@ -75,6 +75,8 @@ The system uses **named Docker volumes** to avoid permission issues with rootles
 
 4. **Gradle Cache** (`clawed-burrow-gradle-cache`): Shared Gradle cache at `/gradle-cache` in runner containers. Speeds up builds.
 
+5. **Git Cache** (`clawed-burrow-git-cache`): Shared bare repository cache at `/cache` in clone containers. Used as `--reference` during clones to avoid re-downloading git objects for repos that have been cloned before.
+
 Using named volumes instead of bind mounts:
 
 - Avoids the slow startup caused by `--userns=keep-id` (Podman re-chowning the image)
@@ -254,20 +256,23 @@ claude.getHistory({
 2. Server calls `sessions.create()`
 3. Server creates session record with status `creating` and returns immediately
 4. UI navigates to session page, polls for status updates
-5. Background: Server creates a dedicated volume for the session (`clawed-burrow-workspace-{sessionId}`)
-6. Background: Server spawns a temporary container with the session's volume mounted
-7. Background: Clone runs inside the container via `git clone` to `/workspace/{repo-name}`
-8. Background: Temporary container is removed
-9. Background: Server starts the session container with:
-   - Session's volume mounted at `/workspace`
-   - Working directory set to `/workspace/{repo-name}` (the cloned repo)
-   - GPU access via CDI (`--device nvidia.com/gpu=all`)
-   - Claude auth copied into container (not bind mounted)
-   - Podman socket mounted (for podman-in-podman)
-   - GITHUB_TOKEN env var for push/pull access
-   - Git credential helper configured automatically
-   - Passwordless sudo for package installation
-10. Session status → `running`, statusMessage → null
+5. Background: Server updates or creates the git reference cache for the repo (see Git Cache below)
+6. Background: Server creates a dedicated volume for the session (`clawed-burrow-workspace-{sessionId}`)
+7. Background: Server spawns a temporary container with the session's volume and cache mounted
+8. Background: Clone runs inside the container via `git clone --reference` to `/workspace/{repo-name}` (uses cache if available, falls back to normal clone)
+9. Background: Temporary container is removed
+10. Background: Server starts the session container with:
+
+- Session's volume mounted at `/workspace`
+- Working directory set to `/workspace/{repo-name}` (the cloned repo)
+- GPU access via CDI (`--device nvidia.com/gpu=all`)
+- Claude auth copied into container (not bind mounted)
+- Podman socket mounted (for podman-in-podman)
+- GITHUB_TOKEN env var for push/pull access
+- Git credential helper configured automatically
+- Passwordless sudo for package installation
+
+11. Session status → `running`, statusMessage → null
 
 ### Interaction Flow
 
@@ -553,6 +558,22 @@ ORDER BY sequence ASC;
 - The cache is mounted at `/gradle-cache` in containers and `GRADLE_USER_HOME` env var is set
 - Gradle's cache is safe for concurrent access (uses file locking)
 - Includes downloaded dependencies, wrapper distributions, and build caches
+
+### Git Reference Cache
+
+The system maintains a cache of bare git repositories to speed up session creation:
+
+- **Volume**: `clawed-burrow-git-cache` (configurable via `GIT_CACHE_VOLUME` env var)
+- **Cache path format**: `/cache/{owner}--{repo}.git` (e.g., `/cache/brendanlong--clawed-burrow.git`)
+- **How it works**:
+  1. Before cloning, the system fetches the latest refs into the cached bare repo (or creates it if missing)
+  2. Clone uses `git clone --reference <cache-path> --dissociate` to share objects with the cache
+  3. The `--dissociate` flag ensures cloned repos are independent - they work even if the cache is deleted
+- **Benefits**:
+  - Subsequent sessions for the same repo only download new commits (typically a few MB instead of the full history)
+  - First clone still works normally if caching fails
+- **Git handles concurrent access**: Multiple fetches/clones can safely use the same cache
+- **Cleanup**: Old cached repos can be pruned by deleting files from the volume; sessions already cloned are unaffected
 
 ### Podman Socket (Container-in-Container)
 
