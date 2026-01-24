@@ -58,8 +58,8 @@ export async function setupTestDb(): Promise<void> {
     globalForPrisma.prisma = undefined;
   }
 
-  // Run migrations
-  execSync('npx prisma db push --skip-generate', {
+  // Run migrations (using migrate deploy to catch missing migrations)
+  execSync('npx prisma migrate deploy', {
     env: { ...process.env, DATABASE_URL: databaseUrl },
     stdio: 'pipe',
   });
