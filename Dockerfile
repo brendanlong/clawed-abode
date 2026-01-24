@@ -1,11 +1,15 @@
 FROM docker.io/node:24-slim
 
-# Install dependencies for Prisma, git for cloning, and podman for container management
+# Install dependencies for Prisma, git for cloning, podman for container management,
+# and sudo for copying files with restricted permissions
 RUN apt-get update && apt-get install -y \
     openssl \
     git \
     podman \
-    && rm -rf /var/lib/apt/lists/*
+    sudo \
+    && rm -rf /var/lib/apt/lists/* \
+    && echo "node ALL=(ALL) NOPASSWD: /usr/bin/podman" > /etc/sudoers.d/node-podman \
+    && chmod 0440 /etc/sudoers.d/node-podman
 
 # Create corepack cache directory with proper permissions for rootless podman
 # This prevents "EACCES: permission denied, mkdir '/home/node/.cache/node/corepack/v1'" errors
