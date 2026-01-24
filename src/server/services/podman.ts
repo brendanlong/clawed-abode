@@ -210,11 +210,16 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
 
     // Build volume binds
     // Use toHostPath() to convert container paths to host paths for container-in-container
+    // Claude auth directory (e.g., /root/.claude) and config file (e.g., /root/.claude.json)
+    const claudeAuthDir = env.CLAUDE_AUTH_PATH;
+    const claudeConfigFile = `${claudeAuthDir}.json`; // e.g., /root/.claude.json
     const volumeArgs: string[] = [
       '-v',
       `${toHostPath(config.workspacePath)}:/workspace`,
       '-v',
-      `${env.CLAUDE_AUTH_PATH}:/home/claudeuser/.claude`,
+      `${claudeAuthDir}:/home/claudeuser/.claude`,
+      '-v',
+      `${claudeConfigFile}:/home/claudeuser/.claude.json`,
     ];
 
     // Mount shared pnpm store if configured

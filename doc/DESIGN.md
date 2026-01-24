@@ -241,7 +241,7 @@ claude.getHistory({
    - Workspace mounted at `/workspace` (the session directory, not just the repo)
    - Working directory set to `/workspace/{repo-name}` (the cloned repo)
    - GPU access via CDI (`--device nvidia.com/gpu=all`)
-   - Claude auth mounted from host
+   - Claude auth mounted from host (`~/.claude` and `~/.claude.json`)
    - Podman socket mounted (for podman-in-podman)
    - GITHUB_TOKEN env var for push/pull access
    - Git credential helper configured automatically
@@ -375,6 +375,8 @@ async function startSessionContainer(session: Session, githubToken?: string): Pr
     `${session.workspacePath}:/workspace`,
     '-v',
     `${CLAUDE_AUTH_PATH}:/home/claudeuser/.claude`,
+    '-v',
+    `${CLAUDE_AUTH_PATH}.json:/home/claudeuser/.claude.json`,
   ];
 
   // Mount shared pnpm store if configured (safe for concurrent access)
