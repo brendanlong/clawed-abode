@@ -142,6 +142,7 @@ podman run -d \
   -v clawed-burrow-db:/data/db \
   -v "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman/podman.sock:/var/run/docker.sock" \
   -v "$HOME/.claude:/claude-auth:ro" \
+  -v "$HOME/.claude.json:/claude-auth.json:ro" \
   --device nvidia.com/gpu=all \
   --security-opt label=disable \
   --restart always \
