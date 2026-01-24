@@ -579,11 +579,32 @@ async function configureGradleCache(containerId: string): Promise<void> {
 /**
  * Fix podman socket permissions inside the container.
  * The mounted socket is owned by root, so we need to make it accessible to claudeuser.
+ * This may fail in nested container scenarios where the socket is a bind mount
+ * that can't have its permissions changed - in that case, we log and continue.
  */
 async function fixPodmanSocketPermissions(containerId: string): Promise<void> {
-  // Make the socket world-readable/writable so claudeuser can access it
-  await runPodman(['exec', '--user', 'root', containerId, 'chmod', '666', '/var/run/docker.sock']);
-  log.info('Fixed podman socket permissions', { containerId });
+  try {
+    // Make the socket world-readable/writable so claudeuser can access it
+    await runPodman([
+      'exec',
+      '--user',
+      'root',
+      containerId,
+      'chmod',
+      '666',
+      '/var/run/docker.sock',
+    ]);
+    log.info('Fixed podman socket permissions', { containerId });
+  } catch (error) {
+    // This can fail in nested container scenarios where the socket is a bind mount
+    // from the host and can't have its permissions changed. Log and continue -
+    // the socket may already have appropriate permissions.
+    log.warn(
+      'Could not change podman socket permissions (may already be accessible)',
+      undefined,
+      toError(error)
+    );
+  }
 }
 
 /**

@@ -391,12 +391,25 @@ describe('E2E Integration Test', () => {
 After running each command, clearly indicate whether it succeeded or failed. Don't commit or push anything - just run the commands and report results.`;
 
     console.log('Sending prompt to Claude...');
-    await apiCall<{ success: boolean }>(
+    const sendResult = await apiCall<{ success: boolean }>(
       'POST',
       'claude.send',
       { sessionId: sessionId!, prompt },
       authToken!
     );
+    console.log('Send result:', JSON.stringify(sendResult));
+
+    // Give Claude a moment to start processing
+    await new Promise((r) => setTimeout(r, 2000));
+
+    // Check if Claude is running
+    const runningCheck = await apiCall<{ running: boolean }>(
+      'GET',
+      'claude.isRunning',
+      { sessionId: sessionId! },
+      authToken!
+    );
+    console.log('Is Claude running after send?', runningCheck.running);
 
     // Wait for Claude to finish
     console.log('Waiting for Claude to finish processing...');
