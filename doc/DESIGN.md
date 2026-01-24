@@ -436,11 +436,21 @@ async function startSessionContainer(session: Session, githubToken?: string): Pr
 
   // Copy Claude auth files into container (instead of bind mounting)
   await runPodman(['cp', CLAUDE_AUTH_PATH, `${containerId}:/home/claudeuser/.claude`]);
-  await runPodman([
-    'cp',
-    `${CLAUDE_AUTH_PATH}.json`,
-    `${containerId}:/home/claudeuser/.claude.json`,
-  ]);
+
+  // Handle .claude.json - only write if CLAUDE_CONFIG_JSON is explicitly set.
+  // We do NOT copy from host by default because the host's file may contain
+  // Claude.ai's automatically configured MCP server proxies, which aren't
+  // appropriate for --dangerously-skip-permissions mode.
+  // Claude Code will create a new .claude.json if one doesn't exist.
+  if (env.CLAUDE_CONFIG_JSON) {
+    await runPodman([
+      'exec',
+      containerId,
+      'sh',
+      '-c',
+      `cat > ~/.claude.json << 'EOF'\n${env.CLAUDE_CONFIG_JSON}\nEOF`,
+    ]);
+  }
 
   // Configure git credential helper and pnpm store
   if (githubToken) await configureGitCredentials(containerId);

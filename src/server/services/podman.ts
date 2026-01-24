@@ -453,7 +453,6 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
  */
 async function copyClaudeAuth(containerId: string): Promise<void> {
   const claudeAuthDir = env.CLAUDE_AUTH_PATH;
-  const claudeConfigFile = `${claudeAuthDir}.json`;
 
   // Only use sudo when running inside a container (where bind-mounted files may have
   // different ownership). In local dev, the current user can read their own files.
@@ -481,35 +480,40 @@ async function copyClaudeAuth(containerId: string): Promise<void> {
     }
   }
 
-  // Try to copy the .claude.json file (contains MCP configs and other settings)
-  // This file is a sibling of .claude directory on the host, so it needs to be mounted separately
-  // at /claude-auth.json (see README for the mount command)
-  try {
-    await runPodman(
-      ['cp', claudeConfigFile, `${containerId}:/home/claudeuser/.claude.json`],
-      useSudo
-    );
-  } catch (error) {
-    log.warn('.claude.json file not found - MCP integrations will not work', {
-      claudeConfigFile,
-      error: toError(error).message,
-    });
+  // Handle .claude.json (contains MCP configs and other settings)
+  // Only write this file if CLAUDE_CONFIG_JSON is explicitly set.
+  // We do NOT copy from host by default because the host's file may contain
+  // Claude.ai's automatically configured MCP server proxies, which aren't
+  // appropriate for --dangerously-skip-permissions mode.
+  // Claude Code will create a new .claude.json if one doesn't exist.
+  if (env.CLAUDE_CONFIG_JSON) {
+    // Write the explicit config to the container
+    await runPodman([
+      'exec',
+      containerId,
+      'sh',
+      '-c',
+      `cat > /home/claudeuser/.claude.json << 'CONFIGEOF'\n${env.CLAUDE_CONFIG_JSON}\nCONFIGEOF`,
+    ]);
+    log.info('Wrote explicit Claude config JSON', { containerId });
+  } else {
+    log.debug('CLAUDE_CONFIG_JSON not set - Claude Code will create .claude.json on first run');
   }
 
   // Fix ownership (podman cp preserves host ownership which may not match container user)
+  // Use sh -c with conditional to handle case where .claude.json might not exist
   await runPodman([
     'exec',
     '--user',
     'root',
     containerId,
-    'chown',
-    '-R',
-    'claudeuser:claudeuser',
-    '/home/claudeuser/.claude',
-    '/home/claudeuser/.claude.json',
+    'sh',
+    '-c',
+    'chown -R claudeuser:claudeuser /home/claudeuser/.claude && ' +
+      '[ -f /home/claudeuser/.claude.json ] && chown claudeuser:claudeuser /home/claudeuser/.claude.json || true',
   ]);
 
-  log.info('Copied Claude auth files', { containerId });
+  log.info('Set up Claude auth files', { containerId });
 }
 
 async function configureGitCredentials(containerId: string): Promise<void> {

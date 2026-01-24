@@ -14,6 +14,7 @@ export { ToolResultDisplay } from './ToolResultDisplay';
 export { SystemInitDisplay } from './SystemInitDisplay';
 export { ResultDisplay } from './ResultDisplay';
 export { HookResponseDisplay } from './HookResponseDisplay';
+export { HookStartedDisplay } from './HookStartedDisplay';
 export { WebSearchDisplay } from './WebSearchDisplay';
 export { AskUserQuestionDisplay } from './AskUserQuestionDisplay';
 export { TaskDisplay } from './TaskDisplay';

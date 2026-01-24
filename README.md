@@ -424,14 +424,15 @@ For persistent Funnel configuration, see the [Tailscale Funnel documentation](ht
 
 ### Environment Variables
 
-| Variable           | Description                             | Default              |
-| ------------------ | --------------------------------------- | -------------------- |
-| `PASSWORD_HASH`    | Base64-encoded Argon2 hash for auth     | None (required)      |
-| `DATABASE_URL`     | SQLite database path                    | `file:./data/dev.db` |
-| `GITHUB_TOKEN`     | GitHub Fine-grained PAT for repo access | Required             |
-| `CLAUDE_AUTH_PATH` | Path to Claude Code auth directory      | `/root/.claude`      |
-| `DATA_DIR`         | Directory for session workspaces        | `/data`              |
-| `NODE_ENV`         | Node environment                        | `development`        |
+| Variable             | Description                                                                | Default              |
+| -------------------- | -------------------------------------------------------------------------- | -------------------- |
+| `PASSWORD_HASH`      | Base64-encoded Argon2 hash for auth                                        | None (required)      |
+| `DATABASE_URL`       | SQLite database path                                                       | `file:./data/dev.db` |
+| `GITHUB_TOKEN`       | GitHub Fine-grained PAT for repo access                                    | Required             |
+| `CLAUDE_AUTH_PATH`   | Path to Claude Code auth directory                                         | `/root/.claude`      |
+| `DATA_DIR`           | Directory for session workspaces                                           | `/data`              |
+| `NODE_ENV`           | Node environment                                                           | `development`        |
+| `CLAUDE_CONFIG_JSON` | Explicit Claude config JSON (see [MCP Server Configuration](#mcp-servers)) | None                 |
 
 ### GPU Support
 
@@ -511,6 +512,19 @@ For rootless operation (recommended for security):
    # If not, add them:
    sudo usermod --add-subuids 100000-165535 --add-subgids 100000-165535 $USER
    ```
+
+### MCP Servers
+
+By default, the application does **not** copy your host's `~/.claude.json` to runner containers. This is intentional because your host's file may contain Claude.ai's automatically configured MCP server proxies, which aren't appropriate for `--dangerously-skip-permissions` mode (they could allow Claude to access services with your credentials without approval).
+
+Claude Code will create a fresh `~/.claude.json` on first run in each container.
+
+To explicitly configure MCP servers in runner containers, set the `CLAUDE_CONFIG_JSON` environment variable:
+
+```bash
+# Example with specific MCP servers you trust:
+CLAUDE_CONFIG_JSON='{"mcpServers":{"memory":{"command":"npx","args":["@anthropic/mcp-server-memory"]}}}'
+```
 
 ## Architecture
 
