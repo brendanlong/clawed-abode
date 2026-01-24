@@ -382,35 +382,31 @@ CMD ["tail", "-f", "/dev/null"]
 
 The application uses Podman CLI commands to manage containers, routing them through the Docker-compatible socket via `CONTAINER_HOST` env var.
 
+Runner containers are created with:
+
+- **Workspace**: Session's subdirectory from named volume mounted at `/workspace` (using `volume-subpath` for isolation)
+- **Claude auth**: Copied into container after start (not bind-mounted, for security and to avoid permission issues)
+- **Podman socket**: Bind-mounted for container-in-container support (read-only)
+- **Optional caches**: pnpm store and Gradle cache can be bind-mounted for performance (requires `--userns=keep-id`)
+
 ```typescript
 async function startSessionContainer(session: Session, githubToken?: string): Promise<string> {
+  // Mount only this session's workspace from the shared volume
   const volumeArgs = [
-    '-v',
-    `${session.workspacePath}:/workspace`,
-    '-v',
-    `${CLAUDE_AUTH_PATH}:/home/claudeuser/.claude`,
-    '-v',
-    `${CLAUDE_AUTH_PATH}.json:/home/claudeuser/.claude.json`,
+    '--mount',
+    `type=volume,source=clawed-burrow-workspaces,destination=/workspace,volume-subpath=${session.id}`,
   ];
 
-  // Mount shared pnpm store if configured (safe for concurrent access)
-  if (PNPM_STORE_PATH) {
-    volumeArgs.push('-v', `${PNPM_STORE_PATH}:/pnpm-store`);
-  }
-
-  // Mount host's podman socket for container-in-container support
+  // Mount host's podman socket for container-in-container support (read-only)
   if (PODMAN_SOCKET_PATH) {
     volumeArgs.push('-v', `${PODMAN_SOCKET_PATH}:/var/run/docker.sock`);
   }
 
-  // Environment variables
-  const envArgs = ['-e', 'NVIDIA_VISIBLE_DEVICES=all', '-e', 'NVIDIA_DRIVER_CAPABILITIES=all'];
-  if (githubToken) {
-    envArgs.push('-e', `GITHUB_TOKEN=${githubToken}`);
-  }
-  // Set CONTAINER_HOST so podman/docker commands inside the container use the host's socket
-  if (PODMAN_SOCKET_PATH) {
-    envArgs.push('-e', 'CONTAINER_HOST=unix:///var/run/docker.sock');
+  // Optional: shared caches (require --userns=keep-id for write access)
+  let needsUsernsKeepId = false;
+  if (PNPM_STORE_PATH) {
+    volumeArgs.push('-v', `${PNPM_STORE_PATH}:/pnpm-store`);
+    needsUsernsKeepId = true;
   }
 
   // Create container with CDI for GPU access
@@ -418,23 +414,31 @@ async function startSessionContainer(session: Session, githubToken?: string): Pr
     'create',
     '--name',
     `claude-session-${session.id}`,
-    '--userns=keep-id',
     '--security-opt',
     'label=disable',
     '--device',
     'nvidia.com/gpu=all',
     '-w',
-    '/workspace',
-    ...envArgs,
+    `/workspace/${session.repoPath}`,
     ...volumeArgs,
     'claude-code-runner:latest',
-    'tail',
-    '-f',
-    '/dev/null',
   ];
+
+  // Only use --userns=keep-id if we have writable bind mounts
+  if (needsUsernsKeepId) {
+    createArgs.splice(2, 0, '--userns=keep-id');
+  }
 
   const containerId = await runPodman(createArgs);
   await runPodman(['start', containerId]);
+
+  // Copy Claude auth files into container (instead of bind mounting)
+  await runPodman(['cp', CLAUDE_AUTH_PATH, `${containerId}:/home/claudeuser/.claude`]);
+  await runPodman([
+    'cp',
+    `${CLAUDE_AUTH_PATH}.json`,
+    `${containerId}:/home/claudeuser/.claude.json`,
+  ]);
 
   // Configure git credential helper and pnpm store
   if (githubToken) await configureGitCredentials(containerId);

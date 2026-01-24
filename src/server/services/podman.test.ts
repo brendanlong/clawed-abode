@@ -144,10 +144,11 @@ describe('podman service', () => {
       expect(containerId).toBe('new-container-id');
 
       // Note: ensureImagePulled is currently commented out, so pull is not called
-      // Verify create was called with correct args including --userns=keep-id and working directory
+      // Verify create was called with correct args and working directory
       const createCall = mockSpawn.mock.calls.find((call) => call[1] && call[1].includes('create'));
       expect(createCall).toBeDefined();
-      expect(createCall![1]).toContain('--userns=keep-id');
+      // --userns=keep-id should NOT be present when no pnpm/Gradle caches are configured
+      expect(createCall![1]).not.toContain('--userns=keep-id');
       expect(createCall![1]).toContain('--name');
       expect(createCall![1]).toContain('claude-session-test-session');
       // Working directory should be set to /workspace/{repoPath}

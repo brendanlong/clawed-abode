@@ -205,30 +205,28 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
     // Mount only this session's subdirectory from the workspaces volume for isolation
     // This prevents agents from accidentally interfering with other sessions
     const sessionId = extractSessionId(config.workspacePath);
-    // Claude auth directory (e.g., /root/.claude) and config file (e.g., /root/.claude.json)
-    const claudeAuthDir = env.CLAUDE_AUTH_PATH;
-    const claudeConfigFile = `${claudeAuthDir}.json`; // e.g., /root/.claude.json
     const volumeArgs: string[] = [
       // Use --mount with volume-subpath to mount only this session's workspace
       '--mount',
       `type=volume,source=${env.WORKSPACES_VOLUME},destination=/workspace,volume-subpath=${sessionId}`,
-      '-v',
-      `${claudeAuthDir}:/home/claudeuser/.claude`,
-      '-v',
-      `${claudeConfigFile}:/home/claudeuser/.claude.json`,
     ];
 
-    // Mount shared pnpm store if configured
+    // Track if we need --userns=keep-id (only needed for writable bind mounts)
+    let needsUsernsKeepId = false;
+
+    // Mount shared pnpm store if configured (requires --userns=keep-id for write access)
     if (env.PNPM_STORE_PATH) {
       volumeArgs.push('-v', `${env.PNPM_STORE_PATH}:/pnpm-store`);
+      needsUsernsKeepId = true;
     }
 
-    // Mount shared Gradle cache if configured
+    // Mount shared Gradle cache if configured (requires --userns=keep-id for write access)
     if (env.GRADLE_USER_HOME) {
       volumeArgs.push('-v', `${env.GRADLE_USER_HOME}:/gradle-cache`);
+      needsUsernsKeepId = true;
     }
 
-    // Mount host's podman socket for container-in-container support
+    // Mount host's podman socket for container-in-container support (read-only, no --userns needed)
     if (env.PODMAN_SOCKET_PATH) {
       volumeArgs.push('-v', `${env.PODMAN_SOCKET_PATH}:/var/run/docker.sock`);
     }
@@ -246,17 +244,12 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
     // Ensure the image is pulled before creating the container
     await ensureImagePulled(CLAUDE_CODE_IMAGE);
 
-    // Create the container with --userns=keep-id for proper UID mapping of mounted volumes.
-    // This maps host UID to container UID 1000, so mounted files have correct permissions.
-    // Note: Image files (like /home/claudeuser) still appear with wrong ownership due to
-    // rootless podman's storage layer - we fix this with chown after container start.
     // GPU access via CDI (Container Device Interface) - requires nvidia-container-toolkit
     // and CDI specs generated via: nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
     const createArgs = [
       'create',
       '--name',
       containerName,
-      '--userns=keep-id',
       '--security-opt',
       'label=disable',
       '--device',
@@ -271,6 +264,15 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
       '/dev/null', // Keep container running
     ];
 
+    // Only use --userns=keep-id if we have writable bind mounts (pnpm store, Gradle cache).
+    // This maps host UID to container UID 1000, so mounted files have correct permissions.
+    // Without bind mounts, we skip this for faster container startup.
+    // Note: When enabled, image files (like /home/claudeuser) appear with wrong ownership
+    // due to rootless podman's storage layer - we fix this with chown after container start.
+    if (needsUsernsKeepId) {
+      createArgs.splice(2, 0, '--userns=keep-id');
+    }
+
     const containerId = (await runPodman(createArgs)).trim();
     log.info('Container created', { sessionId: config.sessionId, containerId });
 
@@ -278,12 +280,19 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
     await runPodman(['start', containerId]);
     log.info('Container started', { sessionId: config.sessionId, containerId });
 
-    // Fix home directory ownership - rootless podman's user namespace causes image files
-    // to appear with wrong ownership. The container user has sudo, so we can fix it.
-    await fixHomeDirectoryOwnership(containerId);
+    // Only fix ownership/sudo if using --userns=keep-id (which breaks image file ownership)
+    if (needsUsernsKeepId) {
+      // Fix home directory ownership - rootless podman's user namespace causes image files
+      // to appear with wrong ownership. The container user has sudo, so we can fix it.
+      await fixHomeDirectoryOwnership(containerId);
 
-    // Fix sudo setuid bit - rootless podman can strip it, breaking sudo
-    await fixSudoSetuid(containerId);
+      // Fix sudo setuid bit - rootless podman can strip it, breaking sudo
+      await fixSudoSetuid(containerId);
+    }
+
+    // Copy Claude auth files into the container (instead of bind mounting)
+    // This avoids permission issues and prevents agents from modifying auth config
+    await copyClaudeAuth(containerId);
 
     // Configure git credential helper if token is provided
     if (config.githubToken) {
@@ -311,13 +320,12 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
  * Rootless podman's user namespace causes image files to appear with wrong ownership
  * (typically root instead of claudeuser). We exec as root to fix this.
  *
- * We chown specific directories rather than recursive on /home/claudeuser to:
- * 1. Avoid chowning mounted volumes like .claude (which could be large)
- * 2. Speed up container startup by only touching image files that need it
+ * Only called when --userns=keep-id is used (for pnpm/Gradle cache bind mounts).
+ * We chown specific directories rather than recursive on /home/claudeuser to
+ * speed up container startup by only touching image files that need it.
  */
 async function fixHomeDirectoryOwnership(containerId: string): Promise<void> {
   // Chown specific directories that exist in the image and need write access
-  // Skip .claude since it's a bind mount from the host
   await runPodman([
     'exec',
     '--user',
@@ -338,6 +346,39 @@ async function fixHomeDirectoryOwnership(containerId: string): Promise<void> {
 async function fixSudoSetuid(containerId: string): Promise<void> {
   await runPodman(['exec', '--user', 'root', containerId, 'chmod', 'u+s', '/usr/bin/sudo']);
   log.info('Fixed sudo setuid bit', { containerId });
+}
+
+/**
+ * Copy Claude auth files into the container.
+ * We copy instead of bind mounting to:
+ * 1. Avoid permission issues with rootless Podman
+ * 2. Prevent agents from modifying the auth config
+ * 3. Enable faster container startup (no --userns=keep-id needed for this)
+ */
+async function copyClaudeAuth(containerId: string): Promise<void> {
+  const claudeAuthDir = env.CLAUDE_AUTH_PATH;
+  const claudeConfigFile = `${claudeAuthDir}.json`;
+
+  // Copy the .claude directory
+  await runPodman(['cp', claudeAuthDir, `${containerId}:/home/claudeuser/.claude`]);
+
+  // Copy the .claude.json file
+  await runPodman(['cp', claudeConfigFile, `${containerId}:/home/claudeuser/.claude.json`]);
+
+  // Fix ownership (podman cp preserves host ownership which may not match container user)
+  await runPodman([
+    'exec',
+    '--user',
+    'root',
+    containerId,
+    'chown',
+    '-R',
+    'claudeuser:claudeuser',
+    '/home/claudeuser/.claude',
+    '/home/claudeuser/.claude.json',
+  ]);
+
+  log.info('Copied Claude auth files', { containerId });
 }
 
 async function configureGitCredentials(containerId: string): Promise<void> {
