@@ -55,13 +55,24 @@ interface Session {
   branch: string; // Branch name
   repoPath: string; // Relative path to repo within workspace (e.g., "my-repo")
   containerId: string | null; // Docker container ID when running
-  status: 'creating' | 'running' | 'stopped' | 'error';
+  status: 'creating' | 'running' | 'stopped' | 'error' | 'archived';
   statusMessage: string | null; // Progress message during creation or error details
   initialPrompt: string | null; // Optional prompt to auto-send when session starts (e.g., from GitHub issue)
   createdAt: Date;
   updatedAt: Date;
+  archivedAt: Date | null; // When the session was archived (null if not archived)
 }
 ```
+
+### Session Archiving
+
+When a session is deleted, it is archived rather than permanently removed. This preserves the message history for later viewing. Archived sessions:
+
+- Have status set to `archived` and archivedAt timestamp recorded
+- Have their container removed and workspace volume deleted
+- Keep all messages in the database for viewing
+- Are excluded from the session list by default (toggle available to show them)
+- Are read-only: no start/stop controls, no prompt input
 
 ### Data Storage
 

@@ -443,8 +443,12 @@ function SessionView({ sessionId }: { sessionId: string }) {
     );
   }
 
-  // Show creation progress or error state
-  if (session.status === 'creating' || session.status === 'error') {
+  // Show creation progress, error state, or archived state
+  if (
+    session.status === 'creating' ||
+    session.status === 'error' ||
+    session.status === 'archived'
+  ) {
     return (
       <div className="flex-1 flex flex-col min-h-0">
         <SessionHeader
@@ -454,27 +458,42 @@ function SessionView({ sessionId }: { sessionId: string }) {
           isStarting={false}
           isStopping={false}
         />
-        <div className="flex-1 flex flex-col items-center justify-center gap-4">
-          {session.status === 'creating' && (
-            <>
-              <Spinner size="lg" />
-              <p className="text-muted-foreground">
-                {session.statusMessage || 'Setting up session...'}
-              </p>
-            </>
-          )}
-          {session.status === 'error' && (
-            <>
-              <div className="text-destructive text-lg">Setup Failed</div>
-              <p className="text-muted-foreground max-w-md text-center">
-                {session.statusMessage || 'An unknown error occurred'}
-              </p>
-              <Button variant="outline" asChild className="mt-4">
-                <Link href="/">Back to sessions</Link>
-              </Button>
-            </>
-          )}
-        </div>
+        {session.status === 'creating' && (
+          <div className="flex-1 flex flex-col items-center justify-center gap-4">
+            <Spinner size="lg" />
+            <p className="text-muted-foreground">
+              {session.statusMessage || 'Setting up session...'}
+            </p>
+          </div>
+        )}
+        {session.status === 'error' && (
+          <div className="flex-1 flex flex-col items-center justify-center gap-4">
+            <div className="text-destructive text-lg">Setup Failed</div>
+            <p className="text-muted-foreground max-w-md text-center">
+              {session.statusMessage || 'An unknown error occurred'}
+            </p>
+            <Button variant="outline" asChild className="mt-4">
+              <Link href="/">Back to sessions</Link>
+            </Button>
+          </div>
+        )}
+        {session.status === 'archived' && (
+          <>
+            <MessageList
+              messages={messages}
+              isLoading={messagesLoading || isFetchingMore}
+              hasMore={hasMore}
+              onLoadMore={fetchMore}
+              tokenUsage={tokenUsage}
+              onSendResponse={() => {}}
+              isClaudeRunning={false}
+            />
+            <div className="border-t bg-muted/50 px-4 py-3 text-center text-sm text-muted-foreground">
+              This session has been archived. You can view the message history but cannot send new
+              prompts.
+            </div>
+          </>
+        )}
       </div>
     );
   }
