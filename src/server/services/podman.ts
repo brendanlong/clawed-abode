@@ -150,6 +150,119 @@ async function ensureImagePulled(imageName: string): Promise<void> {
   }
 }
 
+/**
+ * Convert a repo full name (e.g., "owner/repo") to a cache-safe path.
+ * Uses double-dash to separate owner and repo since slashes aren't valid in paths.
+ */
+function repoCachePath(repoFullName: string): string {
+  return `/cache/${repoFullName.replace('/', '--')}.git`;
+}
+
+/**
+ * Ensure the git cache volume exists, creating it if necessary.
+ */
+async function ensureGitCacheVolume(): Promise<void> {
+  const volumeName = env.GIT_CACHE_VOLUME;
+  try {
+    // Check if volume exists
+    await runPodman(['volume', 'inspect', volumeName]);
+  } catch {
+    // Volume doesn't exist, create it
+    log.info('Creating git cache volume', { volumeName });
+    await runPodman(['volume', 'create', volumeName]);
+  }
+}
+
+/**
+ * Update or create a bare repo cache for a given repository.
+ * If the cache exists, fetches latest refs. If not, clones a new bare repo.
+ * This is done in a temporary container to ensure proper permissions.
+ *
+ * @returns true if cache is ready to use as --reference, false if caching failed
+ */
+async function updateGitCache(repoFullName: string, githubToken?: string): Promise<boolean> {
+  const containerName = `git-cache-${uuid().slice(0, 8)}`;
+  const cachePath = repoCachePath(repoFullName);
+
+  // Build the repo URL with token if provided
+  const repoUrl = githubToken
+    ? `https://${githubToken}@github.com/${repoFullName}.git`
+    : `https://github.com/${repoFullName}.git`;
+
+  log.info('Updating git cache', { repoFullName, cachePath });
+
+  try {
+    await ensureGitCacheVolume();
+
+    // Create a temporary container with the cache volume mounted
+    const createArgs = [
+      'create',
+      '--name',
+      containerName,
+      '--rm',
+      '-v',
+      `${env.GIT_CACHE_VOLUME}:/cache`,
+      '-w',
+      '/cache',
+      CLAUDE_CODE_IMAGE,
+      'tail',
+      '-f',
+      '/dev/null',
+    ];
+
+    const containerId = (await runPodman(createArgs)).trim();
+    await runPodman(['start', containerId]);
+
+    try {
+      // Check if the cache repo already exists
+      const lsResult = await runPodmanIgnoreErrors(['exec', containerId, 'ls', '-d', cachePath]);
+      const cacheExists = lsResult.trim() === cachePath;
+
+      if (cacheExists) {
+        // Cache exists - fetch latest refs
+        log.info('Fetching updates for cached repo', { repoFullName });
+        await runPodman(['exec', containerId, 'git', '-C', cachePath, 'fetch', '--all', '--prune']);
+      } else {
+        // Cache doesn't exist - clone a bare repo
+        log.info('Creating new bare repo cache', { repoFullName });
+
+        // Ensure the parent directory exists
+        const parentDir = cachePath.substring(0, cachePath.lastIndexOf('/'));
+        await runPodman(['exec', containerId, 'mkdir', '-p', parentDir]);
+
+        await runPodman(['exec', containerId, 'git', 'clone', '--bare', repoUrl, cachePath]);
+
+        // Remove the token from the remote URL for security
+        await runPodman([
+          'exec',
+          containerId,
+          'git',
+          '-C',
+          cachePath,
+          'remote',
+          'set-url',
+          'origin',
+          `https://github.com/${repoFullName}.git`,
+        ]);
+      }
+
+      log.info('Git cache updated successfully', { repoFullName });
+      return true;
+    } finally {
+      // Always clean up the temporary container
+      await runPodmanIgnoreErrors(['stop', containerId]);
+      await runPodmanIgnoreErrors(['rm', '-f', containerId]);
+    }
+  } catch (error) {
+    log.warn(
+      'Failed to update git cache, will clone without reference',
+      { repoFullName },
+      toError(error)
+    );
+    return false;
+  }
+}
+
 export interface CloneConfig {
   sessionId: string;
   repoFullName: string;
@@ -165,6 +278,10 @@ export interface CloneResult {
  * Clone a repository into the workspaces volume using a temporary container.
  * This ensures the clone goes directly into the named volume, avoiding
  * permission issues between the service and runner containers.
+ *
+ * Uses a git reference cache when available to speed up clones.
+ * The cache stores bare repos that are fetched on each clone to stay current.
+ * If caching fails, falls back to a normal clone.
  */
 export async function cloneRepoInVolume(config: CloneConfig): Promise<CloneResult> {
   const containerName = `clone-${config.sessionId}`;
@@ -180,6 +297,11 @@ export async function cloneRepoInVolume(config: CloneConfig): Promise<CloneResul
     // Ensure the image is pulled before creating the container
     await ensureImagePulled(CLAUDE_CODE_IMAGE);
 
+    // Update or create the git cache for this repo
+    // This fetches latest refs so the clone will be fast and current
+    const useCache = await updateGitCache(config.repoFullName, config.githubToken);
+    const cachePath = repoCachePath(config.repoFullName);
+
     // Create a dedicated volume for this session
     await runPodman(['volume', 'create', volumeName]);
     log.info('Created session volume', { sessionId: config.sessionId, volumeName });
@@ -193,6 +315,7 @@ export async function cloneRepoInVolume(config: CloneConfig): Promise<CloneResul
     const repoName = config.repoFullName.split('/')[1];
 
     // Create a temporary container with the session's volume mounted
+    // Also mount the git cache volume if we're using it
     const createArgs = [
       'create',
       '--name',
@@ -200,6 +323,7 @@ export async function cloneRepoInVolume(config: CloneConfig): Promise<CloneResul
       '--rm', // Auto-remove when stopped
       '-v',
       `${volumeName}:/workspace`,
+      ...(useCache ? ['-v', `${env.GIT_CACHE_VOLUME}:/cache:ro`] : []),
       '-w',
       '/workspace',
       CLAUDE_CODE_IMAGE,
@@ -209,14 +333,15 @@ export async function cloneRepoInVolume(config: CloneConfig): Promise<CloneResul
     ];
 
     const containerId = (await runPodman(createArgs)).trim();
-    log.info('Clone container created', { sessionId: config.sessionId, containerId });
+    log.info('Clone container created', { sessionId: config.sessionId, containerId, useCache });
 
     // Start the container
     await runPodman(['start', containerId]);
 
     try {
-      // Clone the repository
-      await runPodman([
+      // Clone the repository, using --reference if cache is available
+      // --dissociate ensures the clone is independent even if the cache is deleted later
+      const cloneArgs = [
         'exec',
         containerId,
         'git',
@@ -224,9 +349,11 @@ export async function cloneRepoInVolume(config: CloneConfig): Promise<CloneResul
         '--branch',
         config.branch,
         '--single-branch',
+        ...(useCache ? ['--reference', cachePath, '--dissociate'] : []),
         repoUrl,
         repoName,
-      ]);
+      ];
+      await runPodman(cloneArgs);
 
       // Configure the remote URL without the token for security
       await runPodman([
