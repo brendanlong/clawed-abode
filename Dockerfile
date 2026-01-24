@@ -33,8 +33,10 @@ COPY . .
 # Build Next.js application
 RUN pnpm run build
 
-# Create data directory and set ownership to node user (UID 1000)
-RUN mkdir -p /data/db /data/repos /data/worktrees && \
+# Create data directories and set ownership to node user (UID 1000)
+# /data/db - SQLite database (typically a named volume in production)
+# /data/workspaces - Session workspaces (bind-mounted from host in production)
+RUN mkdir -p /data/db /data/workspaces && \
     chown -R node:node /data /app
 
 # Switch to non-root user for security

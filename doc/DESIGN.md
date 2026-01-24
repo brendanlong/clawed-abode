@@ -64,6 +64,14 @@ interface Session {
 }
 ```
 
+### Data Storage
+
+The service container uses two types of storage:
+
+1. **Database** (`/data/db/`): Uses a named Docker volume (`clawed-burrow-db`) for SQLite. This avoids permission issues with rootless Podman and enables fast container startup (no `--userns=keep-id` needed).
+
+2. **Workspaces** (`/data/workspaces/`): Bind-mounted from the host for sharing with runner containers. The host directory (e.g., `~/.clawed-burrow`) is mounted directly at `/data/workspaces`.
+
 ### Workspace Structure
 
 Each session has a dedicated workspace directory that contains the cloned repository:
@@ -75,7 +83,7 @@ Each session has a dedicated workspace directory that contains the cloned reposi
 └── ...                   # Agent can create other files/directories as needed
 ```
 
-Inside the container, this is mounted at `/workspace`, with the working directory set to `/workspace/{repo-name}`. This gives the agent:
+Inside the runner container, this is mounted at `/workspace`, with the working directory set to `/workspace/{repo-name}`. This gives the agent:
 
 - Full write access to the workspace for worktrees, temp files, etc.
 - Clean separation between the repo and working files

@@ -130,13 +130,12 @@ Run the container:
 podman run -d \
   --name clawed-burrow \
   --replace \
-  --userns=keep-id \
   --label io.containers.autoupdate=registry \
   -p 3000:3000 \
   -e DATABASE_URL=file:/data/db/prod.db \
   -e GITHUB_TOKEN="$GITHUB_TOKEN" \
   -e CLAUDE_AUTH_PATH="$HOME/.claude" \
-  -e DATA_DIR=/data \
+  -e DATA_DIR=/data/workspaces \
   -e DATA_HOST_PATH="$HOME/.clawed-burrow" \
   -e NODE_ENV=production \
   -e PASSWORD_HASH="$PASSWORD_HASH" \
@@ -144,7 +143,8 @@ podman run -d \
   -e CLAUDE_RUNNER_IMAGE=ghcr.io/brendanlong/clawed-burrow-runner:latest \
   ${PNPM_STORE_PATH:+-e PNPM_STORE_PATH="$PNPM_STORE_PATH"} \
   ${GRADLE_USER_HOME:+-e GRADLE_USER_HOME="$GRADLE_USER_HOME"} \
-  -v "$HOME/.clawed-burrow:/data" \
+  -v clawed-burrow-db:/data/db \
+  -v "$HOME/.clawed-burrow:/data/workspaces" \
   -v "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman/podman.sock:/var/run/docker.sock" \
   -v "$HOME/.claude:/claude-auth" \
   --device nvidia.com/gpu=all \
@@ -348,13 +348,14 @@ podman run -d \
   -e DATABASE_URL=file:/data/db/prod.db \
   -e GITHUB_TOKEN="$GITHUB_TOKEN" \
   -e CLAUDE_AUTH_PATH="/home/clawedburrow/.claude" \
-  -e DATA_DIR=/data \
+  -e DATA_DIR=/data/workspaces \
   -e DATA_HOST_PATH="/home/clawedburrow/.clawed-burrow" \
   -e NODE_ENV=production \
   -e PASSWORD_HASH="$PASSWORD_HASH" \
   -e PODMAN_SOCKET_PATH="/run/user/$(id -u)/podman/podman.sock" \
   -e CLAUDE_RUNNER_IMAGE=ghcr.io/brendanlong/clawed-burrow-runner:latest \
-  -v "/home/clawedburrow/.clawed-burrow:/data" \
+  -v clawed-burrow-db:/data/db \
+  -v "/home/clawedburrow/.clawed-burrow:/data/workspaces" \
   -v "/run/user/$(id -u)/podman/podman.sock:/var/run/docker.sock" \
   -v "/home/clawedburrow/.claude:/claude-auth" \
   --device nvidia.com/gpu=all \

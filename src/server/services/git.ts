@@ -3,7 +3,8 @@ import { mkdir, rm, access } from 'fs/promises';
 import { join } from 'path';
 import { env } from '@/lib/env';
 
-const WORKSPACES_DIR = join(env.DATA_DIR, 'workspaces');
+// DATA_DIR points directly to the workspaces directory (e.g., /data/workspaces)
+const WORKSPACES_DIR = env.DATA_DIR;
 
 export interface CloneResult {
   workspacePath: string;
