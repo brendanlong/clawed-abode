@@ -139,8 +139,6 @@ podman run -d \
   -e PASSWORD_HASH="$PASSWORD_HASH" \
   -e PODMAN_SOCKET_PATH="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman/podman.sock" \
   -e CLAUDE_RUNNER_IMAGE=ghcr.io/brendanlong/clawed-burrow-runner:latest \
-  ${PNPM_STORE_PATH:+-e PNPM_STORE_PATH="$PNPM_STORE_PATH"} \
-  ${GRADLE_USER_HOME:+-e GRADLE_USER_HOME="$GRADLE_USER_HOME"} \
   -v clawed-burrow-db:/data/db \
   -v clawed-burrow-workspaces:/data/workspaces \
   -v "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman/podman.sock:/var/run/docker.sock" \
