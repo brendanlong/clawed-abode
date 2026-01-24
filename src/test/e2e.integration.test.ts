@@ -27,6 +27,10 @@ const TEST_PASSWORD = 'test-password-e2e';
 const SERVICE_PORT = 3099; // Use a non-standard port to avoid conflicts
 const PROJECT_ROOT = path.resolve(__dirname, '../..');
 
+// Detect if we're running inside a container (using host's podman socket)
+// If so, use host.containers.internal to reach the service container
+const SERVICE_HOST = process.env.SERVICE_HOST || 'host.containers.internal';
+
 // Image names with test tags
 const SERVICE_IMAGE = `clawed-burrow:${TEST_TAG}`;
 const RUNNER_IMAGE = `claude-code-runner:${TEST_TAG}`;
@@ -66,7 +70,7 @@ async function apiCall<T>(
   input?: unknown,
   token?: string
 ): Promise<T> {
-  const baseUrl = `http://localhost:${SERVICE_PORT}/api/trpc`;
+  const baseUrl = `http://${SERVICE_HOST}:${SERVICE_PORT}/api/trpc`;
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
@@ -78,11 +82,13 @@ async function apiCall<T>(
   let body: string | undefined;
 
   if (method === 'GET') {
-    const inputParam = input ? `?input=${encodeURIComponent(JSON.stringify(input))}` : '';
+    // GET requests use query param with json wrapper
+    const inputParam = input ? `?input=${encodeURIComponent(JSON.stringify({ json: input }))}` : '';
     url = `${baseUrl}/${procedure}${inputParam}`;
   } else {
+    // POST requests need body wrapped in { json: ... } for tRPC
     url = `${baseUrl}/${procedure}`;
-    body = JSON.stringify(input);
+    body = JSON.stringify({ json: input });
   }
 
   const response = await fetch(url, { method, headers, body });
@@ -92,7 +98,7 @@ async function apiCall<T>(
     throw new Error(`API error: ${JSON.stringify(json.error)}`);
   }
 
-  return json.result?.data as T;
+  return json.result?.data?.json as T;
 }
 
 // Helper to wait for service to be ready
@@ -100,10 +106,13 @@ async function waitForService(maxWaitMs = 120000): Promise<void> {
   const startTime = Date.now();
   while (Date.now() - startTime < maxWaitMs) {
     try {
-      const response = await fetch(`http://localhost:${SERVICE_PORT}/api/trpc/auth.listSessions`, {
-        method: 'GET',
-        headers: { Authorization: 'Bearer invalid' },
-      });
+      const response = await fetch(
+        `http://${SERVICE_HOST}:${SERVICE_PORT}/api/trpc/auth.listSessions`,
+        {
+          method: 'GET',
+          headers: { Authorization: 'Bearer invalid' },
+        }
+      );
       // Any response means the service is up
       if (response.status) {
         return;
@@ -172,6 +181,7 @@ describe('E2E Integration Test', () => {
     console.log(`\n=== E2E Test Starting ===`);
     console.log(`Test tag: ${TEST_TAG}`);
     console.log(`Project root: ${PROJECT_ROOT}`);
+    console.log(`Service host: ${SERVICE_HOST}:${SERVICE_PORT}`);
 
     // Check for required environment variables
     if (!process.env.GITHUB_TOKEN) {
@@ -246,6 +256,9 @@ describe('E2E Integration Test', () => {
       // Disable SELinux labels for socket access
       '--security-opt',
       'label=disable',
+      // Run as root to access the podman socket (normal production runs as node user)
+      '--user',
+      'root',
       SERVICE_IMAGE,
     ];
 
