@@ -10,23 +10,6 @@ const log = createLogger('podman');
 // Use env variable if set, otherwise default to local build
 const CLAUDE_CODE_IMAGE = env.CLAUDE_RUNNER_IMAGE;
 
-/**
- * Convert a container path to a host path for bind mounts.
- * In container-in-container setups, DATA_DIR is the path inside this container,
- * but we need the host path for bind mounts in session containers.
- */
-function toHostPath(containerPath: string): string {
-  if (!env.DATA_HOST_PATH) {
-    // No host path configured, use the path as-is (local dev mode)
-    return containerPath;
-  }
-  // Replace the DATA_DIR prefix with DATA_HOST_PATH
-  if (containerPath.startsWith(env.DATA_DIR)) {
-    return containerPath.replace(env.DATA_DIR, env.DATA_HOST_PATH);
-  }
-  return containerPath;
-}
-
 // Track last pull time per image to avoid pulling too frequently
 const lastPullTime = new Map<string, number>();
 const PULL_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes (matches Watchtower poll interval)
@@ -63,11 +46,28 @@ const podmanEnv: NodeJS.ProcessEnv = isRunningInContainer()
 
 /**
  * Run a podman command and return a promise that resolves with stdout.
+ * @param args - Arguments to pass to podman
+ * @param useSudo - Run with sudo (needed when reading files with restricted permissions in containerized deployments)
  */
-async function runPodman(args: string[]): Promise<string> {
+async function runPodman(args: string[], useSudo = false): Promise<string> {
   return new Promise((resolve, reject) => {
-    log.debug('runPodman: Executing', { args });
-    const proc = spawn('podman', args, { env: podmanEnv });
+    let command: string;
+    let finalArgs: string[];
+
+    if (useSudo) {
+      // When using sudo, we need to preserve CONTAINER_HOST so sudo's podman
+      // talks to the same Podman instance (via the socket) as the non-sudo commands.
+      // Without this, sudo podman would use root's separate Podman instance.
+      // The sudoers config allows CONTAINER_HOST via env_keep.
+      command = 'sudo';
+      finalArgs = ['--preserve-env=CONTAINER_HOST', 'podman', ...args];
+    } else {
+      command = 'podman';
+      finalArgs = args;
+    }
+
+    log.debug('runPodman: Executing', { args: finalArgs, useSudo });
+    const proc = spawn(command, finalArgs, { env: podmanEnv });
     let stdout = '';
     let stderr = '';
 
@@ -83,7 +83,7 @@ async function runPodman(args: string[]): Promise<string> {
       if (code === 0) {
         resolve(stdout);
       } else {
-        log.debug('runPodman: Command failed', { args, code, stderr });
+        log.debug('runPodman: Command failed', { args: finalArgs, code, stderr });
         reject(new Error(`podman command failed with code ${code}: ${stderr}`));
       }
     });
@@ -150,9 +150,151 @@ async function ensureImagePulled(imageName: string): Promise<void> {
   }
 }
 
+export interface CloneConfig {
+  sessionId: string;
+  repoFullName: string;
+  branch: string;
+  githubToken?: string;
+}
+
+export interface CloneResult {
+  repoPath: string; // Relative path to repo within workspace (e.g., "my-repo")
+}
+
+/**
+ * Clone a repository into the workspaces volume using a temporary container.
+ * This ensures the clone goes directly into the named volume, avoiding
+ * permission issues between the service and runner containers.
+ */
+export async function cloneRepoInVolume(config: CloneConfig): Promise<CloneResult> {
+  const containerName = `clone-${config.sessionId}`;
+  log.info('Cloning repo in volume', {
+    sessionId: config.sessionId,
+    repoFullName: config.repoFullName,
+    branch: config.branch,
+  });
+
+  const volumeName = `clawed-burrow-workspace-${config.sessionId}`;
+
+  try {
+    // Ensure the image is pulled before creating the container
+    await ensureImagePulled(CLAUDE_CODE_IMAGE);
+
+    // Create a dedicated volume for this session
+    await runPodman(['volume', 'create', volumeName]);
+    log.info('Created session volume', { sessionId: config.sessionId, volumeName });
+
+    // Build the clone URL with token if provided
+    const repoUrl = config.githubToken
+      ? `https://${config.githubToken}@github.com/${config.repoFullName}.git`
+      : `https://github.com/${config.repoFullName}.git`;
+
+    // Extract repo name from full name (e.g., "owner/repo" -> "repo")
+    const repoName = config.repoFullName.split('/')[1];
+
+    // Create a temporary container with the session's volume mounted
+    const createArgs = [
+      'create',
+      '--name',
+      containerName,
+      '--rm', // Auto-remove when stopped
+      '-v',
+      `${volumeName}:/workspace`,
+      '-w',
+      '/workspace',
+      CLAUDE_CODE_IMAGE,
+      'tail',
+      '-f',
+      '/dev/null',
+    ];
+
+    const containerId = (await runPodman(createArgs)).trim();
+    log.info('Clone container created', { sessionId: config.sessionId, containerId });
+
+    // Start the container
+    await runPodman(['start', containerId]);
+
+    try {
+      // Clone the repository
+      await runPodman([
+        'exec',
+        containerId,
+        'git',
+        'clone',
+        '--branch',
+        config.branch,
+        '--single-branch',
+        repoUrl,
+        repoName,
+      ]);
+
+      // Configure the remote URL without the token for security
+      await runPodman([
+        'exec',
+        containerId,
+        'git',
+        '-C',
+        repoName,
+        'remote',
+        'set-url',
+        'origin',
+        `https://github.com/${config.repoFullName}.git`,
+      ]);
+
+      // Create and check out a session-specific branch
+      const sessionBranch = `${env.SESSION_BRANCH_PREFIX}${config.sessionId}`;
+      await runPodman([
+        'exec',
+        containerId,
+        'git',
+        '-C',
+        repoName,
+        'checkout',
+        '-b',
+        sessionBranch,
+      ]);
+
+      log.info('Repo cloned successfully', {
+        sessionId: config.sessionId,
+        repoName,
+        branch: sessionBranch,
+      });
+
+      return { repoPath: repoName };
+    } finally {
+      // Always clean up the temporary container
+      await runPodmanIgnoreErrors(['stop', containerId]);
+      await runPodmanIgnoreErrors(['rm', '-f', containerId]);
+    }
+  } catch (error) {
+    log.error('Failed to clone repo in volume', toError(error), {
+      sessionId: config.sessionId,
+      repoFullName: config.repoFullName,
+    });
+    // Clean up the volume if clone failed
+    await runPodmanIgnoreErrors(['volume', 'rm', volumeName]);
+    throw error;
+  }
+}
+
+/**
+ * Remove a session's workspace volume.
+ */
+export async function removeWorkspaceFromVolume(sessionId: string): Promise<void> {
+  const volumeName = `clawed-burrow-workspace-${sessionId}`;
+  log.info('Removing workspace volume', { sessionId, volumeName });
+
+  try {
+    await runPodman(['volume', 'rm', volumeName]);
+    log.info('Workspace volume removed', { sessionId, volumeName });
+  } catch (error) {
+    log.error('Failed to remove workspace volume', toError(error), { sessionId, volumeName });
+    // Don't throw - cleanup failures shouldn't block session deletion
+  }
+}
+
 export interface ContainerConfig {
   sessionId: string;
-  workspacePath: string;
   repoPath: string; // Relative path to repo within workspace (e.g., "my-repo")
   githubToken?: string;
 }
@@ -196,10 +338,8 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
     if (config.githubToken) {
       envArgs.push('-e', `GITHUB_TOKEN=${config.githubToken}`);
     }
-    // Set Gradle user home if shared cache is configured
-    if (env.GRADLE_USER_HOME) {
-      envArgs.push('-e', 'GRADLE_USER_HOME=/gradle-cache');
-    }
+    // Set Gradle user home to use the shared cache volume
+    envArgs.push('-e', 'GRADLE_USER_HOME=/gradle-cache');
     // Add NVIDIA environment variables for GPU access
     envArgs.push('-e', 'NVIDIA_VISIBLE_DEVICES=all');
     envArgs.push('-e', 'NVIDIA_DRIVER_CAPABILITIES=all');
@@ -209,35 +349,22 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
     }
 
     // Build volume binds
-    // Use toHostPath() to convert container paths to host paths for container-in-container
-    // Claude auth directory (e.g., /root/.claude) and config file (e.g., /root/.claude.json)
-    const claudeAuthDir = env.CLAUDE_AUTH_PATH;
-    const claudeConfigFile = `${claudeAuthDir}.json`; // e.g., /root/.claude.json
-    const volumeArgs: string[] = [
-      '-v',
-      `${toHostPath(config.workspacePath)}:/workspace`,
-      '-v',
-      `${claudeAuthDir}:/home/claudeuser/.claude`,
-      '-v',
-      `${claudeConfigFile}:/home/claudeuser/.claude.json`,
-    ];
+    // Each session has its own dedicated volume for isolation
+    const volumeName = `clawed-burrow-workspace-${config.sessionId}`;
+    const volumeArgs: string[] = ['-v', `${volumeName}:/workspace`];
 
-    // Mount shared pnpm store if configured
-    if (env.PNPM_STORE_PATH) {
-      volumeArgs.push('-v', `${env.PNPM_STORE_PATH}:/pnpm-store`);
-    }
+    // Mount shared pnpm store volume
+    volumeArgs.push('-v', `${env.PNPM_STORE_VOLUME}:/pnpm-store`);
+    // Mount shared Gradle cache volume
+    volumeArgs.push('-v', `${env.GRADLE_CACHE_VOLUME}:/gradle-cache`);
 
-    // Mount shared Gradle cache if configured
-    if (env.GRADLE_USER_HOME) {
-      volumeArgs.push('-v', `${env.GRADLE_USER_HOME}:/gradle-cache`);
-    }
-
-    // Mount host's podman socket for container-in-container support
+    // Mount host's podman socket for container-in-container support (read-only)
     if (env.PODMAN_SOCKET_PATH) {
       volumeArgs.push('-v', `${env.PODMAN_SOCKET_PATH}:/var/run/docker.sock`);
     }
 
-    // Working directory is the repo path inside the container workspace
+    // Working directory is the repo path inside the session's workspace
+    // The session's workspace is mounted at /workspace, so the repo is at /workspace/{repoPath}
     const workingDir = config.repoPath ? `/workspace/${config.repoPath}` : '/workspace';
 
     log.info('Creating new container', {
@@ -249,17 +376,12 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
     // Ensure the image is pulled before creating the container
     await ensureImagePulled(CLAUDE_CODE_IMAGE);
 
-    // Create the container with --userns=keep-id for proper UID mapping of mounted volumes.
-    // This maps host UID to container UID 1000, so mounted files have correct permissions.
-    // Note: Image files (like /home/claudeuser) still appear with wrong ownership due to
-    // rootless podman's storage layer - we fix this with chown after container start.
     // GPU access via CDI (Container Device Interface) - requires nvidia-container-toolkit
     // and CDI specs generated via: nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
     const createArgs = [
       'create',
       '--name',
       containerName,
-      '--userns=keep-id',
       '--security-opt',
       'label=disable',
       '--device',
@@ -281,22 +403,28 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
     await runPodman(['start', containerId]);
     log.info('Container started', { sessionId: config.sessionId, containerId });
 
-    // Fix home directory ownership - rootless podman's user namespace causes image files
-    // to appear with wrong ownership. The container user has sudo, so we can fix it.
-    await fixHomeDirectoryOwnership(containerId);
-
-    // Fix sudo setuid bit - rootless podman can strip it, breaking sudo
-    await fixSudoSetuid(containerId);
+    // Copy Claude auth files into the container (instead of bind mounting)
+    // This avoids permission issues and prevents agents from modifying auth config
+    await copyClaudeAuth(containerId);
 
     // Configure git credential helper if token is provided
     if (config.githubToken) {
       await configureGitCredentials(containerId);
     }
 
-    // Configure pnpm to use shared store if mounted
-    if (env.PNPM_STORE_PATH) {
-      await configurePnpmStore(containerId);
+    // Configure pnpm to use the shared store volume
+    await configurePnpmStore(containerId);
+
+    // Configure Gradle to use the shared cache volume
+    await configureGradleCache(containerId);
+
+    // Fix podman socket permissions if mounted
+    if (env.PODMAN_SOCKET_PATH) {
+      await fixPodmanSocketPermissions(containerId);
     }
+
+    // Fix sudo permissions (rootless Podman without --userns=keep-id can break setuid)
+    await fixSudoPermissions(containerId);
 
     return containerId;
   } catch (error) {
@@ -310,37 +438,78 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
 }
 
 /**
- * Fix home directory ownership in the container.
- * Rootless podman's user namespace causes image files to appear with wrong ownership
- * (typically root instead of claudeuser). We exec as root to fix this.
+ * Copy Claude auth files into the container.
+ * We copy instead of bind mounting to:
+ * 1. Avoid permission issues with rootless Podman
+ * 2. Prevent agents from modifying the auth config
+ * 3. Enable faster container startup (no --userns=keep-id needed for this)
  *
- * We chown specific directories rather than recursive on /home/claudeuser to:
- * 1. Avoid chowning mounted volumes like .claude (which could be large)
- * 2. Speed up container startup by only touching image files that need it
+ * Uses sudo for the copy only when running inside a container, because the service
+ * container may not have permission to read files like .credentials.json (which have
+ * 600 permissions on the host). In local dev, the current user owns the files.
+ *
+ * Only copies essential auth files, not the entire .claude directory (which contains
+ * large directories like file-history that aren't needed and can cause copy errors).
  */
-async function fixHomeDirectoryOwnership(containerId: string): Promise<void> {
-  // Chown specific directories that exist in the image and need write access
-  // Skip .claude since it's a bind mount from the host
+async function copyClaudeAuth(containerId: string): Promise<void> {
+  const claudeAuthDir = env.CLAUDE_AUTH_PATH;
+  const claudeConfigFile = `${claudeAuthDir}.json`;
+
+  // Only use sudo when running inside a container (where bind-mounted files may have
+  // different ownership). In local dev, the current user can read their own files.
+  const useSudo = isRunningInContainer();
+
+  // Create the .claude directory in the container
+  await runPodman(['exec', containerId, 'mkdir', '-p', '/home/claudeuser/.claude']);
+
+  // Essential files for Claude auth - copy only what's needed
+  const essentialFiles = ['.credentials.json', 'settings.json'];
+
+  for (const file of essentialFiles) {
+    const srcPath = `${claudeAuthDir}/${file}`;
+    const destPath = `${containerId}:/home/claudeuser/.claude/${file}`;
+    try {
+      // Use sudo in container deployments to read files with restricted permissions
+      await runPodman(['cp', srcPath, destPath], useSudo);
+    } catch (error) {
+      // settings.json may not exist, that's ok
+      if (file !== '.credentials.json') {
+        log.debug('Optional auth file not found', { file, error: toError(error).message });
+      } else {
+        throw error;
+      }
+    }
+  }
+
+  // Try to copy the .claude.json file (contains MCP configs and other settings)
+  // This file is a sibling of .claude directory on the host, so it needs to be mounted separately
+  // at /claude-auth.json (see README for the mount command)
+  try {
+    await runPodman(
+      ['cp', claudeConfigFile, `${containerId}:/home/claudeuser/.claude.json`],
+      useSudo
+    );
+  } catch (error) {
+    log.warn('.claude.json file not found - MCP integrations will not work', {
+      claudeConfigFile,
+      error: toError(error).message,
+    });
+  }
+
+  // Fix ownership (podman cp preserves host ownership which may not match container user)
   await runPodman([
     'exec',
     '--user',
     'root',
     containerId,
-    'sh',
-    '-c',
-    'chown claudeuser:claudeuser /home/claudeuser && chown -R claudeuser:claudeuser /home/claudeuser/.android /home/claudeuser/.config /home/claudeuser/.local /home/claudeuser/.gitconfig 2>/dev/null || true',
+    'chown',
+    '-R',
+    'claudeuser:claudeuser',
+    '/home/claudeuser/.claude',
+    '/home/claudeuser/.claude.json',
   ]);
-  log.info('Fixed home directory ownership', { containerId });
-}
 
-/**
- * Fix sudo setuid bit in the container.
- * Rootless podman with --userns=keep-id can strip the setuid bit from sudo,
- * making it fail with "effective uid is not 0". This restores it.
- */
-async function fixSudoSetuid(containerId: string): Promise<void> {
-  await runPodman(['exec', '--user', 'root', containerId, 'chmod', 'u+s', '/usr/bin/sudo']);
-  log.info('Fixed sudo setuid bit', { containerId });
+  log.info('Copied Claude auth files', { containerId });
 }
 
 async function configureGitCredentials(containerId: string): Promise<void> {
@@ -381,11 +550,56 @@ fi`;
 }
 
 /**
- * Configure pnpm to use the shared store mounted at /pnpm-store.
+ * Configure pnpm to use the shared store volume mounted at /pnpm-store.
  */
 async function configurePnpmStore(containerId: string): Promise<void> {
   await runPodman(['exec', containerId, 'pnpm', 'config', 'set', 'store-dir', '/pnpm-store']);
   log.info('Configured pnpm store-dir', { containerId });
+}
+
+/**
+ * Configure Gradle to use the shared cache volume mounted at /gradle-cache.
+ */
+async function configureGradleCache(containerId: string): Promise<void> {
+  // Set GRADLE_USER_HOME in the container's environment profile
+  await runPodman([
+    'exec',
+    containerId,
+    'sh',
+    '-c',
+    'echo "export GRADLE_USER_HOME=/gradle-cache" >> /home/claudeuser/.profile',
+  ]);
+  log.info('Configured Gradle cache', { containerId });
+}
+
+/**
+ * Fix podman socket permissions inside the container.
+ * The mounted socket is owned by root, so we need to make it accessible to claudeuser.
+ */
+async function fixPodmanSocketPermissions(containerId: string): Promise<void> {
+  // Make the socket world-readable/writable so claudeuser can access it
+  await runPodman(['exec', '--user', 'root', containerId, 'chmod', '666', '/var/run/docker.sock']);
+  log.info('Fixed podman socket permissions', { containerId });
+}
+
+/**
+ * Fix sudo permissions inside the container.
+ * In rootless Podman without --userns=keep-id, the sudo binary may lose its
+ * setuid bit and root ownership from the container's perspective. This fixes
+ * that by re-applying the correct ownership and permissions.
+ */
+async function fixSudoPermissions(containerId: string): Promise<void> {
+  // Ensure sudo is owned by root and has the setuid bit set
+  await runPodman([
+    'exec',
+    '--user',
+    'root',
+    containerId,
+    'sh',
+    '-c',
+    'chown root:root /usr/bin/sudo && chmod 4755 /usr/bin/sudo',
+  ]);
+  log.info('Fixed sudo permissions', { containerId });
 }
 
 export async function stopContainer(containerId: string): Promise<void> {
