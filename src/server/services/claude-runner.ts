@@ -4,11 +4,15 @@ import {
   tailFileInContainer,
   readFileInContainer,
   getContainerStatus,
+  getContainerState,
+  getContainerLogs,
   fileExistsInContainer,
   killProcessesByPattern,
   signalProcessesByPattern,
   findProcessInContainer,
   sendSignalToExec,
+  isErrorExitCode,
+  describeExitCode,
 } from './podman';
 import { prisma } from '@/lib/prisma';
 import { getMessageType } from '@/lib/claude-messages';
@@ -53,6 +57,127 @@ CONTAINER ISSUE REPORTING: This container should have all standard development t
 3. Then continue with your task using workarounds if possible, or inform the user that the task cannot be completed due to the container issue.`;
 
 const log = createLogger('claude-runner');
+
+/**
+ * Create and save a system error message for display to the user.
+ * Used when Claude process fails unexpectedly.
+ */
+async function createErrorMessage(
+  sessionId: string,
+  errorText: string,
+  details?: {
+    exitCode?: number | null;
+    containerLogs?: string | null;
+  }
+): Promise<void> {
+  const lastMessage = await prisma.message.findFirst({
+    where: { sessionId },
+    orderBy: { sequence: 'desc' },
+    select: { sequence: true },
+  });
+
+  const sequence = (lastMessage?.sequence ?? -1) + 1;
+  const errorId = uuidv5(`${sessionId}:error:${Date.now()}:${errorText}`, ERROR_LINE_NAMESPACE);
+
+  // Build detailed error content
+  let fullText = errorText;
+  if (details?.exitCode !== undefined && details.exitCode !== null && details.exitCode !== 0) {
+    fullText += `\n\nExit code: ${details.exitCode} (${describeExitCode(details.exitCode)})`;
+  }
+  if (details?.containerLogs) {
+    // Truncate logs if too long
+    const maxLogLength = 2000;
+    const logs =
+      details.containerLogs.length > maxLogLength
+        ? details.containerLogs.slice(-maxLogLength) + '\n...(truncated)'
+        : details.containerLogs;
+    fullText += `\n\nContainer logs:\n${logs}`;
+  }
+
+  const errorContent = {
+    type: 'system',
+    subtype: 'error',
+    content: [{ type: 'text', text: fullText }],
+  };
+
+  try {
+    const message = await prisma.message.create({
+      data: {
+        id: errorId,
+        sessionId,
+        sequence,
+        type: 'system',
+        content: JSON.stringify(errorContent),
+      },
+    });
+
+    sseEvents.emitNewMessage(sessionId, {
+      id: message.id,
+      sessionId,
+      sequence,
+      type: 'system',
+      content: errorContent,
+      createdAt: message.createdAt,
+    });
+
+    log.info('Created error message', { sessionId, errorId, sequence });
+  } catch (err) {
+    // Ignore duplicate errors
+    if (err && typeof err === 'object' && 'code' in err && err.code === 'P2002') {
+      return;
+    }
+    log.error('Failed to create error message', toError(err), { sessionId });
+  }
+}
+
+/**
+ * Check container health and create error message if container has failed.
+ * Returns true if container is healthy, false if it has failed.
+ */
+async function checkContainerHealthAndReport(
+  sessionId: string,
+  containerId: string
+): Promise<boolean> {
+  const containerState = await getContainerState(containerId);
+
+  if (containerState.status === 'not_found') {
+    log.error('Container not found during health check', undefined, {
+      sessionId,
+      containerId,
+    });
+
+    await createErrorMessage(sessionId, 'Container was terminated unexpectedly.', {
+      exitCode: null,
+    });
+    return false;
+  }
+
+  if (containerState.status === 'stopped') {
+    log.error('Container stopped unexpectedly', undefined, {
+      sessionId,
+      containerId,
+      exitCode: containerState.exitCode,
+      error: containerState.error,
+      oomKilled: containerState.oomKilled,
+    });
+
+    let errorText = 'Container stopped unexpectedly.';
+    if (containerState.oomKilled) {
+      errorText = 'Container was killed due to out of memory.';
+    } else if (containerState.error) {
+      errorText = `Container stopped with error: ${containerState.error}`;
+    }
+
+    const containerLogs = await getContainerLogs(containerId, { tail: 50 });
+    await createErrorMessage(sessionId, errorText, {
+      exitCode: containerState.exitCode,
+      containerLogs,
+    });
+    return false;
+  }
+
+  return true;
+}
 
 /**
  * Result of attempting to save a message line to the database.
@@ -274,6 +399,7 @@ export async function runClaudeCommand(
     // Process output directly from the attached stream (no tailing needed)
     let buffer = '';
     let totalLines = 0;
+    let finalExitCode: number | null = null;
 
     // Process output - stream ends when process completes
     await new Promise<void>((resolve, reject) => {
@@ -319,20 +445,16 @@ export async function runClaudeCommand(
           totalLines++;
         }
 
-        // Get final exit code for logging
-        try {
-          const status = await getExecStatus(execId);
-          log.info('runClaudeCommand: Completed', {
-            sessionId,
-            totalLines,
-            exitCode: status.exitCode,
-          });
-        } catch {
-          log.info('runClaudeCommand: Completed (could not get exit code)', {
-            sessionId,
-            totalLines,
-          });
-        }
+        // Get final exit code
+        const status = await getExecStatus(execId);
+        finalExitCode = status.exitCode;
+
+        log.info('runClaudeCommand: Completed', {
+          sessionId,
+          totalLines,
+          exitCode: finalExitCode,
+          execNotFound: status.notFound,
+        });
 
         resolve();
       });
@@ -342,6 +464,32 @@ export async function runClaudeCommand(
         reject(err);
       });
     });
+
+    // Check for process errors after stream completes
+    if (isErrorExitCode(finalExitCode)) {
+      // Check if container is still healthy
+      const containerHealthy = await checkContainerHealthAndReport(sessionId, containerId);
+
+      if (containerHealthy) {
+        // Container is fine, so this is a Claude process error
+        // Exit code 130 (SIGINT) is expected for interrupts
+        if (finalExitCode !== 130) {
+          log.error('Claude process failed', undefined, {
+            sessionId,
+            exitCode: finalExitCode,
+            exitDescription: describeExitCode(finalExitCode),
+          });
+
+          // Get container logs for context
+          const containerLogs = await getContainerLogs(containerId, { tail: 30 });
+          await createErrorMessage(
+            sessionId,
+            `Claude process exited unexpectedly: ${describeExitCode(finalExitCode)}`,
+            { exitCode: finalExitCode, containerLogs }
+          );
+        }
+      }
+    }
   } finally {
     runningProcesses.delete(sessionId);
     await prisma.claudeProcess.delete({ where: { sessionId } }).catch(() => {});
@@ -373,25 +521,63 @@ export async function reconnectToClaudeProcess(
   // Check if container is still running
   const containerStatus = await getContainerStatus(containerId);
   if (containerStatus !== 'running') {
-    // Container stopped - just read remaining output
-    await catchUpFromOutputFile(sessionId, containerId, getOutputFilePath(sessionId));
+    log.info('reconnectToClaudeProcess: Container not running', {
+      sessionId,
+      containerId,
+      containerStatus,
+    });
+    // Container stopped - check health and report if needed
+    await checkContainerHealthAndReport(sessionId, containerId);
+    // Try to read remaining output
+    try {
+      await catchUpFromOutputFile(sessionId, containerId, getOutputFilePath(sessionId));
+    } catch (err) {
+      log.warn('reconnectToClaudeProcess: Failed to catch up from output file', {
+        sessionId,
+        error: toError(err).message,
+      });
+    }
     await prisma.claudeProcess.delete({ where: { sessionId } });
     return { reconnected: false, stillRunning: false };
   }
 
   // Check if Claude exec is still running using the stored execId
-  let claudeRunning = false;
-  try {
-    const status = await getExecStatus(processRecord.execId);
-    claudeRunning = status.running;
-  } catch {
-    // Exec not found (container was recreated, etc)
-    claudeRunning = false;
+  const status = await getExecStatus(processRecord.execId);
+  const claudeRunning = status.running;
+
+  if (status.notFound) {
+    log.info('reconnectToClaudeProcess: Exec ID not found (server may have restarted)', {
+      sessionId,
+      execId: processRecord.execId,
+    });
   }
 
   if (!claudeRunning) {
-    // Process finished - just read remaining output
-    await catchUpFromOutputFile(sessionId, containerId, getOutputFilePath(sessionId));
+    // Process finished - check for errors and read remaining output
+    log.info('reconnectToClaudeProcess: Process no longer running', {
+      sessionId,
+      execId: processRecord.execId,
+      exitCode: status.exitCode,
+    });
+
+    // Check if this was an error exit
+    if (isErrorExitCode(status.exitCode) && status.exitCode !== 130) {
+      const containerLogs = await getContainerLogs(containerId, { tail: 30 });
+      await createErrorMessage(
+        sessionId,
+        `Claude process exited: ${describeExitCode(status.exitCode)}`,
+        { exitCode: status.exitCode, containerLogs }
+      );
+    }
+
+    try {
+      await catchUpFromOutputFile(sessionId, containerId, getOutputFilePath(sessionId));
+    } catch (err) {
+      log.warn('reconnectToClaudeProcess: Failed to catch up from output file', {
+        sessionId,
+        error: toError(err).message,
+      });
+    }
     await prisma.claudeProcess.delete({ where: { sessionId } });
     return { reconnected: false, stillRunning: false };
   }
@@ -534,13 +720,41 @@ async function processOutputFileWithExecId(
   let sequence = startSequence;
   let buffer = '';
   let totalLines = 0;
+  let finalExitCode: number | null = null;
 
   try {
+    // First check if container is still running
+    const containerStatus = await getContainerStatus(containerId);
+    if (containerStatus !== 'running') {
+      log.warn('processOutputFile: Container not running at start', {
+        sessionId,
+        containerId,
+        containerStatus,
+      });
+      await checkContainerHealthAndReport(sessionId, containerId);
+      return;
+    }
+
     // Wait for file to exist
     let attempts = 0;
     while (attempts < 50) {
       const exists = await fileExistsInContainer(containerId, outputFile);
       if (exists) break;
+
+      // Check if container is still running while waiting
+      if (attempts % 10 === 0) {
+        const status = await getContainerStatus(containerId);
+        if (status !== 'running') {
+          log.warn('processOutputFile: Container stopped while waiting for output file', {
+            sessionId,
+            containerId,
+            status,
+          });
+          await checkContainerHealthAndReport(sessionId, containerId);
+          return;
+        }
+      }
+
       await new Promise((r) => setTimeout(r, 100));
       attempts++;
     }
@@ -573,30 +787,63 @@ async function processOutputFileWithExecId(
       // Poll exec status (much more reliable than pgrep)
       const pollInterval = setInterval(async () => {
         try {
+          // Also check container status periodically
+          const containerStatus = await getContainerStatus(containerId);
+          if (containerStatus !== 'running') {
+            clearInterval(pollInterval);
+            stream.destroy();
+            log.warn('processOutputFile: Container stopped during processing', {
+              sessionId,
+              containerId,
+              containerStatus,
+            });
+            await checkContainerHealthAndReport(sessionId, containerId);
+            resolve();
+            return;
+          }
+
           const status = await getExecStatus(execId);
-          log.debug('processOutputFile: Exec status', { sessionId, ...status, totalLines });
+          log.debug('processOutputFile: Exec status', {
+            sessionId,
+            running: status.running,
+            exitCode: status.exitCode,
+            notFound: status.notFound,
+            totalLines,
+          });
 
           if (!status.running) {
             clearInterval(pollInterval);
+            finalExitCode = status.exitCode;
             await new Promise((r) => setTimeout(r, 500));
             stream.destroy();
 
             // Read remaining content
-            const fileContent = await readFileInContainer(containerId, outputFile);
-            const allLines = fileContent.split('\n').filter((l) => l.trim());
+            try {
+              const fileContent = await readFileInContainer(containerId, outputFile);
+              const allLines = fileContent.split('\n').filter((l) => l.trim());
 
-            for (let i = totalLines; i < allLines.length; i++) {
-              const line = allLines[i];
-              const result = await saveMessageIfNotExists(sessionId, line, sequence);
-              if (result.saved) {
-                sequence = result.sequence + 1;
-                // Emit new message event
-                sseEvents.emitNewMessage(sessionId, result.message);
+              for (let i = totalLines; i < allLines.length; i++) {
+                const line = allLines[i];
+                const result = await saveMessageIfNotExists(sessionId, line, sequence);
+                if (result.saved) {
+                  sequence = result.sequence + 1;
+                  // Emit new message event
+                  sseEvents.emitNewMessage(sessionId, result.message);
+                }
+                totalLines++;
               }
-              totalLines++;
+            } catch (err) {
+              log.warn('processOutputFile: Failed to read remaining content', {
+                sessionId,
+                error: toError(err).message,
+              });
             }
 
-            log.info('processOutputFile: Completed', { sessionId, totalLines });
+            log.info('processOutputFile: Completed', {
+              sessionId,
+              totalLines,
+              exitCode: finalExitCode,
+            });
             resolve();
           }
         } catch (err) {
@@ -610,6 +857,20 @@ async function processOutputFileWithExecId(
         reject(err);
       });
     });
+
+    // Check for process errors after completion
+    if (isErrorExitCode(finalExitCode)) {
+      const containerHealthy = await checkContainerHealthAndReport(sessionId, containerId);
+      if (containerHealthy && finalExitCode !== 130) {
+        // Claude process error, not container failure
+        const containerLogs = await getContainerLogs(containerId, { tail: 30 });
+        await createErrorMessage(
+          sessionId,
+          `Claude process exited unexpectedly: ${describeExitCode(finalExitCode)}`,
+          { exitCode: finalExitCode, containerLogs }
+        );
+      }
+    }
   } finally {
     activeStreamProcessors.delete(sessionId);
     await killProcessesByPattern(containerId, outputFile).catch(() => {});

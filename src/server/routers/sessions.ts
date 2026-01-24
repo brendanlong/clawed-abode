@@ -8,6 +8,7 @@ import {
   removeContainer,
   cloneRepoInVolume,
   removeWorkspaceFromVolume,
+  verifyContainerHealth,
 } from '../services/podman';
 import { syncSessionStatus } from '../services/session-reconciler';
 import { sseEvents } from '../services/events';
@@ -56,6 +57,11 @@ async function setupSession(
       githubToken,
     });
     log.info('Container started', { sessionId, containerId });
+
+    // Verify container is healthy before marking session as running
+    await updateStatus('Verifying container health...');
+    await verifyContainerHealth(containerId);
+    log.info('Container health verified', { sessionId, containerId });
 
     // Update session with container info
     const session = await prisma.session.update({

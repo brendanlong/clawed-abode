@@ -754,6 +754,43 @@ async function fixSudoPermissions(containerId: string): Promise<void> {
   log.info('Fixed sudo permissions', { containerId });
 }
 
+/**
+ * Verify a container is fully initialized and healthy.
+ * Runs a simple command to ensure the container can execute processes.
+ * Returns true if healthy, throws an error if not.
+ */
+export async function verifyContainerHealth(containerId: string): Promise<void> {
+  log.debug('Verifying container health', { containerId });
+
+  // First check container status
+  const state = await getContainerState(containerId);
+  if (state.status !== 'running') {
+    const logs = await getContainerLogs(containerId, { tail: 30 });
+    throw new Error(
+      `Container is not running (status: ${state.status}, exit code: ${state.exitCode}, error: ${state.error})${logs ? `\nLogs:\n${logs}` : ''}`
+    );
+  }
+
+  // Try to run a simple command to verify the container is responsive
+  try {
+    await runPodman(['exec', containerId, 'echo', 'health-check']);
+  } catch (error) {
+    const logs = await getContainerLogs(containerId, { tail: 30 });
+    throw new Error(
+      `Container health check failed: ${toError(error).message}${logs ? `\nLogs:\n${logs}` : ''}`
+    );
+  }
+
+  // Verify the claude command is available
+  try {
+    await runPodman(['exec', containerId, 'which', 'claude']);
+  } catch (error) {
+    throw new Error(`Claude CLI not available in container: ${toError(error).message}`);
+  }
+
+  log.debug('Container health verified', { containerId });
+}
+
 export async function stopContainer(containerId: string): Promise<void> {
   try {
     await runPodman(['stop', '-t', '10', containerId]);
@@ -836,6 +873,79 @@ export async function getContainerStatus(
     return isRunning ? 'running' : 'stopped';
   } catch {
     return 'not_found';
+  }
+}
+
+/**
+ * Detailed container state information for diagnostics.
+ */
+export interface ContainerState {
+  status: 'running' | 'stopped' | 'not_found';
+  exitCode: number | null;
+  error: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  oomKilled: boolean;
+}
+
+/**
+ * Get detailed container state information.
+ * Returns more diagnostic info than getContainerStatus for error investigation.
+ */
+export async function getContainerState(containerId: string): Promise<ContainerState> {
+  try {
+    // Use JSON format for reliable parsing of multiple fields
+    const output = await runPodman(['inspect', '--format', '{{json .State}}', containerId]);
+    const state = JSON.parse(output.trim());
+    return {
+      status: state.Running ? 'running' : 'stopped',
+      exitCode: state.ExitCode ?? null,
+      error: state.Error || null,
+      startedAt: state.StartedAt || null,
+      finishedAt: state.FinishedAt || null,
+      oomKilled: state.OOMKilled ?? false,
+    };
+  } catch {
+    return {
+      status: 'not_found',
+      exitCode: null,
+      error: null,
+      startedAt: null,
+      finishedAt: null,
+      oomKilled: false,
+    };
+  }
+}
+
+/**
+ * Get recent logs from a container.
+ * Useful for diagnosing container failures or process crashes.
+ *
+ * @param containerId - The container ID
+ * @param options - Options for log retrieval
+ * @returns Container logs or null if unavailable
+ */
+export async function getContainerLogs(
+  containerId: string,
+  options: {
+    tail?: number; // Number of lines from the end (default: 100)
+    since?: string; // Show logs since timestamp (e.g., "10m" for 10 minutes ago)
+  } = {}
+): Promise<string | null> {
+  const { tail = 100, since } = options;
+
+  try {
+    const args = ['logs', '--tail', tail.toString()];
+    if (since) {
+      args.push('--since', since);
+    }
+    args.push(containerId);
+
+    const output = await runPodman(args);
+    return output || null;
+  } catch (error) {
+    log.debug('Failed to get container logs', { containerId, error: toError(error).message });
+    return null;
   }
 }
 
@@ -1018,21 +1128,66 @@ export async function execInContainerWithTee(
 }
 
 /**
+ * Result of checking exec status.
+ */
+export interface ExecStatus {
+  running: boolean;
+  exitCode: number | null;
+  /** True if the exec was not found (e.g., server restarted) */
+  notFound: boolean;
+}
+
+/**
  * Check the status of a tracked exec process by its ID.
  * Returns running state and exit code (if finished).
  */
-export async function getExecStatus(
-  execId: string
-): Promise<{ running: boolean; exitCode: number | null }> {
+export async function getExecStatus(execId: string): Promise<ExecStatus> {
   const tracked = trackedProcesses.get(execId);
   if (!tracked) {
-    // Process not found - assume it finished
-    return { running: false, exitCode: null };
+    // Process not found - could be server restart or exec ID from before restart
+    return { running: false, exitCode: null, notFound: true };
   }
   return {
     running: tracked.running,
     exitCode: tracked.running ? null : tracked.exitCode,
+    notFound: false,
   };
+}
+
+/**
+ * Check if an exit code indicates an error.
+ */
+export function isErrorExitCode(exitCode: number | null): boolean {
+  return exitCode !== null && exitCode !== 0;
+}
+
+/**
+ * Get a human-readable description of an exit code.
+ */
+export function describeExitCode(exitCode: number | null): string {
+  if (exitCode === null) {
+    return 'unknown exit code';
+  }
+  if (exitCode === 0) {
+    return 'success';
+  }
+  // Common signal exit codes (128 + signal number)
+  if (exitCode === 137) {
+    return 'killed (SIGKILL) - possibly out of memory';
+  }
+  if (exitCode === 139) {
+    return 'segmentation fault (SIGSEGV)';
+  }
+  if (exitCode === 143) {
+    return 'terminated (SIGTERM)';
+  }
+  if (exitCode === 130) {
+    return 'interrupted (SIGINT)';
+  }
+  if (exitCode > 128) {
+    return `killed by signal ${exitCode - 128}`;
+  }
+  return `error code ${exitCode}`;
 }
 
 /**
