@@ -23,6 +23,7 @@
     "test:run": "vitest run",
     "test:unit": "vitest run --config vitest.config.ts",
     "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test:e2e": "vitest run --config vitest.e2e.config.ts",
     "test:coverage": "vitest run --coverage",
     "test:component": "vitest run --config vitest.component.config.ts"
   },
