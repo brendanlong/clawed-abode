@@ -134,7 +134,7 @@ podman run -d \
   -p 3000:3000 \
   -e DATABASE_URL=file:/data/db/prod.db \
   -e GITHUB_TOKEN="$GITHUB_TOKEN" \
-  -e CLAUDE_AUTH_PATH="$HOME/.claude" \
+  -e CLAUDE_AUTH_PATH="/claude-auth" \
   -e NODE_ENV=production \
   -e PASSWORD_HASH="$PASSWORD_HASH" \
   -e PODMAN_SOCKET_PATH="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman/podman.sock" \
@@ -342,7 +342,7 @@ podman run -d \
   -p 3000:3000 \
   -e DATABASE_URL=file:/data/db/prod.db \
   -e GITHUB_TOKEN="$GITHUB_TOKEN" \
-  -e CLAUDE_AUTH_PATH="/home/clawedburrow/.claude" \
+  -e CLAUDE_AUTH_PATH="/claude-auth" \
   -e NODE_ENV=production \
   -e PASSWORD_HASH="$PASSWORD_HASH" \
   -e PODMAN_SOCKET_PATH="/run/user/$(id -u)/podman/podman.sock" \
