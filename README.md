@@ -515,19 +515,16 @@ For rootless operation (recommended for security):
 
 ### MCP Servers
 
-By default, Claude Code on your host machine may have Claude.ai's automatically configured MCP server proxies in `~/.claude.json`. These proxies are not appropriate for `--dangerously-skip-permissions` mode since they could allow Claude to access services with your credentials without approval.
+By default, the application does **not** copy your host's `~/.claude.json` to runner containers. This is intentional because your host's file may contain Claude.ai's automatically configured MCP server proxies, which aren't appropriate for `--dangerously-skip-permissions` mode (they could allow Claude to access services with your credentials without approval).
 
-To explicitly control which MCP servers are available in runner containers, set the `CLAUDE_CONFIG_JSON` environment variable:
+Claude Code will create a fresh `~/.claude.json` on first run in each container.
+
+To explicitly configure MCP servers in runner containers, set the `CLAUDE_CONFIG_JSON` environment variable:
 
 ```bash
-# Recommended: No MCP servers (most secure)
-CLAUDE_CONFIG_JSON="{}"
-
-# Or with specific MCP servers you trust:
+# Example with specific MCP servers you trust:
 CLAUDE_CONFIG_JSON='{"mcpServers":{"memory":{"command":"npx","args":["@anthropic/mcp-server-memory"]}}}'
 ```
-
-If `CLAUDE_CONFIG_JSON` is not set, the application will copy your host's `~/.claude.json` file, which may include Claude.ai's MCP proxies.
 
 ## Architecture
 

@@ -453,7 +453,6 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
  */
 async function copyClaudeAuth(containerId: string): Promise<void> {
   const claudeAuthDir = env.CLAUDE_AUTH_PATH;
-  const claudeConfigFile = `${claudeAuthDir}.json`;
 
   // Only use sudo when running inside a container (where bind-mounted files may have
   // different ownership). In local dev, the current user can read their own files.
@@ -482,9 +481,11 @@ async function copyClaudeAuth(containerId: string): Promise<void> {
   }
 
   // Handle .claude.json (contains MCP configs and other settings)
-  // If CLAUDE_CONFIG_JSON is set, use that instead of copying the host's file.
-  // This allows explicit control over which MCP servers are available, avoiding
-  // Claude.ai's automatically configured proxies in --dangerously-skip-permissions mode.
+  // Only write this file if CLAUDE_CONFIG_JSON is explicitly set.
+  // We do NOT copy from host by default because the host's file may contain
+  // Claude.ai's automatically configured MCP server proxies, which aren't
+  // appropriate for --dangerously-skip-permissions mode.
+  // Claude Code will create a new .claude.json if one doesn't exist.
   if (env.CLAUDE_CONFIG_JSON) {
     // Write the explicit config to the container
     await runPodman([
@@ -496,24 +497,7 @@ async function copyClaudeAuth(containerId: string): Promise<void> {
     ]);
     log.info('Wrote explicit Claude config JSON', { containerId });
   } else {
-    // Fall back to copying from host (may include Claude.ai MCP proxies)
-    // This file is a sibling of .claude directory on the host, so it needs to be mounted separately
-    // at /claude-auth.json (see README for the mount command)
-    try {
-      await runPodman(
-        ['cp', claudeConfigFile, `${containerId}:/home/claudeuser/.claude.json`],
-        useSudo
-      );
-      log.warn(
-        'Copied host .claude.json - may include Claude.ai MCP proxies. ' +
-          'Set CLAUDE_CONFIG_JSON to use explicit config instead.'
-      );
-    } catch (error) {
-      log.info('.claude.json file not found and CLAUDE_CONFIG_JSON not set - no MCP servers', {
-        claudeConfigFile,
-        error: toError(error).message,
-      });
-    }
+    log.debug('CLAUDE_CONFIG_JSON not set - Claude Code will create .claude.json on first run');
   }
 
   // Fix ownership (podman cp preserves host ownership which may not match container user)
@@ -529,7 +513,7 @@ async function copyClaudeAuth(containerId: string): Promise<void> {
       '[ -f /home/claudeuser/.claude.json ] && chown claudeuser:claudeuser /home/claudeuser/.claude.json || true',
   ]);
 
-  log.info('Copied Claude auth files', { containerId });
+  log.info('Set up Claude auth files', { containerId });
 }
 
 async function configureGitCredentials(containerId: string): Promise<void> {
