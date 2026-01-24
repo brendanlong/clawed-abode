@@ -119,7 +119,6 @@ describe('podman service with PODMAN_SOCKET_PATH', () => {
 
       const containerId = await createAndStartContainer({
         sessionId: 'test-session',
-        workspacePath: '/data/workspaces/test-session',
         repoPath: 'my-repo',
       });
 

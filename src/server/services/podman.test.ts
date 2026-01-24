@@ -137,7 +137,6 @@ describe('podman service', () => {
 
       const containerId = await createAndStartContainer({
         sessionId: 'test-session',
-        workspacePath: '/data/workspaces/test-session',
         repoPath: 'my-repo',
       });
 
@@ -191,7 +190,6 @@ describe('podman service', () => {
 
       const containerId = await createAndStartContainer({
         sessionId: 'test-session',
-        workspacePath: '/data/workspaces/test-session',
         repoPath: '',
       });
 
@@ -217,7 +215,6 @@ describe('podman service', () => {
 
       const containerId = await createAndStartContainer({
         sessionId: 'test-session',
-        workspacePath: '/data/workspaces/test-session',
         repoPath: 'my-repo',
       });
 
@@ -246,7 +243,6 @@ describe('podman service', () => {
 
       const containerId = await createAndStartContainer({
         sessionId: 'test-session',
-        workspacePath: '/data/workspaces/test-session',
         repoPath: 'my-repo',
       });
 

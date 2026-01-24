@@ -342,10 +342,8 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
     if (config.githubToken) {
       envArgs.push('-e', `GITHUB_TOKEN=${config.githubToken}`);
     }
-    // Set Gradle user home if shared cache is configured
-    if (env.GRADLE_USER_HOME) {
-      envArgs.push('-e', 'GRADLE_USER_HOME=/gradle-cache');
-    }
+    // Set Gradle user home to use the shared cache volume
+    envArgs.push('-e', 'GRADLE_USER_HOME=/gradle-cache');
     // Add NVIDIA environment variables for GPU access
     envArgs.push('-e', 'NVIDIA_VISIBLE_DEVICES=all');
     envArgs.push('-e', 'NVIDIA_DRIVER_CAPABILITIES=all');
