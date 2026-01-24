@@ -21,6 +21,7 @@ import { ToolResultDisplay } from './ToolResultDisplay';
 import { SystemInitDisplay } from './SystemInitDisplay';
 import { ResultDisplay } from './ResultDisplay';
 import { HookResponseDisplay } from './HookResponseDisplay';
+import { HookStartedDisplay } from './HookStartedDisplay';
 import { formatAsJson, buildToolMessages } from './types';
 import type { ToolResultMap, ContentBlock, MessageContent, ToolCall } from './types';
 
@@ -214,6 +215,7 @@ function isRecognizedMessage(
         | 'system'
         | 'systemInit'
         | 'systemError'
+        | 'hookStarted'
         | 'hookResponse'
         | 'result';
     }
@@ -263,6 +265,11 @@ function isRecognizedMessage(
       return { recognized: true, category: 'systemError' };
     }
     return { recognized: false };
+  }
+
+  // Hook started messages (pending hooks show loading state)
+  if (type === 'system' && content.subtype === 'hook_started') {
+    return { recognized: true, category: 'hookStarted' };
   }
 
   // Hook response messages
@@ -397,6 +404,15 @@ export function MessageBubble({
     return (
       <div className="w-full max-w-[85%]">
         <SystemInitDisplay content={content} />
+      </div>
+    );
+  }
+
+  // Hook started messages show loading indicator while hook runs
+  if (category === 'hookStarted') {
+    return (
+      <div className="w-full max-w-[85%]">
+        <HookStartedDisplay content={content} />
       </div>
     );
   }

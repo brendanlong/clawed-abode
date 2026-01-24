@@ -21,6 +21,8 @@ interface MessageContent {
   message?: {
     content?: ContentBlock[];
   };
+  subtype?: string;
+  hook_id?: string;
 }
 
 interface Message {
@@ -44,6 +46,27 @@ function getToolResultBlocks(message: Message): ContentBlock[] {
   const blocks = content?.message?.content;
   if (!Array.isArray(blocks)) return [];
   return blocks.filter((b) => b.type === 'tool_result');
+}
+
+// Build a set of hook_ids that have corresponding hook_response messages
+function getCompletedHookIds(messages: Message[]): Set<string> {
+  const completedIds = new Set<string>();
+  for (const msg of messages) {
+    const content = msg.content as MessageContent | undefined;
+    if (msg.type === 'system' && content?.subtype === 'hook_response' && content.hook_id) {
+      completedIds.add(content.hook_id);
+    }
+  }
+  return completedIds;
+}
+
+// Check if a hook_started message should be hidden (has a corresponding hook_response)
+function isCompletedHookStarted(message: Message, completedHookIds: Set<string>): boolean {
+  if (message.type !== 'system') return false;
+  const content = message.content as MessageContent | undefined;
+  if (content?.subtype !== 'hook_started') return false;
+  // Hide if we have a response for this hook
+  return content.hook_id ? completedHookIds.has(content.hook_id) : false;
 }
 
 // Check if a message is a tool result (comes as type "user" but contains tool_result content)
@@ -234,6 +257,9 @@ export function MessageList({
   // Build the tool result map and determine which messages to hide
   const { resultMap, pairedMessageIds } = useMemo(() => buildToolResultMap(messages), [messages]);
 
+  // Build the set of hook_ids that have responses (for hiding completed hook_started messages)
+  const completedHookIds = useMemo(() => getCompletedHookIds(messages), [messages]);
+
   // Find the latest TodoWrite ID (last one by sequence)
   const latestTodoWriteId = useMemo(() => {
     const todoIds = getTodoWriteIds(messages);
@@ -270,10 +296,15 @@ export function MessageList({
     setManuallyToggledTodoIds((prev) => new Set([...prev, toolId]));
   }, []);
 
-  // Filter out messages that have been fully paired with their tool_use
+  // Filter out messages that have been fully paired with their tool_use,
+  // and hook_started messages that have a corresponding hook_response
+  // (pending hook_started messages are kept to show loading state)
   const visibleMessages = useMemo(
-    () => messages.filter((msg) => !pairedMessageIds.has(msg.id)),
-    [messages, pairedMessageIds]
+    () =>
+      messages.filter(
+        (msg) => !pairedMessageIds.has(msg.id) && !isCompletedHookStarted(msg, completedHookIds)
+      ),
+    [messages, pairedMessageIds, completedHookIds]
   );
 
   const scrollToBottom = useCallback((instant = false) => {
