@@ -170,16 +170,16 @@ export async function cloneRepoInVolume(config: CloneConfig): Promise<CloneResul
     const repoName = config.repoFullName.split('/')[1];
 
     // Create a temporary container with the workspaces volume mounted
-    // Mount only this session's subdirectory for isolation
+    // We mount the whole volume first to create the session subdirectory
     const createArgs = [
       'create',
       '--name',
       containerName,
       '--rm', // Auto-remove when stopped
-      '--mount',
-      `type=volume,source=${env.WORKSPACES_VOLUME},destination=/workspace,volume-subpath=${config.sessionId}`,
+      '-v',
+      `${env.WORKSPACES_VOLUME}:/workspaces`,
       '-w',
-      '/workspace',
+      '/workspaces',
       CLAUDE_CODE_IMAGE,
       'tail',
       '-f',
@@ -193,7 +193,10 @@ export async function cloneRepoInVolume(config: CloneConfig): Promise<CloneResul
     await runPodman(['start', containerId]);
 
     try {
-      // Clone the repository
+      // Create the session directory first
+      await runPodman(['exec', containerId, 'mkdir', '-p', config.sessionId]);
+
+      // Clone the repository into the session directory
       await runPodman([
         'exec',
         containerId,
@@ -203,16 +206,17 @@ export async function cloneRepoInVolume(config: CloneConfig): Promise<CloneResul
         config.branch,
         '--single-branch',
         repoUrl,
-        repoName,
+        `${config.sessionId}/${repoName}`,
       ]);
 
       // Configure the remote URL without the token for security
+      const repoDir = `${config.sessionId}/${repoName}`;
       await runPodman([
         'exec',
         containerId,
         'git',
         '-C',
-        repoName,
+        repoDir,
         'remote',
         'set-url',
         'origin',
@@ -221,16 +225,7 @@ export async function cloneRepoInVolume(config: CloneConfig): Promise<CloneResul
 
       // Create and check out a session-specific branch
       const sessionBranch = `${env.SESSION_BRANCH_PREFIX}${config.sessionId}`;
-      await runPodman([
-        'exec',
-        containerId,
-        'git',
-        '-C',
-        repoName,
-        'checkout',
-        '-b',
-        sessionBranch,
-      ]);
+      await runPodman(['exec', containerId, 'git', '-C', repoDir, 'checkout', '-b', sessionBranch]);
 
       log.info('Repo cloned successfully', {
         sessionId: config.sessionId,
