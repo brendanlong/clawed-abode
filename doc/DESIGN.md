@@ -89,7 +89,7 @@ Each session has a dedicated workspace directory that contains the cloned reposi
 └── ...                   # Agent can create other files/directories as needed
 ```
 
-Inside the runner container, the workspaces volume is mounted at `/workspaces-volume`, with the working directory set to `/workspaces-volume/{sessionId}/{repo-name}`. This gives the agent:
+Inside the runner container, only the session's subdirectory is mounted at `/workspace` (using Podman's `volume-subpath` feature), with the working directory set to `/workspace/{repo-name}`. This provides session isolation - each agent can only access its own workspace. This gives the agent:
 
 - Full write access to the workspace for worktrees, temp files, etc.
 - Clean separation between the repo and working files

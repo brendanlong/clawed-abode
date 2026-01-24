@@ -202,15 +202,16 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
     }
 
     // Build volume binds
-    // Mount the workspaces named volume - this is shared between service and runner containers
-    // The session's workspace is at /{sessionId} within the volume, mounted at /workspace in runner
+    // Mount only this session's subdirectory from the workspaces volume for isolation
+    // This prevents agents from accidentally interfering with other sessions
     const sessionId = extractSessionId(config.workspacePath);
     // Claude auth directory (e.g., /root/.claude) and config file (e.g., /root/.claude.json)
     const claudeAuthDir = env.CLAUDE_AUTH_PATH;
     const claudeConfigFile = `${claudeAuthDir}.json`; // e.g., /root/.claude.json
     const volumeArgs: string[] = [
-      '-v',
-      `${env.WORKSPACES_VOLUME}:/workspaces-volume`,
+      // Use --mount with volume-subpath to mount only this session's workspace
+      '--mount',
+      `type=volume,source=${env.WORKSPACES_VOLUME},destination=/workspace,volume-subpath=${sessionId}`,
       '-v',
       `${claudeAuthDir}:/home/claudeuser/.claude`,
       '-v',
@@ -233,11 +234,8 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
     }
 
     // Working directory is the repo path inside the session's workspace
-    // The volume is mounted at /workspaces-volume, and the session workspace is at /{sessionId}
-    // The repo is at /{sessionId}/{repoPath}
-    const workingDir = config.repoPath
-      ? `/workspaces-volume/${sessionId}/${config.repoPath}`
-      : `/workspaces-volume/${sessionId}`;
+    // The session's workspace is mounted at /workspace, so the repo is at /workspace/{repoPath}
+    const workingDir = config.repoPath ? `/workspace/${config.repoPath}` : '/workspace';
 
     log.info('Creating new container', {
       sessionId: config.sessionId,
