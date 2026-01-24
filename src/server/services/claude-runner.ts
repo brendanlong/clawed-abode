@@ -167,7 +167,7 @@ export async function runClaudeCommand(
   // Verify the container is still running before trying to exec
   const containerStatus = await getContainerStatus(containerId);
   if (containerStatus !== 'running') {
-    log.error('runClaudeCommand: Container not running', {
+    log.error('runClaudeCommand: Container not running', undefined, {
       sessionId,
       containerId,
       containerStatus,
