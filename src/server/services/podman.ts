@@ -443,13 +443,35 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
  *
  * Uses sudo for the copy because in containerized deployments, the service container
  * may not have permission to read files like .credentials.json (which have 600 permissions).
+ *
+ * Only copies essential auth files, not the entire .claude directory (which contains
+ * large directories like file-history that aren't needed and can cause copy errors).
  */
 async function copyClaudeAuth(containerId: string): Promise<void> {
   const claudeAuthDir = env.CLAUDE_AUTH_PATH;
   const claudeConfigFile = `${claudeAuthDir}.json`;
 
-  // Copy the .claude directory (use sudo to read files with restricted permissions)
-  await runPodman(['cp', claudeAuthDir, `${containerId}:/home/claudeuser/.claude`], true);
+  // Create the .claude directory in the container
+  await runPodman(['exec', containerId, 'mkdir', '-p', '/home/claudeuser/.claude']);
+
+  // Essential files for Claude auth - copy only what's needed
+  const essentialFiles = ['.credentials.json', 'settings.json'];
+
+  for (const file of essentialFiles) {
+    const srcPath = `${claudeAuthDir}/${file}`;
+    const destPath = `${containerId}:/home/claudeuser/.claude/${file}`;
+    try {
+      // Use sudo to read files with restricted permissions (like .credentials.json with 600)
+      await runPodman(['cp', srcPath, destPath], true);
+    } catch (error) {
+      // settings.json may not exist, that's ok
+      if (file !== '.credentials.json') {
+        log.debug('Optional auth file not found', { file, error: toError(error).message });
+      } else {
+        throw error;
+      }
+    }
+  }
 
   // Copy the .claude.json file (use sudo to read files with restricted permissions)
   await runPodman(['cp', claudeConfigFile, `${containerId}:/home/claudeuser/.claude.json`], true);
