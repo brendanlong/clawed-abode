@@ -244,6 +244,169 @@ The container includes the `io.containers.autoupdate=registry` label which tells
 
 **Note:** The `--new` flag in `podman generate systemd` is required for auto-updates to work. This ensures systemd creates a fresh container from the latest image on each restart rather than restarting the old container.
 
+### Running as a Dedicated Unprivileged User
+
+For improved isolation, you can run Clawed Burrow as a dedicated unprivileged user instead of your main user account. This provides a layer of security since the Podman socket gives Claude Code agents the ability to run arbitrary containers on your system.
+
+**Note:** This is a partial solution to [issue #92](https://github.com/brendanlong/clawed-burrow/issues/92). The dedicated user can still run containers with GPU access, but cannot affect your main user's files or processes.
+
+#### 1. Create the dedicated user
+
+```bash
+# Create a new user for running Clawed Burrow
+sudo useradd -m -s /bin/bash clawedburrow
+
+# Add subuid/subgid ranges for rootless Podman
+sudo usermod --add-subuids 200000-265535 --add-subgids 200000-265535 clawedburrow
+
+# Enable lingering so user services run without login
+sudo loginctl enable-linger clawedburrow
+```
+
+#### 2. Set up Podman for the new user
+
+```bash
+# Switch to the new user
+sudo -u clawedburrow -i
+
+# Enable the Podman socket
+systemctl --user enable --now podman.socket
+
+# Verify the socket is running
+ls -la /run/user/$(id -u)/podman/podman.sock
+
+# Exit back to your main user
+exit
+```
+
+#### 3. Authenticate Claude Code
+
+Claude Code needs to be authenticated as the dedicated user. You have two options:
+
+**Option A: Authenticate interactively**
+
+```bash
+# Switch to the new user
+sudo -u clawedburrow -i
+
+# Run Claude Code to trigger authentication
+claude --version
+
+# If not authenticated, run any command to trigger the auth flow
+# Note: You may need to copy the auth URL to a browser on another machine
+claude -p "hello"
+
+# Exit back to your main user
+exit
+```
+
+**Option B: Copy existing authentication**
+
+```bash
+# Copy your existing Claude auth to the new user
+sudo cp -r ~/.claude /home/clawedburrow/.claude
+sudo chown -R clawedburrow:clawedburrow /home/clawedburrow/.claude
+```
+
+#### 4. Create the data directory
+
+```bash
+sudo mkdir -p /home/clawedburrow/.clawed-burrow
+sudo chown clawedburrow:clawedburrow /home/clawedburrow/.clawed-burrow
+```
+
+#### 5. Pull the container images
+
+```bash
+sudo -u clawedburrow podman pull ghcr.io/brendanlong/clawed-burrow:latest
+sudo -u clawedburrow podman pull ghcr.io/brendanlong/clawed-burrow-runner:latest
+```
+
+#### 6. Run the container as the dedicated user
+
+Set the required environment variables first:
+
+```bash
+# Generate a password hash (run as any user with pnpm installed)
+pnpm hash-password your-secure-password
+# Save this hash for the next step
+```
+
+Create a script at `/home/clawedburrow/start-clawed-burrow.sh`:
+
+```bash
+#!/bin/bash
+export GITHUB_TOKEN="ghp_your_token_here"
+export PASSWORD_HASH="your_base64_hash_here"
+
+podman run -d \
+  --name clawed-burrow \
+  --replace \
+  --label io.containers.autoupdate=registry \
+  -p 3000:3000 \
+  -e DATABASE_URL=file:/data/db/prod.db \
+  -e GITHUB_TOKEN="$GITHUB_TOKEN" \
+  -e CLAUDE_AUTH_PATH="/home/clawedburrow/.claude" \
+  -e DATA_DIR=/data \
+  -e DATA_HOST_PATH="/home/clawedburrow/.clawed-burrow" \
+  -e NODE_ENV=production \
+  -e PASSWORD_HASH="$PASSWORD_HASH" \
+  -e PODMAN_SOCKET_PATH="/run/user/$(id -u)/podman/podman.sock" \
+  -e CLAUDE_RUNNER_IMAGE=ghcr.io/brendanlong/clawed-burrow-runner:latest \
+  -v "/home/clawedburrow/.clawed-burrow:/data" \
+  -v "/run/user/$(id -u)/podman/podman.sock:/var/run/docker.sock" \
+  -v "/home/clawedburrow/.claude:/claude-auth" \
+  --device nvidia.com/gpu=all \
+  --security-opt label=disable \
+  --restart always \
+  ghcr.io/brendanlong/clawed-burrow:latest
+```
+
+Make it executable and run:
+
+```bash
+sudo chmod +x /home/clawedburrow/start-clawed-burrow.sh
+sudo chown clawedburrow:clawedburrow /home/clawedburrow/start-clawed-burrow.sh
+
+# Run as the dedicated user
+sudo -u clawedburrow /home/clawedburrow/start-clawed-burrow.sh
+```
+
+#### 7. Set up as a systemd service
+
+```bash
+# Switch to the dedicated user
+sudo -u clawedburrow -i
+
+# Generate the systemd unit file
+mkdir -p ~/.config/systemd/user
+podman generate systemd --name clawed-burrow --new > ~/.config/systemd/user/clawed-burrow.service
+
+# Reload systemd and enable the service
+systemctl --user daemon-reload
+systemctl --user enable clawed-burrow.service
+systemctl --user start clawed-burrow.service
+
+# Exit back to your main user
+exit
+```
+
+#### 8. Set up automatic updates (optional)
+
+```bash
+sudo -u clawedburrow bash -c "systemctl --user enable --now podman-auto-update.timer"
+```
+
+#### Viewing logs
+
+```bash
+# View logs as the dedicated user
+sudo -u clawedburrow journalctl --user -u clawed-burrow.service -f
+
+# Or use podman directly
+sudo -u clawedburrow podman logs -f clawed-burrow
+```
+
 ### With Tailscale Funnel (for secure remote access)
 
 Tailscale Funnel allows secure remote access without exposing ports or requiring traditional VPN setup.
