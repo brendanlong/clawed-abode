@@ -473,12 +473,13 @@ async function copyClaudeAuth(containerId: string): Promise<void> {
     }
   }
 
-  // Try to copy the .claude.json file (optional - contains cached settings, not essential for auth)
-  // This file is a sibling of .claude directory on the host, so it may not be mounted
+  // Try to copy the .claude.json file (contains MCP configs and other settings)
+  // This file is a sibling of .claude directory on the host, so it needs to be mounted separately
+  // at /claude-auth.json (see README for the mount command)
   try {
     await runPodman(['cp', claudeConfigFile, `${containerId}:/home/claudeuser/.claude.json`], true);
   } catch (error) {
-    log.debug('Optional .claude.json file not found', {
+    log.warn('.claude.json file not found - MCP integrations will not work', {
       claudeConfigFile,
       error: toError(error).message,
     });
