@@ -137,17 +137,17 @@ describe('podman service', () => {
 
       const containerId = await createAndStartContainer({
         sessionId: 'test-session',
-        workspacePath: '/data/workspaces/test-session',
         repoPath: 'my-repo',
       });
 
       expect(containerId).toBe('new-container-id');
 
       // Note: ensureImagePulled is currently commented out, so pull is not called
-      // Verify create was called with correct args including --userns=keep-id and working directory
+      // Verify create was called with correct args and working directory
       const createCall = mockSpawn.mock.calls.find((call) => call[1] && call[1].includes('create'));
       expect(createCall).toBeDefined();
-      expect(createCall![1]).toContain('--userns=keep-id');
+      // --userns=keep-id should NOT be present when no pnpm/Gradle caches are configured
+      expect(createCall![1]).not.toContain('--userns=keep-id');
       expect(createCall![1]).toContain('--name');
       expect(createCall![1]).toContain('claude-session-test-session');
       // Working directory should be set to /workspace/{repoPath}
@@ -190,7 +190,6 @@ describe('podman service', () => {
 
       const containerId = await createAndStartContainer({
         sessionId: 'test-session',
-        workspacePath: '/data/workspaces/test-session',
         repoPath: '',
       });
 
@@ -198,6 +197,7 @@ describe('podman service', () => {
 
       const createCall = mockSpawn.mock.calls.find((call) => call[1] && call[1].includes('create'));
       expect(createCall).toBeDefined();
+      // When repoPath is empty, working directory is /workspace (the session's mounted workspace)
       const wIndex = createCall![1].indexOf('-w');
       expect(createCall![1][wIndex + 1]).toBe('/workspace');
     });
@@ -215,7 +215,6 @@ describe('podman service', () => {
 
       const containerId = await createAndStartContainer({
         sessionId: 'test-session',
-        workspacePath: '/data/workspaces/test-session',
         repoPath: 'my-repo',
       });
 
@@ -244,7 +243,6 @@ describe('podman service', () => {
 
       const containerId = await createAndStartContainer({
         sessionId: 'test-session',
-        workspacePath: '/data/workspaces/test-session',
         repoPath: 'my-repo',
       });
 

@@ -1,18 +1,15 @@
 import { z } from 'zod';
-import { resolve } from 'path';
 
 const envSchema = z.object({
   DATABASE_URL: z.string().default('file:./data/dev.db'),
   GITHUB_TOKEN: z.string().optional(),
   CLAUDE_AUTH_PATH: z.string().default('/root/.claude'),
-  // Path inside the container where data is mounted (for filesystem operations)
-  DATA_DIR: z
-    .string()
-    .default('/data')
-    .transform((p) => resolve(p)),
-  // Host path to data directory - used for bind mounts when creating session containers
-  // In Docker-in-Docker setups, this must be the path on the Docker host, not inside this container
-  DATA_HOST_PATH: z.string().optional(),
+  // Named volume for pnpm store - shared across all runner containers
+  // Speeds up package installs by caching downloaded packages
+  PNPM_STORE_VOLUME: z.string().default('clawed-burrow-pnpm-store'),
+  // Named volume for Gradle cache - shared across all runner containers
+  // Speeds up builds by caching downloaded dependencies and build outputs
+  GRADLE_CACHE_VOLUME: z.string().default('clawed-burrow-gradle-cache'),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   // Prefix for session branches (e.g., "claude/" creates branches like "claude/{sessionId}")
   SESSION_BRANCH_PREFIX: z.string().default('claude/'),
@@ -23,14 +20,6 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((val) => (val ? Buffer.from(val, 'base64').toString('utf-8') : undefined)),
-  // Optional path to host pnpm store for sharing across sessions
-  // pnpm's store is safe for concurrent access (atomic operations)
-  // Example: /home/user/.local/share/pnpm/store
-  PNPM_STORE_PATH: z.string().optional(),
-  // Optional path to host Gradle user home for sharing caches across sessions
-  // Gradle's cache is safe for concurrent access (file locking)
-  // Example: /home/user/.gradle
-  GRADLE_USER_HOME: z.string().optional(),
   // Docker image to use for Claude Code runner containers
   // Defaults to local build, but can be set to GHCR image for production
   CLAUDE_RUNNER_IMAGE: z.string().default('claude-code-runner:latest'),
