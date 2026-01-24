@@ -68,6 +68,24 @@ RUN corepack enable && \
     corepack prepare pnpm@latest --activate && \
     npm install -g @anthropic-ai/claude-code
 
+# Install Android SDK to /opt (system-wide, read-only for users)
+# Installing as root before creating user avoids chown overhead at container start
+ENV ANDROID_HOME=/opt/android-sdk
+ENV PATH="${ANDROID_HOME}/cmdline-tools/latest/bin:${ANDROID_HOME}/platform-tools:${PATH}"
+
+# Download and install Android command-line tools
+RUN mkdir -p ${ANDROID_HOME}/cmdline-tools && \
+    cd ${ANDROID_HOME}/cmdline-tools && \
+    curl -sSL "https://dl.google.com/android/repository/commandlinetools-linux-13114758_latest.zip" -o cmdline-tools.zip && \
+    unzip -q cmdline-tools.zip && \
+    mv cmdline-tools latest && \
+    rm cmdline-tools.zip && \
+    chmod +x ${ANDROID_HOME}/cmdline-tools/latest/bin/*
+
+# Accept Android SDK licenses and install common components
+RUN yes | sdkmanager --licenses > /dev/null 2>&1 && \
+    sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+
 # Create a non-root user with UID 1000 (common default for host user)
 # Ubuntu 24.04 has an 'ubuntu' user at UID 1000, so delete it first
 # Configure passwordless sudo for package installation and system administration
@@ -92,24 +110,7 @@ USER claudeuser
 ENV HOME=/home/claudeuser
 ENV PATH="/home/claudeuser/.local/bin:${PATH}"
 
-# Install Android SDK
-ENV ANDROID_HOME=/home/claudeuser/Android/Sdk
-ENV PATH="${ANDROID_HOME}/cmdline-tools/latest/bin:${ANDROID_HOME}/platform-tools:${PATH}"
-
-# Download and install Android command-line tools
-RUN mkdir -p ${ANDROID_HOME}/cmdline-tools && \
-    cd ${ANDROID_HOME}/cmdline-tools && \
-    curl -sSL "https://dl.google.com/android/repository/commandlinetools-linux-13114758_latest.zip" -o cmdline-tools.zip && \
-    unzip -q cmdline-tools.zip && \
-    mv cmdline-tools latest && \
-    rm cmdline-tools.zip && \
-    chmod +x ${ANDROID_HOME}/cmdline-tools/latest/bin/*
-
-# Accept Android SDK licenses and install common components
-RUN yes | sdkmanager --licenses > /dev/null 2>&1 && \
-    sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
-
-# Create Android debug keystore for debug builds
+# Create Android debug keystore for debug builds (needs to be in user's home for Gradle)
 RUN mkdir -p /home/claudeuser/.android && \
     keytool -genkey -v \
         -keystore /home/claudeuser/.android/debug.keystore \
