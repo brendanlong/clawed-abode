@@ -66,17 +66,22 @@ interface Session {
 
 ### Data Storage
 
-The service container uses two types of storage, both using **named Docker volumes** to avoid permission issues with rootless Podman:
+The system uses **named Docker volumes** to avoid permission issues with rootless Podman:
 
-1. **Database** (`/data/db/`): Uses a named Docker volume (`clawed-burrow-db`) for SQLite. This avoids permission issues with rootless Podman and enables fast container startup (no `--userns=keep-id` needed).
+1. **Database** (`clawed-burrow-db`): SQLite database for the service container at `/data/db`.
 
-2. **Workspaces** (`/data/workspaces/`): Uses a named Docker volume (`clawed-burrow-workspaces`) for session workspaces. This volume is shared between the service container and runner containers.
+2. **Workspaces** (`clawed-burrow-workspaces`): Session workspaces at `/data/workspaces`. Shared between service and runner containers.
+
+3. **pnpm Store** (`clawed-burrow-pnpm-store`): Shared pnpm cache at `/pnpm-store` in runner containers. Speeds up package installs.
+
+4. **Gradle Cache** (`clawed-burrow-gradle-cache`): Shared Gradle cache at `/gradle-cache` in runner containers. Speeds up builds.
 
 Using named volumes instead of bind mounts:
 
 - Avoids the slow startup caused by `--userns=keep-id` (Podman re-chowning the image)
-- Avoids permission issues when the service container writes to the workspace
+- Avoids permission issues since volumes are owned by the container user
 - Simplifies the architecture by removing the need for host path translation
+- Each volume can be managed independently (cleared, backed up, etc.)
 
 ### Workspace Structure
 
@@ -387,7 +392,8 @@ Runner containers are created with:
 - **Workspace**: Session's subdirectory from named volume mounted at `/workspace` (using `volume-subpath` for isolation)
 - **Claude auth**: Copied into container after start (not bind-mounted, for security and to avoid permission issues)
 - **Podman socket**: Bind-mounted for container-in-container support (read-only)
-- **Optional caches**: pnpm store and Gradle cache can be bind-mounted for performance (requires `--userns=keep-id`)
+- **pnpm store**: Named volume mounted at `/pnpm-store` for shared package cache
+- **Gradle cache**: Named volume mounted at `/gradle-cache` for shared build cache
 
 ```typescript
 async function startSessionContainer(session: Session, githubToken?: string): Promise<string> {
@@ -395,18 +401,16 @@ async function startSessionContainer(session: Session, githubToken?: string): Pr
   const volumeArgs = [
     '--mount',
     `type=volume,source=clawed-burrow-workspaces,destination=/workspace,volume-subpath=${session.id}`,
+    // Shared caches as named volumes
+    '-v',
+    'clawed-burrow-pnpm-store:/pnpm-store',
+    '-v',
+    'clawed-burrow-gradle-cache:/gradle-cache',
   ];
 
   // Mount host's podman socket for container-in-container support (read-only)
   if (PODMAN_SOCKET_PATH) {
     volumeArgs.push('-v', `${PODMAN_SOCKET_PATH}:/var/run/docker.sock`);
-  }
-
-  // Optional: shared caches (require --userns=keep-id for write access)
-  let needsUsernsKeepId = false;
-  if (PNPM_STORE_PATH) {
-    volumeArgs.push('-v', `${PNPM_STORE_PATH}:/pnpm-store`);
-    needsUsernsKeepId = true;
   }
 
   // Create container with CDI for GPU access
@@ -423,11 +427,6 @@ async function startSessionContainer(session: Session, githubToken?: string): Pr
     ...volumeArgs,
     'claude-code-runner:latest',
   ];
-
-  // Only use --userns=keep-id if we have writable bind mounts
-  if (needsUsernsKeepId) {
-    createArgs.splice(2, 0, '--userns=keep-id');
-  }
 
   const containerId = await runPodman(createArgs);
   await runPodman(['start', containerId]);

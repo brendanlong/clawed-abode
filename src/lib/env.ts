@@ -15,6 +15,12 @@ const envSchema = z.object({
   // Named volume for workspaces - shared between service and runner containers
   // This avoids permission issues with bind mounts in rootless Podman
   WORKSPACES_VOLUME: z.string().default('clawed-burrow-workspaces'),
+  // Named volume for pnpm store - shared across all runner containers
+  // Speeds up package installs by caching downloaded packages
+  PNPM_STORE_VOLUME: z.string().default('clawed-burrow-pnpm-store'),
+  // Named volume for Gradle cache - shared across all runner containers
+  // Speeds up builds by caching downloaded dependencies and build outputs
+  GRADLE_CACHE_VOLUME: z.string().default('clawed-burrow-gradle-cache'),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   // Prefix for session branches (e.g., "claude/" creates branches like "claude/{sessionId}")
   SESSION_BRANCH_PREFIX: z.string().default('claude/'),
@@ -25,14 +31,6 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((val) => (val ? Buffer.from(val, 'base64').toString('utf-8') : undefined)),
-  // Optional path to host pnpm store for sharing across sessions
-  // pnpm's store is safe for concurrent access (atomic operations)
-  // Example: /home/user/.local/share/pnpm/store
-  PNPM_STORE_PATH: z.string().optional(),
-  // Optional path to host Gradle user home for sharing caches across sessions
-  // Gradle's cache is safe for concurrent access (file locking)
-  // Example: /home/user/.gradle
-  GRADLE_USER_HOME: z.string().optional(),
   // Docker image to use for Claude Code runner containers
   // Defaults to local build, but can be set to GHCR image for production
   CLAUDE_RUNNER_IMAGE: z.string().default('claude-code-runner:latest'),
