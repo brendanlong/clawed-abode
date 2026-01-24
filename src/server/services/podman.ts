@@ -401,6 +401,11 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
     // Configure Gradle to use the shared cache volume
     await configureGradleCache(containerId);
 
+    // Fix podman socket permissions if mounted
+    if (env.PODMAN_SOCKET_PATH) {
+      await fixPodmanSocketPermissions(containerId);
+    }
+
     return containerId;
   } catch (error) {
     log.error('Failed to create/start container', toError(error), {
@@ -503,6 +508,16 @@ async function configureGradleCache(containerId: string): Promise<void> {
     'echo "export GRADLE_USER_HOME=/gradle-cache" >> /home/claudeuser/.profile',
   ]);
   log.info('Configured Gradle cache', { containerId });
+}
+
+/**
+ * Fix podman socket permissions inside the container.
+ * The mounted socket is owned by root, so we need to make it accessible to claudeuser.
+ */
+async function fixPodmanSocketPermissions(containerId: string): Promise<void> {
+  // Make the socket world-readable/writable so claudeuser can access it
+  await runPodman(['exec', '--user', 'root', containerId, 'chmod', '666', '/var/run/docker.sock']);
+  log.info('Fixed podman socket permissions', { containerId });
 }
 
 export async function stopContainer(containerId: string): Promise<void> {
