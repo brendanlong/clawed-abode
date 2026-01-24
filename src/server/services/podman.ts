@@ -308,17 +308,22 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
  * Fix home directory ownership in the container.
  * Rootless podman's user namespace causes image files to appear with wrong ownership
  * (typically root instead of claudeuser). We exec as root to fix this.
+ *
+ * We chown specific directories rather than recursive on /home/claudeuser to:
+ * 1. Avoid chowning mounted volumes like .claude (which could be large)
+ * 2. Speed up container startup by only touching image files that need it
  */
 async function fixHomeDirectoryOwnership(containerId: string): Promise<void> {
+  // Chown specific directories that exist in the image and need write access
+  // Skip .claude since it's a bind mount from the host
   await runPodman([
     'exec',
     '--user',
     'root',
     containerId,
-    'chown',
-    '-R',
-    'claudeuser:claudeuser',
-    '/home/claudeuser',
+    'sh',
+    '-c',
+    'chown claudeuser:claudeuser /home/claudeuser && chown -R claudeuser:claudeuser /home/claudeuser/.android /home/claudeuser/.config /home/claudeuser/.local /home/claudeuser/.gitconfig 2>/dev/null || true',
   ]);
   log.info('Fixed home directory ownership', { containerId });
 }
