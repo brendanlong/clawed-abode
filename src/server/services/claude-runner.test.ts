@@ -16,11 +16,20 @@ const { mockDockerFunctions, mockPrisma, mockSseEvents } = vi.hoisted(() => {
     tailFileInContainer: vi.fn(),
     readFileInContainer: vi.fn(),
     getContainerStatus: vi.fn(),
+    getContainerState: vi.fn(),
+    getContainerLogs: vi.fn(),
     fileExistsInContainer: vi.fn(),
     killProcessesByPattern: vi.fn(),
     signalProcessesByPattern: vi.fn(),
     findProcessInContainer: vi.fn(),
     sendSignalToExec: vi.fn(),
+    isErrorExitCode: vi.fn((code: number | null) => code !== null && code !== 0),
+    describeExitCode: vi.fn((code: number | null) => {
+      if (code === null) return 'unknown exit code';
+      if (code === 0) return 'success';
+      if (code === 137) return 'killed (SIGKILL) - possibly out of memory';
+      return `error code ${code}`;
+    }),
   };
 
   const mockPrisma = {
@@ -110,8 +119,21 @@ describe('claude-runner service', () => {
     mockPrisma.message.create.mockImplementation(({ data }) => Promise.resolve(data));
     mockPrisma.message.update.mockResolvedValue({});
 
-    mockDockerFunctions.getExecStatus.mockResolvedValue({ running: false, exitCode: 0 });
+    mockDockerFunctions.getExecStatus.mockResolvedValue({
+      running: false,
+      exitCode: 0,
+      notFound: false,
+    });
     mockDockerFunctions.getContainerStatus.mockResolvedValue('running');
+    mockDockerFunctions.getContainerState.mockResolvedValue({
+      status: 'running',
+      exitCode: 0,
+      error: null,
+      startedAt: '2024-01-01T00:00:00Z',
+      finishedAt: null,
+      oomKilled: false,
+    });
+    mockDockerFunctions.getContainerLogs.mockResolvedValue(null);
     mockDockerFunctions.fileExistsInContainer.mockResolvedValue(true);
     mockDockerFunctions.readFileInContainer.mockResolvedValue('');
     mockDockerFunctions.killProcessesByPattern.mockResolvedValue(undefined);
@@ -489,7 +511,7 @@ describe('claude-runner service', () => {
       });
     });
 
-    it('should handle exec not found error gracefully', async () => {
+    it('should handle exec not found gracefully', async () => {
       mockPrisma.claudeProcess.findUnique.mockResolvedValue({
         sessionId: 'test-session-exec-gone',
         execId: 'exec-id',
@@ -497,8 +519,12 @@ describe('claude-runner service', () => {
         session: { containerId: 'container-123' },
       });
       mockDockerFunctions.getContainerStatus.mockResolvedValue('running');
-      // Exec not found - container was recreated
-      mockDockerFunctions.getExecStatus.mockRejectedValue(new Error('exec not found'));
+      // Exec not found returns notFound: true instead of throwing
+      mockDockerFunctions.getExecStatus.mockResolvedValue({
+        running: false,
+        exitCode: null,
+        notFound: true,
+      });
       mockDockerFunctions.fileExistsInContainer.mockResolvedValue(false);
 
       const result = await reconnectToClaudeProcess('test-session-exec-gone');
@@ -624,8 +650,12 @@ describe('claude-runner service', () => {
         sessionId,
         execId: 'stale-exec-id',
       });
-      // Exec not found means it's stale
-      mockDockerFunctions.getExecStatus.mockRejectedValue(new Error('exec not found'));
+      // Exec not found returns notFound: true and running: false
+      mockDockerFunctions.getExecStatus.mockResolvedValue({
+        running: false,
+        exitCode: null,
+        notFound: true,
+      });
 
       mockDockerFunctions.execInContainerWithTee.mockResolvedValue({
         stream: mockStream,

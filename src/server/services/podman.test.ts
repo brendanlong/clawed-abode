@@ -81,10 +81,15 @@ import {
   stopContainer,
   removeContainer,
   getContainerStatus,
+  getContainerState,
+  getContainerLogs,
+  verifyContainerHealth,
   listSessionContainers,
   execInContainer,
   execInContainerWithTee,
   getExecStatus,
+  isErrorExitCode,
+  describeExitCode,
   findProcessInContainer,
   sendSignalToExec,
   signalProcessesByPattern,
@@ -519,12 +524,276 @@ describe('podman service', () => {
       const status = await getExecStatus(execId);
       expect(status.running).toBe(true);
       expect(status.exitCode).toBeNull();
+      expect(status.notFound).toBe(false);
     });
 
-    it('should return not running for unknown exec', async () => {
+    it('should return not running for unknown exec with notFound flag', async () => {
       const status = await getExecStatus('unknown-exec-id');
       expect(status.running).toBe(false);
       expect(status.exitCode).toBeNull();
+      expect(status.notFound).toBe(true);
+    });
+  });
+
+  describe('isErrorExitCode', () => {
+    it('should return false for null exit code', () => {
+      expect(isErrorExitCode(null)).toBe(false);
+    });
+
+    it('should return false for exit code 0', () => {
+      expect(isErrorExitCode(0)).toBe(false);
+    });
+
+    it('should return true for non-zero exit codes', () => {
+      expect(isErrorExitCode(1)).toBe(true);
+      expect(isErrorExitCode(137)).toBe(true);
+      expect(isErrorExitCode(139)).toBe(true);
+      expect(isErrorExitCode(-1)).toBe(true);
+    });
+  });
+
+  describe('describeExitCode', () => {
+    it('should describe null exit code', () => {
+      expect(describeExitCode(null)).toBe('unknown exit code');
+    });
+
+    it('should describe success', () => {
+      expect(describeExitCode(0)).toBe('success');
+    });
+
+    it('should describe SIGKILL (OOM)', () => {
+      expect(describeExitCode(137)).toBe('killed (SIGKILL) - possibly out of memory');
+    });
+
+    it('should describe SIGSEGV', () => {
+      expect(describeExitCode(139)).toBe('segmentation fault (SIGSEGV)');
+    });
+
+    it('should describe SIGTERM', () => {
+      expect(describeExitCode(143)).toBe('terminated (SIGTERM)');
+    });
+
+    it('should describe SIGINT', () => {
+      expect(describeExitCode(130)).toBe('interrupted (SIGINT)');
+    });
+
+    it('should describe other signals', () => {
+      expect(describeExitCode(129)).toBe('killed by signal 1');
+    });
+
+    it('should describe regular error codes', () => {
+      expect(describeExitCode(1)).toBe('error code 1');
+      expect(describeExitCode(127)).toBe('error code 127');
+    });
+  });
+
+  describe('getContainerState', () => {
+    it('should return running state', async () => {
+      mockSpawn.mockImplementation(() => {
+        const proc = createMockProcess();
+        process.nextTick(() => {
+          proc.stdout.emit(
+            'data',
+            Buffer.from(
+              JSON.stringify({
+                Running: true,
+                ExitCode: 0,
+                Error: '',
+                StartedAt: '2024-01-01T00:00:00Z',
+                FinishedAt: '0001-01-01T00:00:00Z',
+                OOMKilled: false,
+              })
+            )
+          );
+          proc.emit('close', 0);
+        });
+        return proc;
+      });
+
+      const state = await getContainerState('test-container');
+      expect(state.status).toBe('running');
+      expect(state.exitCode).toBe(0);
+      // Empty string is converted to null by the || operator
+      expect(state.error).toBeNull();
+      expect(state.oomKilled).toBe(false);
+    });
+
+    it('should return stopped state with exit code', async () => {
+      mockSpawn.mockImplementation(() => {
+        const proc = createMockProcess();
+        process.nextTick(() => {
+          proc.stdout.emit(
+            'data',
+            Buffer.from(
+              JSON.stringify({
+                Running: false,
+                ExitCode: 137,
+                Error: 'container was killed',
+                StartedAt: '2024-01-01T00:00:00Z',
+                FinishedAt: '2024-01-01T01:00:00Z',
+                OOMKilled: true,
+              })
+            )
+          );
+          proc.emit('close', 0);
+        });
+        return proc;
+      });
+
+      const state = await getContainerState('test-container');
+      expect(state.status).toBe('stopped');
+      expect(state.exitCode).toBe(137);
+      expect(state.error).toBe('container was killed');
+      expect(state.oomKilled).toBe(true);
+    });
+
+    it('should return not_found for non-existent container', async () => {
+      mockSpawn.mockImplementation(() => {
+        const proc = createMockProcess();
+        process.nextTick(() => {
+          proc.stderr.emit('data', Buffer.from('no such container'));
+          proc.emit('close', 1);
+        });
+        return proc;
+      });
+
+      const state = await getContainerState('nonexistent');
+      expect(state.status).toBe('not_found');
+      expect(state.exitCode).toBeNull();
+      expect(state.error).toBeNull();
+    });
+  });
+
+  describe('getContainerLogs', () => {
+    it('should return container logs', async () => {
+      mockSpawn.mockImplementation(() => {
+        const proc = createMockProcess();
+        process.nextTick(() => {
+          proc.stdout.emit('data', Buffer.from('Log line 1\nLog line 2\n'));
+          proc.emit('close', 0);
+        });
+        return proc;
+      });
+
+      const logs = await getContainerLogs('test-container');
+      expect(logs).toBe('Log line 1\nLog line 2\n');
+    });
+
+    it('should pass tail and since options', async () => {
+      mockSpawn.mockImplementation(() => {
+        const proc = createMockProcess();
+        process.nextTick(() => {
+          proc.stdout.emit('data', Buffer.from('logs'));
+          proc.emit('close', 0);
+        });
+        return proc;
+      });
+
+      await getContainerLogs('test-container', { tail: 50, since: '10m' });
+
+      expect(mockSpawn).toHaveBeenCalledWith(
+        'podman',
+        ['logs', '--tail', '50', '--since', '10m', 'test-container'],
+        podmanEnvMatcher
+      );
+    });
+
+    it('should return null on error', async () => {
+      mockSpawn.mockImplementation(() => {
+        const proc = createMockProcess();
+        process.nextTick(() => {
+          proc.stderr.emit('data', Buffer.from('container not found'));
+          proc.emit('close', 1);
+        });
+        return proc;
+      });
+
+      const logs = await getContainerLogs('nonexistent');
+      expect(logs).toBeNull();
+    });
+  });
+
+  describe('verifyContainerHealth', () => {
+    it('should verify healthy container', async () => {
+      let callCount = 0;
+      mockSpawn.mockImplementation((_cmd: string, args: string[]) => {
+        callCount++;
+        const proc = createMockProcess();
+        process.nextTick(() => {
+          if (args.includes('inspect')) {
+            proc.stdout.emit(
+              'data',
+              Buffer.from(JSON.stringify({ Running: true, ExitCode: 0, OOMKilled: false }))
+            );
+            proc.emit('close', 0);
+          } else if (args.includes('echo')) {
+            proc.stdout.emit('data', Buffer.from('health-check'));
+            proc.emit('close', 0);
+          } else if (args.includes('which')) {
+            proc.stdout.emit('data', Buffer.from('/usr/bin/claude'));
+            proc.emit('close', 0);
+          } else {
+            proc.emit('close', 0);
+          }
+        });
+        return proc;
+      });
+
+      await expect(verifyContainerHealth('test-container')).resolves.toBeUndefined();
+      expect(callCount).toBe(3); // inspect, echo, which
+    });
+
+    it('should throw if container is not running', async () => {
+      mockSpawn.mockImplementation((_cmd: string, args: string[]) => {
+        const proc = createMockProcess();
+        process.nextTick(() => {
+          if (args.includes('inspect')) {
+            proc.stdout.emit(
+              'data',
+              Buffer.from(JSON.stringify({ Running: false, ExitCode: 1, OOMKilled: false }))
+            );
+            proc.emit('close', 0);
+          } else if (args.includes('logs')) {
+            proc.stdout.emit('data', Buffer.from('error logs'));
+            proc.emit('close', 0);
+          } else {
+            proc.emit('close', 0);
+          }
+        });
+        return proc;
+      });
+
+      await expect(verifyContainerHealth('test-container')).rejects.toThrow(
+        /Container is not running/
+      );
+    });
+
+    it('should throw if claude is not available', async () => {
+      mockSpawn.mockImplementation((_cmd: string, args: string[]) => {
+        const proc = createMockProcess();
+        process.nextTick(() => {
+          if (args.includes('inspect')) {
+            proc.stdout.emit(
+              'data',
+              Buffer.from(JSON.stringify({ Running: true, ExitCode: 0, OOMKilled: false }))
+            );
+            proc.emit('close', 0);
+          } else if (args.includes('echo')) {
+            proc.stdout.emit('data', Buffer.from('health-check'));
+            proc.emit('close', 0);
+          } else if (args.includes('which')) {
+            proc.stderr.emit('data', Buffer.from('claude not found'));
+            proc.emit('close', 1);
+          } else {
+            proc.emit('close', 0);
+          }
+        });
+        return proc;
+      });
+
+      await expect(verifyContainerHealth('test-container')).rejects.toThrow(
+        /Claude CLI not available/
+      );
     });
   });
 
