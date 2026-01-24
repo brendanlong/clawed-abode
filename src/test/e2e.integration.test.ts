@@ -368,11 +368,11 @@ describe('E2E Integration Test', () => {
     expect(authToken).toBeDefined();
     expect(sessionId).toBeDefined();
 
-    // Send a prompt that will test sudo, podman, and nvidia-smi
+    // Send a prompt that will test sudo, podman (with actual container run), and nvidia-smi
     const prompt = `Please run the following commands and report their output:
 
 1. Test sudo access: Run \`sudo echo "sudo works"\` and show the output
-2. Test podman access: Run \`podman --version\` and show the output
+2. Test podman container execution: Run \`podman run --rm hello-world\` to verify podman can actually run containers, and show the output
 3. Test nvidia-smi: Run \`nvidia-smi\` and show the output (or report if it's not available)
 
 After running each command, clearly indicate whether it succeeded or failed. Don't commit or push anything - just run the commands and report results.`;
@@ -431,7 +431,12 @@ After running each command, clearly indicate whether it succeeded or failed. Don
         // Try to identify which test this was for
         if (output.includes('sudo works')) {
           toolResults.push({ tool: 'sudo', success: !toolResult.is_error, output });
-        } else if (output.includes('podman version') || output.includes('Client:')) {
+        } else if (
+          output.includes('Hello from Docker') ||
+          output.includes('hello-world') ||
+          output.includes('Hello World')
+        ) {
+          // The hello-world container outputs "Hello from Docker!" when run successfully
           toolResults.push({ tool: 'podman', success: !toolResult.is_error, output });
         } else if (
           output.includes('nvidia-smi') ||
@@ -482,11 +487,11 @@ After running each command, clearly indicate whether it succeeded or failed. Don
         foundSudoEvidence = true;
       }
 
-      // Check for podman success indicators
+      // Check for podman success indicators (hello-world container output)
       if (
-        contentStr.includes('podman version') ||
-        contentStr.includes('client:') ||
-        contentStr.includes('podman --version')
+        contentStr.includes('hello from docker') ||
+        contentStr.includes('hello-world') ||
+        contentStr.includes('podman run')
       ) {
         foundPodmanEvidence = true;
       }
