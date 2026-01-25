@@ -407,6 +407,7 @@ The application uses Podman CLI commands to manage containers, routing them thro
 
 Runner containers are created with:
 
+- **Network mode**: Configurable via `CONTAINER_NETWORK_MODE` (default: `host`). Host networking allows containers to connect to services started via podman-compose on localhost. See [issue #147](https://github.com/brendanlong/clawed-burrow/issues/147) for details.
 - **Workspace**: Session's dedicated volume mounted at `/workspace`
 - **Claude auth**: Copied into container after start (not bind-mounted, for security and to avoid permission issues)
 - **Podman socket**: Bind-mounted for container-in-container support (read-only)
@@ -433,10 +434,13 @@ async function startSessionContainer(session: Session, githubToken?: string): Pr
   }
 
   // Create container with CDI for GPU access
+  // Network mode defaults to 'host' to allow connecting to podman-compose services
   const createArgs = [
     'create',
     '--name',
     `claude-session-${session.id}`,
+    '--network',
+    env.CONTAINER_NETWORK_MODE, // 'host', 'bridge', or 'pasta'
     '--security-opt',
     'label=disable',
     '--device',

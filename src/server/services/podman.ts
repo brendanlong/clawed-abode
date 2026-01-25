@@ -531,10 +531,20 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
 
     // GPU access via CDI (Container Device Interface) - requires nvidia-container-toolkit
     // and CDI specs generated via: nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
+    //
+    // Network mode is configurable via CONTAINER_NETWORK_MODE:
+    // - "host": Share host's network namespace. Allows containers to connect to
+    //   services started via podman-compose on localhost. Recommended when agents
+    //   need to run and connect to containerized services.
+    // - "bridge": Standard container networking with NAT.
+    // - "pasta": Rootless Podman's default.
+    // See: https://github.com/brendanlong/clawed-burrow/issues/147
     const createArgs = [
       'create',
       '--name',
       containerName,
+      '--network',
+      env.CONTAINER_NETWORK_MODE,
       '--security-opt',
       'label=disable',
       '--device',
