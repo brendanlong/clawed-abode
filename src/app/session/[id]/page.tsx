@@ -202,7 +202,7 @@ function useSessionMessages(sessionId: string) {
 
           // Check if message already exists (deduplication)
           for (const page of old.pages) {
-            if (page.messages.some((m) => m.id === newMessage.id)) {
+            if (page.messages.some((m: { id: string }) => m.id === newMessage.id)) {
               return old; // Already have this message
             }
           }
@@ -257,6 +257,56 @@ function useSessionMessages(sessionId: string) {
     fetchMore: fetchNextPage,
     tokenUsage: tokenUsageData,
   };
+}
+
+/**
+ * Hook for showing a notification when Claude finishes processing.
+ * Only shows notification if the page was hidden while Claude was working.
+ */
+function useWorkCompleteNotification(
+  sessionName: string | undefined,
+  isWorking: boolean,
+  showNotification: (title: string, options?: NotificationOptions) => Promise<void>
+) {
+  const wasWorkingRef = useRef(false);
+  const wasHiddenWhileWorkingRef = useRef(false);
+
+  // Track when we become hidden while working
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.hidden && isWorking) {
+        wasHiddenWhileWorkingRef.current = true;
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    // Also check initial state - if we're hidden and working, mark it
+    if (document.hidden && isWorking) {
+      wasHiddenWhileWorkingRef.current = true;
+    }
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [isWorking]);
+
+  // Detect transition from working to not working
+  useEffect(() => {
+    // When work completes (was working -> not working)
+    if (wasWorkingRef.current && !isWorking && wasHiddenWhileWorkingRef.current) {
+      // Only notify if we're still hidden (user hasn't come back yet)
+      if (document.hidden && sessionName) {
+        showNotification('Claude finished', {
+          body: `Work complete on ${sessionName}`,
+          tag: 'work-complete',
+        });
+      }
+      wasHiddenWhileWorkingRef.current = false;
+    }
+
+    wasWorkingRef.current = isWorking;
+  }, [isWorking, sessionName, showNotification]);
 }
 
 /**
@@ -387,13 +437,16 @@ function SessionView({ sessionId }: { sessionId: string }) {
   useWorkingIndicator(session?.name, isClaudeRunning);
 
   // Request notification permission on mount
-  const { requestPermission, permission } = useNotification();
+  const { requestPermission, permission, showNotification } = useNotification();
   useEffect(() => {
     // Request permission if not yet decided
     if (permission === 'default') {
       requestPermission();
     }
   }, [permission, requestPermission]);
+
+  // Show notification when Claude finishes processing (if tab was hidden)
+  useWorkCompleteNotification(session?.name, isClaudeRunning, showNotification);
 
   const handleSendPrompt = useCallback(
     (prompt: string) => {
