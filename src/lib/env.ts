@@ -43,6 +43,15 @@ const envSchema = z.object({
   // --dangerously-skip-permissions mode)
   // Example: {"mcpServers":{"memory":{"command":"npx","args":["@anthropic/mcp-server-memory"]}}}
   CLAUDE_CONFIG_JSON: z.string().optional(),
+  // Network mode for Claude session containers
+  // - "host": Share host's network namespace. Allows containers to connect to
+  //   services started via podman-compose on localhost. Recommended when agents
+  //   need to run and connect to containerized services.
+  // - "bridge" (default): Standard container networking with NAT. More isolated
+  //   but containers cannot easily connect to podman-compose services.
+  // - "pasta": Rootless Podman's default. Similar limitations to bridge.
+  // See: https://github.com/brendanlong/clawed-burrow/issues/147
+  CONTAINER_NETWORK_MODE: z.enum(['host', 'bridge', 'pasta']).default('host'),
 });
 
 export type Env = z.infer<typeof envSchema>;
