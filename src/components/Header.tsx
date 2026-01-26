@@ -14,7 +14,7 @@ export function Header() {
         <div className="flex justify-between items-center h-16">
           <Link href="/" className="flex items-center space-x-2">
             <span className="text-xl font-bold">
-              Clawed Burrow
+              Clawed Abode
               <TooltipProvider>
                 <Tooltip>
                   <TooltipTrigger asChild>

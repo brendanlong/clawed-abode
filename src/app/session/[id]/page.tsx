@@ -317,11 +317,11 @@ function useWorkingIndicator(sessionName: string | undefined, isWorking: boolean
   // Dynamic page title based on Claude running state
   useEffect(() => {
     if (!sessionName) return;
-    const baseTitle = `${sessionName} - Clawed Burrow`;
+    const baseTitle = `${sessionName} - Clawed Abode`;
     document.title = isWorking ? `Working - ${baseTitle}` : baseTitle;
 
     return () => {
-      document.title = 'Clawed Burrow';
+      document.title = 'Clawed Abode';
     };
   }, [sessionName, isWorking]);
 

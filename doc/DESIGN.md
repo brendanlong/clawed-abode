@@ -1,4 +1,4 @@
-# Clawed Burrow - Design Document
+# Clawed Abode - Design Document
 
 ## Overview
 
@@ -78,15 +78,15 @@ When a session is deleted, it is archived rather than permanently removed. This 
 
 The system uses **named Docker volumes** to avoid permission issues with rootless Podman:
 
-1. **Database** (`clawed-burrow-db`): SQLite database for the service container at `/data/db`.
+1. **Database** (`clawed-abode-db`): SQLite database for the service container at `/data/db`.
 
-2. **Session Workspaces** (`clawed-burrow-workspace-{sessionId}`): Each session gets its own dedicated volume. This provides complete isolation between sessions and makes cleanup trivial (just delete the volume).
+2. **Session Workspaces** (`clawed-abode-workspace-{sessionId}`): Each session gets its own dedicated volume. This provides complete isolation between sessions and makes cleanup trivial (just delete the volume).
 
-3. **pnpm Store** (`clawed-burrow-pnpm-store`): Shared pnpm cache at `/pnpm-store` in runner containers. Speeds up package installs.
+3. **pnpm Store** (`clawed-abode-pnpm-store`): Shared pnpm cache at `/pnpm-store` in runner containers. Speeds up package installs.
 
-4. **Gradle Cache** (`clawed-burrow-gradle-cache`): Shared Gradle cache at `/gradle-cache` in runner containers. Speeds up builds.
+4. **Gradle Cache** (`clawed-abode-gradle-cache`): Shared Gradle cache at `/gradle-cache` in runner containers. Speeds up builds.
 
-5. **Git Cache** (`clawed-burrow-git-cache`): Shared bare repository cache at `/cache` in clone containers. Used as `--reference` during clones to avoid re-downloading git objects for repos that have been cloned before.
+5. **Git Cache** (`clawed-abode-git-cache`): Shared bare repository cache at `/cache` in clone containers. Used as `--reference` during clones to avoid re-downloading git objects for repos that have been cloned before.
 
 Using named volumes instead of bind mounts:
 
@@ -268,7 +268,7 @@ claude.getHistory({
 3. Server creates session record with status `creating` and returns immediately
 4. UI navigates to session page, polls for status updates
 5. Background: Server updates or creates the git reference cache for the repo (see Git Cache below)
-6. Background: Server creates a dedicated volume for the session (`clawed-burrow-workspace-{sessionId}`)
+6. Background: Server creates a dedicated volume for the session (`clawed-abode-workspace-{sessionId}`)
 7. Background: Server spawns a temporary container with the session's volume and cache mounted
 8. Background: Clone runs inside the container via `git clone --reference` to `/workspace/{repo-name}` (uses cache if available, falls back to normal clone)
 9. Background: Temporary container is removed
@@ -316,9 +316,9 @@ This ensures users can see all changes through GitHub, which is their only way t
 
 #### Container Issue Reporting
 
-The system prompt also instructs Claude to report container issues (missing tools, misconfigured environments) to the clawed-burrow repository. Before creating an issue, Claude should:
+The system prompt also instructs Claude to report container issues (missing tools, misconfigured environments) to the clawed-abode repository. Before creating an issue, Claude should:
 
-1. Search existing issues to avoid duplicates: `gh issue list --repo brendanlong/clawed-burrow --search "<issue>" --state all`
+1. Search existing issues to avoid duplicates: `gh issue list --repo brendanlong/clawed-abode --search "<issue>" --state all`
 2. If no matching issue exists, create one with labels `bug` and `reported-by-claude`
 3. Continue with workarounds if possible, or inform the user if the task cannot be completed
 
@@ -407,7 +407,7 @@ The application uses Podman CLI commands to manage containers, routing them thro
 
 Runner containers are created with:
 
-- **Network mode**: Configurable via `CONTAINER_NETWORK_MODE` (default: `host`). Host networking allows containers to connect to services started via podman-compose on localhost. See [issue #147](https://github.com/brendanlong/clawed-burrow/issues/147) for details.
+- **Network mode**: Configurable via `CONTAINER_NETWORK_MODE` (default: `host`). Host networking allows containers to connect to services started via podman-compose on localhost. See [issue #147](https://github.com/brendanlong/clawed-abode/issues/147) for details.
 - **Workspace**: Session's dedicated volume mounted at `/workspace`
 - **Claude auth**: Copied into container after start (not bind-mounted, for security and to avoid permission issues)
 - **Podman socket**: Bind-mounted for container-in-container support (read-only)
@@ -417,15 +417,15 @@ Runner containers are created with:
 ```typescript
 async function startSessionContainer(session: Session, githubToken?: string): Promise<string> {
   // Each session has its own dedicated volume
-  const volumeName = `clawed-burrow-workspace-${session.id}`;
+  const volumeName = `clawed-abode-workspace-${session.id}`;
   const volumeArgs = [
     '-v',
     `${volumeName}:/workspace`,
     // Shared caches as named volumes
     '-v',
-    'clawed-burrow-pnpm-store:/pnpm-store',
+    'clawed-abode-pnpm-store:/pnpm-store',
     '-v',
-    'clawed-burrow-gradle-cache:/gradle-cache',
+    'clawed-abode-gradle-cache:/gradle-cache',
   ];
 
   // Mount host's podman socket for container-in-container support (read-only)
@@ -545,7 +545,7 @@ ORDER BY sequence ASC;
 - **Rootless Podman**: Claude Code agents have passwordless sudo inside containers, but:
   - The container user is not root on the host
   - User namespace isolation prevents host privilege escalation
-  - This solves [issue #39](https://github.com/brendanlong/clawed-burrow/issues/39) (no sudo for package installation)
+  - This solves [issue #39](https://github.com/brendanlong/clawed-abode/issues/39) (no sudo for package installation)
 - `--dangerously-skip-permissions` is acceptable because:
   - Only authenticated user can access
   - Container provides isolation boundary
@@ -578,8 +578,8 @@ ORDER BY sequence ASC;
 
 The system maintains a cache of bare git repositories to speed up session creation:
 
-- **Volume**: `clawed-burrow-git-cache` (configurable via `GIT_CACHE_VOLUME` env var)
-- **Cache path format**: `/cache/{owner}--{repo}.git` (e.g., `/cache/brendanlong--clawed-burrow.git`)
+- **Volume**: `clawed-abode-git-cache` (configurable via `GIT_CACHE_VOLUME` env var)
+- **Cache path format**: `/cache/{owner}--{repo}.git` (e.g., `/cache/brendanlong--clawed-abode.git`)
 - **How it works**:
   1. Before cloning, the system fetches the latest refs into the cached bare repo (or creates it if missing)
   2. Clone uses `git clone --reference <cache-path> --dissociate` to share objects with the cache

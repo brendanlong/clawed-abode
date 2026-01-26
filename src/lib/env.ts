@@ -6,13 +6,13 @@ const envSchema = z.object({
   CLAUDE_AUTH_PATH: z.string().default('/root/.claude'),
   // Named volume for pnpm store - shared across all runner containers
   // Speeds up package installs by caching downloaded packages
-  PNPM_STORE_VOLUME: z.string().default('clawed-burrow-pnpm-store'),
+  PNPM_STORE_VOLUME: z.string().default('clawed-abode-pnpm-store'),
   // Named volume for Gradle cache - shared across all runner containers
   // Speeds up builds by caching downloaded dependencies and build outputs
-  GRADLE_CACHE_VOLUME: z.string().default('clawed-burrow-gradle-cache'),
+  GRADLE_CACHE_VOLUME: z.string().default('clawed-abode-gradle-cache'),
   // Named volume for git reference cache - shared across all runner containers
   // Stores bare repos used as --reference during clones to speed up session creation
-  GIT_CACHE_VOLUME: z.string().default('clawed-burrow-git-cache'),
+  GIT_CACHE_VOLUME: z.string().default('clawed-abode-git-cache'),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   // Prefix for session branches (e.g., "claude/" creates branches like "claude/{sessionId}")
   SESSION_BRANCH_PREFIX: z.string().default('claude/'),
@@ -50,7 +50,7 @@ const envSchema = z.object({
   // - "bridge" (default): Standard container networking with NAT. More isolated
   //   but containers cannot easily connect to podman-compose services.
   // - "pasta": Rootless Podman's default. Similar limitations to bridge.
-  // See: https://github.com/brendanlong/clawed-burrow/issues/147
+  // See: https://github.com/brendanlong/clawed-abode/issues/147
   CONTAINER_NETWORK_MODE: z.enum(['host', 'bridge', 'pasta']).default('host'),
 });
 

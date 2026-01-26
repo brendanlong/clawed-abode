@@ -15,4 +15,4 @@
 - Always use shadcn/ui components
 - Use the centralized logger (`createLogger` from `@/lib/logger`) for all backend logging, especially errors
 - When writing test, don't mock components where the real version is easy to run (like SQLite in-memory)
-- Always write tests for the intended behavior of functions, not the actual behavior. If the actual behavior is wrong and the issue is pre-existing, write the test correctly, mark it skipped, and file a GitHub issue on brendanlong/clawed-burrow
+- Always write tests for the intended behavior of functions, not the actual behavior. If the actual behavior is wrong and the issue is pre-existing, write the test correctly, mark it skipped, and file a GitHub issue on brendanlong/clawed-abode
