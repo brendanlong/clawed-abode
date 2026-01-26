@@ -39,6 +39,8 @@ RUN apt-get update && apt-get install -y \
     # Network tools
     wget \
     openssh-client \
+    # Database clients for schema operations
+    postgresql-client \
     && rm -rf /var/lib/apt/lists/* \
     && ln -sf /usr/bin/python3 /usr/bin/python
 
