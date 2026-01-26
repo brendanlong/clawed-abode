@@ -38,17 +38,14 @@ export async function createContext(opts: { headers: Headers }): Promise<Context
 
   // Check if session has expired
   if (session.expiresAt < now) {
-    // Delete expired session
-    await prisma.authSession.delete({ where: { id: session.id } }).catch(() => {});
     return { sessionId: null, rotatedToken: null };
   }
 
   // Check for idle timeout
   const idleTime = now.getTime() - session.lastActivityAt.getTime();
   if (idleTime > IDLE_TIMEOUT_MS) {
-    // Session is idle, invalidate it
-    log.info('Session invalidated due to idle timeout', { sessionId: session.id });
-    await prisma.authSession.delete({ where: { id: session.id } }).catch(() => {});
+    // Session is idle, reject it (but don't delete - keep for audit/display)
+    log.info('Session rejected due to idle timeout', { sessionId: session.id });
     return { sessionId: null, rotatedToken: null };
   }
 
