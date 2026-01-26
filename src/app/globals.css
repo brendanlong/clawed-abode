@@ -260,6 +260,15 @@ body {
   @apply bg-primary-foreground/20;
 }
 
+/* Logo house fill - lighter in dark mode for visibility */
+.logo-house-fill {
+  fill: #1f2326;
+}
+
+.dark .logo-house-fill {
+  fill: #9ca3af;
+}
+
 /* Terminal output styles */
 .terminal-output {
   @apply font-mono text-xs whitespace-pre-wrap break-words;
