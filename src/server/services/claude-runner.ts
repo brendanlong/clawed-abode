@@ -52,8 +52,8 @@ CONTAINER ENVIRONMENT: This container uses Podman for container operations (not 
 
 CONTAINER ISSUE REPORTING: This container should have all standard development tools pre-installed and properly configured. If you encounter missing tools, misconfigured environments, or other container setup issues that prevent you from completing tasks:
 
-1. First, check if the issue has already been reported by searching existing issues: \`gh issue list --repo brendanlong/clawed-burrow --search "<issue description>" --state all\`
-2. If no existing issue matches, report it to the clawed-burrow repository: \`gh issue create --repo brendanlong/clawed-burrow --title "<brief description>" --body "<detailed description of the problem and what you were trying to do>" --label bug --label reported-by-claude\`
+1. First, check if the issue has already been reported by searching existing issues: \`gh issue list --repo brendanlong/clawed-abode --search "<issue description>" --state all\`
+2. If no existing issue matches, report it to the clawed-abode repository: \`gh issue create --repo brendanlong/clawed-abode --title "<brief description>" --body "<detailed description of the problem and what you were trying to do>" --label bug --label reported-by-claude\`
 3. Then continue with your task using workarounds if possible, or inform the user that the task cannot be completed due to the container issue.`;
 
 const log = createLogger('claude-runner');

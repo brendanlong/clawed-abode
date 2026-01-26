@@ -1,4 +1,4 @@
-# Clawed Burrow
+# Clawed Abode
 
 A place for [clawed creatures](https://claude.ai/code) that run far from the cloud.
 
@@ -29,8 +29,8 @@ A self-hosted web application that provides mobile-friendly access to Claude Cod
 ### 1. Clone and Install
 
 ```bash
-git clone https://github.com/brendanlong/clawed-burrow.git
-cd clawed-burrow
+git clone https://github.com/brendanlong/clawed-abode.git
+cd clawed-abode
 pnpm install
 ```
 
@@ -104,10 +104,10 @@ If you want to build the images yourself instead of using the pre-built images f
 
 ```bash
 # Build the main app (from root Dockerfile)
-podman build -t ghcr.io/brendanlong/clawed-burrow:latest -f Dockerfile .
+podman build -t ghcr.io/brendanlong/clawed-abode:latest -f Dockerfile .
 
 # Build the Claude runner (from docker/Dockerfile.claude-code)
-podman build -t ghcr.io/brendanlong/clawed-burrow-runner:latest -f docker/Dockerfile.claude-code .
+podman build -t ghcr.io/brendanlong/clawed-abode-runner:latest -f docker/Dockerfile.claude-code .
 ```
 
 ### Running with Podman
@@ -121,14 +121,14 @@ systemctl --user enable --now podman.socket
 Create the data directory:
 
 ```bash
-mkdir -p ~/.clawed-burrow
+mkdir -p ~/.clawed-abode
 ```
 
 Run the container:
 
 ```bash
 podman run -d \
-  --name clawed-burrow \
+  --name clawed-abode \
   --replace \
   --label io.containers.autoupdate=registry \
   -p 3000:3000 \
@@ -138,15 +138,15 @@ podman run -d \
   -e NODE_ENV=production \
   -e PASSWORD_HASH="$PASSWORD_HASH" \
   -e PODMAN_SOCKET_PATH="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman/podman.sock" \
-  -e CLAUDE_RUNNER_IMAGE=ghcr.io/brendanlong/clawed-burrow-runner:latest \
-  -v clawed-burrow-db:/data/db \
+  -e CLAUDE_RUNNER_IMAGE=ghcr.io/brendanlong/clawed-abode-runner:latest \
+  -v clawed-abode-db:/data/db \
   -v "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman/podman.sock:/var/run/docker.sock" \
   -v "$HOME/.claude:/claude-auth:ro" \
   -v "$HOME/.claude.json:/claude-auth.json:ro" \
   --device nvidia.com/gpu=all \
   --security-opt label=disable \
   --restart always \
-  ghcr.io/brendanlong/clawed-burrow:latest
+  ghcr.io/brendanlong/clawed-abode:latest
 ```
 
 ### Installing as a systemd Service
@@ -157,14 +157,14 @@ For automatic startup and management, install as a user systemd service:
 
    ```bash
    mkdir -p ~/.config/systemd/user
-   podman generate systemd --name clawed-burrow --new > ~/.config/systemd/user/clawed-burrow.service
+   podman generate systemd --name clawed-abode --new > ~/.config/systemd/user/clawed-abode.service
    ```
 
 2. **Reload systemd and enable the service:**
 
    ```bash
    systemctl --user daemon-reload
-   systemctl --user enable clawed-burrow.service
+   systemctl --user enable clawed-abode.service
    ```
 
 3. **Enable lingering** (so the service runs even when you're not logged in):
@@ -176,7 +176,7 @@ For automatic startup and management, install as a user systemd service:
 4. **Start the service:**
 
    ```bash
-   systemctl --user start clawed-burrow.service
+   systemctl --user start clawed-abode.service
    ```
 
 ### Viewing Logs
@@ -185,22 +185,22 @@ View logs using journalctl:
 
 ```bash
 # Follow logs in real-time
-journalctl --user -u clawed-burrow.service -f
+journalctl --user -u clawed-abode.service -f
 
 # View recent logs
-journalctl --user -u clawed-burrow.service -n 100
+journalctl --user -u clawed-abode.service -n 100
 
 # View logs since last boot
-journalctl --user -u clawed-burrow.service -b
+journalctl --user -u clawed-abode.service -b
 
 # View logs from a specific time
-journalctl --user -u clawed-burrow.service --since "1 hour ago"
+journalctl --user -u clawed-abode.service --since "1 hour ago"
 ```
 
 Or use podman directly:
 
 ```bash
-podman logs -f clawed-burrow
+podman logs -f clawed-abode
 ```
 
 ### Automatic Updates with Podman
@@ -243,28 +243,28 @@ The container includes the `io.containers.autoupdate=registry` label which tells
 
 ### Running as a Dedicated Unprivileged User
 
-For improved isolation, you can run Clawed Burrow as a dedicated unprivileged user instead of your main user account. This provides a layer of security since the Podman socket gives Claude Code agents the ability to run arbitrary containers on your system.
+For improved isolation, you can run Clawed Abode as a dedicated unprivileged user instead of your main user account. This provides a layer of security since the Podman socket gives Claude Code agents the ability to run arbitrary containers on your system.
 
-**Note:** This is a partial solution to [issue #92](https://github.com/brendanlong/clawed-burrow/issues/92). The dedicated user can still run containers with GPU access, but cannot affect your main user's files or processes.
+**Note:** This is a partial solution to [issue #92](https://github.com/brendanlong/clawed-abode/issues/92). The dedicated user can still run containers with GPU access, but cannot affect your main user's files or processes.
 
 #### 1. Create the dedicated user
 
 ```bash
-# Create a new user for running Clawed Burrow
-sudo useradd -m -s /bin/bash clawedburrow
+# Create a new user for running Clawed Abode
+sudo useradd -m -s /bin/bash clawedabode
 
 # Add subuid/subgid ranges for rootless Podman
-sudo usermod --add-subuids 200000-265535 --add-subgids 200000-265535 clawedburrow
+sudo usermod --add-subuids 200000-265535 --add-subgids 200000-265535 clawedabode
 
 # Enable lingering so user services run without login
-sudo loginctl enable-linger clawedburrow
+sudo loginctl enable-linger clawedabode
 ```
 
 #### 2. Set up Podman for the new user
 
 ```bash
 # Switch to the new user
-sudo -u clawedburrow -i
+sudo -u clawedabode -i
 
 # Enable the Podman socket
 systemctl --user enable --now podman.socket
@@ -284,7 +284,7 @@ Claude Code needs to be authenticated as the dedicated user. You have two option
 
 ```bash
 # Switch to the new user
-sudo -u clawedburrow -i
+sudo -u clawedabode -i
 
 # Run Claude Code to trigger authentication
 claude --version
@@ -301,22 +301,22 @@ exit
 
 ```bash
 # Copy your existing Claude auth to the new user
-sudo cp -r ~/.claude /home/clawedburrow/.claude
-sudo chown -R clawedburrow:clawedburrow /home/clawedburrow/.claude
+sudo cp -r ~/.claude /home/clawedabode/.claude
+sudo chown -R clawedabode:clawedabode /home/clawedabode/.claude
 ```
 
 #### 4. Create the data directory
 
 ```bash
-sudo mkdir -p /home/clawedburrow/.clawed-burrow
-sudo chown clawedburrow:clawedburrow /home/clawedburrow/.clawed-burrow
+sudo mkdir -p /home/clawedabode/.clawed-abode
+sudo chown clawedabode:clawedabode /home/clawedabode/.clawed-abode
 ```
 
 #### 5. Pull the container images
 
 ```bash
-sudo -u clawedburrow podman pull ghcr.io/brendanlong/clawed-burrow:latest
-sudo -u clawedburrow podman pull ghcr.io/brendanlong/clawed-burrow-runner:latest
+sudo -u clawedabode podman pull ghcr.io/brendanlong/clawed-abode:latest
+sudo -u clawedabode podman pull ghcr.io/brendanlong/clawed-abode-runner:latest
 ```
 
 #### 6. Run the container as the dedicated user
@@ -329,7 +329,7 @@ pnpm hash-password your-secure-password
 # Save this hash for the next step
 ```
 
-Create a script at `/home/clawedburrow/start-clawed-burrow.sh`:
+Create a script at `/home/clawedabode/start-clawed-abode.sh`:
 
 ```bash
 #!/bin/bash
@@ -337,7 +337,7 @@ export GITHUB_TOKEN="ghp_your_token_here"
 export PASSWORD_HASH="your_base64_hash_here"
 
 podman run -d \
-  --name clawed-burrow \
+  --name clawed-abode \
   --replace \
   --label io.containers.autoupdate=registry \
   -p 3000:3000 \
@@ -347,40 +347,40 @@ podman run -d \
   -e NODE_ENV=production \
   -e PASSWORD_HASH="$PASSWORD_HASH" \
   -e PODMAN_SOCKET_PATH="/run/user/$(id -u)/podman/podman.sock" \
-  -e CLAUDE_RUNNER_IMAGE=ghcr.io/brendanlong/clawed-burrow-runner:latest \
-  -v clawed-burrow-db:/data/db \
+  -e CLAUDE_RUNNER_IMAGE=ghcr.io/brendanlong/clawed-abode-runner:latest \
+  -v clawed-abode-db:/data/db \
   -v "/run/user/$(id -u)/podman/podman.sock:/var/run/docker.sock" \
-  -v "/home/clawedburrow/.claude:/claude-auth" \
+  -v "/home/clawedabode/.claude:/claude-auth" \
   --device nvidia.com/gpu=all \
   --security-opt label=disable \
   --restart always \
-  ghcr.io/brendanlong/clawed-burrow:latest
+  ghcr.io/brendanlong/clawed-abode:latest
 ```
 
 Make it executable and run:
 
 ```bash
-sudo chmod +x /home/clawedburrow/start-clawed-burrow.sh
-sudo chown clawedburrow:clawedburrow /home/clawedburrow/start-clawed-burrow.sh
+sudo chmod +x /home/clawedabode/start-clawed-abode.sh
+sudo chown clawedabode:clawedabode /home/clawedabode/start-clawed-abode.sh
 
 # Run as the dedicated user
-sudo -u clawedburrow /home/clawedburrow/start-clawed-burrow.sh
+sudo -u clawedabode /home/clawedabode/start-clawed-abode.sh
 ```
 
 #### 7. Set up as a systemd service
 
 ```bash
 # Switch to the dedicated user
-sudo -u clawedburrow -i
+sudo -u clawedabode -i
 
 # Generate the systemd unit file
 mkdir -p ~/.config/systemd/user
-podman generate systemd --name clawed-burrow --new > ~/.config/systemd/user/clawed-burrow.service
+podman generate systemd --name clawed-abode --new > ~/.config/systemd/user/clawed-abode.service
 
 # Reload systemd and enable the service
 systemctl --user daemon-reload
-systemctl --user enable clawed-burrow.service
-systemctl --user start clawed-burrow.service
+systemctl --user enable clawed-abode.service
+systemctl --user start clawed-abode.service
 
 # Exit back to your main user
 exit
@@ -389,17 +389,17 @@ exit
 #### 8. Set up automatic updates (optional)
 
 ```bash
-sudo -u clawedburrow bash -c "systemctl --user enable --now podman-auto-update.timer"
+sudo -u clawedabode bash -c "systemctl --user enable --now podman-auto-update.timer"
 ```
 
 #### Viewing logs
 
 ```bash
 # View logs as the dedicated user
-sudo -u clawedburrow journalctl --user -u clawed-burrow.service -f
+sudo -u clawedabode journalctl --user -u clawed-abode.service -f
 
 # Or use podman directly
-sudo -u clawedburrow podman logs -f clawed-burrow
+sudo -u clawedabode podman logs -f clawed-abode
 ```
 
 ### With Tailscale Serve (for access within your Tailnet)

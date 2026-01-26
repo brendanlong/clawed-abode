@@ -3,7 +3,7 @@ import { Providers } from '@/components/Providers';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Clawed Burrow',
+  title: 'Clawed Abode',
   description: 'A place for clawed creatures that run far from the cloud',
 };
 
@@ -20,7 +20,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <meta name="mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-        <meta name="apple-mobile-web-app-title" content="Burrow" />
+        <meta name="apple-mobile-web-app-title" content="Abode" />
         <meta name="theme-color" content="#1f2937" />
       </head>
       <body className="bg-gray-50 min-h-screen">

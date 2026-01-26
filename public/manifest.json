@@ -1,6 +1,6 @@
 {
-  "name": "Clawed Burrow",
-  "short_name": "Burrow",
+  "name": "Clawed Abode",
+  "short_name": "Abode",
   "description": "Mobile-friendly access to Claude Code sessions",
   "start_url": "/",
   "display": "standalone",

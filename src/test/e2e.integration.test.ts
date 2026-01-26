@@ -1,5 +1,5 @@
 /**
- * End-to-end integration test for clawed-burrow
+ * End-to-end integration test for clawed-abode
  *
  * This test:
  * 1. Builds both Docker images (service and runner) with unique test tags
@@ -32,11 +32,11 @@ const PROJECT_ROOT = path.resolve(__dirname, '../..');
 const SERVICE_HOST = process.env.SERVICE_HOST || 'host.containers.internal';
 
 // Image names with test tags
-const SERVICE_IMAGE = `clawed-burrow:${TEST_TAG}`;
+const SERVICE_IMAGE = `clawed-abode:${TEST_TAG}`;
 const RUNNER_IMAGE = `claude-code-runner:${TEST_TAG}`;
 
 // Container names
-const SERVICE_CONTAINER = `clawed-burrow-e2e-${TEST_TAG}`;
+const SERVICE_CONTAINER = `clawed-abode-e2e-${TEST_TAG}`;
 
 // Track resources for cleanup
 let authToken: string | null = null;
@@ -215,7 +215,7 @@ describe('E2E Integration Test', () => {
     console.log('Service image built successfully');
 
     // Create test database volume
-    const dbVolume = `clawed-burrow-db-${TEST_TAG}`;
+    const dbVolume = `clawed-abode-db-${TEST_TAG}`;
     runCommand(`podman volume create ${dbVolume}`);
 
     // Start the service container
@@ -297,7 +297,7 @@ describe('E2E Integration Test', () => {
 
     // Remove database volume
     try {
-      const dbVolume = `clawed-burrow-db-${TEST_TAG}`;
+      const dbVolume = `clawed-abode-db-${TEST_TAG}`;
       runCommandSafe(`podman volume rm ${dbVolume}`);
       console.log('Database volume removed');
     } catch (err) {

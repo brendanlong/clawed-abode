@@ -1131,7 +1131,7 @@ describe('claude-runner system prompt', () => {
       'Pull Request',
       'GitHub',
       'CONTAINER ISSUE REPORTING',
-      'clawed-burrow',
+      'clawed-abode',
     ];
 
     // We can't easily access the constant directly due to module structure,

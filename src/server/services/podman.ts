@@ -318,7 +318,7 @@ export async function cloneRepoInVolume(config: CloneConfig): Promise<CloneResul
     branch: config.branch,
   });
 
-  const volumeName = `clawed-burrow-workspace-${config.sessionId}`;
+  const volumeName = `clawed-abode-workspace-${config.sessionId}`;
 
   try {
     // Ensure the image is pulled before creating the container
@@ -434,7 +434,7 @@ export async function cloneRepoInVolume(config: CloneConfig): Promise<CloneResul
  * Remove a session's workspace volume.
  */
 export async function removeWorkspaceFromVolume(sessionId: string): Promise<void> {
-  const volumeName = `clawed-burrow-workspace-${sessionId}`;
+  const volumeName = `clawed-abode-workspace-${sessionId}`;
   log.info('Removing workspace volume', { sessionId, volumeName });
 
   try {
@@ -503,7 +503,7 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
 
     // Build volume binds
     // Each session has its own dedicated volume for isolation
-    const volumeName = `clawed-burrow-workspace-${config.sessionId}`;
+    const volumeName = `clawed-abode-workspace-${config.sessionId}`;
     const volumeArgs: string[] = ['-v', `${volumeName}:/workspace`];
 
     // Mount shared pnpm store volume
@@ -538,7 +538,7 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
     //   need to run and connect to containerized services.
     // - "bridge": Standard container networking with NAT.
     // - "pasta": Rootless Podman's default.
-    // See: https://github.com/brendanlong/clawed-burrow/issues/147
+    // See: https://github.com/brendanlong/clawed-abode/issues/147
     const createArgs = [
       'create',
       '--name',
