@@ -409,7 +409,7 @@ Runner containers are created with:
 
 - **Network mode**: Configurable via `CONTAINER_NETWORK_MODE` (default: `host`). Host networking allows containers to connect to services started via podman-compose on localhost. See [issue #147](https://github.com/brendanlong/clawed-abode/issues/147) for details.
 - **Workspace**: Session's dedicated volume mounted at `/workspace`
-- **Claude auth**: Copied into container after start (not bind-mounted, for security and to avoid permission issues)
+- **Claude auth**: OAuth token passed via `CLAUDE_CODE_OAUTH_TOKEN` environment variable
 - **Podman socket**: Bind-mounted for container-in-container support (read-only)
 - **pnpm store**: Named volume mounted at `/pnpm-store` for shared package cache
 - **Gradle cache**: Named volume mounted at `/gradle-cache` for shared build cache
@@ -454,26 +454,18 @@ async function startSessionContainer(session: Session, githubToken?: string): Pr
   const containerId = await runPodman(createArgs);
   await runPodman(['start', containerId]);
 
-  // Copy Claude auth files into container (instead of bind mounting)
-  await runPodman(['cp', CLAUDE_AUTH_PATH, `${containerId}:/home/claudeuser/.claude`]);
+  // Configure container - run independent setup tasks in parallel
+  const setupTasks = [
+    configurePnpmStore(containerId),
+    configureGradleCache(containerId),
+    fixSudoPermissions(containerId),
+  ];
 
-  // Handle .claude.json - only write if CLAUDE_CONFIG_JSON is explicitly set.
-  // We do NOT copy from host by default because the host's file may contain
-  // Claude.ai's automatically configured MCP server proxies, which aren't
-  // appropriate for --dangerously-skip-permissions mode.
-  // Claude Code will create a new .claude.json if one doesn't exist.
-  if (env.CLAUDE_CONFIG_JSON) {
-    await runPodman([
-      'exec',
-      containerId,
-      'sh',
-      '-c',
-      `cat > ~/.claude.json << 'EOF'\n${env.CLAUDE_CONFIG_JSON}\nEOF`,
-    ]);
+  if (githubToken) {
+    setupTasks.push(configureGitCredentials(containerId));
   }
 
-  // Configure git credential helper and pnpm store
-  if (githubToken) await configureGitCredentials(containerId);
+  await Promise.all(setupTasks);
 
   return containerId;
 }

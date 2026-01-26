@@ -42,7 +42,17 @@ Edit `.env` and set:
 
 - `PASSWORD_HASH`: Base64-encoded Argon2 hash for authentication (see below)
 - `GITHUB_TOKEN`: Your GitHub Fine-grained Personal Access Token (see below)
-- `CLAUDE_AUTH_PATH`: Path to your Claude Code auth (usually `~/.claude`)
+- `CLAUDE_CODE_OAUTH_TOKEN`: OAuth token for Claude Code (see below)
+
+### Generate Claude OAuth Token
+
+Run the following command to generate an OAuth token (valid for 1 year):
+
+```bash
+claude setup-token
+```
+
+Copy the token and add it to your `.env` file as `CLAUDE_CODE_OAUTH_TOKEN`.
 
 ### Generate GitHub Token
 
@@ -132,15 +142,13 @@ podman run -d \
   -p 3000:3000 \
   -e DATABASE_URL=file:/data/db/prod.db \
   -e GITHUB_TOKEN="$GITHUB_TOKEN" \
-  -e CLAUDE_AUTH_PATH="/claude-auth" \
+  -e CLAUDE_CODE_OAUTH_TOKEN="$CLAUDE_CODE_OAUTH_TOKEN" \
   -e NODE_ENV=production \
   -e PASSWORD_HASH="$PASSWORD_HASH" \
   -e PODMAN_SOCKET_PATH="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman/podman.sock" \
   -e CLAUDE_RUNNER_IMAGE=ghcr.io/brendanlong/clawed-abode-runner:latest \
   -v clawed-abode-db:/data/db \
   -v "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman/podman.sock:/var/run/docker.sock" \
-  -v "$HOME/.claude:/claude-auth:ro" \
-  -v "$HOME/.claude.json:/claude-auth.json:ro" \
   --device nvidia.com/gpu=all \
   --security-opt label=disable \
   --restart always \
@@ -333,6 +341,7 @@ Create a script at `/home/clawedabode/start-clawed-abode.sh`:
 #!/bin/bash
 export GITHUB_TOKEN="ghp_your_token_here"
 export PASSWORD_HASH="your_base64_hash_here"
+export CLAUDE_CODE_OAUTH_TOKEN="your_oauth_token_here"
 
 podman run -d \
   --name clawed-abode \
@@ -341,14 +350,13 @@ podman run -d \
   -p 3000:3000 \
   -e DATABASE_URL=file:/data/db/prod.db \
   -e GITHUB_TOKEN="$GITHUB_TOKEN" \
-  -e CLAUDE_AUTH_PATH="/claude-auth" \
+  -e CLAUDE_CODE_OAUTH_TOKEN="$CLAUDE_CODE_OAUTH_TOKEN" \
   -e NODE_ENV=production \
   -e PASSWORD_HASH="$PASSWORD_HASH" \
   -e PODMAN_SOCKET_PATH="/run/user/$(id -u)/podman/podman.sock" \
   -e CLAUDE_RUNNER_IMAGE=ghcr.io/brendanlong/clawed-abode-runner:latest \
   -v clawed-abode-db:/data/db \
   -v "/run/user/$(id -u)/podman/podman.sock:/var/run/docker.sock" \
-  -v "/home/clawedabode/.claude:/claude-auth" \
   --device nvidia.com/gpu=all \
   --security-opt label=disable \
   --restart always \
@@ -442,15 +450,14 @@ For persistent Funnel configuration, see the [Tailscale Funnel documentation](ht
 
 ### Environment Variables
 
-| Variable             | Description                                                                | Default              |
-| -------------------- | -------------------------------------------------------------------------- | -------------------- |
-| `PASSWORD_HASH`      | Base64-encoded Argon2 hash for auth                                        | None (required)      |
-| `DATABASE_URL`       | SQLite database path                                                       | `file:./data/dev.db` |
-| `GITHUB_TOKEN`       | GitHub Fine-grained PAT for repo access                                    | Required             |
-| `CLAUDE_AUTH_PATH`   | Path to Claude Code auth directory                                         | `/root/.claude`      |
-| `DATA_DIR`           | Directory for session workspaces                                           | `/data`              |
-| `NODE_ENV`           | Node environment                                                           | `development`        |
-| `CLAUDE_CONFIG_JSON` | Explicit Claude config JSON (see [MCP Server Configuration](#mcp-servers)) | None                 |
+| Variable                  | Description                                                                | Default              |
+| ------------------------- | -------------------------------------------------------------------------- | -------------------- |
+| `PASSWORD_HASH`           | Base64-encoded Argon2 hash for auth                                        | None (required)      |
+| `DATABASE_URL`            | SQLite database path                                                       | `file:./data/dev.db` |
+| `GITHUB_TOKEN`            | GitHub Fine-grained PAT for repo access                                    | Required             |
+| `CLAUDE_CODE_OAUTH_TOKEN` | Claude Code OAuth token (run `claude setup-token`)                         | Required             |
+| `NODE_ENV`                | Node environment                                                           | `development`        |
+| `CLAUDE_CONFIG_JSON`      | Explicit Claude config JSON (see [MCP Server Configuration](#mcp-servers)) | None                 |
 
 ### GPU Support
 

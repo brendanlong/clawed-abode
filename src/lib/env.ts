@@ -3,7 +3,9 @@ import { z } from 'zod';
 const envSchema = z.object({
   DATABASE_URL: z.string().default('file:./data/dev.db'),
   GITHUB_TOKEN: z.string().optional(),
-  CLAUDE_AUTH_PATH: z.string().default('/root/.claude'),
+  // Claude Code OAuth token (run `claude setup-token` to generate)
+  // Lasts for 1 year and is simpler than copying auth files
+  CLAUDE_CODE_OAUTH_TOKEN: z.string(),
   // Named volume for pnpm store - shared across all runner containers
   // Speeds up package installs by caching downloaded packages
   PNPM_STORE_VOLUME: z.string().default('clawed-abode-pnpm-store'),
@@ -67,7 +69,8 @@ function validateEnv(): Env {
     // In development or build time, use defaults instead of crashing
     if (process.env.NODE_ENV !== 'production' || isBuildTime) {
       console.warn('Using default environment values');
-      return envSchema.parse({});
+      // Provide dummy value for required CLAUDE_CODE_OAUTH_TOKEN during build
+      return envSchema.parse({ CLAUDE_CODE_OAUTH_TOKEN: 'build-time-placeholder' });
     }
     throw new Error('Invalid environment variables');
   }

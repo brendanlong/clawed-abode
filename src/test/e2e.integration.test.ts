@@ -11,7 +11,7 @@
  * Requirements:
  * - Podman must be available
  * - GITHUB_TOKEN env var for cloning repos
- * - CLAUDE_AUTH_PATH pointing to valid Claude credentials
+ * - CLAUDE_CODE_OAUTH_TOKEN for Claude authentication
  * - PODMAN_SOCKET_PATH pointing to the host's podman socket
  */
 
@@ -187,8 +187,8 @@ describe('E2E Integration Test', () => {
     if (!process.env.GITHUB_TOKEN) {
       throw new Error('GITHUB_TOKEN environment variable is required');
     }
-    if (!process.env.CLAUDE_AUTH_PATH) {
-      throw new Error('CLAUDE_AUTH_PATH environment variable is required');
+    if (!process.env.CLAUDE_CODE_OAUTH_TOKEN) {
+      throw new Error('CLAUDE_CODE_OAUTH_TOKEN environment variable is required');
     }
     if (!process.env.PODMAN_SOCKET_PATH) {
       throw new Error('PODMAN_SOCKET_PATH environment variable is required');
@@ -230,11 +230,6 @@ describe('E2E Integration Test', () => {
       // Mount podman socket for container-in-container
       '-v',
       `${process.env.PODMAN_SOCKET_PATH}:/var/run/docker.sock`,
-      // Mount Claude auth
-      '-v',
-      `${process.env.CLAUDE_AUTH_PATH}:/root/.claude:ro`,
-      '-v',
-      `${process.env.CLAUDE_AUTH_PATH}.json:/root/.claude.json:ro`,
       // Mount database volume
       '-v',
       `${dbVolume}:/data/db`,
@@ -243,6 +238,8 @@ describe('E2E Integration Test', () => {
       `PASSWORD_HASH=${passwordHash}`,
       '-e',
       `GITHUB_TOKEN=${process.env.GITHUB_TOKEN}`,
+      '-e',
+      `CLAUDE_CODE_OAUTH_TOKEN=${process.env.CLAUDE_CODE_OAUTH_TOKEN}`,
       '-e',
       `CLAUDE_RUNNER_IMAGE=${RUNNER_IMAGE}`,
       '-e',

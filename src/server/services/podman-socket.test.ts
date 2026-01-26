@@ -17,7 +17,7 @@ vi.mock('fs', () => ({
 vi.mock('@/lib/env', () => ({
   env: {
     CLAUDE_RUNNER_IMAGE: 'claude-code-runner:test',
-    CLAUDE_AUTH_PATH: '/test/.claude',
+    CLAUDE_CODE_OAUTH_TOKEN: 'test-oauth-token',
     DATA_DIR: '/data',
     DATA_HOST_PATH: undefined,
     PNPM_STORE_PATH: undefined,
