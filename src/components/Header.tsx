@@ -6,6 +6,7 @@ import { useWorkingContext } from '@/lib/working-context';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Logo } from '@/components/Logo';
+import { Settings } from 'lucide-react';
 
 export function Header() {
   const { isAuthenticated, logout } = useAuth();
@@ -36,9 +37,17 @@ export function Header() {
           </Link>
 
           {isAuthenticated && (
-            <Button variant="ghost" size="sm" onClick={logout}>
-              Sign out
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button variant="ghost" size="sm" asChild>
+                <Link href="/settings" className="flex items-center gap-1.5">
+                  <Settings className="h-4 w-4" />
+                  <span className="hidden sm:inline">Settings</span>
+                </Link>
+              </Button>
+              <Button variant="ghost" size="sm" onClick={logout}>
+                Sign out
+              </Button>
+            </div>
           )}
         </div>
       </div>
