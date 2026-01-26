@@ -86,18 +86,18 @@ describe('createContext - activity tracking and token rotation', () => {
   });
 
   describe('expiration', () => {
-    it('should reject and delete expired sessions', async () => {
+    it('should reject expired sessions but preserve them in database', async () => {
       const expiredDate = new Date(Date.now() - 1000); // 1 second ago
       const { session, token } = await createTestSession({ expiresAt: expiredDate });
 
       const ctx = await createContext({ headers: createHeaders(token) });
       expect(ctx.sessionId).toBeNull();
 
-      // Session should be deleted
+      // Session should be preserved (not deleted) for audit/display purposes
       const remaining = await testPrisma.authSession.findFirst({
         where: { id: session.id },
       });
-      expect(remaining).toBeNull();
+      expect(remaining).not.toBeNull();
     });
   });
 
@@ -110,18 +110,18 @@ describe('createContext - activity tracking and token rotation', () => {
       expect(ctx.sessionId).toBe(session.id);
     });
 
-    it('should reject and delete sessions exceeding idle timeout', async () => {
+    it('should reject sessions exceeding idle timeout but preserve them in database', async () => {
       const lastActivity = new Date(Date.now() - IDLE_TIMEOUT_MS - 1000); // Past idle timeout
       const { session, token } = await createTestSession({ lastActivityAt: lastActivity });
 
       const ctx = await createContext({ headers: createHeaders(token) });
       expect(ctx.sessionId).toBeNull();
 
-      // Session should be deleted
+      // Session should be preserved (not deleted) for audit/display purposes
       const remaining = await testPrisma.authSession.findFirst({
         where: { id: session.id },
       });
-      expect(remaining).toBeNull();
+      expect(remaining).not.toBeNull();
     });
   });
 
