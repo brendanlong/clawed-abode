@@ -413,6 +413,7 @@ Runner containers are created with:
 - **Podman socket**: Bind-mounted for container-in-container support (read-only)
 - **pnpm store**: Named volume mounted at `/pnpm-store` for shared package cache
 - **Gradle cache**: Named volume mounted at `/gradle-cache` for shared build cache
+- **Git cache**: Named volume mounted at `/cache` (read-only) for git alternates support
 
 ```typescript
 async function startSessionContainer(session: Session, githubToken?: string): Promise<string> {
@@ -426,6 +427,8 @@ async function startSessionContainer(session: Session, githubToken?: string): Pr
     'clawed-abode-pnpm-store:/pnpm-store',
     '-v',
     'clawed-abode-gradle-cache:/gradle-cache',
+    '-v',
+    'clawed-abode-git-cache:/cache:ro',
   ];
 
   // Mount host's podman socket for container-in-container support (read-only)

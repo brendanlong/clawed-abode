@@ -512,6 +512,8 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
     volumeArgs.push('-v', `${env.PNPM_STORE_VOLUME}:/pnpm-store`);
     // Mount shared Gradle cache volume
     volumeArgs.push('-v', `${env.GRADLE_CACHE_VOLUME}:/gradle-cache`);
+    // Mount git cache volume (read-only) for alternates support
+    volumeArgs.push('-v', `${env.GIT_CACHE_VOLUME}:/cache:ro`);
 
     // Mount host's podman socket for container-in-container support (read-only)
     if (env.PODMAN_SOCKET_PATH) {
