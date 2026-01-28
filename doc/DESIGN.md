@@ -45,24 +45,12 @@ The system uses **rootless Podman** for container management, which provides:
 
 ## Data Model
 
-### Session
+The database schema is defined in [`prisma/schema.prisma`](../prisma/schema.prisma). Key models:
 
-```typescript
-interface Session {
-  id: string; // UUID, also used as Claude Code session ID
-  name: string; // User-provided name
-  repoUrl: string; // GitHub clone URL
-  branch: string; // Branch name
-  repoPath: string; // Relative path to repo within workspace (e.g., "my-repo")
-  containerId: string | null; // Docker container ID when running
-  status: 'creating' | 'running' | 'stopped' | 'error' | 'archived';
-  statusMessage: string | null; // Progress message during creation or error details
-  initialPrompt: string | null; // Optional prompt to auto-send when session starts (e.g., from GitHub issue)
-  createdAt: Date;
-  updatedAt: Date;
-  archivedAt: Date | null; // When the session was archived (null if not archived)
-}
-```
+- **Session**: Claude Code sessions tied to git clones
+- **Message**: Chat messages with sequence numbers for cursor-based pagination
+- **AuthSession**: Login sessions with tokens and audit info
+- **ClaudeProcess**: Tracks running Claude processes for interrupt/resume
 
 ### Session Archiving
 
@@ -111,48 +99,6 @@ Each runner container mounts only its own session's volume at `/workspace`, with
 - Full write access to the workspace for worktrees, temp files, etc.
 - Clean separation between the repo and working files
 - The repo as the default working directory for Claude
-
-### Message
-
-```typescript
-interface Message {
-  id: string; // UUID from Claude Code JSON
-  sessionId: string;
-  sequence: number; // Monotonic ordering for cursor pagination
-  type: 'system' | 'assistant' | 'user' | 'result';
-  content: ClaudeCodeJsonLine; // Raw JSON from Claude Code
-  createdAt: Date;
-}
-```
-
-### AuthSession
-
-```typescript
-interface AuthSession {
-  id: string;
-  token: string; // 256-bit random token
-  expiresAt: Date;
-  createdAt: Date;
-  ipAddress: string | null; // For audit logging
-  userAgent: string | null; // For audit logging
-}
-```
-
-### Issue
-
-```typescript
-interface Issue {
-  id: number;
-  number: number;
-  title: string;
-  body: string | null;
-  state: 'open' | 'closed';
-  author: string;
-  labels: Array<{ name: string; color: string }>;
-  createdAt: string;
-  updatedAt: string;
-}
-```
 
 ## API Design (tRPC)
 
@@ -349,57 +295,16 @@ The system prompt also instructs Claude to report container issues (missing tool
 
 ## Podman Setup
 
-### Base Image (Dockerfile.claude-code)
+### Base Image
 
-The container image includes:
+The runner container image is defined in [`docker/Dockerfile.claude-code`](../docker/Dockerfile.claude-code). Key features:
 
 - NVIDIA CUDA base for GPU workloads
 - Podman for container-in-container operations
 - Common development tools (Node.js, Python, JDK, Android SDK)
 - Passwordless sudo for package installation
 - Docker/docker-compose aliases pointing to Podman equivalents
-
-```dockerfile
-FROM nvidia/cuda:12.1.0-base-ubuntu22.04
-
-# Install dependencies including Python, pip, JDK, Podman, and common dev tools
-RUN apt-get update && apt-get install -y \
-    curl git podman fuse-overlayfs slirp4netns uidmap sudo \
-    ca-certificates gnupg python3 python3-pip python3-venv \
-    openjdk-17-jdk-headless build-essential coreutils \
-    unzip zip tar file tree jq less vim wget openssh-client \
-    && rm -rf /var/lib/apt/lists/* \
-    && ln -sf /usr/bin/python3 /usr/bin/python
-
-# Install Node.js 20.x, GitHub CLI, pnpm, Claude Code
-# ... (see Dockerfile.claude-code for full details)
-
-# Install podman-compose and create docker aliases
-RUN pip3 install --break-system-packages podman-compose && \
-    ln -s /usr/bin/podman /usr/local/bin/docker && \
-    ln -s /usr/local/bin/podman-compose /usr/local/bin/docker-compose
-
-# Create non-root user with passwordless sudo
-RUN useradd -m -s /bin/bash -u 1000 claudeuser && \
-    echo "claudeuser ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/claudeuser && \
-    chmod 0440 /etc/sudoers.d/claudeuser
-
-# Configure subuid/subgid for rootless podman
-RUN echo "claudeuser:100000:65536" >> /etc/subuid && \
-    echo "claudeuser:100000:65536" >> /etc/subgid
-
-USER claudeuser
-# ... (Android SDK, git config, uv, etc.)
-
-# Configure podman for rootless operation with fuse-overlayfs
-RUN mkdir -p /home/claudeuser/.config/containers && \
-    echo '[storage]' > /home/claudeuser/.config/containers/storage.conf && \
-    echo 'driver = "overlay"' >> /home/claudeuser/.config/containers/storage.conf && \
-    echo '[storage.options.overlay]' >> /home/claudeuser/.config/containers/storage.conf && \
-    echo 'mount_program = "/usr/bin/fuse-overlayfs"' >> /home/claudeuser/.config/containers/storage.conf
-
-CMD ["tail", "-f", "/dev/null"]
-```
+- Rootless Podman configured with fuse-overlayfs
 
 ### Container Launch
 
@@ -473,22 +378,7 @@ async function startSessionContainer(session: Session, githubToken?: string): Pr
 
 ## Message Storage & Pagination
 
-Messages are stored with a monotonically increasing sequence number per session. This enables efficient cursor-based pagination:
-
-```sql
-CREATE TABLE messages (
-  id TEXT PRIMARY KEY,
-  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-  sequence INTEGER NOT NULL,
-  type TEXT NOT NULL,
-  content JSONB NOT NULL,
-  created_at TIMESTAMP DEFAULT NOW(),
-
-  UNIQUE(session_id, sequence)
-);
-
-CREATE INDEX idx_messages_session_sequence ON messages(session_id, sequence);
-```
+Messages are stored with a monotonically increasing sequence number per session (see `Message` model in [`prisma/schema.prisma`](../prisma/schema.prisma)). This enables efficient cursor-based pagination.
 
 ### Pagination Queries
 
