@@ -310,7 +310,7 @@ The runner container image is defined in [`docker/Dockerfile.claude-code`](../do
 
 The application uses Podman CLI commands to manage containers, routing them through the Docker-compatible socket via `CONTAINER_HOST` env var.
 
-Runner containers are created with:
+Runner containers are created with (see [`createAndStartContainer`](../src/server/services/podman.ts) for implementation):
 
 - **Network mode**: Configurable via `CONTAINER_NETWORK_MODE` (default: `host`). Host networking allows containers to connect to services started via podman-compose on localhost. See [issue #147](https://github.com/brendanlong/clawed-abode/issues/147) for details.
 - **Workspace**: Session's dedicated volume mounted at `/workspace`
@@ -318,63 +318,6 @@ Runner containers are created with:
 - **Podman socket**: Bind-mounted for container-in-container support (read-only)
 - **pnpm store**: Named volume mounted at `/pnpm-store` for shared package cache
 - **Gradle cache**: Named volume mounted at `/gradle-cache` for shared build cache
-
-```typescript
-async function startSessionContainer(session: Session, githubToken?: string): Promise<string> {
-  // Each session has its own dedicated volume
-  const volumeName = `clawed-abode-workspace-${session.id}`;
-  const volumeArgs = [
-    '-v',
-    `${volumeName}:/workspace`,
-    // Shared caches as named volumes
-    '-v',
-    'clawed-abode-pnpm-store:/pnpm-store',
-    '-v',
-    'clawed-abode-gradle-cache:/gradle-cache',
-  ];
-
-  // Mount host's podman socket for container-in-container support (read-only)
-  if (PODMAN_SOCKET_PATH) {
-    volumeArgs.push('-v', `${PODMAN_SOCKET_PATH}:/var/run/docker.sock`);
-  }
-
-  // Create container with CDI for GPU access
-  // Network mode defaults to 'host' to allow connecting to podman-compose services
-  const createArgs = [
-    'create',
-    '--name',
-    `claude-session-${session.id}`,
-    '--network',
-    env.CONTAINER_NETWORK_MODE, // 'host', 'bridge', or 'pasta'
-    '--security-opt',
-    'label=disable',
-    '--device',
-    'nvidia.com/gpu=all',
-    '-w',
-    `/workspace/${session.repoPath}`,
-    ...volumeArgs,
-    'claude-code-runner:latest',
-  ];
-
-  const containerId = await runPodman(createArgs);
-  await runPodman(['start', containerId]);
-
-  // Configure container - run independent setup tasks in parallel
-  const setupTasks = [
-    configurePnpmStore(containerId),
-    configureGradleCache(containerId),
-    fixSudoPermissions(containerId),
-  ];
-
-  if (githubToken) {
-    setupTasks.push(configureGitCredentials(containerId));
-  }
-
-  await Promise.all(setupTasks);
-
-  return containerId;
-}
-```
 
 ## Message Storage & Pagination
 
