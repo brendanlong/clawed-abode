@@ -16,6 +16,7 @@ import { GlobDisplay } from './GlobDisplay';
 import { WebSearchDisplay } from './WebSearchDisplay';
 import { AskUserQuestionDisplay } from './AskUserQuestionDisplay';
 import { TaskDisplay } from './TaskDisplay';
+import { ExitPlanModeDisplay } from './ExitPlanModeDisplay';
 import { ToolCallDisplay } from './ToolCallDisplay';
 import { ToolResultDisplay } from './ToolResultDisplay';
 import { SystemInitDisplay } from './SystemInitDisplay';
@@ -147,6 +148,10 @@ function renderContentBlocks(
 
             if (block.name === 'Task') {
               return <TaskDisplay key={block.id} tool={tool} />;
+            }
+
+            if (block.name === 'ExitPlanMode') {
+              return <ExitPlanModeDisplay key={block.id} tool={tool} />;
             }
 
             return <ToolCallDisplay key={block.id} tool={tool} />;

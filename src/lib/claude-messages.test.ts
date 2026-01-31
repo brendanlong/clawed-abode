@@ -14,6 +14,7 @@ import {
   parseClaudeStreamLine,
   getMessageType,
   buildToolResultMap,
+  containsExitPlanMode,
   AssistantMessage,
   UserMessage,
   SystemMessage,
@@ -577,6 +578,124 @@ describe('claude-messages', () => {
       const raw = new RawMessage('msg-1', 'session-1', 1, new Date(), circular);
       // Should not throw, returns string representation
       expect(typeof raw.getFormattedJson()).toBe('string');
+    });
+  });
+
+  describe('containsExitPlanMode', () => {
+    it('should return true for assistant message with ExitPlanMode tool use', () => {
+      const parsed = {
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'text', text: 'Here is my plan...' },
+            {
+              type: 'tool_use',
+              id: 'toolu_123',
+              name: 'ExitPlanMode',
+              input: { allowedPrompts: [] },
+            },
+          ],
+        },
+        session_id: 'session-1',
+        uuid: 'uuid-1',
+      };
+      expect(containsExitPlanMode(parsed)).toBe(true);
+    });
+
+    it('should return false for assistant message without ExitPlanMode', () => {
+      const parsed = {
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'text', text: 'Let me read that file.' },
+            {
+              type: 'tool_use',
+              id: 'toolu_123',
+              name: 'Read',
+              input: { file_path: '/test/file.ts' },
+            },
+          ],
+        },
+        session_id: 'session-1',
+        uuid: 'uuid-1',
+      };
+      expect(containsExitPlanMode(parsed)).toBe(false);
+    });
+
+    it('should return false for user message', () => {
+      const parsed = {
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'Hello' }],
+        },
+        session_id: 'session-1',
+        uuid: 'uuid-1',
+      };
+      expect(containsExitPlanMode(parsed)).toBe(false);
+    });
+
+    it('should return false for system message', () => {
+      const parsed = {
+        type: 'system',
+        subtype: 'init',
+        cwd: '/workspace',
+        session_id: 'session-1',
+        model: 'claude-3-5-sonnet',
+      };
+      expect(containsExitPlanMode(parsed)).toBe(false);
+    });
+
+    it('should return false for null/undefined', () => {
+      expect(containsExitPlanMode(null)).toBe(false);
+      expect(containsExitPlanMode(undefined)).toBe(false);
+    });
+
+    it('should return false for non-object', () => {
+      expect(containsExitPlanMode('string')).toBe(false);
+      expect(containsExitPlanMode(123)).toBe(false);
+    });
+
+    it('should return false for assistant message with empty content', () => {
+      const parsed = {
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          content: [],
+        },
+        session_id: 'session-1',
+        uuid: 'uuid-1',
+      };
+      expect(containsExitPlanMode(parsed)).toBe(false);
+    });
+
+    it('should return true even with multiple tool uses including ExitPlanMode', () => {
+      const parsed = {
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'text', text: 'Here is my plan...' },
+            {
+              type: 'tool_use',
+              id: 'toolu_122',
+              name: 'TodoWrite',
+              input: { todos: [] },
+            },
+            {
+              type: 'tool_use',
+              id: 'toolu_123',
+              name: 'ExitPlanMode',
+              input: { allowedPrompts: [] },
+            },
+          ],
+        },
+        session_id: 'session-1',
+        uuid: 'uuid-1',
+      };
+      expect(containsExitPlanMode(parsed)).toBe(true);
     });
   });
 });

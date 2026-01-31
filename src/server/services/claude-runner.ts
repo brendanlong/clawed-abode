@@ -15,7 +15,7 @@ import {
   describeExitCode,
 } from './podman';
 import { prisma } from '@/lib/prisma';
-import { getMessageType } from '@/lib/claude-messages';
+import { getMessageType, containsExitPlanMode } from '@/lib/claude-messages';
 import { v4 as uuid, v5 as uuidv5 } from 'uuid';
 import { sseEvents } from './events';
 import { createLogger, toError } from '@/lib/logger';
@@ -195,6 +195,8 @@ type SaveMessageResult =
         content: unknown;
         createdAt: Date;
       };
+      /** If true, the message contains ExitPlanMode and we should send an interrupt */
+      shouldInterrupt?: boolean;
     }
   | { saved: false; reason: 'parse_error' | 'duplicate' };
 
@@ -240,7 +242,12 @@ async function saveMessageIfNotExists(
       },
     });
 
-    return { saved: true, sequence, message: { ...message, content: parsed } };
+    // Check if this message contains ExitPlanMode tool use
+    // ExitPlanMode doesn't properly end the turn in JSON streaming mode,
+    // so we need to send an interrupt when we see it
+    const shouldInterrupt = containsExitPlanMode(parsed);
+
+    return { saved: true, sequence, message: { ...message, content: parsed }, shouldInterrupt };
   } catch (err) {
     // Handle unique constraint violation on (sessionId, sequence)
     // This can happen in race conditions when processing the same output file
@@ -248,6 +255,26 @@ async function saveMessageIfNotExists(
       return { saved: false, reason: 'duplicate' };
     }
     throw err;
+  }
+}
+
+/**
+ * Send an interrupt to a Claude process when ExitPlanMode is detected.
+ * Uses the in-memory process tracking to find the container and PID.
+ * This is a separate function because interruptClaude() is defined later
+ * and we want to avoid forward reference issues.
+ */
+async function sendInterruptForExitPlanMode(sessionId: string): Promise<void> {
+  const process = runningProcesses.get(sessionId);
+  if (!process) {
+    log.warn('sendInterruptForExitPlanMode: No process found in memory', { sessionId });
+    return;
+  }
+
+  if (process.pid) {
+    await sendSignalToExec(process.containerId, process.pid, 'INT');
+  } else {
+    await signalProcessesByPattern(process.containerId, CLAUDE_PROCESS_PATTERN, 'INT');
   }
 }
 
@@ -458,6 +485,20 @@ export async function runClaudeCommand(
             await prisma.claudeProcess
               .update({ where: { sessionId }, data: { lastSequence: result.sequence } })
               .catch(() => {});
+
+            // Check if we need to interrupt (e.g., ExitPlanMode detected)
+            // ExitPlanMode doesn't properly end the turn in JSON streaming mode,
+            // so we send an interrupt to cleanly end the turn
+            if (result.shouldInterrupt) {
+              log.info('runClaudeCommand: ExitPlanMode detected, sending interrupt', { sessionId });
+              // Send interrupt asynchronously - don't await to avoid blocking the stream
+              sendInterruptForExitPlanMode(sessionId).catch((err) => {
+                log.warn('runClaudeCommand: Failed to send interrupt for ExitPlanMode', {
+                  sessionId,
+                  error: toError(err).message,
+                });
+              });
+            }
           } else if (result.reason === 'parse_error') {
             log.warn('runClaudeCommand: Failed to parse JSON', {
               sessionId,
