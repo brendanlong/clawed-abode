@@ -722,3 +722,33 @@ export function getToolUseIds(msg: AssistantMessage): string[] {
 export function isStandaloneToolResult(msg: AnyParsedMessage): boolean {
   return msg instanceof UserMessage && msg.isToolResult();
 }
+
+/**
+ * Check if raw parsed JSON contains an ExitPlanMode tool use.
+ * Used to detect when Claude has finished plan mode and trigger an interrupt.
+ * ExitPlanMode doesn't properly end the turn in JSON streaming mode, so we need
+ * to send an interrupt when we see it.
+ */
+export function containsExitPlanMode(parsed: unknown): boolean {
+  if (!parsed || typeof parsed !== 'object') return false;
+  const obj = parsed as Record<string, unknown>;
+
+  // Only check assistant messages
+  if (obj.type !== 'assistant') return false;
+
+  // Navigate to message.content array
+  const message = obj.message as Record<string, unknown> | undefined;
+  if (!message || typeof message !== 'object') return false;
+
+  const content = message.content;
+  if (!Array.isArray(content)) return false;
+
+  // Check if any content block is an ExitPlanMode tool use
+  return content.some(
+    (block) =>
+      block &&
+      typeof block === 'object' &&
+      (block as Record<string, unknown>).type === 'tool_use' &&
+      (block as Record<string, unknown>).name === 'ExitPlanMode'
+  );
+}
