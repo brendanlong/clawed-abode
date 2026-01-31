@@ -88,14 +88,4 @@ function getEnv(): Env {
   return parsed.data;
 }
 
-/**
- * Environment variables with lazy evaluation.
- * Uses a Proxy to re-read from process.env on each access,
- * allowing tests to modify env vars dynamically.
- */
-export const env: Env = new Proxy({} as Env, {
-  get(_target, prop: string) {
-    const validated = getEnv();
-    return validated[prop as keyof Env];
-  },
-});
+export const env: Env = getEnv();
