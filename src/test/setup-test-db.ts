@@ -51,6 +51,9 @@ export async function setupTestDb(): Promise<void> {
   // Set DATABASE_URL before Prisma client is created
   process.env.DATABASE_URL = databaseUrl;
 
+  // Set ENCRYPTION_KEY for tests that use secret encryption
+  process.env.ENCRYPTION_KEY = 'test-encryption-key-for-integration-tests';
+
   // Clear any cached Prisma client from globalThis so it recreates with new URL
   const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
   if (globalForPrisma.prisma) {
@@ -99,4 +102,8 @@ export async function clearTestDb(): Promise<void> {
   await testPrisma.message.deleteMany();
   await testPrisma.session.deleteMany();
   await testPrisma.authSession.deleteMany();
+  // Repo settings tables
+  await testPrisma.envVar.deleteMany();
+  await testPrisma.mcpServer.deleteMany();
+  await testPrisma.repoSettings.deleteMany();
 }
