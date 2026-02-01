@@ -287,11 +287,16 @@ function getOutputFilePath(sessionId: string): string {
   return `/tmp/${getOutputFileName(sessionId)}`;
 }
 
-export async function runClaudeCommand(
-  sessionId: string,
-  containerId: string,
-  prompt: string
-): Promise<void> {
+export interface RunClaudeCommandOptions {
+  sessionId: string;
+  containerId: string;
+  prompt: string;
+  /** Optional custom system prompt appended after the default system prompt */
+  customSystemPrompt?: string | null;
+}
+
+export async function runClaudeCommand(options: RunClaudeCommandOptions): Promise<void> {
+  const { sessionId, containerId, prompt, customSystemPrompt } = options;
   log.info('runClaudeCommand: Starting', { sessionId, containerId, promptLength: prompt.length });
 
   // Check if session already has a running process (in-memory check first for speed)
@@ -366,6 +371,13 @@ export async function runClaudeCommand(
   // Build the Claude command
   // Use --resume for subsequent messages, --session-id for the first
   const isFirstMessage = !lastMessage;
+
+  // Build the full system prompt by appending custom prompt if provided
+  let fullSystemPrompt = SYSTEM_PROMPT;
+  if (customSystemPrompt) {
+    fullSystemPrompt += '\n\n' + customSystemPrompt;
+  }
+
   const command = [
     'claude',
     '--model',
@@ -378,7 +390,7 @@ export async function runClaudeCommand(
     '--verbose',
     '--dangerously-skip-permissions',
     '--append-system-prompt',
-    SYSTEM_PROMPT,
+    fullSystemPrompt,
   ];
 
   const outputFile = getOutputFilePath(sessionId);

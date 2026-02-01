@@ -426,4 +426,111 @@ describe('repoSettings router', () => {
       expect(found?.mcpServerCount).toBe(1);
     });
   });
+
+  describe('setCustomSystemPrompt', () => {
+    it('should set a custom system prompt', async () => {
+      const caller = createCaller();
+      const customPrompt = 'Always use TypeScript strict mode. Never use any type.';
+
+      await caller.repoSettings.setCustomSystemPrompt({
+        repoFullName: testRepoName,
+        customSystemPrompt: customPrompt,
+      });
+
+      const settings = await caller.repoSettings.get({ repoFullName: testRepoName });
+      expect(settings?.customSystemPrompt).toBe(customPrompt);
+    });
+
+    it('should create settings if they do not exist', async () => {
+      const caller = createCaller();
+      const customPrompt = 'This is a new repo prompt.';
+
+      await caller.repoSettings.setCustomSystemPrompt({
+        repoFullName: 'new/repo',
+        customSystemPrompt: customPrompt,
+      });
+
+      const settings = await caller.repoSettings.get({ repoFullName: 'new/repo' });
+      expect(settings?.customSystemPrompt).toBe(customPrompt);
+      expect(settings?.isFavorite).toBe(false);
+    });
+
+    it('should update an existing custom system prompt', async () => {
+      const caller = createCaller();
+
+      await caller.repoSettings.setCustomSystemPrompt({
+        repoFullName: testRepoName,
+        customSystemPrompt: 'Initial prompt',
+      });
+
+      await caller.repoSettings.setCustomSystemPrompt({
+        repoFullName: testRepoName,
+        customSystemPrompt: 'Updated prompt',
+      });
+
+      const settings = await caller.repoSettings.get({ repoFullName: testRepoName });
+      expect(settings?.customSystemPrompt).toBe('Updated prompt');
+    });
+
+    it('should clear the custom system prompt when set to null', async () => {
+      const caller = createCaller();
+
+      await caller.repoSettings.setCustomSystemPrompt({
+        repoFullName: testRepoName,
+        customSystemPrompt: 'Some prompt',
+      });
+
+      await caller.repoSettings.setCustomSystemPrompt({
+        repoFullName: testRepoName,
+        customSystemPrompt: null,
+      });
+
+      const settings = await caller.repoSettings.get({ repoFullName: testRepoName });
+      expect(settings?.customSystemPrompt).toBeNull();
+    });
+
+    it('should clear the custom system prompt when set to empty string', async () => {
+      const caller = createCaller();
+
+      await caller.repoSettings.setCustomSystemPrompt({
+        repoFullName: testRepoName,
+        customSystemPrompt: 'Some prompt',
+      });
+
+      await caller.repoSettings.setCustomSystemPrompt({
+        repoFullName: testRepoName,
+        customSystemPrompt: '   ', // whitespace only
+      });
+
+      const settings = await caller.repoSettings.get({ repoFullName: testRepoName });
+      expect(settings?.customSystemPrompt).toBeNull();
+    });
+
+    it('should include customSystemPrompt in getForContainer', async () => {
+      const caller = createCaller();
+      const customPrompt = 'Custom prompt for container';
+
+      await caller.repoSettings.setCustomSystemPrompt({
+        repoFullName: testRepoName,
+        customSystemPrompt: customPrompt,
+      });
+
+      const result = await caller.repoSettings.getForContainer({ repoFullName: testRepoName });
+      expect(result?.customSystemPrompt).toBe(customPrompt);
+    });
+
+    it('should include customSystemPrompt in listWithSettings', async () => {
+      const caller = createCaller();
+      const customPrompt = 'My custom prompt';
+
+      await caller.repoSettings.setCustomSystemPrompt({
+        repoFullName: testRepoName,
+        customSystemPrompt: customPrompt,
+      });
+
+      const result = await caller.repoSettings.listWithSettings();
+      const found = result.settings.find((s) => s.repoFullName === testRepoName);
+      expect(found?.customSystemPrompt).toBe(customPrompt);
+    });
+  });
 });

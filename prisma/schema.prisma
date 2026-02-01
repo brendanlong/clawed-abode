@@ -70,12 +70,13 @@ model ClaudeProcess {
 
 // Per-repository settings for favorites, env vars, and MCP servers
 model RepoSettings {
-  id           String   @id @default(uuid())
-  repoFullName String   @unique // e.g., "owner/repo"
-  isFavorite   Boolean  @default(false)
-  displayOrder Int      @default(0) // For custom ordering within favorites
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id                 String   @id @default(uuid())
+  repoFullName       String   @unique // e.g., "owner/repo"
+  isFavorite         Boolean  @default(false)
+  displayOrder       Int      @default(0) // For custom ordering within favorites
+  customSystemPrompt String?  // Optional prompt appended to the default system prompt
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 
   envVars    EnvVar[]
   mcpServers McpServer[]

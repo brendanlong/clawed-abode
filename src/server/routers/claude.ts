@@ -8,8 +8,10 @@ import {
   isClaudeRunningAsync,
   markLastMessageAsInterrupted,
 } from '../services/claude-runner';
+import { getRepoSettingsForContainer } from '../services/repo-settings';
 import { estimateTokenUsage } from '@/lib/token-estimation';
 import { createLogger, toError } from '@/lib/logger';
+import { extractRepoFullName } from '@/lib/utils';
 
 const log = createLogger('claude');
 
@@ -47,12 +49,22 @@ export const claudeRouter = router({
         });
       }
 
+      // Get repo settings for custom system prompt
+      const repoFullName = extractRepoFullName(session.repoUrl);
+      const repoSettings = await getRepoSettingsForContainer(repoFullName);
+
       // Start Claude in the background - don't await
       log.info('Starting Claude command', {
         sessionId: input.sessionId,
         containerId: session.containerId,
+        hasCustomSystemPrompt: !!repoSettings?.customSystemPrompt,
       });
-      runClaudeCommand(input.sessionId, session.containerId, input.prompt).catch((err) => {
+      runClaudeCommand({
+        sessionId: input.sessionId,
+        containerId: session.containerId,
+        prompt: input.prompt,
+        customSystemPrompt: repoSettings?.customSystemPrompt,
+      }).catch((err) => {
         log.error('Claude command failed', toError(err), { sessionId: input.sessionId });
       });
 
