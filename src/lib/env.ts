@@ -19,6 +19,13 @@ const envSchema = z.object({
   // Stores bare repos used as --reference during clones to speed up session creation
   GIT_CACHE_VOLUME: z.string().default('clawed-abode-git-cache'),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
+  // Server port for HTTP server
+  PORT: z
+    .string()
+    .optional()
+    .transform((val) => (val ? parseInt(val, 10) : 3000)),
+  // Next.js runtime environment (set by Next.js framework)
+  NEXT_RUNTIME: z.enum(['nodejs', 'edge']).optional(),
   // Prefix for session branches (e.g., "claude/" creates branches like "claude/{sessionId}")
   SESSION_BRANCH_PREFIX: z.string().default('claude/'),
   // Base64-encoded Argon2 hash for authentication (generate with: pnpm hash-password <yourpassword>)

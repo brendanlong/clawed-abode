@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { router, protectedProcedure } from '../trpc';
 import { TRPCError } from '@trpc/server';
+import { env } from '@/lib/env';
 
 const GITHUB_API = 'https://api.github.com';
 
@@ -105,7 +106,7 @@ export const githubRouter = router({
       })
     )
     .query(async ({ input }) => {
-      const token = process.env.GITHUB_TOKEN;
+      const token = env.GITHUB_TOKEN;
 
       if (!token) {
         throw new TRPCError({
@@ -189,7 +190,7 @@ export const githubRouter = router({
       })
     )
     .query(async ({ input }) => {
-      const token = process.env.GITHUB_TOKEN;
+      const token = env.GITHUB_TOKEN;
 
       if (!token) {
         throw new TRPCError({
@@ -227,7 +228,7 @@ export const githubRouter = router({
       })
     )
     .query(async ({ input }) => {
-      const token = process.env.GITHUB_TOKEN;
+      const token = env.GITHUB_TOKEN;
 
       if (!token) {
         throw new TRPCError({
@@ -312,7 +313,7 @@ export const githubRouter = router({
       })
     )
     .query(async ({ input }) => {
-      const token = process.env.GITHUB_TOKEN;
+      const token = env.GITHUB_TOKEN;
 
       if (!token) {
         throw new TRPCError({
