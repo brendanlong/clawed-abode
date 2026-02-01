@@ -111,7 +111,9 @@ function EnvVarsSection({
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [deleteEnvVar, setDeleteEnvVar] = useState<string | null>(null);
-  const [visibleSecrets, setVisibleSecrets] = useState<Set<string>>(new Set());
+  // Map from env var name to its revealed value
+  const [revealedSecrets, setRevealedSecrets] = useState<Map<string, string>>(new Map());
+  const [loadingSecret, setLoadingSecret] = useState<string | null>(null);
 
   const deleteMutation = trpc.repoSettings.deleteEnvVar.useMutation({
     onSuccess: () => {
@@ -120,16 +122,30 @@ function EnvVarsSection({
     },
   });
 
-  const toggleSecretVisibility = (name: string) => {
-    setVisibleSecrets((prev) => {
-      const next = new Set(prev);
-      if (next.has(name)) {
+  const utils = trpc.useUtils();
+
+  const toggleSecretVisibility = async (name: string) => {
+    if (revealedSecrets.has(name)) {
+      // Hide the secret
+      setRevealedSecrets((prev) => {
+        const next = new Map(prev);
         next.delete(name);
-      } else {
-        next.add(name);
+        return next;
+      });
+    } else {
+      // Fetch and reveal the secret
+      setLoadingSecret(name);
+      try {
+        const result = await utils.repoSettings.getEnvVarValue.fetch({ repoFullName, name });
+        setRevealedSecrets((prev) => {
+          const next = new Map(prev);
+          next.set(name, result.value);
+          return next;
+        });
+      } finally {
+        setLoadingSecret(null);
       }
-      return next;
-    });
+    }
   };
 
   return (
@@ -153,14 +169,21 @@ function EnvVarsSection({
                 <div className="text-xs text-muted-foreground flex items-center gap-1">
                   {envVar.isSecret ? (
                     <>
-                      <span>{visibleSecrets.has(envVar.name) ? envVar.value : '••••••••'}</span>
+                      <span>
+                        {revealedSecrets.has(envVar.name)
+                          ? revealedSecrets.get(envVar.name)
+                          : '••••••••'}
+                      </span>
                       <Button
                         variant="ghost"
                         size="sm"
                         className="h-5 w-5 p-0"
                         onClick={() => toggleSecretVisibility(envVar.name)}
+                        disabled={loadingSecret === envVar.name}
                       >
-                        {visibleSecrets.has(envVar.name) ? (
+                        {loadingSecret === envVar.name ? (
+                          <Spinner size="sm" className="h-3 w-3" />
+                        ) : revealedSecrets.has(envVar.name) ? (
                           <EyeOff className="h-3 w-3" />
                         ) : (
                           <Eye className="h-3 w-3" />

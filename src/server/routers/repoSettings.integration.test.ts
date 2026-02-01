@@ -300,6 +300,73 @@ describe('repoSettings router', () => {
     });
   });
 
+  describe('getEnvVarValue', () => {
+    it('should return decrypted value for secret env var', async () => {
+      const caller = createCaller();
+
+      await caller.repoSettings.setEnvVar({
+        repoFullName: testRepoName,
+        envVar: {
+          name: 'SECRET_VAR',
+          value: 'my-secret-value',
+          isSecret: true,
+        },
+      });
+
+      const result = await caller.repoSettings.getEnvVarValue({
+        repoFullName: testRepoName,
+        name: 'SECRET_VAR',
+      });
+      expect(result.value).toBe('my-secret-value');
+    });
+
+    it('should return plain value for non-secret env var', async () => {
+      const caller = createCaller();
+
+      await caller.repoSettings.setEnvVar({
+        repoFullName: testRepoName,
+        envVar: {
+          name: 'PLAIN_VAR',
+          value: 'plain-value',
+          isSecret: false,
+        },
+      });
+
+      const result = await caller.repoSettings.getEnvVarValue({
+        repoFullName: testRepoName,
+        name: 'PLAIN_VAR',
+      });
+      expect(result.value).toBe('plain-value');
+    });
+
+    it('should throw NOT_FOUND for non-existent repo', async () => {
+      const caller = createCaller();
+
+      await expect(
+        caller.repoSettings.getEnvVarValue({
+          repoFullName: 'nonexistent/repo',
+          name: 'VAR',
+        })
+      ).rejects.toThrow('Repository settings not found');
+    });
+
+    it('should throw NOT_FOUND for non-existent env var', async () => {
+      const caller = createCaller();
+
+      await caller.repoSettings.toggleFavorite({
+        repoFullName: testRepoName,
+        isFavorite: true,
+      });
+
+      await expect(
+        caller.repoSettings.getEnvVarValue({
+          repoFullName: testRepoName,
+          name: 'NONEXISTENT',
+        })
+      ).rejects.toThrow('Environment variable not found');
+    });
+  });
+
   describe('delete', () => {
     it('should delete all settings for a repo', async () => {
       const caller = createCaller();

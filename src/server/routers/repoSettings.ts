@@ -360,6 +360,42 @@ export const repoSettingsRouter = router({
     }),
 
   /**
+   * Get the decrypted value of a secret environment variable
+   * Used when user clicks "reveal" button in UI
+   */
+  getEnvVarValue: protectedProcedure
+    .input(
+      z.object({
+        repoFullName: repoFullNameSchema,
+        name: envVarNameSchema,
+      })
+    )
+    .query(async ({ input }) => {
+      const settings = await prisma.repoSettings.findUnique({
+        where: { repoFullName: input.repoFullName },
+        include: { envVars: true },
+      });
+
+      if (!settings) {
+        throw new TRPCError({
+          code: 'NOT_FOUND',
+          message: 'Repository settings not found',
+        });
+      }
+
+      const envVar = settings.envVars.find((ev) => ev.name === input.name);
+      if (!envVar) {
+        throw new TRPCError({
+          code: 'NOT_FOUND',
+          message: 'Environment variable not found',
+        });
+      }
+
+      const value = envVar.isSecret ? decrypt(envVar.value) : envVar.value;
+      return { value };
+    }),
+
+  /**
    * Delete all settings for a repository
    */
   delete: protectedProcedure
