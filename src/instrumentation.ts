@@ -3,11 +3,11 @@
  * See: https://nextjs.org/docs/app/building-your-application/optimizing/instrumentation
  */
 
-import { env } from '@/lib/env';
-
 export async function register() {
   // Only run on the server (not during build or in edge runtime)
-  if (env.NEXT_RUNTIME === 'nodejs') {
+  // Use process.env directly here to avoid importing env module at top level
+  // which would cause Next.js to analyze server-side dependencies for Edge Runtime
+  if (process.env.NEXT_RUNTIME === 'nodejs') {
     const { reconcileOrphanedProcesses } = await import('@/server/services/claude-runner');
     const { reconcileSessionsWithPodman, startBackgroundReconciliation } =
       await import('@/server/services/session-reconciler');
