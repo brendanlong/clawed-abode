@@ -1085,6 +1085,139 @@ describe('claude-runner service', () => {
       expect(systemPrompt).not.toContain('\n\nnull');
     });
 
+    it('should use global override when enabled', async () => {
+      const sessionId = 'test-global-override-' + Date.now();
+      const tailStream = createMockStream();
+      setupMocks('exec-1', tailStream);
+
+      const overridePrompt = 'This is my custom global override prompt.';
+      const commandPromise = runClaudeCommand({
+        sessionId,
+        containerId: 'container-1',
+        prompt: 'Hello',
+        globalSettings: {
+          systemPromptOverride: overridePrompt,
+          systemPromptOverrideEnabled: true,
+          systemPromptAppend: null,
+        },
+      });
+
+      await new Promise((r) => setTimeout(r, 10));
+      tailStream.emit('end');
+      await commandPromise;
+
+      const [, command] = mockDockerFunctions.execInContainerToFile.mock.calls[0];
+      const systemPromptIndex = command.indexOf('--append-system-prompt');
+      const systemPrompt = command[systemPromptIndex + 1];
+
+      // Should use the override, not the default
+      expect(systemPrompt).toContain(overridePrompt);
+      expect(systemPrompt).not.toContain('CONTAINER ISSUE REPORTING');
+    });
+
+    it('should use default when global override is disabled', async () => {
+      const sessionId = 'test-global-override-disabled-' + Date.now();
+      const tailStream = createMockStream();
+      setupMocks('exec-1', tailStream);
+
+      const commandPromise = runClaudeCommand({
+        sessionId,
+        containerId: 'container-1',
+        prompt: 'Hello',
+        globalSettings: {
+          systemPromptOverride: 'Some override that should not be used',
+          systemPromptOverrideEnabled: false,
+          systemPromptAppend: null,
+        },
+      });
+
+      await new Promise((r) => setTimeout(r, 10));
+      tailStream.emit('end');
+      await commandPromise;
+
+      const [, command] = mockDockerFunctions.execInContainerToFile.mock.calls[0];
+      const systemPromptIndex = command.indexOf('--append-system-prompt');
+      const systemPrompt = command[systemPromptIndex + 1];
+
+      // Should use the default, not the override
+      expect(systemPrompt).toContain('commit');
+      expect(systemPrompt).toContain('push');
+      expect(systemPrompt).not.toContain('Some override that should not be used');
+    });
+
+    it('should append global append content after base prompt', async () => {
+      const sessionId = 'test-global-append-' + Date.now();
+      const tailStream = createMockStream();
+      setupMocks('exec-1', tailStream);
+
+      const appendContent = 'Always prefer functional programming patterns.';
+      const commandPromise = runClaudeCommand({
+        sessionId,
+        containerId: 'container-1',
+        prompt: 'Hello',
+        globalSettings: {
+          systemPromptOverride: null,
+          systemPromptOverrideEnabled: false,
+          systemPromptAppend: appendContent,
+        },
+      });
+
+      await new Promise((r) => setTimeout(r, 10));
+      tailStream.emit('end');
+      await commandPromise;
+
+      const [, command] = mockDockerFunctions.execInContainerToFile.mock.calls[0];
+      const systemPromptIndex = command.indexOf('--append-system-prompt');
+      const systemPrompt = command[systemPromptIndex + 1];
+
+      // Should contain both default and append
+      expect(systemPrompt).toContain('commit');
+      expect(systemPrompt).toContain(appendContent);
+    });
+
+    it('should combine global override, global append, and per-repo prompt', async () => {
+      const sessionId = 'test-combined-prompts-' + Date.now();
+      const tailStream = createMockStream();
+      setupMocks('exec-1', tailStream);
+
+      const overridePrompt = 'OVERRIDE BASE';
+      const appendContent = 'GLOBAL APPEND';
+      const repoPrompt = 'REPO SPECIFIC';
+
+      const commandPromise = runClaudeCommand({
+        sessionId,
+        containerId: 'container-1',
+        prompt: 'Hello',
+        customSystemPrompt: repoPrompt,
+        globalSettings: {
+          systemPromptOverride: overridePrompt,
+          systemPromptOverrideEnabled: true,
+          systemPromptAppend: appendContent,
+        },
+      });
+
+      await new Promise((r) => setTimeout(r, 10));
+      tailStream.emit('end');
+      await commandPromise;
+
+      const [, command] = mockDockerFunctions.execInContainerToFile.mock.calls[0];
+      const systemPromptIndex = command.indexOf('--append-system-prompt');
+      const systemPrompt = command[systemPromptIndex + 1];
+
+      // Should contain all three, in order
+      expect(systemPrompt).toContain(overridePrompt);
+      expect(systemPrompt).toContain(appendContent);
+      expect(systemPrompt).toContain(repoPrompt);
+
+      // Verify order: override -> append -> repo
+      const overrideIndex = systemPrompt.indexOf(overridePrompt);
+      const appendIndex = systemPrompt.indexOf(appendContent);
+      const repoIndex = systemPrompt.indexOf(repoPrompt);
+
+      expect(overrideIndex).toBeLessThan(appendIndex);
+      expect(appendIndex).toBeLessThan(repoIndex);
+    });
+
     it('should handle invalid JSON lines gracefully', async () => {
       const sessionId = 'test-invalid-json-' + Date.now();
       const tailStream = createMockStream();

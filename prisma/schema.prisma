@@ -114,3 +114,13 @@ model McpServer {
   @@unique([repoSettingsId, name])
   @@index([repoSettingsId])
 }
+
+// Global application settings (singleton - only one row)
+model GlobalSettings {
+  id                        String   @id @default("global") // Singleton pattern
+  systemPromptOverride      String?  // If set, replaces the default system prompt
+  systemPromptOverrideEnabled Boolean @default(false) // Whether to use the override
+  systemPromptAppend        String?  // Additional content appended after default/override prompt
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+}
