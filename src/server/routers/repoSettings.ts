@@ -100,6 +100,7 @@ export const repoSettingsRouter = router({
         repoFullName: settings.repoFullName,
         isFavorite: settings.isFavorite,
         displayOrder: settings.displayOrder,
+        customSystemPrompt: settings.customSystemPrompt,
         createdAt: settings.createdAt,
         updatedAt: settings.updatedAt,
         envVars: maskSecrets(
@@ -149,6 +150,37 @@ export const repoSettingsRouter = router({
     }),
 
   /**
+   * Set custom system prompt for a repository
+   * Pass null or empty string to clear
+   */
+  setCustomSystemPrompt: protectedProcedure
+    .input(
+      z.object({
+        repoFullName: repoFullNameSchema,
+        customSystemPrompt: z.string().max(10000).nullable(),
+      })
+    )
+    .mutation(async ({ input }) => {
+      const prompt = input.customSystemPrompt?.trim() || null;
+
+      await prisma.repoSettings.upsert({
+        where: { repoFullName: input.repoFullName },
+        create: {
+          repoFullName: input.repoFullName,
+          customSystemPrompt: prompt,
+        },
+        update: { customSystemPrompt: prompt },
+      });
+
+      log.info('Set custom system prompt', {
+        repoFullName: input.repoFullName,
+        hasPrompt: prompt !== null,
+      });
+
+      return { success: true };
+    }),
+
+  /**
    * List all favorite repository names
    */
   listFavorites: protectedProcedure.query(async () => {
@@ -178,6 +210,7 @@ export const repoSettingsRouter = router({
         id: s.id,
         repoFullName: s.repoFullName,
         isFavorite: s.isFavorite,
+        customSystemPrompt: s.customSystemPrompt,
         envVarCount: s.envVars.length,
         mcpServerCount: s.mcpServers.length,
         envVars: s.envVars,
@@ -427,6 +460,7 @@ export const repoSettingsRouter = router({
       }
 
       return {
+        customSystemPrompt: settings.customSystemPrompt,
         envVars: settings.envVars.map((ev) => ({
           name: ev.name,
           value: ev.isSecret ? decrypt(ev.value) : ev.value,

@@ -14,8 +14,9 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Spinner } from '@/components/ui/spinner';
 import { Separator } from '@/components/ui/separator';
+import { Textarea } from '@/components/ui/textarea';
 import { trpc } from '@/lib/trpc';
-import { Plus, Trash2, Eye, EyeOff, Star } from 'lucide-react';
+import { Plus, Trash2, Eye, EyeOff, Star, FileText } from 'lucide-react';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -70,6 +71,15 @@ export function RepoSettingsEditor({ repoFullName, onClose }: RepoSettingsEditor
 
             <Separator />
 
+            {/* Custom System Prompt */}
+            <CustomSystemPromptSection
+              repoFullName={repoFullName}
+              customSystemPrompt={data?.customSystemPrompt ?? null}
+              onUpdate={refetch}
+            />
+
+            <Separator />
+
             {/* Environment Variables */}
             <EnvVarsSection
               repoFullName={repoFullName}
@@ -89,6 +99,89 @@ export function RepoSettingsEditor({ repoFullName, onClose }: RepoSettingsEditor
         )}
       </SheetContent>
     </Sheet>
+  );
+}
+
+function CustomSystemPromptSection({
+  repoFullName,
+  customSystemPrompt,
+  onUpdate,
+}: {
+  repoFullName: string;
+  customSystemPrompt: string | null;
+  onUpdate: () => void;
+}) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [value, setValue] = useState(customSystemPrompt ?? '');
+  const [error, setError] = useState<string | null>(null);
+
+  const mutation = trpc.repoSettings.setCustomSystemPrompt.useMutation({
+    onSuccess: () => {
+      setIsEditing(false);
+      onUpdate();
+    },
+    onError: (err) => setError(err.message),
+  });
+
+  const handleSave = () => {
+    setError(null);
+    mutation.mutate({
+      repoFullName,
+      customSystemPrompt: value.trim() || null,
+    });
+  };
+
+  const handleCancel = () => {
+    setValue(customSystemPrompt ?? '');
+    setIsEditing(false);
+    setError(null);
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2">
+        <FileText className="h-4 w-4 text-muted-foreground" />
+        <h3 className="font-medium">Custom System Prompt</h3>
+      </div>
+
+      <p className="text-sm text-muted-foreground">
+        This prompt is appended to the default system prompt for all sessions using this repository.
+      </p>
+
+      {isEditing ? (
+        <div className="space-y-3">
+          <Textarea
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            placeholder="Enter custom instructions for Claude when working with this repository..."
+            className="min-h-[120px] font-mono text-sm"
+          />
+          {error && <p className="text-sm text-destructive">{error}</p>}
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={handleCancel}>
+              Cancel
+            </Button>
+            <Button size="sm" onClick={handleSave} disabled={mutation.isPending}>
+              {mutation.isPending ? <Spinner size="sm" /> : 'Save'}
+            </Button>
+          </div>
+        </div>
+      ) : customSystemPrompt ? (
+        <div className="space-y-3">
+          <div className="rounded-md bg-muted/50 p-3">
+            <pre className="text-sm whitespace-pre-wrap font-mono">{customSystemPrompt}</pre>
+          </div>
+          <Button variant="outline" size="sm" onClick={() => setIsEditing(true)}>
+            Edit
+          </Button>
+        </div>
+      ) : (
+        <Button variant="outline" size="sm" onClick={() => setIsEditing(true)}>
+          <Plus className="h-4 w-4 mr-1" />
+          Add Custom Prompt
+        </Button>
+      )}
+    </div>
   );
 }
 

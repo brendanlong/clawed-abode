@@ -431,6 +431,7 @@ The system maintains a cache of bare git repositories to speed up session creati
 Users can configure per-repository settings that are automatically applied when creating sessions:
 
 - **Favorites**: Mark repositories as favorites so they appear at the top of the repo selector
+- **Custom System Prompt**: Additional instructions appended to the default system prompt for all sessions using this repository
 - **Environment Variables**: Custom env vars passed to the container (e.g., API keys, config values)
 - **MCP Servers**: Configure [MCP servers](https://modelcontextprotocol.io/) for Claude to use
 
@@ -447,6 +448,23 @@ Users can configure per-repository settings that are automatically applied when 
 3. Or use the star icon in the new session repo selector to toggle favorites
 
 **Implementation**: See [`src/server/routers/repoSettings.ts`](../src/server/routers/repoSettings.ts) for the API and [`src/lib/crypto.ts`](../src/lib/crypto.ts) for encryption.
+
+### Global System Prompt Settings
+
+Users can configure global system prompt settings that apply to all sessions:
+
+- **System Prompt Override**: Replace the default system prompt with a custom one. When editing, the field is pre-populated with the current default prompt. The override can be toggled on/off without losing the custom content.
+- **Global System Prompt Append**: Additional content appended to the base prompt (default or override) for all sessions. This is applied before any per-repo custom prompts.
+
+**Prompt Order**: When Claude runs, the system prompt is built in this order:
+
+1. Base prompt (either the default or the override if enabled)
+2. Global append content (if set)
+3. Per-repository custom prompt (if set for that repo)
+
+**Configuration**: Go to Settings → System Prompt to manage these settings.
+
+**Implementation**: See [`src/server/routers/globalSettings.ts`](../src/server/routers/globalSettings.ts) for the API and [`src/server/services/claude-runner.ts`](../src/server/services/claude-runner.ts) for how prompts are combined.
 
 ## UI Screens
 
