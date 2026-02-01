@@ -41,6 +41,10 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((val) => val === 'true' || val === '1'),
+  // 32+ character key for encrypting secrets (env vars, MCP API keys)
+  // Generate with: openssl rand -base64 32
+  // Required for storing per-repo secrets
+  ENCRYPTION_KEY: z.string().min(32).optional(),
   // Explicit Claude config JSON for MCP servers
   // If set, this JSON will be written to ~/.claude.json in runner containers
   // instead of copying the host's .claude.json (which may contain Claude.ai's
@@ -61,24 +65,37 @@ const envSchema = z.object({
 
 export type Env = z.infer<typeof envSchema>;
 
-function validateEnv(): Env {
+/**
+ * Parse and validate environment variables.
+ * Called on each property access to support dynamic env changes (e.g., in tests).
+ */
+function getEnv(): Env {
   // During build time, use defaults
   const isBuildTime = process.env.NEXT_PHASE === 'phase-production-build';
 
   const parsed = envSchema.safeParse(process.env);
 
   if (!parsed.success) {
-    console.error('Invalid environment variables:', parsed.error.flatten().fieldErrors);
-    // In development or build time, use defaults instead of crashing
-    if (process.env.NODE_ENV !== 'production' || isBuildTime) {
-      console.warn('Using default environment values');
-      // Provide dummy value for required CLAUDE_CODE_OAUTH_TOKEN during build
-      return envSchema.parse({ CLAUDE_CODE_OAUTH_TOKEN: 'build-time-placeholder' });
+    // During build time only, use defaults (Next.js imports server code during build)
+    if (isBuildTime) {
+      return envSchema.parse({
+        ...process.env,
+        CLAUDE_CODE_OAUTH_TOKEN: 'build-time-placeholder',
+      });
     }
+    console.error('Invalid environment variables:', parsed.error.flatten().fieldErrors);
     throw new Error('Invalid environment variables');
   }
 
   return parsed.data;
 }
 
-export const env = validateEnv();
+/**
+ * Proxy that calls getEnv() on each property access.
+ * This supports dynamic env changes in tests.
+ */
+export const env: Env = new Proxy({} as Env, {
+  get(_target, prop: keyof Env) {
+    return getEnv()[prop];
+  },
+});
