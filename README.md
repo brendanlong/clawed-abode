@@ -145,6 +145,7 @@ podman run -d \
   -e CLAUDE_CODE_OAUTH_TOKEN="$CLAUDE_CODE_OAUTH_TOKEN" \
   -e NODE_ENV=production \
   -e PASSWORD_HASH="$PASSWORD_HASH" \
+  -e ENCRYPTION_KEY="$ENCRYPTION_KEY" \
   -e PODMAN_SOCKET_PATH="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman/podman.sock" \
   -e CLAUDE_RUNNER_IMAGE=ghcr.io/brendanlong/clawed-abode-runner:latest \
   -v clawed-abode-db:/data/db \
