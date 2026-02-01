@@ -76,10 +76,12 @@ function getEnv(): Env {
   const parsed = envSchema.safeParse(process.env);
 
   if (!parsed.success) {
-    // In development or build time, use defaults instead of crashing
-    if (process.env.NODE_ENV !== 'production' || isBuildTime) {
-      // Provide dummy value for required CLAUDE_CODE_OAUTH_TOKEN during build
-      return envSchema.parse({ CLAUDE_CODE_OAUTH_TOKEN: 'build-time-placeholder' });
+    // During build time only, use defaults (Next.js imports server code during build)
+    if (isBuildTime) {
+      return envSchema.parse({
+        ...process.env,
+        CLAUDE_CODE_OAUTH_TOKEN: 'build-time-placeholder',
+      });
     }
     console.error('Invalid environment variables:', parsed.error.flatten().fieldErrors);
     throw new Error('Invalid environment variables');
@@ -88,4 +90,12 @@ function getEnv(): Env {
   return parsed.data;
 }
 
-export const env: Env = getEnv();
+/**
+ * Proxy that calls getEnv() on each property access.
+ * This supports dynamic env changes in tests.
+ */
+export const env: Env = new Proxy({} as Env, {
+  get(_target, prop: keyof Env) {
+    return getEnv()[prop];
+  },
+});

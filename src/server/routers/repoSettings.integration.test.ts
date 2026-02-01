@@ -1,9 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { setupTestDb, teardownTestDb, testPrisma, clearTestDb } from '@/test/setup-test-db';
 
-// Set up encryption key for testing
-process.env.ENCRYPTION_KEY = 'test-encryption-key-that-is-at-least-32-chars-long';
-
 // Mock logger
 vi.mock('@/lib/logger', () => ({
   createLogger: () => ({

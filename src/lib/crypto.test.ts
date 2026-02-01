@@ -116,8 +116,14 @@ describe('crypto', () => {
   });
 
   describe('isEncryptionConfigured', () => {
-    it('should return false for undefined key', () => {
-      expect(isEncryptionConfigured(undefined)).toBe(false);
+    it('should return false when no key provided and env var not set', () => {
+      const originalKey = process.env.ENCRYPTION_KEY;
+      delete process.env.ENCRYPTION_KEY;
+      try {
+        expect(isEncryptionConfigured(undefined)).toBe(false);
+      } finally {
+        process.env.ENCRYPTION_KEY = originalKey;
+      }
     });
 
     it('should return false for short key', () => {
