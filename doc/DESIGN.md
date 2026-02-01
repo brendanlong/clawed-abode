@@ -431,6 +431,7 @@ The system maintains a cache of bare git repositories to speed up session creati
 Users can configure per-repository settings that are automatically applied when creating sessions:
 
 - **Favorites**: Mark repositories as favorites so they appear at the top of the repo selector
+- **Custom System Prompt**: Additional instructions appended to the default system prompt for all sessions using this repository
 - **Environment Variables**: Custom env vars passed to the container (e.g., API keys, config values)
 - **MCP Servers**: Configure [MCP servers](https://modelcontextprotocol.io/) for Claude to use
 
