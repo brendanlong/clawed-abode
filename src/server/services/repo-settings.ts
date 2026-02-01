@@ -23,6 +23,7 @@ export interface ContainerMcpServer {
  * Repo settings ready for container creation
  */
 export interface ContainerRepoSettings {
+  customSystemPrompt: string | null;
   envVars: ContainerEnvVar[];
   mcpServers: ContainerMcpServer[];
 }
@@ -71,5 +72,9 @@ export async function getRepoSettingsForContainer(
     };
   });
 
-  return { envVars, mcpServers };
+  return {
+    customSystemPrompt: settings.customSystemPrompt,
+    envVars,
+    mcpServers,
+  };
 }

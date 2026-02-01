@@ -679,15 +679,23 @@ describe('claude-runner service', () => {
       setupMocks('exec-1', tailStream);
 
       // Start first command (don't await - we want it running)
-      const firstCommand = runClaudeCommand(sessionId, 'container-1', 'First prompt');
+      const firstCommand = runClaudeCommand({
+        sessionId,
+        containerId: 'container-1',
+        prompt: 'First prompt',
+      });
 
       // Give it time to register in the map
       await new Promise((r) => setTimeout(r, 10));
 
       // Try to start second command with same session ID
-      await expect(runClaudeCommand(sessionId, 'container-1', 'Second prompt')).rejects.toThrow(
-        'A Claude process is already running for this session'
-      );
+      await expect(
+        runClaudeCommand({
+          sessionId,
+          containerId: 'container-1',
+          prompt: 'Second prompt',
+        })
+      ).rejects.toThrow('A Claude process is already running for this session');
 
       // Clean up: end the first stream so it cleans up properly
       tailStream.emit('end');
@@ -712,7 +720,11 @@ describe('claude-runner service', () => {
 
       setupMocks('new-exec-id', tailStream);
 
-      const commandPromise = runClaudeCommand(sessionId, 'container-1', 'Hello');
+      const commandPromise = runClaudeCommand({
+        sessionId,
+        containerId: 'container-1',
+        prompt: 'Hello',
+      });
 
       await new Promise((r) => setTimeout(r, 10));
       tailStream.emit('end');
@@ -729,7 +741,11 @@ describe('claude-runner service', () => {
       const tailStream = createMockStream();
       setupMocks('exec-1', tailStream);
 
-      const commandPromise = runClaudeCommand(sessionId, 'container-1', 'Hello Claude');
+      const commandPromise = runClaudeCommand({
+        sessionId,
+        containerId: 'container-1',
+        prompt: 'Hello Claude',
+      });
 
       await new Promise((r) => setTimeout(r, 10));
       tailStream.emit('end');
@@ -750,7 +766,11 @@ describe('claude-runner service', () => {
       const tailStream = createMockStream();
       setupMocks('exec-1', tailStream);
 
-      const commandPromise = runClaudeCommand(sessionId, 'container-1', 'Hello');
+      const commandPromise = runClaudeCommand({
+        sessionId,
+        containerId: 'container-1',
+        prompt: 'Hello',
+      });
 
       await new Promise((r) => setTimeout(r, 10));
       tailStream.emit('end');
@@ -773,7 +793,11 @@ describe('claude-runner service', () => {
 
       setupMocks('exec-1', tailStream);
 
-      const commandPromise = runClaudeCommand(sessionId, 'container-1', 'First message');
+      const commandPromise = runClaudeCommand({
+        sessionId,
+        containerId: 'container-1',
+        prompt: 'First message',
+      });
 
       await new Promise((r) => setTimeout(r, 10));
       tailStream.emit('end');
@@ -793,7 +817,11 @@ describe('claude-runner service', () => {
 
       setupMocks('exec-1', tailStream);
 
-      const commandPromise = runClaudeCommand(sessionId, 'container-1', 'Follow-up');
+      const commandPromise = runClaudeCommand({
+        sessionId,
+        containerId: 'container-1',
+        prompt: 'Follow-up',
+      });
 
       await new Promise((r) => setTimeout(r, 10));
       tailStream.emit('end');
@@ -810,7 +838,11 @@ describe('claude-runner service', () => {
       const tailStream = createMockStream();
       setupMocks('exec-1', tailStream);
 
-      const commandPromise = runClaudeCommand(sessionId, 'container-1', 'Hello');
+      const commandPromise = runClaudeCommand({
+        sessionId,
+        containerId: 'container-1',
+        prompt: 'Hello',
+      });
 
       await new Promise((r) => setTimeout(r, 10));
 
@@ -849,7 +881,11 @@ describe('claude-runner service', () => {
       // Message already exists in DB
       mockPrisma.message.findUnique.mockResolvedValue({ id: 'existing-msg-id' });
 
-      const commandPromise = runClaudeCommand(sessionId, 'container-1', 'Hello');
+      const commandPromise = runClaudeCommand({
+        sessionId,
+        containerId: 'container-1',
+        prompt: 'Hello',
+      });
 
       await new Promise((r) => setTimeout(r, 10));
 
@@ -878,7 +914,11 @@ describe('claude-runner service', () => {
       const tailStream = createMockStream();
       setupMocks('test-exec-id', tailStream);
 
-      const commandPromise = runClaudeCommand(sessionId, 'container-123', 'Hello');
+      const commandPromise = runClaudeCommand({
+        sessionId,
+        containerId: 'container-123',
+        prompt: 'Hello',
+      });
 
       await new Promise((r) => setTimeout(r, 10));
       tailStream.emit('end');
@@ -898,7 +938,11 @@ describe('claude-runner service', () => {
       const tailStream = createMockStream();
       setupMocks('exec-1', tailStream);
 
-      const commandPromise = runClaudeCommand(sessionId, 'container-1', 'Hello');
+      const commandPromise = runClaudeCommand({
+        sessionId,
+        containerId: 'container-1',
+        prompt: 'Hello',
+      });
 
       await new Promise((r) => setTimeout(r, 10));
       tailStream.emit('error', new Error('Stream connection lost'));
@@ -916,7 +960,11 @@ describe('claude-runner service', () => {
 
       mockDockerFunctions.findProcessInContainer.mockResolvedValue(12345);
 
-      const commandPromise = runClaudeCommand(sessionId, 'container-1', 'Hello');
+      const commandPromise = runClaudeCommand({
+        sessionId,
+        containerId: 'container-1',
+        prompt: 'Hello',
+      });
 
       // Wait for PID search (retries up to 10 times with 200ms delay)
       await new Promise((r) => setTimeout(r, 50));
@@ -939,7 +987,11 @@ describe('claude-runner service', () => {
       const tailStream = createMockStream();
       setupMocks('exec-1', tailStream);
 
-      const commandPromise = runClaudeCommand(sessionId, 'container-1', 'Test prompt');
+      const commandPromise = runClaudeCommand({
+        sessionId,
+        containerId: 'container-1',
+        prompt: 'Test prompt',
+      });
 
       await new Promise((r) => setTimeout(r, 10));
       tailStream.emit('end');
@@ -962,7 +1014,11 @@ describe('claude-runner service', () => {
       const tailStream = createMockStream();
       setupMocks('exec-1', tailStream);
 
-      const commandPromise = runClaudeCommand(sessionId, 'container-1', 'Hello');
+      const commandPromise = runClaudeCommand({
+        sessionId,
+        containerId: 'container-1',
+        prompt: 'Hello',
+      });
 
       await new Promise((r) => setTimeout(r, 10));
       tailStream.emit('end');
@@ -977,12 +1033,201 @@ describe('claude-runner service', () => {
       expect(systemPrompt).toContain('Pull Request');
     });
 
+    it('should append custom system prompt when provided', async () => {
+      const sessionId = 'test-custom-prompt-' + Date.now();
+      const tailStream = createMockStream();
+      setupMocks('exec-1', tailStream);
+
+      const customPrompt = 'Always use TypeScript strict mode.';
+      const commandPromise = runClaudeCommand({
+        sessionId,
+        containerId: 'container-1',
+        prompt: 'Hello',
+        customSystemPrompt: customPrompt,
+      });
+
+      await new Promise((r) => setTimeout(r, 10));
+      tailStream.emit('end');
+      await commandPromise;
+
+      const [, command] = mockDockerFunctions.execInContainerToFile.mock.calls[0];
+      const systemPromptIndex = command.indexOf('--append-system-prompt');
+      const systemPrompt = command[systemPromptIndex + 1];
+
+      // Should contain both default and custom prompt
+      expect(systemPrompt).toContain('commit');
+      expect(systemPrompt).toContain('push');
+      expect(systemPrompt).toContain(customPrompt);
+    });
+
+    it('should not append anything when customSystemPrompt is null', async () => {
+      const sessionId = 'test-null-custom-prompt-' + Date.now();
+      const tailStream = createMockStream();
+      setupMocks('exec-1', tailStream);
+
+      const commandPromise = runClaudeCommand({
+        sessionId,
+        containerId: 'container-1',
+        prompt: 'Hello',
+        customSystemPrompt: null,
+      });
+
+      await new Promise((r) => setTimeout(r, 10));
+      tailStream.emit('end');
+      await commandPromise;
+
+      const [, command] = mockDockerFunctions.execInContainerToFile.mock.calls[0];
+      const systemPromptIndex = command.indexOf('--append-system-prompt');
+      const systemPrompt = command[systemPromptIndex + 1];
+
+      // Should only contain the default prompt, no extra newlines at the end
+      expect(systemPrompt).toContain('commit');
+      expect(systemPrompt).not.toContain('\n\nnull');
+    });
+
+    it('should use global override when enabled', async () => {
+      const sessionId = 'test-global-override-' + Date.now();
+      const tailStream = createMockStream();
+      setupMocks('exec-1', tailStream);
+
+      const overridePrompt = 'This is my custom global override prompt.';
+      const commandPromise = runClaudeCommand({
+        sessionId,
+        containerId: 'container-1',
+        prompt: 'Hello',
+        globalSettings: {
+          systemPromptOverride: overridePrompt,
+          systemPromptOverrideEnabled: true,
+          systemPromptAppend: null,
+        },
+      });
+
+      await new Promise((r) => setTimeout(r, 10));
+      tailStream.emit('end');
+      await commandPromise;
+
+      const [, command] = mockDockerFunctions.execInContainerToFile.mock.calls[0];
+      const systemPromptIndex = command.indexOf('--append-system-prompt');
+      const systemPrompt = command[systemPromptIndex + 1];
+
+      // Should use the override, not the default
+      expect(systemPrompt).toContain(overridePrompt);
+      expect(systemPrompt).not.toContain('CONTAINER ISSUE REPORTING');
+    });
+
+    it('should use default when global override is disabled', async () => {
+      const sessionId = 'test-global-override-disabled-' + Date.now();
+      const tailStream = createMockStream();
+      setupMocks('exec-1', tailStream);
+
+      const commandPromise = runClaudeCommand({
+        sessionId,
+        containerId: 'container-1',
+        prompt: 'Hello',
+        globalSettings: {
+          systemPromptOverride: 'Some override that should not be used',
+          systemPromptOverrideEnabled: false,
+          systemPromptAppend: null,
+        },
+      });
+
+      await new Promise((r) => setTimeout(r, 10));
+      tailStream.emit('end');
+      await commandPromise;
+
+      const [, command] = mockDockerFunctions.execInContainerToFile.mock.calls[0];
+      const systemPromptIndex = command.indexOf('--append-system-prompt');
+      const systemPrompt = command[systemPromptIndex + 1];
+
+      // Should use the default, not the override
+      expect(systemPrompt).toContain('commit');
+      expect(systemPrompt).toContain('push');
+      expect(systemPrompt).not.toContain('Some override that should not be used');
+    });
+
+    it('should append global append content after base prompt', async () => {
+      const sessionId = 'test-global-append-' + Date.now();
+      const tailStream = createMockStream();
+      setupMocks('exec-1', tailStream);
+
+      const appendContent = 'Always prefer functional programming patterns.';
+      const commandPromise = runClaudeCommand({
+        sessionId,
+        containerId: 'container-1',
+        prompt: 'Hello',
+        globalSettings: {
+          systemPromptOverride: null,
+          systemPromptOverrideEnabled: false,
+          systemPromptAppend: appendContent,
+        },
+      });
+
+      await new Promise((r) => setTimeout(r, 10));
+      tailStream.emit('end');
+      await commandPromise;
+
+      const [, command] = mockDockerFunctions.execInContainerToFile.mock.calls[0];
+      const systemPromptIndex = command.indexOf('--append-system-prompt');
+      const systemPrompt = command[systemPromptIndex + 1];
+
+      // Should contain both default and append
+      expect(systemPrompt).toContain('commit');
+      expect(systemPrompt).toContain(appendContent);
+    });
+
+    it('should combine global override, global append, and per-repo prompt', async () => {
+      const sessionId = 'test-combined-prompts-' + Date.now();
+      const tailStream = createMockStream();
+      setupMocks('exec-1', tailStream);
+
+      const overridePrompt = 'OVERRIDE BASE';
+      const appendContent = 'GLOBAL APPEND';
+      const repoPrompt = 'REPO SPECIFIC';
+
+      const commandPromise = runClaudeCommand({
+        sessionId,
+        containerId: 'container-1',
+        prompt: 'Hello',
+        customSystemPrompt: repoPrompt,
+        globalSettings: {
+          systemPromptOverride: overridePrompt,
+          systemPromptOverrideEnabled: true,
+          systemPromptAppend: appendContent,
+        },
+      });
+
+      await new Promise((r) => setTimeout(r, 10));
+      tailStream.emit('end');
+      await commandPromise;
+
+      const [, command] = mockDockerFunctions.execInContainerToFile.mock.calls[0];
+      const systemPromptIndex = command.indexOf('--append-system-prompt');
+      const systemPrompt = command[systemPromptIndex + 1];
+
+      // Should contain all three, in order
+      expect(systemPrompt).toContain(overridePrompt);
+      expect(systemPrompt).toContain(appendContent);
+      expect(systemPrompt).toContain(repoPrompt);
+
+      // Verify order: override -> append -> repo
+      const overrideIndex = systemPrompt.indexOf(overridePrompt);
+      const appendIndex = systemPrompt.indexOf(appendContent);
+      const repoIndex = systemPrompt.indexOf(repoPrompt);
+
+      expect(overrideIndex).toBeLessThan(appendIndex);
+      expect(appendIndex).toBeLessThan(repoIndex);
+    });
+
     it('should handle invalid JSON lines gracefully', async () => {
       const sessionId = 'test-invalid-json-' + Date.now();
       const tailStream = createMockStream();
       setupMocks('exec-1', tailStream);
 
-      const commandPromise = runClaudeCommand(sessionId, 'container-1', 'Hello');
+      const commandPromise = runClaudeCommand({
+        sessionId,
+        containerId: 'container-1',
+        prompt: 'Hello',
+      });
 
       await new Promise((r) => setTimeout(r, 10));
 
@@ -1001,7 +1246,11 @@ describe('claude-runner service', () => {
       const tailStream = createMockStream();
       setupMocks('exec-1', tailStream);
 
-      const commandPromise = runClaudeCommand(sessionId, 'container-1', 'Hello');
+      const commandPromise = runClaudeCommand({
+        sessionId,
+        containerId: 'container-1',
+        prompt: 'Hello',
+      });
 
       await new Promise((r) => setTimeout(r, 10));
 

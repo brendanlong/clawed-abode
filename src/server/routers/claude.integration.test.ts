@@ -84,9 +84,11 @@ describe('claudeRouter integration', () => {
 
       expect(result).toEqual({ success: true });
       expect(mockRunClaudeCommand).toHaveBeenCalledWith(
-        session.id,
-        'container-123',
-        'Hello, Claude!'
+        expect.objectContaining({
+          sessionId: session.id,
+          containerId: 'container-123',
+          prompt: 'Hello, Claude!',
+        })
       );
     });
 

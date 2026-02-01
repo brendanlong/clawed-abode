@@ -37,10 +37,11 @@ const OUTPUT_FILE_PREFIX = '.claude-output-';
 // Using /usr/bin/claude because that's the installed path and won't match other processes
 const CLAUDE_PROCESS_PATTERN = '/usr/bin/claude';
 
-// System prompt appended to all Claude sessions to ensure proper workflow
+// Default system prompt appended to all Claude sessions to ensure proper workflow
 // Since users interact through GitHub PRs (no local access), Claude must always
 // commit, push, and open PRs for any changes to be visible
-const SYSTEM_PROMPT = `IMPORTANT: The user is accessing this session remotely through a web interface and has no local access to the files. They can only see your changes through GitHub. Therefore, you MUST follow this workflow for ANY code changes:
+// This is exported so the UI can display it when setting up an override
+export const DEFAULT_SYSTEM_PROMPT = `IMPORTANT: The user is accessing this session remotely through a web interface and has no local access to the files. They can only see your changes through GitHub. Therefore, you MUST follow this workflow for ANY code changes:
 
 1. Always commit your changes with clear, descriptive commit messages
 2. Always push your commits to the remote repository
@@ -287,11 +288,22 @@ function getOutputFilePath(sessionId: string): string {
   return `/tmp/${getOutputFileName(sessionId)}`;
 }
 
-export async function runClaudeCommand(
-  sessionId: string,
-  containerId: string,
-  prompt: string
-): Promise<void> {
+export interface RunClaudeCommandOptions {
+  sessionId: string;
+  containerId: string;
+  prompt: string;
+  /** Optional per-repo custom system prompt appended after the base system prompt */
+  customSystemPrompt?: string | null;
+  /** Global settings for system prompt override/append */
+  globalSettings?: {
+    systemPromptOverride: string | null;
+    systemPromptOverrideEnabled: boolean;
+    systemPromptAppend: string | null;
+  } | null;
+}
+
+export async function runClaudeCommand(options: RunClaudeCommandOptions): Promise<void> {
+  const { sessionId, containerId, prompt, customSystemPrompt, globalSettings } = options;
   log.info('runClaudeCommand: Starting', { sessionId, containerId, promptLength: prompt.length });
 
   // Check if session already has a running process (in-memory check first for speed)
@@ -366,6 +378,28 @@ export async function runClaudeCommand(
   // Build the Claude command
   // Use --resume for subsequent messages, --session-id for the first
   const isFirstMessage = !lastMessage;
+
+  // Build the full system prompt:
+  // 1. Start with either the global override (if enabled) or the default prompt
+  // 2. Append global append content (if any)
+  // 3. Append per-repo custom prompt (if any)
+  let basePrompt = DEFAULT_SYSTEM_PROMPT;
+  if (globalSettings?.systemPromptOverrideEnabled && globalSettings.systemPromptOverride) {
+    basePrompt = globalSettings.systemPromptOverride;
+  }
+
+  let fullSystemPrompt = basePrompt;
+
+  // Add global append content
+  if (globalSettings?.systemPromptAppend) {
+    fullSystemPrompt += '\n\n' + globalSettings.systemPromptAppend;
+  }
+
+  // Add per-repo custom prompt
+  if (customSystemPrompt) {
+    fullSystemPrompt += '\n\n' + customSystemPrompt;
+  }
+
   const command = [
     'claude',
     '--model',
@@ -378,7 +412,7 @@ export async function runClaudeCommand(
     '--verbose',
     '--dangerously-skip-permissions',
     '--append-system-prompt',
-    SYSTEM_PROMPT,
+    fullSystemPrompt,
   ];
 
   const outputFile = getOutputFilePath(sessionId);
