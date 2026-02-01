@@ -6,6 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AuthSessionsTab } from '@/components/settings/AuthSessionsTab';
 import { AppearanceTab } from '@/components/settings/AppearanceTab';
 import { RepositoriesTab } from '@/components/settings/RepositoriesTab';
+import { SystemPromptTab } from '@/components/settings/SystemPromptTab';
 
 export default function SettingsPage() {
   return (
@@ -18,14 +19,19 @@ export default function SettingsPage() {
             <h1 className="text-2xl font-bold mb-6">Settings</h1>
 
             <Tabs defaultValue="appearance">
-              <TabsList className="mb-4">
+              <TabsList className="mb-4 flex-wrap">
                 <TabsTrigger value="appearance">Appearance</TabsTrigger>
+                <TabsTrigger value="system-prompt">System Prompt</TabsTrigger>
                 <TabsTrigger value="repositories">Repositories</TabsTrigger>
                 <TabsTrigger value="sessions">Sessions</TabsTrigger>
               </TabsList>
 
               <TabsContent value="appearance">
                 <AppearanceTab />
+              </TabsContent>
+
+              <TabsContent value="system-prompt">
+                <SystemPromptTab />
               </TabsContent>
 
               <TabsContent value="repositories">

@@ -9,6 +9,7 @@ import {
   markLastMessageAsInterrupted,
 } from '../services/claude-runner';
 import { getRepoSettingsForContainer } from '../services/repo-settings';
+import { getGlobalSettings } from '../services/global-settings';
 import { estimateTokenUsage } from '@/lib/token-estimation';
 import { createLogger, toError } from '@/lib/logger';
 import { extractRepoFullName } from '@/lib/utils';
@@ -49,21 +50,27 @@ export const claudeRouter = router({
         });
       }
 
-      // Get repo settings for custom system prompt
+      // Get repo settings for custom system prompt and global settings
       const repoFullName = extractRepoFullName(session.repoUrl);
-      const repoSettings = await getRepoSettingsForContainer(repoFullName);
+      const [repoSettings, globalSettings] = await Promise.all([
+        getRepoSettingsForContainer(repoFullName),
+        getGlobalSettings(),
+      ]);
 
       // Start Claude in the background - don't await
       log.info('Starting Claude command', {
         sessionId: input.sessionId,
         containerId: session.containerId,
         hasCustomSystemPrompt: !!repoSettings?.customSystemPrompt,
+        hasGlobalOverride: globalSettings.systemPromptOverrideEnabled,
+        hasGlobalAppend: !!globalSettings.systemPromptAppend,
       });
       runClaudeCommand({
         sessionId: input.sessionId,
         containerId: session.containerId,
         prompt: input.prompt,
         customSystemPrompt: repoSettings?.customSystemPrompt,
+        globalSettings,
       }).catch((err) => {
         log.error('Claude command failed', toError(err), { sessionId: input.sessionId });
       });
