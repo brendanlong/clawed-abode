@@ -14,6 +14,7 @@ import { getRepoSettingsForContainer } from '../services/repo-settings';
 import { syncSessionStatus } from '../services/session-reconciler';
 import { sseEvents } from '../services/events';
 import { createLogger, toError } from '@/lib/logger';
+import { env } from '@/lib/env';
 
 const log = createLogger('sessions');
 
@@ -110,7 +111,7 @@ export const sessionsRouter = router({
       })
     )
     .mutation(async ({ input }) => {
-      const githubToken = process.env.GITHUB_TOKEN;
+      const githubToken = env.GITHUB_TOKEN;
 
       // Create session record first
       const session = await prisma.session.create({
@@ -207,7 +208,7 @@ export const sessionsRouter = router({
       }
 
       try {
-        const githubToken = process.env.GITHUB_TOKEN;
+        const githubToken = env.GITHUB_TOKEN;
 
         // Extract repoFullName from repoUrl (e.g., "https://github.com/owner/repo.git" -> "owner/repo")
         const repoFullNameMatch = session.repoUrl.match(/github\.com\/([^/]+\/[^/.]+)/);

@@ -3,9 +3,11 @@
  * See: https://nextjs.org/docs/app/building-your-application/optimizing/instrumentation
  */
 
+import { env } from '@/lib/env';
+
 export async function register() {
   // Only run on the server (not during build or in edge runtime)
-  if (process.env.NEXT_RUNTIME === 'nodejs') {
+  if (env.NEXT_RUNTIME === 'nodejs') {
     const { reconcileOrphanedProcesses } = await import('@/server/services/claude-runner');
     const { reconcileSessionsWithPodman, startBackgroundReconciliation } =
       await import('@/server/services/session-reconciler');

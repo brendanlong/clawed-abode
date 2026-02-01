@@ -12,13 +12,6 @@ export const trpc = createTRPCReact<AppRouter>();
 const TOKEN_KEY = 'auth_token';
 const TOKEN_ROTATION_HEADER = 'x-rotated-token';
 
-function getBaseUrl() {
-  if (typeof window !== 'undefined') {
-    return '';
-  }
-  return `http://localhost:${process.env.PORT ?? 3000}`;
-}
-
 function getAuthToken(): string | null {
   if (typeof window === 'undefined') return null;
   return localStorage.getItem(TOKEN_KEY);
@@ -95,7 +88,7 @@ export function createTRPCClient() {
       splitLink({
         condition: (op) => op.type === 'subscription',
         true: httpSubscriptionLink({
-          url: `${getBaseUrl()}/api/trpc`,
+          url: '/api/trpc',
           transformer: superjson,
           EventSource: EventSourcePolyfill,
           eventSourceOptions: async () => {
@@ -107,7 +100,7 @@ export function createTRPCClient() {
           },
         }),
         false: httpBatchLink({
-          url: `${getBaseUrl()}/api/trpc`,
+          url: '/api/trpc',
           transformer: superjson,
           fetch: fetchWithTokenRotation,
           headers() {
