@@ -369,7 +369,7 @@ function NewSessionForm() {
 
   const createMutation = trpc.sessions.create.useMutation({
     onSuccess: (data) => {
-      router.push(`/session/${data.session.id}`);
+      router.replace(`/session/${data.session.id}`);
     },
     onError: (err) => {
       setError(err.message);
