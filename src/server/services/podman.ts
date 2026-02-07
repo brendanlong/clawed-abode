@@ -556,6 +556,27 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
     }
     envArgs.push('-e', `CLAUDE_MODEL=${env.CLAUDE_MODEL}`);
 
+    // MCP server configuration (passed as JSON for the entrypoint to write to ~/.claude.json)
+    if (config.mcpServers && config.mcpServers.length > 0) {
+      const mcpConfig = {
+        mcpServers: Object.fromEntries(
+          config.mcpServers.map((server) => {
+            const serverConfig: Record<string, unknown> = {
+              command: server.command,
+            };
+            if (server.args && server.args.length > 0) {
+              serverConfig.args = server.args;
+            }
+            if (server.env && Object.keys(server.env).length > 0) {
+              serverConfig.env = server.env;
+            }
+            return [server.name, serverConfig];
+          })
+        ),
+      };
+      envArgs.push('-e', `MCP_SERVERS_JSON=${JSON.stringify(mcpConfig)}`);
+    }
+
     // Add per-repo environment variables
     if (config.repoEnvVars) {
       for (const envVar of config.repoEnvVars) {
@@ -623,36 +644,10 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
     log.info('Container created', { sessionId: config.sessionId, containerId });
 
     // Start the container
+    // The entrypoint script handles runtime setup (git credentials, sudo fix,
+    // pnpm store, podman socket permissions, MCP config) then starts the agent service.
     await runPodman(['start', containerId]);
     log.info('Container started', { sessionId: config.sessionId, containerId });
-
-    // Configure the container - run independent setup tasks in parallel for speed
-    // These tasks don't depend on each other and can all run concurrently
-    const setupTasks: Promise<void>[] = [
-      // Configure pnpm to use the shared store volume
-      configurePnpmStore(containerId),
-      // Configure Gradle to use the shared cache volume
-      configureGradleCache(containerId),
-      // Fix sudo permissions (rootless Podman without --userns=keep-id can break setuid)
-      fixSudoPermissions(containerId),
-    ];
-
-    // Configure git credential helper if token is provided
-    if (config.githubToken) {
-      setupTasks.push(configureGitCredentials(containerId));
-    }
-
-    // Fix podman socket permissions if mounted
-    if (env.PODMAN_SOCKET_PATH) {
-      setupTasks.push(fixPodmanSocketPermissions(containerId));
-    }
-
-    // Write MCP server configuration if provided
-    if (config.mcpServers && config.mcpServers.length > 0) {
-      setupTasks.push(writeMcpConfig(containerId, config.mcpServers));
-    }
-
-    await Promise.all(setupTasks);
 
     return containerId;
   } catch (error) {
@@ -663,162 +658,6 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
     });
     throw error;
   }
-}
-
-async function configureGitCredentials(containerId: string): Promise<void> {
-  // Configure git to use a credential helper that reads from GITHUB_TOKEN env var
-  const credentialHelper = `#!/bin/sh
-if [ "$1" = "get" ]; then
-  input=$(cat)
-  if echo "$input" | grep -q "host=github.com"; then
-    echo "protocol=https"
-    echo "host=github.com"
-    echo "username=x-access-token"
-    echo "password=$GITHUB_TOKEN"
-  fi
-fi`;
-
-  // Write credential helper script
-  await runPodman([
-    'exec',
-    containerId,
-    'sh',
-    '-c',
-    `cat > /home/claudeuser/.git-credential-helper << 'SCRIPT'\n${credentialHelper}\nSCRIPT`,
-  ]);
-
-  // Make it executable
-  await runPodman(['exec', containerId, 'chmod', '+x', '/home/claudeuser/.git-credential-helper']);
-
-  // Configure git to use the credential helper
-  await runPodman([
-    'exec',
-    containerId,
-    'git',
-    'config',
-    '--global',
-    'credential.helper',
-    '/home/claudeuser/.git-credential-helper',
-  ]);
-}
-
-/**
- * Configure pnpm to use the shared store volume mounted at /pnpm-store.
- */
-async function configurePnpmStore(containerId: string): Promise<void> {
-  await runPodman(['exec', containerId, 'pnpm', 'config', 'set', 'store-dir', '/pnpm-store']);
-  log.info('Configured pnpm store-dir', { containerId });
-}
-
-/**
- * Configure Gradle to use the shared cache volume mounted at /gradle-cache.
- */
-async function configureGradleCache(containerId: string): Promise<void> {
-  // Set GRADLE_USER_HOME in the container's environment profile
-  await runPodman([
-    'exec',
-    containerId,
-    'sh',
-    '-c',
-    'echo "export GRADLE_USER_HOME=/gradle-cache" >> /home/claudeuser/.profile',
-  ]);
-  log.info('Configured Gradle cache', { containerId });
-}
-
-/**
- * Fix podman socket permissions inside the container.
- * The mounted socket is owned by root, so we need to make it accessible to claudeuser.
- * This may fail in nested container scenarios where the socket is a bind mount
- * that can't have its permissions changed - in that case, we log and continue.
- */
-async function fixPodmanSocketPermissions(containerId: string): Promise<void> {
-  try {
-    // Make the socket world-readable/writable so claudeuser can access it
-    await runPodman([
-      'exec',
-      '--user',
-      'root',
-      containerId,
-      'chmod',
-      '666',
-      '/var/run/docker.sock',
-    ]);
-    log.info('Fixed podman socket permissions', { containerId });
-  } catch (error) {
-    // This can fail in nested container scenarios where the socket is a bind mount
-    // from the host and can't have its permissions changed. Log and continue -
-    // the socket may already have appropriate permissions.
-    log.warn(
-      'Could not change podman socket permissions (may already be accessible)',
-      undefined,
-      toError(error)
-    );
-  }
-}
-
-/**
- * Fix sudo permissions inside the container.
- * In rootless Podman without --userns=keep-id, the sudo binary may lose its
- * setuid bit and root ownership from the container's perspective. This fixes
- * that by re-applying the correct ownership and permissions.
- */
-async function fixSudoPermissions(containerId: string): Promise<void> {
-  // Ensure sudo is owned by root and has the setuid bit set
-  await runPodman([
-    'exec',
-    '--user',
-    'root',
-    containerId,
-    'sh',
-    '-c',
-    'chown root:root /usr/bin/sudo && chmod 4755 /usr/bin/sudo',
-  ]);
-  log.info('Fixed sudo permissions', { containerId });
-}
-
-/**
- * Write MCP server configuration to ~/.claude.json in the container.
- * This configures Claude Code to use the specified MCP servers.
- */
-async function writeMcpConfig(
-  containerId: string,
-  mcpServers: NonNullable<ContainerConfig['mcpServers']>
-): Promise<void> {
-  // Build the ~/.claude.json config
-  const claudeConfig = {
-    mcpServers: Object.fromEntries(
-      mcpServers.map((server) => {
-        const serverConfig: Record<string, unknown> = {
-          command: server.command,
-        };
-        if (server.args && server.args.length > 0) {
-          serverConfig.args = server.args;
-        }
-        if (server.env && Object.keys(server.env).length > 0) {
-          serverConfig.env = server.env;
-        }
-        return [server.name, serverConfig];
-      })
-    ),
-  };
-
-  const configJson = JSON.stringify(claudeConfig, null, 2);
-
-  // Write to container using a heredoc to handle special characters safely
-  // The 'EOF' is quoted to prevent shell expansion inside the heredoc
-  await runPodman([
-    'exec',
-    containerId,
-    'sh',
-    '-c',
-    `cat > /home/claudeuser/.claude.json << 'EOF'\n${configJson}\nEOF`,
-  ]);
-
-  log.info('Wrote MCP config to container', {
-    containerId,
-    serverCount: mcpServers.length,
-    servers: mcpServers.map((s) => s.name),
-  });
 }
 
 /**

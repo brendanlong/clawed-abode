@@ -60,6 +60,7 @@ npm-debug.log*
 
 # Docker files (avoid recursive context)
 docker/
+!docker/entrypoint.sh
 Dockerfile*
 
 # Misc
