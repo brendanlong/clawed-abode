@@ -79,7 +79,6 @@ async function setupSession(
       agentPort,
       systemPrompt,
       repoEnvVars: repoSettings?.envVars,
-      mcpServers: repoSettings?.mcpServers,
     });
     log.info('Container started', { sessionId, containerId });
 
@@ -261,7 +260,6 @@ export const sessionsRouter = router({
           agentPort,
           systemPrompt,
           repoEnvVars: repoSettings?.envVars,
-          mcpServers: repoSettings?.mcpServers,
         });
 
         // Wait for agent service to be healthy

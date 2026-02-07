@@ -45,10 +45,5 @@ if [ -e /var/run/docker.sock ]; then
   sudo chmod 666 /var/run/docker.sock 2>/dev/null || true
 fi
 
-# Write MCP server configuration if MCP_SERVERS_JSON is set
-if [ -n "$MCP_SERVERS_JSON" ]; then
-  echo "$MCP_SERVERS_JSON" > "$HOME/.claude.json"
-fi
-
 # --- Launch agent service ---
 exec node /opt/agent-service/dist/index.js

@@ -220,6 +220,13 @@ export interface RunClaudeCommandOptions {
     systemPromptOverrideEnabled: boolean;
     systemPromptAppend: string | null;
   } | null;
+  /** MCP server configurations passed to the SDK at query time */
+  mcpServers?: Array<{
+    name: string;
+    command: string;
+    args?: string[];
+    env?: Record<string, string>;
+  }>;
 }
 
 /**
@@ -319,12 +326,25 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
     // Build working directory
     const workingDir = session.repoPath ? `/workspace/${session.repoPath}` : '/workspace';
 
+    // Build MCP servers config as Record<string, McpServerConfig> for the SDK
+    const mcpServersRecord = options.mcpServers?.length
+      ? Object.fromEntries(
+          options.mcpServers.map((server) => {
+            const config: Record<string, unknown> = { command: server.command };
+            if (server.args?.length) config.args = server.args;
+            if (server.env && Object.keys(server.env).length > 0) config.env = server.env;
+            return [server.name, config];
+          })
+        )
+      : undefined;
+
     // Start the query through the agent service
     for await (const agentMessage of client.query({
       prompt,
       sessionId,
       resume: shouldResume,
       cwd: workingDir,
+      mcpServers: mcpServersRecord,
     })) {
       const messageContent = JSON.stringify(agentMessage.message);
       const messageType = getMessageType(agentMessage.message);

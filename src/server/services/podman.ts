@@ -489,14 +489,8 @@ export interface ContainerConfig {
   agentPort: number;
   // System prompt to pass to the agent service
   systemPrompt?: string;
-  // Per-repo settings (env vars and MCP servers)
+  // Per-repo environment variables
   repoEnvVars?: Array<{ name: string; value: string }>;
-  mcpServers?: Array<{
-    name: string;
-    command: string;
-    args?: string[];
-    env?: Record<string, string>;
-  }>;
 }
 
 export async function createAndStartContainer(config: ContainerConfig): Promise<string> {
@@ -555,27 +549,6 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
       envArgs.push('-e', `SYSTEM_PROMPT=${config.systemPrompt}`);
     }
     envArgs.push('-e', `CLAUDE_MODEL=${env.CLAUDE_MODEL}`);
-
-    // MCP server configuration (passed as JSON for the entrypoint to write to ~/.claude.json)
-    if (config.mcpServers && config.mcpServers.length > 0) {
-      const mcpConfig = {
-        mcpServers: Object.fromEntries(
-          config.mcpServers.map((server) => {
-            const serverConfig: Record<string, unknown> = {
-              command: server.command,
-            };
-            if (server.args && server.args.length > 0) {
-              serverConfig.args = server.args;
-            }
-            if (server.env && Object.keys(server.env).length > 0) {
-              serverConfig.env = server.env;
-            }
-            return [server.name, serverConfig];
-          })
-        ),
-      };
-      envArgs.push('-e', `MCP_SERVERS_JSON=${JSON.stringify(mcpConfig)}`);
-    }
 
     // Add per-repo environment variables
     if (config.repoEnvVars) {
