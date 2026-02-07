@@ -9,18 +9,49 @@
  */
 
 import http from 'node:http';
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { createLogger, toError } from '@/lib/logger';
+import { env } from '@/lib/env';
 
 const log = createLogger('agent-client');
 
 /**
- * A message received from the agent service, with its sequence number.
+ * A complete message received from the agent service, with its sequence number.
  */
 export interface AgentMessage {
+  kind: 'complete';
   sequence: number;
   message: SDKMessage;
 }
+
+/**
+ * A partial (streaming) assistant message. These are transient and not persisted
+ * in the agent-service database. They contain accumulated content from stream_events.
+ */
+export interface AgentPartialMessage {
+  kind: 'partial';
+  partial: {
+    type: 'assistant';
+    partial: true;
+    message: {
+      role: 'assistant';
+      content: Array<
+        | { type: 'text'; text: string }
+        | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
+      >;
+      model?: string;
+      stop_reason?: string | null;
+    };
+    parent_tool_use_id: string | null;
+    uuid: string;
+    session_id: string;
+  };
+}
+
+/** Either a complete or partial message from the agent service query stream. */
+export type AgentStreamEvent = AgentMessage | AgentPartialMessage;
 
 /**
  * Status response from the agent service.
@@ -33,9 +64,13 @@ export interface AgentStatus {
 
 /**
  * SSE event from the /query endpoint.
- * Either a message, a completion marker, or an error.
+ * Either a complete message, a partial message, a completion marker, or an error.
  */
-type SSEEvent = { sequence: number; message: SDKMessage } | { done: true } | { error: string };
+type SSEEvent =
+  | { sequence: number; message: SDKMessage }
+  | { partial: AgentPartialMessage['partial'] }
+  | { done: true }
+  | { error: string };
 
 /**
  * Client for communicating with the agent service running inside a container.
@@ -43,7 +78,8 @@ type SSEEvent = { sequence: number; message: SDKMessage } | { done: true } | { e
 export interface AgentClient {
   /**
    * Start a query and stream results as an async iterable.
-   * Each yielded item is an AgentMessage with sequence number and SDK message.
+   * Yields both complete messages (with sequence numbers, persisted) and
+   * partial messages (transient streaming updates for real-time UI).
    */
   query(options: {
     prompt: string;
@@ -51,7 +87,7 @@ export interface AgentClient {
     resume?: boolean;
     cwd?: string;
     mcpServers?: Record<string, unknown>;
-  }): AsyncGenerator<AgentMessage>;
+  }): AsyncGenerator<AgentStreamEvent>;
 
   /**
    * Interrupt the currently running query.
@@ -207,8 +243,18 @@ export function createAgentClient(socketPath: string): AgentClient {
                 throw new Error(`Agent query error: ${parsed.error}`);
               }
 
+              if ('partial' in parsed) {
+                // Partial (streaming) message update
+                yield {
+                  kind: 'partial',
+                  partial: parsed.partial,
+                };
+                continue;
+              }
+
               if ('sequence' in parsed && 'message' in parsed) {
                 yield {
+                  kind: 'complete',
                   sequence: parsed.sequence,
                   message: parsed.message,
                 };
@@ -230,9 +276,14 @@ export function createAgentClient(socketPath: string): AgentClient {
     },
 
     async getMessages(afterSequence) {
-      return fetchJson<{ messages: AgentMessage[] }>(`/messages?after=${afterSequence}`).then(
-        (res) => res.messages
-      );
+      const res = await fetchJson<{
+        messages: Array<{ sequence: number; message: SDKMessage }>;
+      }>(`/messages?after=${afterSequence}`);
+      return res.messages.map((m) => ({
+        kind: 'complete' as const,
+        sequence: m.sequence,
+        message: m.message,
+      }));
     },
 
     async health() {
@@ -249,10 +300,29 @@ export function createAgentClient(socketPath: string): AgentClient {
 
 /**
  * Get the agent service socket path for a session.
- * Socket is located in the shared sockets volume at /sockets/{sessionId}.sock
+ * In dev mode (host directory): resolves to absolute path (e.g., /path/to/data/sockets/{sessionId}.sock)
+ * In production (container): uses container path (/sockets/{sessionId}.sock)
  */
 export function getAgentSocketPath(sessionId: string): string {
-  return `/sockets/${sessionId}.sock`;
+  // Check if we're running inside a container
+  const isContainer = existsSync('/run/.containerenv') || existsSync('/.dockerenv');
+
+  if (isContainer) {
+    // In container - use container path
+    return `/sockets/${sessionId}.sock`;
+  } else {
+    // On host (dev mode) - use absolute path to host directory
+    const socketsSpec = env.SOCKETS_VOLUME;
+
+    // Check if it's a host path
+    const isHostPath = socketsSpec.startsWith('.') || socketsSpec.startsWith('/');
+    if (isHostPath) {
+      return resolve(socketsSpec, `${sessionId}.sock`);
+    } else {
+      // This shouldn't happen in dev mode, but fall back to container path
+      return `/sockets/${sessionId}.sock`;
+    }
+  }
 }
 
 /**

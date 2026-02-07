@@ -5,12 +5,14 @@ import {
   type McpServerConfig,
 } from '@anthropic-ai/claude-agent-sdk';
 import { MessageStore } from './message-store.js';
+import { StreamAccumulator, type PartialAssistantMessage } from './stream-accumulator.js';
 
 /**
  * Extracts the message type from an SDKMessage for storage categorization.
  */
 function getMessageType(message: SDKMessage): string {
-  return message.type === 'stream_event' ? 'stream_event' : message.type;
+  if (message.type === 'stream_event') return 'stream_event';
+  return message.type;
 }
 
 /**
@@ -32,10 +34,18 @@ export interface QueryOptions {
 }
 
 /**
- * Callback for when a new message is stored.
+ * Callback for when a new message is stored (complete messages only).
  * Used by the HTTP server to push messages to connected SSE clients.
  */
 export type MessageCallback = (sequence: number, message: SDKMessage) => void;
+
+/**
+ * Callback for partial (streaming) assistant message updates.
+ * These are transient and not persisted to the database.
+ * The uuid field links the partial to the stream that produced it;
+ * the final AssistantMessage will have a different uuid.
+ */
+export type PartialMessageCallback = (partial: PartialAssistantMessage) => void;
 
 /**
  * Manages SDK query() execution with message persistence.
@@ -47,6 +57,7 @@ export class QueryRunner {
   private currentAbortController: AbortController | null = null;
   private running = false;
   private messageCallbacks: Set<MessageCallback> = new Set();
+  private partialCallbacks: Set<PartialMessageCallback> = new Set();
 
   constructor(store: MessageStore) {
     this.store = store;
@@ -60,12 +71,23 @@ export class QueryRunner {
   }
 
   /**
-   * Subscribe to new messages. Returns an unsubscribe function.
+   * Subscribe to new complete messages. Returns an unsubscribe function.
    */
   onMessage(callback: MessageCallback): () => void {
     this.messageCallbacks.add(callback);
     return () => {
       this.messageCallbacks.delete(callback);
+    };
+  }
+
+  /**
+   * Subscribe to partial (streaming) message updates. Returns an unsubscribe function.
+   * Partials are emitted as stream_events are accumulated, providing real-time UI updates.
+   */
+  onPartialMessage(callback: PartialMessageCallback): () => void {
+    this.partialCallbacks.add(callback);
+    return () => {
+      this.partialCallbacks.delete(callback);
     };
   }
 
@@ -80,12 +102,15 @@ export class QueryRunner {
 
     this.running = true;
     this.currentAbortController = new AbortController();
+    const accumulator = new StreamAccumulator();
 
     try {
       const sdkOptions: Parameters<typeof query>[0]['options'] = {
         abortController: this.currentAbortController,
         permissionMode: 'bypassPermissions' as const,
         allowDangerouslySkipPermissions: true,
+        // Enable partial message streaming for real-time UI updates
+        includePartialMessages: true,
       };
 
       // System prompt configuration
@@ -138,6 +163,36 @@ export class QueryRunner {
 
       // Iterate through all messages from the SDK
       for await (const message of this.currentQuery) {
+        // Handle stream_events: accumulate into partial messages for real-time UI
+        if (message.type === 'stream_event') {
+          const partial = accumulator.accumulate(
+            message as {
+              type: 'stream_event';
+              event: { type: string; [key: string]: unknown };
+              parent_tool_use_id: string | null;
+              uuid: string;
+              session_id: string;
+            }
+          );
+          if (partial) {
+            for (const callback of this.partialCallbacks) {
+              try {
+                callback(partial);
+              } catch {
+                // Don't let callback errors break the query loop
+              }
+            }
+          }
+          // Don't store stream_events in the database - they're transient
+          continue;
+        }
+
+        // For complete messages (assistant, user, result, system, etc.):
+        // Reset the accumulator when a full assistant message arrives
+        if (message.type === 'assistant') {
+          accumulator.reset();
+        }
+
         const type = getMessageType(message);
         const content = JSON.stringify(message);
         const sequence = this.store.append(options.sessionId, type, content);

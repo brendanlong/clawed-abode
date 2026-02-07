@@ -25,6 +25,7 @@ vi.mock('@/lib/env', () => ({
     PNPM_STORE_VOLUME: 'clawed-abode-pnpm-store',
     GRADLE_USER_HOME: undefined,
     GRADLE_CACHE_VOLUME: 'clawed-abode-gradle-cache',
+    SOCKETS_VOLUME: 'clawed-abode-sockets',
     PODMAN_SOCKET_PATH: '/run/user/1000/podman/podman.sock',
     CONTAINER_NETWORK_MODE: 'host',
     SKIP_IMAGE_PULL: false,

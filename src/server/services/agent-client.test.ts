@@ -3,7 +3,12 @@ import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createAgentClient, waitForAgentHealth, type AgentClient } from './agent-client';
+import {
+  createAgentClient,
+  waitForAgentHealth,
+  type AgentClient,
+  type AgentStreamEvent,
+} from './agent-client';
 
 // Helper to create a mock HTTP server that listens on a Unix socket
 function createMockServer(): {
@@ -180,7 +185,7 @@ describe('AgentClient', () => {
         res.end();
       });
 
-      const messages: Array<{ sequence: number }> = [];
+      const messages: AgentStreamEvent[] = [];
       for await (const msg of client.query({
         prompt: 'test',
         sessionId: 'test-session',
@@ -189,8 +194,63 @@ describe('AgentClient', () => {
       }
 
       expect(messages).toHaveLength(2);
-      expect(messages[0].sequence).toBe(1);
-      expect(messages[1].sequence).toBe(2);
+      expect(messages[0].kind).toBe('complete');
+      expect(messages[1].kind).toBe('complete');
+      if (messages[0].kind === 'complete' && messages[1].kind === 'complete') {
+        expect(messages[0].sequence).toBe(1);
+        expect(messages[1].sequence).toBe(2);
+      }
+    });
+
+    it('should yield partial messages from SSE response', async () => {
+      mockServer.setHandler((_req, res) => {
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+        });
+
+        // Send a partial message, then a complete message, then done
+        const partial = {
+          partial: {
+            type: 'assistant',
+            partial: true,
+            message: { role: 'assistant', content: [{ type: 'text', text: 'Hello' }] },
+            parent_tool_use_id: null,
+            uuid: 'stream-uuid',
+            session_id: 'test-session',
+          },
+        };
+        const complete = {
+          sequence: 1,
+          message: {
+            type: 'assistant',
+            uuid: 'final-uuid',
+            session_id: 'test-session',
+          },
+        };
+
+        res.write(`data: ${JSON.stringify(partial)}\n\n`);
+        res.write(`data: ${JSON.stringify(complete)}\n\n`);
+        res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+        res.end();
+      });
+
+      const events: AgentStreamEvent[] = [];
+      for await (const msg of client.query({
+        prompt: 'test',
+        sessionId: 'test-session',
+      })) {
+        events.push(msg);
+      }
+
+      expect(events).toHaveLength(2);
+      expect(events[0].kind).toBe('partial');
+      expect(events[1].kind).toBe('complete');
+      if (events[0].kind === 'partial') {
+        expect(events[0].partial.uuid).toBe('stream-uuid');
+        expect(events[0].partial.partial).toBe(true);
+      }
     });
 
     it('should throw on query error event', async () => {

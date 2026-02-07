@@ -186,11 +186,13 @@ function useSessionMessages(sessionId: string) {
 
   // Subscribe to new messages via SSE - update cache directly
   // Pass cursor to catch up on missed messages when connecting/reconnecting
+  // Handles both complete messages (persisted) and partial messages (transient streaming updates)
   trpc.sse.onNewMessage.useSubscription(
     { sessionId, afterSequence: newestSequence },
     {
       onData: (trackedData) => {
         const newMessage = trackedData.data.message;
+        const isPartial = newMessage.id.startsWith('partial-');
 
         // Add message directly to the infinite query cache
         utils.claude.getHistory.setInfiniteData({ sessionId, limit: MESSAGE_PAGE_SIZE }, (old) => {
@@ -202,25 +204,50 @@ function useSessionMessages(sessionId: string) {
             };
           }
 
-          // Check if message already exists (deduplication)
+          if (isPartial) {
+            // Partial message: replace existing partial or add new one
+            const newPages = old.pages.map((page, pageIndex) => {
+              if (pageIndex !== 0) return page;
+              // Replace existing partial, or append if none exists
+              const hasExistingPartial = page.messages.some((m) => m.id.startsWith('partial-'));
+              if (hasExistingPartial) {
+                return {
+                  ...page,
+                  messages: page.messages.map((m) =>
+                    m.id.startsWith('partial-') ? newMessage : m
+                  ),
+                };
+              }
+              return { ...page, messages: [...page.messages, newMessage] };
+            });
+            return { ...old, pages: newPages };
+          }
+
+          // Complete message: remove any partial messages and add the new one
+          // Check for deduplication first
           for (const page of old.pages) {
-            if (page.messages.some((m: { id: string }) => m.id === newMessage.id)) {
+            if (page.messages.some((m) => m.id === newMessage.id)) {
               return old; // Already have this message
             }
           }
 
-          // Prepend message to the first page (newest messages)
           const newPages = [...old.pages];
+          // Remove partial messages from the first page (they're replaced by complete messages)
+          const firstPageMessages = newPages[0].messages.filter(
+            (m) => !m.id.startsWith('partial-')
+          );
           newPages[0] = {
             ...newPages[0],
-            messages: [...newPages[0].messages, newMessage],
+            messages: [...firstPageMessages, newMessage],
           };
 
           return { ...old, pages: newPages };
         });
 
-        // Refetch token usage since new messages affect the total
-        refetchTokenUsage();
+        // Refetch token usage only for complete messages (partials don't affect totals)
+        if (!isPartial) {
+          refetchTokenUsage();
+        }
       },
       onError: (err) => {
         console.error('Message SSE error:', err);
