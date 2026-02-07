@@ -4,7 +4,7 @@ import { useCallback, useMemo } from 'react';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { MarkdownContent } from '@/components/MarkdownContent';
-import { OctagonX } from 'lucide-react';
+import { OctagonX, Loader2 } from 'lucide-react';
 
 import { CopyButton } from './CopyButton';
 import { RawJsonDisplay } from './RawJsonDisplay';
@@ -13,7 +13,12 @@ import { ReadDisplay } from './ReadDisplay';
 import { WriteDisplay } from './WriteDisplay';
 import { TodoWriteDisplay } from './TodoWriteDisplay';
 import { GlobDisplay } from './GlobDisplay';
+import { GrepDisplay } from './GrepDisplay';
 import { WebSearchDisplay } from './WebSearchDisplay';
+import { WebFetchDisplay } from './WebFetchDisplay';
+import { BashDisplay } from './BashDisplay';
+import { NotebookEditDisplay } from './NotebookEditDisplay';
+import { SkillDisplay } from './SkillDisplay';
 import { AskUserQuestionDisplay } from './AskUserQuestionDisplay';
 import { TaskDisplay } from './TaskDisplay';
 import { ExitPlanModeDisplay } from './ExitPlanModeDisplay';
@@ -23,6 +28,7 @@ import { SystemInitDisplay } from './SystemInitDisplay';
 import { ResultDisplay } from './ResultDisplay';
 import { HookResponseDisplay } from './HookResponseDisplay';
 import { HookStartedDisplay } from './HookStartedDisplay';
+import { CompactBoundaryDisplay } from './CompactBoundaryDisplay';
 import { formatAsJson, buildToolMessages } from './types';
 import type { ToolResultMap, ContentBlock, MessageContent, ToolCall } from './types';
 
@@ -60,6 +66,25 @@ interface AskUserQuestionProps {
   isClaudeRunning?: boolean;
 }
 
+/**
+ * Map of tool names to their specialized display components.
+ * Tools not in this map fall through to the generic ToolCallDisplay.
+ */
+const TOOL_DISPLAY_MAP: Record<string, React.ComponentType<{ tool: ToolCall }>> = {
+  Glob: GlobDisplay,
+  Grep: GrepDisplay,
+  Edit: EditDisplay,
+  Read: ReadDisplay,
+  Write: WriteDisplay,
+  WebSearch: WebSearchDisplay,
+  WebFetch: WebFetchDisplay,
+  Bash: BashDisplay,
+  NotebookEdit: NotebookEditDisplay,
+  Skill: SkillDisplay,
+  Task: TaskDisplay,
+  ExitPlanMode: ExitPlanModeDisplay,
+};
+
 function renderContentBlocks(
   blocks: ContentBlock[],
   toolResults?: ToolResultMap,
@@ -85,7 +110,7 @@ function renderContentBlocks(
           {toolUseBlocks.map((block) => {
             // Look up the result for this tool_use
             const result = block.id ? toolResults?.get(block.id) : undefined;
-            const tool = {
+            const tool: ToolCall = {
               name: block.name || 'Unknown',
               id: block.id,
               input: block.input,
@@ -93,7 +118,7 @@ function renderContentBlocks(
               is_error: result?.is_error,
             };
 
-            // Use specialized display for specific tools
+            // Special case: TodoWrite needs extra tracking props
             if (block.name === 'TodoWrite') {
               const isLatest = todoTracking && block.id === todoTracking.latestTodoWriteId;
               const wasManuallyToggled =
@@ -115,26 +140,7 @@ function renderContentBlocks(
               );
             }
 
-            if (block.name === 'Glob') {
-              return <GlobDisplay key={block.id} tool={tool} />;
-            }
-
-            if (block.name === 'Edit') {
-              return <EditDisplay key={block.id} tool={tool} />;
-            }
-
-            if (block.name === 'Read') {
-              return <ReadDisplay key={block.id} tool={tool} />;
-            }
-
-            if (block.name === 'Write') {
-              return <WriteDisplay key={block.id} tool={tool} />;
-            }
-
-            if (block.name === 'WebSearch') {
-              return <WebSearchDisplay key={block.id} tool={tool} />;
-            }
-
+            // Special case: AskUserQuestion needs response handler
             if (block.name === 'AskUserQuestion') {
               return (
                 <AskUserQuestionDisplay
@@ -146,14 +152,13 @@ function renderContentBlocks(
               );
             }
 
-            if (block.name === 'Task') {
-              return <TaskDisplay key={block.id} tool={tool} />;
+            // Look up in the tool display map
+            const DisplayComponent = TOOL_DISPLAY_MAP[block.name ?? ''];
+            if (DisplayComponent) {
+              return <DisplayComponent key={block.id} tool={tool} />;
             }
 
-            if (block.name === 'ExitPlanMode') {
-              return <ExitPlanModeDisplay key={block.id} tool={tool} />;
-            }
-
+            // Fallback to generic display
             return <ToolCallDisplay key={block.id} tool={tool} />;
           })}
         </div>
@@ -202,6 +207,19 @@ function getToolResults(content: MessageContent): ContentBlock[] {
   return [];
 }
 
+type MessageCategory =
+  | 'assistant'
+  | 'user'
+  | 'userInterrupt'
+  | 'toolResult'
+  | 'system'
+  | 'systemInit'
+  | 'systemError'
+  | 'systemCompactBoundary'
+  | 'hookStarted'
+  | 'hookResponse'
+  | 'result';
+
 /**
  * Check if a message can be recognized and displayed with our typed components.
  * Returns false if we should fall back to raw JSON display.
@@ -209,22 +227,7 @@ function getToolResults(content: MessageContent): ContentBlock[] {
 function isRecognizedMessage(
   type: string,
   content: MessageContent
-):
-  | {
-      recognized: true;
-      category:
-        | 'assistant'
-        | 'user'
-        | 'userInterrupt'
-        | 'toolResult'
-        | 'system'
-        | 'systemInit'
-        | 'systemError'
-        | 'hookStarted'
-        | 'hookResponse'
-        | 'result';
-    }
-  | { recognized: false } {
+): { recognized: true; category: MessageCategory } | { recognized: false } {
   // Assistant messages must have a valid message.content array
   if (type === 'assistant') {
     if (!content.message || !Array.isArray(content.message.content)) {
@@ -272,6 +275,11 @@ function isRecognizedMessage(
     return { recognized: false };
   }
 
+  // Compact boundary messages
+  if (type === 'system' && content.subtype === 'compact_boundary') {
+    return { recognized: true, category: 'systemCompactBoundary' };
+  }
+
   // Hook started messages (pending hooks show loading state)
   if (type === 'system' && content.subtype === 'hook_started') {
     return { recognized: true, category: 'hookStarted' };
@@ -308,7 +316,7 @@ export function MessageBubble({
   onSendResponse,
   isClaudeRunning,
 }: {
-  message: { type: string; content: unknown };
+  message: { id?: string; type: string; content: unknown };
   toolResults?: ToolResultMap;
   latestTodoWriteId?: string | null;
   manuallyToggledTodoIds?: Set<string>;
@@ -337,6 +345,11 @@ export function MessageBubble({
   }, [onSendResponse, isClaudeRunning]);
   const { type } = message;
   const content = useMemo(() => (message.content || {}) as MessageContent, [message.content]);
+
+  // Check if this is a partial (streaming) message
+  const isPartial = useMemo(() => {
+    return content.partial === true || (message.id?.startsWith('partial-') ?? false);
+  }, [content.partial, message.id]);
 
   // Check if we can properly display this message
   const recognition = useMemo(() => isRecognizedMessage(type, content), [type, content]);
@@ -413,6 +426,15 @@ export function MessageBubble({
     );
   }
 
+  // Compact boundary messages get a divider display
+  if (category === 'systemCompactBoundary') {
+    return (
+      <div className="w-full">
+        <CompactBoundaryDisplay content={content} />
+      </div>
+    );
+  }
+
   // Hook started messages show loading indicator while hook runs
   if (category === 'hookStarted') {
     return (
@@ -435,7 +457,7 @@ export function MessageBubble({
   if (category === 'result') {
     return (
       <div className="w-full max-w-[85%]">
-        <ResultDisplay content={content} />
+        <ResultDisplay content={content as Record<string, unknown>} />
       </div>
     );
   }
@@ -482,13 +504,22 @@ export function MessageBubble({
       <div
         className={cn('rounded-lg p-4', {
           'bg-primary text-primary-foreground ml-auto': isUser,
-          'bg-card border': isAssistant && !isInterrupted,
-          'bg-card border border-amber-300 dark:border-amber-700': isAssistant && isInterrupted,
+          'bg-card border': isAssistant && !isInterrupted && !isPartial,
+          'bg-card border border-blue-300 dark:border-blue-700': isAssistant && isPartial,
+          'bg-card border border-amber-300 dark:border-amber-700':
+            isAssistant && isInterrupted && !isPartial,
           'bg-muted text-muted-foreground text-sm': isSystem && !isError,
           'bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 text-red-800 dark:text-red-200 text-sm':
             isError,
         })}
       >
+        {/* Streaming indicator for partial messages */}
+        {isPartial && isAssistant && (
+          <div className="flex items-center gap-1.5 text-blue-600 dark:text-blue-400 text-xs mb-2">
+            <Loader2 className="h-3 w-3 animate-spin" />
+            <span>Streaming...</span>
+          </div>
+        )}
         {isSystem && !isError && (
           <Badge variant="secondary" className="mb-2">
             System
@@ -499,7 +530,7 @@ export function MessageBubble({
             Error
           </Badge>
         )}
-        {isInterrupted && (
+        {isInterrupted && !isPartial && (
           <div className="flex items-center gap-1 text-amber-600 dark:text-amber-400 text-xs mb-2">
             <OctagonX className="h-3 w-3" />
             <span>May be incomplete</span>
@@ -517,9 +548,11 @@ export function MessageBubble({
           </div>
         )}
       </div>
-      <div className="mt-1">
-        <CopyButton getText={getCopyText} />
-      </div>
+      {!isPartial && (
+        <div className="mt-1">
+          <CopyButton getText={getCopyText} />
+        </div>
+      )}
     </div>
   );
 }
