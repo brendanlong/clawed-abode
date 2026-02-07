@@ -4,8 +4,11 @@
  * The agent service exposes an HTTP API with endpoints for querying Claude,
  * interrupting queries, checking status, and fetching persisted messages.
  * This client provides a typed interface for all those operations.
+ *
+ * Uses Unix domain sockets for communication instead of TCP ports.
  */
 
+import http from 'node:http';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { createLogger, toError } from '@/lib/logger';
 
@@ -73,52 +76,109 @@ export interface AgentClient {
 }
 
 /**
- * Create an agent client that communicates with the agent service at the given URL.
+ * Make an HTTP request over a Unix socket.
  */
-export function createAgentClient(baseUrl: string): AgentClient {
-  async function fetchJson<T>(path: string, options?: RequestInit): Promise<T> {
-    const response = await fetch(`${baseUrl}${path}`, options);
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`Agent service error (${response.status}): ${text}`);
+function httpRequest(
+  socketPath: string,
+  options: http.RequestOptions,
+  body?: string
+): Promise<http.IncomingMessage> {
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      {
+        ...options,
+        socketPath,
+      },
+      (res) => {
+        resolve(res);
+      }
+    );
+
+    req.on('error', reject);
+
+    if (body) {
+      req.write(body);
     }
-    return response.json() as Promise<T>;
+
+    req.end();
+  });
+}
+
+/**
+ * Helper to read full response body and parse as JSON.
+ */
+async function readJsonResponse<T>(res: http.IncomingMessage): Promise<T> {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    res.on('data', (chunk) => {
+      body += chunk.toString();
+    });
+    res.on('end', () => {
+      try {
+        resolve(JSON.parse(body) as T);
+      } catch (err) {
+        reject(new Error(`Failed to parse JSON response: ${err}`));
+      }
+    });
+    res.on('error', reject);
+  });
+}
+
+/**
+ * Create an agent client that communicates with the agent service via Unix socket.
+ */
+export function createAgentClient(socketPath: string): AgentClient {
+  async function fetchJson<T>(path: string, method: string = 'GET', body?: unknown): Promise<T> {
+    const res = await httpRequest(
+      socketPath,
+      {
+        path,
+        method,
+        headers: body ? { 'Content-Type': 'application/json' } : {},
+      },
+      body ? JSON.stringify(body) : undefined
+    );
+
+    if (res.statusCode && (res.statusCode < 200 || res.statusCode >= 300)) {
+      const text = await readJsonResponse<{ error?: string }>(res);
+      throw new Error(`Agent service error (${res.statusCode}): ${text.error || 'Unknown error'}`);
+    }
+
+    return readJsonResponse<T>(res);
   }
 
   return {
     async *query(options) {
-      const response = await fetch(`${baseUrl}/query`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const res = await httpRequest(
+        socketPath,
+        {
+          path: '/query',
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        },
+        JSON.stringify({
           prompt: options.prompt,
           sessionId: options.sessionId,
           resume: options.resume ?? false,
           cwd: options.cwd,
           mcpServers: options.mcpServers,
-        }),
-      });
+        })
+      );
 
-      if (!response.ok) {
-        const text = await response.text();
-        throw new Error(`Agent service query failed (${response.status}): ${text}`);
-      }
-
-      if (!response.body) {
-        throw new Error('No response body from agent service');
+      if (res.statusCode && (res.statusCode < 200 || res.statusCode >= 300)) {
+        const text = await readJsonResponse<{ error?: string }>(res);
+        throw new Error(
+          `Agent service query failed (${res.statusCode}): ${text.error || 'Unknown error'}`
+        );
       }
 
       // Parse SSE stream
-      const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
 
       try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
+        for await (const chunk of res) {
+          buffer += decoder.decode(chunk, { stream: true });
 
           // Process complete SSE events (terminated by \n\n)
           const events = buffer.split('\n\n');
@@ -157,14 +217,12 @@ export function createAgentClient(baseUrl: string): AgentClient {
           }
         }
       } finally {
-        reader.releaseLock();
+        res.destroy();
       }
     },
 
     async interrupt() {
-      return fetchJson<{ success: boolean }>('/interrupt', {
-        method: 'POST',
-      });
+      return fetchJson<{ success: boolean }>('/interrupt', 'POST');
     },
 
     async getStatus() {
@@ -190,12 +248,11 @@ export function createAgentClient(baseUrl: string): AgentClient {
 }
 
 /**
- * Get the agent service URL for a session.
- * For host networking, uses localhost with the session's assigned port.
- * For bridge networking, uses the container's IP with a fixed port.
+ * Get the agent service socket path for a session.
+ * Socket is located in the shared sockets volume at /sockets/{sessionId}.sock
  */
-export function getAgentUrl(agentPort: number): string {
-  return `http://localhost:${agentPort}`;
+export function getAgentSocketPath(sessionId: string): string {
+  return `/sockets/${sessionId}.sock`;
 }
 
 /**

@@ -9,8 +9,16 @@ export async function register() {
   // which would cause Next.js to analyze server-side dependencies for Edge Runtime
   if (process.env.NEXT_RUNTIME === 'nodejs') {
     const { reconcileOrphanedProcesses } = await import('@/server/services/claude-runner');
-    const { reconcileSessionsWithPodman, startBackgroundReconciliation } =
+    const { reconcileSessionsWithPodman, startBackgroundReconciliation, migrateToSockets } =
       await import('@/server/services/session-reconciler');
+
+    // One-time migration: stop all running sessions for socket migration
+    console.log('Running socket migration...');
+    try {
+      await migrateToSockets();
+    } catch (err) {
+      console.error('Error running socket migration:', err);
+    }
 
     console.log('Starting server - reconciling sessions with Podman...');
 

@@ -1,5 +1,10 @@
 import { prisma } from '@/lib/prisma';
-import { getContainerStatus, listSessionContainers, removeContainer } from './podman';
+import {
+  getContainerStatus,
+  listSessionContainers,
+  removeContainer,
+  stopContainer,
+} from './podman';
 import { createLogger, toError } from '@/lib/logger';
 import type { SessionStatus } from '@/lib/types';
 
@@ -271,4 +276,55 @@ export function stopBackgroundReconciliation(): void {
     reconciliationIntervalId = null;
     log.info('Stopped background reconciliation');
   }
+}
+
+/**
+ * One-time migration: Stop all running sessions after upgrading to Unix sockets.
+ * This is called on startup to handle the migration from TCP ports to Unix sockets.
+ * All running sessions need to be stopped and restarted with the new socket configuration.
+ */
+export async function migrateToSockets(): Promise<void> {
+  log.info('Running one-time migration to Unix sockets');
+
+  const runningSessions = await prisma.session.findMany({
+    where: { status: 'running' },
+  });
+
+  if (runningSessions.length === 0) {
+    log.info('No running sessions to migrate');
+    return;
+  }
+
+  log.info('Stopping running sessions for socket migration', {
+    count: runningSessions.length,
+  });
+
+  for (const session of runningSessions) {
+    if (session.containerId) {
+      try {
+        await stopContainer(session.containerId);
+        log.info('Stopped container for migration', {
+          sessionId: session.id,
+          containerId: session.containerId,
+        });
+      } catch (error) {
+        // Container may already be stopped or removed
+        log.warn(
+          'Failed to stop container during migration',
+          { sessionId: session.id, containerId: session.containerId },
+          toError(error)
+        );
+      }
+    }
+
+    await prisma.session.update({
+      where: { id: session.id },
+      data: {
+        status: 'stopped',
+        statusMessage: 'Session stopped due to system upgrade. Please restart.',
+      },
+    });
+  }
+
+  log.info('Socket migration complete', { sessionsStopped: runningSessions.length });
 }

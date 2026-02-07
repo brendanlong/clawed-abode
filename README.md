@@ -150,6 +150,7 @@ podman run -d \
   -e PODMAN_SOCKET_PATH="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman/podman.sock" \
   -e CLAUDE_RUNNER_IMAGE=ghcr.io/brendanlong/clawed-abode-runner:latest \
   -v clawed-abode-db:/data/db \
+  -v clawed-abode-sockets:/sockets \
   -v "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman/podman.sock:/var/run/docker.sock" \
   --device nvidia.com/gpu=all \
   --security-opt label=disable \
@@ -359,6 +360,7 @@ podman run -d \
   -e PODMAN_SOCKET_PATH="/run/user/$(id -u)/podman/podman.sock" \
   -e CLAUDE_RUNNER_IMAGE=ghcr.io/brendanlong/clawed-abode-runner:latest \
   -v clawed-abode-db:/data/db \
+  -v clawed-abode-sockets:/sockets \
   -v "/run/user/$(id -u)/podman/podman.sock:/var/run/docker.sock" \
   --device nvidia.com/gpu=all \
   --security-opt label=disable \

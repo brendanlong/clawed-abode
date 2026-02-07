@@ -1,12 +1,15 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import http from 'node:http';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { createAgentClient, waitForAgentHealth, type AgentClient } from './agent-client';
 
-// Helper to create a mock HTTP server
+// Helper to create a mock HTTP server that listens on a Unix socket
 function createMockServer(): {
   server: http.Server;
-  port: number;
-  start: () => Promise<number>;
+  socketPath: string;
+  start: () => Promise<string>;
   close: () => Promise<void>;
   setHandler: (handler: (req: http.IncomingMessage, res: http.ServerResponse) => void) => void;
 } {
@@ -16,26 +19,30 @@ function createMockServer(): {
   };
 
   const server = http.createServer((req, res) => handler(req, res));
-  let port = 0;
+  const socketPath = path.join(os.tmpdir(), `test-socket-${Date.now()}-${Math.random()}.sock`);
 
   return {
     server,
-    get port() {
-      return port;
-    },
+    socketPath,
     start: () =>
-      new Promise<number>((resolve) => {
-        server.listen(0, () => {
-          const addr = server.address();
-          if (addr && typeof addr !== 'string') {
-            port = addr.port;
-          }
-          resolve(port);
+      new Promise<string>((resolve) => {
+        // Remove stale socket if it exists
+        if (fs.existsSync(socketPath)) {
+          fs.unlinkSync(socketPath);
+        }
+        server.listen(socketPath, () => {
+          resolve(socketPath);
         });
       }),
     close: () =>
       new Promise<void>((resolve) => {
-        server.close(() => resolve());
+        server.close(() => {
+          // Clean up socket file
+          if (fs.existsSync(socketPath)) {
+            fs.unlinkSync(socketPath);
+          }
+          resolve();
+        });
       }),
     setHandler: (h) => {
       handler = h;
@@ -49,8 +56,8 @@ describe('AgentClient', () => {
 
   beforeEach(async () => {
     mockServer = createMockServer();
-    const port = await mockServer.start();
-    client = createAgentClient(`http://localhost:${port}`);
+    const socketPath = await mockServer.start();
+    client = createAgentClient(socketPath);
   });
 
   afterEach(async () => {
@@ -69,7 +76,7 @@ describe('AgentClient', () => {
 
     it('should return false when service is unreachable', async () => {
       await mockServer.close();
-      const unreachableClient = createAgentClient('http://localhost:19999');
+      const unreachableClient = createAgentClient('/tmp/nonexistent-socket.sock');
       expect(await unreachableClient.health()).toBe(false);
     });
 

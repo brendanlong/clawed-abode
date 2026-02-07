@@ -1,9 +1,10 @@
 import http from 'node:http';
+import fs from 'node:fs';
 import { MessageStore } from './message-store.js';
 import { QueryRunner, type QueryOptions } from './query-runner.js';
 import type { SDKMessage, McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 
-const PORT = parseInt(process.env.AGENT_PORT || '3100', 10);
+const SOCKET_PATH = process.env.AGENT_SOCKET_PATH || '/sockets/agent.sock';
 const SYSTEM_PROMPT = process.env.SYSTEM_PROMPT || '';
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL || '';
 
@@ -146,7 +147,7 @@ function handleStatus(_req: http.IncomingMessage, res: http.ServerResponse): voi
  * Handle GET /messages?after=N
  */
 function handleMessages(req: http.IncomingMessage, res: http.ServerResponse): void {
-  const url = new URL(req.url || '/', `http://localhost:${PORT}`);
+  const url = new URL(req.url || '/', `http://unix`);
   const afterParam = url.searchParams.get('after');
   const after = afterParam ? parseInt(afterParam, 10) : 0;
 
@@ -175,7 +176,7 @@ function handleHealth(_req: http.IncomingMessage, res: http.ServerResponse): voi
  * Main request router.
  */
 const server = http.createServer(async (req, res) => {
-  const url = new URL(req.url || '/', `http://localhost:${PORT}`);
+  const url = new URL(req.url || '/', `http://unix`);
   const path = url.pathname;
   const method = req.method?.toUpperCase();
 
@@ -199,24 +200,51 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-// Bind with exclusive address use to fail fast if port is taken
-server.listen(PORT, () => {
-  console.log(`Agent service listening on port ${PORT}`);
+// Remove stale socket file if it exists (handles crashed agents)
+if (fs.existsSync(SOCKET_PATH)) {
+  console.log(`Removing stale socket file: ${SOCKET_PATH}`);
+  fs.unlinkSync(SOCKET_PATH);
+}
+
+// Bind to Unix socket
+server.listen(SOCKET_PATH, () => {
+  // Set socket permissions to allow service container to connect
+  fs.chmodSync(SOCKET_PATH, 0o666);
+  console.log(`Agent service listening on ${SOCKET_PATH}`);
 });
 
 server.on('error', (err: NodeJS.ErrnoException) => {
   if (err.code === 'EADDRINUSE') {
-    console.error(`Port ${PORT} is already in use`);
-    process.exit(98); // Special exit code so Next.js server knows to retry with different port
+    console.error(`Socket ${SOCKET_PATH} is already in use`);
+    // Try to remove and retry once
+    try {
+      fs.unlinkSync(SOCKET_PATH);
+      server.listen(SOCKET_PATH, () => {
+        fs.chmodSync(SOCKET_PATH, 0o666);
+        console.log(`Agent service listening on ${SOCKET_PATH} (after retry)`);
+      });
+    } catch (retryErr) {
+      console.error('Failed to bind after removing stale socket:', retryErr);
+      process.exit(1);
+    }
+  } else {
+    console.error('Server error:', err);
+    process.exit(1);
   }
-  console.error('Server error:', err);
-  process.exit(1);
 });
 
 // Graceful shutdown
 process.on('SIGTERM', () => {
   console.log('Received SIGTERM, shutting down...');
   server.close(() => {
+    // Clean up socket file
+    try {
+      if (fs.existsSync(SOCKET_PATH)) {
+        fs.unlinkSync(SOCKET_PATH);
+      }
+    } catch (err) {
+      console.error('Failed to clean up socket file:', err);
+    }
     store.close();
     process.exit(0);
   });
@@ -225,6 +253,14 @@ process.on('SIGTERM', () => {
 process.on('SIGINT', () => {
   console.log('Received SIGINT, shutting down...');
   server.close(() => {
+    // Clean up socket file
+    try {
+      if (fs.existsSync(SOCKET_PATH)) {
+        fs.unlinkSync(SOCKET_PATH);
+      }
+    } catch (err) {
+      console.error('Failed to clean up socket file:', err);
+    }
     store.close();
     process.exit(0);
   });

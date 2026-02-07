@@ -168,49 +168,56 @@ async function ensureImagePulled(imageName: string): Promise<void> {
 }
 
 /**
- * Allocate a port for the agent service in a container.
- * For host networking, finds the next available port starting from the base.
- * For bridge networking, always returns the fixed port 3100.
+ * Ensure the sockets volume exists, creating it if necessary.
  */
-const AGENT_PORT_BASE = 10000;
-const AGENT_PORT_MAX_RETRIES = 20;
-
-export async function allocateAgentPort(existingPort?: number | null): Promise<number> {
-  // If we have an existing port, reuse it
-  if (existingPort) {
-    return existingPort;
+async function ensureSocketsVolume(): Promise<void> {
+  const volumeName = env.SOCKETS_VOLUME;
+  try {
+    // Check if volume exists
+    await runPodman(['volume', 'inspect', volumeName]);
+  } catch {
+    // Volume doesn't exist, create it
+    log.info('Creating sockets volume', { volumeName });
+    await runPodman(['volume', 'create', volumeName]);
   }
+}
 
-  // For bridge networking, always use fixed port (no conflicts since each container is isolated)
-  if (env.CONTAINER_NETWORK_MODE !== 'host') {
-    return 3100;
+/**
+ * Clean up a session's socket file using a temporary container.
+ * Uses a temporary container to access the sockets volume and delete the file.
+ */
+export async function cleanupSessionSocket(sessionId: string): Promise<void> {
+  const socketPath = `/sockets/${sessionId}.sock`;
+  const containerName = `cleanup-socket-${uuid().slice(0, 8)}`;
+
+  log.info('Cleaning up session socket', { sessionId, socketPath });
+
+  try {
+    await ensureSocketsVolume();
+
+    const containerId = (
+      await runPodman([
+        'create',
+        '--name',
+        containerName,
+        '--rm',
+        '--entrypoint',
+        '/bin/rm',
+        '-v',
+        `${env.SOCKETS_VOLUME}:/sockets`,
+        CLAUDE_CODE_IMAGE,
+        '-f',
+        socketPath,
+      ])
+    ).trim();
+
+    await runPodman(['start', containerId]);
+    // Container auto-removes after command completes
+    log.info('Socket file cleaned up', { sessionId, socketPath });
+  } catch (error) {
+    log.warn('Failed to clean up socket file', { sessionId, socketPath }, toError(error));
+    // Don't throw - cleanup failures shouldn't block session operations
   }
-
-  // For host networking, find the next available port
-  // Query DB for currently allocated ports to avoid conflicts
-  const { prisma } = await import('@/lib/prisma');
-  const sessions = await prisma.session.findMany({
-    where: {
-      agentPort: { not: null },
-      status: { in: ['running', 'creating'] },
-    },
-    select: { agentPort: true },
-  });
-
-  const usedPorts = new Set(
-    sessions.map((s) => s.agentPort).filter((p): p is number => p !== null)
-  );
-
-  // Find the first available port starting from the base
-  for (let port = AGENT_PORT_BASE; port < AGENT_PORT_BASE + AGENT_PORT_MAX_RETRIES; port++) {
-    if (!usedPorts.has(port)) {
-      return port;
-    }
-  }
-
-  throw new Error(
-    `No available agent ports in range ${AGENT_PORT_BASE}-${AGENT_PORT_BASE + AGENT_PORT_MAX_RETRIES - 1}`
-  );
 }
 
 /**
@@ -258,17 +265,19 @@ async function updateGitCache(repoFullName: string, githubToken?: string): Promi
     await ensureGitCacheVolume();
 
     // Create a temporary container with the cache volume mounted
+    // Override entrypoint to avoid starting agent service (which would fail without sockets volume)
     const createArgs = [
       'create',
       '--name',
       containerName,
       '--rm',
+      '--entrypoint',
+      '/bin/sleep',
       '-v',
       `${env.GIT_CACHE_VOLUME}:/cache`,
       '-w',
       '/cache',
       CLAUDE_CODE_IMAGE,
-      'sleep',
       'infinity',
     ];
 
@@ -378,18 +387,20 @@ export async function cloneRepoInVolume(config: CloneConfig): Promise<CloneResul
 
     // Create a temporary container with the session's volume mounted
     // Also mount the git cache volume if we're using it
+    // Override entrypoint to avoid starting agent service (which would fail without sockets volume)
     const createArgs = [
       'create',
       '--name',
       containerName,
       '--rm', // Auto-remove when stopped
+      '--entrypoint',
+      '/bin/sleep',
       '-v',
       `${volumeName}:/workspace`,
       ...(useCache ? ['-v', `${env.GIT_CACHE_VOLUME}:/cache:ro`] : []),
       '-w',
       '/workspace',
       CLAUDE_CODE_IMAGE,
-      'sleep',
       'infinity',
     ];
 
@@ -485,8 +496,6 @@ export interface ContainerConfig {
   sessionId: string;
   repoPath: string; // Relative path to repo within workspace (e.g., "my-repo")
   githubToken?: string;
-  // Port for the agent service HTTP API (host networking)
-  agentPort: number;
   // System prompt to pass to the agent service
   systemPrompt?: string;
   // Per-repo environment variables
@@ -543,8 +552,8 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
     if (env.PODMAN_SOCKET_PATH) {
       envArgs.push('-e', 'CONTAINER_HOST=unix:///var/run/docker.sock');
     }
-    // Agent service configuration
-    envArgs.push('-e', `AGENT_PORT=${config.agentPort}`);
+    // Agent service configuration - use Unix socket instead of TCP port
+    envArgs.push('-e', `AGENT_SOCKET_PATH=/sockets/${config.sessionId}.sock`);
     if (config.systemPrompt) {
       envArgs.push('-e', `SYSTEM_PROMPT=${config.systemPrompt}`);
     }
@@ -566,6 +575,8 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
     volumeArgs.push('-v', `${env.PNPM_STORE_VOLUME}:/pnpm-store`);
     // Mount shared Gradle cache volume
     volumeArgs.push('-v', `${env.GRADLE_CACHE_VOLUME}:/gradle-cache`);
+    // Mount sockets volume for agent service communication
+    volumeArgs.push('-v', `${env.SOCKETS_VOLUME}:/sockets`);
 
     // Mount host's podman socket for container-in-container support (read-only)
     if (env.PODMAN_SOCKET_PATH) {
@@ -584,6 +595,9 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
 
     // Ensure the image is pulled before creating the container
     await ensureImagePulled(CLAUDE_CODE_IMAGE);
+
+    // Ensure the sockets volume exists
+    await ensureSocketsVolume();
 
     // GPU access via CDI (Container Device Interface) - requires nvidia-container-toolkit
     // and CDI specs generated via: nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml

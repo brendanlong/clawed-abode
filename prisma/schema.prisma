@@ -29,7 +29,6 @@ model Session {
   workspacePath String    // Path to workspace directory on host (contains the repo)
   repoPath      String    @default("") // Path to repo relative to workspace (e.g., "my-repo")
   containerId   String?
-  agentPort     Int?      // Port for the agent service HTTP API (host networking)
   status        String    @default("creating") // creating, running, stopped, error, archived
   statusMessage String?   // Human-readable progress message during creation
   initialPrompt String?   // Optional prompt to send when session starts (e.g., from GitHub issue)
