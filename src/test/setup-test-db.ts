@@ -99,7 +99,6 @@ export async function teardownTestDb(): Promise<void> {
  */
 export async function clearTestDb(): Promise<void> {
   // Delete in order to respect foreign key constraints
-  await testPrisma.claudeProcess.deleteMany();
   await testPrisma.message.deleteMany();
   await testPrisma.session.deleteMany();
   await testPrisma.authSession.deleteMany();

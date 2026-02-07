@@ -179,6 +179,52 @@ async function ensureImagePulled(imageName: string): Promise<void> {
 }
 
 /**
+ * Allocate a port for the agent service in a container.
+ * For host networking, finds the next available port starting from the base.
+ * For bridge networking, always returns the fixed port 3100.
+ */
+const AGENT_PORT_BASE = 10000;
+const AGENT_PORT_MAX_RETRIES = 20;
+
+export async function allocateAgentPort(existingPort?: number | null): Promise<number> {
+  // If we have an existing port, reuse it
+  if (existingPort) {
+    return existingPort;
+  }
+
+  // For bridge networking, always use fixed port (no conflicts since each container is isolated)
+  if (env.CONTAINER_NETWORK_MODE !== 'host') {
+    return 3100;
+  }
+
+  // For host networking, find the next available port
+  // Query DB for currently allocated ports to avoid conflicts
+  const { prisma } = await import('@/lib/prisma');
+  const sessions = await prisma.session.findMany({
+    where: {
+      agentPort: { not: null },
+      status: { in: ['running', 'creating'] },
+    },
+    select: { agentPort: true },
+  });
+
+  const usedPorts = new Set(
+    sessions.map((s) => s.agentPort).filter((p): p is number => p !== null)
+  );
+
+  // Find the first available port starting from the base
+  for (let port = AGENT_PORT_BASE; port < AGENT_PORT_BASE + AGENT_PORT_MAX_RETRIES; port++) {
+    if (!usedPorts.has(port)) {
+      return port;
+    }
+  }
+
+  throw new Error(
+    `No available agent ports in range ${AGENT_PORT_BASE}-${AGENT_PORT_BASE + AGENT_PORT_MAX_RETRIES - 1}`
+  );
+}
+
+/**
  * Convert a repo full name (e.g., "owner/repo") to a cache-safe path.
  * Uses double-dash to separate owner and repo since slashes aren't valid in paths.
  */
@@ -450,6 +496,10 @@ export interface ContainerConfig {
   sessionId: string;
   repoPath: string; // Relative path to repo within workspace (e.g., "my-repo")
   githubToken?: string;
+  // Port for the agent service HTTP API (host networking)
+  agentPort: number;
+  // System prompt to pass to the agent service
+  systemPrompt?: string;
   // Per-repo settings (env vars and MCP servers)
   repoEnvVars?: Array<{ name: string; value: string }>;
   mcpServers?: Array<{
@@ -510,6 +560,12 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
     if (env.PODMAN_SOCKET_PATH) {
       envArgs.push('-e', 'CONTAINER_HOST=unix:///var/run/docker.sock');
     }
+    // Agent service configuration
+    envArgs.push('-e', `AGENT_PORT=${config.agentPort}`);
+    if (config.systemPrompt) {
+      envArgs.push('-e', `SYSTEM_PROMPT=${config.systemPrompt}`);
+    }
+    envArgs.push('-e', `CLAUDE_MODEL=${env.CLAUDE_MODEL}`);
 
     // Add per-repo environment variables
     if (config.repoEnvVars) {
@@ -571,8 +627,7 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
       ...envArgs,
       ...volumeArgs,
       CLAUDE_CODE_IMAGE,
-      'sleep',
-      'infinity', // Keep container running (responds to SIGTERM unlike tail -f)
+      // Container runs the agent service via its CMD (node /opt/agent-service/dist/index.js)
     ];
 
     const containerId = (await runPodman(createArgs)).trim();
@@ -802,13 +857,6 @@ export async function verifyContainerHealth(containerId: string): Promise<void> 
     throw new Error(
       `Container health check failed: ${toError(error).message}${logs ? `\nLogs:\n${logs}` : ''}`
     );
-  }
-
-  // Verify the claude command is available
-  try {
-    await runPodman(['exec', containerId, 'which', 'claude']);
-  } catch (error) {
-    throw new Error(`Claude CLI not available in container: ${toError(error).message}`);
   }
 
   log.debug('Container health verified', { containerId });
