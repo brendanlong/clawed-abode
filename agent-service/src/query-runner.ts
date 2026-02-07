@@ -99,8 +99,11 @@ export class QueryRunner {
       sdkOptions.tools = { type: 'preset' as const, preset: 'claude_code' as const };
 
       // Resume or start fresh
+      // We use our own sessionId so resume can find it by the same ID
       if (options.resume) {
         sdkOptions.resume = options.sessionId;
+      } else {
+        sdkOptions.sessionId = options.sessionId;
       }
 
       // Model configuration
