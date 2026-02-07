@@ -106,6 +106,11 @@ async function handleQuery(req: http.IncomingMessage, res: http.ServerResponse):
     res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
+    const errorStack = err instanceof Error ? err.stack : undefined;
+    console.error('Query failed:', errorMessage);
+    if (errorStack) {
+      console.error('Stack trace:', errorStack);
+    }
     res.write(`data: ${JSON.stringify({ error: errorMessage })}\n\n`);
   } finally {
     unsubscribe();
