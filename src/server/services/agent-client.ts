@@ -9,8 +9,11 @@
  */
 
 import http from 'node:http';
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { createLogger, toError } from '@/lib/logger';
+import { env } from '@/lib/env';
 
 const log = createLogger('agent-client');
 
@@ -297,10 +300,29 @@ export function createAgentClient(socketPath: string): AgentClient {
 
 /**
  * Get the agent service socket path for a session.
- * Socket is located in the shared sockets volume at /sockets/{sessionId}.sock
+ * In dev mode (host directory): resolves to absolute path (e.g., /path/to/data/sockets/{sessionId}.sock)
+ * In production (container): uses container path (/sockets/{sessionId}.sock)
  */
 export function getAgentSocketPath(sessionId: string): string {
-  return `/sockets/${sessionId}.sock`;
+  // Check if we're running inside a container
+  const isContainer = existsSync('/run/.containerenv') || existsSync('/.dockerenv');
+
+  if (isContainer) {
+    // In container - use container path
+    return `/sockets/${sessionId}.sock`;
+  } else {
+    // On host (dev mode) - use absolute path to host directory
+    const socketsSpec = env.SOCKETS_VOLUME;
+
+    // Check if it's a host path
+    const isHostPath = socketsSpec.startsWith('.') || socketsSpec.startsWith('/');
+    if (isHostPath) {
+      return resolve(socketsSpec, `${sessionId}.sock`);
+    } else {
+      // This shouldn't happen in dev mode, but fall back to container path
+      return `/sockets/${sessionId}.sock`;
+    }
+  }
 }
 
 /**

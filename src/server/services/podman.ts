@@ -1,5 +1,7 @@
 import { spawn } from 'child_process';
-import { existsSync } from 'fs';
+import { existsSync, mkdirSync } from 'fs';
+import { chmod } from 'fs/promises';
+import { resolve } from 'path';
 import { env } from '@/lib/env';
 import { createLogger, toError } from '@/lib/logger';
 import { v4 as uuid } from 'uuid';
@@ -168,54 +170,105 @@ async function ensureImagePulled(imageName: string): Promise<void> {
 }
 
 /**
- * Ensure the sockets volume exists, creating it if necessary.
+ * Check if a volume string is a host path (starts with . or /) or a named volume.
+ */
+function isHostPath(volumeSpec: string): boolean {
+  return volumeSpec.startsWith('.') || volumeSpec.startsWith('/');
+}
+
+/**
+ * Get the absolute path for a sockets location, whether it's a host path or volume name.
+ * For host paths, resolves to absolute path.
+ * For volume names, returns the volume name as-is.
+ */
+function getSocketsPath(socketsSpec: string): string {
+  if (isHostPath(socketsSpec)) {
+    return resolve(socketsSpec);
+  }
+  return socketsSpec;
+}
+
+/**
+ * Ensure the sockets location exists, creating it if necessary.
+ * For host paths, creates the directory.
+ * For named volumes, creates the volume.
  */
 async function ensureSocketsVolume(): Promise<void> {
-  const volumeName = env.SOCKETS_VOLUME;
-  try {
-    // Check if volume exists
-    await runPodman(['volume', 'inspect', volumeName]);
-  } catch {
-    // Volume doesn't exist, create it
-    log.info('Creating sockets volume', { volumeName });
-    await runPodman(['volume', 'create', volumeName]);
+  const socketsSpec = env.SOCKETS_VOLUME;
+
+  if (isHostPath(socketsSpec)) {
+    // Host path - ensure directory exists with proper permissions
+    const socketsPath = getSocketsPath(socketsSpec);
+    if (!existsSync(socketsPath)) {
+      log.info('Creating sockets directory', { socketsPath });
+      mkdirSync(socketsPath, { recursive: true, mode: 0o777 });
+    }
+    // Ensure directory has write permissions for all users
+    // This is needed so container users can create socket files
+    await chmod(socketsPath, 0o777);
+  } else {
+    // Named volume - ensure it exists
+    try {
+      await runPodman(['volume', 'inspect', socketsSpec]);
+    } catch {
+      // Volume doesn't exist, create it
+      log.info('Creating sockets volume', { volumeName: socketsSpec });
+      await runPodman(['volume', 'create', socketsSpec]);
+    }
   }
 }
 
 /**
- * Clean up a session's socket file using a temporary container.
- * Uses a temporary container to access the sockets volume and delete the file.
+ * Clean up a session's socket file.
+ * For host paths, deletes directly. For volumes, uses a temporary container.
  */
 export async function cleanupSessionSocket(sessionId: string): Promise<void> {
+  const socketsSpec = env.SOCKETS_VOLUME;
   const socketPath = `/sockets/${sessionId}.sock`;
-  const containerName = `cleanup-socket-${uuid().slice(0, 8)}`;
 
-  log.info('Cleaning up session socket', { sessionId, socketPath });
+  log.info('Cleaning up session socket', { sessionId });
 
   try {
-    await ensureSocketsVolume();
+    if (isHostPath(socketsSpec)) {
+      // Host path - delete directly
+      const fs = await import('fs/promises');
+      const absolutePath = resolve(getSocketsPath(socketsSpec), `${sessionId}.sock`);
+      try {
+        await fs.unlink(absolutePath);
+        log.info('Socket file cleaned up', { sessionId, path: absolutePath });
+      } catch (err) {
+        // File might not exist, which is fine
+        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+          throw err;
+        }
+      }
+    } else {
+      // Named volume - use temporary container
+      const containerName = `cleanup-socket-${uuid().slice(0, 8)}`;
+      await ensureSocketsVolume();
 
-    const containerId = (
-      await runPodman([
-        'create',
-        '--name',
-        containerName,
-        '--rm',
-        '--entrypoint',
-        '/bin/rm',
-        '-v',
-        `${env.SOCKETS_VOLUME}:/sockets`,
-        CLAUDE_CODE_IMAGE,
-        '-f',
-        socketPath,
-      ])
-    ).trim();
+      const containerId = (
+        await runPodman([
+          'create',
+          '--name',
+          containerName,
+          '--rm',
+          '--entrypoint',
+          '/bin/rm',
+          '-v',
+          `${socketsSpec}:/sockets`,
+          CLAUDE_CODE_IMAGE,
+          '-f',
+          socketPath,
+        ])
+      ).trim();
 
-    await runPodman(['start', containerId]);
-    // Container auto-removes after command completes
-    log.info('Socket file cleaned up', { sessionId, socketPath });
+      await runPodman(['start', containerId]);
+      // Container auto-removes after command completes
+      log.info('Socket file cleaned up', { sessionId, socketPath });
+    }
   } catch (error) {
-    log.warn('Failed to clean up socket file', { sessionId, socketPath }, toError(error));
+    log.warn('Failed to clean up socket file', { sessionId }, toError(error));
     // Don't throw - cleanup failures shouldn't block session operations
   }
 }
@@ -575,8 +628,10 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
     volumeArgs.push('-v', `${env.PNPM_STORE_VOLUME}:/pnpm-store`);
     // Mount shared Gradle cache volume
     volumeArgs.push('-v', `${env.GRADLE_CACHE_VOLUME}:/gradle-cache`);
-    // Mount sockets volume for agent service communication
-    volumeArgs.push('-v', `${env.SOCKETS_VOLUME}:/sockets`);
+    // Mount sockets location for agent service communication
+    // Use absolute path for host directories, volume name for named volumes
+    const socketsMount = `${getSocketsPath(env.SOCKETS_VOLUME)}:/sockets`;
+    volumeArgs.push('-v', socketsMount);
 
     // Mount host's podman socket for container-in-container support (read-only)
     if (env.PODMAN_SOCKET_PATH) {
