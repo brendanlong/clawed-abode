@@ -47,6 +47,7 @@ export interface AgentClient {
     sessionId: string;
     resume?: boolean;
     cwd?: string;
+    mcpServers?: Record<string, unknown>;
   }): AsyncGenerator<AgentMessage>;
 
   /**
@@ -94,6 +95,7 @@ export function createAgentClient(baseUrl: string): AgentClient {
           sessionId: options.sessionId,
           resume: options.resume ?? false,
           cwd: options.cwd,
+          mcpServers: options.mcpServers,
         }),
       });
 

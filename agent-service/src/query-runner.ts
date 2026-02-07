@@ -1,4 +1,9 @@
-import { query, type Query, type SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import {
+  query,
+  type Query,
+  type SDKMessage,
+  type McpServerConfig,
+} from '@anthropic-ai/claude-agent-sdk';
 import { MessageStore } from './message-store.js';
 
 /**
@@ -22,6 +27,8 @@ export interface QueryOptions {
   model?: string;
   /** Working directory */
   cwd?: string;
+  /** MCP server configurations */
+  mcpServers?: Record<string, McpServerConfig>;
 }
 
 /**
@@ -114,6 +121,11 @@ export class QueryRunner {
       // Working directory
       if (options.cwd) {
         sdkOptions.cwd = options.cwd;
+      }
+
+      // MCP server configurations
+      if (options.mcpServers && Object.keys(options.mcpServers).length > 0) {
+        sdkOptions.mcpServers = options.mcpServers;
       }
 
       // Load project settings (for CLAUDE.md)

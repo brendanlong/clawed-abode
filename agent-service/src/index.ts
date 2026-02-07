@@ -1,7 +1,7 @@
 import http from 'node:http';
 import { MessageStore } from './message-store.js';
 import { QueryRunner, type QueryOptions } from './query-runner.js';
-import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { SDKMessage, McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 
 const PORT = parseInt(process.env.AGENT_PORT || '3100', 10);
 const SYSTEM_PROMPT = process.env.SYSTEM_PROMPT || '';
@@ -56,6 +56,7 @@ async function handleQuery(req: http.IncomingMessage, res: http.ServerResponse):
     sessionId?: string;
     resume?: boolean;
     cwd?: string;
+    mcpServers?: Record<string, McpServerConfig>;
   };
 
   if (!body.prompt || typeof body.prompt !== 'string') {
@@ -98,6 +99,7 @@ async function handleQuery(req: http.IncomingMessage, res: http.ServerResponse):
     systemPrompt: SYSTEM_PROMPT || undefined,
     model: CLAUDE_MODEL || undefined,
     cwd: body.cwd,
+    mcpServers: body.mcpServers,
   };
 
   try {
