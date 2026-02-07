@@ -875,55 +875,6 @@ export async function removeContainer(containerId: string): Promise<void> {
   }
 }
 
-export async function execInContainer(
-  containerId: string,
-  command: string[]
-): Promise<{ stream: Readable; execId: string }> {
-  const execId = uuid();
-  log.debug('execInContainer: Starting', { containerId, command, execId });
-
-  const proc = spawn('podman', ['exec', containerId, ...command], { env: podmanEnv });
-
-  // Combine stdout and stderr into a single stream
-  const combinedStream = new PassThrough();
-  proc.stdout.pipe(combinedStream, { end: false });
-  proc.stderr.pipe(combinedStream, { end: false });
-
-  // Track when both streams are done
-  let stdoutEnded = false;
-  let stderrEnded = false;
-  const checkEnd = () => {
-    if (stdoutEnded && stderrEnded) {
-      combinedStream.end();
-    }
-  };
-  proc.stdout.on('end', () => {
-    stdoutEnded = true;
-    checkEnd();
-  });
-  proc.stderr.on('end', () => {
-    stderrEnded = true;
-    checkEnd();
-  });
-
-  // Track the process
-  const tracked: TrackedProcess = { process: proc, running: true, exitCode: null };
-  trackedProcesses.set(execId, tracked);
-
-  proc.on('close', (code) => {
-    tracked.running = false;
-    tracked.exitCode = code;
-  });
-
-  proc.on('error', (err) => {
-    log.error('execInContainer: Process error', toError(err), { containerId, execId });
-    tracked.running = false;
-    tracked.exitCode = 1;
-  });
-
-  return { stream: combinedStream, execId };
-}
-
 export async function getContainerStatus(
   containerId: string
 ): Promise<'running' | 'stopped' | 'not_found'> {

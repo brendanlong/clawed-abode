@@ -22,35 +22,36 @@ The system uses **rootless Podman** for container management, which provides:
 ## Architecture
 
 ```
-┌─────────────────┐     ┌─────────────────┐     ┌─────────────────────────────┐
-│   Mobile/Web    │     │   Tailscale     │     │      Home Server            │
-│   Browser       │────►│  Serve/Funnel   │────►│  ┌─────────────────────┐    │
-│                 │     │                 │     │  │   Next.js + tRPC    │    │
-└─────────────────┘     └─────────────────┘     │  │   - Auth            │    │
-                                                │  │   - Session mgmt    │    │
-                                                │  │   - WebSocket/SSE   │    │
-                                                │  └──────────┬──────────┘    │
-                                                │             │               │
-                                                │  ┌──────────▼──────────┐    │
-                                                │  │  Podman Containers  │    │
-                                                │  │  ┌───────────────┐  │    │
-                                                │  │  │ Claude Code   │  │    │
-                                                │  │  │ + Git Clone   │  │    │
-                                                │  │  │ + GPU (CDI)   │  │    │
-                                                │  │  │ + sudo access │  │    │
-                                                │  │  └───────────────┘  │    │
-                                                │  └─────────────────────┘    │
-                                                └─────────────────────────────┘
+┌─────────────────┐     ┌─────────────────┐     ┌──────────────────────────────────┐
+│   Mobile/Web    │     │   Tailscale     │     │        Home Server               │
+│   Browser       │────►│  Serve/Funnel   │────►│  ┌────────────────────────┐      │
+│                 │     │                 │     │  │    Next.js + tRPC      │      │
+└─────────────────┘     └─────────────────┘     │  │    - Auth              │      │
+                                                │  │    - Session mgmt      │      │
+                                                │  │    - Agent Client      │      │
+                                                │  │    - SSE to browser    │      │
+                                                │  └──────────┬─────────────┘      │
+                                                │             │ HTTP/SSE           │
+                                                │  ┌──────────▼─────────────┐      │
+                                                │  │   Podman Containers    │      │
+                                                │  │  ┌──────────────────┐  │      │
+                                                │  │  │ Agent Service    │  │      │
+                                                │  │  │ (Claude SDK)    │  │      │
+                                                │  │  │ + Git Clone     │  │      │
+                                                │  │  │ + GPU (CDI)     │  │      │
+                                                │  │  │ + sudo access   │  │      │
+                                                │  │  └──────────────────┘  │      │
+                                                │  └────────────────────────┘      │
+                                                └──────────────────────────────────┘
 ```
 
 ## Data Model
 
 The database schema is defined in [`prisma/schema.prisma`](../prisma/schema.prisma). Key models:
 
-- **Session**: Claude Code sessions tied to git clones
+- **Session**: Claude Code sessions tied to git clones (includes `agentPort` for the agent service)
 - **Message**: Chat messages with sequence numbers for cursor-based pagination
 - **AuthSession**: Login sessions with tokens and audit info
-- **ClaudeProcess**: Tracks running Claude processes for interrupt/resume
 - **RepoSettings**: Per-repository settings (favorites, env vars, MCP servers)
 - **EnvVar**: Environment variables for a repository (encrypted if secret)
 - **McpServer**: MCP server configurations for a repository
@@ -221,34 +222,32 @@ claude.getHistory({
 7. Background: Server spawns a temporary container with the session's volume and cache mounted
 8. Background: Clone runs inside the container via `git clone --reference` to `/workspace/{repo-name}` (uses cache if available, falls back to normal clone)
 9. Background: Temporary container is removed
-10. Background: Server starts the session container with:
+10. Background: Server allocates an agent port (for host networking, finds next available port starting from 10000)
+11. Background: Server starts the session container with:
 
 - Session's volume mounted at `/workspace`
 - Working directory set to `/workspace/{repo-name}` (the cloned repo)
 - GPU access via CDI (`--device nvidia.com/gpu=all`)
-- Claude auth copied into container (not bind mounted)
+- Claude auth passed via environment variable
 - Podman socket mounted (for podman-in-podman)
 - GITHUB_TOKEN env var for push/pull access
 - Git credential helper configured automatically
 - Passwordless sudo for package installation
+- Agent service configuration: `AGENT_PORT`, `SYSTEM_PROMPT`, `CLAUDE_MODEL`
 
-11. Session status → `running`, statusMessage → null
+12. Background: Container starts the agent service (Node.js HTTP server using Claude Agent SDK)
+13. Background: Server waits for agent service health check to pass
+14. Session status → `running`, statusMessage → null
 
 ### Interaction Flow
 
 1. User sends prompt via `claude.send()`
-2. Server executes command in container (via Podman's Docker-compatible API):
-   ```bash
-   claude -p "<prompt>" \
-     --session-id <sessionId> \      # or --resume on subsequent
-     --output-format stream-json \
-     --dangerously-skip-permissions \
-     --append-system-prompt "<system-prompt>"
-   ```
-3. Server reads stdout line by line, parses JSON
-4. Each line saved to database with incrementing sequence number
-5. Lines streamed to client via SSE/WebSocket
-6. On completion, `result` message marks end of turn
+2. Next.js server sends HTTP POST to the agent service inside the container (`/query` endpoint)
+3. Agent service calls `query()` from `@anthropic-ai/claude-agent-sdk`
+4. Agent service streams results back as Server-Sent Events (SSE)
+5. Next.js server reads SSE stream, saves each message to database with incrementing sequence number
+6. Messages streamed to browser client via SSE
+7. On completion, `result` message marks end of turn
 
 ### System Prompt
 
@@ -275,9 +274,10 @@ The system prompt also instructs Claude to report container issues (missing tool
 
 1. User clicks "Stop" in UI
 2. Server calls `claude.interrupt()`
-3. Server sends SIGINT to the `claude` process inside container
-4. Claude Code cleans up, doesn't persist the interrupted tool call
-5. User can send new prompt to continue
+3. Next.js server sends HTTP POST to the agent service (`/interrupt` endpoint)
+4. Agent service calls `interrupt()` on the running SDK query (falls back to `abort()`)
+5. Claude Code cleans up, doesn't persist the interrupted tool call
+6. User can send new prompt to continue
 
 ### Reconnection Flow
 
@@ -308,6 +308,7 @@ The runner container image is defined in [`docker/Dockerfile.claude-code`](../do
 - Passwordless sudo for package installation
 - Docker/docker-compose aliases pointing to Podman equivalents
 - Rootless Podman configured with fuse-overlayfs
+- Built-in agent service (`/opt/agent-service/`) that runs as the container's CMD, providing an HTTP API for Claude Agent SDK interaction
 
 ### Container Launch
 
@@ -321,6 +322,33 @@ Runner containers are created with (see [`createAndStartContainer`](../src/serve
 - **Podman socket**: Bind-mounted for container-in-container support (read-only)
 - **pnpm store**: Named volume mounted at `/pnpm-store` for shared package cache
 - **Gradle cache**: Named volume mounted at `/gradle-cache` for shared build cache
+- **Agent service**: Configured via `AGENT_PORT`, `SYSTEM_PROMPT`, and `CLAUDE_MODEL` environment variables. The container's CMD runs the agent service, which provides an HTTP API for the Next.js server to interact with Claude.
+
+### Agent Service Architecture
+
+Each runner container includes a built-in agent service (`/opt/agent-service/`) that uses the `@anthropic-ai/claude-agent-sdk` to interact with Claude programmatically instead of spawning CLI processes.
+
+**Agent service endpoints:**
+
+- `POST /query` — Start a new Claude query. Streams results as SSE (Server-Sent Events).
+- `POST /interrupt` — Interrupt the currently running query.
+- `GET /status` — Check if a query is running and get the last sequence number.
+- `GET /messages?after=N` — Fetch messages after a given sequence number (for reconnection/catch-up).
+- `GET /health` — Health check endpoint.
+
+**Benefits over the previous CLI approach:**
+
+- No file-based communication (output files, tailing, PID tracking)
+- Clean interrupt via SDK API instead of signal-based process management
+- Message persistence inside the container (SQLite) for reconnection
+- Simpler error handling and lifecycle management
+- Direct programmatic access to Claude sessions, resume, and settings
+
+**Implementation:**
+
+- Agent service: [`agent-service/`](../agent-service/) (Node.js + TypeScript)
+- Agent client (Next.js side): [`src/server/services/agent-client.ts`](../src/server/services/agent-client.ts)
+- Claude runner (orchestration): [`src/server/services/claude-runner.ts`](../src/server/services/claude-runner.ts)
 
 ## Message Storage & Pagination
 
@@ -497,7 +525,14 @@ Users can configure global system prompt settings that apply to all sessions:
 ## File Structure
 
 ```
-claude-code-web/
+clawed-abode/
+├── agent-service/              # Agent service (runs inside containers)
+│   ├── src/
+│   │   ├── index.ts            # HTTP server with query/interrupt/status endpoints
+│   │   ├── query-runner.ts     # Wraps Claude Agent SDK query()
+│   │   └── message-store.ts    # SQLite message persistence
+│   ├── package.json
+│   └── tsconfig.json
 ├── src/
 │   ├── server/
 │   │   ├── routers/
@@ -506,10 +541,10 @@ claude-code-web/
 │   │   │   ├── sessions.ts
 │   │   │   └── claude.ts
 │   │   ├── services/
-│   │   │   ├── docker.ts
-│   │   │   ├── git.ts
-│   │   │   ├── claude-runner.ts
-│   │   │   └── message-store.ts
+│   │   │   ├── podman.ts          # Container management via Podman CLI
+│   │   │   ├── agent-client.ts    # HTTP client for agent service
+│   │   │   ├── claude-runner.ts   # Orchestrates Claude queries via agent client
+│   │   │   └── events.ts         # SSE event emitter
 │   │   └── trpc.ts
 │   ├── app/
 │   │   ├── page.tsx              # Session list
