@@ -118,10 +118,17 @@ export const sseRouter = router({
         }
 
         // Then stream real-time events (client deduplicates any overlap)
+        // Partial messages (id starting with "partial-") need unique tracking IDs
+        // so tRPC doesn't deduplicate subsequent updates to the same partial
+        let partialCounter = 0;
         while (!signal?.aborted) {
           if (events.length > 0) {
             const event = events.shift()!;
-            yield tracked(event.message.id, event);
+            const isPartial = event.message.id.startsWith('partial-');
+            const trackingId = isPartial
+              ? `${event.message.id}-${partialCounter++}`
+              : event.message.id;
+            yield tracked(trackingId, event);
           } else {
             await new Promise<void>((resolve) => {
               resolveWait = resolve;

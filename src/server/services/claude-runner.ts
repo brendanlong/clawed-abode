@@ -338,14 +338,38 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
         )
       : undefined;
 
+    // Use a stable ID for partial messages so the frontend can track and replace them.
+    // The partial message UUID from the stream_event is used as the partial ID.
+    // When the final assistant message arrives, the frontend removes the partial.
+    const PARTIAL_MESSAGE_ID_PREFIX = 'partial-';
+
     // Start the query through the agent service
-    for await (const agentMessage of client.query({
+    for await (const agentEvent of client.query({
       prompt,
       sessionId,
       resume: shouldResume,
       cwd: workingDir,
       mcpServers: mcpServersRecord,
     })) {
+      // Handle partial (streaming) messages - emit via SSE but don't persist
+      if (agentEvent.kind === 'partial') {
+        const partialContent = agentEvent.partial;
+        const partialId = PARTIAL_MESSAGE_ID_PREFIX + partialContent.uuid;
+
+        sseEvents.emitNewMessage(sessionId, {
+          id: partialId,
+          sessionId,
+          // Use the next sequence number (will be taken by the final message)
+          sequence,
+          type: 'assistant',
+          content: partialContent,
+          createdAt: new Date(),
+        });
+        continue;
+      }
+
+      // Handle complete messages - persist and emit
+      const agentMessage = agentEvent;
       const messageContent = JSON.stringify(agentMessage.message);
       const messageType = getMessageType(agentMessage.message);
       const msgId = (agentMessage.message as { uuid?: string }).uuid || uuid();

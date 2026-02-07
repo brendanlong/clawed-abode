@@ -243,10 +243,16 @@ claude.getHistory({
 
 1. User sends prompt via `claude.send()`
 2. Next.js server sends HTTP POST to the agent service inside the container (`/query` endpoint)
-3. Agent service calls `query()` from `@anthropic-ai/claude-agent-sdk`
-4. Agent service streams results back as Server-Sent Events (SSE)
-5. Next.js server reads SSE stream, saves each message to database with incrementing sequence number
-6. Messages streamed to browser client via SSE
+3. Agent service calls `query()` from `@anthropic-ai/claude-agent-sdk` with `includePartialMessages: true`
+4. Agent service streams results back as Server-Sent Events (SSE):
+   - **Partial messages**: `stream_event` messages from the SDK are accumulated by `StreamAccumulator` into synthetic partial assistant messages. These are emitted as `{ partial }` SSE events for real-time UI updates (text streaming, tool call progress) but are **not persisted** to the database.
+   - **Complete messages**: Full `assistant`, `user`, `result`, and `system` messages are emitted as `{ sequence, message }` SSE events and persisted.
+5. Next.js server reads SSE stream:
+   - For partial messages: emits SSE event with `partial-{uuid}` ID to browser (not saved to DB)
+   - For complete messages: saves to database with incrementing sequence number, emits SSE event
+6. Browser client receives SSE events and updates the message cache:
+   - Partial messages replace any existing partial in the cache (only one active partial at a time)
+   - Complete messages remove any partial messages and are added to the cache
 7. On completion, `result` message marks end of turn
 
 ### System Prompt
@@ -330,10 +336,10 @@ Each runner container includes a built-in agent service (`/opt/agent-service/`) 
 
 **Agent service endpoints:**
 
-- `POST /query` — Start a new Claude query. Streams results as SSE (Server-Sent Events).
+- `POST /query` — Start a new Claude query. Streams results as SSE (Server-Sent Events). Emits two types of events: `{ partial }` for real-time streaming updates (accumulated from SDK `stream_event` messages) and `{ sequence, message }` for complete persisted messages.
 - `POST /interrupt` — Interrupt the currently running query.
 - `GET /status` — Check if a query is running and get the last sequence number.
-- `GET /messages?after=N` — Fetch messages after a given sequence number (for reconnection/catch-up).
+- `GET /messages?after=N` — Fetch complete messages after a given sequence number (for reconnection/catch-up).
 - `GET /health` — Health check endpoint.
 
 **Benefits over the previous CLI approach:**
@@ -530,6 +536,7 @@ clawed-abode/
 │   ├── src/
 │   │   ├── index.ts            # HTTP server with query/interrupt/status endpoints
 │   │   ├── query-runner.ts     # Wraps Claude Agent SDK query()
+│   │   ├── stream-accumulator.ts # Accumulates stream_events into partial messages
 │   │   └── message-store.ts    # SQLite message persistence
 │   ├── package.json
 │   └── tsconfig.json
