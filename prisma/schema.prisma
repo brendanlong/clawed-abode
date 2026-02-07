@@ -22,21 +22,21 @@ model AuthSession {
 }
 
 model Session {
-  id            String         @id @default(uuid())
+  id            String    @id @default(uuid())
   name          String
   repoUrl       String
   branch        String
-  workspacePath String         // Path to workspace directory on host (contains the repo)
-  repoPath      String         @default("") // Path to repo relative to workspace (e.g., "my-repo")
+  workspacePath String    // Path to workspace directory on host (contains the repo)
+  repoPath      String    @default("") // Path to repo relative to workspace (e.g., "my-repo")
   containerId   String?
-  status        String         @default("creating") // creating, running, stopped, error, archived
-  statusMessage String?        // Human-readable progress message during creation
-  initialPrompt String?        // Optional prompt to send when session starts (e.g., from GitHub issue)
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
-  archivedAt    DateTime?      // When the session was archived (null if not archived)
+  agentPort     Int?      // Port for the agent service HTTP API (host networking)
+  status        String    @default("creating") // creating, running, stopped, error, archived
+  statusMessage String?   // Human-readable progress message during creation
+  initialPrompt String?   // Optional prompt to send when session starts (e.g., from GitHub issue)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  archivedAt    DateTime? // When the session was archived (null if not archived)
   messages      Message[]
-  claudeProcess ClaudeProcess?
 
   @@index([status])
 }
@@ -53,19 +53,6 @@ model Message {
 
   @@unique([sessionId, sequence])
   @@index([sessionId, sequence])
-}
-
-model ClaudeProcess {
-  id             String   @id @default(uuid())
-  sessionId      String   @unique
-  containerId    String
-  execId         String   // Docker exec ID for checking completion status
-  outputFile     String   // path to output file in container (relative to /workspace)
-  lastSequence   Int      // last sequence number we've processed
-  pid            Int?     // PID of the Claude process in the container (for direct signal delivery)
-  startedAt      DateTime @default(now())
-
-  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 }
 
 // Per-repository settings for favorites, env vars, and MCP servers

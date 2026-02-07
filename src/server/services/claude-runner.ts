@@ -1,41 +1,26 @@
-import {
-  execInContainerToFile,
-  getExecStatus,
-  tailFileInContainer,
-  readFileInContainer,
-  getContainerStatus,
-  getContainerState,
-  getContainerLogs,
-  fileExistsInContainer,
-  killProcessesByPattern,
-  signalProcessesByPattern,
-  findProcessInContainer,
-  sendSignalToExec,
-  isErrorExitCode,
-  describeExitCode,
-} from './podman';
 import { prisma } from '@/lib/prisma';
-import { getMessageType, containsExitPlanMode } from '@/lib/claude-messages';
+import { getMessageType } from '@/lib/claude-messages';
 import { v4 as uuid, v5 as uuidv5 } from 'uuid';
 import { sseEvents } from './events';
 import { createLogger, toError } from '@/lib/logger';
-import { env } from '@/lib/env';
+import {
+  describeExitCode,
+  getContainerStatus,
+  getContainerState,
+  getContainerLogs,
+} from './podman';
+import {
+  createAgentClient,
+  getAgentUrl,
+  waitForAgentHealth,
+  type AgentClient,
+} from './agent-client';
 
 // Namespace UUID for generating deterministic IDs from error line content
 const ERROR_LINE_NAMESPACE = '6ba7b810-9dad-11d1-80b4-00c04fd430c8';
 
-// Track running Claude processes per session (in-memory for quick lookups)
-// The DB is the source of truth; this is for performance
-const runningProcesses = new Map<string, { containerId: string; pid: number | null }>();
-
-// Track active stream processors to avoid duplicate processing
-const activeStreamProcessors = new Set<string>();
-
-const OUTPUT_FILE_PREFIX = '.claude-output-';
-
-// Pattern to match the actual claude CLI process, but not tail commands watching .claude-output files
-// Using /usr/bin/claude because that's the installed path and won't match other processes
-const CLAUDE_PROCESS_PATTERN = '/usr/bin/claude';
+// Track active queries per session (in-memory for quick lookups)
+const activeQueries = new Map<string, { client: AgentClient }>();
 
 // Default system prompt appended to all Claude sessions to ensure proper workflow
 // Since users interact through GitHub PRs (no local access), Claude must always
@@ -59,6 +44,40 @@ CONTAINER ISSUE REPORTING: This container should have all standard development t
 3. Then continue with your task using workarounds if possible, or inform the user that the task cannot be completed due to the container issue.`;
 
 const log = createLogger('claude-runner');
+
+/**
+ * Build the full system prompt from global settings and per-repo custom prompt.
+ */
+export function buildSystemPrompt(options: {
+  customSystemPrompt?: string | null;
+  globalSettings?: {
+    systemPromptOverride: string | null;
+    systemPromptOverrideEnabled: boolean;
+    systemPromptAppend: string | null;
+  } | null;
+}): string {
+  const { customSystemPrompt, globalSettings } = options;
+
+  // Start with either the global override (if enabled) or the default prompt
+  let basePrompt = DEFAULT_SYSTEM_PROMPT;
+  if (globalSettings?.systemPromptOverrideEnabled && globalSettings.systemPromptOverride) {
+    basePrompt = globalSettings.systemPromptOverride;
+  }
+
+  let fullSystemPrompt = basePrompt;
+
+  // Add global append content
+  if (globalSettings?.systemPromptAppend) {
+    fullSystemPrompt += '\n\n' + globalSettings.systemPromptAppend;
+  }
+
+  // Add per-repo custom prompt
+  if (customSystemPrompt) {
+    fullSystemPrompt += '\n\n' + customSystemPrompt;
+  }
+
+  return fullSystemPrompt;
+}
 
 /**
  * Create and save a system error message for display to the user.
@@ -182,110 +201,11 @@ async function checkContainerHealthAndReport(
 }
 
 /**
- * Result of attempting to save a message line to the database.
+ * Get an agent client for a session.
+ * The session must have an agentPort assigned.
  */
-type SaveMessageResult =
-  | {
-      saved: true;
-      sequence: number;
-      message: {
-        id: string;
-        sessionId: string;
-        sequence: number;
-        type: string;
-        content: unknown;
-        createdAt: Date;
-      };
-      /** If true, the message contains ExitPlanMode and we should send an interrupt */
-      shouldInterrupt?: boolean;
-    }
-  | { saved: false; reason: 'parse_error' | 'duplicate' };
-
-/**
- * Parse a JSON line and save it as a message if it doesn't already exist.
- * Returns the saved message with parsed content if saved, or info about why it was skipped.
- */
-async function saveMessageIfNotExists(
-  sessionId: string,
-  line: string,
-  sequence: number
-): Promise<SaveMessageResult> {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(line);
-  } catch {
-    return { saved: false, reason: 'parse_error' };
-  }
-
-  const messageType = getMessageType(parsed);
-  const msgId =
-    (parsed as { uuid?: string; id?: string }).uuid ||
-    (parsed as { uuid?: string; id?: string }).id ||
-    uuid();
-
-  // Check if message already exists (can happen after server restart)
-  const existing = await prisma.message.findUnique({
-    where: { id: msgId },
-    select: { id: true },
-  });
-  if (existing) {
-    return { saved: false, reason: 'duplicate' };
-  }
-
-  try {
-    const message = await prisma.message.create({
-      data: {
-        id: msgId,
-        sessionId,
-        sequence,
-        type: messageType,
-        content: line,
-      },
-    });
-
-    // Check if this message contains ExitPlanMode tool use
-    // ExitPlanMode doesn't properly end the turn in JSON streaming mode,
-    // so we need to send an interrupt when we see it
-    const shouldInterrupt = containsExitPlanMode(parsed);
-
-    return { saved: true, sequence, message: { ...message, content: parsed }, shouldInterrupt };
-  } catch (err) {
-    // Handle unique constraint violation on (sessionId, sequence)
-    // This can happen in race conditions when processing the same output file
-    if (err && typeof err === 'object' && 'code' in err && err.code === 'P2002') {
-      return { saved: false, reason: 'duplicate' };
-    }
-    throw err;
-  }
-}
-
-/**
- * Send an interrupt to a Claude process when ExitPlanMode is detected.
- * Uses the in-memory process tracking to find the container and PID.
- * This is a separate function because interruptClaude() is defined later
- * and we want to avoid forward reference issues.
- */
-async function sendInterruptForExitPlanMode(sessionId: string): Promise<void> {
-  const process = runningProcesses.get(sessionId);
-  if (!process) {
-    log.warn('sendInterruptForExitPlanMode: No process found in memory', { sessionId });
-    return;
-  }
-
-  if (process.pid) {
-    await sendSignalToExec(process.containerId, process.pid, 'INT');
-  } else {
-    await signalProcessesByPattern(process.containerId, CLAUDE_PROCESS_PATTERN, 'INT');
-  }
-}
-
-function getOutputFileName(sessionId: string): string {
-  return `${OUTPUT_FILE_PREFIX}${sessionId}.jsonl`;
-}
-
-function getOutputFilePath(sessionId: string): string {
-  // Put output file in /tmp to avoid cluttering the workspace with untracked files
-  return `/tmp/${getOutputFileName(sessionId)}`;
+function getClientForSession(agentPort: number): AgentClient {
+  return createAgentClient(getAgentUrl(agentPort));
 }
 
 export interface RunClaudeCommandOptions {
@@ -300,46 +220,60 @@ export interface RunClaudeCommandOptions {
     systemPromptOverrideEnabled: boolean;
     systemPromptAppend: string | null;
   } | null;
+  /** MCP server configurations passed to the SDK at query time */
+  mcpServers?: Array<{
+    name: string;
+    command: string;
+    args?: string[];
+    env?: Record<string, string>;
+  }>;
 }
 
+/**
+ * Run a Claude command via the agent service running inside the container.
+ * Streams messages from the agent service, saves them to DB, and emits SSE events.
+ */
 export async function runClaudeCommand(options: RunClaudeCommandOptions): Promise<void> {
-  const { sessionId, containerId, prompt, customSystemPrompt, globalSettings } = options;
+  const { sessionId, containerId, prompt } = options;
   log.info('runClaudeCommand: Starting', { sessionId, containerId, promptLength: prompt.length });
 
-  // Check if session already has a running process (in-memory check first for speed)
-  if (runningProcesses.has(sessionId)) {
-    log.warn('runClaudeCommand: Process already running in memory', { sessionId });
+  // Check if session already has a running query
+  if (activeQueries.has(sessionId)) {
+    log.warn('runClaudeCommand: Query already running', { sessionId });
     throw new Error('A Claude process is already running for this session');
   }
 
-  // Check DB for persistent record
-  const existingProcess = await prisma.claudeProcess.findUnique({
-    where: { sessionId },
+  // Look up the session to get the agentPort
+  const session = await prisma.session.findUnique({
+    where: { id: sessionId },
+    select: { agentPort: true, repoPath: true },
   });
-  if (existingProcess) {
-    // Check if it's actually still running
-    try {
-      const status = await getExecStatus(existingProcess.execId);
-      if (status.running) {
-        throw new Error('A Claude process is already running for this session');
-      }
-    } catch {
-      // Exec not found, clean up stale record
-    }
-    await prisma.claudeProcess.delete({ where: { sessionId } });
+
+  if (!session?.agentPort) {
+    throw new Error('Session does not have an agent port assigned');
   }
 
-  // Verify the container is still running before trying to exec
+  // Verify the container is still running
   const containerStatus = await getContainerStatus(containerId);
   if (containerStatus !== 'running') {
-    log.error('runClaudeCommand: Container not running', undefined, {
-      sessionId,
-      containerId,
-      containerStatus,
-    });
     throw new Error(
       `Cannot execute Claude command: container is ${containerStatus === 'not_found' ? 'not found' : 'stopped'}`
     );
+  }
+
+  // Get the agent client
+  const client = getClientForSession(session.agentPort);
+
+  // Check if agent service is healthy
+  const healthy = await client.health();
+  if (!healthy) {
+    throw new Error('Agent service is not healthy');
+  }
+
+  // Check if agent already has a running query
+  const status = await client.getStatus();
+  if (status.running) {
+    throw new Error('A Claude process is already running for this session');
   }
 
   // Get the next sequence number for this session
@@ -365,7 +299,7 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
     },
   });
 
-  // Emit SSE event for the user message so client can update immediately
+  // Emit SSE event for the user message
   sseEvents.emitNewMessage(sessionId, {
     id: userMessageId,
     sessionId,
@@ -375,255 +309,102 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
     createdAt: new Date(),
   });
 
-  // Build the Claude command
-  // Use --resume for subsequent messages, --session-id for the first
-  const isFirstMessage = !lastMessage;
+  // Determine if we should resume an existing SDK session.
+  // We ask the agent service for its last sequence number. If it has processed
+  // messages before (sequence > 0), it has an active Claude Code session
+  // that we can resume. If it's 0 (fresh container), we start a new session
+  // even if our DB has messages from a previous container lifecycle.
+  const shouldResume = status.lastSequence > 0;
 
-  // Build the full system prompt:
-  // 1. Start with either the global override (if enabled) or the default prompt
-  // 2. Append global append content (if any)
-  // 3. Append per-repo custom prompt (if any)
-  let basePrompt = DEFAULT_SYSTEM_PROMPT;
-  if (globalSettings?.systemPromptOverrideEnabled && globalSettings.systemPromptOverride) {
-    basePrompt = globalSettings.systemPromptOverride;
-  }
-
-  let fullSystemPrompt = basePrompt;
-
-  // Add global append content
-  if (globalSettings?.systemPromptAppend) {
-    fullSystemPrompt += '\n\n' + globalSettings.systemPromptAppend;
-  }
-
-  // Add per-repo custom prompt
-  if (customSystemPrompt) {
-    fullSystemPrompt += '\n\n' + customSystemPrompt;
-  }
-
-  const command = [
-    'claude',
-    '--model',
-    env.CLAUDE_MODEL,
-    '-p',
-    prompt,
-    ...(isFirstMessage ? ['--session-id', sessionId] : ['--resume', sessionId]),
-    '--output-format',
-    'stream-json',
-    '--verbose',
-    '--dangerously-skip-permissions',
-    '--append-system-prompt',
-    fullSystemPrompt,
-  ];
-
-  const outputFile = getOutputFilePath(sessionId);
-
-  // Start Claude with output redirected to file
-  // This avoids the blocking issue where pipes back up when the service disconnects
-  log.info('runClaudeCommand: Executing command in container', { command, outputFile });
-  const { execId, errorStream } = await execInContainerToFile(containerId, command, outputFile);
-  log.info('runClaudeCommand: Command started with file redirect', { sessionId, execId });
-
-  // Collect any startup/redirect errors from the error stream
-  let startupError = '';
-  errorStream.on('data', (chunk: Buffer) => {
-    startupError += chunk.toString('utf-8');
-  });
-
-  // Create persistent record for crash recovery
-  await prisma.claudeProcess.create({
-    data: {
-      sessionId,
-      containerId,
-      execId,
-      outputFile: getOutputFileName(sessionId),
-      lastSequence: sequence - 1,
-    },
-  });
-
-  runningProcesses.set(sessionId, { containerId, pid: null });
-  log.info('runClaudeCommand: Process registered', { sessionId });
+  // Track the active query
+  activeQueries.set(sessionId, { client });
 
   // Emit Claude running event
   sseEvents.emitClaudeRunning(sessionId, true);
 
   try {
-    // Find and store the PID of the Claude process for direct signal delivery
-    // Retry a few times since the process may take a moment to start
-    let pid: number | null = null;
-    for (let attempt = 0; attempt < 10; attempt++) {
-      pid = await findProcessInContainer(containerId, CLAUDE_PROCESS_PATTERN);
-      if (pid) break;
-      await new Promise((r) => setTimeout(r, 200));
-    }
+    // Build working directory
+    const workingDir = session.repoPath ? `/workspace/${session.repoPath}` : '/workspace';
 
-    if (pid) {
-      log.debug('runClaudeCommand: Found Claude process PID', { sessionId, pid });
-      runningProcesses.set(sessionId, { containerId, pid });
-      await prisma.claudeProcess.update({
-        where: { sessionId },
-        data: { pid },
-      });
-    } else {
-      log.warn('runClaudeCommand: Could not find Claude process PID', { sessionId });
-    }
+    // Build MCP servers config as Record<string, McpServerConfig> for the SDK
+    const mcpServersRecord = options.mcpServers?.length
+      ? Object.fromEntries(
+          options.mcpServers.map((server) => {
+            const config: Record<string, unknown> = { command: server.command };
+            if (server.args?.length) config.args = server.args;
+            if (server.env && Object.keys(server.env).length > 0) config.env = server.env;
+            return [server.name, config];
+          })
+        )
+      : undefined;
 
-    // Wait for output file to exist (with timeout)
-    let fileExists = false;
-    for (let attempt = 0; attempt < 50; attempt++) {
-      fileExists = await fileExistsInContainer(containerId, outputFile);
-      if (fileExists) break;
+    // Start the query through the agent service
+    for await (const agentMessage of client.query({
+      prompt,
+      sessionId,
+      resume: shouldResume,
+      cwd: workingDir,
+      mcpServers: mcpServersRecord,
+    })) {
+      const messageContent = JSON.stringify(agentMessage.message);
+      const messageType = getMessageType(agentMessage.message);
+      const msgId = (agentMessage.message as { uuid?: string }).uuid || uuid();
 
-      // Check for startup errors
-      if (startupError.trim()) {
-        throw new Error(`Claude command failed to start: ${startupError.trim()}`);
-      }
+      // Save to database
+      try {
+        const message = await prisma.message.create({
+          data: {
+            id: msgId,
+            sessionId,
+            sequence,
+            type: messageType,
+            content: messageContent,
+          },
+        });
 
-      await new Promise((r) => setTimeout(r, 100));
-    }
+        // Emit SSE event
+        sseEvents.emitNewMessage(sessionId, {
+          id: message.id,
+          sessionId,
+          sequence,
+          type: messageType,
+          content: agentMessage.message,
+          createdAt: message.createdAt,
+        });
 
-    if (!fileExists) {
-      // Check one more time for startup errors
-      if (startupError.trim()) {
-        throw new Error(`Claude command failed to start: ${startupError.trim()}`);
-      }
-      throw new Error('Output file was not created - command may have failed to start');
-    }
-
-    // Tail the output file for actual claude output
-    const { stream: tailStream } = await tailFileInContainer(containerId, outputFile, 0);
-
-    let buffer = '';
-    let totalLines = 0;
-    let finalExitCode: number | null = null;
-
-    // Process output by tailing the file and polling exec status
-    await new Promise<void>((resolve, reject) => {
-      tailStream.on('data', async (chunk: Buffer) => {
-        const data = chunk.toString('utf-8');
-        buffer += data;
-
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          totalLines++;
-
-          const result = await saveMessageIfNotExists(sessionId, line, sequence);
-          if (result.saved) {
-            sequence = result.sequence + 1;
-            log.debug('runClaudeCommand: Saved message', { sessionId, sequence: result.sequence });
-            // Emit new message event
-            sseEvents.emitNewMessage(sessionId, result.message);
-            // Update last processed sequence for recovery
-            await prisma.claudeProcess
-              .update({ where: { sessionId }, data: { lastSequence: result.sequence } })
-              .catch(() => {});
-
-            // Check if we need to interrupt (e.g., ExitPlanMode detected)
-            // ExitPlanMode doesn't properly end the turn in JSON streaming mode,
-            // so we send an interrupt to cleanly end the turn
-            if (result.shouldInterrupt) {
-              log.info('runClaudeCommand: ExitPlanMode detected, sending interrupt', { sessionId });
-              // Send interrupt asynchronously - don't await to avoid blocking the stream
-              sendInterruptForExitPlanMode(sessionId).catch((err) => {
-                log.warn('runClaudeCommand: Failed to send interrupt for ExitPlanMode', {
-                  sessionId,
-                  error: toError(err).message,
-                });
-              });
-            }
-          } else if (result.reason === 'parse_error') {
-            log.warn('runClaudeCommand: Failed to parse JSON', {
-              sessionId,
-              line: line.slice(0, 100),
-            });
-          }
+        sequence++;
+      } catch (err) {
+        // Handle unique constraint violations (duplicate messages)
+        if (err && typeof err === 'object' && 'code' in err && err.code === 'P2002') {
+          log.debug('runClaudeCommand: Skipping duplicate message', { sessionId, msgId });
+          continue;
         }
+        throw err;
+      }
+    }
+
+    log.info('runClaudeCommand: Completed', { sessionId, totalMessages: sequence });
+  } catch (err) {
+    log.error('runClaudeCommand: Error', toError(err), { sessionId });
+
+    // Fetch container logs for debugging
+    const containerLogs = await getContainerLogs(containerId, { tail: 50 });
+    if (containerLogs) {
+      log.error('runClaudeCommand: Container logs after error', undefined, {
+        sessionId,
+        logs: containerLogs,
       });
+    }
 
-      tailStream.on('error', (err) => {
-        log.error('runClaudeCommand: Tail stream error', toError(err), { sessionId });
-        reject(err);
-      });
+    // Check if container is still healthy
+    await checkContainerHealthAndReport(sessionId, containerId);
 
-      // Poll exec status to detect when the command completes
-      const pollInterval = setInterval(async () => {
-        try {
-          const status = await getExecStatus(execId);
-
-          if (!status.running) {
-            clearInterval(pollInterval);
-            finalExitCode = status.exitCode;
-
-            // Give tail a moment to catch up with final output
-            await new Promise((r) => setTimeout(r, 500));
-            tailStream.destroy();
-
-            // Read any remaining content from the file
-            try {
-              const fileContent = await readFileInContainer(containerId, outputFile);
-              const allLines = fileContent.split('\n').filter((l) => l.trim());
-
-              for (let i = totalLines; i < allLines.length; i++) {
-                const line = allLines[i];
-                const result = await saveMessageIfNotExists(sessionId, line, sequence);
-                if (result.saved) {
-                  sequence = result.sequence + 1;
-                  sseEvents.emitNewMessage(sessionId, result.message);
-                }
-                totalLines++;
-              }
-            } catch (err) {
-              log.warn('runClaudeCommand: Failed to read remaining content', {
-                sessionId,
-                error: toError(err).message,
-              });
-            }
-
-            log.info('runClaudeCommand: Completed', {
-              sessionId,
-              totalLines,
-              exitCode: finalExitCode,
-            });
-
-            resolve();
-          }
-        } catch (err) {
-          clearInterval(pollInterval);
-          reject(err);
-        }
-      }, 1000);
+    // Create error message for the user (includes logs for visibility)
+    await createErrorMessage(sessionId, `Claude query failed: ${toError(err).message}`, {
+      containerLogs,
     });
-
-    // Check for process errors after stream completes
-    if (isErrorExitCode(finalExitCode)) {
-      // Check if container is still healthy
-      const containerHealthy = await checkContainerHealthAndReport(sessionId, containerId);
-
-      if (containerHealthy) {
-        // Container is fine, so this is a Claude process error
-        // Exit code 130 (SIGINT) is expected for interrupts
-        if (finalExitCode !== 130) {
-          log.error('Claude process failed', undefined, {
-            sessionId,
-            exitCode: finalExitCode,
-            exitDescription: describeExitCode(finalExitCode),
-          });
-
-          // Get container logs for context
-          const containerLogs = await getContainerLogs(containerId, { tail: 30 });
-          await createErrorMessage(
-            sessionId,
-            `Claude process exited unexpectedly: ${describeExitCode(finalExitCode)}`,
-            { exitCode: finalExitCode, containerLogs }
-          );
-        }
-      }
-    }
   } finally {
-    runningProcesses.delete(sessionId);
-    await prisma.claudeProcess.delete({ where: { sessionId } }).catch(() => {});
+    activeQueries.delete(sessionId);
 
     // Emit Claude stopped event
     sseEvents.emitClaudeRunning(sessionId, false);
@@ -632,395 +413,95 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
 }
 
 /**
- * Reconnect to an existing Claude process and continue processing its output.
- * Used after server restart to resume processing orphaned processes.
+ * Interrupt a running Claude query via the agent service.
  */
-export async function reconnectToClaudeProcess(
-  sessionId: string
-): Promise<{ reconnected: boolean; stillRunning: boolean }> {
-  const processRecord = await prisma.claudeProcess.findUnique({
-    where: { sessionId },
-    include: { session: true },
-  });
+export async function interruptClaude(sessionId: string): Promise<boolean> {
+  log.info('interruptClaude: Interrupt requested', { sessionId });
 
-  if (!processRecord || !processRecord.session.containerId) {
-    return { reconnected: false, stillRunning: false };
+  // Check in-memory active queries first
+  const active = activeQueries.get(sessionId);
+  if (active) {
+    const result = await active.client.interrupt();
+    return result.success;
   }
 
-  const containerId = processRecord.session.containerId;
+  // Fall back to looking up the session's agent port
+  const session = await prisma.session.findUnique({
+    where: { id: sessionId },
+    select: { agentPort: true, containerId: true },
+  });
 
-  // Check if container is still running
-  const containerStatus = await getContainerStatus(containerId);
+  if (!session?.agentPort || !session.containerId) {
+    log.info('interruptClaude: No agent port or container for session', { sessionId });
+    return false;
+  }
+
+  // Verify container is running
+  const containerStatus = await getContainerStatus(session.containerId);
   if (containerStatus !== 'running') {
-    log.info('reconnectToClaudeProcess: Container not running', {
-      sessionId,
-      containerId,
-      containerStatus,
-    });
-    // Container stopped - check health and report if needed
-    await checkContainerHealthAndReport(sessionId, containerId);
-    // Try to read remaining output
-    try {
-      await catchUpFromOutputFile(sessionId, containerId, getOutputFilePath(sessionId));
-    } catch (err) {
-      log.warn('reconnectToClaudeProcess: Failed to catch up from output file', {
-        sessionId,
-        error: toError(err).message,
-      });
-    }
-    await prisma.claudeProcess.delete({ where: { sessionId } });
-    return { reconnected: false, stillRunning: false };
+    log.info('interruptClaude: Container not running', { sessionId, containerStatus });
+    return false;
   }
 
-  // Check if Claude exec is still running using the stored execId
-  const status = await getExecStatus(processRecord.execId);
-  let claudeRunning = status.running;
-
-  if (status.notFound) {
-    log.info('reconnectToClaudeProcess: Exec ID not found (server may have restarted)', {
-      sessionId,
-      execId: processRecord.execId,
-    });
-
-    // Exec ID is invalid (server restarted), but the process might still be running
-    // Check by looking for the actual claude process in the container
-    const pid = await findProcessInContainer(containerId, CLAUDE_PROCESS_PATTERN);
-    claudeRunning = pid !== null;
-
-    if (claudeRunning) {
-      log.info('reconnectToClaudeProcess: Claude process still running (found by PID)', {
-        sessionId,
-        pid,
-      });
-      // Update the stored PID
-      await prisma.claudeProcess.update({
-        where: { sessionId },
-        data: { pid },
-      });
-    } else {
-      log.info('reconnectToClaudeProcess: Claude process not found in container', {
-        sessionId,
-      });
-    }
-  }
-
-  if (!claudeRunning) {
-    // Process finished - check for errors and read remaining output
-    log.info('reconnectToClaudeProcess: Process no longer running', {
-      sessionId,
-      execId: processRecord.execId,
-      exitCode: status.exitCode,
-    });
-
-    // Check if this was an error exit (only if we have an exit code)
-    if (isErrorExitCode(status.exitCode) && status.exitCode !== 130) {
-      const containerLogs = await getContainerLogs(containerId, { tail: 30 });
-      await createErrorMessage(
-        sessionId,
-        `Claude process exited: ${describeExitCode(status.exitCode)}`,
-        { exitCode: status.exitCode, containerLogs }
-      );
-    }
-
-    try {
-      await catchUpFromOutputFile(sessionId, containerId, getOutputFilePath(sessionId));
-    } catch (err) {
-      log.warn('reconnectToClaudeProcess: Failed to catch up from output file', {
-        sessionId,
-        error: toError(err).message,
-      });
-    }
-    await prisma.claudeProcess.delete({ where: { sessionId } });
-    return { reconnected: false, stillRunning: false };
-  }
-
-  // Process is still running - reconnect to it
-  if (runningProcesses.has(sessionId) || activeStreamProcessors.has(sessionId)) {
-    // Already being processed
-    return { reconnected: true, stillRunning: true };
-  }
-
-  runningProcesses.set(sessionId, { containerId, pid: processRecord.pid });
-
-  // Emit Claude running event for reconnection
-  sseEvents.emitClaudeRunning(sessionId, true);
-
-  // Start processing the output file in the background
-  // Use PID-based detection if exec ID is invalid
-  processOutputFileWithPid(
-    sessionId,
-    containerId,
-    getOutputFilePath(sessionId),
-    processRecord.lastSequence + 1
-  )
-    .finally(() => {
-      runningProcesses.delete(sessionId);
-      killProcessesByPattern(containerId, getOutputFilePath(sessionId)).catch(() => {});
-      prisma.claudeProcess.delete({ where: { sessionId } }).catch(() => {});
-      // Emit Claude stopped event
-      sseEvents.emitClaudeRunning(sessionId, false);
-    })
-    .catch((err) => {
-      log.error('Error processing reconnected Claude output', toError(err), { sessionId });
-    });
-
-  return { reconnected: true, stillRunning: true };
-}
-
-/**
- * Read any unprocessed output from the file and save to DB.
- * Used when process has finished but we missed some output.
- */
-async function catchUpFromOutputFile(
-  sessionId: string,
-  containerId: string,
-  outputFile: string
-): Promise<void> {
-  // Check if file exists
-  const fileExists = await fileExistsInContainer(containerId, outputFile);
-  if (!fileExists) {
-    log.info('catchUpFromOutputFile: Output file not found', { sessionId, outputFile });
-    return;
-  }
-
-  const fileContent = await readFileInContainer(containerId, outputFile);
-  const lines = fileContent.split('\n').filter((line) => line.trim());
-
-  // Get current max sequence from DB to know where to start new messages
-  const lastMessage = await prisma.message.findFirst({
-    where: { sessionId },
-    orderBy: { sequence: 'desc' },
-    select: { sequence: true },
-  });
-
-  let sequence = (lastMessage?.sequence ?? -1) + 1;
-  let linesProcessed = 0;
-  let linesSkipped = 0;
-
-  // Process all lines and skip any that are already in the DB (by message ID).
-  // This is more robust than trying to calculate which lines to skip based on
-  // sequence numbers, since sequence numbers don't map 1:1 to file line numbers.
-  for (const line of lines) {
-    if (!line.trim()) continue;
-
-    try {
-      JSON.parse(line);
-    } catch {
-      // Generate deterministic ID from content so we can detect duplicates
-      const errorId = uuidv5(`${sessionId}:error:${line}`, ERROR_LINE_NAMESPACE);
-      const existingError = await prisma.message.findUnique({
-        where: { id: errorId },
-        select: { id: true },
-      });
-      if (existingError) {
-        linesSkipped++;
-        continue;
-      }
-
-      // Save as error
-      await prisma.message.create({
-        data: {
-          id: errorId,
-          sessionId,
-          sequence: sequence++,
-          type: 'system',
-          content: JSON.stringify({
-            type: 'system',
-            subtype: 'error',
-            content: [{ type: 'text', text: line }],
-          }),
-        },
-      });
-      linesProcessed++;
-      continue;
-    }
-
-    const result = await saveMessageIfNotExists(sessionId, line, sequence);
-    if (result.saved) {
-      sequence = result.sequence + 1;
-      linesProcessed++;
-    } else if (result.reason === 'duplicate') {
-      linesSkipped++;
-    }
-  }
-
-  log.info('catchUpFromOutputFile: Complete', {
-    sessionId,
-    linesProcessed,
-    linesSkipped,
-  });
-}
-
-async function updateLastSequence(sessionId: string, sequence: number): Promise<void> {
-  await prisma.claudeProcess
-    .update({
-      where: { sessionId },
-      data: { lastSequence: sequence },
-    })
-    .catch(() => {}); // Ignore if record doesn't exist
-}
-
-/**
- * Process the output file by tailing it and using PID-based process detection.
- * Used for reconnection after server restart when exec ID is no longer valid.
- */
-async function processOutputFileWithPid(
-  sessionId: string,
-  containerId: string,
-  outputFile: string,
-  startSequence: number
-): Promise<void> {
-  log.info('processOutputFileWithPid: Starting', { sessionId, outputFile, startSequence });
-
-  if (activeStreamProcessors.has(sessionId)) {
-    throw new Error('Stream processor already active for this session');
-  }
-
-  activeStreamProcessors.add(sessionId);
-  let sequence = startSequence;
-  let buffer = '';
-  let totalLines = 0;
-
+  const client = getClientForSession(session.agentPort);
   try {
-    // First check if container is still running
-    const containerStatus = await getContainerStatus(containerId);
-    if (containerStatus !== 'running') {
-      log.warn('processOutputFileWithPid: Container not running at start', {
-        sessionId,
-        containerId,
-        containerStatus,
-      });
-      await checkContainerHealthAndReport(sessionId, containerId);
-      return;
-    }
-
-    // Wait for file to exist
-    let attempts = 0;
-    while (attempts < 50) {
-      const exists = await fileExistsInContainer(containerId, outputFile);
-      if (exists) break;
-
-      if (attempts % 10 === 0) {
-        const status = await getContainerStatus(containerId);
-        if (status !== 'running') {
-          log.warn('processOutputFileWithPid: Container stopped while waiting for output file', {
-            sessionId,
-            containerId,
-            status,
-          });
-          await checkContainerHealthAndReport(sessionId, containerId);
-          return;
-        }
-      }
-
-      await new Promise((r) => setTimeout(r, 100));
-      attempts++;
-    }
-
-    const { stream } = await tailFileInContainer(containerId, outputFile, 0);
-
-    await new Promise<void>((resolve, reject) => {
-      stream.on('data', async (chunk: Buffer) => {
-        const data = chunk.toString('utf-8');
-        buffer += data;
-
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          totalLines++;
-
-          const result = await saveMessageIfNotExists(sessionId, line, sequence);
-          if (result.saved) {
-            sequence = result.sequence + 1;
-            sseEvents.emitNewMessage(sessionId, result.message);
-            await updateLastSequence(sessionId, result.sequence);
-          }
-        }
-      });
-
-      // Poll process existence using PID pattern matching
-      const pollInterval = setInterval(async () => {
-        try {
-          // Check container status periodically
-          const containerStatus = await getContainerStatus(containerId);
-          if (containerStatus !== 'running') {
-            clearInterval(pollInterval);
-            stream.destroy();
-            log.warn('processOutputFileWithPid: Container stopped during processing', {
-              sessionId,
-              containerId,
-              containerStatus,
-            });
-            await checkContainerHealthAndReport(sessionId, containerId);
-            resolve();
-            return;
-          }
-
-          // Check if claude process is still running by pattern
-          const pid = await findProcessInContainer(containerId, CLAUDE_PROCESS_PATTERN);
-          const processRunning = pid !== null;
-
-          log.debug('processOutputFileWithPid: Process status', {
-            sessionId,
-            processRunning,
-            pid,
-            totalLines,
-          });
-
-          if (!processRunning) {
-            clearInterval(pollInterval);
-            await new Promise((r) => setTimeout(r, 500));
-            stream.destroy();
-
-            // Read remaining content
-            try {
-              const fileContent = await readFileInContainer(containerId, outputFile);
-              const allLines = fileContent.split('\n').filter((l) => l.trim());
-
-              for (let i = totalLines; i < allLines.length; i++) {
-                const line = allLines[i];
-                const result = await saveMessageIfNotExists(sessionId, line, sequence);
-                if (result.saved) {
-                  sequence = result.sequence + 1;
-                  sseEvents.emitNewMessage(sessionId, result.message);
-                }
-                totalLines++;
-              }
-            } catch (err) {
-              log.warn('processOutputFileWithPid: Failed to read remaining content', {
-                sessionId,
-                error: toError(err).message,
-              });
-            }
-
-            log.info('processOutputFileWithPid: Completed', {
-              sessionId,
-              totalLines,
-            });
-            resolve();
-          }
-        } catch (err) {
-          clearInterval(pollInterval);
-          reject(err);
-        }
-      }, 1000);
-
-      stream.on('error', (err) => {
-        clearInterval(pollInterval);
-        reject(err);
-      });
+    const result = await client.interrupt();
+    return result.success;
+  } catch (err) {
+    log.warn('interruptClaude: Failed to interrupt', {
+      sessionId,
+      error: toError(err).message,
     });
-  } finally {
-    activeStreamProcessors.delete(sessionId);
-    await killProcessesByPattern(containerId, outputFile).catch(() => {});
+    return false;
+  }
+}
+
+/**
+ * Check if Claude is running for a session (in-memory check).
+ */
+export function isClaudeRunning(sessionId: string): boolean {
+  return activeQueries.has(sessionId);
+}
+
+/**
+ * Check if Claude is running, including checking the agent service.
+ * More thorough than isClaudeRunning() but involves a network call.
+ */
+export async function isClaudeRunningAsync(sessionId: string): Promise<boolean> {
+  // Check in-memory first
+  if (activeQueries.has(sessionId)) {
+    return true;
+  }
+
+  // Look up the session's agent port
+  const session = await prisma.session.findUnique({
+    where: { id: sessionId },
+    select: { agentPort: true, containerId: true },
+  });
+
+  if (!session?.agentPort || !session.containerId) {
+    return false;
+  }
+
+  // Check container status
+  const containerStatus = await getContainerStatus(session.containerId);
+  if (containerStatus !== 'running') {
+    return false;
+  }
+
+  // Ask the agent service directly
+  try {
+    const client = getClientForSession(session.agentPort);
+    const status = await client.getStatus();
+    return status.running;
+  } catch {
+    return false;
   }
 }
 
 /**
  * Mark the last non-user message as potentially interrupted and add an interrupt indicator message.
- * Called after successfully sending SIGINT to the Claude process.
+ * Called after successfully sending interrupt to the agent service.
  */
 export async function markLastMessageAsInterrupted(sessionId: string): Promise<void> {
   log.info('markLastMessageAsInterrupted: Marking message as interrupted', { sessionId });
@@ -1038,7 +519,6 @@ export async function markLastMessageAsInterrupted(sessionId: string): Promise<v
   }
 
   // Find the last non-user message to mark as interrupted
-  // This could be assistant, result, or system type
   const lastNonUserMessage = await prisma.message.findFirst({
     where: {
       sessionId,
@@ -1049,7 +529,6 @@ export async function markLastMessageAsInterrupted(sessionId: string): Promise<v
   });
 
   if (lastNonUserMessage) {
-    // Parse the content, add interrupted flag, and save back
     try {
       const content = JSON.parse(lastNonUserMessage.content);
       content.interrupted = true;
@@ -1117,197 +596,132 @@ export async function markLastMessageAsInterrupted(sessionId: string): Promise<v
   });
 }
 
-export async function interruptClaude(sessionId: string): Promise<boolean> {
-  log.info('interruptClaude: Interrupt requested', { sessionId });
-
-  // Check in-memory first
-  const process = runningProcesses.get(sessionId);
-  if (process) {
-    log.debug('interruptClaude: Found in-memory process', {
-      sessionId,
-      containerId: process.containerId,
-      pid: process.pid,
-    });
-
-    // Verify the container is still running before trying to signal
-    const containerStatus = await getContainerStatus(process.containerId);
-    if (containerStatus !== 'running') {
-      log.info('interruptClaude: Cleaning up stale in-memory process (container not running)', {
-        sessionId,
-        containerId: process.containerId,
-        containerStatus,
-      });
-      runningProcesses.delete(sessionId);
-      await prisma.claudeProcess.delete({ where: { sessionId } }).catch(() => {});
-      return false;
-    }
-
-    if (process.pid) {
-      // Use direct kill with PID for more reliable signal delivery
-      await sendSignalToExec(process.containerId, process.pid, 'INT');
-    } else {
-      // Fallback to pattern matching if PID not available
-      await signalProcessesByPattern(process.containerId, CLAUDE_PROCESS_PATTERN, 'INT');
-    }
-    return true;
-  }
-
-  // Check DB for persistent record
-  const processRecord = await prisma.claudeProcess.findUnique({
-    where: { sessionId },
-  });
-  if (!processRecord) {
-    log.info('interruptClaude: No process found', { sessionId });
-    return false;
-  }
-
-  // Verify the container actually exists before trying to signal
-  const containerStatus = await getContainerStatus(processRecord.containerId);
-  if (containerStatus !== 'running') {
-    log.info('interruptClaude: Cleaning up stale process record (container not running)', {
-      sessionId,
-      containerId: processRecord.containerId,
-      containerStatus,
-    });
-    await prisma.claudeProcess.delete({ where: { sessionId } }).catch(() => {});
-    return false;
-  }
-
-  log.debug('interruptClaude: Found DB process record', {
-    sessionId,
-    containerId: processRecord.containerId,
-    pid: processRecord.pid,
-  });
-  // Send SIGINT to the Claude process - prefer direct PID if available
-  if (processRecord.pid) {
-    await sendSignalToExec(processRecord.containerId, processRecord.pid, 'INT');
-  } else {
-    await signalProcessesByPattern(processRecord.containerId, CLAUDE_PROCESS_PATTERN, 'INT');
-  }
-  return true;
-}
-
-export function isClaudeRunning(sessionId: string): boolean {
-  return runningProcesses.has(sessionId);
-}
-
 /**
- * Check if Claude is running, including checking the DB for persistent records.
- * More thorough than isClaudeRunning() but involves a DB query.
- * Also verifies the container actually exists and cleans up stale records if not.
- */
-export async function isClaudeRunningAsync(sessionId: string): Promise<boolean> {
-  // Check in-memory first, but verify container is still running
-  const inMemoryProcess = runningProcesses.get(sessionId);
-  if (inMemoryProcess) {
-    const containerStatus = await getContainerStatus(inMemoryProcess.containerId);
-    if (containerStatus === 'running') {
-      return true;
-    }
-    // Container is gone - clean up stale in-memory and DB records
-    log.info('isClaudeRunningAsync: Cleaning up stale in-memory process (container not running)', {
-      sessionId,
-      containerId: inMemoryProcess.containerId,
-      containerStatus,
-    });
-    runningProcesses.delete(sessionId);
-    await prisma.claudeProcess.delete({ where: { sessionId } }).catch(() => {});
-    return false;
-  }
-
-  const processRecord = await prisma.claudeProcess.findUnique({
-    where: { sessionId },
-  });
-
-  if (!processRecord) {
-    return false;
-  }
-
-  // Verify the container actually exists - if not, clean up the stale record
-  const containerStatus = await getContainerStatus(processRecord.containerId);
-  if (containerStatus === 'not_found') {
-    log.info('isClaudeRunningAsync: Cleaning up stale process record (container not found)', {
-      sessionId,
-      containerId: processRecord.containerId,
-    });
-    await prisma.claudeProcess.delete({ where: { sessionId } }).catch(() => {});
-    return false;
-  }
-
-  // Container exists but is stopped - clean up the stale record
-  if (containerStatus === 'stopped') {
-    log.info('isClaudeRunningAsync: Cleaning up stale process record (container stopped)', {
-      sessionId,
-      containerId: processRecord.containerId,
-    });
-    await prisma.claudeProcess.delete({ where: { sessionId } }).catch(() => {});
-    return false;
-  }
-
-  // Container is running - check if the Claude exec is still active
-  if (processRecord.execId) {
-    try {
-      const execStatus = await getExecStatus(processRecord.execId);
-      if (!execStatus.running) {
-        log.info('isClaudeRunningAsync: Cleaning up stale process record (exec finished)', {
-          sessionId,
-          execId: processRecord.execId,
-        });
-        await prisma.claudeProcess.delete({ where: { sessionId } }).catch(() => {});
-        return false;
-      }
-    } catch {
-      // Exec not found - clean up
-      log.info('isClaudeRunningAsync: Cleaning up stale process record (exec not found)', {
-        sessionId,
-        execId: processRecord.execId,
-      });
-      await prisma.claudeProcess.delete({ where: { sessionId } }).catch(() => {});
-      return false;
-    }
-  }
-
-  return true;
-}
-
-/**
- * Reconcile all orphaned Claude processes on startup.
- * Should be called once when the server starts.
+ * Reconcile running sessions on startup.
+ * For each running session with an agent port, checks the agent service
+ * and catches up on any missed messages.
  */
 export async function reconcileOrphanedProcesses(): Promise<{
   total: number;
   reconnected: number;
   cleaned: number;
 }> {
-  const orphanedProcesses = await prisma.claudeProcess.findMany({
-    include: { session: true },
+  // Find running sessions with agent ports
+  const runningSessions = await prisma.session.findMany({
+    where: {
+      status: 'running',
+      agentPort: { not: null },
+      containerId: { not: null },
+    },
+    select: {
+      id: true,
+      agentPort: true,
+      containerId: true,
+    },
   });
 
   let reconnected = 0;
   let cleaned = 0;
 
-  for (const processRecord of orphanedProcesses) {
-    log.info('Reconciling orphaned process', { sessionId: processRecord.sessionId });
+  for (const session of runningSessions) {
+    if (!session.agentPort || !session.containerId) continue;
+
+    log.info('Reconciling session', { sessionId: session.id });
 
     try {
-      const result = await reconnectToClaudeProcess(processRecord.sessionId);
-      if (result.reconnected) {
-        reconnected++;
-        log.info('Reconnected to running process', { sessionId: processRecord.sessionId });
-      } else {
+      // Check if container is running
+      const containerStatus = await getContainerStatus(session.containerId);
+      if (containerStatus !== 'running') {
+        log.info('Container not running, checking health', {
+          sessionId: session.id,
+          containerStatus,
+        });
+        await checkContainerHealthAndReport(session.id, session.containerId);
         cleaned++;
-        log.info('Cleaned up finished process', { sessionId: processRecord.sessionId });
+        continue;
+      }
+
+      // Try to connect to agent service
+      const client = getClientForSession(session.agentPort);
+      const healthy = await waitForAgentHealth(client, { maxAttempts: 5, intervalMs: 1000 });
+
+      if (!healthy) {
+        log.warn('Agent service not healthy during reconciliation', {
+          sessionId: session.id,
+          agentPort: session.agentPort,
+        });
+        cleaned++;
+        continue;
+      }
+
+      // Get the agent's status and catch up on any missed messages
+      const agentStatus = await client.getStatus();
+
+      // Get our last stored sequence
+      const lastMessage = await prisma.message.findFirst({
+        where: { sessionId: session.id },
+        orderBy: { sequence: 'desc' },
+        select: { sequence: true },
+      });
+      const lastSequence = lastMessage?.sequence ?? 0;
+
+      // Fetch any messages we missed
+      if (agentStatus.lastSequence > 0) {
+        const missedMessages = await client.getMessages(0); // Get all from agent
+        let sequence = lastSequence + 1;
+
+        for (const agentMsg of missedMessages) {
+          const messageContent = JSON.stringify(agentMsg.message);
+          const messageType = getMessageType(agentMsg.message);
+          const msgId = (agentMsg.message as { uuid?: string }).uuid || uuid();
+
+          try {
+            const message = await prisma.message.create({
+              data: {
+                id: msgId,
+                sessionId: session.id,
+                sequence,
+                type: messageType,
+                content: messageContent,
+              },
+            });
+            sseEvents.emitNewMessage(session.id, {
+              id: message.id,
+              sessionId: session.id,
+              sequence,
+              type: messageType,
+              content: agentMsg.message,
+              createdAt: message.createdAt,
+            });
+            sequence++;
+          } catch (err) {
+            // Skip duplicates
+            if (err && typeof err === 'object' && 'code' in err && err.code === 'P2002') {
+              continue;
+            }
+            log.warn('Failed to save missed message during reconciliation', {
+              sessionId: session.id,
+              error: toError(err).message,
+            });
+          }
+        }
+      }
+
+      if (agentStatus.running) {
+        log.info('Session has active query, marking as reconnected', { sessionId: session.id });
+        reconnected++;
+      } else {
+        log.info('Session agent service is idle', { sessionId: session.id });
+        reconnected++;
       }
     } catch (err) {
-      log.error('Error reconciling session', toError(err), { sessionId: processRecord.sessionId });
-      // Clean up the record to avoid infinite retry
-      await prisma.claudeProcess.delete({ where: { id: processRecord.id } }).catch(() => {});
+      log.error('Error reconciling session', toError(err), { sessionId: session.id });
       cleaned++;
     }
   }
 
   return {
-    total: orphanedProcesses.length,
+    total: runningSessions.length,
     reconnected,
     cleaned,
   };

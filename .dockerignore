@@ -42,6 +42,8 @@ doc/
 coverage/
 .nyc_output/
 *.lcov
+*.test.ts
+*.test.js
 
 # Prisma local data (not the schema)
 prisma/*.db
@@ -58,6 +60,7 @@ npm-debug.log*
 
 # Docker files (avoid recursive context)
 docker/
+!docker/entrypoint.sh
 Dockerfile*
 
 # Misc

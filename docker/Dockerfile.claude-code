@@ -104,6 +104,18 @@ RUN corepack enable && \
     corepack prepare pnpm@latest --activate && \
     npm install -g @anthropic-ai/claude-code
 
+# Install the agent service (runs inside container to interface with Claude Agent SDK)
+# Copy package files first so npm install is cached when only source changes
+COPY agent-service/package.json agent-service/package-lock.json* /opt/agent-service/
+RUN cd /opt/agent-service && npm install
+
+# Copy source, build, then prune devDependencies
+COPY agent-service/tsconfig.json /opt/agent-service/
+COPY agent-service/src/ /opt/agent-service/src/
+RUN cd /opt/agent-service && \
+    npm run build && \
+    npm prune --production
+
 # Create a non-root user with UID 1000 (common default for host user)
 # Ubuntu 24.04 has an 'ubuntu' user at UID 1000, so delete it first
 # Configure passwordless sudo for package installation and system administration
@@ -160,5 +172,10 @@ RUN mkdir -p /home/claudeuser/.config/containers && \
 # This allows short names like 'postgres:16' to resolve to 'docker.io/library/postgres:16'
 RUN echo 'unqualified-search-registries = ["docker.io"]' > /home/claudeuser/.config/containers/registries.conf
 
-# Entry point that keeps container alive
-CMD ["tail", "-f", "/dev/null"]
+# Copy entrypoint script that handles runtime setup (git credentials, sudo fix,
+# pnpm store, podman socket permissions) then starts the agent service.
+# This avoids race conditions with host-side podman exec commands.
+COPY --chmod=755 docker/entrypoint.sh /opt/entrypoint.sh
+
+# Run the entrypoint which does setup then launches the agent service
+ENTRYPOINT ["/opt/entrypoint.sh"]

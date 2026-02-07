@@ -8,6 +8,8 @@ const mockCreateAndStartContainer = vi.hoisted(() => vi.fn());
 const mockStopContainer = vi.hoisted(() => vi.fn());
 const mockRemoveContainer = vi.hoisted(() => vi.fn());
 const mockGetContainerStatus = vi.hoisted(() => vi.fn());
+const mockVerifyContainerHealth = vi.hoisted(() => vi.fn());
+const mockAllocateAgentPort = vi.hoisted(() => vi.fn().mockResolvedValue(10000));
 
 vi.mock('../services/podman', () => ({
   cloneRepoInVolume: mockCloneRepoInVolume,
@@ -16,6 +18,36 @@ vi.mock('../services/podman', () => ({
   stopContainer: mockStopContainer,
   removeContainer: mockRemoveContainer,
   getContainerStatus: mockGetContainerStatus,
+  verifyContainerHealth: mockVerifyContainerHealth,
+  allocateAgentPort: mockAllocateAgentPort,
+}));
+
+// Mock claude-runner's buildSystemPrompt
+vi.mock('../services/claude-runner', () => ({
+  buildSystemPrompt: vi.fn().mockReturnValue('test system prompt'),
+}));
+
+// Mock agent-client
+vi.mock('../services/agent-client', () => ({
+  createAgentClient: vi.fn().mockReturnValue({
+    health: vi.fn().mockResolvedValue(true),
+  }),
+  getAgentUrl: vi.fn().mockReturnValue('http://localhost:10000'),
+  waitForAgentHealth: vi.fn().mockResolvedValue(true),
+}));
+
+// Mock repo-settings
+vi.mock('../services/repo-settings', () => ({
+  getRepoSettingsForContainer: vi.fn().mockResolvedValue({
+    envVars: [],
+    mcpServers: [],
+    customSystemPrompt: null,
+  }),
+}));
+
+// Mock global-settings
+vi.mock('../services/global-settings', () => ({
+  getGlobalSettings: vi.fn().mockResolvedValue(null),
 }));
 
 const mockSseEvents = vi.hoisted(() => ({

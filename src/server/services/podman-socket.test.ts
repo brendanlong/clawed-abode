@@ -18,11 +18,16 @@ vi.mock('@/lib/env', () => ({
   env: {
     CLAUDE_RUNNER_IMAGE: 'claude-code-runner:test',
     CLAUDE_CODE_OAUTH_TOKEN: 'test-oauth-token',
+    CLAUDE_MODEL: 'opus',
     DATA_DIR: '/data',
     DATA_HOST_PATH: undefined,
     PNPM_STORE_PATH: undefined,
+    PNPM_STORE_VOLUME: 'clawed-abode-pnpm-store',
     GRADLE_USER_HOME: undefined,
+    GRADLE_CACHE_VOLUME: 'clawed-abode-gradle-cache',
     PODMAN_SOCKET_PATH: '/run/user/1000/podman/podman.sock',
+    CONTAINER_NETWORK_MODE: 'host',
+    SKIP_IMAGE_PULL: false,
   },
 }));
 
@@ -120,6 +125,7 @@ describe('podman service with PODMAN_SOCKET_PATH', () => {
       const containerId = await createAndStartContainer({
         sessionId: 'test-session',
         repoPath: 'my-repo',
+        agentPort: 10000,
       });
 
       expect(containerId).toBe('new-container-id');
