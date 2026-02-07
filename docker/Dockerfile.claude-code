@@ -105,12 +105,15 @@ RUN corepack enable && \
     npm install -g @anthropic-ai/claude-code
 
 # Install the agent service (runs inside container to interface with Claude Agent SDK)
-# Copy source and build inside the container so the Docker build is self-contained
-COPY agent-service/ /opt/agent-service/
+# Copy package files first so npm install is cached when only source changes
+COPY agent-service/package.json agent-service/package-lock.json* /opt/agent-service/
+RUN cd /opt/agent-service && npm install
+
+# Copy source, build, then prune devDependencies
+COPY agent-service/tsconfig.json /opt/agent-service/
+COPY agent-service/src/ /opt/agent-service/src/
 RUN cd /opt/agent-service && \
-    npm install && \
     npm run build && \
-    # Remove devDependencies after build to keep image smaller
     npm prune --production
 
 # Create a non-root user with UID 1000 (common default for host user)
