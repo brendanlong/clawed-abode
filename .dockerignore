@@ -8,7 +8,10 @@ node_modules/
 # Build outputs
 .next/
 out/
+
+# Exclude dist/ everywhere except agent-service (which needs its built output)
 dist/
+!agent-service/dist/
 
 # Environment files (secrets)
 .env
@@ -42,6 +45,8 @@ doc/
 coverage/
 .nyc_output/
 *.lcov
+*.test.ts
+*.test.js
 
 # Prisma local data (not the schema)
 prisma/*.db
