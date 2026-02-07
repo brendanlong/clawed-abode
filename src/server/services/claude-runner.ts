@@ -302,8 +302,12 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
     createdAt: new Date(),
   });
 
-  // Determine if this is a resume (not the first message)
-  const isFirstMessage = !lastMessage;
+  // Determine if we should resume an existing SDK session.
+  // We ask the agent service for its last sequence number. If it has processed
+  // messages before (sequence > 0), it has an active Claude Code session
+  // that we can resume. If it's 0 (fresh container), we start a new session
+  // even if our DB has messages from a previous container lifecycle.
+  const shouldResume = status.lastSequence > 0;
 
   // Track the active query
   activeQueries.set(sessionId, { client });
@@ -319,7 +323,7 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
     for await (const agentMessage of client.query({
       prompt,
       sessionId,
-      resume: !isFirstMessage,
+      resume: shouldResume,
       cwd: workingDir,
     })) {
       const messageContent = JSON.stringify(agentMessage.message);
@@ -363,11 +367,22 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
   } catch (err) {
     log.error('runClaudeCommand: Error', toError(err), { sessionId });
 
+    // Fetch container logs for debugging
+    const containerLogs = await getContainerLogs(containerId, { tail: 50 });
+    if (containerLogs) {
+      log.error('runClaudeCommand: Container logs after error', undefined, {
+        sessionId,
+        logs: containerLogs,
+      });
+    }
+
     // Check if container is still healthy
     await checkContainerHealthAndReport(sessionId, containerId);
 
-    // Create error message for the user
-    await createErrorMessage(sessionId, `Claude query failed: ${toError(err).message}`);
+    // Create error message for the user (includes logs for visibility)
+    await createErrorMessage(sessionId, `Claude query failed: ${toError(err).message}`, {
+      containerLogs,
+    });
   } finally {
     activeQueries.delete(sessionId);
 

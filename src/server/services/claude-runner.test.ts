@@ -706,7 +706,7 @@ describe('claude-runner service', () => {
       expect(mockSseEvents.emitClaudeRunning).toHaveBeenCalledWith('test-session', false);
     });
 
-    it('should use resume=false for first message', async () => {
+    it('should use resume=false when agent has no prior messages (fresh container)', async () => {
       mockPrisma.session.findUnique.mockResolvedValue({ agentPort: 10000, repoPath: 'my-repo' });
       mockPrisma.message.findFirst.mockResolvedValue(null); // no existing messages
       mockPodmanFunctions.getContainerStatus.mockResolvedValue('running');
@@ -733,11 +733,12 @@ describe('claude-runner service', () => {
       );
     });
 
-    it('should use resume=true for subsequent messages', async () => {
+    it('should use resume=false after container restart even with DB messages', async () => {
       mockPrisma.session.findUnique.mockResolvedValue({ agentPort: 10000, repoPath: 'my-repo' });
-      mockPrisma.message.findFirst.mockResolvedValue({ sequence: 5 }); // has existing messages
+      mockPrisma.message.findFirst.mockResolvedValue({ sequence: 5 }); // DB has messages from previous run
       mockPodmanFunctions.getContainerStatus.mockResolvedValue('running');
       mockAgentClient.health.mockResolvedValue(true);
+      // Agent has lastSequence: 0 (fresh container, no prior messages in agent)
       mockAgentClient.getStatus.mockResolvedValue({ running: false, lastSequence: 0 });
 
       mockAgentClient.query.mockReturnValue(
@@ -749,13 +750,41 @@ describe('claude-runner service', () => {
       await runClaudeCommand({
         sessionId: 'test-session',
         containerId: 'container-1',
-        prompt: 'Follow-up',
+        prompt: 'Follow-up after restart',
+      });
+
+      expect(mockAgentClient.query).toHaveBeenCalledWith(
+        expect.objectContaining({
+          resume: false,
+          prompt: 'Follow-up after restart',
+        })
+      );
+    });
+
+    it('should use resume=true when agent has prior messages', async () => {
+      mockPrisma.session.findUnique.mockResolvedValue({ agentPort: 10000, repoPath: 'my-repo' });
+      mockPrisma.message.findFirst.mockResolvedValue({ sequence: 5 }); // has existing messages
+      mockPodmanFunctions.getContainerStatus.mockResolvedValue('running');
+      mockAgentClient.health.mockResolvedValue(true);
+      // Agent has lastSequence: 3 (has prior messages from an earlier query in same container lifecycle)
+      mockAgentClient.getStatus.mockResolvedValue({ running: false, lastSequence: 3 });
+
+      mockAgentClient.query.mockReturnValue(
+        (async function* () {
+          // no messages
+        })()
+      );
+
+      await runClaudeCommand({
+        sessionId: 'test-session',
+        containerId: 'container-1',
+        prompt: 'Follow-up in same session',
       });
 
       expect(mockAgentClient.query).toHaveBeenCalledWith(
         expect.objectContaining({
           resume: true,
-          prompt: 'Follow-up',
+          prompt: 'Follow-up in same session',
         })
       );
     });
