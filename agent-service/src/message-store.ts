@@ -1,4 +1,6 @@
 import Database from 'better-sqlite3';
+import { mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
 
 /**
  * A stored message in the local SQLite database.
@@ -23,7 +25,9 @@ export class MessageStore {
   private getLastSequenceStmt: Database.Statement;
   private getCountStmt: Database.Statement;
 
-  constructor(dbPath: string = '/tmp/agent-messages.db') {
+  constructor(dbPath: string = `${process.env.HOME || '/tmp'}/.claude/agent-messages.db`) {
+    // Ensure the parent directory exists
+    mkdirSync(dirname(dbPath), { recursive: true });
     this.db = new Database(dbPath);
 
     // Enable WAL mode for better concurrent read performance

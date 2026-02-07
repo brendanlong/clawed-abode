@@ -3,6 +3,9 @@
 # Runs setup tasks that need to happen at container start, then launches
 # the agent service. This avoids race conditions with host-side podman exec
 # commands that could fail if the container's main process exits.
+#
+# This script must be idempotent - it runs on every container start,
+# including restarts of stopped containers.
 
 set -e
 
@@ -11,8 +14,10 @@ set -e
 # Configure pnpm to use the shared store volume
 pnpm config set store-dir /pnpm-store 2>/dev/null || true
 
-# Configure Gradle to use the shared cache volume
-echo "export GRADLE_USER_HOME=/gradle-cache" >> "$HOME/.profile"
+# Configure Gradle to use the shared cache volume (idempotent - only add if not present)
+if ! grep -q 'GRADLE_USER_HOME=/gradle-cache' "$HOME/.profile" 2>/dev/null; then
+  echo "export GRADLE_USER_HOME=/gradle-cache" >> "$HOME/.profile"
+fi
 
 # Fix sudo permissions (rootless Podman without --userns=keep-id can break setuid)
 sudo sh -c 'chown root:root /usr/bin/sudo && chmod 4755 /usr/bin/sudo' 2>/dev/null || true
