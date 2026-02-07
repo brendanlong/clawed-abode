@@ -8,10 +8,7 @@ node_modules/
 # Build outputs
 .next/
 out/
-
-# Exclude dist/ everywhere except agent-service (which needs its built output)
 dist/
-!agent-service/dist/
 
 # Environment files (secrets)
 .env

@@ -105,8 +105,13 @@ RUN corepack enable && \
     npm install -g @anthropic-ai/claude-code
 
 # Install the agent service (runs inside container to interface with Claude Agent SDK)
+# Copy source and build inside the container so the Docker build is self-contained
 COPY agent-service/ /opt/agent-service/
-RUN cd /opt/agent-service && npm install --production
+RUN cd /opt/agent-service && \
+    npm install && \
+    npm run build && \
+    # Remove devDependencies after build to keep image smaller
+    npm prune --production
 
 # Create a non-root user with UID 1000 (common default for host user)
 # Ubuntu 24.04 has an 'ubuntu' user at UID 1000, so delete it first
