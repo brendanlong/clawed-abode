@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import { MessageStore } from './message-store.js';
 import { QueryRunner, type QueryOptions } from './query-runner.js';
 import type { SDKMessage, McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
+import type { PartialAssistantMessage } from './stream-accumulator.js';
 
 const SOCKET_PATH = process.env.AGENT_SOCKET_PATH || '/sockets/agent.sock';
 const SYSTEM_PROMPT = process.env.SYSTEM_PROMPT || '';
@@ -82,15 +83,22 @@ async function handleQuery(req: http.IncomingMessage, res: http.ServerResponse):
     Connection: 'keep-alive',
   });
 
-  // Subscribe to messages and send them as SSE events
-  const unsubscribe = runner.onMessage((sequence: number, message: SDKMessage) => {
+  // Subscribe to complete messages and send them as SSE events
+  const unsubscribeMessages = runner.onMessage((sequence: number, message: SDKMessage) => {
     const data = JSON.stringify({ sequence, message });
+    res.write(`data: ${data}\n\n`);
+  });
+
+  // Subscribe to partial (streaming) messages for real-time UI updates
+  const unsubscribePartials = runner.onPartialMessage((partial: PartialAssistantMessage) => {
+    const data = JSON.stringify({ partial });
     res.write(`data: ${data}\n\n`);
   });
 
   // Handle client disconnect
   req.on('close', () => {
-    unsubscribe();
+    unsubscribeMessages();
+    unsubscribePartials();
   });
 
   const options: QueryOptions = {
@@ -116,7 +124,8 @@ async function handleQuery(req: http.IncomingMessage, res: http.ServerResponse):
     }
     res.write(`data: ${JSON.stringify({ error: errorMessage })}\n\n`);
   } finally {
-    unsubscribe();
+    unsubscribeMessages();
+    unsubscribePartials();
     res.end();
   }
 }
