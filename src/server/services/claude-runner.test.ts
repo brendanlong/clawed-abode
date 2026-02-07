@@ -78,7 +78,7 @@ vi.mock('uuid', () => ({
 // Mock agent-client
 vi.mock('./agent-client', () => ({
   createAgentClient: () => mockAgentClient,
-  getAgentUrl: (port: number) => `http://localhost:${port}`,
+  getAgentSocketPath: (sessionId: string) => `/sockets/${sessionId}.sock`,
   waitForAgentHealth: vi.fn().mockResolvedValue(true),
 }));
 
@@ -210,19 +210,8 @@ describe('claude-runner service', () => {
   });
 
   describe('interruptClaude', () => {
-    it('should return false if session has no agent port', async () => {
-      mockPrisma.session.findUnique.mockResolvedValue({
-        agentPort: null,
-        containerId: 'container-123',
-      });
-
-      const result = await interruptClaude('test-session-no-port');
-      expect(result).toBe(false);
-    });
-
     it('should return false if session has no container', async () => {
       mockPrisma.session.findUnique.mockResolvedValue({
-        agentPort: 10000,
         containerId: null,
       });
 
@@ -230,21 +219,19 @@ describe('claude-runner service', () => {
       expect(result).toBe(false);
     });
 
-    it('should call agent client interrupt when session has agent port', async () => {
+    it('should call agent client interrupt when session has container', async () => {
       mockPrisma.session.findUnique.mockResolvedValue({
-        agentPort: 10000,
         containerId: 'container-123',
       });
       mockPodmanFunctions.getContainerStatus.mockResolvedValue('running');
 
-      const result = await interruptClaude('test-session-with-port');
+      const result = await interruptClaude('test-session-with-container');
       expect(result).toBe(true);
       expect(mockAgentClient.interrupt).toHaveBeenCalled();
     });
 
     it('should return false when container is not running', async () => {
       mockPrisma.session.findUnique.mockResolvedValue({
-        agentPort: 10000,
         containerId: 'container-123',
       });
       mockPodmanFunctions.getContainerStatus.mockResolvedValue('stopped');
@@ -255,7 +242,6 @@ describe('claude-runner service', () => {
 
     it('should return false when interrupt fails', async () => {
       mockPrisma.session.findUnique.mockResolvedValue({
-        agentPort: 10000,
         containerId: 'container-123',
       });
       mockPodmanFunctions.getContainerStatus.mockResolvedValue('running');
@@ -274,19 +260,17 @@ describe('claude-runner service', () => {
   });
 
   describe('isClaudeRunningAsync', () => {
-    it('should return false when session has no agent port', async () => {
+    it('should return false when session has no container', async () => {
       mockPrisma.session.findUnique.mockResolvedValue({
-        agentPort: null,
-        containerId: 'container-123',
+        containerId: null,
       });
 
-      const result = await isClaudeRunningAsync('test-session-no-port');
+      const result = await isClaudeRunningAsync('test-session-no-container');
       expect(result).toBe(false);
     });
 
     it('should return false when container is not running', async () => {
       mockPrisma.session.findUnique.mockResolvedValue({
-        agentPort: 10000,
         containerId: 'container-123',
       });
       mockPodmanFunctions.getContainerStatus.mockResolvedValue('stopped');
@@ -297,7 +281,6 @@ describe('claude-runner service', () => {
 
     it('should return true when agent reports running', async () => {
       mockPrisma.session.findUnique.mockResolvedValue({
-        agentPort: 10000,
         containerId: 'container-123',
       });
       mockPodmanFunctions.getContainerStatus.mockResolvedValue('running');
@@ -309,7 +292,6 @@ describe('claude-runner service', () => {
 
     it('should return false when agent reports not running', async () => {
       mockPrisma.session.findUnique.mockResolvedValue({
-        agentPort: 10000,
         containerId: 'container-123',
       });
       mockPodmanFunctions.getContainerStatus.mockResolvedValue('running');
@@ -321,7 +303,6 @@ describe('claude-runner service', () => {
 
     it('should return false when agent is unreachable', async () => {
       mockPrisma.session.findUnique.mockResolvedValue({
-        agentPort: 10000,
         containerId: 'container-123',
       });
       mockPodmanFunctions.getContainerStatus.mockResolvedValue('running');
@@ -465,7 +446,6 @@ describe('claude-runner service', () => {
       mockPrisma.session.findMany.mockResolvedValue([
         {
           id: 'session-1',
-          agentPort: 10000,
           containerId: 'container-1',
         },
       ]);
@@ -481,7 +461,6 @@ describe('claude-runner service', () => {
       mockPrisma.session.findMany.mockResolvedValue([
         {
           id: 'session-error',
-          agentPort: 10000,
           containerId: 'container-1',
         },
       ]);
@@ -494,8 +473,8 @@ describe('claude-runner service', () => {
 
     it('should process multiple sessions', async () => {
       mockPrisma.session.findMany.mockResolvedValue([
-        { id: 'session-1', agentPort: 10000, containerId: 'container-1' },
-        { id: 'session-2', agentPort: 10001, containerId: 'container-2' },
+        { id: 'session-1', containerId: 'container-1' },
+        { id: 'session-2', containerId: 'container-2' },
       ]);
       mockPodmanFunctions.getContainerStatus.mockResolvedValue('running');
       mockAgentClient.getStatus.mockResolvedValue({ running: false, lastSequence: 0 });
@@ -507,20 +486,8 @@ describe('claude-runner service', () => {
   });
 
   describe('runClaudeCommand', () => {
-    it('should throw error if session has no agent port', async () => {
-      mockPrisma.session.findUnique.mockResolvedValue({ agentPort: null, repoPath: 'my-repo' });
-
-      await expect(
-        runClaudeCommand({
-          sessionId: 'test-session',
-          containerId: 'container-1',
-          prompt: 'Hello',
-        })
-      ).rejects.toThrow('Session does not have an agent port assigned');
-    });
-
     it('should throw error if container is not running', async () => {
-      mockPrisma.session.findUnique.mockResolvedValue({ agentPort: 10000, repoPath: 'my-repo' });
+      mockPrisma.session.findUnique.mockResolvedValue({ repoPath: 'my-repo' });
       mockPodmanFunctions.getContainerStatus.mockResolvedValue('stopped');
 
       await expect(
@@ -533,7 +500,7 @@ describe('claude-runner service', () => {
     });
 
     it('should throw error if agent service is not healthy', async () => {
-      mockPrisma.session.findUnique.mockResolvedValue({ agentPort: 10000, repoPath: 'my-repo' });
+      mockPrisma.session.findUnique.mockResolvedValue({ repoPath: 'my-repo' });
       mockPodmanFunctions.getContainerStatus.mockResolvedValue('running');
       mockAgentClient.health.mockResolvedValue(false);
 
@@ -547,7 +514,7 @@ describe('claude-runner service', () => {
     });
 
     it('should throw error if agent already has a running query', async () => {
-      mockPrisma.session.findUnique.mockResolvedValue({ agentPort: 10000, repoPath: 'my-repo' });
+      mockPrisma.session.findUnique.mockResolvedValue({ repoPath: 'my-repo' });
       mockPodmanFunctions.getContainerStatus.mockResolvedValue('running');
       mockAgentClient.health.mockResolvedValue(true);
       mockAgentClient.getStatus.mockResolvedValue({ running: true, lastSequence: 5 });
@@ -562,7 +529,7 @@ describe('claude-runner service', () => {
     });
 
     it('should save user message before starting query', async () => {
-      mockPrisma.session.findUnique.mockResolvedValue({ agentPort: 10000, repoPath: 'my-repo' });
+      mockPrisma.session.findUnique.mockResolvedValue({ repoPath: 'my-repo' });
       mockPodmanFunctions.getContainerStatus.mockResolvedValue('running');
       mockAgentClient.health.mockResolvedValue(true);
       mockAgentClient.getStatus.mockResolvedValue({ running: false, lastSequence: 0 });
@@ -590,7 +557,7 @@ describe('claude-runner service', () => {
     });
 
     it('should emit SSE events for user message and Claude running state', async () => {
-      mockPrisma.session.findUnique.mockResolvedValue({ agentPort: 10000, repoPath: 'my-repo' });
+      mockPrisma.session.findUnique.mockResolvedValue({ repoPath: 'my-repo' });
       mockPodmanFunctions.getContainerStatus.mockResolvedValue('running');
       mockAgentClient.health.mockResolvedValue(true);
       mockAgentClient.getStatus.mockResolvedValue({ running: false, lastSequence: 0 });
@@ -616,7 +583,7 @@ describe('claude-runner service', () => {
     });
 
     it('should save and emit streamed messages from agent', async () => {
-      mockPrisma.session.findUnique.mockResolvedValue({ agentPort: 10000, repoPath: 'my-repo' });
+      mockPrisma.session.findUnique.mockResolvedValue({ repoPath: 'my-repo' });
       mockPodmanFunctions.getContainerStatus.mockResolvedValue('running');
       mockAgentClient.health.mockResolvedValue(true);
       mockAgentClient.getStatus.mockResolvedValue({ running: false, lastSequence: 0 });
@@ -653,7 +620,7 @@ describe('claude-runner service', () => {
     });
 
     it('should handle duplicate messages gracefully', async () => {
-      mockPrisma.session.findUnique.mockResolvedValue({ agentPort: 10000, repoPath: 'my-repo' });
+      mockPrisma.session.findUnique.mockResolvedValue({ repoPath: 'my-repo' });
       mockPodmanFunctions.getContainerStatus.mockResolvedValue('running');
       mockAgentClient.health.mockResolvedValue(true);
       mockAgentClient.getStatus.mockResolvedValue({ running: false, lastSequence: 0 });
@@ -684,7 +651,7 @@ describe('claude-runner service', () => {
     });
 
     it('should clean up and report errors on query failure', async () => {
-      mockPrisma.session.findUnique.mockResolvedValue({ agentPort: 10000, repoPath: 'my-repo' });
+      mockPrisma.session.findUnique.mockResolvedValue({ repoPath: 'my-repo' });
       mockPodmanFunctions.getContainerStatus.mockResolvedValue('running');
       mockAgentClient.health.mockResolvedValue(true);
       mockAgentClient.getStatus.mockResolvedValue({ running: false, lastSequence: 0 });
@@ -707,7 +674,7 @@ describe('claude-runner service', () => {
     });
 
     it('should use resume=false when agent has no prior messages (fresh container)', async () => {
-      mockPrisma.session.findUnique.mockResolvedValue({ agentPort: 10000, repoPath: 'my-repo' });
+      mockPrisma.session.findUnique.mockResolvedValue({ repoPath: 'my-repo' });
       mockPrisma.message.findFirst.mockResolvedValue(null); // no existing messages
       mockPodmanFunctions.getContainerStatus.mockResolvedValue('running');
       mockAgentClient.health.mockResolvedValue(true);
@@ -734,7 +701,7 @@ describe('claude-runner service', () => {
     });
 
     it('should use resume=false after container restart even with DB messages', async () => {
-      mockPrisma.session.findUnique.mockResolvedValue({ agentPort: 10000, repoPath: 'my-repo' });
+      mockPrisma.session.findUnique.mockResolvedValue({ repoPath: 'my-repo' });
       mockPrisma.message.findFirst.mockResolvedValue({ sequence: 5 }); // DB has messages from previous run
       mockPodmanFunctions.getContainerStatus.mockResolvedValue('running');
       mockAgentClient.health.mockResolvedValue(true);
@@ -762,7 +729,7 @@ describe('claude-runner service', () => {
     });
 
     it('should use resume=true when agent has prior messages', async () => {
-      mockPrisma.session.findUnique.mockResolvedValue({ agentPort: 10000, repoPath: 'my-repo' });
+      mockPrisma.session.findUnique.mockResolvedValue({ repoPath: 'my-repo' });
       mockPrisma.message.findFirst.mockResolvedValue({ sequence: 5 }); // has existing messages
       mockPodmanFunctions.getContainerStatus.mockResolvedValue('running');
       mockAgentClient.health.mockResolvedValue(true);

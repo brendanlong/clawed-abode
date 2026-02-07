@@ -18,6 +18,9 @@ const envSchema = z.object({
   // Named volume for git reference cache - shared across all runner containers
   // Stores bare repos used as --reference during clones to speed up session creation
   GIT_CACHE_VOLUME: z.string().default('clawed-abode-git-cache'),
+  // Named volume for Unix sockets - shared between service and runner containers
+  // Used for agent service communication instead of TCP ports
+  SOCKETS_VOLUME: z.string().default('clawed-abode-sockets'),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   // Server port for HTTP server
   PORT: z

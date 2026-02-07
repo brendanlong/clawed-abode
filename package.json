@@ -53,6 +53,7 @@
     "dockerode": "^4.0.9",
     "dompurify": "^3.3.1",
     "event-source-polyfill": "^1.0.31",
+    "get-port": "^7.1.0",
     "lucide-react": "^0.562.0",
     "marked": "^17.0.1",
     "next": "^16.1.3",

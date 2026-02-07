@@ -11,7 +11,7 @@ import {
 } from './podman';
 import {
   createAgentClient,
-  getAgentUrl,
+  getAgentSocketPath,
   waitForAgentHealth,
   type AgentClient,
 } from './agent-client';
@@ -202,10 +202,10 @@ async function checkContainerHealthAndReport(
 
 /**
  * Get an agent client for a session.
- * The session must have an agentPort assigned.
+ * Uses the session's Unix socket path for communication.
  */
-function getClientForSession(agentPort: number): AgentClient {
-  return createAgentClient(getAgentUrl(agentPort));
+function getClientForSession(sessionId: string): AgentClient {
+  return createAgentClient(getAgentSocketPath(sessionId));
 }
 
 export interface RunClaudeCommandOptions {
@@ -243,14 +243,14 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
     throw new Error('A Claude process is already running for this session');
   }
 
-  // Look up the session to get the agentPort
+  // Look up the session to get the repoPath
   const session = await prisma.session.findUnique({
     where: { id: sessionId },
-    select: { agentPort: true, repoPath: true },
+    select: { repoPath: true },
   });
 
-  if (!session?.agentPort) {
-    throw new Error('Session does not have an agent port assigned');
+  if (!session) {
+    throw new Error('Session not found');
   }
 
   // Verify the container is still running
@@ -262,7 +262,7 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
   }
 
   // Get the agent client
-  const client = getClientForSession(session.agentPort);
+  const client = getClientForSession(sessionId);
 
   // Check if agent service is healthy
   const healthy = await client.health();
@@ -425,14 +425,14 @@ export async function interruptClaude(sessionId: string): Promise<boolean> {
     return result.success;
   }
 
-  // Fall back to looking up the session's agent port
+  // Fall back to looking up the session's container
   const session = await prisma.session.findUnique({
     where: { id: sessionId },
-    select: { agentPort: true, containerId: true },
+    select: { containerId: true },
   });
 
-  if (!session?.agentPort || !session.containerId) {
-    log.info('interruptClaude: No agent port or container for session', { sessionId });
+  if (!session?.containerId) {
+    log.info('interruptClaude: No container for session', { sessionId });
     return false;
   }
 
@@ -443,7 +443,7 @@ export async function interruptClaude(sessionId: string): Promise<boolean> {
     return false;
   }
 
-  const client = getClientForSession(session.agentPort);
+  const client = getClientForSession(sessionId);
   try {
     const result = await client.interrupt();
     return result.success;
@@ -473,13 +473,13 @@ export async function isClaudeRunningAsync(sessionId: string): Promise<boolean> 
     return true;
   }
 
-  // Look up the session's agent port
+  // Look up the session's container
   const session = await prisma.session.findUnique({
     where: { id: sessionId },
-    select: { agentPort: true, containerId: true },
+    select: { containerId: true },
   });
 
-  if (!session?.agentPort || !session.containerId) {
+  if (!session?.containerId) {
     return false;
   }
 
@@ -491,7 +491,7 @@ export async function isClaudeRunningAsync(sessionId: string): Promise<boolean> 
 
   // Ask the agent service directly
   try {
-    const client = getClientForSession(session.agentPort);
+    const client = getClientForSession(sessionId);
     const status = await client.getStatus();
     return status.running;
   } catch {
@@ -606,16 +606,14 @@ export async function reconcileOrphanedProcesses(): Promise<{
   reconnected: number;
   cleaned: number;
 }> {
-  // Find running sessions with agent ports
+  // Find running sessions with containers
   const runningSessions = await prisma.session.findMany({
     where: {
       status: 'running',
-      agentPort: { not: null },
       containerId: { not: null },
     },
     select: {
       id: true,
-      agentPort: true,
       containerId: true,
     },
   });
@@ -624,7 +622,7 @@ export async function reconcileOrphanedProcesses(): Promise<{
   let cleaned = 0;
 
   for (const session of runningSessions) {
-    if (!session.agentPort || !session.containerId) continue;
+    if (!session.containerId) continue;
 
     log.info('Reconciling session', { sessionId: session.id });
 
@@ -642,13 +640,12 @@ export async function reconcileOrphanedProcesses(): Promise<{
       }
 
       // Try to connect to agent service
-      const client = getClientForSession(session.agentPort);
+      const client = getClientForSession(session.id);
       const healthy = await waitForAgentHealth(client, { maxAttempts: 5, intervalMs: 1000 });
 
       if (!healthy) {
         log.warn('Agent service not healthy during reconciliation', {
           sessionId: session.id,
-          agentPort: session.agentPort,
         });
         cleaned++;
         continue;

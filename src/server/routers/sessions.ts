@@ -9,12 +9,16 @@ import {
   cloneRepoInVolume,
   removeWorkspaceFromVolume,
   verifyContainerHealth,
-  allocateAgentPort,
+  cleanupSessionSocket,
 } from '../services/podman';
 import { getRepoSettingsForContainer } from '../services/repo-settings';
 import { getGlobalSettings } from '../services/global-settings';
 import { buildSystemPrompt } from '../services/claude-runner';
-import { createAgentClient, getAgentUrl, waitForAgentHealth } from '../services/agent-client';
+import {
+  createAgentClient,
+  getAgentSocketPath,
+  waitForAgentHealth,
+} from '../services/agent-client';
 import { syncSessionStatus } from '../services/session-reconciler';
 import { sseEvents } from '../services/events';
 import { createLogger, toError } from '@/lib/logger';
@@ -67,16 +71,12 @@ async function setupSession(
       globalSettings,
     });
 
-    // Allocate a port for the agent service
-    const agentPort = await allocateAgentPort();
-
     // Start container with GitHub token for push/pull access and repo-specific settings
-    log.info('Starting container', { sessionId, hasRepoSettings: !!repoSettings, agentPort });
+    log.info('Starting container', { sessionId, hasRepoSettings: !!repoSettings });
     const containerId = await createAndStartContainer({
       sessionId,
       repoPath,
       githubToken,
-      agentPort,
       systemPrompt,
       repoEnvVars: repoSettings?.envVars,
     });
@@ -88,20 +88,19 @@ async function setupSession(
 
     // Wait for the agent service inside the container to become healthy
     await updateStatus('Waiting for agent service...');
-    const agentClient = createAgentClient(getAgentUrl(agentPort));
+    const agentClient = createAgentClient(getAgentSocketPath(sessionId));
     const agentHealthy = await waitForAgentHealth(agentClient);
     if (!agentHealthy) {
       throw new Error('Agent service did not become healthy');
     }
-    log.info('Agent service healthy', { sessionId, containerId, agentPort });
+    log.info('Agent service healthy', { sessionId, containerId });
 
-    // Update session with container info and agent port
+    // Update session with container info
     const session = await prisma.session.update({
       where: { id: sessionId },
       data: {
         repoPath,
         containerId,
-        agentPort,
         status: 'running',
         statusMessage: null,
       },
@@ -246,31 +245,28 @@ export const sessionsRouter = router({
           getGlobalSettings(),
         ]);
 
-        // Build system prompt and allocate port
+        // Build system prompt
         const systemPrompt = buildSystemPrompt({
           customSystemPrompt: repoSettings?.customSystemPrompt,
           globalSettings,
         });
-        const agentPort = await allocateAgentPort(session.agentPort);
 
         const containerId = await createAndStartContainer({
           sessionId: session.id,
           repoPath: session.repoPath,
           githubToken,
-          agentPort,
           systemPrompt,
           repoEnvVars: repoSettings?.envVars,
         });
 
         // Wait for agent service to be healthy
-        const agentClient = createAgentClient(getAgentUrl(agentPort));
+        const agentClient = createAgentClient(getAgentSocketPath(session.id));
         await waitForAgentHealth(agentClient, { maxAttempts: 30, intervalMs: 1000 });
 
         const updatedSession = await prisma.session.update({
           where: { id: session.id },
           data: {
             containerId,
-            agentPort,
             status: 'running',
           },
         });
@@ -338,6 +334,9 @@ export const sessionsRouter = router({
 
       // Remove workspace from volume
       await removeWorkspaceFromVolume(session.id);
+
+      // Clean up socket file
+      await cleanupSessionSocket(session.id);
 
       // Archive session instead of deleting (keep messages for later viewing)
       const updatedSession = await prisma.session.update({
