@@ -195,6 +195,20 @@ function getPendingAskUserQuestions(
   return pending;
 }
 
+// Extract total cost from result messages
+function getTotalCostUsd(messages: Message[]): number {
+  let totalCost = 0;
+  for (const msg of messages) {
+    if (msg.type === 'result') {
+      const content = msg.content as { total_cost_usd?: number } | undefined;
+      if (typeof content?.total_cost_usd === 'number') {
+        totalCost += content.total_cost_usd;
+      }
+    }
+  }
+  return totalCost;
+}
+
 interface MessageListProps {
   messages: Message[];
   isLoading: boolean;
@@ -265,6 +279,9 @@ export function MessageList({
     const todoIds = getTodoWriteIds(messages);
     return todoIds.length > 0 ? todoIds[todoIds.length - 1] : null;
   }, [messages]);
+
+  // Calculate total cost from result messages
+  const totalCostUsd = useMemo(() => getTotalCostUsd(messages), [messages]);
 
   // Find pending AskUserQuestion tool calls
   const pendingQuestions = useMemo(
@@ -375,6 +392,7 @@ export function MessageList({
             >
               <MessageBubble
                 message={{
+                  id: message.id,
                   type: message.type,
                   content: message.content,
                 }}
@@ -393,7 +411,11 @@ export function MessageList({
       </div>
 
       {/* Context usage indicator - positioned in bottom right */}
-      <ContextUsageIndicator stats={tokenUsage} className="absolute bottom-3 right-3 shadow-sm" />
+      <ContextUsageIndicator
+        stats={tokenUsage}
+        totalCostUsd={totalCostUsd}
+        className="absolute bottom-3 right-3 shadow-sm"
+      />
     </div>
   );
 }

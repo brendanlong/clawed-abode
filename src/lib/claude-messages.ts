@@ -217,21 +217,42 @@ export const SystemGenericContentSchema = z.object({
 export type SystemGenericContent = z.infer<typeof SystemGenericContentSchema>;
 
 /**
+ * Permission denial info from result messages
+ */
+export const PermissionDenialSchema = z.object({
+  tool_name: z.string().optional(),
+  tool_use_id: z.string().optional(),
+  tool_input: z.unknown().optional(),
+});
+export type PermissionDenial = z.infer<typeof PermissionDenialSchema>;
+
+/**
  * Result message content (session completion)
+ * Handles all SDK result subtypes: success, error_max_turns, error_during_execution,
+ * error_max_budget_usd, error_max_structured_output_retries
  */
 export const ResultContentSchema = z.object({
   type: z.literal('result'),
-  subtype: z.enum(['success', 'error']),
+  subtype: z.enum([
+    'success',
+    'error',
+    'error_max_turns',
+    'error_during_execution',
+    'error_max_budget_usd',
+    'error_max_structured_output_retries',
+  ]),
   is_error: z.boolean(),
   duration_ms: z.number().optional(),
   duration_api_ms: z.number().optional(),
   num_turns: z.number().optional(),
   result: z.string().optional(),
+  errors: z.array(z.string()).optional(),
   session_id: z.string(),
   total_cost_usd: z.number().optional(),
   usage: ResultUsageSchema.optional(),
   modelUsage: z.record(z.string(), ModelUsageSchema).optional(),
-  permission_denials: z.array(z.unknown()).optional(),
+  permission_denials: z.array(PermissionDenialSchema).optional(),
+  structured_output: z.unknown().optional(),
   uuid: z.string().optional(),
 });
 export type ResultContent = z.infer<typeof ResultContentSchema>;

@@ -1,11 +1,13 @@
 'use client';
 
+import { useMemo } from 'react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatTokenCount, formatPercentage, type TokenUsageStats } from '@/lib/token-estimation';
 import { cn } from '@/lib/utils';
 
 interface ContextUsageIndicatorProps {
   stats: TokenUsageStats | null | undefined;
+  totalCostUsd?: number;
   className?: string;
 }
 
@@ -28,7 +30,7 @@ function getUsageColorClass(percentUsed: number): string {
 /**
  * Format the detailed tooltip content
  */
-function formatTooltipContent(stats: TokenUsageStats): string {
+function formatTooltipContent(stats: TokenUsageStats, totalCostUsd?: number): string {
   const lines: string[] = [];
 
   lines.push(`Input: ${formatTokenCount(stats.inputTokens)} tokens`);
@@ -38,7 +40,15 @@ function formatTooltipContent(stats: TokenUsageStats): string {
     lines.push(`Cache read: ${formatTokenCount(stats.cacheReadTokens)}`);
   }
 
+  if (stats.cacheCreationTokens > 0) {
+    lines.push(`Cache creation: ${formatTokenCount(stats.cacheCreationTokens)}`);
+  }
+
   lines.push(`Context window: ${formatTokenCount(stats.contextWindow)}`);
+
+  if (totalCostUsd !== undefined && totalCostUsd > 0) {
+    lines.push(`Cost: $${totalCostUsd.toFixed(4)}`);
+  }
 
   if (stats.model) {
     lines.push(`Model: ${stats.model}`);
@@ -48,10 +58,20 @@ function formatTooltipContent(stats: TokenUsageStats): string {
 }
 
 /**
- * Displays estimated context usage as a percentage indicator.
+ * Displays estimated context usage as a percentage indicator with optional cost.
  * Shows in the bottom-right corner of the messages area.
  */
-export function ContextUsageIndicator({ stats, className }: ContextUsageIndicatorProps) {
+export function ContextUsageIndicator({
+  stats,
+  totalCostUsd,
+  className,
+}: ContextUsageIndicatorProps) {
+  const costLabel = useMemo(() => {
+    if (totalCostUsd === undefined || totalCostUsd === 0) return null;
+    if (totalCostUsd < 0.01) return '<$0.01';
+    return `$${totalCostUsd.toFixed(2)}`;
+  }, [totalCostUsd]);
+
   // Don't show if there's no usage yet
   if (!stats || stats.totalTokens === 0) {
     return null;
@@ -89,11 +109,14 @@ export function ContextUsageIndicator({ stats, className }: ContextUsageIndicato
                 strokeWidth="3"
               />
             </svg>
-            <span>{formatPercentage(stats.percentUsed)} context</span>
+            <span>
+              {formatPercentage(stats.percentUsed)} context
+              {costLabel && <span className="ml-1 opacity-70">{costLabel}</span>}
+            </span>
           </div>
         </TooltipTrigger>
         <TooltipContent side="top" className="whitespace-pre-line text-left">
-          {formatTooltipContent(stats)}
+          {formatTooltipContent(stats, totalCostUsd)}
         </TooltipContent>
       </Tooltip>
     </TooltipProvider>
