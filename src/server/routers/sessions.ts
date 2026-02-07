@@ -9,8 +9,12 @@ import {
   cloneRepoInVolume,
   removeWorkspaceFromVolume,
   verifyContainerHealth,
+  allocateAgentPort,
 } from '../services/podman';
 import { getRepoSettingsForContainer } from '../services/repo-settings';
+import { getGlobalSettings } from '../services/global-settings';
+import { buildSystemPrompt } from '../services/claude-runner';
+import { createAgentClient, getAgentUrl, waitForAgentHealth } from '../services/agent-client';
 import { syncSessionStatus } from '../services/session-reconciler';
 import { sseEvents } from '../services/events';
 import { createLogger, toError } from '@/lib/logger';
@@ -51,31 +55,53 @@ async function setupSession(
     // Update status
     await updateStatus('Starting container...');
 
-    // Fetch per-repo settings (env vars, MCP servers)
-    const repoSettings = await getRepoSettingsForContainer(repoFullName);
+    // Fetch per-repo settings (env vars, MCP servers) and global settings
+    const [repoSettings, globalSettings] = await Promise.all([
+      getRepoSettingsForContainer(repoFullName),
+      getGlobalSettings(),
+    ]);
+
+    // Build the system prompt to pass to the agent service
+    const systemPrompt = buildSystemPrompt({
+      customSystemPrompt: repoSettings?.customSystemPrompt,
+      globalSettings,
+    });
+
+    // Allocate a port for the agent service
+    const agentPort = await allocateAgentPort();
 
     // Start container with GitHub token for push/pull access and repo-specific settings
-    log.info('Starting container', { sessionId, hasRepoSettings: !!repoSettings });
+    log.info('Starting container', { sessionId, hasRepoSettings: !!repoSettings, agentPort });
     const containerId = await createAndStartContainer({
       sessionId,
       repoPath,
       githubToken,
+      agentPort,
+      systemPrompt,
       repoEnvVars: repoSettings?.envVars,
-      mcpServers: repoSettings?.mcpServers,
     });
     log.info('Container started', { sessionId, containerId });
 
     // Verify container is healthy before marking session as running
     await updateStatus('Verifying container health...');
     await verifyContainerHealth(containerId);
-    log.info('Container health verified', { sessionId, containerId });
 
-    // Update session with container info
+    // Wait for the agent service inside the container to become healthy
+    await updateStatus('Waiting for agent service...');
+    const agentClient = createAgentClient(getAgentUrl(agentPort));
+    const agentHealthy = await waitForAgentHealth(agentClient);
+    if (!agentHealthy) {
+      throw new Error('Agent service did not become healthy');
+    }
+    log.info('Agent service healthy', { sessionId, containerId, agentPort });
+
+    // Update session with container info and agent port
     const session = await prisma.session.update({
       where: { id: sessionId },
       data: {
         repoPath,
         containerId,
+        agentPort,
         status: 'running',
         statusMessage: null,
       },
@@ -214,21 +240,37 @@ export const sessionsRouter = router({
         const repoFullNameMatch = session.repoUrl.match(/github\.com\/([^/]+\/[^/.]+)/);
         const repoFullName = repoFullNameMatch?.[1];
 
-        // Fetch per-repo settings (env vars, MCP servers)
-        const repoSettings = repoFullName ? await getRepoSettingsForContainer(repoFullName) : null;
+        // Fetch per-repo settings (env vars, MCP servers) and global settings
+        const [repoSettings, globalSettings] = await Promise.all([
+          repoFullName ? getRepoSettingsForContainer(repoFullName) : null,
+          getGlobalSettings(),
+        ]);
+
+        // Build system prompt and allocate port
+        const systemPrompt = buildSystemPrompt({
+          customSystemPrompt: repoSettings?.customSystemPrompt,
+          globalSettings,
+        });
+        const agentPort = await allocateAgentPort(session.agentPort);
 
         const containerId = await createAndStartContainer({
           sessionId: session.id,
           repoPath: session.repoPath,
           githubToken,
+          agentPort,
+          systemPrompt,
           repoEnvVars: repoSettings?.envVars,
-          mcpServers: repoSettings?.mcpServers,
         });
+
+        // Wait for agent service to be healthy
+        const agentClient = createAgentClient(getAgentUrl(agentPort));
+        await waitForAgentHealth(agentClient, { maxAttempts: 30, intervalMs: 1000 });
 
         const updatedSession = await prisma.session.update({
           where: { id: session.id },
           data: {
             containerId,
+            agentPort,
             status: 'running',
           },
         });

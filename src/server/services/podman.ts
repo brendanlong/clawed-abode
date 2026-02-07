@@ -1,5 +1,4 @@
-import { spawn, ChildProcess } from 'child_process';
-import { Readable, PassThrough } from 'stream';
+import { spawn } from 'child_process';
 import { existsSync } from 'fs';
 import { env } from '@/lib/env';
 import { createLogger, toError } from '@/lib/logger';
@@ -13,16 +12,6 @@ const CLAUDE_CODE_IMAGE = env.CLAUDE_RUNNER_IMAGE;
 // Track last pull time per image to avoid pulling too frequently
 const lastPullTime = new Map<string, number>();
 const PULL_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes (matches Watchtower poll interval)
-
-/**
- * Track spawned exec processes so we can check their status later.
- */
-interface TrackedProcess {
-  process: ChildProcess;
-  running: boolean;
-  exitCode: number | null;
-}
-const trackedProcesses = new Map<string, TrackedProcess>();
 
 /**
  * Check if we're running inside a container.
@@ -176,6 +165,52 @@ async function ensureImagePulled(imageName: string): Promise<void> {
     log.error('Failed to pull image', toError(error), { imageName });
     throw error;
   }
+}
+
+/**
+ * Allocate a port for the agent service in a container.
+ * For host networking, finds the next available port starting from the base.
+ * For bridge networking, always returns the fixed port 3100.
+ */
+const AGENT_PORT_BASE = 10000;
+const AGENT_PORT_MAX_RETRIES = 20;
+
+export async function allocateAgentPort(existingPort?: number | null): Promise<number> {
+  // If we have an existing port, reuse it
+  if (existingPort) {
+    return existingPort;
+  }
+
+  // For bridge networking, always use fixed port (no conflicts since each container is isolated)
+  if (env.CONTAINER_NETWORK_MODE !== 'host') {
+    return 3100;
+  }
+
+  // For host networking, find the next available port
+  // Query DB for currently allocated ports to avoid conflicts
+  const { prisma } = await import('@/lib/prisma');
+  const sessions = await prisma.session.findMany({
+    where: {
+      agentPort: { not: null },
+      status: { in: ['running', 'creating'] },
+    },
+    select: { agentPort: true },
+  });
+
+  const usedPorts = new Set(
+    sessions.map((s) => s.agentPort).filter((p): p is number => p !== null)
+  );
+
+  // Find the first available port starting from the base
+  for (let port = AGENT_PORT_BASE; port < AGENT_PORT_BASE + AGENT_PORT_MAX_RETRIES; port++) {
+    if (!usedPorts.has(port)) {
+      return port;
+    }
+  }
+
+  throw new Error(
+    `No available agent ports in range ${AGENT_PORT_BASE}-${AGENT_PORT_BASE + AGENT_PORT_MAX_RETRIES - 1}`
+  );
 }
 
 /**
@@ -450,14 +485,12 @@ export interface ContainerConfig {
   sessionId: string;
   repoPath: string; // Relative path to repo within workspace (e.g., "my-repo")
   githubToken?: string;
-  // Per-repo settings (env vars and MCP servers)
+  // Port for the agent service HTTP API (host networking)
+  agentPort: number;
+  // System prompt to pass to the agent service
+  systemPrompt?: string;
+  // Per-repo environment variables
   repoEnvVars?: Array<{ name: string; value: string }>;
-  mcpServers?: Array<{
-    name: string;
-    command: string;
-    args?: string[];
-    env?: Record<string, string>;
-  }>;
 }
 
 export async function createAndStartContainer(config: ContainerConfig): Promise<string> {
@@ -510,6 +543,12 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
     if (env.PODMAN_SOCKET_PATH) {
       envArgs.push('-e', 'CONTAINER_HOST=unix:///var/run/docker.sock');
     }
+    // Agent service configuration
+    envArgs.push('-e', `AGENT_PORT=${config.agentPort}`);
+    if (config.systemPrompt) {
+      envArgs.push('-e', `SYSTEM_PROMPT=${config.systemPrompt}`);
+    }
+    envArgs.push('-e', `CLAUDE_MODEL=${env.CLAUDE_MODEL}`);
 
     // Add per-repo environment variables
     if (config.repoEnvVars) {
@@ -571,44 +610,17 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
       ...envArgs,
       ...volumeArgs,
       CLAUDE_CODE_IMAGE,
-      'sleep',
-      'infinity', // Keep container running (responds to SIGTERM unlike tail -f)
+      // Container runs the agent service via its CMD (node /opt/agent-service/dist/index.js)
     ];
 
     const containerId = (await runPodman(createArgs)).trim();
     log.info('Container created', { sessionId: config.sessionId, containerId });
 
     // Start the container
+    // The entrypoint script handles runtime setup (git credentials, sudo fix,
+    // pnpm store, podman socket permissions, MCP config) then starts the agent service.
     await runPodman(['start', containerId]);
     log.info('Container started', { sessionId: config.sessionId, containerId });
-
-    // Configure the container - run independent setup tasks in parallel for speed
-    // These tasks don't depend on each other and can all run concurrently
-    const setupTasks: Promise<void>[] = [
-      // Configure pnpm to use the shared store volume
-      configurePnpmStore(containerId),
-      // Configure Gradle to use the shared cache volume
-      configureGradleCache(containerId),
-      // Fix sudo permissions (rootless Podman without --userns=keep-id can break setuid)
-      fixSudoPermissions(containerId),
-    ];
-
-    // Configure git credential helper if token is provided
-    if (config.githubToken) {
-      setupTasks.push(configureGitCredentials(containerId));
-    }
-
-    // Fix podman socket permissions if mounted
-    if (env.PODMAN_SOCKET_PATH) {
-      setupTasks.push(fixPodmanSocketPermissions(containerId));
-    }
-
-    // Write MCP server configuration if provided
-    if (config.mcpServers && config.mcpServers.length > 0) {
-      setupTasks.push(writeMcpConfig(containerId, config.mcpServers));
-    }
-
-    await Promise.all(setupTasks);
 
     return containerId;
   } catch (error) {
@@ -619,162 +631,6 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
     });
     throw error;
   }
-}
-
-async function configureGitCredentials(containerId: string): Promise<void> {
-  // Configure git to use a credential helper that reads from GITHUB_TOKEN env var
-  const credentialHelper = `#!/bin/sh
-if [ "$1" = "get" ]; then
-  input=$(cat)
-  if echo "$input" | grep -q "host=github.com"; then
-    echo "protocol=https"
-    echo "host=github.com"
-    echo "username=x-access-token"
-    echo "password=$GITHUB_TOKEN"
-  fi
-fi`;
-
-  // Write credential helper script
-  await runPodman([
-    'exec',
-    containerId,
-    'sh',
-    '-c',
-    `cat > /home/claudeuser/.git-credential-helper << 'SCRIPT'\n${credentialHelper}\nSCRIPT`,
-  ]);
-
-  // Make it executable
-  await runPodman(['exec', containerId, 'chmod', '+x', '/home/claudeuser/.git-credential-helper']);
-
-  // Configure git to use the credential helper
-  await runPodman([
-    'exec',
-    containerId,
-    'git',
-    'config',
-    '--global',
-    'credential.helper',
-    '/home/claudeuser/.git-credential-helper',
-  ]);
-}
-
-/**
- * Configure pnpm to use the shared store volume mounted at /pnpm-store.
- */
-async function configurePnpmStore(containerId: string): Promise<void> {
-  await runPodman(['exec', containerId, 'pnpm', 'config', 'set', 'store-dir', '/pnpm-store']);
-  log.info('Configured pnpm store-dir', { containerId });
-}
-
-/**
- * Configure Gradle to use the shared cache volume mounted at /gradle-cache.
- */
-async function configureGradleCache(containerId: string): Promise<void> {
-  // Set GRADLE_USER_HOME in the container's environment profile
-  await runPodman([
-    'exec',
-    containerId,
-    'sh',
-    '-c',
-    'echo "export GRADLE_USER_HOME=/gradle-cache" >> /home/claudeuser/.profile',
-  ]);
-  log.info('Configured Gradle cache', { containerId });
-}
-
-/**
- * Fix podman socket permissions inside the container.
- * The mounted socket is owned by root, so we need to make it accessible to claudeuser.
- * This may fail in nested container scenarios where the socket is a bind mount
- * that can't have its permissions changed - in that case, we log and continue.
- */
-async function fixPodmanSocketPermissions(containerId: string): Promise<void> {
-  try {
-    // Make the socket world-readable/writable so claudeuser can access it
-    await runPodman([
-      'exec',
-      '--user',
-      'root',
-      containerId,
-      'chmod',
-      '666',
-      '/var/run/docker.sock',
-    ]);
-    log.info('Fixed podman socket permissions', { containerId });
-  } catch (error) {
-    // This can fail in nested container scenarios where the socket is a bind mount
-    // from the host and can't have its permissions changed. Log and continue -
-    // the socket may already have appropriate permissions.
-    log.warn(
-      'Could not change podman socket permissions (may already be accessible)',
-      undefined,
-      toError(error)
-    );
-  }
-}
-
-/**
- * Fix sudo permissions inside the container.
- * In rootless Podman without --userns=keep-id, the sudo binary may lose its
- * setuid bit and root ownership from the container's perspective. This fixes
- * that by re-applying the correct ownership and permissions.
- */
-async function fixSudoPermissions(containerId: string): Promise<void> {
-  // Ensure sudo is owned by root and has the setuid bit set
-  await runPodman([
-    'exec',
-    '--user',
-    'root',
-    containerId,
-    'sh',
-    '-c',
-    'chown root:root /usr/bin/sudo && chmod 4755 /usr/bin/sudo',
-  ]);
-  log.info('Fixed sudo permissions', { containerId });
-}
-
-/**
- * Write MCP server configuration to ~/.claude.json in the container.
- * This configures Claude Code to use the specified MCP servers.
- */
-async function writeMcpConfig(
-  containerId: string,
-  mcpServers: NonNullable<ContainerConfig['mcpServers']>
-): Promise<void> {
-  // Build the ~/.claude.json config
-  const claudeConfig = {
-    mcpServers: Object.fromEntries(
-      mcpServers.map((server) => {
-        const serverConfig: Record<string, unknown> = {
-          command: server.command,
-        };
-        if (server.args && server.args.length > 0) {
-          serverConfig.args = server.args;
-        }
-        if (server.env && Object.keys(server.env).length > 0) {
-          serverConfig.env = server.env;
-        }
-        return [server.name, serverConfig];
-      })
-    ),
-  };
-
-  const configJson = JSON.stringify(claudeConfig, null, 2);
-
-  // Write to container using a heredoc to handle special characters safely
-  // The 'EOF' is quoted to prevent shell expansion inside the heredoc
-  await runPodman([
-    'exec',
-    containerId,
-    'sh',
-    '-c',
-    `cat > /home/claudeuser/.claude.json << 'EOF'\n${configJson}\nEOF`,
-  ]);
-
-  log.info('Wrote MCP config to container', {
-    containerId,
-    serverCount: mcpServers.length,
-    servers: mcpServers.map((s) => s.name),
-  });
 }
 
 /**
@@ -804,13 +660,6 @@ export async function verifyContainerHealth(containerId: string): Promise<void> 
     );
   }
 
-  // Verify the claude command is available
-  try {
-    await runPodman(['exec', containerId, 'which', 'claude']);
-  } catch (error) {
-    throw new Error(`Claude CLI not available in container: ${toError(error).message}`);
-  }
-
   log.debug('Container health verified', { containerId });
 }
 
@@ -836,55 +685,6 @@ export async function removeContainer(containerId: string): Promise<void> {
   } catch {
     // Ignore remove errors if already removed
   }
-}
-
-export async function execInContainer(
-  containerId: string,
-  command: string[]
-): Promise<{ stream: Readable; execId: string }> {
-  const execId = uuid();
-  log.debug('execInContainer: Starting', { containerId, command, execId });
-
-  const proc = spawn('podman', ['exec', containerId, ...command], { env: podmanEnv });
-
-  // Combine stdout and stderr into a single stream
-  const combinedStream = new PassThrough();
-  proc.stdout.pipe(combinedStream, { end: false });
-  proc.stderr.pipe(combinedStream, { end: false });
-
-  // Track when both streams are done
-  let stdoutEnded = false;
-  let stderrEnded = false;
-  const checkEnd = () => {
-    if (stdoutEnded && stderrEnded) {
-      combinedStream.end();
-    }
-  };
-  proc.stdout.on('end', () => {
-    stdoutEnded = true;
-    checkEnd();
-  });
-  proc.stderr.on('end', () => {
-    stderrEnded = true;
-    checkEnd();
-  });
-
-  // Track the process
-  const tracked: TrackedProcess = { process: proc, running: true, exitCode: null };
-  trackedProcesses.set(execId, tracked);
-
-  proc.on('close', (code) => {
-    tracked.running = false;
-    tracked.exitCode = code;
-  });
-
-  proc.on('error', (err) => {
-    log.error('execInContainer: Process error', toError(err), { containerId, execId });
-    tracked.running = false;
-    tracked.exitCode = 1;
-  });
-
-  return { stream: combinedStream, execId };
 }
 
 export async function getContainerStatus(
@@ -1023,189 +823,6 @@ export async function listSessionContainers(): Promise<SessionContainerInfo[]> {
   }
 }
 
-export async function sendSignalToExec(
-  containerId: string,
-  pid: number,
-  signal: string = 'INT'
-): Promise<void> {
-  log.debug('sendSignalToExec: Sending signal to PID', { containerId, pid, signal });
-  try {
-    await runPodman(['exec', containerId, 'kill', `-${signal}`, pid.toString()]);
-    log.debug('sendSignalToExec: Signal sent', { containerId, pid, signal });
-  } catch (error) {
-    log.warn('sendSignalToExec: Error sending signal', {
-      containerId,
-      pid,
-      signal,
-      error: toError(error).message,
-    });
-  }
-}
-
-/**
- * Kill all processes matching a pattern in a container using pkill.
- */
-export async function killProcessesByPattern(containerId: string, pattern: string): Promise<void> {
-  await signalProcessesByPattern(containerId, pattern, 'TERM');
-}
-
-/**
- * Send a signal to all processes matching a pattern in a container.
- */
-export async function signalProcessesByPattern(
-  containerId: string,
-  pattern: string,
-  signal: string = 'TERM'
-): Promise<void> {
-  log.debug('signalProcessesByPattern: Sending signal', { containerId, pattern, signal });
-  try {
-    await runPodmanIgnoreErrors(['exec', containerId, 'pkill', `-${signal}`, '-f', pattern]);
-    log.debug('signalProcessesByPattern: Signal sent', { containerId, pattern, signal });
-  } catch {
-    log.debug('signalProcessesByPattern: Could not send signal (process may not exist)', {
-      containerId,
-      pattern,
-      signal,
-    });
-  }
-}
-
-export async function findProcessInContainer(
-  containerId: string,
-  processPattern: string
-): Promise<number | null> {
-  try {
-    const output = await runPodmanIgnoreErrors([
-      'exec',
-      containerId,
-      'pgrep',
-      '-f',
-      processPattern,
-    ]);
-    const pid = parseInt(output.trim().split('\n')[0], 10);
-    const result = isNaN(pid) ? null : pid;
-    log.debug('findProcessInContainer: Search complete', {
-      containerId,
-      processPattern,
-      pid: result,
-    });
-    return result;
-  } catch {
-    log.warn('findProcessInContainer: Error', { containerId, processPattern });
-    return null;
-  }
-}
-
-/**
- * Check if a specific process is running in a container
- */
-export async function isProcessRunning(containerId: string, processName: string): Promise<boolean> {
-  const pid = await findProcessInContainer(containerId, processName);
-  return pid !== null;
-}
-/**
- * Execute a command with output redirected to a file.
- * This approach avoids the blocking issue where pipes back up when the service disconnects.
- *
- * The command runs as: `command > outputFile 2>&1`
- *
- * If the redirect fails (e.g., can't create file), the shell error goes to the exec's stderr.
- * Otherwise, all command output goes to the file and the exec's stdout/stderr are empty.
- *
- * @returns execId for tracking, and errorStream for catching redirect/startup errors
- */
-export async function execInContainerToFile(
-  containerId: string,
-  command: string[],
-  outputFile: string
-): Promise<{ execId: string; errorStream: Readable }> {
-  log.info('execInContainerToFile: Starting', {
-    containerId,
-    command: command.slice(0, 3),
-    outputFile,
-  });
-
-  const execId = uuid();
-
-  // Build the command with output redirected to file
-  // Using stdbuf -oL for line-buffered output so the file gets written promptly
-  const wrappedCommand = `stdbuf -oL ${command.map(escapeShellArg).join(' ')} > "${outputFile}" 2>&1`;
-  log.info('execInContainerToFile: Spawning podman exec', { containerId, wrappedCommand });
-
-  const proc = spawn('podman', ['exec', containerId, 'sh', '-c', wrappedCommand], {
-    env: podmanEnv,
-  });
-
-  log.info('execInContainerToFile: Spawn returned', { execId, pid: proc.pid });
-
-  // Track the process
-  const tracked: TrackedProcess = { process: proc, running: true, exitCode: null };
-  trackedProcesses.set(execId, tracked);
-
-  proc.on('close', (code) => {
-    tracked.running = false;
-    tracked.exitCode = code;
-  });
-
-  proc.on('error', (err) => {
-    log.error('execInContainerToFile: Process error', toError(err), { containerId, execId });
-    tracked.running = false;
-    tracked.exitCode = 1;
-  });
-
-  log.debug('execInContainerToFile: Started', { execId });
-
-  // Combine stdout and stderr - if the redirect fails, the error will appear here
-  const combinedStream = new PassThrough();
-  proc.stdout.pipe(combinedStream, { end: false });
-  proc.stderr.pipe(combinedStream, { end: false });
-
-  let stdoutEnded = false;
-  let stderrEnded = false;
-  const checkEnd = () => {
-    if (stdoutEnded && stderrEnded) {
-      combinedStream.end();
-    }
-  };
-  proc.stdout.on('end', () => {
-    stdoutEnded = true;
-    checkEnd();
-  });
-  proc.stderr.on('end', () => {
-    stderrEnded = true;
-    checkEnd();
-  });
-
-  return { execId, errorStream: combinedStream };
-}
-
-/**
- * Result of checking exec status.
- */
-export interface ExecStatus {
-  running: boolean;
-  exitCode: number | null;
-  /** True if the exec was not found (e.g., server restarted) */
-  notFound: boolean;
-}
-
-/**
- * Check the status of a tracked exec process by its ID.
- * Returns running state and exit code (if finished).
- */
-export async function getExecStatus(execId: string): Promise<ExecStatus> {
-  const tracked = trackedProcesses.get(execId);
-  if (!tracked) {
-    // Process not found - could be server restart or exec ID from before restart
-    return { running: false, exitCode: null, notFound: true };
-  }
-  return {
-    running: tracked.running,
-    exitCode: tracked.running ? null : tracked.exitCode,
-    notFound: false,
-  };
-}
-
 /**
  * Check if an exit code indicates an error.
  */
@@ -1240,66 +857,4 @@ export function describeExitCode(exitCode: number | null): string {
     return `killed by signal ${exitCode - 128}`;
   }
   return `error code ${exitCode}`;
-}
-
-/**
- * Tail a file in a container, streaming new content as it's written.
- */
-export async function tailFileInContainer(
-  containerId: string,
-  filePath: string,
-  startLine: number = 0
-): Promise<{ stream: Readable; execId: string }> {
-  log.debug('tailFileInContainer: Starting', { containerId, filePath, startLine });
-
-  const execId = uuid();
-
-  // Use tail -f to follow the file, starting from line N
-  const proc = spawn(
-    'podman',
-    ['exec', containerId, 'tail', '-n', `+${startLine + 1}`, '-f', filePath],
-    { env: podmanEnv }
-  );
-
-  // Track the process
-  const tracked: TrackedProcess = { process: proc, running: true, exitCode: null };
-  trackedProcesses.set(execId, tracked);
-
-  proc.on('close', (code) => {
-    tracked.running = false;
-    tracked.exitCode = code;
-  });
-
-  log.debug('tailFileInContainer: Tail stream started', { execId });
-
-  return { stream: proc.stdout, execId };
-}
-
-/**
- * Read the current contents of a file in a container.
- */
-export async function readFileInContainer(containerId: string, filePath: string): Promise<string> {
-  return runPodman(['exec', containerId, 'cat', filePath]);
-}
-
-/**
- * Check if a file exists in a container
- */
-export async function fileExistsInContainer(
-  containerId: string,
-  filePath: string
-): Promise<boolean> {
-  try {
-    await runPodman(['exec', containerId, 'test', '-f', filePath]);
-    log.debug('fileExistsInContainer: Check complete', { containerId, filePath, exists: true });
-    return true;
-  } catch {
-    log.debug('fileExistsInContainer: Check complete', { containerId, filePath, exists: false });
-    return false;
-  }
-}
-
-function escapeShellArg(arg: string): string {
-  // Escape single quotes and wrap in single quotes
-  return `'${arg.replace(/'/g, "'\\''")}'`;
 }

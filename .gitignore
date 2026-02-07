@@ -149,3 +149,5 @@ vite.config.ts.timestamp-*
 
 # Annoying things that change constantly
 next-env.d.ts
+agent-service/node_modules/
+agent-service/dist/

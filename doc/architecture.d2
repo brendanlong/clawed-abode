@@ -20,21 +20,24 @@ server: Home Server {
 
     auth: Auth
     session_mgmt: Session Management
+    agent_client: Agent Client (HTTP/SSE)
     websocket: WebSocket/SSE
   }
 
-  docker: Docker Containers {
+  podman: Podman Containers {
     style.fill: "#2496ED"
     style.font-color: white
 
     container1: Session Container {
-      claude: Claude Code
+      agent_svc: Agent Service (HTTP)
+      claude_sdk: Claude Agent SDK
       workspace: Git Clone
       gpu: GPU Access
     }
 
     container2: Session Container {
-      claude2: Claude Code
+      agent_svc2: Agent Service (HTTP)
+      claude_sdk2: Claude Agent SDK
       workspace2: Git Clone
       gpu2: GPU Access
     }
@@ -50,14 +53,18 @@ server: Home Server {
       authSessions: AuthSessions
     }
 
-    filesystem: Filesystem {
-      workspaces: /data/workspaces
+    volumes: Named Volumes {
+      workspaces: Workspace Volumes
+      pnpm: pnpm Store
+      gradle: Gradle Cache
+      git_cache: Git Cache
     }
   }
 
-  app -> docker: docker exec
+  app.agent_client -> podman.container1.agent_svc: HTTP/SSE
+  app.agent_client -> podman.container2.agent_svc2: HTTP/SSE
   app -> storage.sqlite: Prisma
-  docker -> storage.filesystem: mount
+  podman -> storage.volumes: mount
 }
 
 # Connections
@@ -76,6 +83,7 @@ data_model: Data Model {
     branch: string
     workspacePath: string
     containerId: string | null
+    agentPort: int | null
     status: enum
     statusMessage: string | null
     createdAt: timestamp
@@ -159,9 +167,38 @@ lifecycle: Session Lifecycle {
     style.font-color: white
   }
 
-  creating -> running: Container started
+  creating -> running: Container + Agent ready
   running -> stopped: User stops
   stopped -> running: User starts
   running -> error: Failure
   creating -> error: Failure
+}
+
+# Agent Service Detail
+agent_detail: Agent Service (per container) {
+  style.fill: "#F0F4FF"
+  direction: down
+
+  http: HTTP Server {
+    query: POST /query → SSE stream
+    interrupt: POST /interrupt
+    status: GET /status
+    messages: GET /messages
+    health: GET /health
+  }
+
+  sdk: Claude Agent SDK {
+    query_fn: query()
+    sessions: Session management
+    resume: Resume support
+  }
+
+  msg_store: SQLite Message Store {
+    append: append()
+    get_after: getAfter()
+  }
+
+  http.query -> sdk.query_fn: Start query
+  sdk.query_fn -> msg_store.append: Persist messages
+  http.messages -> msg_store.get_after: Catch-up
 }
