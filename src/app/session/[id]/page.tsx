@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useMemo, useEffect, useRef, use, useState } from 'react';
+import { useCallback, useMemo, useEffect, useRef, use } from 'react';
 import Link from 'next/link';
 import { AuthGuard } from '@/components/AuthGuard';
 import { Header } from '@/components/Header';
@@ -342,10 +342,9 @@ function useWorkCompleteNotification(
  * Hook for managing Claude process state: running status, send prompts, interrupt, and commands.
  */
 function useClaudeState(sessionId: string) {
-  // Local state for Claude running status (overridden by SSE, initialized from query)
-  const [runningOverride, setRunningOverride] = useState<boolean | null>(null);
+  const utils = trpc.useUtils();
 
-  // Initial fetch of Claude running state
+  // Fetch Claude running state
   const { data: runningData, refetch } = trpc.claude.isRunning.useQuery({ sessionId });
 
   // Fetch available slash commands
@@ -354,28 +353,19 @@ function useClaudeState(sessionId: string) {
     { staleTime: Infinity }
   );
 
-  // Local override for commands (updated by SSE)
-  const [commandsOverride, setCommandsOverride] = useState<Array<{
-    name: string;
-    description: string;
-    argumentHint: string;
-  }> | null>(null);
-
-  // Refetch and reset override when app regains visibility or network reconnects
-  const refetchAndReset = useCallback(() => {
-    // Reset override so we use fresh data from the query
-    setRunningOverride(null);
+  // Refetch when app regains visibility or network reconnects
+  const refetchAll = useCallback(() => {
     refetch();
     refetchCommands();
   }, [refetch, refetchCommands]);
-  useRefetchOnReconnect(refetchAndReset);
+  useRefetchOnReconnect(refetchAll);
 
-  // Subscribe to Claude running state via SSE
+  // Subscribe to Claude running state via SSE - update cache directly
   trpc.sse.onClaudeRunning.useSubscription(
     { sessionId },
     {
       onData: (trackedData) => {
-        setRunningOverride(trackedData.data.running);
+        utils.claude.isRunning.setData({ sessionId }, { running: trackedData.data.running });
         // When Claude finishes running, refetch commands in case new ones were discovered
         if (!trackedData.data.running) {
           refetchCommands();
@@ -387,12 +377,12 @@ function useClaudeState(sessionId: string) {
     }
   );
 
-  // Subscribe to commands updates via SSE
+  // Subscribe to commands updates via SSE - update cache directly
   trpc.sse.onCommands.useSubscription(
     { sessionId },
     {
       onData: (trackedData) => {
-        setCommandsOverride(trackedData.data.commands);
+        utils.claude.getCommands.setData({ sessionId }, { commands: trackedData.data.commands });
       },
       onError: (err) => {
         console.error('Commands SSE error:', err);
@@ -414,9 +404,8 @@ function useClaudeState(sessionId: string) {
     interruptMutation.mutate({ sessionId });
   }, [sessionId, interruptMutation]);
 
-  // Use SSE override if available, otherwise use query data
-  const isRunning = runningOverride ?? runningData?.running ?? false;
-  const commands = commandsOverride ?? commandsData?.commands ?? [];
+  const isRunning = runningData?.running ?? false;
+  const commands = commandsData?.commands ?? [];
 
   return {
     isRunning,
