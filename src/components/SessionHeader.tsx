@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
-import { SessionStatusBadge } from '@/components/SessionStatusBadge';
+import { SessionStatusToggle } from '@/components/SessionStatusToggle';
 import { SessionActionButton } from '@/components/SessionActionButton';
 
 interface SessionHeaderProps {
@@ -36,9 +36,9 @@ export function SessionHeader({
 
   return (
     <div className="border-b bg-background px-4 py-3">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" asChild>
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0">
+          <Button variant="ghost" size="icon" className="shrink-0" asChild>
             <Link href="/">
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path
@@ -50,29 +50,20 @@ export function SessionHeader({
               </svg>
             </Link>
           </Button>
-          <div>
-            <h1 className="font-semibold">{session.name}</h1>
-            <p className="text-sm text-muted-foreground">
-              {repoName} · {session.branch}
-            </p>
+          <div className="min-w-0">
+            <h1 className="font-semibold break-words">{session.name}</h1>
+            <p className="text-sm text-muted-foreground truncate">{repoName}</p>
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
-          <span className="text-sm text-muted-foreground">Container:</span>
-          <SessionStatusBadge status={session.status} />
-
-          {session.status === 'stopped' && (
-            <SessionActionButton action="start" onClick={onStart} isPending={isStarting} />
-          )}
-          {session.status === 'running' && (
-            <SessionActionButton
-              action="stop"
-              onClick={onStop}
-              isPending={isStopping}
-              variant="secondary"
-            />
-          )}
+        <div className="flex flex-col items-end gap-1 shrink-0">
+          <SessionStatusToggle
+            status={session.status}
+            onStart={onStart}
+            onStop={onStop}
+            isStarting={isStarting}
+            isStopping={isStopping}
+          />
           {(session.status === 'stopped' || session.status === 'running') && onArchive && (
             <SessionActionButton
               action="archive"
