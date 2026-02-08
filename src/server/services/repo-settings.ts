@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/prisma';
-import { decrypt } from '@/lib/crypto';
+import { decryptEnvVarsForContainer, decryptMcpServersForContainer } from './settings-helpers';
 
 /**
  * Environment variable for container
@@ -78,59 +78,9 @@ export async function getRepoSettingsForContainer(
     return null;
   }
 
-  // Decrypt env var values
-  const envVars: ContainerEnvVar[] = settings.envVars.map((ev) => ({
-    name: ev.name,
-    value: ev.isSecret ? decrypt(ev.value) : ev.value,
-  }));
-
-  // Parse and decrypt MCP server configs
-  const mcpServers: ContainerMcpServer[] = settings.mcpServers.map((mcp) => {
-    const serverType = (mcp.type || 'stdio') as McpServerType;
-
-    if (serverType === 'http' || serverType === 'sse') {
-      // HTTP/SSE servers: decrypt headers
-      const headersJson = mcp.headers
-        ? (JSON.parse(mcp.headers) as Record<string, { value: string; isSecret: boolean }>)
-        : {};
-      const headers = Object.fromEntries(
-        Object.entries(headersJson).map(([key, { value, isSecret }]) => [
-          key,
-          isSecret ? decrypt(value) : value,
-        ])
-      );
-
-      return {
-        name: mcp.name,
-        type: serverType,
-        url: mcp.url!,
-        headers: Object.keys(headers).length > 0 ? headers : undefined,
-      } as ContainerMcpServer;
-    }
-
-    // Stdio servers: decrypt env vars
-    const envJson = mcp.env
-      ? (JSON.parse(mcp.env) as Record<string, { value: string; isSecret: boolean }>)
-      : {};
-    const env = Object.fromEntries(
-      Object.entries(envJson).map(([key, { value, isSecret }]) => [
-        key,
-        isSecret ? decrypt(value) : value,
-      ])
-    );
-
-    return {
-      name: mcp.name,
-      type: 'stdio',
-      command: mcp.command,
-      args: mcp.args ? (JSON.parse(mcp.args) as string[]) : undefined,
-      env: Object.keys(env).length > 0 ? env : undefined,
-    } as ContainerStdioMcpServer;
-  });
-
   return {
     customSystemPrompt: settings.customSystemPrompt,
-    envVars,
-    mcpServers,
+    envVars: decryptEnvVarsForContainer(settings.envVars),
+    mcpServers: decryptMcpServersForContainer(settings.mcpServers),
   };
 }

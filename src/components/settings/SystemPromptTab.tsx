@@ -10,6 +10,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { trpc } from '@/lib/trpc';
 import { ChevronDown, ChevronRight, RotateCcw } from 'lucide-react';
+import { GlobalEnvVarsCard, GlobalMcpServersCard } from './GlobalSettingsTab';
 
 export function SystemPromptTab() {
   const { data: settings, isLoading, refetch } = trpc.globalSettings.get.useQuery();
@@ -58,6 +59,10 @@ export function SystemPromptTab() {
           />
         </CardContent>
       </Card>
+
+      <GlobalEnvVarsCard />
+
+      <GlobalMcpServersCard />
 
       <Card>
         <CardHeader>
