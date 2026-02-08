@@ -175,4 +175,43 @@ export const sseRouter = router({
         unsubscribe();
       }
     }),
+
+  // Subscribe to supported slash commands updates
+  onCommands: protectedProcedure
+    .input(z.object({ sessionId: z.string().uuid() }))
+    .subscription(async function* ({ input, signal }) {
+      const events: Array<{
+        type: 'commands';
+        sessionId: string;
+        commands: Array<{ name: string; description: string; argumentHint: string }>;
+      }> = [];
+      let resolveWait: (() => void) | null = null;
+      let counter = 0;
+
+      const unsubscribe = sseEvents.onCommands(input.sessionId, (event) => {
+        events.push(event);
+        resolveWait?.();
+      });
+
+      signal?.addEventListener('abort', () => {
+        unsubscribe();
+      });
+
+      try {
+        while (!signal?.aborted) {
+          if (events.length > 0) {
+            const event = events.shift()!;
+            yield tracked(`${event.sessionId}-commands-${counter++}`, event);
+          } else {
+            await new Promise<void>((resolve) => {
+              resolveWait = resolve;
+              const onAbort = () => resolve();
+              signal?.addEventListener('abort', onAbort, { once: true });
+            });
+          }
+        }
+      } finally {
+        unsubscribe();
+      }
+    }),
 });

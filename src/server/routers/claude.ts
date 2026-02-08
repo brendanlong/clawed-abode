@@ -13,6 +13,8 @@ import { getGlobalSettings } from '../services/global-settings';
 import { estimateTokenUsage } from '@/lib/token-estimation';
 import { createLogger, toError } from '@/lib/logger';
 import { extractRepoFullName } from '@/lib/utils';
+import { createAgentClient, getAgentSocketPath } from '../services/agent-client';
+import { getContainerStatus } from '../services/podman';
 
 const log = createLogger('claude');
 
@@ -222,5 +224,33 @@ export const claudeRouter = router({
       }));
 
       return estimateTokenUsage(parsedMessages);
+    }),
+
+  getCommands: protectedProcedure
+    .input(z.object({ sessionId: z.string().uuid() }))
+    .query(async ({ input }) => {
+      const session = await prisma.session.findUnique({
+        where: { id: input.sessionId },
+        select: { containerId: true },
+      });
+
+      if (!session?.containerId) {
+        return { commands: [] };
+      }
+
+      // Check container is running
+      const containerStatus = await getContainerStatus(session.containerId);
+      if (containerStatus !== 'running') {
+        return { commands: [] };
+      }
+
+      try {
+        const client = createAgentClient(getAgentSocketPath(input.sessionId));
+        const commands = await client.getCommands();
+        return { commands };
+      } catch (err) {
+        log.debug('Failed to fetch commands', { error: toError(err).message });
+        return { commands: [] };
+      }
     }),
 });

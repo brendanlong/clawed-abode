@@ -351,6 +351,12 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
       cwd: workingDir,
       mcpServers: mcpServersRecord,
     })) {
+      // Handle commands update - emit via SSE for frontend autocomplete
+      if (agentEvent.kind === 'commands') {
+        sseEvents.emitCommands(sessionId, agentEvent.commands);
+        continue;
+      }
+
       // Handle partial (streaming) messages - emit via SSE but don't persist
       if (agentEvent.kind === 'partial') {
         const partialContent = agentEvent.partial;

@@ -30,6 +30,7 @@ const { mockPodmanFunctions, mockPrisma, mockSseEvents, mockAgentClient } = vi.h
   const mockSseEvents = {
     emitNewMessage: vi.fn(),
     emitClaudeRunning: vi.fn(),
+    emitCommands: vi.fn(),
     emitSessionUpdate: vi.fn(),
   };
 
@@ -38,6 +39,7 @@ const { mockPodmanFunctions, mockPrisma, mockSseEvents, mockAgentClient } = vi.h
     interrupt: vi.fn(),
     getStatus: vi.fn(),
     getMessages: vi.fn(),
+    getCommands: vi.fn(),
     health: vi.fn(),
   };
 
