@@ -173,7 +173,22 @@ export const repoSettingsRouter = router({
         update: {},
       });
 
-      const value = input.envVar.isSecret ? encrypt(input.envVar.value) : input.envVar.value;
+      // Check if existing value should be preserved (secret unchanged)
+      const existing = await prisma.envVar.findUnique({
+        where: {
+          repoSettingsId_name: {
+            repoSettingsId: settings.id,
+            name: input.envVar.name,
+          },
+        },
+      });
+
+      let value: string;
+      if (input.envVar.isSecret && !input.envVar.value && existing?.isSecret) {
+        value = existing.value;
+      } else {
+        value = input.envVar.isSecret ? encrypt(input.envVar.value) : input.envVar.value;
+      }
 
       await prisma.envVar.upsert({
         where: {
@@ -253,7 +268,17 @@ export const repoSettingsRouter = router({
         update: {},
       });
 
-      const data = buildMcpServerData(server);
+      // Find existing to preserve unchanged secrets
+      const existing = await prisma.mcpServer.findUnique({
+        where: {
+          repoSettingsId_name: {
+            repoSettingsId: settings.id,
+            name: server.name,
+          },
+        },
+      });
+
+      const data = buildMcpServerData(server, existing);
 
       await prisma.mcpServer.upsert({
         where: {
