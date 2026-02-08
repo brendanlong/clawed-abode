@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useReducer } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { AuthGuard } from '@/components/AuthGuard';
@@ -17,6 +17,7 @@ import { BranchSelector } from '@/components/BranchSelector';
 import { IssueSelector } from '@/components/IssueSelector';
 import type { Repo } from '@/components/RepoSelector';
 import type { Issue } from '@/lib/types';
+import { formReducer, initialFormState } from './form-reducer';
 
 function generateIssuePrompt(issue: Issue, repoFullName: string): string {
   const issueUrl = `https://github.com/${repoFullName}/issues/${issue.number}`;
@@ -42,10 +43,7 @@ function generateIssuePrompt(issue: Issue, repoFullName: string): string {
 
 function NewSessionForm() {
   const router = useRouter();
-  const [selectedRepo, setSelectedRepo] = useState<Repo | null>(null);
-  const [selectedBranch, setSelectedBranch] = useState('');
-  const [selectedIssue, setSelectedIssue] = useState<Issue | null>(null);
-  const [sessionName, setSessionName] = useState('');
+  const [form, dispatch] = useReducer(formReducer, initialFormState);
   const [error, setError] = useState('');
 
   const createMutation = trpc.sessions.create.useMutation({
@@ -57,46 +55,44 @@ function NewSessionForm() {
     },
   });
 
-  // When an issue is selected, use its title as the session name
   const handleIssueSelect = useCallback((issue: Issue | null) => {
-    setSelectedIssue(issue);
-    if (issue) {
-      setSessionName(`#${issue.number}: ${issue.title}`);
-    } else {
-      setSessionName('');
-    }
+    dispatch({ type: 'selectIssue', issue });
   }, []);
 
-  // Handle repo selection: reset branch, issue, and name
   const handleRepoSelect = useCallback((repo: Repo) => {
-    setSelectedRepo(repo);
-    setSelectedBranch('');
-    setSelectedIssue(null);
-    setSessionName('');
+    dispatch({ type: 'selectRepo', repo });
+  }, []);
+
+  const handleBranchSelect = useCallback((branch: string) => {
+    dispatch({ type: 'selectBranch', branch });
+  }, []);
+
+  const handleNameChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    dispatch({ type: 'editName', name: e.target.value });
   }, []);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
-    if (!selectedRepo) {
+    if (!form.selectedRepo) {
       setError('Please select a repository');
       return;
     }
 
-    if (!selectedBranch) {
+    if (!form.selectedBranch) {
       setError('Please select a branch');
       return;
     }
 
-    const initialPrompt = selectedIssue
-      ? generateIssuePrompt(selectedIssue, selectedRepo.fullName)
+    const initialPrompt = form.selectedIssue
+      ? generateIssuePrompt(form.selectedIssue, form.selectedRepo.fullName)
       : undefined;
 
     createMutation.mutate({
-      name: sessionName || `${selectedRepo.name} - ${selectedBranch}`,
-      repoFullName: selectedRepo.fullName,
-      branch: selectedBranch,
+      name: form.sessionName || `${form.selectedRepo.name} - ${form.selectedBranch}`,
+      repoFullName: form.selectedRepo.fullName,
+      branch: form.selectedBranch,
       initialPrompt,
     });
   };
@@ -109,32 +105,34 @@ function NewSessionForm() {
         </Alert>
       )}
 
-      <RepoSelector selectedRepo={selectedRepo} onSelect={handleRepoSelect} />
+      <RepoSelector selectedRepo={form.selectedRepo} onSelect={handleRepoSelect} />
 
-      {selectedRepo && (
+      {form.selectedRepo && (
         <>
           <BranchSelector
-            repoFullName={selectedRepo.fullName}
-            selectedBranch={selectedBranch}
-            onSelect={setSelectedBranch}
+            repoFullName={form.selectedRepo.fullName}
+            selectedBranch={form.selectedBranch}
+            onSelect={handleBranchSelect}
           />
 
           <IssueSelector
-            repoFullName={selectedRepo.fullName}
-            selectedIssue={selectedIssue}
+            repoFullName={form.selectedRepo.fullName}
+            selectedIssue={form.selectedIssue}
             onSelect={handleIssueSelect}
           />
 
           <div className="space-y-2">
-            <Label htmlFor="sessionName">Session name {selectedIssue ? '' : '(optional)'}</Label>
+            <Label htmlFor="sessionName">
+              Session name {form.selectedIssue ? '' : '(optional)'}
+            </Label>
             <Input
               id="sessionName"
               type="text"
-              value={sessionName}
-              onChange={(e) => setSessionName(e.target.value)}
-              placeholder={`${selectedRepo.name} - ${selectedBranch || 'branch'}`}
+              value={form.sessionName}
+              onChange={handleNameChange}
+              placeholder={`${form.selectedRepo.name} - ${form.selectedBranch || 'branch'}`}
             />
-            {selectedIssue && (
+            {form.selectedIssue && (
               <p className="text-xs text-muted-foreground">
                 When the session starts, Claude will automatically be prompted to fix this issue.
               </p>
@@ -149,7 +147,7 @@ function NewSessionForm() {
         </Button>
         <Button
           type="submit"
-          disabled={!selectedRepo || !selectedBranch || createMutation.isPending}
+          disabled={!form.selectedRepo || !form.selectedBranch || createMutation.isPending}
         >
           {createMutation.isPending ? (
             <span className="flex items-center gap-2">
