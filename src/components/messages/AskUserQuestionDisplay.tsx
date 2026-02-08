@@ -2,9 +2,8 @@
 
 import { useState, useMemo } from 'react';
 import { cn } from '@/lib/utils';
-import { Card, CardContent } from '@/components/ui/card';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Badge } from '@/components/ui/badge';
+import { ToolDisplayWrapper } from './ToolDisplayWrapper';
 import type { ToolCall } from './types';
 
 interface QuestionOption {
@@ -104,7 +103,6 @@ export function AskUserQuestionDisplay({
   onSendResponse,
   isClaudeRunning,
 }: AskUserQuestionDisplayProps) {
-  const [expanded, setExpanded] = useState(true);
   const [selectedOptions, setSelectedOptions] = useState<Map<number, Set<number>>>(new Map());
 
   const hasOutput = tool.output !== undefined;
@@ -180,141 +178,112 @@ export function AskUserQuestionDisplay({
   };
 
   return (
-    <div className="group">
-      <Collapsible open={expanded} onOpenChange={setExpanded}>
-        <Card
-          className={cn(
-            'mt-2',
-            isPending &&
-              'border-purple-300 dark:border-purple-700 bg-purple-50/50 dark:bg-purple-950/30',
-            isRealError && 'border-red-300 dark:border-red-700',
-            !isPending && !isRealError && 'border-green-300 dark:border-green-700'
-          )}
+    <ToolDisplayWrapper
+      tool={tool}
+      icon={<QuestionIcon />}
+      title="AskUserQuestion"
+      defaultExpanded={true}
+      isPendingOverride={isPending}
+      isErrorOverride={isRealError}
+      pendingText="Waiting for input"
+      cardClassName={cn(
+        isPending &&
+          'border-purple-300 dark:border-purple-700 bg-purple-50/50 dark:bg-purple-950/30',
+        !isPending && !isRealError && 'border-green-300 dark:border-green-700'
+      )}
+      doneBadge={
+        <Badge
+          variant="outline"
+          className="text-xs border-green-500 text-green-700 dark:text-green-400"
         >
-          <CollapsibleTrigger className="w-full px-3 py-2 text-left flex items-center justify-between text-sm hover:bg-muted/50 rounded-t-xl">
-            <div className="flex items-center gap-2 flex-1 min-w-0">
-              <QuestionIcon />
-              <span className="font-mono text-primary">AskUserQuestion</span>
-              {isPending && (
-                <Badge
-                  variant="outline"
-                  className="text-xs border-purple-500 text-purple-700 dark:text-purple-400 animate-pulse"
-                >
-                  Waiting for input
-                </Badge>
-              )}
-              {isRealError && (
-                <Badge variant="destructive" className="text-xs">
-                  Error
-                </Badge>
-              )}
-              {!isPending && !isRealError && (
-                <Badge
-                  variant="outline"
-                  className="text-xs border-green-500 text-green-700 dark:text-green-400"
-                >
-                  Answered
-                </Badge>
-              )}
-            </div>
-            <span className="text-muted-foreground ml-2 flex-shrink-0">{expanded ? '−' : '+'}</span>
-          </CollapsibleTrigger>
+          Answered
+        </Badge>
+      }
+    >
+      {questions.map((question, qIndex) => (
+        <div key={qIndex} className="space-y-2">
+          {/* Question header badge */}
+          {question.header && (
+            <Badge variant="secondary" className="text-xs">
+              {question.header}
+            </Badge>
+          )}
 
-          <CollapsibleContent>
-            <CardContent className="p-3 space-y-4">
-              {questions.map((question, qIndex) => (
-                <div key={qIndex} className="space-y-2">
-                  {/* Question header badge */}
-                  {question.header && (
-                    <Badge variant="secondary" className="text-xs">
-                      {question.header}
-                    </Badge>
+          {/* Question text */}
+          <p className="text-sm font-medium text-foreground">{question.question}</p>
+
+          {/* Options */}
+          <div className="space-y-1.5 ml-1">
+            {question.options.map((option, oIndex) => {
+              const isSelected = isOptionSelected(qIndex, oIndex);
+              const wasAnswered = isAnsweredOption(option);
+              const canClick = isPending && !isClaudeRunning && onSendResponse;
+
+              return (
+                <button
+                  key={oIndex}
+                  type="button"
+                  disabled={!canClick}
+                  onClick={() => handleOptionClick(qIndex, oIndex, question.multiSelect)}
+                  className={cn(
+                    'flex items-start gap-2 py-1.5 px-2 rounded text-sm w-full text-left',
+                    'transition-colors',
+                    canClick
+                      ? 'bg-muted/50 hover:bg-purple-100 dark:hover:bg-purple-900/50 cursor-pointer'
+                      : 'bg-muted/50',
+                    isSelected && 'bg-purple-100 dark:bg-purple-900/50 ring-1 ring-purple-400',
+                    wasAnswered && 'bg-green-100 dark:bg-green-900/50 ring-1 ring-green-400'
                   )}
-
-                  {/* Question text */}
-                  <p className="text-sm font-medium text-foreground">{question.question}</p>
-
-                  {/* Options */}
-                  <div className="space-y-1.5 ml-1">
-                    {question.options.map((option, oIndex) => {
-                      const isSelected = isOptionSelected(qIndex, oIndex);
-                      const wasAnswered = isAnsweredOption(option);
-                      const canClick = isPending && !isClaudeRunning && onSendResponse;
-
-                      return (
-                        <button
-                          key={oIndex}
-                          type="button"
-                          disabled={!canClick}
-                          onClick={() => handleOptionClick(qIndex, oIndex, question.multiSelect)}
-                          className={cn(
-                            'flex items-start gap-2 py-1.5 px-2 rounded text-sm w-full text-left',
-                            'transition-colors',
-                            canClick
-                              ? 'bg-muted/50 hover:bg-purple-100 dark:hover:bg-purple-900/50 cursor-pointer'
-                              : 'bg-muted/50',
-                            isSelected &&
-                              'bg-purple-100 dark:bg-purple-900/50 ring-1 ring-purple-400',
-                            wasAnswered && 'bg-green-100 dark:bg-green-900/50 ring-1 ring-green-400'
-                          )}
-                        >
-                          {question.multiSelect ? (
-                            <CheckboxIcon checked={isSelected || wasAnswered} />
-                          ) : (
-                            <RadioIcon selected={isSelected || wasAnswered} />
-                          )}
-                          <div className="flex-1 min-w-0">
-                            <div className="font-medium text-foreground">{option.label}</div>
-                            {option.description && (
-                              <div className="text-xs text-muted-foreground mt-0.5">
-                                {option.description}
-                              </div>
-                            )}
-                          </div>
-                        </button>
-                      );
-                    })}
+                >
+                  {question.multiSelect ? (
+                    <CheckboxIcon checked={isSelected || wasAnswered} />
+                  ) : (
+                    <RadioIcon selected={isSelected || wasAnswered} />
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium text-foreground">{option.label}</div>
+                    {option.description && (
+                      <div className="text-xs text-muted-foreground mt-0.5">
+                        {option.description}
+                      </div>
+                    )}
                   </div>
+                </button>
+              );
+            })}
+          </div>
 
-                  {/* Submit button for multi-select */}
-                  {question.multiSelect &&
-                    isPending &&
-                    !isClaudeRunning &&
-                    onSendResponse &&
-                    (selectedOptions.get(qIndex)?.size ?? 0) > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => handleSubmitMultiSelect(qIndex)}
-                        className="mt-2 px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white text-sm rounded transition-colors"
-                      >
-                        Submit Selected
-                      </button>
-                    )}
-                </div>
-              ))}
+          {/* Submit button for multi-select */}
+          {question.multiSelect &&
+            isPending &&
+            !isClaudeRunning &&
+            onSendResponse &&
+            (selectedOptions.get(qIndex)?.size ?? 0) > 0 && (
+              <button
+                type="button"
+                onClick={() => handleSubmitMultiSelect(qIndex)}
+                className="mt-2 px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white text-sm rounded transition-colors"
+              >
+                Submit Selected
+              </button>
+            )}
+        </div>
+      ))}
 
-              {/* Show the response if answered (but not the "Answer questions?" error) */}
-              {hasOutput && !isWaitingForInput && (
-                <div className="pt-2 border-t">
-                  <div className="text-xs text-muted-foreground mb-1">Response:</div>
-                  <pre
-                    className={cn(
-                      'text-xs p-2 rounded overflow-x-auto',
-                      isRealError
-                        ? 'bg-red-50 dark:bg-red-950 text-red-800 dark:text-red-200'
-                        : 'bg-muted'
-                    )}
-                  >
-                    {typeof tool.output === 'string'
-                      ? tool.output
-                      : JSON.stringify(tool.output, null, 2)}
-                  </pre>
-                </div>
-              )}
-            </CardContent>
-          </CollapsibleContent>
-        </Card>
-      </Collapsible>
-    </div>
+      {/* Show the response if answered (but not the "Answer questions?" error) */}
+      {hasOutput && !isWaitingForInput && (
+        <div className="pt-2 border-t">
+          <div className="text-xs text-muted-foreground mb-1">Response:</div>
+          <pre
+            className={cn(
+              'text-xs p-2 rounded overflow-x-auto',
+              isRealError ? 'bg-red-50 dark:bg-red-950 text-red-800 dark:text-red-200' : 'bg-muted'
+            )}
+          >
+            {typeof tool.output === 'string' ? tool.output : JSON.stringify(tool.output, null, 2)}
+          </pre>
+        </div>
+      )}
+    </ToolDisplayWrapper>
   );
 }

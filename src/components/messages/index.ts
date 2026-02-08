@@ -3,6 +3,7 @@
 
 export { MessageBubble } from './MessageBubble';
 export { CopyButton } from './CopyButton';
+export { ToolDisplayWrapper } from './ToolDisplayWrapper';
 export { EditDisplay } from './EditDisplay';
 export { ReadDisplay } from './ReadDisplay';
 export { WriteDisplay } from './WriteDisplay';
@@ -24,6 +25,7 @@ export { HookStartedDisplay } from './HookStartedDisplay';
 export { WebSearchDisplay } from './WebSearchDisplay';
 export { AskUserQuestionDisplay } from './AskUserQuestionDisplay';
 export { TaskDisplay } from './TaskDisplay';
+export { ExitPlanModeDisplay } from './ExitPlanModeDisplay';
 
 export type { ToolResultMap, ToolCall, ContentBlock, MessageContent, TodoItem } from './types';
 export { formatAsJson } from './types';
