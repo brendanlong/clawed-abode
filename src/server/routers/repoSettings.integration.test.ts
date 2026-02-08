@@ -205,6 +205,7 @@ describe('repoSettings router', () => {
         repoFullName: testRepoName,
         mcpServer: {
           name: 'memory',
+          type: 'stdio',
           command: 'npx',
           args: ['@anthropic/mcp-server-memory'],
         },
@@ -213,6 +214,7 @@ describe('repoSettings router', () => {
       const settings = await caller.repoSettings.get({ repoFullName: testRepoName });
       expect(settings?.mcpServers).toHaveLength(1);
       expect(settings?.mcpServers[0].name).toBe('memory');
+      expect(settings?.mcpServers[0].type).toBe('stdio');
       expect(settings?.mcpServers[0].command).toBe('npx');
       expect(settings?.mcpServers[0].args).toEqual(['@anthropic/mcp-server-memory']);
     });
@@ -224,6 +226,7 @@ describe('repoSettings router', () => {
         repoFullName: testRepoName,
         mcpServer: {
           name: 'api-server',
+          type: 'stdio',
           command: 'node',
           args: ['server.js'],
           env: {
@@ -249,6 +252,7 @@ describe('repoSettings router', () => {
         repoFullName: testRepoName,
         mcpServer: {
           name: 'to-delete',
+          type: 'stdio',
           command: 'node',
         },
       });
@@ -260,6 +264,127 @@ describe('repoSettings router', () => {
 
       const settings = await caller.repoSettings.get({ repoFullName: testRepoName });
       expect(settings?.mcpServers).toHaveLength(0);
+    });
+  });
+
+  describe('setMcpServer (HTTP)', () => {
+    it('should create an HTTP MCP server config', async () => {
+      const caller = createCaller();
+
+      await caller.repoSettings.setMcpServer({
+        repoFullName: testRepoName,
+        mcpServer: {
+          name: 'my-http-server',
+          type: 'http',
+          url: 'https://mcp.example.com/api',
+        },
+      });
+
+      const settings = await caller.repoSettings.get({ repoFullName: testRepoName });
+      expect(settings?.mcpServers).toHaveLength(1);
+      expect(settings?.mcpServers[0].name).toBe('my-http-server');
+      expect(settings?.mcpServers[0].type).toBe('http');
+      expect(settings?.mcpServers[0].url).toBe('https://mcp.example.com/api');
+      expect(settings?.mcpServers[0].command).toBe('');
+    });
+
+    it('should create an SSE MCP server config', async () => {
+      const caller = createCaller();
+
+      await caller.repoSettings.setMcpServer({
+        repoFullName: testRepoName,
+        mcpServer: {
+          name: 'my-sse-server',
+          type: 'sse',
+          url: 'https://mcp.example.com/sse',
+        },
+      });
+
+      const settings = await caller.repoSettings.get({ repoFullName: testRepoName });
+      expect(settings?.mcpServers).toHaveLength(1);
+      expect(settings?.mcpServers[0].name).toBe('my-sse-server');
+      expect(settings?.mcpServers[0].type).toBe('sse');
+      expect(settings?.mcpServers[0].url).toBe('https://mcp.example.com/sse');
+    });
+
+    it('should create an HTTP MCP server with secret headers', async () => {
+      const caller = createCaller();
+
+      await caller.repoSettings.setMcpServer({
+        repoFullName: testRepoName,
+        mcpServer: {
+          name: 'authed-server',
+          type: 'http',
+          url: 'https://mcp.example.com/api',
+          headers: {
+            Authorization: { value: 'Bearer secret-token', isSecret: true },
+            'X-Custom': { value: 'public-value', isSecret: false },
+          },
+        },
+      });
+
+      const settings = await caller.repoSettings.get({ repoFullName: testRepoName });
+      expect(settings?.mcpServers[0].headers.Authorization.value).toBe('••••••••');
+      expect(settings?.mcpServers[0].headers.Authorization.isSecret).toBe(true);
+      expect(settings?.mcpServers[0].headers['X-Custom'].value).toBe('public-value');
+      expect(settings?.mcpServers[0].headers['X-Custom'].isSecret).toBe(false);
+    });
+
+    it('should return decrypted HTTP MCP server headers in getForContainer', async () => {
+      const caller = createCaller();
+
+      await caller.repoSettings.setMcpServer({
+        repoFullName: testRepoName,
+        mcpServer: {
+          name: 'container-http-server',
+          type: 'http',
+          url: 'https://mcp.example.com/api',
+          headers: {
+            Authorization: { value: 'Bearer my-secret-token', isSecret: true },
+          },
+        },
+      });
+
+      const result = await caller.repoSettings.getForContainer({ repoFullName: testRepoName });
+      const server = result?.mcpServers[0];
+      expect(server?.name).toBe('container-http-server');
+      expect(server?.type).toBe('http');
+      expect(server && 'url' in server ? server.url : undefined).toBe(
+        'https://mcp.example.com/api'
+      );
+      expect(server && 'headers' in server ? server.headers?.Authorization : undefined).toBe(
+        'Bearer my-secret-token'
+      );
+    });
+
+    it('should reject HTTP MCP server without URL', async () => {
+      const caller = createCaller();
+
+      await expect(
+        caller.repoSettings.setMcpServer({
+          repoFullName: testRepoName,
+          mcpServer: {
+            name: 'no-url-server',
+            type: 'http',
+            url: '',
+          } as Parameters<typeof caller.repoSettings.setMcpServer>[0]['mcpServer'],
+        })
+      ).rejects.toThrow();
+    });
+
+    it('should reject HTTP MCP server with invalid URL', async () => {
+      const caller = createCaller();
+
+      await expect(
+        caller.repoSettings.setMcpServer({
+          repoFullName: testRepoName,
+          mcpServer: {
+            name: 'bad-url-server',
+            type: 'http',
+            url: 'not-a-url',
+          },
+        })
+      ).rejects.toThrow();
     });
   });
 
@@ -288,6 +413,7 @@ describe('repoSettings router', () => {
         repoFullName: testRepoName,
         mcpServer: {
           name: 'test-server',
+          type: 'stdio',
           command: 'node',
           env: {
             API_KEY: { value: 'secret-key', isSecret: true },
@@ -296,7 +422,9 @@ describe('repoSettings router', () => {
       });
 
       const result = await caller.repoSettings.getForContainer({ repoFullName: testRepoName });
-      expect(result?.mcpServers[0].env?.API_KEY).toBe('secret-key'); // Decrypted!
+      const server = result?.mcpServers[0];
+      expect(server?.type).toBe('stdio');
+      expect(server && 'env' in server ? server.env?.API_KEY : undefined).toBe('secret-key'); // Decrypted!
     });
   });
 
@@ -414,6 +542,7 @@ describe('repoSettings router', () => {
         repoFullName: testRepoName,
         mcpServer: {
           name: 'server1',
+          type: 'stdio',
           command: 'node',
         },
       });

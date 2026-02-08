@@ -10,14 +10,48 @@ export interface ContainerEnvVar {
 }
 
 /**
- * MCP server configuration for container
+ * MCP server type discriminator
  */
-export interface ContainerMcpServer {
+export type McpServerType = 'stdio' | 'http' | 'sse';
+
+/**
+ * Stdio MCP server configuration for container
+ */
+export interface ContainerStdioMcpServer {
   name: string;
+  type: 'stdio';
   command: string;
   args?: string[];
   env?: Record<string, string>; // Decrypted env values
 }
+
+/**
+ * HTTP MCP server configuration for container
+ */
+export interface ContainerHttpMcpServer {
+  name: string;
+  type: 'http';
+  url: string;
+  headers?: Record<string, string>; // Decrypted header values
+}
+
+/**
+ * SSE MCP server configuration for container
+ */
+export interface ContainerSseMcpServer {
+  name: string;
+  type: 'sse';
+  url: string;
+  headers?: Record<string, string>; // Decrypted header values
+}
+
+/**
+ * MCP server configuration for container (discriminated union)
+ */
+export type ContainerMcpServer =
+  | ContainerStdioMcpServer
+  | ContainerHttpMcpServer
+  | ContainerSseMcpServer;
 
 /**
  * Repo settings ready for container creation
@@ -52,11 +86,32 @@ export async function getRepoSettingsForContainer(
 
   // Parse and decrypt MCP server configs
   const mcpServers: ContainerMcpServer[] = settings.mcpServers.map((mcp) => {
+    const serverType = (mcp.type || 'stdio') as McpServerType;
+
+    if (serverType === 'http' || serverType === 'sse') {
+      // HTTP/SSE servers: decrypt headers
+      const headersJson = mcp.headers
+        ? (JSON.parse(mcp.headers) as Record<string, { value: string; isSecret: boolean }>)
+        : {};
+      const headers = Object.fromEntries(
+        Object.entries(headersJson).map(([key, { value, isSecret }]) => [
+          key,
+          isSecret ? decrypt(value) : value,
+        ])
+      );
+
+      return {
+        name: mcp.name,
+        type: serverType,
+        url: mcp.url!,
+        headers: Object.keys(headers).length > 0 ? headers : undefined,
+      } as ContainerMcpServer;
+    }
+
+    // Stdio servers: decrypt env vars
     const envJson = mcp.env
       ? (JSON.parse(mcp.env) as Record<string, { value: string; isSecret: boolean }>)
       : {};
-
-    // Decrypt secret env values
     const env = Object.fromEntries(
       Object.entries(envJson).map(([key, { value, isSecret }]) => [
         key,
@@ -66,10 +121,11 @@ export async function getRepoSettingsForContainer(
 
     return {
       name: mcp.name,
+      type: 'stdio',
       command: mcp.command,
       args: mcp.args ? (JSON.parse(mcp.args) as string[]) : undefined,
       env: Object.keys(env).length > 0 ? env : undefined,
-    };
+    } as ContainerStdioMcpServer;
   });
 
   return {

@@ -221,12 +221,17 @@ export interface RunClaudeCommandOptions {
     systemPromptAppend: string | null;
   } | null;
   /** MCP server configurations passed to the SDK at query time */
-  mcpServers?: Array<{
-    name: string;
-    command: string;
-    args?: string[];
-    env?: Record<string, string>;
-  }>;
+  mcpServers?: Array<
+    | {
+        name: string;
+        type: 'stdio';
+        command: string;
+        args?: string[];
+        env?: Record<string, string>;
+      }
+    | { name: string; type: 'http'; url: string; headers?: Record<string, string> }
+    | { name: string; type: 'sse'; url: string; headers?: Record<string, string> }
+  >;
 }
 
 /**
@@ -335,6 +340,14 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
     const mcpServersRecord = options.mcpServers?.length
       ? Object.fromEntries(
           options.mcpServers.map((server) => {
+            if (server.type === 'http' || server.type === 'sse') {
+              const config: Record<string, unknown> = { type: server.type, url: server.url };
+              if (server.headers && Object.keys(server.headers).length > 0) {
+                config.headers = server.headers;
+              }
+              return [server.name, config];
+            }
+            // stdio (default)
             const config: Record<string, unknown> = { command: server.command };
             if (server.args?.length) config.args = server.args;
             if (server.env && Object.keys(server.env).length > 0) config.env = server.env;

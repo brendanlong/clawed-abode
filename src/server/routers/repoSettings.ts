@@ -36,12 +36,22 @@ type McpServerEnvValue = z.infer<typeof mcpServerEnvValueSchema>;
 
 const mcpServerEnvSchema = z.record(z.string(), mcpServerEnvValueSchema);
 
-const mcpServerSchema = z.object({
+const mcpServerStdioSchema = z.object({
   name: z.string().min(1).max(100),
+  type: z.literal('stdio').default('stdio'),
   command: z.string().min(1).max(1000),
   args: z.array(z.string()).optional(),
   env: mcpServerEnvSchema.optional(),
 });
+
+const mcpServerHttpSchema = z.object({
+  name: z.string().min(1).max(100),
+  type: z.enum(['http', 'sse']),
+  url: z.string().url().max(2000),
+  headers: mcpServerEnvSchema.optional(), // Reuse same schema: { "Header-Name": { value, isSecret } }
+});
+
+const mcpServerSchema = z.discriminatedUnion('type', [mcpServerStdioSchema, mcpServerHttpSchema]);
 
 /**
  * Mask secret values for display
@@ -114,9 +124,14 @@ export const repoSettingsRouter = router({
         mcpServers: settings.mcpServers.map((mcp) => ({
           id: mcp.id,
           name: mcp.name,
+          type: (mcp.type || 'stdio') as 'stdio' | 'http' | 'sse',
           command: mcp.command,
           args: mcp.args ? (JSON.parse(mcp.args) as string[]) : [],
           env: mcp.env ? maskMcpEnv(JSON.parse(mcp.env) as Record<string, McpServerEnvValue>) : {},
+          url: mcp.url ?? undefined,
+          headers: mcp.headers
+            ? maskMcpEnv(JSON.parse(mcp.headers) as Record<string, McpServerEnvValue>)
+            : {},
         })),
       };
     }),
@@ -316,9 +331,11 @@ export const repoSettingsRouter = router({
       })
     )
     .mutation(async ({ input }) => {
-      // Check if any env vars are secrets
-      const env = input.mcpServer.env ?? {};
-      const hasSecrets = Object.values(env).some((e) => e.isSecret);
+      const server = input.mcpServer;
+
+      // Check secrets in env (stdio) or headers (http/sse)
+      const secretEntries = server.type === 'stdio' ? (server.env ?? {}) : (server.headers ?? {});
+      const hasSecrets = Object.values(secretEntries).some((e) => e.isSecret);
       if (hasSecrets && !isEncryptionConfigured()) {
         throw new TRPCError({
           code: 'PRECONDITION_FAILED',
@@ -334,31 +351,42 @@ export const repoSettingsRouter = router({
         update: {},
       });
 
-      // Encrypt secret env values
+      // Build data depending on server type
+      const isStdio = server.type === 'stdio';
+      const env = isStdio ? (server.env ?? {}) : {};
       const processedEnv = Object.keys(env).length > 0 ? encryptMcpEnv(env) : null;
+      const headers = !isStdio ? (server.headers ?? {}) : {};
+      const processedHeaders = Object.keys(headers).length > 0 ? encryptMcpEnv(headers) : null;
+
+      const data = {
+        type: server.type,
+        command: isStdio ? server.command : '',
+        args: isStdio && server.args ? JSON.stringify(server.args) : null,
+        env: processedEnv ? JSON.stringify(processedEnv) : null,
+        url: !isStdio ? server.url : null,
+        headers: processedHeaders ? JSON.stringify(processedHeaders) : null,
+      };
 
       await prisma.mcpServer.upsert({
         where: {
           repoSettingsId_name: {
             repoSettingsId: settings.id,
-            name: input.mcpServer.name,
+            name: server.name,
           },
         },
         create: {
           repoSettingsId: settings.id,
-          name: input.mcpServer.name,
-          command: input.mcpServer.command,
-          args: input.mcpServer.args ? JSON.stringify(input.mcpServer.args) : null,
-          env: processedEnv ? JSON.stringify(processedEnv) : null,
+          name: server.name,
+          ...data,
         },
-        update: {
-          command: input.mcpServer.command,
-          args: input.mcpServer.args ? JSON.stringify(input.mcpServer.args) : null,
-          env: processedEnv ? JSON.stringify(processedEnv) : null,
-        },
+        update: data,
       });
 
-      log.info('Set MCP server', { repoFullName: input.repoFullName, name: input.mcpServer.name });
+      log.info('Set MCP server', {
+        repoFullName: input.repoFullName,
+        name: server.name,
+        type: server.type,
+      });
 
       return { success: true };
     }),
@@ -467,9 +495,30 @@ export const repoSettingsRouter = router({
           isSecret: ev.isSecret,
         })),
         mcpServers: settings.mcpServers.map((mcp) => {
+          const serverType = (mcp.type || 'stdio') as 'stdio' | 'http' | 'sse';
+
+          if (serverType === 'http' || serverType === 'sse') {
+            const headersJson = mcp.headers
+              ? (JSON.parse(mcp.headers) as Record<string, McpServerEnvValue>)
+              : {};
+            const headers = Object.fromEntries(
+              Object.entries(headersJson).map(([key, { value, isSecret }]) => [
+                key,
+                isSecret ? decrypt(value) : value,
+              ])
+            );
+            return {
+              name: mcp.name,
+              type: serverType,
+              url: mcp.url!,
+              headers: Object.keys(headers).length > 0 ? headers : undefined,
+            };
+          }
+
           const env = mcp.env ? (JSON.parse(mcp.env) as Record<string, McpServerEnvValue>) : {};
           return {
             name: mcp.name,
+            type: 'stdio' as const,
             command: mcp.command,
             args: mcp.args ? (JSON.parse(mcp.args) as string[]) : undefined,
             env: Object.fromEntries(
