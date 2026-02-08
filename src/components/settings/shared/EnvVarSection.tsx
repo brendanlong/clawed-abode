@@ -6,17 +6,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Spinner } from '@/components/ui/spinner';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
 import { Plus, Trash2, Eye, EyeOff } from 'lucide-react';
+import { DeleteConfirmDialog } from './DeleteConfirmDialog';
 import type { EnvVar } from '@/lib/settings-types';
 
 export interface EnvVarMutations {
@@ -163,26 +154,18 @@ export function EnvVarSection({
         />
       )}
 
-      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete environment variable?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {deleteDescriptionPrefix} <strong>{deleteTarget}</strong>.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleDelete}
-              disabled={isDeleting}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <DeleteConfirmDialog
+        open={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={handleDelete}
+        title="Delete environment variable?"
+        description={
+          <>
+            {deleteDescriptionPrefix} <strong>{deleteTarget}</strong>.
+          </>
+        }
+        isPending={isDeleting}
+      />
     </div>
   );
 }
