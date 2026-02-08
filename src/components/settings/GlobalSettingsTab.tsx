@@ -25,7 +25,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { trpc } from '@/lib/trpc';
-import { Plus, Trash2, Eye, EyeOff } from 'lucide-react';
+import { Plus, Trash2, Eye, EyeOff, Plug, Check, X } from 'lucide-react';
 
 interface EnvVar {
   id: string;
@@ -359,11 +359,25 @@ function GlobalMcpServersSection({
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [deleteMcpServer, setDeleteMcpServer] = useState<string | null>(null);
+  const [validationResults, setValidationResults] = useState<
+    Map<string, { success: boolean; error?: string; tools?: string[] }>
+  >(new Map());
 
   const deleteMutation = trpc.globalSettings.deleteMcpServer.useMutation({
     onSuccess: () => {
       onUpdate();
       setDeleteMcpServer(null);
+    },
+  });
+
+  const validateMutation = trpc.globalSettings.validateMcpServer.useMutation({
+    onSuccess: (result, variables) => {
+      setValidationResults((prev) => new Map(prev).set(variables.name, result));
+    },
+    onError: (err, variables) => {
+      setValidationResults((prev) =>
+        new Map(prev).set(variables.name, { success: false, error: err.message })
+      );
     },
   });
 
@@ -381,34 +395,78 @@ function GlobalMcpServersSection({
         <p className="text-sm text-muted-foreground">No global MCP servers configured.</p>
       ) : (
         <ul className="space-y-2">
-          {mcpServers.map((server) => (
-            <li key={server.id} className="flex items-center gap-2 p-2 rounded-md bg-muted/50">
-              <div className="flex-1 min-w-0">
-                <div className="font-mono text-sm flex items-center gap-2">
-                  {server.name}
-                  <span className="text-xs text-muted-foreground font-sans uppercase">
-                    {server.type}
-                  </span>
+          {mcpServers.map((server) => {
+            const result = validationResults.get(server.name);
+            const isTesting =
+              validateMutation.isPending && validateMutation.variables?.name === server.name;
+            return (
+              <li key={server.id} className="space-y-1">
+                <div className="flex items-center gap-2 p-2 rounded-md bg-muted/50">
+                  <div className="flex-1 min-w-0">
+                    <div className="font-mono text-sm flex items-center gap-2">
+                      {server.name}
+                      <span className="text-xs text-muted-foreground font-sans uppercase">
+                        {server.type}
+                      </span>
+                    </div>
+                    <div className="text-xs text-muted-foreground truncate">
+                      {server.type === 'stdio'
+                        ? `${server.command} ${server.args.join(' ')}`
+                        : server.url}
+                    </div>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => validateMutation.mutate({ name: server.name })}
+                    disabled={isTesting}
+                    title="Test connection"
+                  >
+                    {isTesting ? (
+                      <Spinner size="sm" className="h-4 w-4" />
+                    ) : (
+                      <Plug className="h-4 w-4" />
+                    )}
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => setEditingId(server.id)}>
+                    Edit
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setDeleteMcpServer(server.name)}
+                    className="text-destructive hover:text-destructive"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
                 </div>
-                <div className="text-xs text-muted-foreground truncate">
-                  {server.type === 'stdio'
-                    ? `${server.command} ${server.args.join(' ')}`
-                    : server.url}
-                </div>
-              </div>
-              <Button variant="ghost" size="sm" onClick={() => setEditingId(server.id)}>
-                Edit
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setDeleteMcpServer(server.name)}
-                className="text-destructive hover:text-destructive"
-              >
-                <Trash2 className="h-4 w-4" />
-              </Button>
-            </li>
-          ))}
+                {result && (
+                  <div
+                    className={`text-xs px-2 py-1 rounded flex items-center gap-1 ${
+                      result.success
+                        ? 'text-green-700 bg-green-50 dark:text-green-400 dark:bg-green-950'
+                        : 'text-red-700 bg-red-50 dark:text-red-400 dark:bg-red-950'
+                    }`}
+                  >
+                    {result.success ? (
+                      <>
+                        <Check className="h-3 w-3" />
+                        Connected
+                        {result.tools && result.tools.length > 0
+                          ? ` \u2014 ${result.tools.length} tool${result.tools.length === 1 ? '' : 's'}`
+                          : ''}
+                      </>
+                    ) : (
+                      <>
+                        <X className="h-3 w-3" />
+                        {result.error}
+                      </>
+                    )}
+                  </div>
+                )}
+              </li>
+            );
+          })}
         </ul>
       )}
 
