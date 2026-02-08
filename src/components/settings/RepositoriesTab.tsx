@@ -7,16 +7,7 @@ import { Spinner } from '@/components/ui/spinner';
 import { trpc } from '@/lib/trpc';
 import { RepoSettingsEditor } from './RepoSettingsEditor';
 import { Star, Settings, Trash2 } from 'lucide-react';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
+import { DeleteConfirmDialog } from './shared/DeleteConfirmDialog';
 
 export function RepositoriesTab() {
   const [selectedRepo, setSelectedRepo] = useState<string | null>(null);
@@ -107,26 +98,19 @@ export function RepositoriesTab() {
         />
       )}
 
-      <AlertDialog open={!!deleteRepo} onOpenChange={(open) => !open && setDeleteRepo(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete repository settings?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This will delete all settings for <strong>{deleteRepo}</strong>, including environment
-              variables and MCP server configurations. This action cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => deleteRepo && deleteMutation.mutate({ repoFullName: deleteRepo })}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              {deleteMutation.isPending ? <Spinner size="sm" /> : 'Delete'}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <DeleteConfirmDialog
+        open={!!deleteRepo}
+        onClose={() => setDeleteRepo(null)}
+        onConfirm={() => deleteRepo && deleteMutation.mutate({ repoFullName: deleteRepo })}
+        title="Delete repository settings?"
+        description={
+          <>
+            This will delete all settings for <strong>{deleteRepo}</strong>, including environment
+            variables and MCP server configurations. This action cannot be undone.
+          </>
+        }
+        isPending={deleteMutation.isPending}
+      />
     </>
   );
 }

@@ -12,17 +12,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
 import { Plus, Trash2, Plug, Check, X } from 'lucide-react';
+import { DeleteConfirmDialog } from './DeleteConfirmDialog';
 import { KeyValueListEditor } from './KeyValueListEditor';
 import type { McpServer, McpServerType, ValidationResult } from '@/lib/settings-types';
 
@@ -209,26 +200,18 @@ export function McpServerSection({
         />
       )}
 
-      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete MCP server?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {deleteDescriptionPrefix} <strong>{deleteTarget}</strong>.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleDelete}
-              disabled={isDeleting}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <DeleteConfirmDialog
+        open={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={handleDelete}
+        title="Delete MCP server?"
+        description={
+          <>
+            {deleteDescriptionPrefix} <strong>{deleteTarget}</strong>.
+          </>
+        }
+        isPending={isDeleting}
+      />
     </div>
   );
 }
