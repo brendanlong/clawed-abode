@@ -52,9 +52,10 @@ The database schema is defined in [`prisma/schema.prisma`](../prisma/schema.pris
 - **Session**: Claude Code sessions tied to git clones (includes `agentPort` for the agent service)
 - **Message**: Chat messages with sequence numbers for cursor-based pagination
 - **AuthSession**: Login sessions with tokens and audit info
-- **RepoSettings**: Per-repository settings (favorites, env vars, MCP servers)
-- **EnvVar**: Environment variables for a repository (encrypted if secret)
-- **McpServer**: MCP server configurations for a repository
+- **GlobalSettings**: Global application settings (system prompt override and append)
+- **RepoSettings**: Per-repository settings (favorites, custom system prompt)
+- **EnvVar**: Environment variables for a repository or global (encrypted if secret). When `repoSettingsId` is null, the variable is global and applies to all sessions.
+- **McpServer**: MCP server configurations for a repository or global. When `repoSettingsId` is null, the server is global and applies to all sessions.
 
 ### Session Archiving
 
@@ -486,12 +487,14 @@ Users can configure per-repository settings that are automatically applied when 
 
 **Implementation**: See [`src/server/routers/repoSettings.ts`](../src/server/routers/repoSettings.ts) for the API and [`src/lib/crypto.ts`](../src/lib/crypto.ts) for encryption.
 
-### Global System Prompt Settings
+### Global Settings
 
-Users can configure global system prompt settings that apply to all sessions:
+Users can configure global settings that apply to all sessions:
 
 - **System Prompt Override**: Replace the default system prompt with a custom one. When editing, the field is pre-populated with the current default prompt. The override can be toggled on/off without losing the custom content.
 - **Global System Prompt Append**: Additional content appended to the base prompt (default or override) for all sessions. This is applied before any per-repo custom prompts.
+- **Global Environment Variables**: Environment variables applied to all sessions. Per-repo variables with the same name take precedence.
+- **Global MCP Servers**: MCP server configurations available in all sessions. Per-repo servers with the same name take precedence. Supports stdio, HTTP, and SSE transport types.
 
 **Prompt Order**: When Claude runs, the system prompt is built in this order:
 
@@ -499,9 +502,16 @@ Users can configure global system prompt settings that apply to all sessions:
 2. Global append content (if set)
 3. Per-repository custom prompt (if set for that repo)
 
+**Settings Merging**: When a session starts, global and per-repo settings are merged:
+
+- **Environment Variables**: Global env vars are included in all sessions. If a per-repo env var has the same name as a global one, the per-repo value takes precedence.
+- **MCP Servers**: Global MCP servers are included in all sessions. If a per-repo MCP server has the same name as a global one, the per-repo configuration takes precedence.
+
 **Configuration**: Go to Settings → System Prompt to manage these settings.
 
-**Implementation**: See [`src/server/routers/globalSettings.ts`](../src/server/routers/globalSettings.ts) for the API and [`src/server/services/claude-runner.ts`](../src/server/services/claude-runner.ts) for how prompts are combined.
+**Data Model**: Global env vars and MCP servers are stored in the same `EnvVar` and `McpServer` tables as per-repo ones, with `repoSettingsId = null` indicating a global setting. A partial unique index (`WHERE repoSettingsId IS NULL`) enforces name uniqueness for global entries at the database level.
+
+**Implementation**: See [`src/server/routers/globalSettings.ts`](../src/server/routers/globalSettings.ts) for the API, [`src/server/services/global-settings.ts`](../src/server/services/global-settings.ts) for the service layer, [`src/server/services/settings-merger.ts`](../src/server/services/settings-merger.ts) for the merging logic, and [`src/server/services/settings-helpers.ts`](../src/server/services/settings-helpers.ts) for shared validation schemas, encryption helpers, and decrypt functions used by both global and per-repo settings.
 
 ## UI Screens
 
@@ -549,11 +559,17 @@ clawed-abode/
 │   │   │   ├── auth.ts
 │   │   │   ├── github.ts
 │   │   │   ├── sessions.ts
-│   │   │   └── claude.ts
+│   │   │   ├── claude.ts
+│   │   │   ├── repoSettings.ts
+│   │   │   └── globalSettings.ts
 │   │   ├── services/
 │   │   │   ├── podman.ts          # Container management via Podman CLI
 │   │   │   ├── agent-client.ts    # HTTP client for agent service
 │   │   │   ├── claude-runner.ts   # Orchestrates Claude queries via agent client
+│   │   │   ├── global-settings.ts # Global settings service (prompts, global env vars/MCP)
+│   │   │   ├── repo-settings.ts   # Per-repo settings service
+│   │   │   ├── settings-helpers.ts # Shared schemas, encryption, decrypt helpers
+│   │   │   ├── settings-merger.ts # Merges global + per-repo env vars and MCP servers
 │   │   │   └── events.ts         # SSE event emitter
 │   │   └── trpc.ts
 │   ├── app/

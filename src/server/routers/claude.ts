@@ -9,7 +9,8 @@ import {
   markLastMessageAsInterrupted,
 } from '../services/claude-runner';
 import { getRepoSettingsForContainer } from '../services/repo-settings';
-import { getGlobalSettings } from '../services/global-settings';
+import { getGlobalSettingsForContainer } from '../services/global-settings';
+import { mergeMcpServers } from '../services/settings-merger';
 import { estimateTokenUsage } from '@/lib/token-estimation';
 import { createLogger, toError } from '@/lib/logger';
 import { extractRepoFullName } from '@/lib/utils';
@@ -56,8 +57,14 @@ export const claudeRouter = router({
       const repoFullName = extractRepoFullName(session.repoUrl);
       const [repoSettings, globalSettings] = await Promise.all([
         getRepoSettingsForContainer(repoFullName),
-        getGlobalSettings(),
+        getGlobalSettingsForContainer(),
       ]);
+
+      // Merge global and per-repo MCP servers (per-repo wins on name conflict)
+      const mergedMcpServers = mergeMcpServers(
+        globalSettings.mcpServers,
+        repoSettings?.mcpServers ?? []
+      );
 
       // Start Claude in the background - don't await
       log.info('Starting Claude command', {
@@ -73,7 +80,7 @@ export const claudeRouter = router({
         prompt: input.prompt,
         customSystemPrompt: repoSettings?.customSystemPrompt,
         globalSettings,
-        mcpServers: repoSettings?.mcpServers,
+        mcpServers: mergedMcpServers,
       }).catch((err) => {
         log.error('Claude command failed', toError(err), { sessionId: input.sessionId });
       });

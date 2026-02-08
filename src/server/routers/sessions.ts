@@ -12,8 +12,9 @@ import {
   cleanupSessionSocket,
 } from '../services/podman';
 import { getRepoSettingsForContainer } from '../services/repo-settings';
-import { getGlobalSettings } from '../services/global-settings';
+import { getGlobalSettingsForContainer } from '../services/global-settings';
 import { buildSystemPrompt } from '../services/claude-runner';
+import { mergeEnvVars } from '../services/settings-merger';
 import {
   createAgentClient,
   getAgentSocketPath,
@@ -62,7 +63,7 @@ async function setupSession(
     // Fetch per-repo settings (env vars, MCP servers) and global settings
     const [repoSettings, globalSettings] = await Promise.all([
       getRepoSettingsForContainer(repoFullName),
-      getGlobalSettings(),
+      getGlobalSettingsForContainer(),
     ]);
 
     // Build the system prompt to pass to the agent service
@@ -71,14 +72,17 @@ async function setupSession(
       globalSettings,
     });
 
-    // Start container with GitHub token for push/pull access and repo-specific settings
+    // Merge global and per-repo env vars (per-repo wins on conflict)
+    const mergedEnvVars = mergeEnvVars(globalSettings.envVars, repoSettings?.envVars ?? []);
+
+    // Start container with GitHub token for push/pull access and merged settings
     log.info('Starting container', { sessionId, hasRepoSettings: !!repoSettings });
     const containerId = await createAndStartContainer({
       sessionId,
       repoPath,
       githubToken,
       systemPrompt,
-      repoEnvVars: repoSettings?.envVars,
+      repoEnvVars: mergedEnvVars,
     });
     log.info('Container started', { sessionId, containerId });
 
@@ -242,7 +246,7 @@ export const sessionsRouter = router({
         // Fetch per-repo settings (env vars, MCP servers) and global settings
         const [repoSettings, globalSettings] = await Promise.all([
           repoFullName ? getRepoSettingsForContainer(repoFullName) : null,
-          getGlobalSettings(),
+          getGlobalSettingsForContainer(),
         ]);
 
         // Build system prompt
@@ -251,12 +255,15 @@ export const sessionsRouter = router({
           globalSettings,
         });
 
+        // Merge global and per-repo env vars (per-repo wins on conflict)
+        const mergedEnvVars = mergeEnvVars(globalSettings.envVars, repoSettings?.envVars ?? []);
+
         const containerId = await createAndStartContainer({
           sessionId: session.id,
           repoPath: session.repoPath,
           githubToken,
           systemPrompt,
-          repoEnvVars: repoSettings?.envVars,
+          repoEnvVars: mergedEnvVars,
         });
 
         // Wait for agent service to be healthy
