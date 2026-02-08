@@ -19,6 +19,7 @@ import {
   type DisplayMcpServer,
 } from '../services/settings-helpers';
 import { validateMcpServer } from '../services/mcp-validator';
+import { getModelSuggestions } from '../services/anthropic-models';
 
 const log = createLogger('globalSettings');
 
@@ -63,6 +64,16 @@ export const globalSettingsRouter = router({
       defaultClaudeModel: env.CLAUDE_MODEL,
       hasEnvApiKey: !!env.CLAUDE_CODE_OAUTH_TOKEN,
     };
+  }),
+
+  /**
+   * Get available Claude model suggestions.
+   * Returns well-known aliases + API models + inferred aliases.
+   * Results are cached for 1 hour.
+   */
+  getModelSuggestions: protectedProcedure.query(async () => {
+    const models = await getModelSuggestions();
+    return { models };
   }),
 
   /**
