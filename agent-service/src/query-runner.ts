@@ -193,12 +193,15 @@ export class QueryRunner {
       // to send via SSE while the response is still open.
       try {
         const commands = await this.currentQuery.supportedCommands();
-        this._supportedCommands = commands;
-        for (const callback of this.commandsCallbacks) {
-          try {
-            callback(commands);
-          } catch {
-            // Don't let callback errors break anything
+        console.log(`supportedCommands() returned ${commands.length} commands`);
+        if (commands.length > 0) {
+          this._supportedCommands = commands;
+          for (const callback of this.commandsCallbacks) {
+            try {
+              callback(commands);
+            } catch {
+              // Don't let callback errors break anything
+            }
           }
         }
       } catch (err) {
