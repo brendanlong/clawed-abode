@@ -5,7 +5,8 @@ const envSchema = z.object({
   GITHUB_TOKEN: z.string().optional(),
   // Claude Code OAuth token (run `claude setup-token` to generate)
   // Lasts for 1 year and is simpler than copying auth files
-  CLAUDE_CODE_OAUTH_TOKEN: z.string(),
+  // Optional if configured via Settings UI instead
+  CLAUDE_CODE_OAUTH_TOKEN: z.string().optional().default(''),
   // Claude model to use in runner containers (e.g., "opus", "sonnet", "claude-opus-4-5-20251101")
   // Passed as --model to the claude CLI
   CLAUDE_MODEL: z.string().default('opus'),
@@ -91,10 +92,7 @@ function getEnv(): Env {
   if (!parsed.success) {
     // During build time only, use defaults (Next.js imports server code during build)
     if (isBuildTime) {
-      return envSchema.parse({
-        ...process.env,
-        CLAUDE_CODE_OAUTH_TOKEN: 'build-time-placeholder',
-      });
+      return envSchema.parse(process.env);
     }
     console.error('Invalid environment variables:', parsed.error.flatten().fieldErrors);
     throw new Error('Invalid environment variables');

@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
@@ -9,7 +10,7 @@ import { Spinner } from '@/components/ui/spinner';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { trpc } from '@/lib/trpc';
-import { ChevronDown, ChevronRight, RotateCcw } from 'lucide-react';
+import { ChevronDown, ChevronRight, RotateCcw, Check, X } from 'lucide-react';
 import { GlobalEnvVarsCard, GlobalMcpServersCard } from './GlobalSettingsTab';
 
 export function SystemPromptTab() {
@@ -26,6 +27,41 @@ export function SystemPromptTab() {
 
   return (
     <div className="space-y-6">
+      <Card>
+        <CardHeader>
+          <CardTitle>Claude Model</CardTitle>
+          <CardDescription>
+            The Claude model used for all sessions. Overrides the CLAUDE_MODEL environment variable
+            when set.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ClaudeModelSection
+            currentModel={settings?.claudeModel ?? null}
+            defaultModel={settings?.defaultClaudeModel ?? 'opus'}
+            onUpdate={refetch}
+          />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Claude API Key</CardTitle>
+          <CardDescription>
+            OAuth token for Claude Code authentication. Overrides the CLAUDE_CODE_OAUTH_TOKEN
+            environment variable when set. Generate with{' '}
+            <code className="text-xs bg-muted px-1 py-0.5 rounded">claude setup-token</code>.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ClaudeApiKeySection
+            hasDbKey={settings?.hasClaudeApiKey ?? false}
+            hasEnvKey={settings?.hasEnvApiKey ?? false}
+            onUpdate={refetch}
+          />
+        </CardContent>
+      </Card>
+
       <Card>
         <CardHeader>
           <CardTitle>System Prompt Override</CardTitle>
@@ -281,6 +317,197 @@ function SystemPromptAppendSection({
           Add Global Append
         </Button>
       )}
+    </div>
+  );
+}
+
+function ClaudeModelSection({
+  currentModel,
+  defaultModel,
+  onUpdate,
+}: {
+  currentModel: string | null;
+  defaultModel: string;
+  onUpdate: () => void;
+}) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [editValue, setEditValue] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  const mutation = trpc.globalSettings.setClaudeModel.useMutation({
+    onSuccess: () => {
+      setIsEditing(false);
+      onUpdate();
+    },
+    onError: (err) => setError(err.message),
+  });
+
+  const handleSave = () => {
+    setError(null);
+    mutation.mutate({ claudeModel: editValue.trim() || null });
+  };
+
+  const handleClear = () => {
+    setError(null);
+    mutation.mutate({ claudeModel: null });
+  };
+
+  const handleCancel = () => {
+    setIsEditing(false);
+    setError(null);
+  };
+
+  const startEditing = () => {
+    setEditValue(currentModel ?? '');
+    setIsEditing(true);
+  };
+
+  if (isEditing) {
+    return (
+      <div className="space-y-3">
+        <Input
+          value={editValue}
+          onChange={(e) => setEditValue(e.target.value)}
+          placeholder={defaultModel}
+          className="font-mono text-sm"
+        />
+        <p className="text-xs text-muted-foreground">Examples: opus, sonnet, claude-opus-4-6</p>
+        {error && <p className="text-sm text-destructive">{error}</p>}
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" size="sm" onClick={handleCancel}>
+            Cancel
+          </Button>
+          <Button size="sm" onClick={handleSave} disabled={mutation.isPending}>
+            {mutation.isPending ? <Spinner size="sm" /> : 'Save'}
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <code className="text-sm font-mono bg-muted px-2 py-1 rounded">
+          {currentModel ?? defaultModel}
+        </code>
+        {!currentModel && <span className="text-xs text-muted-foreground">(from environment)</span>}
+      </div>
+      <div className="flex gap-2">
+        <Button variant="outline" size="sm" onClick={startEditing}>
+          {currentModel ? 'Edit' : 'Override'}
+        </Button>
+        {currentModel && (
+          <Button variant="outline" size="sm" onClick={handleClear} disabled={mutation.isPending}>
+            {mutation.isPending ? <Spinner size="sm" /> : 'Reset to Default'}
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ClaudeApiKeySection({
+  hasDbKey,
+  hasEnvKey,
+  onUpdate,
+}: {
+  hasDbKey: boolean;
+  hasEnvKey: boolean;
+  onUpdate: () => void;
+}) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [editValue, setEditValue] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  const mutation = trpc.globalSettings.setClaudeApiKey.useMutation({
+    onSuccess: () => {
+      setIsEditing(false);
+      setEditValue('');
+      onUpdate();
+    },
+    onError: (err) => setError(err.message),
+  });
+
+  const handleSave = () => {
+    setError(null);
+    if (!editValue.trim()) {
+      setError('API key cannot be empty');
+      return;
+    }
+    mutation.mutate({ claudeApiKey: editValue.trim() });
+  };
+
+  const handleClear = () => {
+    setError(null);
+    mutation.mutate({ claudeApiKey: '' });
+  };
+
+  const handleCancel = () => {
+    setIsEditing(false);
+    setEditValue('');
+    setError(null);
+  };
+
+  if (isEditing) {
+    return (
+      <div className="space-y-3">
+        <Input
+          type="password"
+          value={editValue}
+          onChange={(e) => setEditValue(e.target.value)}
+          placeholder="Enter Claude Code OAuth token..."
+          className="font-mono text-sm"
+        />
+        {error && <p className="text-sm text-destructive">{error}</p>}
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" size="sm" onClick={handleCancel}>
+            Cancel
+          </Button>
+          <Button size="sm" onClick={handleSave} disabled={mutation.isPending}>
+            {mutation.isPending ? <Spinner size="sm" /> : 'Save'}
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  const configured = hasDbKey || hasEnvKey;
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        {configured ? (
+          <>
+            <Check className="h-4 w-4 text-green-500" />
+            <span className="text-sm">Configured</span>
+            {!hasDbKey && hasEnvKey && (
+              <span className="text-xs text-muted-foreground">(from environment)</span>
+            )}
+          </>
+        ) : (
+          <>
+            <X className="h-4 w-4 text-destructive" />
+            <span className="text-sm text-destructive">Not configured</span>
+          </>
+        )}
+      </div>
+      <div className="flex gap-2">
+        <Button variant="outline" size="sm" onClick={() => setIsEditing(true)}>
+          {hasDbKey ? 'Update Key' : 'Set Key'}
+        </Button>
+        {hasDbKey && (
+          <Button variant="outline" size="sm" onClick={handleClear} disabled={mutation.isPending}>
+            {mutation.isPending ? (
+              <Spinner size="sm" />
+            ) : hasEnvKey ? (
+              'Reset to Default'
+            ) : (
+              'Remove Key'
+            )}
+          </Button>
+        )}
+      </div>
     </div>
   );
 }

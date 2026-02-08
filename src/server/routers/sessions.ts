@@ -83,6 +83,8 @@ async function setupSession(
       githubToken,
       systemPrompt,
       repoEnvVars: mergedEnvVars,
+      claudeModel: globalSettings.claudeModel ?? undefined,
+      claudeApiKey: globalSettings.claudeApiKey ?? undefined,
     });
     log.info('Container started', { sessionId, containerId });
 
@@ -264,6 +266,8 @@ export const sessionsRouter = router({
           githubToken,
           systemPrompt,
           repoEnvVars: mergedEnvVars,
+          claudeModel: globalSettings.claudeModel ?? undefined,
+          claudeApiKey: globalSettings.claudeApiKey ?? undefined,
         });
 
         // Wait for agent service to be healthy

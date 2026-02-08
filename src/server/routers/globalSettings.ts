@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma';
 import { encrypt, decrypt } from '@/lib/crypto';
 import { TRPCError } from '@trpc/server';
 import { createLogger } from '@/lib/logger';
+import { env } from '@/lib/env';
 import { DEFAULT_SYSTEM_PROMPT } from '../services/claude-runner';
 import {
   envVarNameSchema,
@@ -53,18 +54,14 @@ export const globalSettingsRouter = router({
       where: { id: GLOBAL_SETTINGS_ID },
     });
 
-    if (!settings) {
-      return {
-        systemPromptOverride: null,
-        systemPromptOverrideEnabled: false,
-        systemPromptAppend: null,
-      };
-    }
-
     return {
-      systemPromptOverride: settings.systemPromptOverride,
-      systemPromptOverrideEnabled: settings.systemPromptOverrideEnabled,
-      systemPromptAppend: settings.systemPromptAppend,
+      systemPromptOverride: settings?.systemPromptOverride ?? null,
+      systemPromptOverrideEnabled: settings?.systemPromptOverrideEnabled ?? false,
+      systemPromptAppend: settings?.systemPromptAppend ?? null,
+      claudeModel: settings?.claudeModel ?? null,
+      hasClaudeApiKey: settings?.claudeApiKey !== null && settings?.claudeApiKey !== undefined,
+      defaultClaudeModel: env.CLAUDE_MODEL,
+      hasEnvApiKey: !!env.CLAUDE_CODE_OAUTH_TOKEN,
     };
   }),
 
@@ -333,6 +330,65 @@ export const globalSettingsRouter = router({
       });
 
       log.info('Deleted global MCP server', { name: input.name });
+
+      return { success: true };
+    }),
+
+  /**
+   * Set the Claude model override.
+   * Pass null or empty string to clear (reverts to CLAUDE_MODEL env var).
+   */
+  setClaudeModel: protectedProcedure
+    .input(
+      z.object({
+        claudeModel: z.string().max(200).nullable(),
+      })
+    )
+    .mutation(async ({ input }) => {
+      const model = input.claudeModel?.trim() || null;
+
+      await prisma.globalSettings.upsert({
+        where: { id: GLOBAL_SETTINGS_ID },
+        create: { id: GLOBAL_SETTINGS_ID, claudeModel: model },
+        update: { claudeModel: model },
+      });
+
+      log.info('Set Claude model', { claudeModel: model });
+
+      return { success: true };
+    }),
+
+  /**
+   * Set the Claude API key (OAuth token) override.
+   * Stored encrypted at rest. Pass empty string to clear.
+   */
+  setClaudeApiKey: protectedProcedure
+    .input(
+      z.object({
+        claudeApiKey: z.string().max(5000),
+      })
+    )
+    .mutation(async ({ input }) => {
+      const key = input.claudeApiKey.trim();
+
+      if (!key) {
+        // Clear the stored key
+        await prisma.globalSettings.upsert({
+          where: { id: GLOBAL_SETTINGS_ID },
+          create: { id: GLOBAL_SETTINGS_ID, claudeApiKey: null },
+          update: { claudeApiKey: null },
+        });
+        log.info('Cleared Claude API key');
+      } else {
+        requireEncryptionForSecrets(true);
+        const encrypted = encrypt(key);
+        await prisma.globalSettings.upsert({
+          where: { id: GLOBAL_SETTINGS_ID },
+          create: { id: GLOBAL_SETTINGS_ID, claudeApiKey: encrypted },
+          update: { claudeApiKey: encrypted },
+        });
+        log.info('Set Claude API key');
+      }
 
       return { success: true };
     }),
