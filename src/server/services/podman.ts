@@ -553,6 +553,10 @@ export interface ContainerConfig {
   systemPrompt?: string;
   // Per-repo environment variables
   repoEnvVars?: Array<{ name: string; value: string }>;
+  // Claude model override (from global settings DB). Falls back to CLAUDE_MODEL env var.
+  claudeModel?: string;
+  // Claude API key override (from global settings DB). Falls back to CLAUDE_CODE_OAUTH_TOKEN env var.
+  claudeApiKey?: string;
 }
 
 export async function createAndStartContainer(config: ContainerConfig): Promise<string> {
@@ -594,8 +598,14 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
     if (config.githubToken) {
       envArgs.push('-e', `GITHUB_TOKEN=${config.githubToken}`);
     }
-    // Claude Code OAuth token for authentication
-    envArgs.push('-e', `CLAUDE_CODE_OAUTH_TOKEN=${env.CLAUDE_CODE_OAUTH_TOKEN}`);
+    // Claude Code OAuth token for authentication (DB override takes precedence over env var)
+    const oauthToken = config.claudeApiKey || env.CLAUDE_CODE_OAUTH_TOKEN;
+    if (!oauthToken) {
+      throw new Error(
+        'No Claude API key configured. Set CLAUDE_CODE_OAUTH_TOKEN environment variable or configure it in Settings.'
+      );
+    }
+    envArgs.push('-e', `CLAUDE_CODE_OAUTH_TOKEN=${oauthToken}`);
     // Set Gradle user home to use the shared cache volume
     envArgs.push('-e', 'GRADLE_USER_HOME=/gradle-cache');
     // Add NVIDIA environment variables for GPU access
@@ -610,7 +620,8 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
     if (config.systemPrompt) {
       envArgs.push('-e', `SYSTEM_PROMPT=${config.systemPrompt}`);
     }
-    envArgs.push('-e', `CLAUDE_MODEL=${env.CLAUDE_MODEL}`);
+    // Claude model (DB override takes precedence over env var)
+    envArgs.push('-e', `CLAUDE_MODEL=${config.claudeModel ?? env.CLAUDE_MODEL}`);
 
     // Add per-repo environment variables
     if (config.repoEnvVars) {
