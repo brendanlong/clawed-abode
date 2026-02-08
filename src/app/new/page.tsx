@@ -386,9 +386,10 @@ function NewSessionForm() {
     }
   }, []);
 
-  // Handle repo selection: also reset issue and name
+  // Handle repo selection: reset branch, issue, and name
   const handleRepoSelect = useCallback((repo: Repo) => {
     setSelectedRepo(repo);
+    setSelectedBranch('');
     setSelectedIssue(null);
     setSessionName('');
   }, []);
