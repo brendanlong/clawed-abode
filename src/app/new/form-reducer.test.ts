@@ -30,7 +30,8 @@ const mockIssue: Issue = {
   title: 'Fix the bug',
   body: 'Something is broken',
   state: 'open',
-  labels: [{ name: 'bug' }],
+  author: 'testuser',
+  labels: [{ name: 'bug', color: 'ff0000' }],
   createdAt: '2024-01-01T00:00:00Z',
   updatedAt: '2024-01-01T00:00:00Z',
 };
