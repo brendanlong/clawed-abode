@@ -591,9 +591,7 @@ function GlobalMcpServerForm({
       const env = envVars.reduce(
         (acc, { key, value, isSecret }) => {
           if (key) {
-            const existingEnv = existingServer?.env[key];
-            const finalValue = existingEnv?.isSecret && !value ? existingEnv.value : value;
-            acc[key] = { value: finalValue, isSecret };
+            acc[key] = { value, isSecret };
           }
           return acc;
         },
@@ -618,9 +616,7 @@ function GlobalMcpServerForm({
       const headersRecord = headers.reduce(
         (acc, { key, value, isSecret }) => {
           if (key) {
-            const existingHeader = existingServer?.headers?.[key];
-            const finalValue = existingHeader?.isSecret && !value ? existingHeader.value : value;
-            acc[key] = { value: finalValue, isSecret };
+            acc[key] = { value, isSecret };
           }
           return acc;
         },

@@ -89,20 +89,6 @@ export function maskMcpEnv(
   );
 }
 
-/**
- * Encrypt MCP server env/header secrets for storage
- */
-export function encryptMcpEnv(
-  env: Record<string, McpServerEnvValue>
-): Record<string, McpServerEnvValue> {
-  return Object.fromEntries(
-    Object.entries(env).map(([key, { value, isSecret }]) => [
-      key,
-      { value: isSecret ? encrypt(value) : value, isSecret },
-    ])
-  );
-}
-
 // ─── Display Formatters ──────────────────────────────────────────────
 
 /** DB row shape for env vars */
@@ -233,14 +219,55 @@ export function decryptMcpServersForContainer(mcpServers: DbMcpServer[]): Contai
 // ─── MCP Server Data Builder ─────────────────────────────────────────
 
 /**
- * Build MCP server data object for database upsert from validated input
+ * Merge secret values from input with existing encrypted values from the DB.
+ * When a secret value is empty, it means the user didn't change it, so we
+ * preserve the existing encrypted value from the database.
  */
-export function buildMcpServerData(server: z.infer<typeof mcpServerSchema>) {
+function mergeSecretEnv(
+  input: Record<string, McpServerEnvValue>,
+  existingJson: string | null
+): Record<string, McpServerEnvValue> {
+  const existing = existingJson
+    ? (JSON.parse(existingJson) as Record<string, McpServerEnvValue>)
+    : {};
+
+  return Object.fromEntries(
+    Object.entries(input).map(([key, entry]) => {
+      if (entry.isSecret && !entry.value && existing[key]?.isSecret) {
+        // Unchanged secret: preserve existing encrypted value
+        return [key, existing[key]];
+      }
+      // New or changed value: encrypt if secret
+      return [
+        key,
+        { value: entry.isSecret ? encrypt(entry.value) : entry.value, isSecret: entry.isSecret },
+      ];
+    })
+  );
+}
+
+/** Shape of an existing MCP server DB row, used to preserve unchanged secrets */
+interface ExistingMcpServer {
+  env: string | null;
+  headers: string | null;
+}
+
+/**
+ * Build MCP server data object for database upsert from validated input.
+ * When `existing` is provided, unchanged secret values (empty string + isSecret)
+ * are preserved from the existing DB record rather than being overwritten.
+ */
+export function buildMcpServerData(
+  server: z.infer<typeof mcpServerSchema>,
+  existing?: ExistingMcpServer | null
+) {
   const isStdio = server.type === 'stdio';
   const env = isStdio ? (server.env ?? {}) : {};
-  const processedEnv = Object.keys(env).length > 0 ? encryptMcpEnv(env) : null;
+  const processedEnv =
+    Object.keys(env).length > 0 ? mergeSecretEnv(env, existing?.env ?? null) : null;
   const headers = !isStdio ? (server.headers ?? {}) : {};
-  const processedHeaders = Object.keys(headers).length > 0 ? encryptMcpEnv(headers) : null;
+  const processedHeaders =
+    Object.keys(headers).length > 0 ? mergeSecretEnv(headers, existing?.headers ?? null) : null;
 
   return {
     type: server.type,

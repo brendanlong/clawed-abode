@@ -172,6 +172,37 @@ describe('repoSettings router', () => {
       expect(settings?.envVars).toHaveLength(1);
       expect(settings?.envVars[0].value).toBe('updated-value');
     });
+
+    it('should preserve existing secret value when updated with empty string', async () => {
+      const caller = createCaller();
+
+      // Create a secret env var
+      await caller.repoSettings.setEnvVar({
+        repoFullName: testRepoName,
+        envVar: {
+          name: 'SECRET_VAR',
+          value: 'my-secret-value',
+          isSecret: true,
+        },
+      });
+
+      // Update with empty value (simulates UI not changing the secret)
+      await caller.repoSettings.setEnvVar({
+        repoFullName: testRepoName,
+        envVar: {
+          name: 'SECRET_VAR',
+          value: '',
+          isSecret: true,
+        },
+      });
+
+      // The original secret should be preserved
+      const result = await caller.repoSettings.getEnvVarValue({
+        repoFullName: testRepoName,
+        name: 'SECRET_VAR',
+      });
+      expect(result.value).toBe('my-secret-value');
+    });
   });
 
   describe('deleteEnvVar', () => {
@@ -328,6 +359,95 @@ describe('repoSettings router', () => {
       expect(settings?.mcpServers[0].headers.Authorization.isSecret).toBe(true);
       expect(settings?.mcpServers[0].headers['X-Custom'].value).toBe('public-value');
       expect(settings?.mcpServers[0].headers['X-Custom'].isSecret).toBe(false);
+    });
+
+    it('should preserve secret header when updated with empty value', async () => {
+      const caller = createCaller();
+
+      // Create an HTTP MCP server with a secret header
+      await caller.repoSettings.setMcpServer({
+        repoFullName: testRepoName,
+        mcpServer: {
+          name: 'authed-server',
+          type: 'http',
+          url: 'https://mcp.example.com/api',
+          headers: {
+            Authorization: { value: 'Bearer secret-token', isSecret: true },
+          },
+        },
+      });
+
+      // Update the server with empty header value (simulates UI not changing the secret)
+      await caller.repoSettings.setMcpServer({
+        repoFullName: testRepoName,
+        mcpServer: {
+          name: 'authed-server',
+          type: 'http',
+          url: 'https://mcp.example.com/api-v2',
+          headers: {
+            Authorization: { value: '', isSecret: true },
+          },
+        },
+      });
+
+      // Verify the URL was updated
+      const settings = await caller.repoSettings.get({ repoFullName: testRepoName });
+      expect(settings?.mcpServers[0].url).toBe('https://mcp.example.com/api-v2');
+
+      // Verify the secret header was preserved via getForContainer
+      const containerSettings = await caller.repoSettings.getForContainer({
+        repoFullName: testRepoName,
+      });
+      const server = containerSettings?.mcpServers[0];
+      expect(server && 'headers' in server ? server.headers?.Authorization : undefined).toBe(
+        'Bearer secret-token'
+      );
+    });
+
+    it('should preserve secret env var in stdio server when updated with empty value', async () => {
+      const caller = createCaller();
+
+      // Create a stdio MCP server with a secret env var
+      await caller.repoSettings.setMcpServer({
+        repoFullName: testRepoName,
+        mcpServer: {
+          name: 'api-server',
+          type: 'stdio',
+          command: 'node',
+          args: ['server.js'],
+          env: {
+            API_KEY: { value: 'secret-api-key', isSecret: true },
+            DEBUG: { value: 'true', isSecret: false },
+          },
+        },
+      });
+
+      // Update the server, changing command but not the secret env var
+      await caller.repoSettings.setMcpServer({
+        repoFullName: testRepoName,
+        mcpServer: {
+          name: 'api-server',
+          type: 'stdio',
+          command: 'npx',
+          args: ['server.js'],
+          env: {
+            API_KEY: { value: '', isSecret: true },
+            DEBUG: { value: 'false', isSecret: false },
+          },
+        },
+      });
+
+      // Verify the command was updated
+      const settings = await caller.repoSettings.get({ repoFullName: testRepoName });
+      expect(settings?.mcpServers[0].command).toBe('npx');
+      expect(settings?.mcpServers[0].env.DEBUG.value).toBe('false');
+
+      // Verify the secret env var was preserved via getForContainer
+      const containerSettings = await caller.repoSettings.getForContainer({
+        repoFullName: testRepoName,
+      });
+      const server = containerSettings?.mcpServers[0];
+      expect(server && 'env' in server ? server.env?.API_KEY : undefined).toBe('secret-api-key');
     });
 
     it('should return decrypted HTTP MCP server headers in getForContainer', async () => {

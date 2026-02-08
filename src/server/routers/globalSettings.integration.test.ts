@@ -295,6 +295,32 @@ describe('globalSettings router', () => {
       expect(settings.envVars).toHaveLength(1);
       expect(settings.envVars[0].value).toBe('updated-value');
     });
+
+    it('should preserve existing secret value when updated with empty string', async () => {
+      const caller = createCaller();
+
+      // Create a secret env var
+      await caller.globalSettings.setEnvVar({
+        envVar: {
+          name: 'SECRET_VAR',
+          value: 'my-secret-value',
+          isSecret: true,
+        },
+      });
+
+      // Update with empty value (simulates UI not changing the secret)
+      await caller.globalSettings.setEnvVar({
+        envVar: {
+          name: 'SECRET_VAR',
+          value: '',
+          isSecret: true,
+        },
+      });
+
+      // The original secret should be preserved
+      const result = await caller.globalSettings.getEnvVarValue({ name: 'SECRET_VAR' });
+      expect(result.value).toBe('my-secret-value');
+    });
   });
 
   describe('deleteEnvVar', () => {
@@ -447,6 +473,97 @@ describe('globalSettings router', () => {
       expect(settings.mcpServers[0].headers.Authorization.isSecret).toBe(true);
       expect(settings.mcpServers[0].headers['X-Custom'].value).toBe('public-value');
       expect(settings.mcpServers[0].headers['X-Custom'].isSecret).toBe(false);
+    });
+
+    it('should preserve secret header when updated with empty value', async () => {
+      const caller = createCaller();
+
+      // Create an HTTP MCP server with a secret header
+      await caller.globalSettings.setMcpServer({
+        mcpServer: {
+          name: 'authed-server',
+          type: 'http',
+          url: 'https://mcp.example.com/api',
+          headers: {
+            Authorization: { value: 'Bearer secret-token', isSecret: true },
+          },
+        },
+      });
+
+      // Update the server with empty header value (simulates UI not changing the secret)
+      await caller.globalSettings.setMcpServer({
+        mcpServer: {
+          name: 'authed-server',
+          type: 'http',
+          url: 'https://mcp.example.com/api-v2',
+          headers: {
+            Authorization: { value: '', isSecret: true },
+          },
+        },
+      });
+
+      // Verify the URL was updated
+      const settings = await caller.globalSettings.getWithSettings();
+      expect(settings.mcpServers[0].url).toBe('https://mcp.example.com/api-v2');
+
+      // Verify the secret header was preserved by checking the raw DB value decrypts correctly
+      const dbServer = await testPrisma.mcpServer.findFirst({
+        where: { repoSettingsId: null, name: 'authed-server' },
+      });
+      const headers = JSON.parse(dbServer!.headers!) as Record<
+        string,
+        { value: string; isSecret: boolean }
+      >;
+      const { decrypt } = await import('@/lib/crypto');
+      expect(decrypt(headers.Authorization.value)).toBe('Bearer secret-token');
+    });
+
+    it('should preserve secret env var in stdio server when updated with empty value', async () => {
+      const caller = createCaller();
+
+      // Create a stdio MCP server with a secret env var
+      await caller.globalSettings.setMcpServer({
+        mcpServer: {
+          name: 'api-server',
+          type: 'stdio',
+          command: 'node',
+          args: ['server.js'],
+          env: {
+            API_KEY: { value: 'secret-api-key', isSecret: true },
+            DEBUG: { value: 'true', isSecret: false },
+          },
+        },
+      });
+
+      // Update the server, changing command but not the secret env var
+      await caller.globalSettings.setMcpServer({
+        mcpServer: {
+          name: 'api-server',
+          type: 'stdio',
+          command: 'npx',
+          args: ['server.js'],
+          env: {
+            API_KEY: { value: '', isSecret: true },
+            DEBUG: { value: 'false', isSecret: false },
+          },
+        },
+      });
+
+      // Verify the command was updated
+      const settings = await caller.globalSettings.getWithSettings();
+      expect(settings.mcpServers[0].command).toBe('npx');
+      expect(settings.mcpServers[0].env.DEBUG.value).toBe('false');
+
+      // Verify the secret env var was preserved
+      const dbServer = await testPrisma.mcpServer.findFirst({
+        where: { repoSettingsId: null, name: 'api-server' },
+      });
+      const env = JSON.parse(dbServer!.env!) as Record<
+        string,
+        { value: string; isSecret: boolean }
+      >;
+      const { decrypt } = await import('@/lib/crypto');
+      expect(decrypt(env.API_KEY.value)).toBe('secret-api-key');
     });
   });
 

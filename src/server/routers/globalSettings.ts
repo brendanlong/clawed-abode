@@ -185,12 +185,18 @@ export const globalSettingsRouter = router({
     .mutation(async ({ input }) => {
       requireEncryptionForSecrets(input.envVar.isSecret);
 
-      const value = input.envVar.isSecret ? encrypt(input.envVar.value) : input.envVar.value;
-
       // Find existing global env var with this name (repoSettingsId IS NULL)
       const existing = await prisma.envVar.findFirst({
         where: { repoSettingsId: null, name: input.envVar.name },
       });
+
+      // If secret value is empty and existing is also secret, preserve existing encrypted value
+      let value: string;
+      if (input.envVar.isSecret && !input.envVar.value && existing?.isSecret) {
+        value = existing.value;
+      } else {
+        value = input.envVar.isSecret ? encrypt(input.envVar.value) : input.envVar.value;
+      }
 
       if (existing) {
         await prisma.envVar.update({
@@ -262,12 +268,12 @@ export const globalSettingsRouter = router({
       const server = input.mcpServer;
       requireEncryptionForSecrets(mcpServerHasSecrets(server));
 
-      const data = buildMcpServerData(server);
-
       // Find existing global MCP server with this name (repoSettingsId IS NULL)
       const existing = await prisma.mcpServer.findFirst({
         where: { repoSettingsId: null, name: server.name },
       });
+
+      const data = buildMcpServerData(server, existing);
 
       if (existing) {
         await prisma.mcpServer.update({
