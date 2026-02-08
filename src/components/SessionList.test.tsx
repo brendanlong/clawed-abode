@@ -2,7 +2,6 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { SessionList } from './SessionList';
 import type { Session } from '@/hooks/useSessionList';
-import type { SessionActions } from '@/hooks/useSessionActions';
 
 // Mock next/link
 vi.mock('next/link', () => ({
@@ -11,17 +10,16 @@ vi.mock('next/link', () => ({
   ),
 }));
 
-function createMockActions(overrides: Partial<SessionActions> = {}): SessionActions {
-  return {
-    start: vi.fn(),
-    stop: vi.fn(),
-    archive: vi.fn(),
-    isStarting: () => false,
-    isStopping: () => false,
-    isArchiving: () => false,
-    ...overrides,
-  };
-}
+// Mock trpc so SessionListItem's useMutation calls work without a provider
+vi.mock('@/lib/trpc', () => ({
+  trpc: {
+    sessions: {
+      start: { useMutation: () => ({ mutate: vi.fn(), isPending: false }) },
+      stop: { useMutation: () => ({ mutate: vi.fn(), isPending: false }) },
+      delete: { useMutation: () => ({ mutate: vi.fn(), isPending: false }) },
+    },
+  },
+}));
 
 describe('SessionList', () => {
   describe('loading state', () => {
@@ -30,7 +28,6 @@ describe('SessionList', () => {
         <SessionList
           sessions={[]}
           isLoading={true}
-          actions={createMockActions()}
           showArchived={false}
           onToggleArchived={vi.fn()}
         />
@@ -47,7 +44,6 @@ describe('SessionList', () => {
         <SessionList
           sessions={[]}
           isLoading={false}
-          actions={createMockActions()}
           showArchived={false}
           onToggleArchived={vi.fn()}
         />
@@ -62,7 +58,6 @@ describe('SessionList', () => {
         <SessionList
           sessions={[]}
           isLoading={false}
-          actions={createMockActions()}
           showArchived={false}
           onToggleArchived={vi.fn()}
         />
@@ -99,7 +94,6 @@ describe('SessionList', () => {
         <SessionList
           sessions={mockSessions}
           isLoading={false}
-          actions={createMockActions()}
           showArchived={false}
           onToggleArchived={vi.fn()}
         />
@@ -114,7 +108,6 @@ describe('SessionList', () => {
         <SessionList
           sessions={mockSessions}
           isLoading={false}
-          actions={createMockActions()}
           showArchived={false}
           onToggleArchived={vi.fn()}
         />
@@ -132,7 +125,6 @@ describe('SessionList', () => {
         <SessionList
           sessions={mockSessions}
           isLoading={false}
-          actions={createMockActions()}
           showArchived={false}
           onToggleArchived={vi.fn()}
         />

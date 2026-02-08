@@ -1,31 +1,31 @@
 'use client';
 
 import Link from 'next/link';
+import { trpc } from '@/lib/trpc';
 import { SessionStatusBadge } from '@/components/SessionStatusBadge';
 import { SessionActionButton } from '@/components/SessionActionButton';
 import type { Session } from '@/hooks/useSessionList';
-import type { SessionActions } from '@/hooks/useSessionActions';
 
 export interface SessionListItemProps {
   session: Session;
-  actions: SessionActions;
+  onMutationSuccess?: () => void;
 }
 
 /**
- * Pure presentation component for a single session list item.
- * Receives session data and actions as props, making it easily testable.
+ * Session list item that owns its own mutation state.
+ * Each instance tracks its own pending start/stop/archive independently.
  */
-export function SessionListItem({ session, actions }: SessionListItemProps) {
+export function SessionListItem({ session, onMutationSuccess }: SessionListItemProps) {
   const repoName = session.repoUrl.replace('https://github.com/', '').replace('.git', '');
-
-  const isArchiving = actions.isArchiving(session.id);
-  const isStarting = actions.isStarting(session.id);
-  const isStopping = actions.isStopping(session.id);
   const isArchived = session.status === 'archived';
+
+  const startMutation = trpc.sessions.start.useMutation({ onSuccess: onMutationSuccess });
+  const stopMutation = trpc.sessions.stop.useMutation({ onSuccess: onMutationSuccess });
+  const archiveMutation = trpc.sessions.delete.useMutation({ onSuccess: onMutationSuccess });
 
   return (
     <li
-      className={`p-4 hover:bg-muted/50 transition-all ${isArchiving ? 'opacity-50 pointer-events-none' : ''}`}
+      className={`p-4 hover:bg-muted/50 transition-all ${archiveMutation.isPending ? 'opacity-50 pointer-events-none' : ''}`}
     >
       <div className="flex items-center justify-between">
         <div className="flex-1 min-w-0">
@@ -51,23 +51,23 @@ export function SessionListItem({ session, actions }: SessionListItemProps) {
                 {session.status === 'stopped' && (
                   <SessionActionButton
                     action="start"
-                    onClick={() => actions.start(session.id)}
-                    isPending={isStarting}
+                    onClick={() => startMutation.mutate({ sessionId: session.id })}
+                    isPending={startMutation.isPending}
                     variant="ghost"
                   />
                 )}
                 {session.status === 'running' && (
                   <SessionActionButton
                     action="stop"
-                    onClick={() => actions.stop(session.id)}
-                    isPending={isStopping}
+                    onClick={() => stopMutation.mutate({ sessionId: session.id })}
+                    isPending={stopMutation.isPending}
                     variant="ghost"
                   />
                 )}
                 <SessionActionButton
                   action="archive"
-                  onClick={() => actions.archive(session.id)}
-                  isPending={isArchiving}
+                  onClick={() => archiveMutation.mutate({ sessionId: session.id })}
+                  isPending={archiveMutation.isPending}
                   variant="ghost"
                   sessionName={session.name}
                 />
