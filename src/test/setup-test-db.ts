@@ -106,4 +106,8 @@ export async function clearTestDb(): Promise<void> {
   await testPrisma.envVar.deleteMany();
   await testPrisma.mcpServer.deleteMany();
   await testPrisma.repoSettings.deleteMany();
+  // Global settings tables
+  await testPrisma.globalEnvVar.deleteMany();
+  await testPrisma.globalMcpServer.deleteMany();
+  await testPrisma.globalSettings.deleteMany();
 }

@@ -112,4 +112,41 @@ model GlobalSettings {
   systemPromptAppend        String?  // Additional content appended after default/override prompt
   createdAt                 DateTime @default(now())
   updatedAt                 DateTime @updatedAt
+
+  envVars    GlobalEnvVar[]
+  mcpServers GlobalMcpServer[]
+}
+
+// Global environment variables applied to all sessions
+model GlobalEnvVar {
+  id               String         @id @default(uuid())
+  globalSettingsId String
+  globalSettings   GlobalSettings @relation(fields: [globalSettingsId], references: [id], onDelete: Cascade)
+  name             String // e.g., "API_KEY"
+  value            String // Encrypted if isSecret=true
+  isSecret         Boolean        @default(false)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@unique([globalSettingsId, name])
+  @@index([globalSettingsId])
+}
+
+// Global MCP server configurations applied to all sessions
+model GlobalMcpServer {
+  id               String         @id @default(uuid())
+  globalSettingsId String
+  globalSettings   GlobalSettings @relation(fields: [globalSettingsId], references: [id], onDelete: Cascade)
+  name             String // Server name (key in mcpServers object)
+  type             String         @default("stdio") // "stdio", "http", or "sse"
+  command          String         @default("") // For stdio: e.g., "npx" (empty for http/sse)
+  args             String? // For stdio: JSON array, e.g., '["@anthropic/mcp-server-memory"]'
+  env              String? // For stdio: JSON object: { "KEY": { "value": "...", "isSecret": true } }
+  url              String? // For http/sse: server URL
+  headers          String? // For http/sse: JSON object of headers, { "KEY": { "value": "...", "isSecret": true } }
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@unique([globalSettingsId, name])
+  @@index([globalSettingsId])
 }
