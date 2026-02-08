@@ -3,6 +3,7 @@ import {
   type Query,
   type SDKMessage,
   type McpServerConfig,
+  type SlashCommand,
 } from '@anthropic-ai/claude-agent-sdk';
 import { MessageStore } from './message-store.js';
 import { StreamAccumulator, type PartialAssistantMessage } from './stream-accumulator.js';
@@ -48,6 +49,12 @@ export type MessageCallback = (sequence: number, message: SDKMessage) => void;
 export type PartialMessageCallback = (partial: PartialAssistantMessage) => void;
 
 /**
+ * Callback for when supported slash commands are detected.
+ * Called after each query() call when commands are retrieved from the SDK.
+ */
+export type CommandsCallback = (commands: SlashCommand[]) => void;
+
+/**
  * Manages SDK query() execution with message persistence.
  * Only one query can run at a time per QueryRunner instance.
  */
@@ -58,6 +65,8 @@ export class QueryRunner {
   private running = false;
   private messageCallbacks: Set<MessageCallback> = new Set();
   private partialCallbacks: Set<PartialMessageCallback> = new Set();
+  private commandsCallbacks: Set<CommandsCallback> = new Set();
+  private _supportedCommands: SlashCommand[] = [];
 
   constructor(store: MessageStore) {
     this.store = store;
@@ -89,6 +98,24 @@ export class QueryRunner {
     return () => {
       this.partialCallbacks.delete(callback);
     };
+  }
+
+  /**
+   * Subscribe to supported commands updates. Returns an unsubscribe function.
+   * Commands are detected after each query() call completes its first iteration.
+   */
+  onCommands(callback: CommandsCallback): () => void {
+    this.commandsCallbacks.add(callback);
+    return () => {
+      this.commandsCallbacks.delete(callback);
+    };
+  }
+
+  /**
+   * Get the currently known supported slash commands.
+   */
+  get supportedCommands(): SlashCommand[] {
+    return this._supportedCommands;
   }
 
   /**
@@ -160,6 +187,41 @@ export class QueryRunner {
         prompt: options.prompt,
         options: sdkOptions,
       });
+
+      // Fetch supported commands from the query object.
+      // We try initializationResult() first (which includes commands along with
+      // other init data), then fall back to supportedCommands().
+      // We await this before iterating messages so the commands are available
+      // to send via SSE while the response is still open.
+      try {
+        let commands: SlashCommand[] = [];
+
+        // Try initializationResult() first - it returns the full init response
+        // including commands from the SDK control channel
+        try {
+          const initResult = await this.currentQuery.initializationResult();
+          commands = initResult.commands ?? [];
+          console.log(`initializationResult() returned ${commands.length} commands`);
+        } catch (initErr) {
+          console.log('initializationResult() failed, trying supportedCommands():', initErr);
+          // Fall back to supportedCommands()
+          commands = await this.currentQuery.supportedCommands();
+          console.log(`supportedCommands() returned ${commands.length} commands`);
+        }
+
+        if (commands.length > 0) {
+          this._supportedCommands = commands;
+          for (const callback of this.commandsCallbacks) {
+            try {
+              callback(commands);
+            } catch {
+              // Don't let callback errors break anything
+            }
+          }
+        }
+      } catch (err) {
+        console.error('Failed to fetch supported commands:', err);
+      }
 
       // Iterate through all messages from the SDK
       for await (const message of this.currentQuery) {

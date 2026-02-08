@@ -2,7 +2,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import { MessageStore } from './message-store.js';
 import { QueryRunner, type QueryOptions } from './query-runner.js';
-import type { SDKMessage, McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
+import type { SDKMessage, McpServerConfig, SlashCommand } from '@anthropic-ai/claude-agent-sdk';
 import type { PartialAssistantMessage } from './stream-accumulator.js';
 
 const SOCKET_PATH = process.env.AGENT_SOCKET_PATH || '/sockets/agent.sock';
@@ -95,10 +95,17 @@ async function handleQuery(req: http.IncomingMessage, res: http.ServerResponse):
     res.write(`data: ${data}\n\n`);
   });
 
+  // Subscribe to commands updates and send them as SSE events
+  const unsubscribeCommands = runner.onCommands((commands: SlashCommand[]) => {
+    const data = JSON.stringify({ commands });
+    res.write(`data: ${data}\n\n`);
+  });
+
   // Handle client disconnect
   req.on('close', () => {
     unsubscribeMessages();
     unsubscribePartials();
+    unsubscribeCommands();
   });
 
   const options: QueryOptions = {
@@ -126,6 +133,7 @@ async function handleQuery(req: http.IncomingMessage, res: http.ServerResponse):
   } finally {
     unsubscribeMessages();
     unsubscribePartials();
+    unsubscribeCommands();
     res.end();
   }
 }
@@ -149,6 +157,7 @@ function handleStatus(_req: http.IncomingMessage, res: http.ServerResponse): voi
     running: runner.isRunning,
     messageCount: store.getLastSequence(),
     lastSequence: store.getLastSequence(),
+    commands: runner.supportedCommands,
   });
 }
 
@@ -175,6 +184,14 @@ function handleMessages(req: http.IncomingMessage, res: http.ServerResponse): vo
 }
 
 /**
+ * Handle GET /commands
+ * Returns the currently known supported slash commands.
+ */
+function handleCommands(_req: http.IncomingMessage, res: http.ServerResponse): void {
+  sendJson(res, 200, { commands: runner.supportedCommands });
+}
+
+/**
  * Handle GET /health
  */
 function handleHealth(_req: http.IncomingMessage, res: http.ServerResponse): void {
@@ -198,6 +215,8 @@ const server = http.createServer(async (req, res) => {
       handleStatus(req, res);
     } else if (method === 'GET' && path === '/messages') {
       handleMessages(req, res);
+    } else if (method === 'GET' && path === '/commands') {
+      handleCommands(req, res);
     } else if (method === 'GET' && path === '/health') {
       handleHealth(req, res);
     } else {

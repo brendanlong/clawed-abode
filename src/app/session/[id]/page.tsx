@@ -339,7 +339,7 @@ function useWorkCompleteNotification(
 }
 
 /**
- * Hook for managing Claude process state: running status, send prompts, and interrupt.
+ * Hook for managing Claude process state: running status, send prompts, interrupt, and commands.
  */
 function useClaudeState(sessionId: string) {
   // Local state for Claude running status (overridden by SSE, initialized from query)
@@ -348,12 +348,26 @@ function useClaudeState(sessionId: string) {
   // Initial fetch of Claude running state
   const { data: runningData, refetch } = trpc.claude.isRunning.useQuery({ sessionId });
 
+  // Fetch available slash commands
+  const { data: commandsData, refetch: refetchCommands } = trpc.claude.getCommands.useQuery(
+    { sessionId },
+    { staleTime: Infinity }
+  );
+
+  // Local override for commands (updated by SSE)
+  const [commandsOverride, setCommandsOverride] = useState<Array<{
+    name: string;
+    description: string;
+    argumentHint: string;
+  }> | null>(null);
+
   // Refetch and reset override when app regains visibility or network reconnects
   const refetchAndReset = useCallback(() => {
     // Reset override so we use fresh data from the query
     setRunningOverride(null);
     refetch();
-  }, [refetch]);
+    refetchCommands();
+  }, [refetch, refetchCommands]);
   useRefetchOnReconnect(refetchAndReset);
 
   // Subscribe to Claude running state via SSE
@@ -362,9 +376,26 @@ function useClaudeState(sessionId: string) {
     {
       onData: (trackedData) => {
         setRunningOverride(trackedData.data.running);
+        // When Claude finishes running, refetch commands in case new ones were discovered
+        if (!trackedData.data.running) {
+          refetchCommands();
+        }
       },
       onError: (err) => {
         console.error('Claude running SSE error:', err);
+      },
+    }
+  );
+
+  // Subscribe to commands updates via SSE
+  trpc.sse.onCommands.useSubscription(
+    { sessionId },
+    {
+      onData: (trackedData) => {
+        setCommandsOverride(trackedData.data.commands);
+      },
+      onError: (err) => {
+        console.error('Commands SSE error:', err);
       },
     }
   );
@@ -385,12 +416,14 @@ function useClaudeState(sessionId: string) {
 
   // Use SSE override if available, otherwise use query data
   const isRunning = runningOverride ?? runningData?.running ?? false;
+  const commands = commandsOverride ?? commandsData?.commands ?? [];
 
   return {
     isRunning,
     send,
     interrupt,
     isInterrupting: interruptMutation.isPending,
+    commands,
   };
 }
 
@@ -417,12 +450,13 @@ function SessionView({ sessionId }: { sessionId: string }) {
     tokenUsage,
   } = useSessionMessages(sessionId);
 
-  // Claude state: running, send, interrupt
+  // Claude state: running, send, interrupt, commands
   const {
     isRunning: isClaudeRunning,
     send: sendPrompt,
     interrupt,
     isInterrupting,
+    commands,
   } = useClaudeState(sessionId);
 
   // Working indicator: page title and favicon
@@ -592,6 +626,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
         isRunning={isClaudeRunning}
         isInterrupting={isInterrupting}
         disabled={session.status !== 'running'}
+        commands={commands}
       />
     </div>
   );

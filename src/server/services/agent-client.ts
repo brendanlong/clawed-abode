@@ -11,7 +11,7 @@
 import http from 'node:http';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { SDKMessage, SlashCommand } from '@anthropic-ai/claude-agent-sdk';
 import { createLogger, toError } from '@/lib/logger';
 import { env } from '@/lib/env';
 
@@ -50,8 +50,17 @@ export interface AgentPartialMessage {
   };
 }
 
-/** Either a complete or partial message from the agent service query stream. */
-export type AgentStreamEvent = AgentMessage | AgentPartialMessage;
+/**
+ * A commands update event from the agent service.
+ * Emitted when the agent detects supported slash commands from the SDK.
+ */
+export interface AgentCommandsEvent {
+  kind: 'commands';
+  commands: SlashCommand[];
+}
+
+/** Either a complete message, partial message, or commands update from the agent service query stream. */
+export type AgentStreamEvent = AgentMessage | AgentPartialMessage | AgentCommandsEvent;
 
 /**
  * Status response from the agent service.
@@ -60,6 +69,7 @@ export interface AgentStatus {
   running: boolean;
   messageCount: number;
   lastSequence: number;
+  commands: SlashCommand[];
 }
 
 /**
@@ -69,6 +79,7 @@ export interface AgentStatus {
 type SSEEvent =
   | { sequence: number; message: SDKMessage }
   | { partial: AgentPartialMessage['partial'] }
+  | { commands: SlashCommand[] }
   | { done: true }
   | { error: string };
 
@@ -104,6 +115,11 @@ export interface AgentClient {
    * Used for catching up after reconnection.
    */
   getMessages(afterSequence: number): Promise<AgentMessage[]>;
+
+  /**
+   * Get the currently known supported slash commands.
+   */
+  getCommands(): Promise<SlashCommand[]>;
 
   /**
    * Health check - returns true if the agent service is reachable.
@@ -252,6 +268,15 @@ export function createAgentClient(socketPath: string): AgentClient {
                 continue;
               }
 
+              if ('commands' in parsed) {
+                // Supported slash commands update
+                yield {
+                  kind: 'commands',
+                  commands: parsed.commands,
+                };
+                continue;
+              }
+
               if ('sequence' in parsed && 'message' in parsed) {
                 yield {
                   kind: 'complete',
@@ -284,6 +309,11 @@ export function createAgentClient(socketPath: string): AgentClient {
         sequence: m.sequence,
         message: m.message,
       }));
+    },
+
+    async getCommands() {
+      const res = await fetchJson<{ commands: SlashCommand[] }>('/commands');
+      return res.commands;
     },
 
     async health() {
