@@ -14,8 +14,10 @@ import {
   formatMcpServersForDisplay,
   buildMcpServerData,
   mcpServerHasSecrets,
+  decryptMcpServersForContainer,
   type DisplayMcpServer,
 } from '../services/settings-helpers';
+import { validateMcpServer } from '../services/mcp-validator';
 
 const log = createLogger('globalSettings');
 
@@ -296,6 +298,28 @@ export const globalSettingsRouter = router({
       });
 
       return { success: true };
+    }),
+
+  /**
+   * Validate a global MCP server connection by connecting with the MCP SDK
+   * Only works for HTTP/SSE servers (stdio servers run inside containers)
+   */
+  validateMcpServer: protectedProcedure
+    .input(z.object({ name: z.string().min(1) }))
+    .mutation(async ({ input }) => {
+      const dbServer = await prisma.mcpServer.findFirst({
+        where: { repoSettingsId: null, name: input.name },
+      });
+
+      if (!dbServer) {
+        throw new TRPCError({
+          code: 'NOT_FOUND',
+          message: `MCP server "${input.name}" not found`,
+        });
+      }
+
+      const [decrypted] = decryptMcpServersForContainer([dbServer]);
+      return validateMcpServer(decrypted);
     }),
 
   /**
