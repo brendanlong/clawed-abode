@@ -467,9 +467,12 @@ Users can configure per-repository settings that are automatically applied when 
 - **Favorites**: Mark repositories as favorites so they appear at the top of the repo selector
 - **Custom System Prompt**: Additional instructions appended to the default system prompt for all sessions using this repository
 - **Environment Variables**: Custom env vars passed to the container (e.g., API keys, config values)
-- **MCP Servers**: Configure [MCP servers](https://modelcontextprotocol.io/) for Claude to use
+- **MCP Servers**: Configure [MCP servers](https://modelcontextprotocol.io/) for Claude to use, supporting three transport types:
+  - **Stdio**: Traditional command-based servers (e.g., `npx @anthropic/mcp-server-memory`)
+  - **HTTP**: Streamable HTTP MCP servers with optional auth headers
+  - **SSE**: Server-Sent Events MCP servers with optional auth headers
 
-**Secret Encryption**: Environment variables and MCP server env vars can be marked as "secret", which:
+**Secret Encryption**: Environment variables, MCP server env vars, and HTTP/SSE header values can be marked as "secret", which:
 
 - Encrypts the value at rest using AES-256-GCM with the `ENCRYPTION_KEY` env var
 - Displays masked values (`••••••••`) in the UI

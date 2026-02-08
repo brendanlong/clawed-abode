@@ -91,9 +91,12 @@ model McpServer {
   repoSettingsId String
   repoSettings   RepoSettings @relation(fields: [repoSettingsId], references: [id], onDelete: Cascade)
   name           String // Server name (key in mcpServers object)
-  command        String // e.g., "npx"
-  args           String? // JSON array, e.g., '["@anthropic/mcp-server-memory"]'
-  env            String? // JSON object: { "KEY": { "value": "...", "isSecret": true } }
+  type           String       @default("stdio") // "stdio", "http", or "sse"
+  command        String       @default("") // For stdio: e.g., "npx" (empty for http/sse)
+  args           String? // For stdio: JSON array, e.g., '["@anthropic/mcp-server-memory"]'
+  env            String? // For stdio: JSON object: { "KEY": { "value": "...", "isSecret": true } }
+  url            String? // For http/sse: server URL
+  headers        String? // For http/sse: JSON object of headers, { "KEY": { "value": "...", "isSecret": true } }
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
