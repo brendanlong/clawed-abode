@@ -265,12 +265,11 @@ describe('globalSettings router', () => {
       expect(settings.envVars[0].isSecret).toBe(true);
 
       // Check that the raw value is encrypted in the database
-      const dbSettings = await testPrisma.globalSettings.findUnique({
-        where: { id: 'global' },
-        include: { envVars: true },
+      const dbEnvVars = await testPrisma.envVar.findMany({
+        where: { repoSettingsId: null },
       });
-      expect(dbSettings?.envVars[0].value).not.toBe('secret-value');
-      expect(dbSettings?.envVars[0].value).toContain(':'); // Encrypted format includes colons
+      expect(dbEnvVars[0].value).not.toBe('secret-value');
+      expect(dbEnvVars[0].value).toContain(':'); // Encrypted format includes colons
     });
 
     it('should update an existing env var', async () => {
