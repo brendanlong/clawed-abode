@@ -1,13 +1,21 @@
 /**
  * Token usage estimation utilities
  *
- * Estimates context usage by aggregating token information from Claude Code messages.
- * Uses the usage data embedded in assistant and result messages.
+ * Estimates context window usage from Claude Code messages.
+ *
+ * Key insight: The "context usage %" should reflect how full the context window
+ * currently is, NOT the total tokens consumed across all API calls. Each assistant
+ * message's input_tokens represents the full prompt sent for that API call, which
+ * is the best proxy for current context size. We use the most recent assistant
+ * message's input_tokens (including cache reads, which are still part of the prompt).
+ *
+ * Total consumed tokens (summed from result messages) are tracked separately
+ * for cost display purposes.
  */
 
 import { z } from 'zod';
 
-// Default context window size (200k tokens for Claude 3.5 Sonnet / Claude 4 Opus)
+// Default context window size (200k tokens for Claude models)
 // Claude Code uses context management, so the effective limit may vary
 const DEFAULT_CONTEXT_WINDOW = 200_000;
 
@@ -23,16 +31,24 @@ const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
 };
 
 /**
- * Structure representing aggregated token usage
+ * Structure representing token usage and context window occupancy
  */
 export interface TokenUsageStats {
+  /** Total input tokens consumed across all API calls (for cost tracking) */
   inputTokens: number;
+  /** Total output tokens consumed across all API calls (for cost tracking) */
   outputTokens: number;
+  /** Total cache read tokens across all API calls */
   cacheReadTokens: number;
+  /** Total cache creation tokens across all API calls */
   cacheCreationTokens: number;
+  /** Total tokens consumed (input + output, for cost tracking) */
   totalTokens: number;
+  /** Model's context window capacity */
   contextWindow: number;
+  /** Percentage of context window currently occupied (based on most recent API call) */
   percentUsed: number;
+  /** Detected model name */
   model?: string;
 }
 
@@ -97,7 +113,8 @@ const ResultContentSchema = z.object({
 });
 
 /**
- * Message structure expected by the estimation function
+ * Message structure expected by the estimation function.
+ * Messages must be provided in chronological order (oldest first).
  */
 interface Message {
   type: string;
@@ -213,15 +230,16 @@ function getContextWindow(model?: string): number {
 }
 
 /**
- * Estimate total token usage from a list of messages
+ * Estimate token usage and context window occupancy from a list of messages.
  *
- * This function aggregates token usage from:
- * - Assistant messages (per-message usage)
- * - Result messages (aggregated usage for completed turns)
+ * Messages should be in chronological order (oldest first).
  *
- * Note: We use result messages as the primary source of truth since they
- * contain aggregated stats. If no result messages are present, we fall back
- * to summing assistant message usage.
+ * Context percentage is based on the most recent assistant message's input_tokens,
+ * which represents the actual size of the prompt/context sent in the latest API call.
+ * This is the best proxy for how full the context window currently is.
+ *
+ * Total consumed tokens (inputTokens, outputTokens in the result) are summed from
+ * result messages for cost tracking purposes.
  */
 export function estimateTokenUsage(messages: Message[]): TokenUsageStats {
   let totalInputTokens = 0;
@@ -230,6 +248,11 @@ export function estimateTokenUsage(messages: Message[]): TokenUsageStats {
   let totalCacheCreationTokens = 0;
   let detectedModel: string | undefined;
   let detectedContextWindow: number | undefined;
+
+  // Track the most recent assistant message's input tokens for context % calculation.
+  // input_tokens represents the full prompt size for that API call, which is our
+  // best proxy for current context window occupancy.
+  let lastAssistantInputTokens = 0;
 
   // First pass: look for model info in system init
   for (const msg of messages) {
@@ -242,26 +265,42 @@ export function estimateTokenUsage(messages: Message[]): TokenUsageStats {
     }
   }
 
-  // Find the most recent result message - it contains cumulative usage
-  // for all turns in that interaction
+  // Sum up total consumed tokens from result messages (for cost tracking)
   const resultMessages = messages.filter((m) => m.type === 'result');
-
-  if (resultMessages.length > 0) {
-    // Sum up usage from all result messages (each represents a completed turn)
-    for (const resultMsg of resultMessages) {
-      const usage = extractResultUsage(resultMsg.content);
-      if (usage) {
-        totalInputTokens += usage.inputTokens;
-        totalOutputTokens += usage.outputTokens;
-        totalCacheReadTokens += usage.cacheReadTokens;
-        totalCacheCreationTokens += usage.cacheCreationTokens;
-        if (usage.contextWindow) {
-          detectedContextWindow = usage.contextWindow;
-        }
+  for (const resultMsg of resultMessages) {
+    const usage = extractResultUsage(resultMsg.content);
+    if (usage) {
+      totalInputTokens += usage.inputTokens;
+      totalOutputTokens += usage.outputTokens;
+      totalCacheReadTokens += usage.cacheReadTokens;
+      totalCacheCreationTokens += usage.cacheCreationTokens;
+      if (usage.contextWindow) {
+        detectedContextWindow = usage.contextWindow;
       }
     }
-  } else {
-    // No result messages yet - sum up from assistant messages
+  }
+
+  // Find the most recent assistant message to determine current context occupancy.
+  // We iterate in reverse to find it efficiently.
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg.type === 'assistant') {
+      const usage = extractAssistantUsage(msg.content);
+      if (usage) {
+        // input_tokens from the Anthropic API represents non-cached input tokens.
+        // cache_read_input_tokens are tokens read from cache.
+        // Together they represent the full prompt size (= context window occupancy).
+        lastAssistantInputTokens = usage.inputTokens + usage.cacheReadTokens;
+        if (usage.model && !detectedModel) {
+          detectedModel = usage.model;
+        }
+        break;
+      }
+    }
+  }
+
+  // If we have no result messages yet, sum assistant messages for total consumed tokens
+  if (resultMessages.length === 0) {
     for (const msg of messages) {
       if (msg.type === 'assistant') {
         const usage = extractAssistantUsage(msg.content);
@@ -278,15 +317,18 @@ export function estimateTokenUsage(messages: Message[]): TokenUsageStats {
     }
   }
 
-  // Calculate total tokens (input + output represents actual context usage)
-  // Note: cache_read tokens are part of input_tokens, not additional
+  // Calculate total tokens consumed (for cost/display)
   const totalTokens = totalInputTokens + totalOutputTokens;
 
-  // Determine context window
+  // Determine context window capacity
   const contextWindow = detectedContextWindow ?? getContextWindow(detectedModel);
 
-  // Calculate percentage used
-  const percentUsed = contextWindow > 0 ? (totalTokens / contextWindow) * 100 : 0;
+  // Calculate percentage of context window currently used.
+  // Use the most recent assistant message's prompt size as the indicator.
+  // Fall back to total tokens if no assistant messages found (shouldn't happen in practice).
+  const currentContextTokens =
+    lastAssistantInputTokens > 0 ? lastAssistantInputTokens : totalTokens;
+  const percentUsed = contextWindow > 0 ? (currentContextTokens / contextWindow) * 100 : 0;
 
   return {
     inputTokens: totalInputTokens,
