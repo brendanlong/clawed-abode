@@ -1,5 +1,6 @@
 'use client';
 
+import { useCallback, useState } from 'react';
 import { trpc } from '@/lib/trpc';
 
 export interface SessionActions {
@@ -12,22 +13,56 @@ export interface SessionActions {
 }
 
 /**
+ * Creates mutation options that track all concurrently pending session IDs,
+ * not just the most recent one.
+ */
+function usePendingSet() {
+  const [pending, setPending] = useState<Set<string>>(() => new Set());
+
+  const add = useCallback((sessionId: string) => {
+    setPending((prev) => new Set(prev).add(sessionId));
+  }, []);
+
+  const remove = useCallback((sessionId: string) => {
+    setPending((prev) => {
+      const next = new Set(prev);
+      next.delete(sessionId);
+      return next;
+    });
+  }, []);
+
+  const has = useCallback((sessionId: string) => pending.has(sessionId), [pending]);
+
+  return { add, remove, has };
+}
+
+/**
  * Hook for session mutation actions (start, stop, archive).
  * Separates mutation logic from presentation.
  *
  * @param onSuccess - Callback to run after any successful mutation (e.g., refetch list)
  */
 export function useSessionActions(onSuccess?: () => void): SessionActions {
+  const startPending = usePendingSet();
+  const stopPending = usePendingSet();
+  const archivePending = usePendingSet();
+
   const startMutation = trpc.sessions.start.useMutation({
+    onMutate: ({ sessionId }) => startPending.add(sessionId),
+    onSettled: (_data, _error, { sessionId }) => startPending.remove(sessionId),
     onSuccess,
   });
 
   const stopMutation = trpc.sessions.stop.useMutation({
+    onMutate: ({ sessionId }) => stopPending.add(sessionId),
+    onSettled: (_data, _error, { sessionId }) => stopPending.remove(sessionId),
     onSuccess,
   });
 
   // The API endpoint is "delete" but it now archives instead of permanently deleting
   const archiveMutation = trpc.sessions.delete.useMutation({
+    onMutate: ({ sessionId }) => archivePending.add(sessionId),
+    onSettled: (_data, _error, { sessionId }) => archivePending.remove(sessionId),
     onSuccess,
   });
 
@@ -35,11 +70,8 @@ export function useSessionActions(onSuccess?: () => void): SessionActions {
     start: (sessionId: string) => startMutation.mutate({ sessionId }),
     stop: (sessionId: string) => stopMutation.mutate({ sessionId }),
     archive: (sessionId: string) => archiveMutation.mutate({ sessionId }),
-    isStarting: (sessionId: string) =>
-      startMutation.isPending && startMutation.variables?.sessionId === sessionId,
-    isStopping: (sessionId: string) =>
-      stopMutation.isPending && stopMutation.variables?.sessionId === sessionId,
-    isArchiving: (sessionId: string) =>
-      archiveMutation.isPending && archiveMutation.variables?.sessionId === sessionId,
+    isStarting: startPending.has,
+    isStopping: stopPending.has,
+    isArchiving: archivePending.has,
   };
 }
