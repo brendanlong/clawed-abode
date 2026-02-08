@@ -376,6 +376,10 @@ function useClaudeState(sessionId: string) {
     {
       onData: (trackedData) => {
         setRunningOverride(trackedData.data.running);
+        // When Claude finishes running, refetch commands in case new ones were discovered
+        if (!trackedData.data.running) {
+          refetchCommands();
+        }
       },
       onError: (err) => {
         console.error('Claude running SSE error:', err);
