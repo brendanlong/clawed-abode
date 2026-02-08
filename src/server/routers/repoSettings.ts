@@ -16,6 +16,7 @@ import {
   decryptEnvVarsForContainer,
   decryptMcpServersForContainer,
 } from '../services/settings-helpers';
+import { validateMcpServer } from '../services/mcp-validator';
 
 const log = createLogger('repoSettings');
 
@@ -382,6 +383,42 @@ export const repoSettingsRouter = router({
       log.info('Deleted repo settings', { repoFullName: input.repoFullName });
 
       return { success: true };
+    }),
+
+  /**
+   * Validate an MCP server connection by connecting with the MCP SDK
+   * Only works for HTTP/SSE servers (stdio servers run inside containers)
+   */
+  validateMcpServer: protectedProcedure
+    .input(
+      z.object({
+        repoFullName: repoFullNameSchema,
+        name: z.string().min(1),
+      })
+    )
+    .mutation(async ({ input }) => {
+      const settings = await prisma.repoSettings.findUnique({
+        where: { repoFullName: input.repoFullName },
+        include: { mcpServers: true },
+      });
+
+      if (!settings) {
+        throw new TRPCError({
+          code: 'NOT_FOUND',
+          message: 'Repository settings not found',
+        });
+      }
+
+      const dbServer = settings.mcpServers.find((s) => s.name === input.name);
+      if (!dbServer) {
+        throw new TRPCError({
+          code: 'NOT_FOUND',
+          message: `MCP server "${input.name}" not found`,
+        });
+      }
+
+      const [decrypted] = decryptMcpServersForContainer([dbServer]);
+      return validateMcpServer(decrypted);
     }),
 
   /**
