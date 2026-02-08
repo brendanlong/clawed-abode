@@ -69,6 +69,7 @@ export interface AgentStatus {
   running: boolean;
   messageCount: number;
   lastSequence: number;
+  commands: SlashCommand[];
 }
 
 /**

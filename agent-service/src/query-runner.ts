@@ -188,23 +188,22 @@ export class QueryRunner {
         options: sdkOptions,
       });
 
-      // Fetch supported commands from the query object
-      // This is available after the query is created
-      this.currentQuery
-        .supportedCommands()
-        .then((commands) => {
-          this._supportedCommands = commands;
-          for (const callback of this.commandsCallbacks) {
-            try {
-              callback(commands);
-            } catch {
-              // Don't let callback errors break anything
-            }
+      // Fetch supported commands from the query object.
+      // We await this before iterating messages so the commands are available
+      // to send via SSE while the response is still open.
+      try {
+        const commands = await this.currentQuery.supportedCommands();
+        this._supportedCommands = commands;
+        for (const callback of this.commandsCallbacks) {
+          try {
+            callback(commands);
+          } catch {
+            // Don't let callback errors break anything
           }
-        })
-        .catch((err) => {
-          console.error('Failed to fetch supported commands:', err);
-        });
+        }
+      } catch (err) {
+        console.error('Failed to fetch supported commands:', err);
+      }
 
       // Iterate through all messages from the SDK
       for await (const message of this.currentQuery) {

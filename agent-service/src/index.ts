@@ -157,6 +157,7 @@ function handleStatus(_req: http.IncomingMessage, res: http.ServerResponse): voi
     running: runner.isRunning,
     messageCount: store.getLastSequence(),
     lastSequence: store.getLastSequence(),
+    commands: runner.supportedCommands,
   });
 }
 

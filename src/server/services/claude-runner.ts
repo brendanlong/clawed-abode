@@ -276,6 +276,11 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
     throw new Error('A Claude process is already running for this session');
   }
 
+  // Emit any cached commands from the agent service (from a previous query in this container)
+  if (status.commands?.length > 0) {
+    sseEvents.emitCommands(sessionId, status.commands);
+  }
+
   // Get the next sequence number for this session
   const lastMessage = await prisma.message.findFirst({
     where: { sessionId },

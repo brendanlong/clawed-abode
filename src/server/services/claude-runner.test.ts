@@ -121,7 +121,7 @@ describe('claude-runner service', () => {
     mockPodmanFunctions.getContainerLogs.mockResolvedValue(null);
 
     mockAgentClient.health.mockResolvedValue(true);
-    mockAgentClient.getStatus.mockResolvedValue({ running: false, lastSequence: 0 });
+    mockAgentClient.getStatus.mockResolvedValue({ running: false, lastSequence: 0, commands: [] });
     mockAgentClient.interrupt.mockResolvedValue({ success: true });
     mockAgentClient.getMessages.mockResolvedValue([]);
   });
@@ -286,7 +286,7 @@ describe('claude-runner service', () => {
         containerId: 'container-123',
       });
       mockPodmanFunctions.getContainerStatus.mockResolvedValue('running');
-      mockAgentClient.getStatus.mockResolvedValue({ running: true, lastSequence: 5 });
+      mockAgentClient.getStatus.mockResolvedValue({ running: true, lastSequence: 5, commands: [] });
 
       const result = await isClaudeRunningAsync('test-session-running');
       expect(result).toBe(true);
@@ -297,7 +297,11 @@ describe('claude-runner service', () => {
         containerId: 'container-123',
       });
       mockPodmanFunctions.getContainerStatus.mockResolvedValue('running');
-      mockAgentClient.getStatus.mockResolvedValue({ running: false, lastSequence: 0 });
+      mockAgentClient.getStatus.mockResolvedValue({
+        running: false,
+        lastSequence: 0,
+        commands: [],
+      });
 
       const result = await isClaudeRunningAsync('test-session-idle');
       expect(result).toBe(false);
@@ -452,7 +456,11 @@ describe('claude-runner service', () => {
         },
       ]);
       mockPodmanFunctions.getContainerStatus.mockResolvedValue('running');
-      mockAgentClient.getStatus.mockResolvedValue({ running: false, lastSequence: 0 });
+      mockAgentClient.getStatus.mockResolvedValue({
+        running: false,
+        lastSequence: 0,
+        commands: [],
+      });
 
       const result = await reconcileOrphanedProcesses();
 
@@ -479,7 +487,11 @@ describe('claude-runner service', () => {
         { id: 'session-2', containerId: 'container-2' },
       ]);
       mockPodmanFunctions.getContainerStatus.mockResolvedValue('running');
-      mockAgentClient.getStatus.mockResolvedValue({ running: false, lastSequence: 0 });
+      mockAgentClient.getStatus.mockResolvedValue({
+        running: false,
+        lastSequence: 0,
+        commands: [],
+      });
 
       const result = await reconcileOrphanedProcesses();
 
@@ -519,7 +531,7 @@ describe('claude-runner service', () => {
       mockPrisma.session.findUnique.mockResolvedValue({ repoPath: 'my-repo' });
       mockPodmanFunctions.getContainerStatus.mockResolvedValue('running');
       mockAgentClient.health.mockResolvedValue(true);
-      mockAgentClient.getStatus.mockResolvedValue({ running: true, lastSequence: 5 });
+      mockAgentClient.getStatus.mockResolvedValue({ running: true, lastSequence: 5, commands: [] });
 
       await expect(
         runClaudeCommand({
@@ -534,7 +546,11 @@ describe('claude-runner service', () => {
       mockPrisma.session.findUnique.mockResolvedValue({ repoPath: 'my-repo' });
       mockPodmanFunctions.getContainerStatus.mockResolvedValue('running');
       mockAgentClient.health.mockResolvedValue(true);
-      mockAgentClient.getStatus.mockResolvedValue({ running: false, lastSequence: 0 });
+      mockAgentClient.getStatus.mockResolvedValue({
+        running: false,
+        lastSequence: 0,
+        commands: [],
+      });
 
       // Return empty async generator
       mockAgentClient.query.mockReturnValue(
@@ -562,7 +578,11 @@ describe('claude-runner service', () => {
       mockPrisma.session.findUnique.mockResolvedValue({ repoPath: 'my-repo' });
       mockPodmanFunctions.getContainerStatus.mockResolvedValue('running');
       mockAgentClient.health.mockResolvedValue(true);
-      mockAgentClient.getStatus.mockResolvedValue({ running: false, lastSequence: 0 });
+      mockAgentClient.getStatus.mockResolvedValue({
+        running: false,
+        lastSequence: 0,
+        commands: [],
+      });
 
       mockAgentClient.query.mockReturnValue(
         (async function* () {
@@ -588,7 +608,11 @@ describe('claude-runner service', () => {
       mockPrisma.session.findUnique.mockResolvedValue({ repoPath: 'my-repo' });
       mockPodmanFunctions.getContainerStatus.mockResolvedValue('running');
       mockAgentClient.health.mockResolvedValue(true);
-      mockAgentClient.getStatus.mockResolvedValue({ running: false, lastSequence: 0 });
+      mockAgentClient.getStatus.mockResolvedValue({
+        running: false,
+        lastSequence: 0,
+        commands: [],
+      });
 
       const assistantMessage = {
         type: 'assistant',
@@ -625,7 +649,11 @@ describe('claude-runner service', () => {
       mockPrisma.session.findUnique.mockResolvedValue({ repoPath: 'my-repo' });
       mockPodmanFunctions.getContainerStatus.mockResolvedValue('running');
       mockAgentClient.health.mockResolvedValue(true);
-      mockAgentClient.getStatus.mockResolvedValue({ running: false, lastSequence: 0 });
+      mockAgentClient.getStatus.mockResolvedValue({
+        running: false,
+        lastSequence: 0,
+        commands: [],
+      });
 
       const agentMessage = {
         type: 'assistant',
@@ -656,7 +684,11 @@ describe('claude-runner service', () => {
       mockPrisma.session.findUnique.mockResolvedValue({ repoPath: 'my-repo' });
       mockPodmanFunctions.getContainerStatus.mockResolvedValue('running');
       mockAgentClient.health.mockResolvedValue(true);
-      mockAgentClient.getStatus.mockResolvedValue({ running: false, lastSequence: 0 });
+      mockAgentClient.getStatus.mockResolvedValue({
+        running: false,
+        lastSequence: 0,
+        commands: [],
+      });
 
       mockAgentClient.query.mockReturnValue(
         (async function* () {
@@ -680,7 +712,11 @@ describe('claude-runner service', () => {
       mockPrisma.message.findFirst.mockResolvedValue(null); // no existing messages
       mockPodmanFunctions.getContainerStatus.mockResolvedValue('running');
       mockAgentClient.health.mockResolvedValue(true);
-      mockAgentClient.getStatus.mockResolvedValue({ running: false, lastSequence: 0 });
+      mockAgentClient.getStatus.mockResolvedValue({
+        running: false,
+        lastSequence: 0,
+        commands: [],
+      });
 
       mockAgentClient.query.mockReturnValue(
         (async function* () {
@@ -708,7 +744,11 @@ describe('claude-runner service', () => {
       mockPodmanFunctions.getContainerStatus.mockResolvedValue('running');
       mockAgentClient.health.mockResolvedValue(true);
       // Agent has lastSequence: 0 (fresh container, no prior messages in agent)
-      mockAgentClient.getStatus.mockResolvedValue({ running: false, lastSequence: 0 });
+      mockAgentClient.getStatus.mockResolvedValue({
+        running: false,
+        lastSequence: 0,
+        commands: [],
+      });
 
       mockAgentClient.query.mockReturnValue(
         (async function* () {
@@ -736,7 +776,11 @@ describe('claude-runner service', () => {
       mockPodmanFunctions.getContainerStatus.mockResolvedValue('running');
       mockAgentClient.health.mockResolvedValue(true);
       // Agent has lastSequence: 3 (has prior messages from an earlier query in same container lifecycle)
-      mockAgentClient.getStatus.mockResolvedValue({ running: false, lastSequence: 3 });
+      mockAgentClient.getStatus.mockResolvedValue({
+        running: false,
+        lastSequence: 3,
+        commands: [],
+      });
 
       mockAgentClient.query.mockReturnValue(
         (async function* () {
