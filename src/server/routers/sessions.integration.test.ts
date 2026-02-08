@@ -48,6 +48,13 @@ vi.mock('../services/repo-settings', () => ({
 // Mock global-settings
 vi.mock('../services/global-settings', () => ({
   getGlobalSettings: vi.fn().mockResolvedValue(null),
+  getGlobalSettingsForContainer: vi.fn().mockResolvedValue({
+    systemPromptOverride: null,
+    systemPromptOverrideEnabled: false,
+    systemPromptAppend: null,
+    envVars: [],
+    mcpServers: [],
+  }),
 }));
 
 const mockSseEvents = vi.hoisted(() => ({
