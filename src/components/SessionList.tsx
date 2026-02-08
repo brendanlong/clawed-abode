@@ -6,12 +6,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Spinner } from '@/components/ui/spinner';
 import { SessionListItem } from '@/components/SessionListItem';
 import type { Session } from '@/hooks/useSessionList';
-import type { SessionActions } from '@/hooks/useSessionActions';
 
 export interface SessionListProps {
   sessions: Session[];
   isLoading: boolean;
-  actions: SessionActions;
+  onMutationSuccess?: () => void;
   showArchived: boolean;
   onToggleArchived: () => void;
 }
@@ -23,7 +22,7 @@ export interface SessionListProps {
 export function SessionList({
   sessions,
   isLoading,
-  actions,
+  onMutationSuccess,
   showArchived,
   onToggleArchived,
 }: SessionListProps) {
@@ -65,7 +64,11 @@ export function SessionList({
           {activeSessions.length > 0 ? (
             <ul className="divide-y divide-border">
               {activeSessions.map((session) => (
-                <SessionListItem key={session.id} session={session} actions={actions} />
+                <SessionListItem
+                  key={session.id}
+                  session={session}
+                  onMutationSuccess={onMutationSuccess}
+                />
               ))}
             </ul>
           ) : (
@@ -97,7 +100,11 @@ export function SessionList({
           <CardContent className="p-0">
             <ul className="divide-y divide-border">
               {archivedSessions.map((session) => (
-                <SessionListItem key={session.id} session={session} actions={actions} />
+                <SessionListItem
+                  key={session.id}
+                  session={session}
+                  onMutationSuccess={onMutationSuccess}
+                />
               ))}
             </ul>
           </CardContent>
