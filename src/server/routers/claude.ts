@@ -205,20 +205,43 @@ export const claudeRouter = router({
         });
       }
 
-      // Fetch all result messages for the session (they contain aggregated token usage per turn)
-      // We only need result messages since they contain the cumulative stats
-      const messages = await prisma.message.findMany({
-        where: {
-          sessionId: input.sessionId,
-          type: { in: ['result', 'system'] },
-        },
-        select: {
-          type: true,
-          content: true,
-        },
-      });
+      // Fetch result and system messages for total consumed tokens and model info,
+      // plus the most recent assistant message for current context window occupancy.
+      const [resultAndSystemMessages, lastAssistantMessage] = await Promise.all([
+        prisma.message.findMany({
+          where: {
+            sessionId: input.sessionId,
+            type: { in: ['result', 'system'] },
+          },
+          select: {
+            type: true,
+            content: true,
+            sequence: true,
+          },
+          orderBy: { sequence: 'asc' },
+        }),
+        prisma.message.findFirst({
+          where: {
+            sessionId: input.sessionId,
+            type: 'assistant',
+          },
+          select: {
+            type: true,
+            content: true,
+            sequence: true,
+          },
+          orderBy: { sequence: 'desc' },
+        }),
+      ]);
 
-      const parsedMessages = messages.map((m) => ({
+      // Combine and sort by sequence so estimateTokenUsage sees them in order
+      const allMessages = [...resultAndSystemMessages];
+      if (lastAssistantMessage) {
+        allMessages.push(lastAssistantMessage);
+      }
+      allMessages.sort((a, b) => a.sequence - b.sequence);
+
+      const parsedMessages = allMessages.map((m) => ({
         type: m.type,
         content: JSON.parse(m.content),
       }));
