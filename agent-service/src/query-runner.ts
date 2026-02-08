@@ -189,11 +189,26 @@ export class QueryRunner {
       });
 
       // Fetch supported commands from the query object.
+      // We try initializationResult() first (which includes commands along with
+      // other init data), then fall back to supportedCommands().
       // We await this before iterating messages so the commands are available
       // to send via SSE while the response is still open.
       try {
-        const commands = await this.currentQuery.supportedCommands();
-        console.log(`supportedCommands() returned ${commands.length} commands`);
+        let commands: SlashCommand[] = [];
+
+        // Try initializationResult() first - it returns the full init response
+        // including commands from the SDK control channel
+        try {
+          const initResult = await this.currentQuery.initializationResult();
+          commands = initResult.commands ?? [];
+          console.log(`initializationResult() returned ${commands.length} commands`);
+        } catch (initErr) {
+          console.log('initializationResult() failed, trying supportedCommands():', initErr);
+          // Fall back to supportedCommands()
+          commands = await this.currentQuery.supportedCommands();
+          console.log(`supportedCommands() returned ${commands.length} commands`);
+        }
+
         if (commands.length > 0) {
           this._supportedCommands = commands;
           for (const callback of this.commandsCallbacks) {
