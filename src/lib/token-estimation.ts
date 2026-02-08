@@ -4,10 +4,9 @@
  * Estimates context window usage from Claude Code messages.
  *
  * Key insight: The "context usage %" should reflect how full the context window
- * currently is, NOT the total tokens consumed across all API calls. Each assistant
- * message's input_tokens represents the full prompt sent for that API call, which
- * is the best proxy for current context size. We use the most recent assistant
- * message's input_tokens (including cache reads, which are still part of the prompt).
+ * currently is, NOT the total tokens consumed across all API calls. We use the
+ * most recent assistant message's input_tokens + cache_read_input_tokens (the full
+ * prompt size) plus output_tokens (which will become input in the next call).
  *
  * Total consumed tokens (summed from result messages) are tracked separately
  * for cost display purposes.
@@ -289,8 +288,9 @@ export function estimateTokenUsage(messages: Message[]): TokenUsageStats {
       if (usage) {
         // input_tokens from the Anthropic API represents non-cached input tokens.
         // cache_read_input_tokens are tokens read from cache.
-        // Together they represent the full prompt size (= context window occupancy).
-        lastAssistantInputTokens = usage.inputTokens + usage.cacheReadTokens;
+        // output_tokens will become part of the input in the next API call.
+        // Together they represent the current context window occupancy.
+        lastAssistantInputTokens = usage.inputTokens + usage.cacheReadTokens + usage.outputTokens;
         if (usage.model && !detectedModel) {
           detectedModel = usage.model;
         }

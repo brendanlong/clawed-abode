@@ -137,9 +137,9 @@ describe('token-estimation', () => {
       expect(result.outputTokens).toBe(1500);
       expect(result.totalTokens).toBe(16500);
 
-      // Context % based on the LAST assistant message's input_tokens (10000)
-      // 10000 / 200000 = 5%
-      expect(result.percentUsed).toBe(5);
+      // Context % based on the LAST assistant message's input + output (10000 + 1000 = 11000)
+      // 11000 / 200000 = 5.5%
+      expect(result.percentUsed).toBeCloseTo(5.5, 0);
     });
 
     it('should include cache_read_input_tokens in context percentage', () => {
@@ -161,9 +161,9 @@ describe('token-estimation', () => {
 
       const result = estimateTokenUsage(messages);
 
-      // Context occupancy = input_tokens + cache_read_input_tokens = 5000 + 45000 = 50000
-      // 50000 / 200000 = 25%
-      expect(result.percentUsed).toBe(25);
+      // Context occupancy = input_tokens + cache_read + output = 5000 + 45000 + 500 = 50500
+      // 50500 / 200000 = 25.25%
+      expect(result.percentUsed).toBeCloseTo(25.25, 1);
     });
 
     it('should prefer result messages for total token counts over assistant messages', () => {
@@ -231,9 +231,9 @@ describe('token-estimation', () => {
       expect(result.outputTokens).toBe(10000);
       expect(result.totalTokens).toBe(90000);
 
-      // Context % from last assistant message: input_tokens + cache_read = 50000 + 50000 = 100000
-      // 100000 / 200000 = 50%
-      expect(result.percentUsed).toBe(50);
+      // Context % from last assistant message: input + cache_read + output = 50000 + 50000 + 500 = 100500
+      // 100500 / 200000 = 50.25%
+      expect(result.percentUsed).toBeCloseTo(50.25, 1);
     });
 
     it('should extract usage from modelUsage in result messages', () => {
@@ -337,8 +337,8 @@ describe('token-estimation', () => {
 
       const result = estimateTokenUsage(messages);
 
-      // Context % based on last assistant's input_tokens: 100k / 200k = 50%
-      expect(result.percentUsed).toBe(50);
+      // Context % based on last assistant's input + output: (100k + 5k) / 200k = 52.5%
+      expect(result.percentUsed).toBeCloseTo(52.5, 0);
     });
 
     it('should cap percentage at 100%', () => {
