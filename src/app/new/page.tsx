@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { AuthGuard } from '@/components/AuthGuard';
@@ -88,6 +88,27 @@ function RepoSelector({
     return 0;
   });
 
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const sentinelRef = useRef<HTMLLIElement>(null);
+
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    const scrollContainer = scrollRef.current;
+    if (!sentinel || !scrollContainer) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && hasNextPage && !isFetchingNextPage) {
+          fetchNextPage();
+        }
+      },
+      { root: scrollContainer, rootMargin: '100px' }
+    );
+
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
+
   return (
     <div className="space-y-4">
       <div className="space-y-2">
@@ -100,7 +121,7 @@ function RepoSelector({
         />
       </div>
 
-      <div className="border rounded-lg max-h-64 overflow-y-auto">
+      <div ref={scrollRef} className="border rounded-lg max-h-64 overflow-y-auto">
         {isLoading ? (
           <div className="flex justify-center py-8">
             <Spinner />
@@ -150,14 +171,8 @@ function RepoSelector({
               );
             })}
             {hasNextPage && (
-              <li className="px-4 py-3 text-center">
-                <Button
-                  variant="link"
-                  onClick={() => fetchNextPage()}
-                  disabled={isFetchingNextPage}
-                >
-                  {isFetchingNextPage ? 'Loading...' : 'Load more'}
-                </Button>
+              <li ref={sentinelRef} className="px-4 py-3 flex justify-center">
+                <Spinner size="sm" />
               </li>
             )}
           </ul>
@@ -253,6 +268,27 @@ function IssueSelector({
 
   const issues = data?.pages.flatMap((p) => p.issues) || [];
 
+  const issueScrollRef = useRef<HTMLDivElement>(null);
+  const issueSentinelRef = useRef<HTMLLIElement>(null);
+
+  useEffect(() => {
+    const sentinel = issueSentinelRef.current;
+    const scrollContainer = issueScrollRef.current;
+    if (!sentinel || !scrollContainer) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && hasNextPage && !isFetchingNextPage) {
+          fetchNextPage();
+        }
+      },
+      { root: scrollContainer, rootMargin: '100px' }
+    );
+
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
+
   return (
     <div className="space-y-4">
       <div className="space-y-2">
@@ -265,7 +301,7 @@ function IssueSelector({
         />
       </div>
 
-      <div className="border rounded-lg max-h-48 overflow-y-auto">
+      <div ref={issueScrollRef} className="border rounded-lg max-h-48 overflow-y-auto">
         {isLoading ? (
           <div className="flex justify-center py-6">
             <Spinner />
@@ -319,15 +355,8 @@ function IssueSelector({
               </li>
             ))}
             {hasNextPage && (
-              <li className="px-4 py-2 text-center">
-                <Button
-                  variant="link"
-                  size="sm"
-                  onClick={() => fetchNextPage()}
-                  disabled={isFetchingNextPage}
-                >
-                  {isFetchingNextPage ? 'Loading...' : 'Load more'}
-                </Button>
+              <li ref={issueSentinelRef} className="px-4 py-2 flex justify-center">
+                <Spinner size="sm" />
               </li>
             )}
           </ul>
