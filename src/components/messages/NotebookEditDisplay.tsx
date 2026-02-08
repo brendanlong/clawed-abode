@@ -1,10 +1,8 @@
 'use client';
 
-import { useState } from 'react';
 import { cn } from '@/lib/utils';
-import { Card, CardContent } from '@/components/ui/card';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Badge } from '@/components/ui/badge';
+import { ToolDisplayWrapper } from './ToolDisplayWrapper';
 import type { ToolCall } from './types';
 
 interface NotebookEditInput {
@@ -38,9 +36,7 @@ function NotebookIcon() {
  * Shows the notebook path, edit mode, cell info, and content.
  */
 export function NotebookEditDisplay({ tool }: { tool: ToolCall }) {
-  const [expanded, setExpanded] = useState(false);
   const hasOutput = tool.output !== undefined;
-  const isPending = !hasOutput;
 
   const input = tool.input as NotebookEditInput | undefined;
   const notebookPath = input?.notebook_path ?? 'Unknown notebook';
@@ -64,97 +60,67 @@ export function NotebookEditDisplay({ tool }: { tool: ToolCall }) {
   }[editMode];
 
   return (
-    <div className="group">
-      <Collapsible open={expanded} onOpenChange={setExpanded}>
-        <Card
-          className={cn(
-            'mt-2',
-            tool.is_error && 'border-red-300 dark:border-red-700',
-            isPending && 'border-yellow-300 dark:border-yellow-700'
-          )}
-        >
-          <CollapsibleTrigger className="w-full px-3 py-2 text-left flex items-center justify-between text-sm hover:bg-muted/50 rounded-t-xl">
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                <NotebookIcon />
-                <span className="font-mono text-primary">NotebookEdit</span>
-                <span className="text-muted-foreground font-mono text-xs truncate">{fileName}</span>
-                <Badge variant="outline" className={cn('text-xs', editModeColor)}>
-                  {editModeLabel}
-                </Badge>
-                <Badge variant="outline" className="text-xs">
-                  {cellType}
-                </Badge>
-                {isPending && (
-                  <Badge
-                    variant="outline"
-                    className="text-xs border-yellow-500 text-yellow-700 dark:text-yellow-400"
-                  >
-                    Running...
-                  </Badge>
-                )}
-                {tool.is_error && (
-                  <Badge variant="destructive" className="text-xs">
-                    Error
-                  </Badge>
-                )}
-              </div>
-              <div className="text-muted-foreground text-xs mt-1 truncate">{notebookPath}</div>
-            </div>
-            <span className="text-muted-foreground ml-2 flex-shrink-0">{expanded ? '−' : '+'}</span>
-          </CollapsibleTrigger>
+    <ToolDisplayWrapper
+      tool={tool}
+      icon={<NotebookIcon />}
+      title="NotebookEdit"
+      headerContent={
+        <>
+          <span className="text-muted-foreground font-mono text-xs truncate">{fileName}</span>
+          <Badge variant="outline" className={cn('text-xs', editModeColor)}>
+            {editModeLabel}
+          </Badge>
+          <Badge variant="outline" className="text-xs">
+            {cellType}
+          </Badge>
+        </>
+      }
+      subtitle={<div className="text-muted-foreground text-xs mt-1 truncate">{notebookPath}</div>}
+      doneBadge={null}
+    >
+      {/* Cell info */}
+      {cellId && (
+        <div>
+          <span className="text-muted-foreground">Cell ID: </span>
+          <code className="bg-muted px-1.5 py-0.5 rounded">{cellId}</code>
+        </div>
+      )}
 
-          <CollapsibleContent>
-            <CardContent className="p-3 space-y-3 text-xs">
-              {/* Cell info */}
-              {cellId && (
-                <div>
-                  <span className="text-muted-foreground">Cell ID: </span>
-                  <code className="bg-muted px-1.5 py-0.5 rounded">{cellId}</code>
-                </div>
-              )}
+      {/* Content section */}
+      {editMode !== 'delete' && newSource && (
+        <div>
+          <div className="text-muted-foreground mb-1">
+            {editMode === 'insert' ? 'New cell content:' : 'Updated content:'}
+          </div>
+          <pre
+            className={cn(
+              'border p-2 rounded overflow-x-auto max-h-96 overflow-y-auto',
+              editMode === 'insert'
+                ? 'bg-green-50 dark:bg-green-950/50 border-green-200 dark:border-green-800'
+                : 'bg-blue-50 dark:bg-blue-950/50 border-blue-200 dark:border-blue-800'
+            )}
+          >
+            <code className="whitespace-pre-wrap break-words">{newSource}</code>
+          </pre>
+        </div>
+      )}
 
-              {/* Content section */}
-              {editMode !== 'delete' && newSource && (
-                <div>
-                  <div className="text-muted-foreground mb-1">
-                    {editMode === 'insert' ? 'New cell content:' : 'Updated content:'}
-                  </div>
-                  <pre
-                    className={cn(
-                      'border p-2 rounded overflow-x-auto max-h-96 overflow-y-auto',
-                      editMode === 'insert'
-                        ? 'bg-green-50 dark:bg-green-950/50 border-green-200 dark:border-green-800'
-                        : 'bg-blue-50 dark:bg-blue-950/50 border-blue-200 dark:border-blue-800'
-                    )}
-                  >
-                    <code className="whitespace-pre-wrap break-words">{newSource}</code>
-                  </pre>
-                </div>
-              )}
-
-              {/* Output/Result */}
-              {hasOutput && (
-                <div>
-                  <div className="text-muted-foreground mb-1">Result:</div>
-                  <pre
-                    className={cn(
-                      'p-2 rounded overflow-x-auto max-h-32 overflow-y-auto',
-                      tool.is_error
-                        ? 'bg-red-50 dark:bg-red-950 text-red-800 dark:text-red-200'
-                        : 'bg-muted'
-                    )}
-                  >
-                    {typeof tool.output === 'string'
-                      ? tool.output
-                      : JSON.stringify(tool.output, null, 2)}
-                  </pre>
-                </div>
-              )}
-            </CardContent>
-          </CollapsibleContent>
-        </Card>
-      </Collapsible>
-    </div>
+      {/* Output/Result */}
+      {hasOutput && (
+        <div>
+          <div className="text-muted-foreground mb-1">Result:</div>
+          <pre
+            className={cn(
+              'p-2 rounded overflow-x-auto max-h-32 overflow-y-auto',
+              tool.is_error
+                ? 'bg-red-50 dark:bg-red-950 text-red-800 dark:text-red-200'
+                : 'bg-muted'
+            )}
+          >
+            {typeof tool.output === 'string' ? tool.output : JSON.stringify(tool.output, null, 2)}
+          </pre>
+        </div>
+      )}
+    </ToolDisplayWrapper>
   );
 }
