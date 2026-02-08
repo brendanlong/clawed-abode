@@ -112,6 +112,8 @@ model GlobalSettings {
   systemPromptOverride      String?  // If set, replaces the default system prompt
   systemPromptOverrideEnabled Boolean @default(false) // Whether to use the override
   systemPromptAppend        String?  // Additional content appended after default/override prompt
+  claudeModel               String?  // If set, overrides CLAUDE_MODEL env var
+  claudeApiKey              String?  // If set (encrypted), overrides CLAUDE_CODE_OAUTH_TOKEN env var
   createdAt                 DateTime @default(now())
   updatedAt                 DateTime @updatedAt
 }

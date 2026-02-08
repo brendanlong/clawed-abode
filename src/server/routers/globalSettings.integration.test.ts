@@ -52,6 +52,10 @@ describe('globalSettings router', () => {
         systemPromptOverride: null,
         systemPromptOverrideEnabled: false,
         systemPromptAppend: null,
+        claudeModel: null,
+        hasClaudeApiKey: false,
+        defaultClaudeModel: 'opus',
+        hasEnvApiKey: true,
       });
     });
 
@@ -225,6 +229,85 @@ describe('globalSettings router', () => {
 
       const result = await caller.globalSettings.get();
       expect(result.systemPromptOverrideEnabled).toBe(true);
+    });
+  });
+
+  describe('setClaudeModel', () => {
+    it('should set the Claude model', async () => {
+      const caller = createCaller();
+
+      await caller.globalSettings.setClaudeModel({ claudeModel: 'sonnet' });
+
+      const result = await caller.globalSettings.get();
+      expect(result.claudeModel).toBe('sonnet');
+    });
+
+    it('should clear the model when set to null', async () => {
+      const caller = createCaller();
+
+      await caller.globalSettings.setClaudeModel({ claudeModel: 'sonnet' });
+      await caller.globalSettings.setClaudeModel({ claudeModel: null });
+
+      const result = await caller.globalSettings.get();
+      expect(result.claudeModel).toBeNull();
+    });
+
+    it('should clear the model when set to empty string', async () => {
+      const caller = createCaller();
+
+      await caller.globalSettings.setClaudeModel({ claudeModel: 'sonnet' });
+      await caller.globalSettings.setClaudeModel({ claudeModel: '  ' });
+
+      const result = await caller.globalSettings.get();
+      expect(result.claudeModel).toBeNull();
+    });
+
+    it('should trim whitespace', async () => {
+      const caller = createCaller();
+
+      await caller.globalSettings.setClaudeModel({ claudeModel: '  opus  ' });
+
+      const result = await caller.globalSettings.get();
+      expect(result.claudeModel).toBe('opus');
+    });
+  });
+
+  describe('setClaudeApiKey', () => {
+    it('should set an encrypted API key', async () => {
+      const caller = createCaller();
+
+      await caller.globalSettings.setClaudeApiKey({ claudeApiKey: 'my-secret-token' });
+
+      const result = await caller.globalSettings.get();
+      expect(result.hasClaudeApiKey).toBe(true);
+
+      // Verify it's encrypted in the DB
+      const dbSettings = await testPrisma.globalSettings.findUnique({
+        where: { id: 'global' },
+      });
+      expect(dbSettings!.claudeApiKey).not.toBe('my-secret-token');
+      expect(dbSettings!.claudeApiKey).toContain(':'); // Encrypted format includes colons
+    });
+
+    it('should clear the API key when set to empty string', async () => {
+      const caller = createCaller();
+
+      await caller.globalSettings.setClaudeApiKey({ claudeApiKey: 'my-secret-token' });
+      await caller.globalSettings.setClaudeApiKey({ claudeApiKey: '' });
+
+      const result = await caller.globalSettings.get();
+      expect(result.hasClaudeApiKey).toBe(false);
+    });
+
+    it('should decrypt correctly for container use', async () => {
+      const caller = createCaller();
+
+      await caller.globalSettings.setClaudeApiKey({ claudeApiKey: 'my-secret-token' });
+
+      // Verify the service layer decrypts correctly
+      const { getGlobalSettingsForContainer } = await import('../services/global-settings');
+      const containerSettings = await getGlobalSettingsForContainer();
+      expect(containerSettings.claudeApiKey).toBe('my-secret-token');
     });
   });
 

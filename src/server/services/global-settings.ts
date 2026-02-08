@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/prisma';
+import { decrypt } from '@/lib/crypto';
 import { decryptEnvVarsForContainer, decryptMcpServersForContainer } from './settings-helpers';
 import type { ContainerEnvVar, ContainerMcpServer } from './repo-settings';
 
@@ -6,7 +7,18 @@ import type { ContainerEnvVar, ContainerMcpServer } from './repo-settings';
 const GLOBAL_SETTINGS_ID = 'global';
 
 /**
- * Global settings for use in Claude sessions
+ * Global settings for display in the UI (no secrets exposed)
+ */
+export interface GlobalDisplaySettings {
+  systemPromptOverride: string | null;
+  systemPromptOverrideEnabled: boolean;
+  systemPromptAppend: string | null;
+  claudeModel: string | null;
+  hasClaudeApiKey: boolean;
+}
+
+/**
+ * Global settings for use in Claude sessions (prompt building)
  */
 export interface GlobalSystemPromptSettings {
   systemPromptOverride: string | null;
@@ -18,15 +30,17 @@ export interface GlobalSystemPromptSettings {
  * Global settings including env vars and MCP servers for container creation
  */
 export interface GlobalContainerSettings extends GlobalSystemPromptSettings {
+  claudeModel: string | null;
+  claudeApiKey: string | null;
   envVars: ContainerEnvVar[];
   mcpServers: ContainerMcpServer[];
 }
 
 /**
- * Get global settings for use in Claude sessions
- * Returns defaults if no settings exist
+ * Get global settings for display in the UI.
+ * Does not expose secret values.
  */
-export async function getGlobalSettings(): Promise<GlobalSystemPromptSettings> {
+export async function getGlobalSettings(): Promise<GlobalDisplaySettings> {
   const settings = await prisma.globalSettings.findUnique({
     where: { id: GLOBAL_SETTINGS_ID },
   });
@@ -36,6 +50,8 @@ export async function getGlobalSettings(): Promise<GlobalSystemPromptSettings> {
       systemPromptOverride: null,
       systemPromptOverrideEnabled: false,
       systemPromptAppend: null,
+      claudeModel: null,
+      hasClaudeApiKey: false,
     };
   }
 
@@ -43,6 +59,8 @@ export async function getGlobalSettings(): Promise<GlobalSystemPromptSettings> {
     systemPromptOverride: settings.systemPromptOverride,
     systemPromptOverrideEnabled: settings.systemPromptOverrideEnabled,
     systemPromptAppend: settings.systemPromptAppend,
+    claudeModel: settings.claudeModel,
+    hasClaudeApiKey: settings.claudeApiKey !== null,
   };
 }
 
@@ -59,10 +77,18 @@ export async function getGlobalSettingsForContainer(): Promise<GlobalContainerSe
     prisma.mcpServer.findMany({ where: { repoSettingsId: null } }),
   ]);
 
+  // Decrypt the API key if stored
+  let claudeApiKey: string | null = null;
+  if (settings?.claudeApiKey) {
+    claudeApiKey = decrypt(settings.claudeApiKey);
+  }
+
   return {
     systemPromptOverride: settings?.systemPromptOverride ?? null,
     systemPromptOverrideEnabled: settings?.systemPromptOverrideEnabled ?? false,
     systemPromptAppend: settings?.systemPromptAppend ?? null,
+    claudeModel: settings?.claudeModel ?? null,
+    claudeApiKey,
     envVars: decryptEnvVarsForContainer(envVarRows),
     mcpServers: decryptMcpServersForContainer(mcpServerRows),
   };
