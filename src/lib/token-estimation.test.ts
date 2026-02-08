@@ -78,7 +78,7 @@ describe('token-estimation', () => {
       expect(result.totalTokens).toBe(1500);
     });
 
-    it('should sum usage from multiple assistant messages', () => {
+    it('should sum usage from multiple assistant messages for total tokens', () => {
       const messages = [
         {
           type: 'assistant',
@@ -107,7 +107,66 @@ describe('token-estimation', () => {
       expect(result.totalTokens).toBe(4500);
     });
 
-    it('should prefer result messages over assistant messages', () => {
+    it('should use last assistant message input_tokens for context percentage', () => {
+      const messages = [
+        {
+          type: 'assistant',
+          content: {
+            type: 'assistant',
+            message: {
+              usage: { input_tokens: 5000, output_tokens: 500 },
+            },
+          },
+        },
+        {
+          type: 'assistant',
+          content: {
+            type: 'assistant',
+            message: {
+              // Context grows: the second API call has a larger prompt
+              usage: { input_tokens: 10000, output_tokens: 1000 },
+            },
+          },
+        },
+      ];
+
+      const result = estimateTokenUsage(messages);
+
+      // Total tokens summed from both messages (no result messages present)
+      expect(result.inputTokens).toBe(15000);
+      expect(result.outputTokens).toBe(1500);
+      expect(result.totalTokens).toBe(16500);
+
+      // Context % based on the LAST assistant message's input + output (10000 + 1000 = 11000)
+      // 11000 / 200000 = 5.5%
+      expect(result.percentUsed).toBeCloseTo(5.5, 0);
+    });
+
+    it('should include cache_read_input_tokens in context percentage', () => {
+      const messages = [
+        {
+          type: 'assistant',
+          content: {
+            type: 'assistant',
+            message: {
+              usage: {
+                input_tokens: 5000,
+                output_tokens: 500,
+                cache_read_input_tokens: 45000,
+              },
+            },
+          },
+        },
+      ];
+
+      const result = estimateTokenUsage(messages);
+
+      // Context occupancy = input_tokens + cache_read + output = 5000 + 45000 + 500 = 50500
+      // 50500 / 200000 = 25.25%
+      expect(result.percentUsed).toBeCloseTo(25.25, 1);
+    });
+
+    it('should prefer result messages for total token counts over assistant messages', () => {
       const messages = [
         {
           type: 'assistant',
@@ -132,13 +191,62 @@ describe('token-estimation', () => {
 
       const result = estimateTokenUsage(messages);
 
-      // Should use result message, not assistant
+      // Total tokens come from result message
       expect(result.inputTokens).toBe(5000);
       expect(result.outputTokens).toBe(2500);
     });
 
+    it('should use assistant message for context % even when result messages exist', () => {
+      const messages = [
+        {
+          type: 'assistant',
+          content: {
+            type: 'assistant',
+            message: {
+              usage: {
+                input_tokens: 50000,
+                output_tokens: 500,
+                cache_read_input_tokens: 50000,
+              },
+            },
+          },
+        },
+        {
+          type: 'result',
+          content: {
+            type: 'result',
+            // Result usage sums all API calls in the query, which is NOT current context size
+            usage: {
+              input_tokens: 80000,
+              output_tokens: 10000,
+            },
+          },
+        },
+      ];
+
+      const result = estimateTokenUsage(messages);
+
+      // Total tokens from result message (for cost)
+      expect(result.inputTokens).toBe(80000);
+      expect(result.outputTokens).toBe(10000);
+      expect(result.totalTokens).toBe(90000);
+
+      // Context % from last assistant message: input + cache_read + output = 50000 + 50000 + 500 = 100500
+      // 100500 / 200000 = 50.25%
+      expect(result.percentUsed).toBeCloseTo(50.25, 1);
+    });
+
     it('should extract usage from modelUsage in result messages', () => {
       const messages = [
+        {
+          type: 'assistant',
+          content: {
+            type: 'assistant',
+            message: {
+              usage: { input_tokens: 3000, output_tokens: 500 },
+            },
+          },
+        },
         {
           type: 'result',
           content: {
@@ -201,8 +309,20 @@ describe('token-estimation', () => {
       expect(result.model).toBe('claude-3-5-sonnet-20241022');
     });
 
-    it('should calculate percentage used correctly', () => {
+    it('should calculate percentage based on last assistant message', () => {
       const messages = [
+        {
+          type: 'assistant',
+          content: {
+            type: 'assistant',
+            message: {
+              usage: {
+                input_tokens: 100_000,
+                output_tokens: 5_000,
+              },
+            },
+          },
+        },
         {
           type: 'result',
           content: {
@@ -217,19 +337,21 @@ describe('token-estimation', () => {
 
       const result = estimateTokenUsage(messages);
 
-      // 150k / 200k = 75%
-      expect(result.percentUsed).toBe(75);
+      // Context % based on last assistant's input + output: (100k + 5k) / 200k = 52.5%
+      expect(result.percentUsed).toBeCloseTo(52.5, 0);
     });
 
     it('should cap percentage at 100%', () => {
       const messages = [
         {
-          type: 'result',
+          type: 'assistant',
           content: {
-            type: 'result',
-            usage: {
-              input_tokens: 250_000,
-              output_tokens: 50_000,
+            type: 'assistant',
+            message: {
+              usage: {
+                input_tokens: 250_000,
+                output_tokens: 1_000,
+              },
             },
           },
         },
@@ -284,6 +406,27 @@ describe('token-estimation', () => {
       const result = estimateTokenUsage(messages);
 
       expect(result.contextWindow).toBe(150000);
+    });
+
+    it('should fall back to total tokens for % when no assistant messages', () => {
+      // This shouldn't happen in practice but tests the fallback
+      const messages = [
+        {
+          type: 'result',
+          content: {
+            type: 'result',
+            usage: {
+              input_tokens: 100_000,
+              output_tokens: 50_000,
+            },
+          },
+        },
+      ];
+
+      const result = estimateTokenUsage(messages);
+
+      // Falls back to total tokens: (100k + 50k) / 200k = 75%
+      expect(result.percentUsed).toBe(75);
     });
   });
 });
