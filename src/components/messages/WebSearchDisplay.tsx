@@ -1,10 +1,8 @@
 'use client';
 
-import { useState, useMemo } from 'react';
-import { cn } from '@/lib/utils';
-import { Card, CardContent } from '@/components/ui/card';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { useMemo } from 'react';
 import { Badge } from '@/components/ui/badge';
+import { ToolDisplayWrapper } from './ToolDisplayWrapper';
 import type { ToolCall } from './types';
 
 interface WebSearchInput {
@@ -123,9 +121,7 @@ const ExternalLinkIcon = () => (
  * Shows the search query, clickable source links, and a formatted summary.
  */
 export function WebSearchDisplay({ tool }: { tool: ToolCall }) {
-  const [expanded, setExpanded] = useState(false);
   const hasOutput = tool.output !== undefined;
-  const isPending = !hasOutput;
 
   const inputObj = tool.input as WebSearchInput | undefined;
   const query = inputObj?.query ?? '';
@@ -138,121 +134,85 @@ export function WebSearchDisplay({ tool }: { tool: ToolCall }) {
   }, [tool.output]);
 
   return (
-    <div className="group">
-      <Collapsible open={expanded} onOpenChange={setExpanded}>
-        <Card
-          className={cn(
-            'mt-2',
-            tool.is_error && 'border-red-300 dark:border-red-700',
-            isPending && 'border-yellow-300 dark:border-yellow-700'
-          )}
-        >
-          <CollapsibleTrigger className="w-full px-3 py-2 text-left flex items-center justify-between text-sm hover:bg-muted/50 rounded-t-xl">
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                <SearchIcon />
-                <span className="font-mono text-primary">WebSearch</span>
-                {isPending && (
-                  <Badge
-                    variant="outline"
-                    className="text-xs border-yellow-500 text-yellow-700 dark:text-yellow-400"
-                  >
-                    Searching...
-                  </Badge>
-                )}
-                {tool.is_error && (
-                  <Badge variant="destructive" className="text-xs">
-                    Error
-                  </Badge>
-                )}
-                {hasOutput && !tool.is_error && parsed && (
-                  <Badge
-                    variant="outline"
-                    className="text-xs border-blue-500 text-blue-700 dark:text-blue-400"
-                  >
-                    {parsed.links.length} {parsed.links.length === 1 ? 'source' : 'sources'}
-                  </Badge>
-                )}
-              </div>
-              <div className="text-muted-foreground text-xs mt-1 truncate">{query}</div>
-            </div>
-            <span className="text-muted-foreground ml-2 flex-shrink-0">{expanded ? '−' : '+'}</span>
-          </CollapsibleTrigger>
+    <ToolDisplayWrapper
+      tool={tool}
+      icon={<SearchIcon />}
+      title="WebSearch"
+      pendingText="Searching..."
+      subtitle={<div className="text-muted-foreground text-xs mt-1 truncate">{query}</div>}
+      doneBadge={
+        parsed ? (
+          <Badge
+            variant="outline"
+            className="text-xs border-blue-500 text-blue-700 dark:text-blue-400"
+          >
+            {parsed.links.length} {parsed.links.length === 1 ? 'source' : 'sources'}
+          </Badge>
+        ) : null
+      }
+    >
+      {/* Query section */}
+      <div>
+        <div className="text-muted-foreground text-xs mb-1">Query:</div>
+        <code className="bg-muted px-2 py-1 rounded text-sm">{query}</code>
+      </div>
 
-          <CollapsibleContent>
-            <CardContent className="p-3 space-y-3 text-sm">
-              {/* Query section */}
-              <div>
-                <div className="text-muted-foreground text-xs mb-1">Query:</div>
-                <code className="bg-muted px-2 py-1 rounded text-sm">{query}</code>
-              </div>
+      {/* Error display */}
+      {tool.is_error && hasOutput && (
+        <div>
+          <div className="text-muted-foreground text-xs mb-1">Error:</div>
+          <pre className="bg-red-50 dark:bg-red-950 text-red-800 dark:text-red-200 p-2 rounded overflow-x-auto max-h-48 overflow-y-auto text-xs">
+            {typeof tool.output === 'string' ? tool.output : JSON.stringify(tool.output, null, 2)}
+          </pre>
+        </div>
+      )}
 
-              {/* Error display */}
-              {tool.is_error && hasOutput && (
-                <div>
-                  <div className="text-muted-foreground text-xs mb-1">Error:</div>
-                  <pre className="bg-red-50 dark:bg-red-950 text-red-800 dark:text-red-200 p-2 rounded overflow-x-auto max-h-48 overflow-y-auto text-xs">
-                    {typeof tool.output === 'string'
-                      ? tool.output
-                      : JSON.stringify(tool.output, null, 2)}
-                  </pre>
-                </div>
-              )}
-
-              {/* Sources section */}
-              {hasOutput && !tool.is_error && parsed && parsed.links.length > 0 && (
-                <div>
-                  <div className="text-muted-foreground text-xs mb-1">Sources:</div>
-                  <div className="bg-muted rounded p-2 max-h-48 overflow-y-auto space-y-1">
-                    {parsed.links.map((link, index) => (
-                      <a
-                        key={index}
-                        href={link.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="group/link flex items-start gap-2 py-1.5 px-2 -mx-2 hover:bg-background/50 rounded text-xs"
-                      >
-                        <span className="text-muted-foreground flex-shrink-0 mt-0.5">
-                          {index + 1}.
-                        </span>
-                        <div className="flex-1 min-w-0">
-                          <div className="text-blue-600 dark:text-blue-400 hover:underline font-medium truncate">
-                            {link.title}
-                          </div>
-                          <div className="text-muted-foreground truncate text-xs">{link.url}</div>
-                        </div>
-                        <ExternalLinkIcon />
-                      </a>
-                    ))}
+      {/* Sources section */}
+      {hasOutput && !tool.is_error && parsed && parsed.links.length > 0 && (
+        <div>
+          <div className="text-muted-foreground text-xs mb-1">Sources:</div>
+          <div className="bg-muted rounded p-2 max-h-48 overflow-y-auto space-y-1">
+            {parsed.links.map((link, index) => (
+              <a
+                key={index}
+                href={link.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="group/link flex items-start gap-2 py-1.5 px-2 -mx-2 hover:bg-background/50 rounded text-xs"
+              >
+                <span className="text-muted-foreground flex-shrink-0 mt-0.5">{index + 1}.</span>
+                <div className="flex-1 min-w-0">
+                  <div className="text-blue-600 dark:text-blue-400 hover:underline font-medium truncate">
+                    {link.title}
                   </div>
+                  <div className="text-muted-foreground truncate text-xs">{link.url}</div>
                 </div>
-              )}
+                <ExternalLinkIcon />
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
 
-              {/* Summary section */}
-              {hasOutput && !tool.is_error && parsed && parsed.summary && (
-                <div>
-                  <div className="text-muted-foreground text-xs mb-1">Summary:</div>
-                  <div className="bg-muted rounded p-3 max-h-64 overflow-y-auto text-sm whitespace-pre-wrap">
-                    {parsed.summary}
-                  </div>
-                </div>
-              )}
+      {/* Summary section */}
+      {hasOutput && !tool.is_error && parsed && parsed.summary && (
+        <div>
+          <div className="text-muted-foreground text-xs mb-1">Summary:</div>
+          <div className="bg-muted rounded p-3 max-h-64 overflow-y-auto text-sm whitespace-pre-wrap">
+            {parsed.summary}
+          </div>
+        </div>
+      )}
 
-              {/* Fallback if parsing failed */}
-              {hasOutput && !tool.is_error && !parsed && (
-                <div>
-                  <div className="text-muted-foreground text-xs mb-1">Result:</div>
-                  <pre className="bg-muted p-2 rounded overflow-x-auto max-h-48 overflow-y-auto text-xs font-mono">
-                    {typeof tool.output === 'string'
-                      ? tool.output
-                      : JSON.stringify(tool.output, null, 2)}
-                  </pre>
-                </div>
-              )}
-            </CardContent>
-          </CollapsibleContent>
-        </Card>
-      </Collapsible>
-    </div>
+      {/* Fallback if parsing failed */}
+      {hasOutput && !tool.is_error && !parsed && (
+        <div>
+          <div className="text-muted-foreground text-xs mb-1">Result:</div>
+          <pre className="bg-muted p-2 rounded overflow-x-auto max-h-48 overflow-y-auto text-xs font-mono">
+            {typeof tool.output === 'string' ? tool.output : JSON.stringify(tool.output, null, 2)}
+          </pre>
+        </div>
+      )}
+    </ToolDisplayWrapper>
   );
 }

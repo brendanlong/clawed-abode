@@ -1,11 +1,8 @@
 'use client';
 
-import { useState } from 'react';
-import { cn } from '@/lib/utils';
-import { Card, CardContent } from '@/components/ui/card';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Badge } from '@/components/ui/badge';
 import { MarkdownContent } from '@/components/MarkdownContent';
+import { ToolDisplayWrapper } from './ToolDisplayWrapper';
 import type { ToolCall } from './types';
 
 interface ExitPlanModeInput {
@@ -43,7 +40,6 @@ function ClipboardIcon() {
  * Shows the plan approval status and any allowed prompts.
  */
 export function ExitPlanModeDisplay({ tool }: { tool: ToolCall }) {
-  const [expanded, setExpanded] = useState(true);
   const hasOutput = tool.output !== undefined;
   const isPending = !hasOutput;
 
@@ -59,97 +55,70 @@ export function ExitPlanModeDisplay({ tool }: { tool: ToolCall }) {
         : '';
 
   return (
-    <div className="group">
-      <Collapsible open={expanded} onOpenChange={setExpanded}>
-        <Card
-          className={cn(
-            'mt-2',
-            tool.is_error && 'border-red-300 dark:border-red-700',
-            isPending && 'border-yellow-300 dark:border-yellow-700',
-            !isPending && !tool.is_error && 'border-purple-300 dark:border-purple-700'
-          )}
+    <ToolDisplayWrapper
+      tool={tool}
+      icon={<ClipboardIcon />}
+      title="Plan Complete"
+      defaultExpanded={true}
+      pendingText="Awaiting approval..."
+      cardClassName={
+        !isPending && !tool.is_error ? 'border-purple-300 dark:border-purple-700' : undefined
+      }
+      subtitle={
+        <div className="text-muted-foreground text-xs mt-1">
+          Claude has finished planning and is ready for your review
+        </div>
+      }
+      doneBadge={
+        <Badge
+          variant="outline"
+          className="text-xs border-purple-500 text-purple-700 dark:text-purple-400"
         >
-          <CollapsibleTrigger className="w-full px-3 py-2 text-left flex items-center justify-between text-sm hover:bg-muted/50 rounded-t-xl">
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                <ClipboardIcon />
-                <span className="font-mono text-primary">Plan Complete</span>
-                {isPending && (
-                  <Badge
-                    variant="outline"
-                    className="text-xs border-yellow-500 text-yellow-700 dark:text-yellow-400"
-                  >
-                    Awaiting approval...
-                  </Badge>
-                )}
-                {tool.is_error && (
-                  <Badge variant="destructive" className="text-xs">
-                    Error
-                  </Badge>
-                )}
-                {hasOutput && !tool.is_error && (
-                  <Badge
-                    variant="outline"
-                    className="text-xs border-purple-500 text-purple-700 dark:text-purple-400"
-                  >
-                    Ready for review
-                  </Badge>
-                )}
-              </div>
-              <div className="text-muted-foreground text-xs mt-1">
-                Claude has finished planning and is ready for your review
-              </div>
-            </div>
-            <span className="text-muted-foreground ml-2 flex-shrink-0">{expanded ? '−' : '+'}</span>
-          </CollapsibleTrigger>
+          Ready for review
+        </Badge>
+      }
+    >
+      {/* Output/Status section */}
+      {hasOutput && outputText && (
+        <div>
+          <div className="text-muted-foreground mb-1">Status:</div>
+          <div className="bg-muted rounded p-2">
+            <MarkdownContent content={outputText} />
+          </div>
+        </div>
+      )}
 
-          <CollapsibleContent>
-            <CardContent className="p-3 space-y-3 text-xs">
-              {/* Output/Status section */}
-              {hasOutput && outputText && (
-                <div>
-                  <div className="text-muted-foreground mb-1">Status:</div>
-                  <div className="bg-muted rounded p-2">
-                    <MarkdownContent content={outputText} />
-                  </div>
-                </div>
-              )}
+      {/* Allowed prompts section */}
+      {allowedPrompts.length > 0 && (
+        <div>
+          <div className="text-muted-foreground mb-1">Requested permissions:</div>
+          <ul className="bg-muted rounded p-2 space-y-1">
+            {allowedPrompts.map((prompt, index) => (
+              <li key={index} className="flex items-center gap-2">
+                <Badge variant="outline" className="text-xs">
+                  {prompt.tool}
+                </Badge>
+                <span>{prompt.prompt}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
-              {/* Allowed prompts section */}
-              {allowedPrompts.length > 0 && (
-                <div>
-                  <div className="text-muted-foreground mb-1">Requested permissions:</div>
-                  <ul className="bg-muted rounded p-2 space-y-1">
-                    {allowedPrompts.map((prompt, index) => (
-                      <li key={index} className="flex items-center gap-2">
-                        <Badge variant="outline" className="text-xs">
-                          {prompt.tool}
-                        </Badge>
-                        <span>{prompt.prompt}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-              {/* Remote session info */}
-              {inputObj?.pushToRemote && inputObj.remoteSessionUrl && (
-                <div>
-                  <div className="text-muted-foreground mb-1">Remote session:</div>
-                  <a
-                    href={inputObj.remoteSessionUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-blue-600 dark:text-blue-400 hover:underline"
-                  >
-                    {inputObj.remoteSessionTitle || inputObj.remoteSessionUrl}
-                  </a>
-                </div>
-              )}
-            </CardContent>
-          </CollapsibleContent>
-        </Card>
-      </Collapsible>
-    </div>
+      {/* Remote session info */}
+      {inputObj?.pushToRemote && inputObj.remoteSessionUrl && (
+        <div>
+          <div className="text-muted-foreground mb-1">Remote session:</div>
+          <a
+            href={inputObj.remoteSessionUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-blue-600 dark:text-blue-400 hover:underline"
+          >
+            {inputObj.remoteSessionTitle || inputObj.remoteSessionUrl}
+          </a>
+        </div>
+      )}
+    </ToolDisplayWrapper>
   );
 }
