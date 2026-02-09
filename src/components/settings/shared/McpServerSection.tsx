@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useReducer } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -15,6 +15,12 @@ import {
 import { Plus, Trash2, Plug, Check, X } from 'lucide-react';
 import { DeleteConfirmDialog } from './DeleteConfirmDialog';
 import { KeyValueListEditor } from './KeyValueListEditor';
+import {
+  mcpServerSectionReducer,
+  initialMcpServerSectionState,
+  mcpServerFormReducer,
+  createInitialMcpServerFormState,
+} from './mcp-server-reducer';
 import type { McpServer, McpServerType, ValidationResult } from '@/lib/settings-types';
 
 interface StdioMcpServerInput {
@@ -57,41 +63,34 @@ export function McpServerSection({
   deleteDescriptionPrefix = 'This will delete the MCP server',
   idPrefix = 'mcp',
 }: McpServerSectionProps) {
-  const [showForm, setShowForm] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
-  const [isDeleting, setIsDeleting] = useState(false);
-  const [validationResults, setValidationResults] = useState<Map<string, ValidationResult>>(
-    new Map()
-  );
-  const [validatingServer, setValidatingServer] = useState<string | null>(null);
+  const [state, dispatch] = useReducer(mcpServerSectionReducer, initialMcpServerSectionState);
 
   const handleValidate = async (name: string) => {
-    setValidatingServer(name);
+    dispatch({ type: 'startValidating', name });
     try {
       const result = await mutations.validateMcpServer(name);
-      setValidationResults((prev) => new Map(prev).set(name, result));
+      dispatch({ type: 'setValidationResult', name, result });
     } catch (err) {
-      setValidationResults((prev) =>
-        new Map(prev).set(name, {
+      dispatch({
+        type: 'setValidationResult',
+        name,
+        result: {
           success: false,
           error: err instanceof Error ? err.message : 'Validation failed',
-        })
-      );
-    } finally {
-      setValidatingServer(null);
+        },
+      });
     }
   };
 
   const handleDelete = async () => {
-    if (!deleteTarget) return;
-    setIsDeleting(true);
+    if (!state.deleteTarget) return;
+    dispatch({ type: 'startDeleting' });
     try {
-      await mutations.deleteMcpServer(deleteTarget);
-      setDeleteTarget(null);
+      await mutations.deleteMcpServer(state.deleteTarget);
+      dispatch({ type: 'finishDeleting' });
       onUpdate();
-    } finally {
-      setIsDeleting(false);
+    } catch {
+      dispatch({ type: 'finishDeleting' });
     }
   };
 
@@ -99,19 +98,19 @@ export function McpServerSection({
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h3 className="font-medium">MCP Servers</h3>
-        <Button variant="outline" size="sm" onClick={() => setShowForm(true)}>
+        <Button variant="outline" size="sm" onClick={() => dispatch({ type: 'openForm' })}>
           <Plus className="h-4 w-4 mr-1" />
           Add
         </Button>
       </div>
 
-      {mcpServers.length === 0 && !showForm ? (
+      {mcpServers.length === 0 && !state.showForm ? (
         <p className="text-sm text-muted-foreground">{emptyMessage}</p>
       ) : (
         <ul className="space-y-2">
           {mcpServers.map((server) => {
-            const result = validationResults.get(server.name);
-            const isTesting = validatingServer === server.name;
+            const result = state.validationResults.get(server.name);
+            const isTesting = state.validatingServer === server.name;
             return (
               <li key={server.id} className="space-y-1">
                 <div className="flex items-center gap-2 p-2 rounded-md bg-muted/50">
@@ -141,13 +140,17 @@ export function McpServerSection({
                       <Plug className="h-4 w-4" />
                     )}
                   </Button>
-                  <Button variant="ghost" size="sm" onClick={() => setEditingId(server.id)}>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => dispatch({ type: 'startEditing', id: server.id })}
+                  >
                     Edit
                   </Button>
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => setDeleteTarget(server.name)}
+                    onClick={() => dispatch({ type: 'setDeleteTarget', name: server.name })}
                     className="text-destructive hover:text-destructive"
                   >
                     <Trash2 className="h-4 w-4" />
@@ -183,16 +186,14 @@ export function McpServerSection({
         </ul>
       )}
 
-      {(showForm || editingId) && (
+      {(state.showForm || state.editingId) && (
         <McpServerForm
-          existingServer={editingId ? mcpServers.find((s) => s.id === editingId) : undefined}
-          onClose={() => {
-            setShowForm(false);
-            setEditingId(null);
-          }}
+          existingServer={
+            state.editingId ? mcpServers.find((s) => s.id === state.editingId) : undefined
+          }
+          onClose={() => dispatch({ type: 'closeForm' })}
           onSuccess={() => {
-            setShowForm(false);
-            setEditingId(null);
+            dispatch({ type: 'formSuccess' });
             onUpdate();
           }}
           setMcpServer={mutations.setMcpServer}
@@ -201,16 +202,16 @@ export function McpServerSection({
       )}
 
       <DeleteConfirmDialog
-        open={!!deleteTarget}
-        onClose={() => setDeleteTarget(null)}
+        open={!!state.deleteTarget}
+        onClose={() => dispatch({ type: 'setDeleteTarget', name: null })}
         onConfirm={handleDelete}
         title="Delete MCP server?"
         description={
           <>
-            {deleteDescriptionPrefix} <strong>{deleteTarget}</strong>.
+            {deleteDescriptionPrefix} <strong>{state.deleteTarget}</strong>.
           </>
         }
-        isPending={isDeleting}
+        isPending={state.isDeleting}
       />
     </div>
   );
@@ -229,51 +230,27 @@ function McpServerForm({
   setMcpServer: McpServerMutations['setMcpServer'];
   idPrefix: string;
 }) {
-  const [name, setName] = useState(existingServer?.name ?? '');
-  const [serverType, setServerType] = useState<McpServerType>(existingServer?.type ?? 'stdio');
-  const [command, setCommand] = useState(existingServer?.command ?? '');
-  const [args, setArgs] = useState(existingServer?.args.join(' ') ?? '');
-  const [envVars, setEnvVars] = useState<Array<{ key: string; value: string; isSecret: boolean }>>(
-    existingServer?.env
-      ? Object.entries(existingServer.env).map(([key, { value, isSecret }]) => ({
-          key,
-          value: isSecret ? '' : value,
-          isSecret,
-        }))
-      : []
+  const [form, dispatch] = useReducer(mcpServerFormReducer, existingServer, (existing) =>
+    createInitialMcpServerFormState(existing)
   );
-  const [url, setUrl] = useState(existingServer?.url ?? '');
-  const [headers, setHeaders] = useState<Array<{ key: string; value: string; isSecret: boolean }>>(
-    existingServer?.headers
-      ? Object.entries(existingServer.headers).map(([key, { value, isSecret }]) => ({
-          key,
-          value: isSecret ? '' : value,
-          isSecret,
-        }))
-      : []
-  );
-  const [error, setError] = useState<string | null>(null);
-  const [isPending, setIsPending] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError(null);
 
-    if (!name) {
-      setError('Name is required');
+    if (!form.name) {
+      dispatch({ type: 'setError', error: 'Name is required' });
       return;
     }
 
-    setIsPending(true);
+    dispatch({ type: 'startSubmit' });
     try {
-      if (serverType === 'stdio') {
-        if (!command) {
-          setError('Command is required');
-          setIsPending(false);
+      if (form.serverType === 'stdio') {
+        if (!form.command) {
+          dispatch({ type: 'submitError', error: 'Command is required' });
           return;
         }
 
-        const env = envVars.reduce(
+        const env = form.envVars.reduce(
           (acc, { key, value, isSecret }) => {
             if (key) {
               acc[key] = { value, isSecret };
@@ -284,20 +261,19 @@ function McpServerForm({
         );
 
         await setMcpServer({
-          name,
+          name: form.name,
           type: 'stdio',
-          command,
-          args: args.split(/\s+/).filter(Boolean),
+          command: form.command,
+          args: form.args.split(/\s+/).filter(Boolean),
           env: Object.keys(env).length > 0 ? env : undefined,
         });
       } else {
-        if (!url) {
-          setError('URL is required');
-          setIsPending(false);
+        if (!form.url) {
+          dispatch({ type: 'submitError', error: 'URL is required' });
           return;
         }
 
-        const headersRecord = headers.reduce(
+        const headersRecord = form.headers.reduce(
           (acc, { key, value, isSecret }) => {
             if (key) {
               acc[key] = { value, isSecret };
@@ -308,17 +284,18 @@ function McpServerForm({
         );
 
         await setMcpServer({
-          name,
-          type: serverType,
-          url,
+          name: form.name,
+          type: form.serverType,
+          url: form.url,
           headers: Object.keys(headersRecord).length > 0 ? headersRecord : undefined,
         });
       }
       onSuccess();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred');
-    } finally {
-      setIsPending(false);
+      dispatch({
+        type: 'submitError',
+        error: err instanceof Error ? err.message : 'An error occurred',
+      });
     }
   };
 
@@ -328,8 +305,8 @@ function McpServerForm({
         <Label htmlFor={`${idPrefix}-name`}>Name</Label>
         <Input
           id={`${idPrefix}-name`}
-          value={name}
-          onChange={(e) => setName(e.target.value)}
+          value={form.name}
+          onChange={(e) => dispatch({ type: 'setName', name: e.target.value })}
           placeholder="memory"
           disabled={!!existingServer}
         />
@@ -338,8 +315,10 @@ function McpServerForm({
       <div className="space-y-2">
         <Label htmlFor={`${idPrefix}-type`}>Type</Label>
         <Select
-          value={serverType}
-          onValueChange={(value) => setServerType(value as McpServerType)}
+          value={form.serverType}
+          onValueChange={(value) =>
+            dispatch({ type: 'setServerType', serverType: value as McpServerType })
+          }
           disabled={!!existingServer}
         >
           <SelectTrigger id={`${idPrefix}-type`}>
@@ -353,14 +332,14 @@ function McpServerForm({
         </Select>
       </div>
 
-      {serverType === 'stdio' ? (
+      {form.serverType === 'stdio' ? (
         <>
           <div className="space-y-2">
             <Label htmlFor={`${idPrefix}-command`}>Command</Label>
             <Input
               id={`${idPrefix}-command`}
-              value={command}
-              onChange={(e) => setCommand(e.target.value)}
+              value={form.command}
+              onChange={(e) => dispatch({ type: 'setCommand', command: e.target.value })}
               placeholder="npx"
             />
           </div>
@@ -369,17 +348,17 @@ function McpServerForm({
             <Label htmlFor={`${idPrefix}-args`}>Arguments (space-separated)</Label>
             <Input
               id={`${idPrefix}-args`}
-              value={args}
-              onChange={(e) => setArgs(e.target.value)}
+              value={form.args}
+              onChange={(e) => dispatch({ type: 'setArgs', args: e.target.value })}
               placeholder="@anthropic/mcp-server-memory"
             />
           </div>
 
           <KeyValueListEditor
             label="Environment Variables"
-            entries={envVars}
+            entries={form.envVars}
             existingEntries={existingServer?.env}
-            onChange={setEnvVars}
+            onChange={(envVars) => dispatch({ type: 'setEnvVars', envVars })}
             keyPlaceholder="KEY"
             keyTransform={(key) => key.toUpperCase()}
           />
@@ -390,30 +369,30 @@ function McpServerForm({
             <Label htmlFor={`${idPrefix}-url`}>URL</Label>
             <Input
               id={`${idPrefix}-url`}
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
+              value={form.url}
+              onChange={(e) => dispatch({ type: 'setUrl', url: e.target.value })}
               placeholder="https://mcp.example.com/sse"
             />
           </div>
 
           <KeyValueListEditor
             label="Headers"
-            entries={headers}
+            entries={form.headers}
             existingEntries={existingServer?.headers}
-            onChange={setHeaders}
+            onChange={(headers) => dispatch({ type: 'setHeaders', headers })}
             keyPlaceholder="Header-Name"
           />
         </>
       )}
 
-      {error && <p className="text-sm text-destructive">{error}</p>}
+      {form.error && <p className="text-sm text-destructive">{form.error}</p>}
 
       <div className="flex justify-end gap-2">
         <Button type="button" variant="outline" onClick={onClose}>
           Cancel
         </Button>
-        <Button type="submit" disabled={isPending}>
-          {isPending ? <Spinner size="sm" /> : existingServer ? 'Update' : 'Add'}
+        <Button type="submit" disabled={form.isPending}>
+          {form.isPending ? <Spinner size="sm" /> : existingServer ? 'Update' : 'Add'}
         </Button>
       </div>
     </form>
