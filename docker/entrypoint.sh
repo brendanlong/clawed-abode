@@ -46,4 +46,4 @@ if [ -e /var/run/docker.sock ]; then
 fi
 
 # --- Launch agent service ---
-exec node /opt/agent-service/dist/index.js
+exec node /opt/agent-service/dist/agent-service/src/index.js
