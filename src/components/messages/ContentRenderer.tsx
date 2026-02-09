@@ -15,6 +15,7 @@ import { BashDisplay } from './BashDisplay';
 import { NotebookEditDisplay } from './NotebookEditDisplay';
 import { SkillDisplay } from './SkillDisplay';
 import { TaskDisplay } from './TaskDisplay';
+import { EnterPlanModeDisplay } from './EnterPlanModeDisplay';
 import { ExitPlanModeDisplay } from './ExitPlanModeDisplay';
 import { TodoWriteDisplay } from './TodoWriteDisplay';
 import { AskUserQuestionDisplay } from './AskUserQuestionDisplay';
@@ -35,6 +36,7 @@ const TOOL_DISPLAY_MAP: Record<string, React.ComponentType<{ tool: ToolCall }>> 
   NotebookEdit: NotebookEditDisplay,
   Skill: SkillDisplay,
   Task: TaskDisplay,
+  EnterPlanMode: EnterPlanModeDisplay,
   ExitPlanMode: ExitPlanModeDisplay,
   TodoWrite: TodoWriteDisplay,
   AskUserQuestion: AskUserQuestionDisplay,

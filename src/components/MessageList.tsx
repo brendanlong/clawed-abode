@@ -7,6 +7,7 @@ import { Spinner } from '@/components/ui/spinner';
 import { ContextUsageIndicator } from '@/components/ContextUsageIndicator';
 import type { TokenUsageStats } from '@/lib/token-estimation';
 import { useNotification } from '@/hooks/useNotification';
+import { isPlanFile } from './messages/plan-utils';
 
 interface ContentBlock {
   type: string;
@@ -196,6 +197,66 @@ function getPendingAskUserQuestions(
   return pending;
 }
 
+interface PlanToolCall {
+  sequence: number;
+  type: 'write' | 'edit';
+  content?: string; // For Write: full content
+  oldString?: string; // For Edit: string to replace
+  newString?: string; // For Edit: replacement string
+}
+
+/**
+ * Extract plan file Write/Edit tool calls from messages, ordered by sequence.
+ * Then reconstruct the current plan content by replaying writes and edits.
+ */
+function getLatestPlanContent(messages: Message[]): string | null {
+  const planCalls: PlanToolCall[] = [];
+  const sortedMessages = [...messages].sort((a, b) => a.sequence - b.sequence);
+
+  for (const msg of sortedMessages) {
+    if (msg.type !== 'assistant') continue;
+    const content = msg.content as MessageContent | undefined;
+    const blocks = content?.message?.content;
+    if (!Array.isArray(blocks)) continue;
+
+    for (const block of blocks) {
+      if (block.type !== 'tool_use' || !block.input) continue;
+      const input = block.input as Record<string, unknown>;
+      const filePath = input.file_path as string | undefined;
+      if (!filePath || !isPlanFile(filePath)) continue;
+
+      if (block.name === 'Write') {
+        planCalls.push({
+          sequence: msg.sequence,
+          type: 'write',
+          content: (input.content as string) ?? '',
+        });
+      } else if (block.name === 'Edit') {
+        planCalls.push({
+          sequence: msg.sequence,
+          type: 'edit',
+          oldString: (input.old_string as string) ?? '',
+          newString: (input.new_string as string) ?? '',
+        });
+      }
+    }
+  }
+
+  if (planCalls.length === 0) return null;
+
+  // Replay writes and edits to build current plan content
+  let planContent = '';
+  for (const call of planCalls) {
+    if (call.type === 'write') {
+      planContent = call.content ?? '';
+    } else if (call.type === 'edit' && call.oldString) {
+      planContent = planContent.replace(call.oldString, call.newString ?? '');
+    }
+  }
+
+  return planContent || null;
+}
+
 // Extract total cost from result messages
 function getTotalCostUsd(messages: Message[]): number {
   let totalCost = 0;
@@ -284,6 +345,9 @@ export function MessageList({
   // Calculate total cost from result messages
   const totalCostUsd = useMemo(() => getTotalCostUsd(messages), [messages]);
 
+  // Track the latest plan content from Write/Edit calls to plan files
+  const latestPlanContent = useMemo(() => getLatestPlanContent(messages), [messages]);
+
   // Find pending AskUserQuestion tool calls
   const pendingQuestions = useMemo(
     () => getPendingAskUserQuestions(messages, resultMap),
@@ -363,6 +427,7 @@ export function MessageList({
       onTodoManualToggle: handleTodoManualToggle,
       onSendResponse,
       isClaudeRunning,
+      latestPlanContent,
     }),
     [
       latestTodoWriteId,
@@ -370,6 +435,7 @@ export function MessageList({
       handleTodoManualToggle,
       onSendResponse,
       isClaudeRunning,
+      latestPlanContent,
     ]
   );
 
