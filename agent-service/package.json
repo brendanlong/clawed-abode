@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
-    "start": "node dist/index.js",
+    "start": "node dist/agent-service/src/index.js",
     "dev": "tsx src/index.ts",
     "test": "vitest run",
     "test:watch": "vitest"

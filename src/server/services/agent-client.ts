@@ -14,6 +14,7 @@ import { resolve } from 'node:path';
 import type { SDKMessage, SlashCommand } from '@anthropic-ai/claude-agent-sdk';
 import { createLogger, toError } from '@/lib/logger';
 import { env } from '@/lib/env';
+import type { PartialAssistantMessage } from '../../../shared/agent-types';
 
 const log = createLogger('agent-client');
 
@@ -32,22 +33,7 @@ export interface AgentMessage {
  */
 export interface AgentPartialMessage {
   kind: 'partial';
-  partial: {
-    type: 'assistant';
-    partial: true;
-    message: {
-      role: 'assistant';
-      content: Array<
-        | { type: 'text'; text: string }
-        | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
-      >;
-      model?: string;
-      stop_reason?: string | null;
-    };
-    parent_tool_use_id: string | null;
-    uuid: string;
-    session_id: string;
-  };
+  partial: PartialAssistantMessage;
 }
 
 /**
