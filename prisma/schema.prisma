@@ -31,8 +31,9 @@ model Session {
   containerId   String?
   status        String    @default("creating") // creating, running, stopped, error, archived
   statusMessage String?   // Human-readable progress message during creation
-  initialPrompt String?   // Optional prompt to send when session starts (e.g., from GitHub issue)
-  createdAt     DateTime  @default(now())
+  initialPrompt  String?   // Optional prompt to send when session starts (e.g., from GitHub issue)
+  currentBranch  String?   // Current git branch in the container (detected after each query)
+  createdAt      DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
   archivedAt    DateTime? // When the session was archived (null if not archived)
   messages      Message[]

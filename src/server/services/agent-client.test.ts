@@ -149,6 +149,32 @@ describe('AgentClient', () => {
     });
   });
 
+  describe('getCurrentBranch', () => {
+    it('should return branch name when available', async () => {
+      mockServer.setHandler((_req, res) => {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ branch: 'feature-branch' }));
+      });
+
+      expect(await client.getCurrentBranch()).toBe('feature-branch');
+    });
+
+    it('should return null when branch is null', async () => {
+      mockServer.setHandler((_req, res) => {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ branch: null }));
+      });
+
+      expect(await client.getCurrentBranch()).toBeNull();
+    });
+
+    it('should return null on error', async () => {
+      await mockServer.close();
+      const unreachableClient = createAgentClient('/tmp/nonexistent-socket.sock');
+      expect(await unreachableClient.getCurrentBranch()).toBeNull();
+    });
+  });
+
   describe('query', () => {
     it('should stream messages from SSE response', async () => {
       mockServer.setHandler((req, res) => {
@@ -319,6 +345,7 @@ describe('waitForAgentHealth', () => {
       getStatus: vi.fn(),
       getMessages: vi.fn(),
       getCommands: vi.fn(),
+      getCurrentBranch: vi.fn(),
     };
 
     const result = await waitForAgentHealth(mockClient, {
@@ -341,6 +368,7 @@ describe('waitForAgentHealth', () => {
       getStatus: vi.fn(),
       getMessages: vi.fn(),
       getCommands: vi.fn(),
+      getCurrentBranch: vi.fn(),
     };
 
     const result = await waitForAgentHealth(mockClient, {
@@ -359,6 +387,7 @@ describe('waitForAgentHealth', () => {
       getStatus: vi.fn(),
       getMessages: vi.fn(),
       getCommands: vi.fn(),
+      getCurrentBranch: vi.fn(),
     };
 
     const result = await waitForAgentHealth(mockClient, {

@@ -18,6 +18,7 @@ const { mockPodmanFunctions, mockPrisma, mockSseEvents, mockAgentClient } = vi.h
     session: {
       findUnique: vi.fn(),
       findMany: vi.fn(),
+      update: vi.fn(),
     },
     message: {
       findUnique: vi.fn(),
@@ -32,6 +33,7 @@ const { mockPodmanFunctions, mockPrisma, mockSseEvents, mockAgentClient } = vi.h
     emitClaudeRunning: vi.fn(),
     emitCommands: vi.fn(),
     emitSessionUpdate: vi.fn(),
+    emitPrUpdate: vi.fn(),
   };
 
   const mockAgentClient = {
@@ -40,6 +42,7 @@ const { mockPodmanFunctions, mockPrisma, mockSseEvents, mockAgentClient } = vi.h
     getStatus: vi.fn(),
     getMessages: vi.fn(),
     getCommands: vi.fn(),
+    getCurrentBranch: vi.fn(),
     health: vi.fn(),
   };
 
@@ -57,6 +60,12 @@ vi.mock('@/lib/prisma', () => ({
 // Mock the events module
 vi.mock('./events', () => ({
   sseEvents: mockSseEvents,
+}));
+
+// Mock the github service
+const mockFetchPullRequestForBranch = vi.fn();
+vi.mock('./github', () => ({
+  fetchPullRequestForBranch: (...args: unknown[]) => mockFetchPullRequestForBranch(...args),
 }));
 
 // Mock the logger
@@ -104,6 +113,9 @@ describe('claude-runner service', () => {
     // Reset default mock implementations
     mockPrisma.session.findUnique.mockResolvedValue(null);
     mockPrisma.session.findMany.mockResolvedValue([]);
+    mockPrisma.session.update.mockImplementation(({ data, where }) =>
+      Promise.resolve({ id: where.id, ...data })
+    );
     mockPrisma.message.findUnique.mockResolvedValue(null);
     mockPrisma.message.findFirst.mockResolvedValue(null);
     mockPrisma.message.create.mockImplementation(({ data }) => Promise.resolve(data));
@@ -124,6 +136,8 @@ describe('claude-runner service', () => {
     mockAgentClient.getStatus.mockResolvedValue({ running: false, lastSequence: 0, commands: [] });
     mockAgentClient.interrupt.mockResolvedValue({ success: true });
     mockAgentClient.getMessages.mockResolvedValue([]);
+    mockAgentClient.getCurrentBranch.mockResolvedValue(null);
+    mockFetchPullRequestForBranch.mockResolvedValue(null);
   });
 
   afterEach(() => {

@@ -1,5 +1,6 @@
 import http from 'node:http';
 import fs from 'node:fs';
+import { execFile } from 'node:child_process';
 import { z } from 'zod';
 import { MessageStore } from './message-store.js';
 import { QueryRunner, type QueryOptions } from './query-runner.js';
@@ -232,6 +233,20 @@ function handleCommands(_req: http.IncomingMessage, res: http.ServerResponse): v
 }
 
 /**
+ * Handle GET /branch
+ * Returns the current git branch name in the working directory.
+ */
+function handleBranch(_req: http.IncomingMessage, res: http.ServerResponse): void {
+  execFile('git', ['symbolic-ref', '--short', 'HEAD'], { cwd: process.cwd() }, (err, stdout) => {
+    if (err) {
+      sendJson(res, 200, { branch: null });
+      return;
+    }
+    sendJson(res, 200, { branch: stdout.trim() });
+  });
+}
+
+/**
  * Handle GET /health
  */
 function handleHealth(_req: http.IncomingMessage, res: http.ServerResponse): void {
@@ -257,6 +272,8 @@ const server = http.createServer(async (req, res) => {
       handleMessages(req, res);
     } else if (method === 'GET' && path === '/commands') {
       handleCommands(req, res);
+    } else if (method === 'GET' && path === '/branch') {
+      handleBranch(req, res);
     } else if (method === 'GET' && path === '/health') {
       handleHealth(req, res);
     } else {

@@ -2,6 +2,8 @@ import { z } from 'zod';
 import { router, protectedProcedure } from '../trpc';
 import { TRPCError } from '@trpc/server';
 import { env } from '@/lib/env';
+import { prisma } from '@/lib/prisma';
+import { extractRepoFullName } from '@/lib/utils';
 import { fetchPullRequestForBranch } from '../services/github';
 
 const GITHUB_API = 'https://api.github.com';
@@ -294,24 +296,31 @@ export const githubRouter = router({
       };
     }),
 
-  getPullRequestForBranch: protectedProcedure
+  getSessionPrStatus: protectedProcedure
     .input(
       z.object({
-        repoFullName: z.string().regex(/^[\w-]+\/[\w.-]+$/),
-        branch: z.string().min(1),
+        sessionId: z.string().uuid(),
       })
     )
     .query(async ({ input }) => {
-      const token = env.GITHUB_TOKEN;
+      const session = await prisma.session.findUnique({
+        where: { id: input.sessionId },
+        select: { repoUrl: true, currentBranch: true },
+      });
 
-      if (!token) {
+      if (!session) {
         throw new TRPCError({
-          code: 'PRECONDITION_FAILED',
-          message: 'GitHub token is not configured',
+          code: 'NOT_FOUND',
+          message: 'Session not found',
         });
       }
 
-      const pullRequest = await fetchPullRequestForBranch(input.repoFullName, input.branch);
+      if (!session.currentBranch) {
+        return { pullRequest: null };
+      }
+
+      const repoFullName = extractRepoFullName(session.repoUrl);
+      const pullRequest = await fetchPullRequestForBranch(repoFullName, session.currentBranch);
       return { pullRequest: pullRequest ?? null };
     }),
 });
