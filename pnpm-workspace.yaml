@@ -1,7 +1,12 @@
+packages:
+  - '.'
+  - 'agent-service'
+
 onlyBuiltDependencies:
   - '@prisma/client'
   - '@prisma/engines'
   - bcrypt
+  - better-sqlite3
   - cpu-features
   - prisma
   - protobufjs
