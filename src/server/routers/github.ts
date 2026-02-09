@@ -33,7 +33,7 @@ interface GitHubIssue {
   updated_at: string;
 }
 
-async function githubFetch<T>(path: string, token?: string): Promise<T> {
+async function githubFetchResponse(path: string, token?: string): Promise<Response> {
   const headers: Record<string, string> = {
     Accept: 'application/vnd.github+json',
     'X-GitHub-Api-Version': '2022-11-28',
@@ -70,6 +70,11 @@ async function githubFetch<T>(path: string, token?: string): Promise<T> {
     });
   }
 
+  return response;
+}
+
+async function githubFetch<T>(path: string, token?: string): Promise<T> {
+  const response = await githubFetchResponse(path, token);
   return response.json();
 }
 
@@ -118,55 +123,25 @@ export const githubRouter = router({
       const page = input.cursor ? parseInt(input.cursor, 10) : 1;
 
       let repos: GitHubRepo[];
-      let linkHeader: string | null = null;
+      let response: Response;
 
       if (input.search) {
         // Search repositories
         const query = encodeURIComponent(`${input.search} in:name user:@me`);
         const url = `/search/repositories?q=${query}&per_page=${input.perPage}&page=${page}`;
 
-        const headers: Record<string, string> = {
-          Accept: 'application/vnd.github+json',
-          'X-GitHub-Api-Version': '2022-11-28',
-          Authorization: `Bearer ${token}`,
-        };
-
-        const response = await fetch(`${GITHUB_API}${url}`, { headers });
-        linkHeader = response.headers.get('link');
-
-        if (!response.ok) {
-          throw new TRPCError({
-            code: 'INTERNAL_SERVER_ERROR',
-            message: `GitHub API error: ${response.status}`,
-          });
-        }
-
+        response = await githubFetchResponse(url, token);
         const data = await response.json();
         repos = data.items;
       } else {
         // List user's repositories
         const url = `/user/repos?sort=updated&per_page=${input.perPage}&page=${page}`;
 
-        const headers: Record<string, string> = {
-          Accept: 'application/vnd.github+json',
-          'X-GitHub-Api-Version': '2022-11-28',
-          Authorization: `Bearer ${token}`,
-        };
-
-        const response = await fetch(`${GITHUB_API}${url}`, { headers });
-        linkHeader = response.headers.get('link');
-
-        if (!response.ok) {
-          throw new TRPCError({
-            code: 'INTERNAL_SERVER_ERROR',
-            message: `GitHub API error: ${response.status}`,
-          });
-        }
-
+        response = await githubFetchResponse(url, token);
         repos = await response.json();
       }
 
-      const links = parseLinkHeader(linkHeader);
+      const links = parseLinkHeader(response.headers.get('link'));
 
       return {
         repos: repos.map((r) => ({
@@ -239,14 +214,8 @@ export const githubRouter = router({
 
       const page = input.cursor ? parseInt(input.cursor, 10) : 1;
 
-      const headers: Record<string, string> = {
-        Accept: 'application/vnd.github+json',
-        'X-GitHub-Api-Version': '2022-11-28',
-        Authorization: `Bearer ${token}`,
-      };
-
       let issues: GitHubIssue[];
-      let linkHeader: string | null = null;
+      let response: Response;
 
       if (input.search) {
         // Search issues in the specific repository
@@ -255,39 +224,21 @@ export const githubRouter = router({
         );
         const url = `/search/issues?q=${query}&per_page=${input.perPage}&page=${page}`;
 
-        const response = await fetch(`${GITHUB_API}${url}`, { headers });
-        linkHeader = response.headers.get('link');
-
-        if (!response.ok) {
-          throw new TRPCError({
-            code: 'INTERNAL_SERVER_ERROR',
-            message: `GitHub API error: ${response.status}`,
-          });
-        }
-
+        response = await githubFetchResponse(url, token);
         const data = await response.json();
         issues = data.items;
       } else {
         // List issues for the repository
         const url = `/repos/${input.repoFullName}/issues?state=${input.state}&per_page=${input.perPage}&page=${page}&sort=updated&direction=desc`;
 
-        const response = await fetch(`${GITHUB_API}${url}`, { headers });
-        linkHeader = response.headers.get('link');
-
-        if (!response.ok) {
-          throw new TRPCError({
-            code: 'INTERNAL_SERVER_ERROR',
-            message: `GitHub API error: ${response.status}`,
-          });
-        }
-
+        response = await githubFetchResponse(url, token);
         issues = await response.json();
       }
 
       // Filter out pull requests (GitHub returns them in issues endpoint)
       issues = issues.filter((issue) => !('pull_request' in issue));
 
-      const links = parseLinkHeader(linkHeader);
+      const links = parseLinkHeader(response.headers.get('link'));
 
       return {
         issues: issues.map((i) => ({
