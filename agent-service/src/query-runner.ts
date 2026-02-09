@@ -7,6 +7,9 @@ import {
 } from '@anthropic-ai/claude-agent-sdk';
 import { MessageStore } from './message-store.js';
 import { StreamAccumulator, type PartialAssistantMessage } from './stream-accumulator.js';
+import { createLogger, toError } from './logger.js';
+
+const log = createLogger('query-runner');
 
 /**
  * Extracts the message type from an SDKMessage for storage categorization.
@@ -201,12 +204,16 @@ export class QueryRunner {
         try {
           const initResult = await this.currentQuery.initializationResult();
           commands = initResult.commands ?? [];
-          console.log(`initializationResult() returned ${commands.length} commands`);
+          log.debug('initializationResult() returned commands', { count: commands.length });
         } catch (initErr) {
-          console.log('initializationResult() failed, trying supportedCommands():', initErr);
+          log.warn(
+            'initializationResult() failed, trying supportedCommands()',
+            undefined,
+            toError(initErr)
+          );
           // Fall back to supportedCommands()
           commands = await this.currentQuery.supportedCommands();
-          console.log(`supportedCommands() returned ${commands.length} commands`);
+          log.debug('supportedCommands() returned commands', { count: commands.length });
         }
 
         if (commands.length > 0) {
@@ -220,7 +227,7 @@ export class QueryRunner {
           }
         }
       } catch (err) {
-        console.error('Failed to fetch supported commands:', err);
+        log.error('Failed to fetch supported commands', toError(err));
       }
 
       // Iterate through all messages from the SDK
