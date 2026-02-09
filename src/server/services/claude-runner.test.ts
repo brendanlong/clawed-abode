@@ -102,6 +102,7 @@ import {
   markLastMessageAsInterrupted,
   reconcileOrphanedProcesses,
   buildSystemPrompt,
+  shouldAutoInterrupt,
   DEFAULT_SYSTEM_PROMPT,
 } from './claude-runner';
 
@@ -825,5 +826,107 @@ describe('claude-runner system prompt', () => {
     expect(DEFAULT_SYSTEM_PROMPT).toContain('Pull Request');
     expect(DEFAULT_SYSTEM_PROMPT).toContain('CONTAINER ISSUE REPORTING');
     expect(DEFAULT_SYSTEM_PROMPT).toContain('clawed-abode');
+  });
+});
+
+describe('shouldAutoInterrupt', () => {
+  it('should return true for AskUserQuestion tool call', () => {
+    const message = {
+      type: 'assistant',
+      message: {
+        role: 'assistant',
+        content: [
+          {
+            type: 'tool_use',
+            id: 'test-id',
+            name: 'AskUserQuestion',
+            input: { questions: [] },
+          },
+        ],
+      },
+    };
+    expect(shouldAutoInterrupt(message)).toBe(true);
+  });
+
+  it('should return true for ExitPlanMode tool call', () => {
+    const message = {
+      type: 'assistant',
+      message: {
+        role: 'assistant',
+        content: [
+          {
+            type: 'tool_use',
+            id: 'test-id',
+            name: 'ExitPlanMode',
+            input: {},
+          },
+        ],
+      },
+    };
+    expect(shouldAutoInterrupt(message)).toBe(true);
+  });
+
+  it('should return false for regular tool calls', () => {
+    const message = {
+      type: 'assistant',
+      message: {
+        role: 'assistant',
+        content: [
+          {
+            type: 'tool_use',
+            id: 'test-id',
+            name: 'Write',
+            input: { file_path: '/tmp/test.txt', content: 'hello' },
+          },
+        ],
+      },
+    };
+    expect(shouldAutoInterrupt(message)).toBe(false);
+  });
+
+  it('should return false for text-only assistant messages', () => {
+    const message = {
+      type: 'assistant',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'Hello, how can I help?' }],
+      },
+    };
+    expect(shouldAutoInterrupt(message)).toBe(false);
+  });
+
+  it('should return false for user messages', () => {
+    const message = {
+      type: 'user',
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: 'Hello' }],
+      },
+    };
+    expect(shouldAutoInterrupt(message)).toBe(false);
+  });
+
+  it('should return false for null/undefined', () => {
+    expect(shouldAutoInterrupt(null)).toBe(false);
+    expect(shouldAutoInterrupt(undefined)).toBe(false);
+  });
+
+  it('should return true when AskUserQuestion is mixed with other tool calls', () => {
+    const message = {
+      type: 'assistant',
+      message: {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'Let me ask a question' },
+          {
+            type: 'tool_use',
+            id: 'test-id',
+            name: 'AskUserQuestion',
+            input: { questions: [] },
+          },
+        ],
+      },
+    };
+    expect(shouldAutoInterrupt(message)).toBe(true);
   });
 });

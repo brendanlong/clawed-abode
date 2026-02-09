@@ -25,6 +25,7 @@ export { HookStartedDisplay } from './HookStartedDisplay';
 export { WebSearchDisplay } from './WebSearchDisplay';
 export { AskUserQuestionDisplay } from './AskUserQuestionDisplay';
 export { TaskDisplay } from './TaskDisplay';
+export { EnterPlanModeDisplay } from './EnterPlanModeDisplay';
 export { ExitPlanModeDisplay } from './ExitPlanModeDisplay';
 
 export type { ToolResultMap, ToolCall, ContentBlock, MessageContent, TodoItem } from './types';
