@@ -109,9 +109,10 @@ RUN corepack enable && \
 COPY agent-service/package.json agent-service/package-lock.json* /opt/agent-service/
 RUN cd /opt/agent-service && npm install
 
-# Copy source, build, then prune devDependencies
+# Copy source and shared types, build, then prune devDependencies
 COPY agent-service/tsconfig.json /opt/agent-service/
 COPY agent-service/src/ /opt/agent-service/src/
+COPY shared/ /opt/shared/
 RUN cd /opt/agent-service && \
     npm run build && \
     npm prune --production
