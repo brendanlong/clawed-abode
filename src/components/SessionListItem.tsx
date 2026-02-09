@@ -2,8 +2,11 @@
 
 import Link from 'next/link';
 import { trpc } from '@/lib/trpc';
+import { extractRepoFullName } from '@/lib/utils';
 import { SessionStatusBadge } from '@/components/SessionStatusBadge';
 import { SessionActionButton } from '@/components/SessionActionButton';
+import { PrStatusIndicator } from '@/components/PrStatusIndicator';
+import { usePullRequestStatus } from '@/hooks/usePullRequestStatus';
 import type { Session } from '@/hooks/useSessionList';
 
 export interface SessionListItemProps {
@@ -16,12 +19,19 @@ export interface SessionListItemProps {
  * Each instance tracks its own pending start/stop/archive independently.
  */
 export function SessionListItem({ session, onMutationSuccess }: SessionListItemProps) {
-  const repoName = session.repoUrl.replace('https://github.com/', '').replace('.git', '');
+  const repoName = extractRepoFullName(session.repoUrl);
   const isArchived = session.status === 'archived';
 
   const startMutation = trpc.sessions.start.useMutation({ onSuccess: onMutationSuccess });
   const stopMutation = trpc.sessions.stop.useMutation({ onSuccess: onMutationSuccess });
   const archiveMutation = trpc.sessions.delete.useMutation({ onSuccess: onMutationSuccess });
+
+  const { pullRequest } = usePullRequestStatus(
+    session.id,
+    session.repoUrl,
+    session.branch,
+    !isArchived
+  );
 
   return (
     <li
@@ -42,6 +52,7 @@ export function SessionListItem({ session, onMutationSuccess }: SessionListItemP
         </div>
 
         <div className="flex items-center gap-4">
+          {pullRequest && <PrStatusIndicator pullRequest={pullRequest} />}
           <SessionStatusBadge status={session.status} />
 
           <div className="flex items-center gap-2">
