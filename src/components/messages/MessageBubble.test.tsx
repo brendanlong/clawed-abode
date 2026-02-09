@@ -328,6 +328,7 @@ describe('MessageBubble', () => {
             latestTodoWriteId: 'todo-1',
             manuallyToggledTodoIds,
             onTodoManualToggle,
+            latestPlanContent: null,
           }}
         >
           <MessageBubble message={message} />

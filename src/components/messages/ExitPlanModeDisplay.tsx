@@ -1,8 +1,10 @@
 'use client';
 
+import { useCallback, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { MarkdownContent } from '@/components/MarkdownContent';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
+import { useMessageListContext } from './MessageListContext';
 import type { ToolCall } from './types';
 
 interface ExitPlanModeInput {
@@ -35,24 +37,64 @@ function ClipboardIcon() {
   );
 }
 
+// Copy icon
+function CopyIcon() {
+  return (
+    <svg
+      className="w-3.5 h-3.5"
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+      strokeWidth={2}
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9.75a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184"
+      />
+    </svg>
+  );
+}
+
+// Check icon
+function CheckIcon() {
+  return (
+    <svg
+      className="w-3.5 h-3.5"
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+      strokeWidth={2}
+    >
+      <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+    </svg>
+  );
+}
+
 /**
  * Specialized display for ExitPlanMode tool calls.
- * Shows the plan approval status and any allowed prompts.
+ * Shows the full rendered plan content and approval status.
  */
 export function ExitPlanModeDisplay({ tool }: { tool: ToolCall }) {
+  const ctx = useMessageListContext();
+  const planContent = ctx?.latestPlanContent;
   const hasOutput = tool.output !== undefined;
   const isPending = !hasOutput;
+  const [copied, setCopied] = useState(false);
 
   const inputObj = tool.input as ExitPlanModeInput | undefined;
   const allowedPrompts = inputObj?.allowedPrompts ?? [];
 
-  // Parse the output - it's typically a string like "Exit plan mode?"
-  const outputText =
-    typeof tool.output === 'string'
-      ? tool.output
-      : tool.output
-        ? JSON.stringify(tool.output, null, 2)
-        : '';
+  const handleCopyPlan = useCallback(async () => {
+    if (!planContent) return;
+    try {
+      await navigator.clipboard.writeText(planContent);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Fallback for older browsers
+    }
+  }, [planContent]);
 
   return (
     <ToolDisplayWrapper
@@ -61,9 +103,7 @@ export function ExitPlanModeDisplay({ tool }: { tool: ToolCall }) {
       title="Plan Complete"
       defaultExpanded={true}
       pendingText="Awaiting approval..."
-      cardClassName={
-        !isPending && !tool.is_error ? 'border-purple-300 dark:border-purple-700' : undefined
-      }
+      cardClassName="border-purple-300 dark:border-purple-700"
       subtitle={
         <div className="text-muted-foreground text-xs mt-1">
           Claude has finished planning and is ready for your review
@@ -78,12 +118,23 @@ export function ExitPlanModeDisplay({ tool }: { tool: ToolCall }) {
         </Badge>
       }
     >
-      {/* Output/Status section */}
-      {hasOutput && outputText && (
+      {/* Full plan content rendered as Markdown */}
+      {planContent && (
         <div>
-          <div className="text-muted-foreground mb-1">Status:</div>
-          <div className="bg-muted rounded p-2">
-            <MarkdownContent content={outputText} />
+          <div className="flex items-center justify-between mb-1">
+            <div className="text-muted-foreground font-medium">Plan:</div>
+            <button
+              type="button"
+              onClick={handleCopyPlan}
+              className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+              title="Copy plan to clipboard"
+            >
+              {copied ? <CheckIcon /> : <CopyIcon />}
+              {copied ? 'Copied' : 'Copy'}
+            </button>
+          </div>
+          <div className="bg-muted/50 rounded p-3 overflow-y-auto max-h-[600px]">
+            <MarkdownContent content={planContent} />
           </div>
         </div>
       )}
@@ -118,6 +169,11 @@ export function ExitPlanModeDisplay({ tool }: { tool: ToolCall }) {
             {inputObj.remoteSessionTitle || inputObj.remoteSessionUrl}
           </a>
         </div>
+      )}
+
+      {/* Show status message if no plan content available */}
+      {!planContent && isPending && (
+        <div className="text-muted-foreground italic py-2">Waiting for plan approval...</div>
       )}
     </ToolDisplayWrapper>
   );

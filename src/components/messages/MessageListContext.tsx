@@ -13,6 +13,8 @@ interface MessageListContextValue {
   onSendResponse?: (response: string) => void;
   /** Whether Claude is currently running (disables AskUserQuestion interactions) */
   isClaudeRunning?: boolean;
+  /** The latest plan content from Write/Edit of plan files, or null */
+  latestPlanContent: string | null;
 }
 
 const MessageListContext = createContext<MessageListContextValue | null>(null);
