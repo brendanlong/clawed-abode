@@ -11,10 +11,7 @@ import {
   verifyContainerHealth,
   cleanupSessionSocket,
 } from '../services/podman';
-import { getRepoSettingsForContainer } from '../services/repo-settings';
-import { getGlobalSettingsForContainer } from '../services/global-settings';
-import { buildSystemPrompt } from '../services/claude-runner';
-import { mergeEnvVars } from '../services/settings-merger';
+import { loadMergedSessionSettings } from '../services/settings-merger';
 import {
   createAgentClient,
   getAgentSocketPath,
@@ -60,31 +57,19 @@ async function setupSession(
     // Update status
     await updateStatus('Starting container...');
 
-    // Fetch per-repo settings (env vars, MCP servers) and global settings
-    const [repoSettings, globalSettings] = await Promise.all([
-      getRepoSettingsForContainer(repoFullName),
-      getGlobalSettingsForContainer(),
-    ]);
-
-    // Build the system prompt to pass to the agent service
-    const systemPrompt = buildSystemPrompt({
-      customSystemPrompt: repoSettings?.customSystemPrompt,
-      globalSettings,
-    });
-
-    // Merge global and per-repo env vars (per-repo wins on conflict)
-    const mergedEnvVars = mergeEnvVars(globalSettings.envVars, repoSettings?.envVars ?? []);
+    // Load and merge global + per-repo settings
+    const settings = await loadMergedSessionSettings(repoFullName);
 
     // Start container with GitHub token for push/pull access and merged settings
-    log.info('Starting container', { sessionId, hasRepoSettings: !!repoSettings });
+    log.info('Starting container', { sessionId });
     const containerId = await createAndStartContainer({
       sessionId,
       repoPath,
       githubToken,
-      systemPrompt,
-      repoEnvVars: mergedEnvVars,
-      claudeModel: globalSettings.claudeModel ?? undefined,
-      claudeApiKey: globalSettings.claudeApiKey ?? undefined,
+      systemPrompt: settings.systemPrompt,
+      repoEnvVars: settings.envVars,
+      claudeModel: settings.claudeModel,
+      claudeApiKey: settings.claudeApiKey,
     });
     log.info('Container started', { sessionId, containerId });
 
@@ -245,29 +230,17 @@ export const sessionsRouter = router({
         const repoFullNameMatch = session.repoUrl.match(/github\.com\/([^/]+\/[^/.]+)/);
         const repoFullName = repoFullNameMatch?.[1];
 
-        // Fetch per-repo settings (env vars, MCP servers) and global settings
-        const [repoSettings, globalSettings] = await Promise.all([
-          repoFullName ? getRepoSettingsForContainer(repoFullName) : null,
-          getGlobalSettingsForContainer(),
-        ]);
-
-        // Build system prompt
-        const systemPrompt = buildSystemPrompt({
-          customSystemPrompt: repoSettings?.customSystemPrompt,
-          globalSettings,
-        });
-
-        // Merge global and per-repo env vars (per-repo wins on conflict)
-        const mergedEnvVars = mergeEnvVars(globalSettings.envVars, repoSettings?.envVars ?? []);
+        // Load and merge global + per-repo settings
+        const settings = await loadMergedSessionSettings(repoFullName);
 
         const containerId = await createAndStartContainer({
           sessionId: session.id,
           repoPath: session.repoPath,
           githubToken,
-          systemPrompt,
-          repoEnvVars: mergedEnvVars,
-          claudeModel: globalSettings.claudeModel ?? undefined,
-          claudeApiKey: globalSettings.claudeApiKey ?? undefined,
+          systemPrompt: settings.systemPrompt,
+          repoEnvVars: settings.envVars,
+          claudeModel: settings.claudeModel,
+          claudeApiKey: settings.claudeApiKey,
         });
 
         // Wait for agent service to be healthy
