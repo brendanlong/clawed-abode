@@ -1,4 +1,52 @@
 import type { ContainerEnvVar, ContainerMcpServer } from './repo-settings';
+import { getRepoSettingsForContainer } from './repo-settings';
+import { getGlobalSettingsForContainer, type GlobalContainerSettings } from './global-settings';
+import { buildSystemPrompt } from './claude-runner';
+
+/**
+ * Fully merged session settings ready for container creation and Claude queries.
+ */
+export interface MergedSessionSettings {
+  systemPrompt: string;
+  envVars: ContainerEnvVar[];
+  mcpServers: ContainerMcpServer[];
+  claudeModel: string | undefined;
+  claudeApiKey: string | undefined;
+  customSystemPrompt: string | null | undefined;
+  globalSettings: GlobalContainerSettings;
+}
+
+/**
+ * Load and merge global + per-repo settings into a single object.
+ * Fetches repo and global settings in parallel, builds the system prompt,
+ * and merges env vars and MCP servers.
+ */
+export async function loadMergedSessionSettings(
+  repoFullName: string | null | undefined
+): Promise<MergedSessionSettings> {
+  const [repoSettings, globalSettings] = await Promise.all([
+    repoFullName ? getRepoSettingsForContainer(repoFullName) : null,
+    getGlobalSettingsForContainer(),
+  ]);
+
+  const systemPrompt = buildSystemPrompt({
+    customSystemPrompt: repoSettings?.customSystemPrompt,
+    globalSettings,
+  });
+
+  const envVars = mergeEnvVars(globalSettings.envVars, repoSettings?.envVars ?? []);
+  const mcpServers = mergeMcpServers(globalSettings.mcpServers, repoSettings?.mcpServers ?? []);
+
+  return {
+    systemPrompt,
+    envVars,
+    mcpServers,
+    claudeModel: globalSettings.claudeModel ?? undefined,
+    claudeApiKey: globalSettings.claudeApiKey ?? undefined,
+    customSystemPrompt: repoSettings?.customSystemPrompt,
+    globalSettings,
+  };
+}
 
 /**
  * Merge global and per-repo environment variables.

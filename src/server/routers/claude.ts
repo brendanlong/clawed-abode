@@ -8,9 +8,7 @@ import {
   isClaudeRunningAsync,
   markLastMessageAsInterrupted,
 } from '../services/claude-runner';
-import { getRepoSettingsForContainer } from '../services/repo-settings';
-import { getGlobalSettingsForContainer } from '../services/global-settings';
-import { mergeMcpServers } from '../services/settings-merger';
+import { loadMergedSessionSettings } from '../services/settings-merger';
 import { estimateTokenUsage } from '@/lib/token-estimation';
 import { createLogger, toError } from '@/lib/logger';
 import { extractRepoFullName } from '@/lib/utils';
@@ -53,34 +51,25 @@ export const claudeRouter = router({
         });
       }
 
-      // Get repo settings for custom system prompt and global settings
+      // Load and merge global + per-repo settings
       const repoFullName = extractRepoFullName(session.repoUrl);
-      const [repoSettings, globalSettings] = await Promise.all([
-        getRepoSettingsForContainer(repoFullName),
-        getGlobalSettingsForContainer(),
-      ]);
-
-      // Merge global and per-repo MCP servers (per-repo wins on name conflict)
-      const mergedMcpServers = mergeMcpServers(
-        globalSettings.mcpServers,
-        repoSettings?.mcpServers ?? []
-      );
+      const settings = await loadMergedSessionSettings(repoFullName);
 
       // Start Claude in the background - don't await
       log.info('Starting Claude command', {
         sessionId: input.sessionId,
         containerId: session.containerId,
-        hasCustomSystemPrompt: !!repoSettings?.customSystemPrompt,
-        hasGlobalOverride: globalSettings.systemPromptOverrideEnabled,
-        hasGlobalAppend: !!globalSettings.systemPromptAppend,
+        hasCustomSystemPrompt: !!settings.customSystemPrompt,
+        hasGlobalOverride: settings.globalSettings.systemPromptOverrideEnabled,
+        hasGlobalAppend: !!settings.globalSettings.systemPromptAppend,
       });
       runClaudeCommand({
         sessionId: input.sessionId,
         containerId: session.containerId,
         prompt: input.prompt,
-        customSystemPrompt: repoSettings?.customSystemPrompt,
-        globalSettings,
-        mcpServers: mergedMcpServers,
+        customSystemPrompt: settings.customSystemPrompt,
+        globalSettings: settings.globalSettings,
+        mcpServers: settings.mcpServers,
       }).catch((err) => {
         log.error('Claude command failed', toError(err), { sessionId: input.sessionId });
       });

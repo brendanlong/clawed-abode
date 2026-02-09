@@ -7,12 +7,16 @@ const mockInterruptClaude = vi.hoisted(() => vi.fn());
 const mockIsClaudeRunningAsync = vi.hoisted(() => vi.fn());
 const mockMarkLastMessageAsInterrupted = vi.hoisted(() => vi.fn());
 
-vi.mock('../services/claude-runner', () => ({
-  runClaudeCommand: mockRunClaudeCommand,
-  interruptClaude: mockInterruptClaude,
-  isClaudeRunningAsync: mockIsClaudeRunningAsync,
-  markLastMessageAsInterrupted: mockMarkLastMessageAsInterrupted,
-}));
+vi.mock('../services/claude-runner', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../services/claude-runner')>();
+  return {
+    ...actual,
+    runClaudeCommand: mockRunClaudeCommand,
+    interruptClaude: mockInterruptClaude,
+    isClaudeRunningAsync: mockIsClaudeRunningAsync,
+    markLastMessageAsInterrupted: mockMarkLastMessageAsInterrupted,
+  };
+});
 
 // Use real token estimation (pure function)
 // vi.mock('@/lib/token-estimation') - not mocked
