@@ -117,6 +117,15 @@ RUN cd /opt/agent-service && \
     npm run build && \
     npm prune --production
 
+# Verify the built entry point exists at the path expected by entrypoint.sh
+# This catches build configuration errors at build time instead of runtime
+RUN test -f /opt/agent-service/dist/agent-service/src/index.js || \
+    (echo "ERROR: Agent service entry point not found at expected path" && \
+     echo "Expected: /opt/agent-service/dist/agent-service/src/index.js" && \
+     echo "Actual contents of /opt/agent-service/dist/:" && \
+     find /opt/agent-service/dist/ -type f 2>/dev/null | head -20 && \
+     exit 1)
+
 # Create a non-root user with UID 1000 (common default for host user)
 # Ubuntu 24.04 has an 'ubuntu' user at UID 1000, so delete it first
 # Configure passwordless sudo for package installation and system administration

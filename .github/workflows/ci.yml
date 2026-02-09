@@ -213,3 +213,40 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=runner
           cache-to: type=gha,mode=max,scope=runner
+          load: true
+
+      - name: Verify runner container starts
+        run: |
+          # Create socket directory for agent service
+          mkdir -p /tmp/test-sockets
+
+          # Start container with minimal config
+          CONTAINER_ID=$(docker run -d \
+            --rm \
+            -e AGENT_SOCKET_PATH=/sockets/test.sock \
+            -v /tmp/test-sockets:/sockets \
+            ${{ env.REGISTRY }}/${{ env.RUNNER_IMAGE_NAME }}:latest)
+
+          echo "Container started: $CONTAINER_ID"
+
+          # Wait up to 10 seconds for agent service to start
+          for i in {1..10}; do
+            if docker exec $CONTAINER_ID test -S /sockets/test.sock; then
+              echo "✓ Agent service socket created"
+
+              # Test the health endpoint via the socket
+              if docker exec $CONTAINER_ID sh -c 'curl -sf --unix-socket /sockets/test.sock http://localhost/health' | grep -q '"ok":true'; then
+                echo "✓ Agent service health check passed"
+                docker stop $CONTAINER_ID
+                exit 0
+              fi
+            fi
+            echo "Waiting for agent service... ($i/10)"
+            sleep 1
+          done
+
+          echo "✗ Agent service failed to start within 10 seconds"
+          echo "Container logs:"
+          docker logs $CONTAINER_ID
+          docker stop $CONTAINER_ID
+          exit 1
