@@ -10,7 +10,7 @@ vi.mock('next/link', () => ({
   ),
 }));
 
-// Mock trpc so SessionListItem's useMutation calls work without a provider
+// Mock trpc so SessionListItem's useMutation and useQuery calls work without a provider
 vi.mock('@/lib/trpc', () => ({
   trpc: {
     sessions: {
@@ -18,6 +18,21 @@ vi.mock('@/lib/trpc', () => ({
       stop: { useMutation: () => ({ mutate: vi.fn(), isPending: false }) },
       delete: { useMutation: () => ({ mutate: vi.fn(), isPending: false }) },
     },
+    github: {
+      getPullRequestForBranch: {
+        useQuery: () => ({ data: null, isLoading: false }),
+      },
+    },
+    sse: {
+      onPrUpdate: {
+        useSubscription: vi.fn(),
+      },
+    },
+    useUtils: () => ({
+      github: {
+        getPullRequestForBranch: { setData: vi.fn() },
+      },
+    }),
   },
 }));
 
