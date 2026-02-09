@@ -55,17 +55,6 @@ function extractTextContent(content: MessageContent): string | null {
   return null;
 }
 
-interface TodoWriteTrackingProps {
-  latestTodoWriteId: string | null;
-  manuallyToggledTodoIds: Set<string>;
-  onTodoManualToggle: (toolId: string) => void;
-}
-
-interface AskUserQuestionProps {
-  onSendResponse?: (response: string) => void;
-  isClaudeRunning?: boolean;
-}
-
 /**
  * Map of tool names to their specialized display components.
  * Tools not in this map fall through to the generic ToolCallDisplay.
@@ -83,14 +72,11 @@ const TOOL_DISPLAY_MAP: Record<string, React.ComponentType<{ tool: ToolCall }>> 
   Skill: SkillDisplay,
   Task: TaskDisplay,
   ExitPlanMode: ExitPlanModeDisplay,
+  TodoWrite: TodoWriteDisplay,
+  AskUserQuestion: AskUserQuestionDisplay,
 };
 
-function renderContentBlocks(
-  blocks: ContentBlock[],
-  toolResults?: ToolResultMap,
-  todoTracking?: TodoWriteTrackingProps,
-  askUserQuestionProps?: AskUserQuestionProps
-): React.ReactNode {
+function renderContentBlocks(blocks: ContentBlock[], toolResults?: ToolResultMap): React.ReactNode {
   const textBlocks: string[] = [];
   const toolUseBlocks: ContentBlock[] = [];
 
@@ -118,40 +104,6 @@ function renderContentBlocks(
               is_error: result?.is_error,
             };
 
-            // Special case: TodoWrite needs extra tracking props
-            if (block.name === 'TodoWrite') {
-              const isLatest = todoTracking && block.id === todoTracking.latestTodoWriteId;
-              const wasManuallyToggled =
-                todoTracking && block.id
-                  ? todoTracking.manuallyToggledTodoIds.has(block.id)
-                  : false;
-              return (
-                <TodoWriteDisplay
-                  key={block.id}
-                  tool={tool}
-                  isLatest={isLatest ?? false}
-                  wasManuallyToggled={wasManuallyToggled}
-                  onManualToggle={() => {
-                    if (block.id && todoTracking) {
-                      todoTracking.onTodoManualToggle(block.id);
-                    }
-                  }}
-                />
-              );
-            }
-
-            // Special case: AskUserQuestion needs response handler
-            if (block.name === 'AskUserQuestion') {
-              return (
-                <AskUserQuestionDisplay
-                  key={block.id}
-                  tool={tool}
-                  onSendResponse={askUserQuestionProps?.onSendResponse}
-                  isClaudeRunning={askUserQuestionProps?.isClaudeRunning}
-                />
-              );
-            }
-
             // Look up in the tool display map
             const DisplayComponent = TOOL_DISPLAY_MAP[block.name ?? ''];
             if (DisplayComponent) {
@@ -167,23 +119,13 @@ function renderContentBlocks(
   );
 }
 
-function renderContent(
-  content: unknown,
-  toolResults?: ToolResultMap,
-  todoTracking?: TodoWriteTrackingProps,
-  askUserQuestionProps?: AskUserQuestionProps
-): React.ReactNode {
+function renderContent(content: unknown, toolResults?: ToolResultMap): React.ReactNode {
   if (typeof content === 'string') {
     return <MarkdownContent content={content} />;
   }
 
   if (Array.isArray(content)) {
-    return renderContentBlocks(
-      content as ContentBlock[],
-      toolResults,
-      todoTracking,
-      askUserQuestionProps
-    );
+    return renderContentBlocks(content as ContentBlock[], toolResults);
   }
 
   return null;
@@ -310,39 +252,10 @@ function isRecognizedMessage(
 export function MessageBubble({
   message,
   toolResults,
-  latestTodoWriteId,
-  manuallyToggledTodoIds,
-  onTodoManualToggle,
-  onSendResponse,
-  isClaudeRunning,
 }: {
   message: { id?: string; type: string; content: unknown };
   toolResults?: ToolResultMap;
-  latestTodoWriteId?: string | null;
-  manuallyToggledTodoIds?: Set<string>;
-  onTodoManualToggle?: (toolId: string) => void;
-  onSendResponse?: (response: string) => void;
-  isClaudeRunning?: boolean;
 }) {
-  // Build todoTracking prop if all required values are provided
-  const todoTracking: TodoWriteTrackingProps | undefined = useMemo(() => {
-    if (latestTodoWriteId !== undefined && manuallyToggledTodoIds && onTodoManualToggle) {
-      return {
-        latestTodoWriteId,
-        manuallyToggledTodoIds,
-        onTodoManualToggle,
-      };
-    }
-    return undefined;
-  }, [latestTodoWriteId, manuallyToggledTodoIds, onTodoManualToggle]);
-
-  // Build askUserQuestionProps
-  const askUserQuestionProps: AskUserQuestionProps | undefined = useMemo(() => {
-    if (onSendResponse) {
-      return { onSendResponse, isClaudeRunning };
-    }
-    return undefined;
-  }, [onSendResponse, isClaudeRunning]);
   const { type } = message;
   const content = useMemo(() => (message.content || {}) as MessageContent, [message.content]);
 
@@ -538,7 +451,7 @@ export function MessageBubble({
         )}
 
         {/* Render content (works for both regular messages and errors now) */}
-        {renderContent(displayContent, toolResults, todoTracking, askUserQuestionProps)}
+        {renderContent(displayContent, toolResults)}
 
         {content.tool_calls && content.tool_calls.length > 0 && (
           <div className="mt-2 space-y-2">
