@@ -3,8 +3,11 @@ import fs from 'node:fs';
 import { z } from 'zod';
 import { MessageStore } from './message-store.js';
 import { QueryRunner, type QueryOptions } from './query-runner.js';
+import { createLogger, toError } from './logger.js';
 import type { SDKMessage, SlashCommand } from '@anthropic-ai/claude-agent-sdk';
 import type { PartialAssistantMessage } from './stream-accumulator.js';
+
+const log = createLogger('agent-service');
 
 const SOCKET_PATH = process.env.AGENT_SOCKET_PATH || '/sockets/agent.sock';
 const SYSTEM_PROMPT = process.env.SYSTEM_PROMPT || '';
@@ -160,11 +163,7 @@ async function handleQuery(req: http.IncomingMessage, res: http.ServerResponse):
     res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
-    const errorStack = err instanceof Error ? err.stack : undefined;
-    console.error('Query failed:', errorMessage);
-    if (errorStack) {
-      console.error('Stack trace:', errorStack);
-    }
+    log.error('Query failed', toError(err));
     res.write(`data: ${JSON.stringify({ error: errorMessage })}\n\n`);
   } finally {
     unsubscribeMessages();
@@ -264,14 +263,14 @@ const server = http.createServer(async (req, res) => {
       sendError(res, 404, 'Not found');
     }
   } catch (err) {
-    console.error('Request error:', err);
+    log.error('Request error', toError(err));
     sendError(res, 500, err instanceof Error ? err.message : 'Internal server error');
   }
 });
 
 // Remove stale socket file if it exists (handles crashed agents)
 if (fs.existsSync(SOCKET_PATH)) {
-  console.log(`Removing stale socket file: ${SOCKET_PATH}`);
+  log.info('Removing stale socket file', { socketPath: SOCKET_PATH });
   fs.unlinkSync(SOCKET_PATH);
 }
 
@@ -279,32 +278,32 @@ if (fs.existsSync(SOCKET_PATH)) {
 server.listen(SOCKET_PATH, () => {
   // Set socket permissions to allow service container to connect
   fs.chmodSync(SOCKET_PATH, 0o666);
-  console.log(`Agent service listening on ${SOCKET_PATH}`);
+  log.info('Agent service listening', { socketPath: SOCKET_PATH });
 });
 
 server.on('error', (err: NodeJS.ErrnoException) => {
   if (err.code === 'EADDRINUSE') {
-    console.error(`Socket ${SOCKET_PATH} is already in use`);
+    log.error('Socket already in use', undefined, { socketPath: SOCKET_PATH });
     // Try to remove and retry once
     try {
       fs.unlinkSync(SOCKET_PATH);
       server.listen(SOCKET_PATH, () => {
         fs.chmodSync(SOCKET_PATH, 0o666);
-        console.log(`Agent service listening on ${SOCKET_PATH} (after retry)`);
+        log.info('Agent service listening (after retry)', { socketPath: SOCKET_PATH });
       });
     } catch (retryErr) {
-      console.error('Failed to bind after removing stale socket:', retryErr);
+      log.error('Failed to bind after removing stale socket', toError(retryErr));
       process.exit(1);
     }
   } else {
-    console.error('Server error:', err);
+    log.error('Server error', err);
     process.exit(1);
   }
 });
 
 // Graceful shutdown
 process.on('SIGTERM', () => {
-  console.log('Received SIGTERM, shutting down...');
+  log.info('Received SIGTERM, shutting down');
   server.close(() => {
     // Clean up socket file
     try {
@@ -312,7 +311,7 @@ process.on('SIGTERM', () => {
         fs.unlinkSync(SOCKET_PATH);
       }
     } catch (err) {
-      console.error('Failed to clean up socket file:', err);
+      log.error('Failed to clean up socket file', toError(err));
     }
     store.close();
     process.exit(0);
@@ -320,7 +319,7 @@ process.on('SIGTERM', () => {
 });
 
 process.on('SIGINT', () => {
-  console.log('Received SIGINT, shutting down...');
+  log.info('Received SIGINT, shutting down');
   server.close(() => {
     // Clean up socket file
     try {
@@ -328,7 +327,7 @@ process.on('SIGINT', () => {
         fs.unlinkSync(SOCKET_PATH);
       }
     } catch (err) {
-      console.error('Failed to clean up socket file:', err);
+      log.error('Failed to clean up socket file', toError(err));
     }
     store.close();
     process.exit(0);
