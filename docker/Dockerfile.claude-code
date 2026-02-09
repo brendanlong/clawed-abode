@@ -143,6 +143,11 @@ RUN echo "claudeuser:100000:65536" >> /etc/subuid && \
 WORKDIR /workspace
 RUN chown claudeuser:claudeuser /workspace
 
+# Create /sockets directory for agent service Unix socket
+# This is typically mounted as a volume at runtime, but we create it here
+# so the container can run standalone for testing
+RUN mkdir -p /sockets && chown claudeuser:claudeuser /sockets
+
 # Switch to non-root user
 USER claudeuser
 

@@ -217,27 +217,44 @@ jobs:
 
       - name: Verify runner container starts
         run: |
-          # Create socket directory for agent service
+          # Create socket directory for agent service with correct permissions
+          # The container runs as UID 1000 (claudeuser), so we need to ensure
+          # the mounted directory is writable by that user
           mkdir -p /tmp/test-sockets
+          chmod 777 /tmp/test-sockets
 
-          # Start container with minimal config
+          # Start container with minimal config (no --rm so we can get logs)
           CONTAINER_ID=$(docker run -d \
-            --rm \
             -e AGENT_SOCKET_PATH=/sockets/test.sock \
             -v /tmp/test-sockets:/sockets \
             ${{ env.REGISTRY }}/${{ env.RUNNER_IMAGE_NAME }}:latest)
 
           echo "Container started: $CONTAINER_ID"
 
+          # Function to cleanup on exit
+          cleanup() {
+            echo "Cleaning up container..."
+            docker rm -f $CONTAINER_ID 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
           # Wait up to 10 seconds for agent service to start
           for i in {1..10}; do
-            if docker exec $CONTAINER_ID test -S /sockets/test.sock; then
+            # Check if container is still running
+            if ! docker ps -q --no-trunc | grep -q $CONTAINER_ID; then
+              echo "✗ Container exited unexpectedly"
+              echo "Container logs:"
+              docker logs $CONTAINER_ID
+              exit 1
+            fi
+
+            # Check if socket exists
+            if docker exec $CONTAINER_ID test -S /sockets/test.sock 2>/dev/null; then
               echo "✓ Agent service socket created"
 
               # Test the health endpoint via the socket
               if docker exec $CONTAINER_ID sh -c 'curl -sf --unix-socket /sockets/test.sock http://localhost/health' | grep -q '"ok":true'; then
                 echo "✓ Agent service health check passed"
-                docker stop $CONTAINER_ID
                 exit 0
               fi
             fi
@@ -248,5 +265,4 @@ jobs:
           echo "✗ Agent service failed to start within 10 seconds"
           echo "Container logs:"
           docker logs $CONTAINER_ID
-          docker stop $CONTAINER_ID
           exit 1
