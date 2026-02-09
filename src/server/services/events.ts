@@ -1,6 +1,7 @@
 import { EventEmitter } from 'events';
 import type { Message, Session } from '@prisma/client';
 import type { SlashCommand } from '@anthropic-ai/claude-agent-sdk';
+import type { PullRequestInfo } from './github';
 
 // Message with parsed content (for SSE events)
 export type ParsedMessage = Omit<Message, 'content'> & { content: unknown };
@@ -30,7 +31,18 @@ export interface CommandsEvent {
   commands: SlashCommand[];
 }
 
-export type SSEEvent = SessionUpdateEvent | MessageEvent | ClaudeRunningEvent | CommandsEvent;
+export interface PrUpdateEvent {
+  type: 'pr_update';
+  sessionId: string;
+  pullRequest: PullRequestInfo | null;
+}
+
+export type SSEEvent =
+  | SessionUpdateEvent
+  | MessageEvent
+  | ClaudeRunningEvent
+  | CommandsEvent
+  | PrUpdateEvent;
 
 // Create a typed event emitter
 class SSEEventEmitter extends EventEmitter {
@@ -90,6 +102,20 @@ class SSEEventEmitter extends EventEmitter {
   // Subscribe to commands updates for a specific session
   onCommands(sessionId: string, callback: (event: CommandsEvent) => void): () => void {
     const eventName = `commands:${sessionId}`;
+    this.on(eventName, callback);
+    return () => this.off(eventName, callback);
+  }
+
+  emitPrUpdate(sessionId: string, pullRequest: PullRequestInfo | null): void {
+    this.emit(`pr:${sessionId}`, {
+      type: 'pr_update',
+      sessionId,
+      pullRequest,
+    } satisfies PrUpdateEvent);
+  }
+
+  onPrUpdate(sessionId: string, callback: (event: PrUpdateEvent) => void): () => void {
+    const eventName = `pr:${sessionId}`;
     this.on(eventName, callback);
     return () => this.off(eventName, callback);
   }

@@ -1,8 +1,10 @@
 import { prisma } from '@/lib/prisma';
 import { getMessageType } from '@/lib/claude-messages';
+import { extractRepoFullName } from '@/lib/utils';
 import { v4 as uuid, v5 as uuidv5 } from 'uuid';
 import { sseEvents } from './events';
 import { createLogger, toError } from '@/lib/logger';
+import { fetchPullRequestForBranch } from './github';
 import {
   describeExitCode,
   getContainerStatus,
@@ -248,10 +250,10 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
     throw new Error('A Claude process is already running for this session');
   }
 
-  // Look up the session to get the repoPath
+  // Look up the session to get the repoPath, repoUrl, and branch
   const session = await prisma.session.findUnique({
     where: { id: sessionId },
-    select: { repoPath: true },
+    select: { repoPath: true, repoUrl: true, branch: true },
   });
 
   if (!session) {
@@ -456,6 +458,24 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
 
     // Emit Claude stopped event
     sseEvents.emitClaudeRunning(sessionId, false);
+
+    // Check for PR updates (fire-and-forget)
+    if (session.repoUrl && session.branch) {
+      const repoFullName = extractRepoFullName(session.repoUrl);
+      fetchPullRequestForBranch(repoFullName, session.branch)
+        .then((pr) => {
+          if (pr !== undefined) {
+            sseEvents.emitPrUpdate(sessionId, pr);
+          }
+        })
+        .catch((err) => {
+          log.debug('runClaudeCommand: Failed to check PR status', {
+            sessionId,
+            error: toError(err).message,
+          });
+        });
+    }
+
     log.debug('runClaudeCommand: Cleanup complete', { sessionId });
   }
 }

@@ -15,6 +15,12 @@ vi.mock('@/lib/logger', () => ({
   toError: (e: unknown) => (e instanceof Error ? e : new Error(String(e))),
 }));
 
+// Mock the github service (used by getPullRequestForBranch endpoint)
+const mockFetchPullRequestForBranch = vi.fn();
+vi.mock('../services/github', () => ({
+  fetchPullRequestForBranch: (...args: unknown[]) => mockFetchPullRequestForBranch(...args),
+}));
+
 // Import the router after mocks are set up
 import { githubRouter } from './github';
 import { router } from '../trpc';
@@ -578,6 +584,104 @@ describe('githubRouter', () => {
       ).rejects.toMatchObject({
         code: 'UNAUTHORIZED',
       });
+    });
+  });
+
+  describe('getPullRequestForBranch', () => {
+    it('should return PR info when a PR exists', async () => {
+      const mockPr = {
+        number: 42,
+        title: 'Add feature',
+        state: 'open' as const,
+        draft: false,
+        url: 'https://github.com/owner/repo/pull/42',
+        author: 'user',
+        updatedAt: '2024-01-01T00:00:00Z',
+      };
+      mockFetchPullRequestForBranch.mockResolvedValue(mockPr);
+
+      const caller = createCaller('auth-session-id');
+      const result = await caller.github.getPullRequestForBranch({
+        repoFullName: 'owner/repo',
+        branch: 'feature',
+      });
+
+      expect(result.pullRequest).toEqual(mockPr);
+      expect(mockFetchPullRequestForBranch).toHaveBeenCalledWith('owner/repo', 'feature');
+    });
+
+    it('should return null when no PR exists', async () => {
+      mockFetchPullRequestForBranch.mockResolvedValue(null);
+
+      const caller = createCaller('auth-session-id');
+      const result = await caller.github.getPullRequestForBranch({
+        repoFullName: 'owner/repo',
+        branch: 'no-pr',
+      });
+
+      expect(result.pullRequest).toBeNull();
+    });
+
+    it('should return null when service returns undefined', async () => {
+      mockFetchPullRequestForBranch.mockResolvedValue(undefined);
+
+      const caller = createCaller('auth-session-id');
+      const result = await caller.github.getPullRequestForBranch({
+        repoFullName: 'owner/repo',
+        branch: 'branch',
+      });
+
+      expect(result.pullRequest).toBeNull();
+    });
+
+    it('should throw PRECONDITION_FAILED if no GitHub token', async () => {
+      delete process.env.GITHUB_TOKEN;
+
+      const caller = createCaller('auth-session-id');
+
+      await expect(
+        caller.github.getPullRequestForBranch({
+          repoFullName: 'owner/repo',
+          branch: 'main',
+        })
+      ).rejects.toMatchObject({
+        code: 'PRECONDITION_FAILED',
+      });
+    });
+
+    it('should require authentication', async () => {
+      const caller = createCaller(null);
+
+      await expect(
+        caller.github.getPullRequestForBranch({
+          repoFullName: 'owner/repo',
+          branch: 'main',
+        })
+      ).rejects.toMatchObject({
+        code: 'UNAUTHORIZED',
+      });
+    });
+
+    it('should validate repoFullName format', async () => {
+      const caller = createCaller('auth-session-id');
+
+      await expect(
+        caller.github.getPullRequestForBranch({
+          repoFullName: 'invalid',
+          branch: 'main',
+        })
+      ).rejects.toThrow();
+    });
+
+    it('should validate branch is non-empty', async () => {
+      const caller = createCaller('auth-session-id');
+
+      await expect(
+        caller.github.getPullRequestForBranch({
+          repoFullName: 'owner/repo',
+          branch: '',
+        })
+      ).rejects.toThrow();
     });
   });
 });

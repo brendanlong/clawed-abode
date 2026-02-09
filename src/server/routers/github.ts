@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { router, protectedProcedure } from '../trpc';
 import { TRPCError } from '@trpc/server';
 import { env } from '@/lib/env';
+import { fetchPullRequestForBranch } from '../services/github';
 
 const GITHUB_API = 'https://api.github.com';
 
@@ -291,5 +292,26 @@ export const githubRouter = router({
           updatedAt: issue.updated_at,
         },
       };
+    }),
+
+  getPullRequestForBranch: protectedProcedure
+    .input(
+      z.object({
+        repoFullName: z.string().regex(/^[\w-]+\/[\w.-]+$/),
+        branch: z.string().min(1),
+      })
+    )
+    .query(async ({ input }) => {
+      const token = env.GITHUB_TOKEN;
+
+      if (!token) {
+        throw new TRPCError({
+          code: 'PRECONDITION_FAILED',
+          message: 'GitHub token is not configured',
+        });
+      }
+
+      const pullRequest = await fetchPullRequestForBranch(input.repoFullName, input.branch);
+      return { pullRequest: pullRequest ?? null };
     }),
 });
