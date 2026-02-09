@@ -1,32 +1,27 @@
+import {
+  SettingsListState,
+  SettingsListAction,
+  initialSettingsListState,
+  reduceSettingsListAction,
+} from './settings-list-reducer';
+
 // -- EnvVarSection (list management) reducer --
 
-export interface EnvVarSectionState {
-  showForm: boolean;
-  editingId: string | null;
-  deleteTarget: string | null;
-  isDeleting: boolean;
+export interface EnvVarSectionState extends SettingsListState {
   revealedSecrets: Map<string, string>;
   loadingSecret: string | null;
 }
 
-export type EnvVarSectionAction =
-  | { type: 'openForm' }
-  | { type: 'startEditing'; id: string }
-  | { type: 'closeForm' }
-  | { type: 'formSuccess' }
-  | { type: 'setDeleteTarget'; name: string | null }
-  | { type: 'startDeleting' }
-  | { type: 'finishDeleting' }
+type EnvVarSpecificAction =
   | { type: 'startLoadingSecret'; name: string }
   | { type: 'revealSecret'; name: string; value: string }
   | { type: 'hideSecret'; name: string }
   | { type: 'finishLoadingSecret' };
 
+export type EnvVarSectionAction = SettingsListAction | EnvVarSpecificAction;
+
 export const initialEnvVarSectionState: EnvVarSectionState = {
-  showForm: false,
-  editingId: null,
-  deleteTarget: null,
-  isDeleting: false,
+  ...initialSettingsListState,
   revealedSecrets: new Map(),
   loadingSecret: null,
 };
@@ -35,21 +30,10 @@ export function envVarSectionReducer(
   state: EnvVarSectionState,
   action: EnvVarSectionAction
 ): EnvVarSectionState {
+  const baseResult = reduceSettingsListAction(state, action as SettingsListAction);
+  if (baseResult) return baseResult;
+
   switch (action.type) {
-    case 'openForm':
-      return { ...state, showForm: true };
-    case 'startEditing':
-      return { ...state, editingId: action.id };
-    case 'closeForm':
-      return { ...state, showForm: false, editingId: null };
-    case 'formSuccess':
-      return { ...state, showForm: false, editingId: null };
-    case 'setDeleteTarget':
-      return { ...state, deleteTarget: action.name };
-    case 'startDeleting':
-      return { ...state, isDeleting: true };
-    case 'finishDeleting':
-      return { ...state, isDeleting: false, deleteTarget: null };
     case 'startLoadingSecret':
       return { ...state, loadingSecret: action.name };
     case 'revealSecret': {
@@ -64,6 +48,8 @@ export function envVarSectionReducer(
     }
     case 'finishLoadingSecret':
       return { ...state, loadingSecret: null };
+    default:
+      return state;
   }
 }
 
