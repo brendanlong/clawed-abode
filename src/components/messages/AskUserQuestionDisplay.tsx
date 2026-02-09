@@ -4,6 +4,7 @@ import { useState, useMemo } from 'react';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
+import { useMessageListContext } from './MessageListContext';
 import type { ToolCall } from './types';
 
 interface QuestionOption {
@@ -86,23 +87,14 @@ function RadioIcon({ selected }: { selected?: boolean }) {
   );
 }
 
-interface AskUserQuestionDisplayProps {
-  tool: ToolCall;
-  /** Callback to send a response to Claude */
-  onSendResponse?: (response: string) => void;
-  /** Whether Claude is currently running (disables clicking options) */
-  isClaudeRunning?: boolean;
-}
-
 /**
  * Specialized display for AskUserQuestion tool calls.
  * Shows a nicely formatted question with clickable options.
  */
-export function AskUserQuestionDisplay({
-  tool,
-  onSendResponse,
-  isClaudeRunning,
-}: AskUserQuestionDisplayProps) {
+export function AskUserQuestionDisplay({ tool }: { tool: ToolCall }) {
+  const ctx = useMessageListContext();
+  const onSendResponse = ctx?.onSendResponse;
+  const isClaudeRunning = ctx?.isClaudeRunning;
   const [selectedOptions, setSelectedOptions] = useState<Map<number, Set<number>>>(new Map());
 
   const hasOutput = tool.output !== undefined;
