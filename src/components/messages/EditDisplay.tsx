@@ -1,8 +1,10 @@
 'use client';
 
+import { useMemo } from 'react';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
+import { isPlanFile } from './plan-utils';
 import type { ToolCall } from './types';
 
 interface EditInput {
@@ -15,6 +17,7 @@ interface EditInput {
 /**
  * Specialized display for Edit tool calls.
  * Shows file path and a diff-like view of old vs new content.
+ * For plan files, shows a simplified "Plan updated" view.
  */
 export function EditDisplay({ tool }: { tool: ToolCall }) {
   const hasOutput = tool.output !== undefined;
@@ -27,6 +30,61 @@ export function EditDisplay({ tool }: { tool: ToolCall }) {
 
   // Extract just the filename for the header
   const fileName = filePath.split('/').pop() ?? filePath;
+
+  // Check if this is a plan file
+  const isPlan = useMemo(() => isPlanFile(filePath), [filePath]);
+
+  // For plan files, show a simplified compact view
+  if (isPlan) {
+    return (
+      <ToolDisplayWrapper
+        tool={tool}
+        title="Plan Updated"
+        subtitle={
+          <div className="text-muted-foreground text-xs mt-1">Plan was updated with changes</div>
+        }
+        doneBadge={
+          <Badge
+            variant="outline"
+            className="text-xs border-purple-500 text-purple-700 dark:text-purple-400"
+          >
+            Updated
+          </Badge>
+        }
+        cardClassName="border-purple-300 dark:border-purple-700"
+      >
+        {/* Show the changes as a simple diff */}
+        <div>
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-red-600 dark:text-red-400 font-medium">Removed</span>
+            <span className="text-muted-foreground">
+              ({oldString.split('\n').length}{' '}
+              {oldString.split('\n').length === 1 ? 'line' : 'lines'})
+            </span>
+          </div>
+          <pre className="bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 p-2 rounded overflow-x-auto max-h-32 overflow-y-auto">
+            <code className="text-red-800 dark:text-red-200 whitespace-pre-wrap break-words">
+              {oldString || '(empty)'}
+            </code>
+          </pre>
+        </div>
+        <div>
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-green-600 dark:text-green-400 font-medium">Added</span>
+            <span className="text-muted-foreground">
+              ({newString.split('\n').length}{' '}
+              {newString.split('\n').length === 1 ? 'line' : 'lines'})
+            </span>
+          </div>
+          <pre className="bg-green-50 dark:bg-green-950/50 border border-green-200 dark:border-green-800 p-2 rounded overflow-x-auto max-h-32 overflow-y-auto">
+            <code className="text-green-800 dark:text-green-200 whitespace-pre-wrap break-words">
+              {newString || '(empty)'}
+            </code>
+          </pre>
+        </div>
+      </ToolDisplayWrapper>
+    );
+  }
 
   return (
     <ToolDisplayWrapper
