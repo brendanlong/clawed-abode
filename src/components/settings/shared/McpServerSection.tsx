@@ -12,8 +12,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Plus, Trash2, Plug, Check, X } from 'lucide-react';
-import { DeleteConfirmDialog } from './DeleteConfirmDialog';
+import { Plug, Check, X } from 'lucide-react';
+import { SettingsListEditor } from './SettingsListEditor';
 import { KeyValueListEditor } from './KeyValueListEditor';
 import {
   mcpServerSectionReducer,
@@ -95,124 +95,83 @@ export function McpServerSection({
   };
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h3 className="font-medium">MCP Servers</h3>
-        <Button variant="outline" size="sm" onClick={() => dispatch({ type: 'openForm' })}>
-          <Plus className="h-4 w-4 mr-1" />
-          Add
-        </Button>
-      </div>
-
-      {mcpServers.length === 0 && !state.showForm ? (
-        <p className="text-sm text-muted-foreground">{emptyMessage}</p>
-      ) : (
-        <ul className="space-y-2">
-          {mcpServers.map((server) => {
-            const result = state.validationResults.get(server.name);
-            const isTesting = state.validatingServer === server.name;
-            return (
-              <li key={server.id} className="space-y-1">
-                <div className="flex items-center gap-2 p-2 rounded-md bg-muted/50">
-                  <div className="flex-1 min-w-0">
-                    <div className="font-mono text-sm flex items-center gap-2">
-                      {server.name}
-                      <span className="text-xs text-muted-foreground font-sans uppercase">
-                        {server.type}
-                      </span>
-                    </div>
-                    <div className="text-xs text-muted-foreground truncate">
-                      {server.type === 'stdio'
-                        ? `${server.command} ${server.args.join(' ')}`
-                        : server.url}
-                    </div>
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => handleValidate(server.name)}
-                    disabled={isTesting}
-                    title="Test connection"
-                  >
-                    {isTesting ? (
-                      <Spinner size="sm" className="h-4 w-4" />
-                    ) : (
-                      <Plug className="h-4 w-4" />
-                    )}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => dispatch({ type: 'startEditing', id: server.id })}
-                  >
-                    Edit
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => dispatch({ type: 'setDeleteTarget', name: server.name })}
-                    className="text-destructive hover:text-destructive"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </div>
-                {result && (
-                  <div
-                    className={`text-xs px-2 py-1 rounded flex items-center gap-1 ${
-                      result.success
-                        ? 'text-green-700 bg-green-50 dark:text-green-400 dark:bg-green-950'
-                        : 'text-red-700 bg-red-50 dark:text-red-400 dark:bg-red-950'
-                    }`}
-                  >
-                    {result.success ? (
-                      <>
-                        <Check className="h-3 w-3" />
-                        Connected
-                        {result.tools && result.tools.length > 0
-                          ? ` \u2014 ${result.tools.length} tool${result.tools.length === 1 ? '' : 's'}`
-                          : ''}
-                      </>
-                    ) : (
-                      <>
-                        <X className="h-3 w-3" />
-                        {result.error}
-                      </>
-                    )}
-                  </div>
-                )}
-              </li>
-            );
-          })}
-        </ul>
+    <SettingsListEditor
+      title="MCP Servers"
+      items={mcpServers}
+      state={state}
+      dispatch={dispatch}
+      onDelete={handleDelete}
+      emptyMessage={emptyMessage}
+      deleteDialogTitle="Delete MCP server?"
+      deleteDescriptionPrefix={deleteDescriptionPrefix}
+      renderItem={(server) => (
+        <>
+          <div className="font-mono text-sm flex items-center gap-2">
+            {server.name}
+            <span className="text-xs text-muted-foreground font-sans uppercase">{server.type}</span>
+          </div>
+          <div className="text-xs text-muted-foreground truncate">
+            {server.type === 'stdio' ? `${server.command} ${server.args.join(' ')}` : server.url}
+          </div>
+        </>
       )}
-
-      {(state.showForm || state.editingId) && (
+      extraItemActions={(server) => {
+        const isTesting = state.validatingServer === server.name;
+        return (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => handleValidate(server.name)}
+            disabled={isTesting}
+            title="Test connection"
+          >
+            {isTesting ? <Spinner size="sm" className="h-4 w-4" /> : <Plug className="h-4 w-4" />}
+          </Button>
+        );
+      }}
+      renderItemExtra={(server) => {
+        const result = state.validationResults.get(server.name);
+        return result ? <ValidationResultBadge result={result} /> : null;
+      }}
+      renderForm={({ existingItem, onClose, onSuccess }) => (
         <McpServerForm
-          existingServer={
-            state.editingId ? mcpServers.find((s) => s.id === state.editingId) : undefined
-          }
-          onClose={() => dispatch({ type: 'closeForm' })}
+          existingServer={existingItem}
+          onClose={onClose}
           onSuccess={() => {
-            dispatch({ type: 'formSuccess' });
+            onSuccess();
             onUpdate();
           }}
           setMcpServer={mutations.setMcpServer}
           idPrefix={idPrefix}
         />
       )}
+    />
+  );
+}
 
-      <DeleteConfirmDialog
-        open={!!state.deleteTarget}
-        onClose={() => dispatch({ type: 'setDeleteTarget', name: null })}
-        onConfirm={handleDelete}
-        title="Delete MCP server?"
-        description={
-          <>
-            {deleteDescriptionPrefix} <strong>{state.deleteTarget}</strong>.
-          </>
-        }
-        isPending={state.isDeleting}
-      />
+function ValidationResultBadge({ result }: { result: ValidationResult }) {
+  return (
+    <div
+      className={`text-xs px-2 py-1 rounded flex items-center gap-1 ${
+        result.success
+          ? 'text-green-700 bg-green-50 dark:text-green-400 dark:bg-green-950'
+          : 'text-red-700 bg-red-50 dark:text-red-400 dark:bg-red-950'
+      }`}
+    >
+      {result.success ? (
+        <>
+          <Check className="h-3 w-3" />
+          Connected
+          {result.tools && result.tools.length > 0
+            ? ` \u2014 ${result.tools.length} tool${result.tools.length === 1 ? '' : 's'}`
+            : ''}
+        </>
+      ) : (
+        <>
+          <X className="h-3 w-3" />
+          {result.error}
+        </>
+      )}
     </div>
   );
 }

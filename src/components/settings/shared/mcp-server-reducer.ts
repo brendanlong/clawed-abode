@@ -1,33 +1,27 @@
+import {
+  SettingsListState,
+  SettingsListAction,
+  initialSettingsListState,
+  reduceSettingsListAction,
+} from './settings-list-reducer';
 import type { McpServerType, ValidationResult } from '@/lib/settings-types';
 
 // -- McpServerSection (list management) reducer --
 
-export interface McpServerSectionState {
-  showForm: boolean;
-  editingId: string | null;
-  deleteTarget: string | null;
-  isDeleting: boolean;
+export interface McpServerSectionState extends SettingsListState {
   validationResults: Map<string, ValidationResult>;
   validatingServer: string | null;
 }
 
-export type McpServerSectionAction =
-  | { type: 'openForm' }
-  | { type: 'startEditing'; id: string }
-  | { type: 'closeForm' }
-  | { type: 'formSuccess' }
-  | { type: 'setDeleteTarget'; name: string | null }
-  | { type: 'startDeleting' }
-  | { type: 'finishDeleting' }
+type McpServerSpecificAction =
   | { type: 'startValidating'; name: string }
   | { type: 'setValidationResult'; name: string; result: ValidationResult }
   | { type: 'finishValidating' };
 
+export type McpServerSectionAction = SettingsListAction | McpServerSpecificAction;
+
 export const initialMcpServerSectionState: McpServerSectionState = {
-  showForm: false,
-  editingId: null,
-  deleteTarget: null,
-  isDeleting: false,
+  ...initialSettingsListState,
   validationResults: new Map(),
   validatingServer: null,
 };
@@ -36,21 +30,10 @@ export function mcpServerSectionReducer(
   state: McpServerSectionState,
   action: McpServerSectionAction
 ): McpServerSectionState {
+  const baseResult = reduceSettingsListAction(state, action as SettingsListAction);
+  if (baseResult) return baseResult;
+
   switch (action.type) {
-    case 'openForm':
-      return { ...state, showForm: true };
-    case 'startEditing':
-      return { ...state, editingId: action.id };
-    case 'closeForm':
-      return { ...state, showForm: false, editingId: null };
-    case 'formSuccess':
-      return { ...state, showForm: false, editingId: null };
-    case 'setDeleteTarget':
-      return { ...state, deleteTarget: action.name };
-    case 'startDeleting':
-      return { ...state, isDeleting: true };
-    case 'finishDeleting':
-      return { ...state, isDeleting: false, deleteTarget: null };
     case 'startValidating':
       return { ...state, validatingServer: action.name };
     case 'setValidationResult': {
@@ -60,6 +43,8 @@ export function mcpServerSectionReducer(
     }
     case 'finishValidating':
       return { ...state, validatingServer: null };
+    default:
+      return state;
   }
 }
 
