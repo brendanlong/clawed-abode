@@ -6,8 +6,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Spinner } from '@/components/ui/spinner';
-import { Plus, Trash2, Eye, EyeOff } from 'lucide-react';
-import { DeleteConfirmDialog } from './DeleteConfirmDialog';
+import { Eye, EyeOff } from 'lucide-react';
+import { SettingsListEditor } from './SettingsListEditor';
 import {
   envVarSectionReducer,
   initialEnvVarSectionState,
@@ -68,100 +68,61 @@ export function EnvVarSection({
   };
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h3 className="font-medium">Environment Variables</h3>
-        <Button variant="outline" size="sm" onClick={() => dispatch({ type: 'openForm' })}>
-          <Plus className="h-4 w-4 mr-1" />
-          Add
-        </Button>
-      </div>
-
-      {envVars.length === 0 && !state.showForm ? (
-        <p className="text-sm text-muted-foreground">{emptyMessage}</p>
-      ) : (
-        <ul className="space-y-2">
-          {envVars.map((envVar) => (
-            <li key={envVar.id} className="flex items-center gap-2 p-2 rounded-md bg-muted/50">
-              <div className="flex-1 min-w-0">
-                <div className="font-mono text-sm">{envVar.name}</div>
-                <div className="text-xs text-muted-foreground flex items-center gap-1">
-                  {envVar.isSecret ? (
-                    <>
-                      <span>
-                        {state.revealedSecrets.has(envVar.name)
-                          ? state.revealedSecrets.get(envVar.name)
-                          : '••••••••'}
-                      </span>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-5 w-5 p-0"
-                        onClick={() => toggleSecretVisibility(envVar.name)}
-                        disabled={state.loadingSecret === envVar.name}
-                      >
-                        {state.loadingSecret === envVar.name ? (
-                          <Spinner size="sm" className="h-3 w-3" />
-                        ) : state.revealedSecrets.has(envVar.name) ? (
-                          <EyeOff className="h-3 w-3" />
-                        ) : (
-                          <Eye className="h-3 w-3" />
-                        )}
-                      </Button>
-                    </>
+    <SettingsListEditor
+      title="Environment Variables"
+      items={envVars}
+      state={state}
+      dispatch={dispatch}
+      onDelete={handleDelete}
+      emptyMessage={emptyMessage}
+      deleteDialogTitle="Delete environment variable?"
+      deleteDescriptionPrefix={deleteDescriptionPrefix}
+      renderItem={(envVar) => (
+        <>
+          <div className="font-mono text-sm">{envVar.name}</div>
+          <div className="text-xs text-muted-foreground flex items-center gap-1">
+            {envVar.isSecret ? (
+              <>
+                <span>
+                  {state.revealedSecrets.has(envVar.name)
+                    ? state.revealedSecrets.get(envVar.name)
+                    : '••••••••'}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-5 w-5 p-0"
+                  onClick={() => toggleSecretVisibility(envVar.name)}
+                  disabled={state.loadingSecret === envVar.name}
+                >
+                  {state.loadingSecret === envVar.name ? (
+                    <Spinner size="sm" className="h-3 w-3" />
+                  ) : state.revealedSecrets.has(envVar.name) ? (
+                    <EyeOff className="h-3 w-3" />
                   ) : (
-                    <span className="truncate">{envVar.value}</span>
+                    <Eye className="h-3 w-3" />
                   )}
-                </div>
-              </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => dispatch({ type: 'startEditing', id: envVar.id })}
-              >
-                Edit
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => dispatch({ type: 'setDeleteTarget', name: envVar.name })}
-                className="text-destructive hover:text-destructive"
-              >
-                <Trash2 className="h-4 w-4" />
-              </Button>
-            </li>
-          ))}
-        </ul>
+                </Button>
+              </>
+            ) : (
+              <span className="truncate">{envVar.value}</span>
+            )}
+          </div>
+        </>
       )}
-
-      {(state.showForm || state.editingId) && (
+      renderForm={({ existingItem, onClose, onSuccess }) => (
         <EnvVarForm
-          existingEnvVar={
-            state.editingId ? envVars.find((e) => e.id === state.editingId) : undefined
-          }
-          onClose={() => dispatch({ type: 'closeForm' })}
+          existingEnvVar={existingItem}
+          onClose={onClose}
           onSuccess={() => {
-            dispatch({ type: 'formSuccess' });
+            onSuccess();
             onUpdate();
           }}
           setEnvVar={mutations.setEnvVar}
           idPrefix={idPrefix}
         />
       )}
-
-      <DeleteConfirmDialog
-        open={!!state.deleteTarget}
-        onClose={() => dispatch({ type: 'setDeleteTarget', name: null })}
-        onConfirm={handleDelete}
-        title="Delete environment variable?"
-        description={
-          <>
-            {deleteDescriptionPrefix} <strong>{state.deleteTarget}</strong>.
-          </>
-        }
-        isPending={state.isDeleting}
-      />
-    </div>
+    />
   );
 }
 
