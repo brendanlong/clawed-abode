@@ -2,6 +2,7 @@
 
 import { useRef, useEffect, useCallback, useMemo, useState } from 'react';
 import { MessageBubble, type ToolResultMap } from './messages';
+import { MessageListProvider } from './messages/MessageListContext';
 import { Spinner } from '@/components/ui/spinner';
 import { ContextUsageIndicator } from '@/components/ContextUsageIndicator';
 import type { TokenUsageStats } from '@/lib/token-estimation';
@@ -355,6 +356,23 @@ export function MessageList({
     isAtBottomRef.current = scrollHeight - scrollTop - clientHeight < 50;
   }, []);
 
+  const contextValue = useMemo(
+    () => ({
+      latestTodoWriteId,
+      manuallyToggledTodoIds,
+      onTodoManualToggle: handleTodoManualToggle,
+      onSendResponse,
+      isClaudeRunning,
+    }),
+    [
+      latestTodoWriteId,
+      manuallyToggledTodoIds,
+      handleTodoManualToggle,
+      onSendResponse,
+      isClaudeRunning,
+    ]
+  );
+
   return (
     <div className="relative flex-1 min-h-0">
       <div
@@ -382,30 +400,27 @@ export function MessageList({
           </div>
         )}
 
-        {visibleMessages.map((message) => {
-          // Only right-align actual user messages, not tool results
-          const isUserMessage = message.type === 'user' && !isToolResultMessage(message);
-          return (
-            <div
-              key={message.id}
-              className={`flex ${isUserMessage ? 'justify-end' : 'justify-start'}`}
-            >
-              <MessageBubble
-                message={{
-                  id: message.id,
-                  type: message.type,
-                  content: message.content,
-                }}
-                toolResults={resultMap}
-                latestTodoWriteId={latestTodoWriteId}
-                manuallyToggledTodoIds={manuallyToggledTodoIds}
-                onTodoManualToggle={handleTodoManualToggle}
-                onSendResponse={onSendResponse}
-                isClaudeRunning={isClaudeRunning}
-              />
-            </div>
-          );
-        })}
+        <MessageListProvider value={contextValue}>
+          {visibleMessages.map((message) => {
+            // Only right-align actual user messages, not tool results
+            const isUserMessage = message.type === 'user' && !isToolResultMessage(message);
+            return (
+              <div
+                key={message.id}
+                className={`flex ${isUserMessage ? 'justify-end' : 'justify-start'}`}
+              >
+                <MessageBubble
+                  message={{
+                    id: message.id,
+                    type: message.type,
+                    content: message.content,
+                  }}
+                  toolResults={resultMap}
+                />
+              </div>
+            );
+          })}
+        </MessageListProvider>
 
         <div ref={bottomRef} style={{ overflowAnchor: 'none' }} />
       </div>
