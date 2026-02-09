@@ -108,6 +108,12 @@ export interface AgentClient {
   getCommands(): Promise<SlashCommand[]>;
 
   /**
+   * Get the current git branch in the container's working directory.
+   * Returns null if the branch cannot be determined (e.g., detached HEAD, error).
+   */
+  getCurrentBranch(): Promise<string | null>;
+
+  /**
    * Health check - returns true if the agent service is reachable.
    */
   health(): Promise<boolean>;
@@ -300,6 +306,16 @@ export function createAgentClient(socketPath: string): AgentClient {
     async getCommands() {
       const res = await fetchJson<{ commands: SlashCommand[] }>('/commands');
       return res.commands;
+    },
+
+    async getCurrentBranch() {
+      try {
+        const result = await fetchJson<{ branch: string | null }>('/branch');
+        return result.branch;
+      } catch (err) {
+        log.debug('Get current branch failed', { error: toError(err).message });
+        return null;
+      }
     },
 
     async health() {

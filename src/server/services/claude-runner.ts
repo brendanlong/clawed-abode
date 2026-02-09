@@ -250,10 +250,10 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
     throw new Error('A Claude process is already running for this session');
   }
 
-  // Look up the session to get the repoPath, repoUrl, and branch
+  // Look up the session to get the repoPath, repoUrl, branch, and currentBranch
   const session = await prisma.session.findUnique({
     where: { id: sessionId },
-    select: { repoPath: true, repoUrl: true, branch: true },
+    select: { repoPath: true, repoUrl: true, branch: true, currentBranch: true },
   });
 
   if (!session) {
@@ -459,22 +459,37 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
     // Emit Claude stopped event
     sseEvents.emitClaudeRunning(sessionId, false);
 
-    // Check for PR updates (fire-and-forget)
-    if (session.repoUrl && session.branch) {
-      const repoFullName = extractRepoFullName(session.repoUrl);
-      fetchPullRequestForBranch(repoFullName, session.branch)
-        .then((pr) => {
+    // Detect current branch, persist it, and check for PR updates (fire-and-forget)
+    void (async () => {
+      try {
+        // Detect the current branch from the container
+        const detectedBranch = await client.getCurrentBranch();
+
+        // If branch changed, persist it and emit session update
+        if (detectedBranch && detectedBranch !== session.currentBranch) {
+          const updatedSession = await prisma.session.update({
+            where: { id: sessionId },
+            data: { currentBranch: detectedBranch },
+          });
+          sseEvents.emitSessionUpdate(sessionId, updatedSession);
+        }
+
+        // Look up PR using the detected branch (or fall back to stored currentBranch)
+        const branchForPr = detectedBranch ?? session.currentBranch;
+        if (session.repoUrl && branchForPr) {
+          const repoFullName = extractRepoFullName(session.repoUrl);
+          const pr = await fetchPullRequestForBranch(repoFullName, branchForPr);
           if (pr !== undefined) {
             sseEvents.emitPrUpdate(sessionId, pr);
           }
-        })
-        .catch((err) => {
-          log.debug('runClaudeCommand: Failed to check PR status', {
-            sessionId,
-            error: toError(err).message,
-          });
+        }
+      } catch (err) {
+        log.debug('runClaudeCommand: Failed to detect branch or check PR status', {
+          sessionId,
+          error: toError(err).message,
         });
-    }
+      }
+    })();
 
     log.debug('runClaudeCommand: Cleanup complete', { sessionId });
   }

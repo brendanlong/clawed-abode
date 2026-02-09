@@ -26,12 +26,7 @@ export function SessionListItem({ session, onMutationSuccess }: SessionListItemP
   const stopMutation = trpc.sessions.stop.useMutation({ onSuccess: onMutationSuccess });
   const archiveMutation = trpc.sessions.delete.useMutation({ onSuccess: onMutationSuccess });
 
-  const { pullRequest } = usePullRequestStatus(
-    session.id,
-    session.repoUrl,
-    session.branch,
-    !isArchived
-  );
+  const { pullRequest } = usePullRequestStatus(session.id, !isArchived);
 
   return (
     <li

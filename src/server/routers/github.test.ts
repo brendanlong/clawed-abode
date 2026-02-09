@@ -4,6 +4,16 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
 
+// Create hoisted mock objects that will be accessible in vi.mock factories
+const { mockFetchPullRequestForBranch, mockPrisma } = vi.hoisted(() => ({
+  mockFetchPullRequestForBranch: vi.fn(),
+  mockPrisma: {
+    session: {
+      findUnique: vi.fn(),
+    },
+  },
+}));
+
 // Mock logger
 vi.mock('@/lib/logger', () => ({
   createLogger: () => ({
@@ -15,10 +25,14 @@ vi.mock('@/lib/logger', () => ({
   toError: (e: unknown) => (e instanceof Error ? e : new Error(String(e))),
 }));
 
-// Mock the github service (used by getPullRequestForBranch endpoint)
-const mockFetchPullRequestForBranch = vi.fn();
+// Mock the github service (used by getSessionPrStatus endpoint)
 vi.mock('../services/github', () => ({
   fetchPullRequestForBranch: (...args: unknown[]) => mockFetchPullRequestForBranch(...args),
+}));
+
+// Mock prisma (used by getSessionPrStatus endpoint)
+vi.mock('@/lib/prisma', () => ({
+  prisma: mockPrisma,
 }));
 
 // Import the router after mocks are set up
@@ -587,8 +601,13 @@ describe('githubRouter', () => {
     });
   });
 
-  describe('getPullRequestForBranch', () => {
-    it('should return PR info when a PR exists', async () => {
+  describe('getSessionPrStatus', () => {
+    it('should return PR info when session has a currentBranch with a PR', async () => {
+      mockPrisma.session.findUnique.mockResolvedValue({
+        repoUrl: 'https://github.com/owner/repo.git',
+        currentBranch: 'feature',
+      });
+
       const mockPr = {
         number: 42,
         title: 'Add feature',
@@ -601,51 +620,71 @@ describe('githubRouter', () => {
       mockFetchPullRequestForBranch.mockResolvedValue(mockPr);
 
       const caller = createCaller('auth-session-id');
-      const result = await caller.github.getPullRequestForBranch({
-        repoFullName: 'owner/repo',
-        branch: 'feature',
+      const result = await caller.github.getSessionPrStatus({
+        sessionId: 'a0000000-0000-4000-8000-000000000001',
       });
 
       expect(result.pullRequest).toEqual(mockPr);
       expect(mockFetchPullRequestForBranch).toHaveBeenCalledWith('owner/repo', 'feature');
     });
 
-    it('should return null when no PR exists', async () => {
+    it('should return null when session has no currentBranch', async () => {
+      mockPrisma.session.findUnique.mockResolvedValue({
+        repoUrl: 'https://github.com/owner/repo.git',
+        currentBranch: null,
+      });
+
+      const caller = createCaller('auth-session-id');
+      const result = await caller.github.getSessionPrStatus({
+        sessionId: 'a0000000-0000-4000-8000-000000000001',
+      });
+
+      expect(result.pullRequest).toBeNull();
+      expect(mockFetchPullRequestForBranch).not.toHaveBeenCalled();
+    });
+
+    it('should return null when no PR exists for the branch', async () => {
+      mockPrisma.session.findUnique.mockResolvedValue({
+        repoUrl: 'https://github.com/owner/repo.git',
+        currentBranch: 'no-pr-branch',
+      });
       mockFetchPullRequestForBranch.mockResolvedValue(null);
 
       const caller = createCaller('auth-session-id');
-      const result = await caller.github.getPullRequestForBranch({
-        repoFullName: 'owner/repo',
-        branch: 'no-pr',
+      const result = await caller.github.getSessionPrStatus({
+        sessionId: 'a0000000-0000-4000-8000-000000000001',
       });
 
       expect(result.pullRequest).toBeNull();
     });
 
     it('should return null when service returns undefined', async () => {
+      mockPrisma.session.findUnique.mockResolvedValue({
+        repoUrl: 'https://github.com/owner/repo.git',
+        currentBranch: 'branch',
+      });
       mockFetchPullRequestForBranch.mockResolvedValue(undefined);
 
       const caller = createCaller('auth-session-id');
-      const result = await caller.github.getPullRequestForBranch({
-        repoFullName: 'owner/repo',
-        branch: 'branch',
+      const result = await caller.github.getSessionPrStatus({
+        sessionId: 'a0000000-0000-4000-8000-000000000001',
       });
 
       expect(result.pullRequest).toBeNull();
     });
 
-    it('should throw PRECONDITION_FAILED if no GitHub token', async () => {
-      delete process.env.GITHUB_TOKEN;
+    it('should throw NOT_FOUND when session does not exist', async () => {
+      mockPrisma.session.findUnique.mockResolvedValue(null);
 
       const caller = createCaller('auth-session-id');
 
       await expect(
-        caller.github.getPullRequestForBranch({
-          repoFullName: 'owner/repo',
-          branch: 'main',
+        caller.github.getSessionPrStatus({
+          sessionId: 'a0000000-0000-4000-8000-000000000001',
         })
       ).rejects.toMatchObject({
-        code: 'PRECONDITION_FAILED',
+        code: 'NOT_FOUND',
+        message: 'Session not found',
       });
     });
 
@@ -653,33 +692,20 @@ describe('githubRouter', () => {
       const caller = createCaller(null);
 
       await expect(
-        caller.github.getPullRequestForBranch({
-          repoFullName: 'owner/repo',
-          branch: 'main',
+        caller.github.getSessionPrStatus({
+          sessionId: 'a0000000-0000-4000-8000-000000000001',
         })
       ).rejects.toMatchObject({
         code: 'UNAUTHORIZED',
       });
     });
 
-    it('should validate repoFullName format', async () => {
+    it('should validate sessionId is a UUID', async () => {
       const caller = createCaller('auth-session-id');
 
       await expect(
-        caller.github.getPullRequestForBranch({
-          repoFullName: 'invalid',
-          branch: 'main',
-        })
-      ).rejects.toThrow();
-    });
-
-    it('should validate branch is non-empty', async () => {
-      const caller = createCaller('auth-session-id');
-
-      await expect(
-        caller.github.getPullRequestForBranch({
-          repoFullName: 'owner/repo',
-          branch: '',
+        caller.github.getSessionPrStatus({
+          sessionId: 'not-a-uuid',
         })
       ).rejects.toThrow();
     });

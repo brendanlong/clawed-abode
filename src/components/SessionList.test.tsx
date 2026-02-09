@@ -19,7 +19,7 @@ vi.mock('@/lib/trpc', () => ({
       delete: { useMutation: () => ({ mutate: vi.fn(), isPending: false }) },
     },
     github: {
-      getPullRequestForBranch: {
+      getSessionPrStatus: {
         useQuery: () => ({ data: null, isLoading: false }),
       },
     },
@@ -30,7 +30,7 @@ vi.mock('@/lib/trpc', () => ({
     },
     useUtils: () => ({
       github: {
-        getPullRequestForBranch: { setData: vi.fn() },
+        getSessionPrStatus: { setData: vi.fn() },
       },
     }),
   },
