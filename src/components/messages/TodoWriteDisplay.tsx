@@ -4,17 +4,11 @@ import { useState } from 'react';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
+import { useMessageListContext } from './MessageListContext';
 import type { ToolCall, TodoItem } from './types';
 
 interface TodoWriteInput {
   todos: TodoItem[];
-}
-
-interface TodoWriteDisplayProps {
-  tool: ToolCall;
-  isLatest?: boolean;
-  wasManuallyToggled?: boolean;
-  onManualToggle?: () => void;
 }
 
 // Checkmark icon for completed items
@@ -90,12 +84,11 @@ function ChecklistIcon() {
  * Shows a checklist of todo items with status indicators.
  * Supports auto-collapse behavior for non-latest items.
  */
-export function TodoWriteDisplay({
-  tool,
-  isLatest = false,
-  wasManuallyToggled = false,
-  onManualToggle,
-}: TodoWriteDisplayProps) {
+export function TodoWriteDisplay({ tool }: { tool: ToolCall }) {
+  const ctx = useMessageListContext();
+  const isLatest = ctx ? tool.id === ctx.latestTodoWriteId : false;
+  const wasManuallyToggled = ctx && tool.id ? ctx.manuallyToggledTodoIds.has(tool.id) : false;
+
   const [manualExpandedState, setManualExpandedState] = useState(true);
 
   // Conditional expanded state:
@@ -104,7 +97,9 @@ export function TodoWriteDisplay({
   const expanded = wasManuallyToggled ? manualExpandedState : isLatest;
 
   const handleOpenChange = (open: boolean) => {
-    onManualToggle?.();
+    if (ctx && tool.id) {
+      ctx.onTodoManualToggle(tool.id);
+    }
     setManualExpandedState(open);
   };
 

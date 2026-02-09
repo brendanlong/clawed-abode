@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { MessageBubble } from './MessageBubble';
+import { MessageListProvider } from './MessageListContext';
 import type { ToolResultMap, MessageContent } from './types';
 
 describe('MessageBubble', () => {
@@ -299,7 +300,7 @@ describe('MessageBubble', () => {
   });
 
   describe('TodoWrite tracking', () => {
-    it('passes todo tracking props to TodoWrite tool displays', () => {
+    it('renders TodoWrite tool display when context is provided', () => {
       const onTodoManualToggle = vi.fn();
       const manuallyToggledTodoIds = new Set<string>();
 
@@ -322,12 +323,15 @@ describe('MessageBubble', () => {
       };
 
       render(
-        <MessageBubble
-          message={message}
-          latestTodoWriteId="todo-1"
-          manuallyToggledTodoIds={manuallyToggledTodoIds}
-          onTodoManualToggle={onTodoManualToggle}
-        />
+        <MessageListProvider
+          value={{
+            latestTodoWriteId: 'todo-1',
+            manuallyToggledTodoIds,
+            onTodoManualToggle,
+          }}
+        >
+          <MessageBubble message={message} />
+        </MessageListProvider>
       );
 
       // TodoWriteDisplay should be rendered (check for its specific elements)
