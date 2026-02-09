@@ -97,6 +97,9 @@ RUN yes | sdkmanager --licenses > /dev/null 2>&1 && \
 # Install uv package manager for Python (system-wide to avoid chown overhead)
 RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
 
+# Install Fly CLI (system-wide)
+RUN curl -L https://fly.io/install.sh | FLYCTL_INSTALL=/usr/local sh
+
 # Enable corepack for pnpm (built into Node.js) and install Claude Code
 # This is placed late because Claude Code updates frequently, and we want to
 # preserve cache for the slow Android SDK layers above
