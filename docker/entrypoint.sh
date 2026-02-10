@@ -19,6 +19,10 @@ if ! grep -q 'GRADLE_USER_HOME=/gradle-cache' "$HOME/.profile" 2>/dev/null; then
   echo "export GRADLE_USER_HOME=/gradle-cache" >> "$HOME/.profile"
 fi
 
+# Fix ownership of Gradle cache volume mount points
+# Docker/Podman creates volume mount points as root; Gradle needs to write to them
+sudo chown claudeuser:claudeuser /gradle-cache/caches /gradle-cache/wrapper 2>/dev/null || true
+
 # Fix sudo permissions (rootless Podman without --userns=keep-id can break setuid)
 sudo sh -c 'chown root:root /usr/bin/sudo && chmod 4755 /usr/bin/sudo' 2>/dev/null || true
 
