@@ -77,7 +77,7 @@ The system uses **named Docker volumes** to avoid permission issues with rootles
 
 3. **pnpm Store** (`clawed-abode-pnpm-store`): Shared pnpm cache at `/pnpm-store` in runner containers. Speeds up package installs.
 
-4. **Gradle Cache** (`clawed-abode-gradle-cache`): Shared Gradle cache at `/gradle-cache` in runner containers. Speeds up builds.
+4. **Gradle Cache** (`clawed-abode-gradle-cache`): Shared Gradle cache at `/gradle-cache` in runner containers. Speeds up builds. The Gradle daemon is disabled (`org.gradle.daemon=false`) because stale daemons from previous sessions have cached VFS snapshots of old `/workspace` mounts, causing phantom builds.
 
 5. **Git Cache** (`clawed-abode-git-cache`): Shared bare repository cache at `/cache` in clone containers. Used as `--reference` during clones to avoid re-downloading git objects for repos that have been cloned before.
 
@@ -436,6 +436,7 @@ ORDER BY sequence ASC;
 - The cache is mounted at `/gradle-cache` in containers and `GRADLE_USER_HOME` env var is set
 - Gradle's cache is safe for concurrent access (uses file locking)
 - Includes downloaded dependencies, wrapper distributions, and build caches
+- **Daemon disabled**: The Gradle daemon is disabled via `GRADLE_OPTS=-Dorg.gradle.daemon=false` (env var) and `/gradle-cache/gradle.properties` (written at container startup). Stale daemons from previous sessions persist in the shared volume with cached VFS snapshots of old `/workspace` mounts, causing phantom builds where outputs are invisible. The entrypoint also kills any leftover `GradleDaemon` processes as a safety measure.
 
 ### Git Reference Cache
 

@@ -608,6 +608,10 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
     envArgs.push('-e', `CLAUDE_CODE_OAUTH_TOKEN=${oauthToken}`);
     // Set Gradle user home to use the shared cache volume
     envArgs.push('-e', 'GRADLE_USER_HOME=/gradle-cache');
+    // Disable Gradle daemon - the shared /gradle-cache volume persists daemons across
+    // container sessions, but stale daemons have cached VFS snapshots from old /workspace
+    // mounts, causing phantom builds where outputs are invisible (see issue #238)
+    envArgs.push('-e', 'GRADLE_OPTS=-Dorg.gradle.daemon=false');
     // Add NVIDIA environment variables for GPU access
     envArgs.push('-e', 'NVIDIA_VISIBLE_DEVICES=all');
     envArgs.push('-e', 'NVIDIA_DRIVER_CAPABILITIES=all');

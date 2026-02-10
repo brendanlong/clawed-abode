@@ -19,6 +19,16 @@ if ! grep -q 'GRADLE_USER_HOME=/gradle-cache' "$HOME/.profile" 2>/dev/null; then
   echo "export GRADLE_USER_HOME=/gradle-cache" >> "$HOME/.profile"
 fi
 
+# Stop any stale Gradle daemons from previous container sessions.
+# The shared /gradle-cache volume can persist daemons that have cached VFS snapshots
+# from old /workspace mounts, causing phantom builds (see issue #238).
+if [ -d /gradle-cache ]; then
+  # Disable daemon via gradle.properties in GRADLE_USER_HOME
+  echo "org.gradle.daemon=false" > /gradle-cache/gradle.properties
+  # Kill any leftover daemon processes (they won't have valid /workspace mounts)
+  pkill -f 'GradleDaemon' 2>/dev/null || true
+fi
+
 # Fix sudo permissions (rootless Podman without --userns=keep-id can break setuid)
 sudo sh -c 'chown root:root /usr/bin/sudo && chmod 4755 /usr/bin/sudo' 2>/dev/null || true
 
