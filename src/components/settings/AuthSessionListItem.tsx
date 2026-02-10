@@ -79,7 +79,8 @@ export function AuthSessionListItem({ session, onRevoke }: AuthSessionListItemPr
 
   const now = new Date();
   const isRevoked = !!session.revokedAt;
-  const isExpired = new Date(session.expiresAt) <= now;
+  const isExpired = new Date(session.effectiveExpiresAt) <= now;
+  const isIdleExpired = !isRevoked && isExpired && new Date(session.expiresAt) > now;
   const isActive = !isRevoked && !isExpired;
 
   const handleRevoke = async () => {
@@ -107,7 +108,12 @@ export function AuthSessionListItem({ session, onRevoke }: AuthSessionListItemPr
                 Revoked
               </Badge>
             )}
-            {isExpired && !isRevoked && (
+            {isIdleExpired && (
+              <Badge variant="outline" className="text-xs text-muted-foreground">
+                Idle timeout
+              </Badge>
+            )}
+            {isExpired && !isRevoked && !isIdleExpired && (
               <Badge variant="outline" className="text-xs text-muted-foreground">
                 Expired
               </Badge>
@@ -119,7 +125,8 @@ export function AuthSessionListItem({ session, onRevoke }: AuthSessionListItemPr
             <p>Last active: {formatRelativeTime(session.lastActivityAt)}</p>
             {isRevoked && session.revokedAt && <p>Revoked: {formatDate(session.revokedAt)}</p>}
             <p>
-              {isExpired ? 'Expired' : 'Expires'}: {formatDate(session.expiresAt)}
+              {isExpired ? 'Expired' : 'Expires'}: {formatDate(session.effectiveExpiresAt)}
+              {isIdleExpired && ' (idle)'}
             </p>
             <p>Created: {formatDate(session.createdAt)}</p>
           </div>

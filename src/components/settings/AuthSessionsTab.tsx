@@ -36,7 +36,7 @@ export function AuthSessionsTab() {
 
   const now = new Date();
   const isSessionActive = (s: (typeof sessions)[number]) =>
-    !s.revokedAt && new Date(s.expiresAt) > now;
+    !s.revokedAt && new Date(s.effectiveExpiresAt) > now;
   const activeSessions = sessions.filter(isSessionActive);
   const inactiveSessions = sessions.filter((s) => !isSessionActive(s));
 

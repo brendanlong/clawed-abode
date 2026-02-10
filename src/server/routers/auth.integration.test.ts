@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { TRPCError } from '@trpc/server';
 import { setupTestDb, teardownTestDb, testPrisma, clearTestDb } from '@/test/setup-test-db';
-import { hashPassword } from '@/lib/auth';
+import { hashPassword, IDLE_TIMEOUT_MS } from '@/lib/auth';
 
 // Mock env - we'll set the real hash in beforeAll
 const mockEnv = vi.hoisted(() => ({
@@ -304,6 +304,40 @@ describe('authRouter integration', () => {
       expect(others.every((s) => s.isCurrent === false)).toBe(true);
       // All sessions should have lastActivityAt
       expect(result.sessions.every((s) => s.lastActivityAt !== undefined)).toBe(true);
+      // All sessions should have effectiveExpiresAt (idle timeout based on lastActivityAt)
+      for (const s of result.sessions) {
+        const idleExpiresAt = new Date(s.lastActivityAt.getTime() + IDLE_TIMEOUT_MS);
+        const expected = idleExpiresAt < s.expiresAt ? idleExpiresAt : s.expiresAt;
+        expect(s.effectiveExpiresAt.getTime()).toBe(expected.getTime());
+      }
+    });
+
+    it('should show effectiveExpiresAt based on idle timeout for stale sessions', async () => {
+      const loginCaller = createCaller(null);
+      const session = await loginCaller.auth.login({ password: TEST_PASSWORD });
+
+      const dbSession = await testPrisma.authSession.findFirst({
+        where: { token: session.token },
+      });
+
+      // Set lastActivityAt to 2 days ago (well past idle timeout)
+      const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+      await testPrisma.authSession.update({
+        where: { id: dbSession!.id },
+        data: { lastActivityAt: twoDaysAgo },
+      });
+
+      const caller = createCaller(dbSession!.id);
+      const result = await caller.auth.listSessions();
+
+      const listedSession = result.sessions.find((s) => s.id === dbSession!.id)!;
+      // effectiveExpiresAt should be lastActivityAt + idle timeout (i.e. ~1 day ago)
+      const expectedEffective = new Date(twoDaysAgo.getTime() + IDLE_TIMEOUT_MS);
+      expect(listedSession.effectiveExpiresAt.getTime()).toBe(expectedEffective.getTime());
+      // And it should be in the past (the session effectively expired)
+      expect(listedSession.effectiveExpiresAt.getTime()).toBeLessThan(Date.now());
+      // But expiresAt should still be in the future (7-day absolute hasn't passed)
+      expect(listedSession.expiresAt.getTime()).toBeGreaterThan(Date.now());
     });
 
     it('should require authentication', async () => {
