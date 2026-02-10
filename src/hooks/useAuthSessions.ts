@@ -6,6 +6,7 @@ export interface AuthSession {
   id: string;
   createdAt: Date;
   expiresAt: Date;
+  effectiveExpiresAt: Date;
   lastActivityAt: Date;
   revokedAt: Date | null;
   ipAddress: string | null;

@@ -1,7 +1,13 @@
 import { z } from 'zod';
 import { router, publicProcedure, protectedProcedure } from '../trpc';
 import { prisma } from '@/lib/prisma';
-import { verifyPassword, generateSessionToken, loginSchema, SESSION_DURATION_MS } from '@/lib/auth';
+import {
+  verifyPassword,
+  generateSessionToken,
+  loginSchema,
+  SESSION_DURATION_MS,
+  IDLE_TIMEOUT_MS,
+} from '@/lib/auth';
 import { loginRateLimiter } from '@/lib/rate-limiter';
 import { env } from '@/lib/env';
 import { TRPCError } from '@trpc/server';
@@ -122,10 +128,15 @@ export const authRouter = router({
     });
 
     return {
-      sessions: sessions.map((s) => ({
-        ...s,
-        isCurrent: s.id === ctx.sessionId,
-      })),
+      sessions: sessions.map((s) => {
+        const idleExpiresAt = new Date(new Date(s.lastActivityAt).getTime() + IDLE_TIMEOUT_MS);
+        const effectiveExpiresAt = idleExpiresAt < s.expiresAt ? idleExpiresAt : s.expiresAt;
+        return {
+          ...s,
+          effectiveExpiresAt,
+          isCurrent: s.id === ctx.sessionId,
+        };
+      }),
     };
   }),
 
