@@ -637,8 +637,11 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
 
     // Mount shared pnpm store volume
     volumeArgs.push('-v', `${env.PNPM_STORE_VOLUME}:/pnpm-store`);
-    // Mount shared Gradle cache volume
-    volumeArgs.push('-v', `${env.GRADLE_CACHE_VOLUME}:/gradle-cache`);
+    // Mount shared Gradle cache subdirectories (caches/ and wrapper/ only)
+    // The daemon/ directory is intentionally NOT shared to avoid stale Gradle daemons
+    // from previous container sessions (see issue #238)
+    volumeArgs.push('-v', `${env.GRADLE_CACHES_VOLUME}:/gradle-cache/caches`);
+    volumeArgs.push('-v', `${env.GRADLE_WRAPPER_VOLUME}:/gradle-cache/wrapper`);
     // Mount sockets location for agent service communication
     // Use absolute path for host directories, volume name for named volumes
     const socketsMount = `${getSocketsPath(env.SOCKETS_VOLUME)}:/sockets`;

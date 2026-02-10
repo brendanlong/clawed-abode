@@ -13,9 +13,11 @@ const envSchema = z.object({
   // Named volume for pnpm store - shared across all runner containers
   // Speeds up package installs by caching downloaded packages
   PNPM_STORE_VOLUME: z.string().default('clawed-abode-pnpm-store'),
-  // Named volume for Gradle cache - shared across all runner containers
-  // Speeds up builds by caching downloaded dependencies and build outputs
-  GRADLE_CACHE_VOLUME: z.string().default('clawed-abode-gradle-cache'),
+  // Named volumes for Gradle cache subdirectories - shared across all runner containers
+  // Only caches/ and wrapper/ are shared; daemon/ and other dirs are ephemeral per-container
+  // to avoid stale Gradle daemons from previous sessions (see issue #238)
+  GRADLE_CACHES_VOLUME: z.string().default('clawed-abode-gradle-caches'),
+  GRADLE_WRAPPER_VOLUME: z.string().default('clawed-abode-gradle-wrapper'),
   // Named volume for git reference cache - shared across all runner containers
   // Stores bare repos used as --reference during clones to speed up session creation
   GIT_CACHE_VOLUME: z.string().default('clawed-abode-git-cache'),
