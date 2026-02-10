@@ -151,6 +151,12 @@ RUN chown claudeuser:claudeuser /workspace
 # so the container can run standalone for testing
 RUN mkdir -p /sockets && chown claudeuser:claudeuser /sockets
 
+# Create /gradle-cache directory owned by claudeuser
+# Only caches/ and wrapper/ are mounted as shared volumes at runtime;
+# daemon/ and other dirs live on the overlay and are recreated fresh each session
+# to prevent stale Gradle daemons (see issue #238)
+RUN mkdir -p /gradle-cache && chown claudeuser:claudeuser /gradle-cache
+
 # Switch to non-root user
 USER claudeuser
 

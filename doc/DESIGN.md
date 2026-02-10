@@ -77,9 +77,13 @@ The system uses **named Docker volumes** to avoid permission issues with rootles
 
 3. **pnpm Store** (`clawed-abode-pnpm-store`): Shared pnpm cache at `/pnpm-store` in runner containers. Speeds up package installs.
 
-4. **Gradle Cache** (`clawed-abode-gradle-cache`): Shared Gradle cache at `/gradle-cache` in runner containers. Speeds up builds.
+4. **Gradle Caches** (`clawed-abode-gradle-caches`): Shared Gradle dependency cache at `/gradle-cache/caches` in runner containers. Contains downloaded dependencies and artifact transforms (~3.7 GB). Speeds up builds.
 
-5. **Git Cache** (`clawed-abode-git-cache`): Shared bare repository cache at `/cache` in clone containers. Used as `--reference` during clones to avoid re-downloading git objects for repos that have been cloned before.
+5. **Gradle Wrapper** (`clawed-abode-gradle-wrapper`): Shared Gradle wrapper distribution at `/gradle-cache/wrapper` in runner containers. Contains the Gradle distribution binary (~291 MB).
+
+   Note: Only `caches/` and `wrapper/` are shared. The `daemon/` directory and other ephemeral state live on the container's overlay filesystem and are recreated fresh each session. This prevents stale Gradle daemons from previous sessions from causing phantom builds (see issue #238).
+
+6. **Git Cache** (`clawed-abode-git-cache`): Shared bare repository cache at `/cache` in clone containers. Used as `--reference` during clones to avoid re-downloading git objects for repos that have been cloned before.
 
 Using named volumes instead of bind mounts:
 
@@ -328,7 +332,7 @@ Runner containers are created with (see [`createAndStartContainer`](../src/serve
 - **Claude auth**: OAuth token passed via `CLAUDE_CODE_OAUTH_TOKEN` environment variable
 - **Podman socket**: Bind-mounted for container-in-container support (read-only)
 - **pnpm store**: Named volume mounted at `/pnpm-store` for shared package cache
-- **Gradle cache**: Named volume mounted at `/gradle-cache` for shared build cache
+- **Gradle cache**: Named volumes for `caches/` and `wrapper/` subdirectories mounted under `/gradle-cache`. The `daemon/` directory is ephemeral per-container to prevent stale daemon issues.
 - **Agent service**: Configured via `AGENT_PORT`, `SYSTEM_PROMPT`, and `CLAUDE_MODEL` environment variables. The container's CMD runs the agent service, which provides an HTTP API for the Next.js server to interact with Claude.
 
 ### Agent Service Architecture
@@ -432,10 +436,13 @@ ORDER BY sequence ASC;
 
 ### Shared Gradle Cache
 
-- Set `GRADLE_USER_HOME` to the host's Gradle user home (e.g., `/home/user/.gradle`)
-- The cache is mounted at `/gradle-cache` in containers and `GRADLE_USER_HOME` env var is set
+- `GRADLE_USER_HOME` is set to `/gradle-cache` in containers
+- Only the `caches/` and `wrapper/` subdirectories are shared via named volumes:
+  - `clawed-abode-gradle-caches` → `/gradle-cache/caches` (dependencies, artifact transforms)
+  - `clawed-abode-gradle-wrapper` → `/gradle-cache/wrapper` (Gradle distribution binary)
+- The `daemon/` directory and other ephemeral state are NOT shared — they live on the container's overlay filesystem and are recreated fresh each session
+- This prevents stale Gradle daemons from previous sessions from causing phantom builds (see issue #238)
 - Gradle's cache is safe for concurrent access (uses file locking)
-- Includes downloaded dependencies, wrapper distributions, and build caches
 
 ### Git Reference Cache
 
