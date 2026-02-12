@@ -15,6 +15,7 @@ export interface GlobalDisplaySettings {
   systemPromptAppend: string | null;
   claudeModel: string | null;
   hasClaudeApiKey: boolean;
+  hasOpenaiApiKey: boolean;
 }
 
 /**
@@ -52,6 +53,7 @@ export async function getGlobalSettings(): Promise<GlobalDisplaySettings> {
       systemPromptAppend: null,
       claudeModel: null,
       hasClaudeApiKey: false,
+      hasOpenaiApiKey: false,
     };
   }
 
@@ -61,6 +63,7 @@ export async function getGlobalSettings(): Promise<GlobalDisplaySettings> {
     systemPromptAppend: settings.systemPromptAppend,
     claudeModel: settings.claudeModel,
     hasClaudeApiKey: settings.claudeApiKey !== null,
+    hasOpenaiApiKey: settings.openaiApiKey !== null,
   };
 }
 

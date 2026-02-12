@@ -73,6 +73,28 @@ export function SystemPromptTab() {
 
       <Card>
         <CardHeader>
+          <CardTitle>OpenAI API Key</CardTitle>
+          <CardDescription>
+            Required for voice input (speech-to-text) and voice output (text-to-speech). Get a key
+            at{' '}
+            <a
+              href="https://platform.openai.com/api-keys"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline"
+            >
+              platform.openai.com
+            </a>
+            . Text transformation (markdown to speech) also requires a Claude API key above.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <OpenaiApiKeySection hasKey={settings?.hasOpenaiApiKey ?? false} onUpdate={refetch} />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
           <CardTitle>System Prompt Override</CardTitle>
           <CardDescription>
             Replace the default system prompt with a custom one. When disabled, the built-in default
@@ -596,6 +618,92 @@ function ClaudeApiKeySection({
             ) : (
               'Remove Key'
             )}
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function OpenaiApiKeySection({ hasKey, onUpdate }: { hasKey: boolean; onUpdate: () => void }) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [editValue, setEditValue] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  const mutation = trpc.globalSettings.setOpenaiApiKey.useMutation({
+    onSuccess: () => {
+      setIsEditing(false);
+      setEditValue('');
+      onUpdate();
+    },
+    onError: (err) => setError(err.message),
+  });
+
+  const handleSave = () => {
+    setError(null);
+    if (!editValue.trim()) {
+      setError('API key cannot be empty');
+      return;
+    }
+    mutation.mutate({ openaiApiKey: editValue.trim() });
+  };
+
+  const handleClear = () => {
+    setError(null);
+    mutation.mutate({ openaiApiKey: '' });
+  };
+
+  const handleCancel = () => {
+    setIsEditing(false);
+    setEditValue('');
+    setError(null);
+  };
+
+  if (isEditing) {
+    return (
+      <div className="space-y-3">
+        <Input
+          type="password"
+          value={editValue}
+          onChange={(e) => setEditValue(e.target.value)}
+          placeholder="Enter OpenAI API key (sk-...)..."
+          className="font-mono text-sm"
+        />
+        {error && <p className="text-sm text-destructive">{error}</p>}
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" size="sm" onClick={handleCancel}>
+            Cancel
+          </Button>
+          <Button size="sm" onClick={handleSave} disabled={mutation.isPending}>
+            {mutation.isPending ? <Spinner size="sm" /> : 'Save'}
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        {hasKey ? (
+          <>
+            <Check className="h-4 w-4 text-green-500" />
+            <span className="text-sm">Configured</span>
+          </>
+        ) : (
+          <>
+            <X className="h-4 w-4 text-destructive" />
+            <span className="text-sm text-destructive">Not configured</span>
+          </>
+        )}
+      </div>
+      <div className="flex gap-2">
+        <Button variant="outline" size="sm" onClick={() => setIsEditing(true)}>
+          {hasKey ? 'Update Key' : 'Set Key'}
+        </Button>
+        {hasKey && (
+          <Button variant="outline" size="sm" onClick={handleClear} disabled={mutation.isPending}>
+            {mutation.isPending ? <Spinner size="sm" /> : 'Remove Key'}
           </Button>
         )}
       </div>

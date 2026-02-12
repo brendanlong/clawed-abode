@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
+import { VoiceMicButton } from '@/components/voice/VoiceMicButton';
 
 export interface SlashCommand {
   name: string;
@@ -17,6 +18,7 @@ interface PromptInputProps {
   isInterrupting: boolean;
   disabled: boolean;
   commands?: SlashCommand[];
+  voiceEnabled?: boolean;
 }
 
 export function PromptInput({
@@ -26,6 +28,7 @@ export function PromptInput({
   isInterrupting,
   disabled,
   commands = [],
+  voiceEnabled = false,
 }: PromptInputProps) {
   const [prompt, setPrompt] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -119,6 +122,11 @@ export function PromptInput({
     setSelectedIndex(0);
   }, []);
 
+  const handleVoiceTranscript = useCallback((text: string) => {
+    setPrompt((prev) => (prev ? `${prev} ${text}` : text));
+    textareaRef.current?.focus();
+  }, []);
+
   // Scroll selected item into view
   useEffect(() => {
     if (!showCommands || !commandsRef.current) return;
@@ -182,6 +190,10 @@ export function PromptInput({
               className="min-h-[44px] resize-none"
             />
           </div>
+
+          {voiceEnabled && !isRunning && (
+            <VoiceMicButton onTranscript={handleVoiceTranscript} disabled={disabled} />
+          )}
 
           {isRunning ? (
             <Button
