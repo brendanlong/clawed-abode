@@ -115,6 +115,7 @@ model GlobalSettings {
   systemPromptAppend        String?  // Additional content appended after default/override prompt
   claudeModel               String?  // If set, overrides CLAUDE_MODEL env var
   claudeApiKey              String?  // If set (encrypted), overrides CLAUDE_CODE_OAUTH_TOKEN env var
+  openaiApiKey              String?  // If set (encrypted), used for voice STT/TTS
   createdAt                 DateTime @default(now())
   updatedAt                 DateTime @updatedAt
 }
