@@ -17,6 +17,8 @@ import { useSessionState } from '@/hooks/useSessionState';
 import { useSessionMessages } from '@/hooks/useSessionMessages';
 import { useClaudeState } from '@/hooks/useClaudeState';
 import { useWorkCompleteNotification } from '@/hooks/useWorkCompleteNotification';
+import { useVoiceConfig } from '@/hooks/useVoiceConfig';
+import { useVoicePlayback, VoicePlaybackContext } from '@/hooks/useVoicePlayback';
 
 function SessionView({ sessionId }: { sessionId: string }) {
   // Session state: data, start/stop/archive
@@ -72,6 +74,10 @@ function SessionView({ sessionId }: { sessionId: string }) {
   // Show notification when Claude finishes processing (if tab was hidden)
   useWorkCompleteNotification(session?.name, isClaudeRunning, showNotification);
 
+  // Voice features
+  const voiceConfig = useVoiceConfig(sessionId);
+  const voicePlayback = useVoicePlayback();
+
   const handleSendPrompt = useCallback(
     (prompt: string) => {
       if (!session || session.status !== 'running') {
@@ -81,6 +87,48 @@ function SessionView({ sessionId }: { sessionId: string }) {
     },
     [session, sendPrompt]
   );
+
+  // Stop playback when user sends a new prompt
+  const handleSendPromptWithVoice = useCallback(
+    (prompt: string) => {
+      voicePlayback.stop();
+      handleSendPrompt(prompt);
+    },
+    [handleSendPrompt, voicePlayback]
+  );
+
+  // Auto-read: detect when Claude finishes a turn and speak the last assistant message
+  const prevRunningRef = useRef(false);
+  useEffect(() => {
+    const wasRunning = prevRunningRef.current;
+    prevRunningRef.current = isClaudeRunning;
+
+    // Detect transition from running -> not running (turn complete)
+    if (wasRunning && !isClaudeRunning && voiceConfig.autoRead && voiceConfig.enabled) {
+      // Find the last assistant message
+      for (let i = messages.length - 1; i >= 0; i--) {
+        const msg = messages[i];
+        if (msg.type === 'assistant' && msg.id && !msg.id.startsWith('partial-')) {
+          // Extract text content from the message
+          const content = msg.content as Record<string, unknown> | undefined;
+          const innerMsg = content?.message as Record<string, unknown> | undefined;
+          const blocks = innerMsg?.content;
+          if (Array.isArray(blocks)) {
+            const textParts = blocks
+              .filter(
+                (b: Record<string, unknown>) => b.type === 'text' && typeof b.text === 'string'
+              )
+              .map((b: Record<string, unknown>) => b.text as string);
+            const fullText = textParts.join('\n');
+            if (fullText.trim()) {
+              voicePlayback.play(msg.id, fullText);
+            }
+          }
+          break;
+        }
+      }
+    }
+  }, [isClaudeRunning, messages, voiceConfig.autoRead, voiceConfig.enabled, voicePlayback]);
 
   // Track whether we've already sent the initial prompt
   const initialPromptSentRef = useRef(false);
@@ -188,38 +236,58 @@ function SessionView({ sessionId }: { sessionId: string }) {
   }
 
   return (
-    <div className="flex-1 flex flex-col min-h-0">
-      <SessionHeader
-        session={session}
-        onStart={start}
-        onStop={stop}
-        onArchive={archive}
-        isStarting={isStarting}
-        isStopping={isStopping}
-        isArchiving={isArchiving}
-      />
+    <VoicePlaybackContext.Provider
+      value={
+        voiceConfig.enabled
+          ? voicePlayback
+          : {
+              enabled: false,
+              isPlaying: false,
+              currentMessageId: null,
+              isLoading: false,
+              play: async () => {},
+              pause: () => {},
+              stop: () => {},
+            }
+      }
+    >
+      <div className="flex-1 flex flex-col min-h-0">
+        <SessionHeader
+          session={session}
+          onStart={start}
+          onStop={stop}
+          onArchive={archive}
+          isStarting={isStarting}
+          isStopping={isStopping}
+          isArchiving={isArchiving}
+          voiceEnabled={voiceConfig.enabled}
+          autoRead={voiceConfig.autoRead}
+          onAutoReadToggle={voiceConfig.setAutoRead}
+        />
 
-      <MessageList
-        messages={messages}
-        isLoading={messagesLoading || isFetchingMore}
-        hasMore={hasMore}
-        onLoadMore={fetchMore}
-        tokenUsage={tokenUsage}
-        onSendResponse={handleSendPrompt}
-        isClaudeRunning={isClaudeRunning}
-      />
+        <MessageList
+          messages={messages}
+          isLoading={messagesLoading || isFetchingMore}
+          hasMore={hasMore}
+          onLoadMore={fetchMore}
+          tokenUsage={tokenUsage}
+          onSendResponse={handleSendPromptWithVoice}
+          isClaudeRunning={isClaudeRunning}
+        />
 
-      <ClaudeStatusIndicator isRunning={isClaudeRunning} containerStatus={session.status} />
+        <ClaudeStatusIndicator isRunning={isClaudeRunning} containerStatus={session.status} />
 
-      <PromptInput
-        onSubmit={handleSendPrompt}
-        onInterrupt={interrupt}
-        isRunning={isClaudeRunning}
-        isInterrupting={isInterrupting}
-        disabled={session.status !== 'running'}
-        commands={commands}
-      />
-    </div>
+        <PromptInput
+          onSubmit={handleSendPromptWithVoice}
+          onInterrupt={interrupt}
+          isRunning={isClaudeRunning}
+          isInterrupting={isInterrupting}
+          disabled={session.status !== 'running'}
+          commands={commands}
+          voiceEnabled={voiceConfig.enabled}
+        />
+      </div>
+    </VoicePlaybackContext.Provider>
   );
 }
 
