@@ -8,6 +8,8 @@ import { OctagonX, Loader2 } from 'lucide-react';
 import { CopyButton } from './CopyButton';
 import { ToolCallDisplay } from './ToolCallDisplay';
 import { renderContent } from './ContentRenderer';
+import { MessagePlayButton } from '@/components/voice/MessagePlayButton';
+import { useVoicePlaybackContext } from '@/hooks/useVoicePlayback';
 import {
   buildToolCalls,
   getCopyText,
@@ -17,6 +19,7 @@ import {
 import type { MessageContent, ToolCall, ToolResultMap } from './types';
 
 interface MainMessageBubbleProps {
+  messageId?: string;
   content: MessageContent;
   category: MessageCategory;
   isPartial: boolean;
@@ -28,6 +31,7 @@ interface MainMessageBubbleProps {
  * Handles styling, status indicators, content rendering, and copy functionality.
  */
 export function MainMessageBubble({
+  messageId,
   content,
   category,
   isPartial,
@@ -49,6 +53,14 @@ export function MainMessageBubble({
   }, [content, category, toolCalls]);
 
   const displayContent = getDisplayContent(content, category);
+
+  // Voice playback: show play button on completed assistant messages with text
+  const playback = useVoicePlaybackContext();
+  const textForPlayback = useMemo(() => {
+    if (!isAssistant || isPartial || !messageId || !playback.enabled) return null;
+    const text = getCopyText(content, category, toolCalls);
+    return text.trim().length > 0 ? text : null;
+  }, [isAssistant, isPartial, messageId, playback.enabled, content, category, toolCalls]);
 
   return (
     <div className="group max-w-[85%]">
@@ -98,8 +110,15 @@ export function MainMessageBubble({
         )}
       </div>
       {!isPartial && (
-        <div className="mt-1">
+        <div className="mt-1 flex items-center gap-1">
           <CopyButton getText={handleGetCopyText} />
+          {textForPlayback && messageId && (
+            <MessagePlayButton
+              messageId={messageId}
+              text={textForPlayback}
+              className="h-6 px-2 text-xs opacity-0 group-hover:opacity-100 transition-opacity"
+            />
+          )}
         </div>
       )}
     </div>

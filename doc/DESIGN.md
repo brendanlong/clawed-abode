@@ -52,7 +52,7 @@ The database schema is defined in [`prisma/schema.prisma`](../prisma/schema.pris
 - **Session**: Claude Code sessions tied to git clones (includes `agentPort` for the agent service)
 - **Message**: Chat messages with sequence numbers for cursor-based pagination
 - **AuthSession**: Login sessions with tokens and audit info
-- **GlobalSettings**: Global application settings (system prompt override and append, Claude model, Claude API key)
+- **GlobalSettings**: Global application settings (system prompt override and append, Claude model, Claude API key, OpenAI API key for voice)
 - **RepoSettings**: Per-repository settings (favorites, custom system prompt)
 - **EnvVar**: Environment variables for a repository or global (encrypted if secret). When `repoSettingsId` is null, the variable is global and applies to all sessions.
 - **McpServer**: MCP server configurations for a repository or global. When `repoSettingsId` is null, the server is global and applies to all sessions.
@@ -504,6 +504,7 @@ Users can configure global settings that apply to all sessions:
 - **Global System Prompt Append**: Additional content appended to the base prompt (default or override) for all sessions. This is applied before any per-repo custom prompts.
 - **Global Environment Variables**: Environment variables applied to all sessions. Per-repo variables with the same name take precedence.
 - **Global MCP Servers**: MCP server configurations available in all sessions. Per-repo servers with the same name take precedence. Supports stdio, HTTP, and SSE transport types.
+- **OpenAI API Key**: API key for voice features (speech-to-text and text-to-speech). Stored encrypted at rest. When configured, enables voice input/output in session views.
 
 **Prompt Order**: When Claude runs, the system prompt is built in this order:
 
@@ -521,6 +522,34 @@ Users can configure global settings that apply to all sessions:
 **Data Model**: Global env vars and MCP servers are stored in the same `EnvVar` and `McpServer` tables as per-repo ones, with `repoSettingsId = null` indicating a global setting. A partial unique index (`WHERE repoSettingsId IS NULL`) enforces name uniqueness for global entries at the database level.
 
 **Implementation**: See [`src/server/routers/globalSettings.ts`](../src/server/routers/globalSettings.ts) for the API, [`src/server/services/global-settings.ts`](../src/server/services/global-settings.ts) for the service layer, [`src/server/services/settings-merger.ts`](../src/server/services/settings-merger.ts) for the merging logic, and [`src/server/services/settings-helpers.ts`](../src/server/services/settings-helpers.ts) for shared validation schemas, encryption helpers, and decrypt functions used by both global and per-repo settings.
+
+### Voice Mode
+
+Voice mode provides speech-to-text input and text-to-speech output for hands-free interaction with Claude sessions.
+
+**Requirements**: OpenAI API key configured in Settings → System Prompt. Optionally, an Anthropic/Claude API key enables text transformation (markdown → natural speech) before TTS.
+
+**Architecture**:
+
+- **Voice input**: Browser MediaRecorder captures audio → sent to `/api/voice/transcribe` → OpenAI `gpt-4o-mini-transcribe` → transcript inserted into prompt input
+- **Voice output**: Text from assistant message → optionally transformed by Claude Sonnet (if markdown detected) → sent to `/api/voice/speak` → OpenAI `tts-1` → streamed audio playback in browser
+- **API routes**: Voice endpoints use Next.js API routes (not tRPC) since they handle binary audio data and multipart form uploads
+
+**Components**:
+
+- `VoiceMicButton`: Push-to-talk button in PromptInput. Click to start recording, click again to stop and transcribe.
+- `MessagePlayButton`: Per-message play/pause button on assistant messages. Visible when voice is enabled.
+- `VoiceAutoReadToggle`: Toggle in SessionHeader. When enabled, automatically speaks the last assistant message when Claude finishes a turn.
+
+**Hooks**:
+
+- `useVoiceConfig`: Queries voice configuration (enabled status) and manages auto-read preference per session (localStorage)
+- `useVoiceRecording`: MediaRecorder lifecycle, audio capture, and transcription
+- `useVoicePlayback`: Central playback state via React Context, manages Audio element and blob URLs
+
+**Text transformation**: When the Anthropic API key is configured, text with markdown (tables, code blocks, headers, links, bullet lists) is transformed into natural speech via Claude Sonnet before being sent to TTS. This is detected by `needsTransformation()` in the voice service.
+
+**Implementation**: See [`src/server/services/voice.ts`](../src/server/services/voice.ts) for the voice service, [`src/app/api/voice/`](../src/app/api/voice/) for API routes, and [`src/components/voice/`](../src/components/voice/) for UI components.
 
 ## UI Screens
 
@@ -570,7 +599,8 @@ clawed-abode/
 │   │   │   ├── sessions.ts
 │   │   │   ├── claude.ts
 │   │   │   ├── repoSettings.ts
-│   │   │   └── globalSettings.ts
+│   │   │   ├── globalSettings.ts
+│   │   │   └── voice.ts
 │   │   ├── services/
 │   │   │   ├── podman.ts          # Container management via Podman CLI
 │   │   │   ├── agent-client.ts    # HTTP client for agent service
@@ -579,18 +609,24 @@ clawed-abode/
 │   │   │   ├── repo-settings.ts   # Per-repo settings service
 │   │   │   ├── settings-helpers.ts # Shared schemas, encryption, decrypt helpers
 │   │   │   ├── settings-merger.ts # Merges global + per-repo env vars and MCP servers
-│   │   │   └── events.ts         # SSE event emitter
+│   │   │   ├── events.ts         # SSE event emitter
+│   │   │   └── voice.ts          # Voice service (STT, TTS, text transformation)
 │   │   └── trpc.ts
 │   ├── app/
 │   │   ├── page.tsx              # Session list
 │   │   ├── new/page.tsx          # New session
 │   │   ├── session/[id]/page.tsx # Session view
-│   │   └── login/page.tsx
+│   │   ├── login/page.tsx
+│   │   └── api/voice/           # Voice API routes (transcribe, speak)
 │   └── components/
 │       ├── MessageList.tsx
 │       ├── MessageBubble.tsx
 │       ├── ToolCallDisplay.tsx
-│       └── PromptInput.tsx
+│       ├── PromptInput.tsx
+│       └── voice/               # Voice UI components
+│           ├── VoiceMicButton.tsx
+│           ├── MessagePlayButton.tsx
+│           └── VoiceAutoReadToggle.tsx
 ├── docker/
 │   ├── Dockerfile.claude-code
 │   └── docker-compose.yml

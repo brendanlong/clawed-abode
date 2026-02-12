@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { SessionStatusToggle } from '@/components/SessionStatusToggle';
 import { SessionActionButton } from '@/components/SessionActionButton';
+import { VoiceAutoReadToggle } from '@/components/voice/VoiceAutoReadToggle';
 
 interface SessionHeaderProps {
   session: {
@@ -21,6 +22,9 @@ interface SessionHeaderProps {
   isStarting: boolean;
   isStopping: boolean;
   isArchiving?: boolean;
+  voiceEnabled?: boolean;
+  autoRead?: boolean;
+  onAutoReadToggle?: (value: boolean) => void;
 }
 
 export function SessionHeader({
@@ -31,6 +35,9 @@ export function SessionHeader({
   isStarting,
   isStopping,
   isArchiving = false,
+  voiceEnabled = false,
+  autoRead = false,
+  onAutoReadToggle,
 }: SessionHeaderProps) {
   const repoName = session.repoUrl.replace('https://github.com/', '').replace('.git', '');
 
@@ -57,13 +64,18 @@ export function SessionHeader({
         </div>
 
         <div className="flex flex-col items-end gap-1 shrink-0">
-          <SessionStatusToggle
-            status={session.status}
-            onStart={onStart}
-            onStop={onStop}
-            isStarting={isStarting}
-            isStopping={isStopping}
-          />
+          <div className="flex items-center gap-1">
+            {voiceEnabled && onAutoReadToggle && (
+              <VoiceAutoReadToggle autoRead={autoRead} onToggle={onAutoReadToggle} />
+            )}
+            <SessionStatusToggle
+              status={session.status}
+              onStart={onStart}
+              onStop={onStop}
+              isStarting={isStarting}
+              isStopping={isStopping}
+            />
+          </div>
           {(session.status === 'stopped' || session.status === 'running') && onArchive && (
             <SessionActionButton
               action="archive"
