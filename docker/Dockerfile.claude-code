@@ -75,8 +75,8 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | d
 RUN ln -s /usr/bin/podman /usr/local/bin/docker && \
     ln -s /usr/bin/podman-compose /usr/local/bin/docker-compose
 
-# Install Android SDK to /opt (system-wide, read-only for users)
-# Installing as root before creating user avoids chown overhead at container start
+# Install Android SDK to /opt (system-wide, writable by claudeuser after user creation)
+# Installing as root before creating user keeps the layer cached
 # This is placed early because it's slow to download but rarely changes
 ENV ANDROID_HOME=/opt/android-sdk
 ENV PATH="${ANDROID_HOME}/cmdline-tools/latest/bin:${ANDROID_HOME}/platform-tools:${PATH}"
@@ -141,6 +141,10 @@ RUN userdel -r ubuntu 2>/dev/null || true && \
 # This allows podman to create user namespaces for nested containers
 RUN echo "claudeuser:100000:65536" >> /etc/subuid && \
     echo "claudeuser:100000:65536" >> /etc/subgid
+
+# Make Android SDK writable by claudeuser so Gradle can auto-install
+# additional SDK components (build-tools, platforms, etc.) without sudo
+RUN chown -R claudeuser:claudeuser ${ANDROID_HOME}
 
 # Set up working directory
 WORKDIR /workspace
