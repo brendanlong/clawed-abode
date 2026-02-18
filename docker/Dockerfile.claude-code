@@ -1,3 +1,28 @@
+# Stage 1: Install Android SDK in a separate stage so we can COPY --chown
+# into the final image without creating a duplicate layer from chown -R
+FROM docker.io/nvidia/cuda:12.6.3-base-ubuntu24.04 AS android-sdk-builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV ANDROID_HOME=/opt/android-sdk
+
+RUN apt-get update && apt-get install -y curl unzip openjdk-17-jdk-headless && \
+    rm -rf /var/lib/apt/lists/*
+
+# Download and install Android command-line tools
+RUN mkdir -p ${ANDROID_HOME}/cmdline-tools && \
+    cd ${ANDROID_HOME}/cmdline-tools && \
+    curl -sSL "https://dl.google.com/android/repository/commandlinetools-linux-13114758_latest.zip" -o cmdline-tools.zip && \
+    unzip -q cmdline-tools.zip && \
+    mv cmdline-tools latest && \
+    rm cmdline-tools.zip && \
+    chmod +x ${ANDROID_HOME}/cmdline-tools/latest/bin/*
+
+# Accept Android SDK licenses and install common components
+ENV PATH="${ANDROID_HOME}/cmdline-tools/latest/bin:${PATH}"
+RUN yes | sdkmanager --licenses > /dev/null 2>&1 && \
+    sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+
+# Stage 2: Final image
 FROM docker.io/nvidia/cuda:12.6.3-base-ubuntu24.04
 
 # Avoid prompts from apt
@@ -75,24 +100,9 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | d
 RUN ln -s /usr/bin/podman /usr/local/bin/docker && \
     ln -s /usr/bin/podman-compose /usr/local/bin/docker-compose
 
-# Install Android SDK to /opt (system-wide, writable by claudeuser after user creation)
-# Installing as root before creating user keeps the layer cached
-# This is placed early because it's slow to download but rarely changes
+# Android SDK env vars (actual SDK is copied from builder stage after user creation)
 ENV ANDROID_HOME=/opt/android-sdk
 ENV PATH="${ANDROID_HOME}/cmdline-tools/latest/bin:${ANDROID_HOME}/platform-tools:${PATH}"
-
-# Download and install Android command-line tools
-RUN mkdir -p ${ANDROID_HOME}/cmdline-tools && \
-    cd ${ANDROID_HOME}/cmdline-tools && \
-    curl -sSL "https://dl.google.com/android/repository/commandlinetools-linux-13114758_latest.zip" -o cmdline-tools.zip && \
-    unzip -q cmdline-tools.zip && \
-    mv cmdline-tools latest && \
-    rm cmdline-tools.zip && \
-    chmod +x ${ANDROID_HOME}/cmdline-tools/latest/bin/*
-
-# Accept Android SDK licenses and install common components
-RUN yes | sdkmanager --licenses > /dev/null 2>&1 && \
-    sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
 # Install uv package manager for Python (system-wide to avoid chown overhead)
 RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
@@ -142,9 +152,10 @@ RUN userdel -r ubuntu 2>/dev/null || true && \
 RUN echo "claudeuser:100000:65536" >> /etc/subuid && \
     echo "claudeuser:100000:65536" >> /etc/subgid
 
-# Make Android SDK writable by claudeuser so Gradle can auto-install
-# additional SDK components (build-tools, platforms, etc.) without sudo
-RUN chown -R claudeuser:claudeuser ${ANDROID_HOME}
+# Copy Android SDK from builder stage, owned by claudeuser so Gradle can
+# auto-install additional SDK components (build-tools, platforms, etc.)
+# Using COPY --from avoids a duplicate layer from chown -R
+COPY --from=android-sdk-builder --chown=claudeuser:claudeuser /opt/android-sdk /opt/android-sdk
 
 # Set up working directory
 WORKDIR /workspace
