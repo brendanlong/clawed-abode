@@ -315,7 +315,7 @@ The runner container image is defined in [`docker/Dockerfile.claude-code`](../do
 
 - NVIDIA CUDA base for GPU workloads
 - Podman for container-in-container operations
-- Common development tools (Node.js, Python, JDK, Android SDK)
+- Common development tools (Node.js, Python, JDK, Android SDK with emulator and system images)
 - Passwordless sudo for package installation
 - Docker/docker-compose aliases pointing to Podman equivalents
 - Rootless Podman configured with fuse-overlayfs
@@ -334,6 +334,7 @@ Runner containers are created with (see [`createAndStartContainer`](../src/serve
 - **pnpm store**: Named volume mounted at `/pnpm-store` for shared package cache
 - **Gradle cache**: Named volumes for `caches/` and `wrapper/` subdirectories mounted under `/gradle-cache`. The `daemon/` directory is ephemeral per-container to prevent stale daemon issues.
 - **Agent service**: Configured via `AGENT_PORT`, `SYSTEM_PROMPT`, and `CLAUDE_MODEL` environment variables. The container's CMD runs the agent service, which provides an HTTP API for the Next.js server to interact with Claude.
+- **KVM access**: `/dev/kvm` is passed through when available on the host, enabling hardware-accelerated Android emulator for instrumented tests (Espresso, Compose UI tests). The entrypoint script fixes device permissions so the container user can access it. See [issue #245](https://github.com/brendanlong/clawed-abode/issues/245).
 
 ### Agent Service Architecture
 

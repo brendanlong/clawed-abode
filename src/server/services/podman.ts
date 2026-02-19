@@ -671,6 +671,9 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
     // GPU access via CDI (Container Device Interface) - requires nvidia-container-toolkit
     // and CDI specs generated via: nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
     //
+    // KVM access for Android emulator hardware acceleration (see issue #245).
+    // Passed through only if /dev/kvm exists on the host.
+    //
     // Network mode is configurable via CONTAINER_NETWORK_MODE:
     // - "host": Share host's network namespace. Allows containers to connect to
     //   services started via podman-compose on localhost. Recommended when agents
@@ -678,6 +681,11 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
     // - "bridge": Standard container networking with NAT.
     // - "pasta": Rootless Podman's default.
     // See: https://github.com/brendanlong/clawed-abode/issues/147
+    const deviceArgs: string[] = ['--device', 'nvidia.com/gpu=all'];
+    if (existsSync('/dev/kvm')) {
+      deviceArgs.push('--device', '/dev/kvm');
+    }
+
     const createArgs = [
       'create',
       '--name',
@@ -686,8 +694,7 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
       env.CONTAINER_NETWORK_MODE,
       '--security-opt',
       'label=disable',
-      '--device',
-      'nvidia.com/gpu=all',
+      ...deviceArgs,
       '-w',
       workingDir,
       ...envArgs,

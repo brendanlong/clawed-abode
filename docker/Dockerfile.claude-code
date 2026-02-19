@@ -18,9 +18,11 @@ RUN mkdir -p ${ANDROID_HOME}/cmdline-tools && \
     chmod +x ${ANDROID_HOME}/cmdline-tools/latest/bin/*
 
 # Accept Android SDK licenses and install common components
+# Includes emulator and a system image for Android instrumented tests (see issue #245)
 ENV PATH="${ANDROID_HOME}/cmdline-tools/latest/bin:${PATH}"
 RUN yes | sdkmanager --licenses > /dev/null 2>&1 && \
-    sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+    sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" \
+    "emulator" "system-images;android-35;google_apis;x86_64"
 
 # Stage 2: Final image
 FROM docker.io/nvidia/cuda:12.6.3-base-ubuntu24.04

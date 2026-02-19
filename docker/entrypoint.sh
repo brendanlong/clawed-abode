@@ -49,5 +49,11 @@ if [ -e /var/run/docker.sock ]; then
   sudo chmod 666 /var/run/docker.sock 2>/dev/null || true
 fi
 
+# Fix KVM device permissions for Android emulator hardware acceleration (see issue #245)
+# When /dev/kvm is passed through via --device, the container user needs write access
+if [ -e /dev/kvm ]; then
+  sudo chmod 666 /dev/kvm 2>/dev/null || true
+fi
+
 # --- Launch agent service ---
 exec node /opt/agent-service/dist/agent-service/src/index.js
