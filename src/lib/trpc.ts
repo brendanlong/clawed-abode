@@ -10,22 +10,10 @@ import type { AppRouter } from '@/server/routers';
 export const trpc = createTRPCReact<AppRouter>();
 
 const TOKEN_KEY = 'auth_token';
-const TOKEN_ROTATION_HEADER = 'x-rotated-token';
 
 function getAuthToken(): string | null {
   if (typeof window === 'undefined') return null;
   return localStorage.getItem(TOKEN_KEY);
-}
-
-/**
- * Updates the stored auth token if a rotated token is provided.
- * Called when the server rotates the session token.
- */
-function handleTokenRotation(headers: Headers) {
-  const rotatedToken = headers.get(TOKEN_ROTATION_HEADER);
-  if (rotatedToken && typeof window !== 'undefined') {
-    localStorage.setItem(TOKEN_KEY, rotatedToken);
-  }
 }
 
 /**
@@ -69,18 +57,6 @@ function authErrorLink(): TRPCLink<AppRouter> {
   };
 }
 
-/**
- * Custom fetch that intercepts responses to handle token rotation.
- */
-async function fetchWithTokenRotation(
-  input: RequestInfo | URL,
-  init?: RequestInit
-): Promise<Response> {
-  const response = await fetch(input, init);
-  handleTokenRotation(response.headers);
-  return response;
-}
-
 export function createTRPCClient() {
   return trpc.createClient({
     links: [
@@ -102,7 +78,6 @@ export function createTRPCClient() {
         false: httpBatchLink({
           url: '/api/trpc',
           transformer: superjson,
-          fetch: fetchWithTokenRotation,
           headers() {
             const token = getAuthToken();
             return token ? { authorization: `Bearer ${token}` } : {};

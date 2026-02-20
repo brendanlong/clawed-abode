@@ -40,7 +40,7 @@ const createCaller = (sessionId: string | null) => {
   const testRouter = router({
     claude: claudeRouter,
   });
-  return testRouter.createCaller({ sessionId, rotatedToken: null });
+  return testRouter.createCaller({ sessionId });
 };
 
 describe('claudeRouter integration', () => {
