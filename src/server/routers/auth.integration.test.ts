@@ -31,7 +31,7 @@ const createCaller = (sessionId: string | null) => {
   const testRouter = router({
     auth: authRouter,
   });
-  return testRouter.createCaller({ sessionId, rotatedToken: null });
+  return testRouter.createCaller({ sessionId });
 };
 
 const TEST_PASSWORD = 'test-password-123';

@@ -1,12 +1,6 @@
 import { initTRPC, TRPCError } from '@trpc/server';
 import superjson from 'superjson';
-import {
-  parseAuthHeader,
-  generateSessionToken,
-  IDLE_TIMEOUT_MS,
-  TOKEN_ROTATION_INTERVAL_MS,
-  ACTIVITY_UPDATE_THROTTLE_MS,
-} from '@/lib/auth';
+import { parseAuthHeader, IDLE_TIMEOUT_MS, ACTIVITY_UPDATE_THROTTLE_MS } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { createLogger } from '@/lib/logger';
 
@@ -14,7 +8,6 @@ const log = createLogger('trpc');
 
 export interface Context {
   sessionId: string | null;
-  rotatedToken: string | null; // New token if rotation occurred
 }
 
 export async function createContext(opts: { headers: Headers }): Promise<Context> {
@@ -22,7 +15,7 @@ export async function createContext(opts: { headers: Headers }): Promise<Context
   const token = parseAuthHeader(authHeader);
 
   if (!token) {
-    return { sessionId: null, rotatedToken: null };
+    return { sessionId: null };
   }
 
   const session = await prisma.authSession.findUnique({
@@ -31,19 +24,19 @@ export async function createContext(opts: { headers: Headers }): Promise<Context
   });
 
   if (!session) {
-    return { sessionId: null, rotatedToken: null };
+    return { sessionId: null };
   }
 
   const now = new Date();
 
   // Check if session has been revoked
   if (session.revokedAt) {
-    return { sessionId: null, rotatedToken: null };
+    return { sessionId: null };
   }
 
   // Check if session has expired
   if (session.expiresAt < now) {
-    return { sessionId: null, rotatedToken: null };
+    return { sessionId: null };
   }
 
   // Check for idle timeout
@@ -51,27 +44,11 @@ export async function createContext(opts: { headers: Headers }): Promise<Context
   if (idleTime > IDLE_TIMEOUT_MS) {
     // Session is idle, reject it (but don't delete - keep for audit/display)
     log.info('Session rejected due to idle timeout', { sessionId: session.id });
-    return { sessionId: null, rotatedToken: null };
+    return { sessionId: null };
   }
 
-  // Check if token rotation is needed (more than TOKEN_ROTATION_INTERVAL_MS since last activity)
-  let rotatedToken: string | null = null;
-  if (idleTime > TOKEN_ROTATION_INTERVAL_MS) {
-    // Rotate the token
-    const newToken = generateSessionToken();
-    try {
-      await prisma.authSession.update({
-        where: { id: session.id },
-        data: { token: newToken, lastActivityAt: now },
-      });
-      rotatedToken = newToken;
-      log.info('Session token rotated', { sessionId: session.id });
-    } catch {
-      // If update fails (e.g., race condition), just continue with activity update
-      log.warn('Token rotation failed, continuing with activity update', { sessionId: session.id });
-    }
-  } else if (idleTime > ACTIVITY_UPDATE_THROTTLE_MS) {
-    // Just update last activity (throttled to avoid excessive DB writes)
+  // Update last activity (throttled to avoid excessive DB writes)
+  if (idleTime > ACTIVITY_UPDATE_THROTTLE_MS) {
     prisma.authSession
       .update({
         where: { id: session.id },
@@ -82,7 +59,7 @@ export async function createContext(opts: { headers: Headers }): Promise<Context
       });
   }
 
-  return { sessionId: session.id, rotatedToken };
+  return { sessionId: session.id };
 }
 
 const t = initTRPC.context<Context>().create({

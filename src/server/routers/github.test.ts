@@ -44,7 +44,7 @@ const createCaller = (sessionId: string | null) => {
   const testRouter = router({
     github: githubRouter,
   });
-  return testRouter.createCaller({ sessionId, rotatedToken: null });
+  return testRouter.createCaller({ sessionId });
 };
 
 // Helper to create mock Response

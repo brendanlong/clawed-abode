@@ -84,7 +84,7 @@ const createCaller = (sessionId: string | null) => {
   const testRouter = router({
     sessions: sessionsRouter,
   });
-  return testRouter.createCaller({ sessionId, rotatedToken: null });
+  return testRouter.createCaller({ sessionId });
 };
 
 describe('sessionsRouter integration', () => {
