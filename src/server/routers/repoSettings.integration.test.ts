@@ -21,7 +21,7 @@ const createCaller = () => {
     repoSettings: repoSettingsRouter,
   });
   // Use a fake session ID to pass the auth check
-  return testRouter.createCaller({ sessionId: 'test-session', rotatedToken: null });
+  return testRouter.createCaller({ sessionId: 'test-session' });
 };
 
 describe('repoSettings router', () => {

@@ -1,11 +1,6 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { setupTestDb, teardownTestDb, testPrisma, clearTestDb } from '@/test/setup-test-db';
-import {
-  IDLE_TIMEOUT_MS,
-  TOKEN_ROTATION_INTERVAL_MS,
-  ACTIVITY_UPDATE_THROTTLE_MS,
-  generateSessionToken,
-} from '@/lib/auth';
+import { IDLE_TIMEOUT_MS, ACTIVITY_UPDATE_THROTTLE_MS, generateSessionToken } from '@/lib/auth';
 
 // Mock logger (just to reduce noise)
 vi.mock('@/lib/logger', () => ({
@@ -21,7 +16,7 @@ vi.mock('@/lib/logger', () => ({
 // Will be set in beforeAll after test DB is set up
 let createContext: Awaited<typeof import('./trpc')>['createContext'];
 
-describe('createContext - activity tracking and token rotation', () => {
+describe('createContext - activity tracking', () => {
   beforeAll(async () => {
     await setupTestDb();
 
@@ -68,13 +63,11 @@ describe('createContext - activity tracking and token rotation', () => {
     it('should return null sessionId for missing token', async () => {
       const ctx = await createContext({ headers: createHeaders(null) });
       expect(ctx.sessionId).toBeNull();
-      expect(ctx.rotatedToken).toBeNull();
     });
 
     it('should return null sessionId for invalid token', async () => {
       const ctx = await createContext({ headers: createHeaders('invalid-token') });
       expect(ctx.sessionId).toBeNull();
-      expect(ctx.rotatedToken).toBeNull();
     });
 
     it('should return sessionId for valid token', async () => {
@@ -125,54 +118,8 @@ describe('createContext - activity tracking and token rotation', () => {
     });
   });
 
-  describe('token rotation', () => {
-    it('should rotate token when activity exceeds rotation interval', async () => {
-      const lastActivity = new Date(Date.now() - TOKEN_ROTATION_INTERVAL_MS - 1000); // Past rotation interval
-      const { session, token } = await createTestSession({ lastActivityAt: lastActivity });
-
-      const ctx = await createContext({ headers: createHeaders(token) });
-
-      // Session should still be valid
-      expect(ctx.sessionId).toBe(session.id);
-
-      // Should have a rotated token
-      expect(ctx.rotatedToken).toBeDefined();
-      expect(ctx.rotatedToken).not.toBe(token);
-
-      // Database should have the new token
-      const updatedSession = await testPrisma.authSession.findFirst({
-        where: { id: session.id },
-      });
-      expect(updatedSession).toBeDefined();
-      expect(updatedSession!.token).toBe(ctx.rotatedToken);
-
-      // Last activity should be updated
-      expect(updatedSession!.lastActivityAt.getTime()).toBeGreaterThan(lastActivity.getTime());
-    });
-
-    it('should not rotate token when activity is within rotation interval', async () => {
-      const lastActivity = new Date(Date.now() - TOKEN_ROTATION_INTERVAL_MS / 2); // Half of rotation interval
-      const { session, token } = await createTestSession({ lastActivityAt: lastActivity });
-
-      const ctx = await createContext({ headers: createHeaders(token) });
-
-      // Session should still be valid
-      expect(ctx.sessionId).toBe(session.id);
-
-      // Should NOT have a rotated token
-      expect(ctx.rotatedToken).toBeNull();
-
-      // Token should remain unchanged
-      const updatedSession = await testPrisma.authSession.findFirst({
-        where: { id: session.id },
-      });
-      expect(updatedSession!.token).toBe(token);
-    });
-  });
-
   describe('activity update throttling', () => {
-    it('should update activity when exceeding throttle interval but not rotation interval', async () => {
-      // Set last activity to just past the throttle interval but within rotation interval
+    it('should update activity when exceeding throttle interval', async () => {
       const lastActivity = new Date(Date.now() - ACTIVITY_UPDATE_THROTTLE_MS - 1000);
       const { session, token } = await createTestSession({ lastActivityAt: lastActivity });
 
@@ -180,9 +127,6 @@ describe('createContext - activity tracking and token rotation', () => {
 
       // Session should be valid
       expect(ctx.sessionId).toBe(session.id);
-
-      // Should NOT have a rotated token
-      expect(ctx.rotatedToken).toBeNull();
 
       // Wait a bit for the async update to complete
       await new Promise((resolve) => setTimeout(resolve, 100));
@@ -203,9 +147,6 @@ describe('createContext - activity tracking and token rotation', () => {
       // Session should be valid
       expect(ctx.sessionId).toBe(session.id);
 
-      // Should NOT have a rotated token
-      expect(ctx.rotatedToken).toBeNull();
-
       // Wait a bit
       await new Promise((resolve) => setTimeout(resolve, 100));
 
@@ -214,6 +155,23 @@ describe('createContext - activity tracking and token rotation', () => {
         where: { id: session.id },
       });
       expect(updatedSession!.lastActivityAt.getTime()).toBe(lastActivity.getTime());
+    });
+
+    it('should not change token regardless of idle time', async () => {
+      // Even with long idle time (but within idle timeout), token should remain the same
+      const lastActivity = new Date(Date.now() - IDLE_TIMEOUT_MS / 2);
+      const { session, token } = await createTestSession({ lastActivityAt: lastActivity });
+
+      await createContext({ headers: createHeaders(token) });
+
+      // Wait for async update
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      // Token should remain unchanged
+      const updatedSession = await testPrisma.authSession.findFirst({
+        where: { id: session.id },
+      });
+      expect(updatedSession!.token).toBe(token);
     });
   });
 });
