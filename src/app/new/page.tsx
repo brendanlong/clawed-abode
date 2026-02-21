@@ -33,10 +33,11 @@ function generateIssuePrompt(issue: Issue, repoFullName: string): string {
   prompt += issue.body || '(No description provided)';
   prompt += `\n\n---\n\n`;
   prompt += `Please:\n`;
-  prompt += `1. Analyze the issue and understand what needs to be fixed\n`;
-  prompt += `2. Make the necessary code changes\n`;
-  prompt += `3. Commit your changes with a descriptive message\n`;
-  prompt += `4. Push the changes to the remote repository`;
+  prompt += `1. Read the GitHub issue comments (using \`gh issue view ${issue.number} --repo ${repoFullName} --comments\`) as they may contain useful context\n`;
+  prompt += `2. Analyze the issue and understand what needs to be fixed\n`;
+  prompt += `3. Make the necessary code changes\n`;
+  prompt += `4. Commit your changes with a descriptive message\n`;
+  prompt += `5. Push the changes to the remote repository`;
 
   return prompt;
 }
