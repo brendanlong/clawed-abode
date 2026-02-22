@@ -32,6 +32,7 @@ interface GitHubIssue {
   state: 'open' | 'closed';
   user: { login: string } | null;
   labels: Array<{ name: string; color: string }>;
+  comments: number;
   created_at: string;
   updated_at: string;
 }
@@ -252,6 +253,7 @@ export const githubRouter = router({
           state: i.state,
           author: i.user?.login || 'unknown',
           labels: i.labels.map((l) => ({ name: l.name, color: l.color })),
+          comments: i.comments,
           createdAt: i.created_at,
           updatedAt: i.updated_at,
         })),
@@ -290,6 +292,7 @@ export const githubRouter = router({
           state: issue.state,
           author: issue.user?.login || 'unknown',
           labels: issue.labels.map((l) => ({ name: l.name, color: l.color })),
+          comments: issue.comments,
           createdAt: issue.created_at,
           updatedAt: issue.updated_at,
         },

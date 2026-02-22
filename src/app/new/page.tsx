@@ -31,6 +31,9 @@ function generateIssuePrompt(issue: Issue, repoFullName: string): string {
   }
   prompt += `\n### Description\n\n`;
   prompt += issue.body || '(No description provided)';
+  if (issue.comments > 0) {
+    prompt += `\n\nThis issue has ${issue.comments} comment${issue.comments === 1 ? '' : 's'} which may contain useful context. Read them with \`gh issue view ${issue.number} --repo ${repoFullName} --comments\`.`;
+  }
   prompt += `\n\n---\n\n`;
   prompt += `Please:\n`;
   prompt += `1. Analyze the issue and understand what needs to be fixed\n`;

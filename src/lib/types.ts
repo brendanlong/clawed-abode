@@ -54,6 +54,7 @@ export interface Issue {
   state: 'open' | 'closed';
   author: string;
   labels: Array<{ name: string; color: string }>;
+  comments: number;
   createdAt: string;
   updatedAt: string;
 }
