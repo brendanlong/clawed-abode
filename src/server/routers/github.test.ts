@@ -276,6 +276,7 @@ describe('githubRouter', () => {
           state: 'open',
           user: { login: 'reporter' },
           labels: [{ name: 'bug', color: 'd73a4a' }],
+          comments: 3,
           created_at: '2024-01-01T00:00:00Z',
           updated_at: '2024-01-02T00:00:00Z',
         },
@@ -287,6 +288,7 @@ describe('githubRouter', () => {
           state: 'open',
           user: null,
           labels: [],
+          comments: 0,
           created_at: '2024-01-03T00:00:00Z',
           updated_at: '2024-01-04T00:00:00Z',
         },
@@ -308,6 +310,7 @@ describe('githubRouter', () => {
         state: 'open',
         author: 'reporter',
         labels: [{ name: 'bug', color: 'd73a4a' }],
+        comments: 3,
       });
       expect(result.issues[1].author).toBe('unknown');
       expect(result.issues[1].body).toBeNull();
@@ -339,6 +342,7 @@ describe('githubRouter', () => {
             state: 'open',
             user: { login: 'user' },
             labels: [],
+            comments: 0,
             created_at: '2024-01-01T00:00:00Z',
             updated_at: '2024-01-02T00:00:00Z',
           },
@@ -370,6 +374,7 @@ describe('githubRouter', () => {
           state: 'open',
           user: { login: 'user' },
           labels: [],
+          comments: 0,
           created_at: '2024-01-01T00:00:00Z',
           updated_at: '2024-01-02T00:00:00Z',
         },
@@ -381,6 +386,7 @@ describe('githubRouter', () => {
           state: 'open',
           user: { login: 'user' },
           labels: [],
+          comments: 0,
           created_at: '2024-01-01T00:00:00Z',
           updated_at: '2024-01-02T00:00:00Z',
           pull_request: { url: 'https://...' },
@@ -446,6 +452,7 @@ describe('githubRouter', () => {
           { name: 'enhancement', color: 'a2eeef' },
           { name: 'help wanted', color: '008672' },
         ],
+        comments: 5,
         created_at: '2024-01-01T00:00:00Z',
         updated_at: '2024-01-02T00:00:00Z',
       };
@@ -481,6 +488,7 @@ describe('githubRouter', () => {
         state: 'closed',
         user: { login: 'user' },
         labels: [],
+        comments: 0,
         created_at: '2024-01-01T00:00:00Z',
         updated_at: '2024-01-02T00:00:00Z',
       };
