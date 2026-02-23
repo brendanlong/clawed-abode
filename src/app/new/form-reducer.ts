@@ -7,13 +7,16 @@ export interface FormState {
   selectedIssue: Issue | null;
   sessionName: string;
   nameManuallyEdited: boolean;
+  initialPrompt: string;
+  promptManuallyEdited: boolean;
 }
 
 export type FormAction =
   | { type: 'selectRepo'; repo: Repo }
   | { type: 'selectBranch'; branch: string }
-  | { type: 'selectIssue'; issue: Issue | null }
-  | { type: 'editName'; name: string };
+  | { type: 'selectIssue'; issue: Issue | null; generatedPrompt?: string }
+  | { type: 'editName'; name: string }
+  | { type: 'editPrompt'; prompt: string };
 
 export const initialFormState: FormState = {
   selectedRepo: null,
@@ -21,6 +24,8 @@ export const initialFormState: FormState = {
   selectedIssue: null,
   sessionName: '',
   nameManuallyEdited: false,
+  initialPrompt: '',
+  promptManuallyEdited: false,
 };
 
 export function formReducer(state: FormState, action: FormAction): FormState {
@@ -41,12 +46,21 @@ export function formReducer(state: FormState, action: FormAction): FormState {
           : action.issue
             ? `#${action.issue.number}: ${action.issue.title}`
             : '',
+        initialPrompt: state.promptManuallyEdited
+          ? state.initialPrompt
+          : (action.generatedPrompt ?? ''),
       };
     case 'editName':
       return {
         ...state,
         sessionName: action.name,
         nameManuallyEdited: true,
+      };
+    case 'editPrompt':
+      return {
+        ...state,
+        initialPrompt: action.prompt,
+        promptManuallyEdited: true,
       };
   }
 }
