@@ -166,13 +166,13 @@ sessions.create({
   name: string,
   repoFullName: string,    // e.g., "brendanlong/math-llm"
   branch: string,
-  initialPrompt?: string   // Optional prompt to auto-send when session starts
+  initialPrompt: string    // Prompt to auto-send when session starts
 })
   → { session: Session }
   // Returns immediately with session in "creating" status
   // Cloning and container setup continues in background
   // UI polls session.get() to track progress via statusMessage
-  // If initialPrompt is provided, it will be sent automatically when session becomes running
+  // initialPrompt is sent automatically server-side when session becomes running
 
 sessions.list({ status?: SessionStatus })
   → { sessions: Session[] }
@@ -243,6 +243,7 @@ claude.getHistory({
 12. Background: Container starts the agent service (Node.js HTTP server using Claude Agent SDK)
 13. Background: Server waits for agent service health check to pass
 14. Session status → `running`, statusMessage → null
+15. Background: Server sends the initial prompt via `runClaudeCommand()` (no client interaction needed)
 
 ### Interaction Flow
 
@@ -537,8 +538,10 @@ Users can configure global settings that apply to all sessions:
 - Optional: Select a GitHub issue to work on
   - Searchable dropdown with open issues
   - When selected, auto-fills session name with issue title
-  - Generates initial prompt asking Claude to fix the issue
-- Name the session (auto-filled from issue if selected)
+  - Pre-fills initial prompt asking Claude to fix the issue (editable)
+- Name the session (optional, auto-filled from issue if selected)
+- Initial prompt (required) — editable textarea, pre-filled when issue is selected
+  - Sent server-side after session setup completes (works even if client disconnects)
 - Create button
 
 ### Session View (Chat)

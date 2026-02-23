@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, use } from 'react';
+import { useCallback, useEffect, use } from 'react';
 import Link from 'next/link';
 import { AuthGuard } from '@/components/AuthGuard';
 import { Header } from '@/components/Header';
@@ -81,37 +81,6 @@ function SessionView({ sessionId }: { sessionId: string }) {
     },
     [session, sendPrompt]
   );
-
-  // Track whether we've already sent the initial prompt
-  const initialPromptSentRef = useRef(false);
-  const prevStatusRef = useRef<string | undefined>(undefined);
-
-  // Send the initial prompt when session transitions to running for the first time
-  useEffect(() => {
-    if (!session) return;
-
-    const wasCreating = prevStatusRef.current === 'creating';
-    const isNowRunning = session.status === 'running';
-    const hasInitialPrompt = !!session.initialPrompt;
-    const noMessagesSent = messages.length === 0;
-
-    // Update previous status
-    prevStatusRef.current = session.status;
-
-    // Only send initial prompt on transition from creating to running,
-    // when there's a prompt, no messages have been sent yet, and we haven't already sent it
-    if (
-      wasCreating &&
-      isNowRunning &&
-      hasInitialPrompt &&
-      noMessagesSent &&
-      !initialPromptSentRef.current &&
-      session.initialPrompt // TypeScript narrowing
-    ) {
-      initialPromptSentRef.current = true;
-      sendPrompt(session.initialPrompt);
-    }
-  }, [session, messages.length, sendPrompt]);
 
   if (sessionLoading) {
     return (

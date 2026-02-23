@@ -8,6 +8,7 @@ import { Header } from '@/components/Header';
 import { trpc } from '@/lib/trpc';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -58,9 +59,16 @@ function NewSessionForm() {
     },
   });
 
-  const handleIssueSelect = useCallback((issue: Issue | null) => {
-    dispatch({ type: 'selectIssue', issue });
-  }, []);
+  const handleIssueSelect = useCallback(
+    (issue: Issue | null) => {
+      const generatedPrompt =
+        issue && form.selectedRepo
+          ? generateIssuePrompt(issue, form.selectedRepo.fullName)
+          : undefined;
+      dispatch({ type: 'selectIssue', issue, generatedPrompt });
+    },
+    [form.selectedRepo]
+  );
 
   const handleRepoSelect = useCallback((repo: Repo) => {
     dispatch({ type: 'selectRepo', repo });
@@ -72,6 +80,10 @@ function NewSessionForm() {
 
   const handleNameChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     dispatch({ type: 'editName', name: e.target.value });
+  }, []);
+
+  const handlePromptChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    dispatch({ type: 'editPrompt', prompt: e.target.value });
   }, []);
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -88,15 +100,16 @@ function NewSessionForm() {
       return;
     }
 
-    const initialPrompt = form.selectedIssue
-      ? generateIssuePrompt(form.selectedIssue, form.selectedRepo.fullName)
-      : undefined;
+    if (!form.initialPrompt.trim()) {
+      setError('Please provide an initial prompt');
+      return;
+    }
 
     createMutation.mutate({
       name: form.sessionName || `${form.selectedRepo.name} - ${form.selectedBranch}`,
       repoFullName: form.selectedRepo.fullName,
       branch: form.selectedBranch,
-      initialPrompt,
+      initialPrompt: form.initialPrompt.trim(),
     });
   };
 
@@ -125,9 +138,7 @@ function NewSessionForm() {
           />
 
           <div className="space-y-2">
-            <Label htmlFor="sessionName">
-              Session name {form.selectedIssue ? '' : '(optional)'}
-            </Label>
+            <Label htmlFor="sessionName">Session name (optional)</Label>
             <Input
               id="sessionName"
               type="text"
@@ -135,11 +146,20 @@ function NewSessionForm() {
               onChange={handleNameChange}
               placeholder={`${form.selectedRepo.name} - ${form.selectedBranch || 'branch'}`}
             />
-            {form.selectedIssue && (
-              <p className="text-xs text-muted-foreground">
-                When the session starts, Claude will automatically be prompted to fix this issue.
-              </p>
-            )}
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="initialPrompt">Initial prompt</Label>
+            <Textarea
+              id="initialPrompt"
+              value={form.initialPrompt}
+              onChange={handlePromptChange}
+              placeholder="What should Claude work on?"
+              rows={6}
+            />
+            <p className="text-xs text-muted-foreground">
+              This prompt will be sent to Claude automatically when the session starts.
+            </p>
           </div>
         </>
       )}
@@ -150,7 +170,12 @@ function NewSessionForm() {
         </Button>
         <Button
           type="submit"
-          disabled={!form.selectedRepo || !form.selectedBranch || createMutation.isPending}
+          disabled={
+            !form.selectedRepo ||
+            !form.selectedBranch ||
+            !form.initialPrompt.trim() ||
+            createMutation.isPending
+          }
         >
           {createMutation.isPending ? (
             <span className="flex items-center gap-2">
