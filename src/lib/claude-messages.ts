@@ -207,7 +207,22 @@ export const SystemErrorContentSchema = z.object({
 export type SystemErrorContent = z.infer<typeof SystemErrorContentSchema>;
 
 /**
- * Generic system content (for other subtypes)
+ * Compact boundary message content - emitted when /compact is used or auto-compaction triggers
+ */
+export const SystemCompactBoundaryContentSchema = z.object({
+  type: z.literal('system'),
+  subtype: z.literal('compact_boundary'),
+  compact_metadata: z.object({
+    trigger: z.enum(['manual', 'auto']),
+    pre_tokens: z.number(),
+  }),
+  uuid: z.string(),
+  session_id: z.string(),
+});
+export type SystemCompactBoundaryContent = z.infer<typeof SystemCompactBoundaryContentSchema>;
+
+/**
+ * Generic system content (for other subtypes like status, hook_started, hook_response, etc.)
  */
 export const SystemGenericContentSchema = z.object({
   type: z.literal('system'),
@@ -386,7 +401,11 @@ export class SystemMessage extends ParsedMessage {
     sessionId: string,
     sequence: number,
     createdAt: Date,
-    public readonly content: SystemInitContent | SystemErrorContent | SystemGenericContent
+    public readonly content:
+      | SystemInitContent
+      | SystemErrorContent
+      | SystemCompactBoundaryContent
+      | SystemGenericContent
   ) {
     super(id, sessionId, sequence, createdAt);
   }
@@ -399,6 +418,11 @@ export class SystemMessage extends ParsedMessage {
   /** Check if this is an error message */
   isError(): this is SystemMessage & { content: SystemErrorContent } {
     return this.content.subtype === 'error';
+  }
+
+  /** Check if this is a compact boundary message */
+  isCompactBoundary(): this is SystemMessage & { content: SystemCompactBoundaryContent } {
+    return this.content.subtype === 'compact_boundary';
   }
 
   /** Get error text if this is an error message */
@@ -424,6 +448,21 @@ export class SystemMessage extends ParsedMessage {
       cwd: initContent.cwd,
       tools: initContent.tools,
       version: initContent.claude_code_version,
+    };
+  }
+
+  /** Get compact metadata if this is a compact boundary message */
+  getCompactInfo():
+    | {
+        trigger: 'manual' | 'auto';
+        preTokens: number;
+      }
+    | undefined {
+    if (!this.isCompactBoundary()) return undefined;
+    const compactContent = this.content as SystemCompactBoundaryContent;
+    return {
+      trigger: compactContent.compact_metadata.trigger,
+      preTokens: compactContent.compact_metadata.pre_tokens,
     };
   }
 }
@@ -562,7 +601,7 @@ export function parseStoredMessage(stored: StoredMessage): AnyParsedMessage {
     }
 
     case 'system': {
-      // Try init first, then error, then generic
+      // Try specific schemas first, then fall back to generic
       const initParsed = SystemInitContentSchema.safeParse(content);
       if (initParsed.success) {
         return new SystemMessage(id, sessionId, sequence, date, initParsed.data);
@@ -573,7 +612,12 @@ export function parseStoredMessage(stored: StoredMessage): AnyParsedMessage {
         return new SystemMessage(id, sessionId, sequence, date, errorParsed.data);
       }
 
-      // Fall back to generic
+      const compactParsed = SystemCompactBoundaryContentSchema.safeParse(content);
+      if (compactParsed.success) {
+        return new SystemMessage(id, sessionId, sequence, date, compactParsed.data);
+      }
+
+      // Fall back to generic (handles status, hook_started, hook_response, etc.)
       const genericParsed = SystemGenericContentSchema.safeParse(content);
       if (genericParsed.success) {
         return new SystemMessage(id, sessionId, sequence, date, genericParsed.data);
@@ -628,13 +672,22 @@ export function parseStoredMessage(stored: StoredMessage): AnyParsedMessage {
 export type StreamLineParseResult =
   | {
       success: true;
-      data: AssistantContent | UserContent | SystemInitContent | SystemErrorContent | ResultContent;
+      data:
+        | AssistantContent
+        | UserContent
+        | SystemInitContent
+        | SystemErrorContent
+        | SystemCompactBoundaryContent
+        | SystemGenericContent
+        | ResultContent;
     }
   | { success: false; raw: unknown; error: string };
 
 /**
- * Parse raw JSON content from Claude Code stream
- * Returns the parsed content or the raw content with an error message
+ * Parse raw JSON content from Claude Code stream.
+ * Handles all known SDK message types including system subtypes
+ * (init, error, compact_boundary, status, hooks) and non-system types
+ * (tool_progress, tool_use_summary, auth_status).
  */
 export function parseClaudeStreamLine(json: unknown): StreamLineParseResult {
   if (!json || typeof json !== 'object') {
@@ -664,6 +717,7 @@ export function parseClaudeStreamLine(json: unknown): StreamLineParseResult {
       return { success: false, raw: json, error: `Failed to parse user: ${parsed.error.message}` };
     }
     case 'system': {
+      // Try specific schemas first, then fall back to generic
       const initParsed = SystemInitContentSchema.safeParse(json);
       if (initParsed.success) {
         return { success: true, data: initParsed.data };
@@ -672,6 +726,18 @@ export function parseClaudeStreamLine(json: unknown): StreamLineParseResult {
       const errorParsed = SystemErrorContentSchema.safeParse(json);
       if (errorParsed.success) {
         return { success: true, data: errorParsed.data };
+      }
+
+      const compactParsed = SystemCompactBoundaryContentSchema.safeParse(json);
+      if (compactParsed.success) {
+        return { success: true, data: compactParsed.data };
+      }
+
+      // Fall back to generic for other system subtypes (status, hook_started,
+      // hook_response, hook_progress, files_persisted, task_notification)
+      const genericParsed = SystemGenericContentSchema.safeParse(json);
+      if (genericParsed.success) {
+        return { success: true, data: genericParsed.data };
       }
 
       return { success: false, raw: json, error: 'Failed to parse system message' };
@@ -687,13 +753,36 @@ export function parseClaudeStreamLine(json: unknown): StreamLineParseResult {
         error: `Failed to parse result: ${parsed.error.message}`,
       };
     }
+    // Additional SDK message types that are not 'system' but are stored as system in DB
+    case 'tool_progress':
+    case 'tool_use_summary':
+    case 'auth_status': {
+      // These have their own top-level type in the SDK but are stored as 'system' in our DB.
+      // Parse them as generic system content for forward compatibility.
+      const genericParsed = SystemGenericContentSchema.safeParse({
+        ...json,
+        type: 'system',
+        subtype: type,
+      });
+      if (genericParsed.success) {
+        return { success: true, data: genericParsed.data };
+      }
+      return { success: false, raw: json, error: `Failed to parse ${type} message` };
+    }
     default:
       return { success: false, raw: json, error: `Unknown message type: ${type}` };
   }
 }
 
 /**
- * Extract the message type from raw content
+ * Extract the database-compatible message type from raw content.
+ *
+ * Maps SDK message types to one of the four DB column types:
+ * - 'user': user messages and user message replays
+ * - 'assistant': assistant messages
+ * - 'result': result/completion messages
+ * - 'system': system messages (init, error, compact_boundary, status, hooks, etc.),
+ *             plus other SDK types (tool_progress, tool_use_summary, auth_status, etc.)
  */
 export function getMessageType(content: unknown): 'system' | 'user' | 'assistant' | 'result' {
   if (!content || typeof content !== 'object') return 'system';
@@ -702,6 +791,10 @@ export function getMessageType(content: unknown): 'system' | 'user' | 'assistant
   if (type === 'user') return 'user';
   if (type === 'assistant') return 'assistant';
   if (type === 'result') return 'result';
+  // All other SDK types map to 'system' for DB storage:
+  // 'system' (init, error, compact_boundary, status, hook_started, hook_response,
+  //           hook_progress, files_persisted, task_notification)
+  // 'tool_progress', 'tool_use_summary', 'auth_status', 'stream_event'
   return 'system';
 }
 
