@@ -67,24 +67,36 @@ function NewSessionForm() {
           : undefined;
       dispatch({ type: 'selectIssue', issue, generatedPrompt });
     },
-    [form.selectedRepo]
+    [form.selectedRepo, dispatch]
   );
 
-  const handleRepoSelect = useCallback((repo: Repo) => {
-    dispatch({ type: 'selectRepo', repo });
-  }, []);
+  const handleRepoSelect = useCallback(
+    (repo: Repo) => {
+      dispatch({ type: 'selectRepo', repo });
+    },
+    [dispatch]
+  );
 
-  const handleBranchSelect = useCallback((branch: string) => {
-    dispatch({ type: 'selectBranch', branch });
-  }, []);
+  const handleBranchSelect = useCallback(
+    (branch: string) => {
+      dispatch({ type: 'selectBranch', branch });
+    },
+    [dispatch]
+  );
 
-  const handleNameChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    dispatch({ type: 'editName', name: e.target.value });
-  }, []);
+  const handleNameChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      dispatch({ type: 'editName', name: e.target.value });
+    },
+    [dispatch]
+  );
 
-  const handlePromptChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    dispatch({ type: 'editPrompt', prompt: e.target.value });
-  }, []);
+  const handlePromptChange = useCallback(
+    (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+      dispatch({ type: 'editPrompt', prompt: e.target.value });
+    },
+    [dispatch]
+  );
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
