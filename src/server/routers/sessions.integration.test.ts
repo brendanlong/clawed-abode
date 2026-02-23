@@ -22,9 +22,10 @@ vi.mock('../services/podman', () => ({
   cleanupSessionSocket: mockCleanupSessionSocket,
 }));
 
-// Mock claude-runner's buildSystemPrompt
+// Mock claude-runner's buildSystemPrompt and runClaudeCommand
 vi.mock('../services/claude-runner', () => ({
   buildSystemPrompt: vi.fn().mockReturnValue('test system prompt'),
+  runClaudeCommand: vi.fn().mockResolvedValue(undefined),
 }));
 
 // Mock agent-client
@@ -117,6 +118,7 @@ describe('sessionsRouter integration', () => {
         name: 'Test Session',
         repoFullName: 'owner/repo',
         branch: 'main',
+        initialPrompt: 'Work on something',
       });
 
       expect(result.session.name).toBe('Test Session');
@@ -157,6 +159,7 @@ describe('sessionsRouter integration', () => {
           name: 'Test',
           repoFullName: 'owner/repo',
           branch: 'main',
+          initialPrompt: 'Do something',
         })
       ).rejects.toMatchObject({
         code: 'UNAUTHORIZED',
@@ -171,6 +174,7 @@ describe('sessionsRouter integration', () => {
           name: 'Test',
           repoFullName: 'invalid-format',
           branch: 'main',
+          initialPrompt: 'Do something',
         })
       ).rejects.toThrow();
     });
