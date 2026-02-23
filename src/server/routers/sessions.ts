@@ -17,6 +17,7 @@ import {
   getAgentSocketPath,
   waitForAgentHealth,
 } from '../services/agent-client';
+import { runClaudeCommand } from '../services/claude-runner';
 import { syncSessionStatus } from '../services/session-reconciler';
 import { sseEvents } from '../services/events';
 import { createLogger, toError } from '@/lib/logger';
@@ -31,6 +32,7 @@ async function setupSession(
   sessionId: string,
   repoFullName: string,
   branch: string,
+  initialPrompt: string,
   githubToken?: string
 ): Promise<void> {
   log.info('Starting session setup', { sessionId, repoFullName, branch });
@@ -98,7 +100,20 @@ async function setupSession(
     });
     sseEvents.emitSessionUpdate(sessionId, session);
 
-    log.info('Session setup complete', { sessionId });
+    log.info('Session setup complete, sending initial prompt', { sessionId });
+
+    // Send the initial prompt now that the session is running
+    // Reuse settings already loaded above for container creation
+    runClaudeCommand({
+      sessionId,
+      containerId,
+      prompt: initialPrompt,
+      customSystemPrompt: settings.customSystemPrompt,
+      globalSettings: settings.globalSettings,
+      mcpServers: settings.mcpServers,
+    }).catch((err) => {
+      log.error('Initial prompt failed', toError(err), { sessionId });
+    });
   } catch (error) {
     // Log the full error with stack trace
     log.error('Session setup failed', toError(error), { sessionId, repoFullName, branch });
@@ -123,7 +138,7 @@ export const sessionsRouter = router({
         name: z.string().min(1).max(100),
         repoFullName: z.string().regex(/^[\w-]+\/[\w.-]+$/),
         branch: z.string().min(1),
-        initialPrompt: z.string().max(100000).optional(),
+        initialPrompt: z.string().min(1).max(100000),
       })
     )
     .mutation(async ({ input }) => {
@@ -138,14 +153,20 @@ export const sessionsRouter = router({
           workspacePath: '', // Deprecated - workspaces now use named volumes
           status: 'creating',
           statusMessage: 'Cloning repository...',
-          initialPrompt: input.initialPrompt || null,
+          initialPrompt: input.initialPrompt,
         },
       });
 
       // Start setup in background (don't await)
       // Note: setupSession already logs errors internally, but we catch here
       // to prevent unhandled promise rejections
-      setupSession(session.id, input.repoFullName, input.branch, githubToken).catch((error) => {
+      setupSession(
+        session.id,
+        input.repoFullName,
+        input.branch,
+        input.initialPrompt,
+        githubToken
+      ).catch((error) => {
         log.error('Unhandled error in session setup', toError(error), { sessionId: session.id });
       });
 
