@@ -28,7 +28,7 @@
     "test:component": "vitest run --config vitest.component.config.ts"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.2.34",
+    "@anthropic-ai/claude-agent-sdk": "^0.2.51",
     "@anthropic-ai/sdk": "^0.74.0",
     "@modelcontextprotocol/sdk": "^1.26.0",
     "@prisma/client": "^5.22.0",
