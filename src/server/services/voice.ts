@@ -23,16 +23,19 @@ Rules:
 - For short simple text without formatting, return it as-is`;
 
 /**
- * Get the decrypted OpenAI API key from global settings.
+ * Get the decrypted OpenAI API key and TTS speed from global settings.
  */
-export async function getOpenaiApiKey(): Promise<string | null> {
+export async function getOpenaiSettings(): Promise<{ apiKey: string; ttsSpeed: number } | null> {
   const settings = await prisma.globalSettings.findUnique({
     where: { id: GLOBAL_SETTINGS_ID },
-    select: { openaiApiKey: true },
+    select: { openaiApiKey: true, ttsSpeed: true },
   });
 
   if (!settings?.openaiApiKey) return null;
-  return decrypt(settings.openaiApiKey);
+  return {
+    apiKey: decrypt(settings.openaiApiKey),
+    ttsSpeed: settings.ttsSpeed ?? 1.0,
+  };
 }
 
 /**
@@ -159,12 +162,18 @@ export function splitTextForTTS(text: string): string[] {
 export async function generateSpeech(
   text: string,
   apiKey: string,
-  voice: string = 'nova'
+  voice: string = 'nova',
+  speed: number = 1.0
 ): Promise<Response> {
   const openai = new OpenAI({ apiKey });
   const chunks = splitTextForTTS(text);
 
-  log.info('Generating speech', { textLength: text.length, chunks: chunks.length, voice });
+  log.info('Generating speech', {
+    textLength: text.length,
+    chunks: chunks.length,
+    voice,
+    speed,
+  });
 
   if (chunks.length === 1) {
     const response = await openai.audio.speech.create({
@@ -172,6 +181,7 @@ export async function generateSpeech(
       voice: voice as 'alloy' | 'echo' | 'fable' | 'onyx' | 'nova' | 'shimmer',
       input: chunks[0],
       response_format: 'mp3',
+      speed,
     });
 
     return new Response(response.body, {
@@ -190,6 +200,7 @@ export async function generateSpeech(
       voice: voice as 'alloy' | 'echo' | 'fable' | 'onyx' | 'nova' | 'shimmer',
       input: chunk,
       response_format: 'mp3',
+      speed,
     });
     audioBuffers.push(await response.arrayBuffer());
   }

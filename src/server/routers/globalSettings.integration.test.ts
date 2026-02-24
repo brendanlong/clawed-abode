@@ -55,6 +55,7 @@ describe('globalSettings router', () => {
         claudeModel: null,
         hasClaudeApiKey: false,
         hasOpenaiApiKey: false,
+        ttsSpeed: null,
         defaultClaudeModel: 'opus',
         hasEnvApiKey: true,
       });

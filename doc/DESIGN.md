@@ -52,7 +52,7 @@ The database schema is defined in [`prisma/schema.prisma`](../prisma/schema.pris
 - **Session**: Claude Code sessions tied to git clones (includes `agentPort` for the agent service)
 - **Message**: Chat messages with sequence numbers for cursor-based pagination
 - **AuthSession**: Login sessions with tokens and audit info
-- **GlobalSettings**: Global application settings (system prompt override and append, Claude model, Claude API key, OpenAI API key for voice)
+- **GlobalSettings**: Global application settings (system prompt override and append, Claude model, Claude API key, OpenAI API key for voice, TTS speed)
 - **RepoSettings**: Per-repository settings (favorites, custom system prompt)
 - **EnvVar**: Environment variables for a repository or global (encrypted if secret). When `repoSettingsId` is null, the variable is global and applies to all sessions.
 - **McpServer**: MCP server configurations for a repository or global. When `repoSettingsId` is null, the server is global and applies to all sessions.
@@ -506,6 +506,7 @@ Users can configure global settings that apply to all sessions:
 - **Global Environment Variables**: Environment variables applied to all sessions. Per-repo variables with the same name take precedence.
 - **Global MCP Servers**: MCP server configurations available in all sessions. Per-repo servers with the same name take precedence. Supports stdio, HTTP, and SSE transport types.
 - **OpenAI API Key**: API key for voice features (speech-to-text and text-to-speech). Stored encrypted at rest. When configured, enables voice input/output in session views.
+- **TTS Speed**: Controls text-to-speech playback speed (0.25x to 4.0x, default 1.0x). Passed to OpenAI TTS API as the `speed` parameter.
 
 **Prompt Order**: When Claude runs, the system prompt is built in this order:
 

@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { verifyApiAuth } from '@/lib/api-auth';
 import {
-  getOpenaiApiKey,
+  getOpenaiSettings,
   getAnthropicApiKey,
   needsTransformation,
   transformTextForSpeech,
@@ -25,8 +25,8 @@ export async function POST(req: Request) {
     });
   }
 
-  const openaiKey = await getOpenaiApiKey();
-  if (!openaiKey) {
+  const openaiSettings = await getOpenaiSettings();
+  if (!openaiSettings) {
     return new Response(JSON.stringify({ error: 'OpenAI API key not configured' }), {
       status: 400,
       headers: { 'Content-Type': 'application/json' },
@@ -62,7 +62,7 @@ export async function POST(req: Request) {
       }
     }
 
-    return await generateSpeech(text, openaiKey, voice);
+    return await generateSpeech(text, openaiSettings.apiKey, voice, openaiSettings.ttsSpeed);
   } catch (error) {
     log.error(
       'Speech generation failed',
