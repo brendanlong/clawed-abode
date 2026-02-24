@@ -54,6 +54,7 @@ describe('globalSettings router', () => {
         systemPromptAppend: null,
         claudeModel: null,
         hasClaudeApiKey: false,
+        hasOpenaiApiKey: false,
         defaultClaudeModel: 'opus',
         hasEnvApiKey: true,
       });
