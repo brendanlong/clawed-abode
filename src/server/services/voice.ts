@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import OpenAI from 'openai';
 import Anthropic from '@anthropic-ai/sdk';
 import { prisma } from '@/lib/prisma';
@@ -181,8 +182,9 @@ export function splitTextForTTS(text: string): string[] {
   return chunks;
 }
 
-type TTSVoice = 'alloy' | 'echo' | 'fable' | 'onyx' | 'nova' | 'shimmer';
-type TTSFormat = 'mp3' | 'aac';
+export const ttsVoiceSchema = z.enum(['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer']);
+export type TTSVoice = z.infer<typeof ttsVoiceSchema>;
+export type TTSFormat = 'mp3' | 'aac';
 
 /**
  * Generate speech audio for a single text chunk via OpenAI TTS.

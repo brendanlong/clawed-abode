@@ -17,7 +17,6 @@ export class StreamingAudioPlayer {
   private sourceBuffer: SourceBuffer | null = null;
   private wrapper: MSEAudioWrapper;
   private segmentQueue: Uint8Array[] = [];
-  private draining = false;
   private finalized = false;
   private destroyed = false;
   private objectUrl: string;
