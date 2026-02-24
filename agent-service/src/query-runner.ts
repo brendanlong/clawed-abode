@@ -145,10 +145,11 @@ export class QueryRunner {
   /**
    * Currently pending input request, if any.
    * When the canUseTool callback fires for a user-input tool,
-   * we store the resolve function here so POST /respond can fulfill it.
+   * we store the full request details and the resolve function here
+   * so POST /respond can fulfill it and GET /status can report it.
    */
   private pendingInputRequest: {
-    requestId: string;
+    request: InputRequest;
     resolve: (response: InputResponse) => void;
   } | null = null;
 
@@ -165,16 +166,10 @@ export class QueryRunner {
 
   /**
    * Get the currently pending input request, if any.
+   * Returns the full request details so clients can display the prompt after reconnection.
    */
   get currentInputRequest(): InputRequest | null {
-    return this.pendingInputRequest
-      ? {
-          requestId: this.pendingInputRequest.requestId,
-          toolName: '',
-          toolInput: {},
-          toolUseId: '',
-        }
-      : null;
+    return this.pendingInputRequest?.request ?? null;
   }
 
   /**
@@ -245,9 +240,9 @@ export class QueryRunner {
       return false;
     }
 
-    if (this.pendingInputRequest.requestId !== response.requestId) {
+    if (this.pendingInputRequest.request.requestId !== response.requestId) {
       log.warn('respond: Request ID mismatch', {
-        expected: this.pendingInputRequest.requestId,
+        expected: this.pendingInputRequest.request.requestId,
         received: response.requestId,
       });
       return false;
@@ -324,7 +319,7 @@ export class QueryRunner {
 
           // Create a promise that will be resolved when the user responds
           const responsePromise = new Promise<InputResponse>((resolve) => {
-            this.pendingInputRequest = { requestId, resolve };
+            this.pendingInputRequest = { request, resolve };
           });
 
           // Notify all listeners that input is needed
@@ -489,7 +484,7 @@ export class QueryRunner {
       // Clean up any pending input request that was never resolved
       if (this.pendingInputRequest) {
         log.warn('run: Query ended with unresolved input request', {
-          requestId: this.pendingInputRequest.requestId,
+          requestId: this.pendingInputRequest.request.requestId,
         });
         this.pendingInputRequest = null;
       }
@@ -512,10 +507,10 @@ export class QueryRunner {
     // resolves and the query can proceed to handle the interruption
     if (this.pendingInputRequest) {
       log.info('interrupt: Rejecting pending input request', {
-        requestId: this.pendingInputRequest.requestId,
+        requestId: this.pendingInputRequest.request.requestId,
       });
       this.pendingInputRequest.resolve({
-        requestId: this.pendingInputRequest.requestId,
+        requestId: this.pendingInputRequest.request.requestId,
         behavior: 'deny',
         message: 'Interrupted by user',
       });

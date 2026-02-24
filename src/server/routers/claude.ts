@@ -224,7 +224,31 @@ export const claudeRouter = router({
   isRunning: protectedProcedure
     .input(z.object({ sessionId: z.string().uuid() }))
     .query(async ({ input }) => {
-      return { running: await isClaudeRunningAsync(input.sessionId) };
+      const session = await prisma.session.findUnique({
+        where: { id: input.sessionId },
+        select: { containerId: true },
+      });
+
+      if (!session?.containerId) {
+        return { running: false, pendingInputRequest: null };
+      }
+
+      // Check container is running
+      const containerStatus = await getContainerStatus(session.containerId);
+      if (containerStatus !== 'running') {
+        return { running: false, pendingInputRequest: null };
+      }
+
+      try {
+        const client = createAgentClient(getAgentSocketPath(input.sessionId));
+        const status = await client.getStatus();
+        return {
+          running: status.running,
+          pendingInputRequest: status.pendingInputRequest,
+        };
+      } catch {
+        return { running: false, pendingInputRequest: null };
+      }
     }),
 
   getTokenUsage: protectedProcedure

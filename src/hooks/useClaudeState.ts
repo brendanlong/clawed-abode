@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback } from 'react';
 import { trpc } from '@/lib/trpc';
 import { useRefetchOnReconnect } from './useRefetchOnReconnect';
 
@@ -16,12 +16,15 @@ export interface PendingInputRequest {
 
 /**
  * Hook for managing Claude process state: running status, send prompts, interrupt, respond, and commands.
+ *
+ * The pending input request is stored in the isRunning query cache so it
+ * survives page refreshes (fetched from agent /status on mount) and is
+ * updated in real-time via SSE subscriptions.
  */
 export function useClaudeState(sessionId: string) {
   const utils = trpc.useUtils();
-  const [pendingInputRequest, setPendingInputRequest] = useState<PendingInputRequest | null>(null);
 
-  // Fetch Claude running state
+  // Fetch Claude running state (also includes pending input request for recovery after refresh)
   const { data: runningData, refetch } = trpc.claude.isRunning.useQuery({ sessionId });
 
   // Fetch available slash commands
@@ -42,10 +45,14 @@ export function useClaudeState(sessionId: string) {
     { sessionId },
     {
       onData: (trackedData) => {
-        utils.claude.isRunning.setData({ sessionId }, { running: trackedData.data.running });
-        // When Claude finishes running, clear pending input request and refetch commands
+        utils.claude.isRunning.setData({ sessionId }, (prev) => ({
+          running: trackedData.data.running,
+          // When Claude stops, clear any pending input request
+          pendingInputRequest: trackedData.data.running
+            ? (prev?.pendingInputRequest ?? null)
+            : null,
+        }));
         if (!trackedData.data.running) {
-          setPendingInputRequest(null);
           refetchCommands();
         }
       },
@@ -68,18 +75,21 @@ export function useClaudeState(sessionId: string) {
     }
   );
 
-  // Subscribe to input request events via SSE
+  // Subscribe to input request events via SSE - update isRunning cache with the request
   trpc.sse.onInputRequest.useSubscription(
     { sessionId },
     {
       onData: (trackedData) => {
         const event = trackedData.data;
-        setPendingInputRequest({
-          requestId: event.requestId,
-          toolName: event.toolName,
-          toolInput: event.toolInput,
-          toolUseId: event.toolUseId,
-        });
+        utils.claude.isRunning.setData({ sessionId }, (prev) => ({
+          running: prev?.running ?? true,
+          pendingInputRequest: {
+            requestId: event.requestId,
+            toolName: event.toolName,
+            toolInput: event.toolInput,
+            toolUseId: event.toolUseId,
+          },
+        }));
       },
       onError: (err) => {
         console.error('Input request SSE error:', err);
@@ -109,14 +119,19 @@ export function useClaudeState(sessionId: string) {
       updatedInput?: Record<string, unknown>;
       message?: string;
     }) => {
-      setPendingInputRequest(null);
+      // Optimistically clear the pending input request from cache
+      utils.claude.isRunning.setData({ sessionId }, (prev) => ({
+        running: prev?.running ?? true,
+        pendingInputRequest: null,
+      }));
       respondMutation.mutate({ sessionId, ...options });
     },
-    [sessionId, respondMutation]
+    [sessionId, respondMutation, utils.claude.isRunning]
   );
 
   const isRunning = runningData?.running ?? false;
   const commands = commandsData?.commands ?? [];
+  const pendingInputRequest = runningData?.pendingInputRequest ?? null;
 
   return {
     isRunning,

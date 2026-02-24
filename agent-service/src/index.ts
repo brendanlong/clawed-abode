@@ -244,6 +244,7 @@ function handleStatus(_req: http.IncomingMessage, res: http.ServerResponse): voi
     lastSequence: store.getLastSequence(),
     commands: runner.supportedCommands,
     hasPendingInputRequest: runner.hasPendingInputRequest,
+    pendingInputRequest: runner.currentInputRequest,
   });
 }
 

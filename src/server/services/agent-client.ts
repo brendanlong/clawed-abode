@@ -74,6 +74,12 @@ export interface AgentStatus {
   lastSequence: number;
   commands: SlashCommand[];
   hasPendingInputRequest: boolean;
+  pendingInputRequest: {
+    requestId: string;
+    toolName: string;
+    toolInput: Record<string, unknown>;
+    toolUseId: string;
+  } | null;
 }
 
 /**
