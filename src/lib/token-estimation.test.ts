@@ -49,6 +49,7 @@ describe('token-estimation', () => {
       expect(result.totalTokens).toBe(0);
       expect(result.contextWindow).toBe(200_000); // Default
       expect(result.percentUsed).toBe(0);
+      expect(result.totalCostUsd).toBe(0);
     });
 
     it('should extract usage from assistant messages when no result messages', () => {
@@ -427,6 +428,209 @@ describe('token-estimation', () => {
 
       // Falls back to total tokens: (100k + 50k) / 200k = 75%
       expect(result.percentUsed).toBe(75);
+    });
+
+    it('should extract total_cost_usd from result messages', () => {
+      const messages = [
+        {
+          type: 'assistant',
+          content: {
+            type: 'assistant',
+            message: {
+              usage: { input_tokens: 1000, output_tokens: 500 },
+            },
+          },
+        },
+        {
+          type: 'result',
+          content: {
+            type: 'result',
+            total_cost_usd: 0.0523,
+            usage: {
+              input_tokens: 5000,
+              output_tokens: 2500,
+            },
+          },
+        },
+      ];
+
+      const result = estimateTokenUsage(messages);
+
+      expect(result.totalCostUsd).toBeCloseTo(0.0523, 4);
+    });
+
+    it('should sum total_cost_usd from multiple result messages', () => {
+      const messages = [
+        {
+          type: 'result',
+          content: {
+            type: 'result',
+            total_cost_usd: 0.05,
+            usage: { input_tokens: 1000, output_tokens: 500 },
+          },
+        },
+        {
+          type: 'result',
+          content: {
+            type: 'result',
+            total_cost_usd: 0.1,
+            usage: { input_tokens: 2000, output_tokens: 1000 },
+          },
+        },
+      ];
+
+      const result = estimateTokenUsage(messages);
+
+      expect(result.totalCostUsd).toBeCloseTo(0.15, 4);
+      expect(result.inputTokens).toBe(3000);
+      expect(result.outputTokens).toBe(1500);
+    });
+
+    it('should deduplicate assistant messages with the same id (parallel tool uses)', () => {
+      // Per Anthropic docs: when Claude sends multiple messages in the same step
+      // (text + parallel tool uses), they share the same message ID and usage.
+      // We should only count usage once per unique ID.
+      const messages = [
+        {
+          type: 'assistant',
+          content: {
+            type: 'assistant',
+            message: {
+              id: 'msg_123',
+              usage: { input_tokens: 1000, output_tokens: 500 },
+            },
+          },
+        },
+        {
+          type: 'assistant',
+          content: {
+            type: 'assistant',
+            message: {
+              id: 'msg_123', // Same ID - parallel tool use
+              usage: { input_tokens: 1000, output_tokens: 500 },
+            },
+          },
+        },
+        {
+          type: 'assistant',
+          content: {
+            type: 'assistant',
+            message: {
+              id: 'msg_123', // Same ID - another parallel tool use
+              usage: { input_tokens: 1000, output_tokens: 500 },
+            },
+          },
+        },
+      ];
+
+      const result = estimateTokenUsage(messages);
+
+      // Should only count once, not three times
+      expect(result.inputTokens).toBe(1000);
+      expect(result.outputTokens).toBe(500);
+      expect(result.totalTokens).toBe(1500);
+    });
+
+    it('should count assistant messages with different ids separately', () => {
+      // Different steps have different message IDs
+      const messages = [
+        {
+          type: 'assistant',
+          content: {
+            type: 'assistant',
+            message: {
+              id: 'msg_1',
+              usage: { input_tokens: 1000, output_tokens: 500 },
+            },
+          },
+        },
+        {
+          type: 'assistant',
+          content: {
+            type: 'assistant',
+            message: {
+              id: 'msg_2', // Different step
+              usage: { input_tokens: 2000, output_tokens: 1000 },
+            },
+          },
+        },
+      ];
+
+      const result = estimateTokenUsage(messages);
+
+      expect(result.inputTokens).toBe(3000);
+      expect(result.outputTokens).toBe(1500);
+      expect(result.totalTokens).toBe(4500);
+    });
+
+    it('should still sum assistant messages without ids (backwards compatibility)', () => {
+      // Older messages might not have an id field
+      const messages = [
+        {
+          type: 'assistant',
+          content: {
+            type: 'assistant',
+            message: {
+              usage: { input_tokens: 1000, output_tokens: 500 },
+            },
+          },
+        },
+        {
+          type: 'assistant',
+          content: {
+            type: 'assistant',
+            message: {
+              usage: { input_tokens: 2000, output_tokens: 1000 },
+            },
+          },
+        },
+      ];
+
+      const result = estimateTokenUsage(messages);
+
+      expect(result.inputTokens).toBe(3000);
+      expect(result.outputTokens).toBe(1500);
+    });
+
+    it('should extract total_cost_usd from result with modelUsage but no usage', () => {
+      const messages = [
+        {
+          type: 'result',
+          content: {
+            type: 'result',
+            total_cost_usd: 0.0842,
+            modelUsage: {
+              'claude-sonnet-4-20250514': {
+                inputTokens: 3000,
+                outputTokens: 1500,
+                costUSD: 0.0842,
+              },
+            },
+          },
+        },
+      ];
+
+      const result = estimateTokenUsage(messages);
+
+      expect(result.totalCostUsd).toBeCloseTo(0.0842, 4);
+    });
+
+    it('should return totalCostUsd of 0 when no result messages', () => {
+      const messages = [
+        {
+          type: 'assistant',
+          content: {
+            type: 'assistant',
+            message: {
+              usage: { input_tokens: 1000, output_tokens: 500 },
+            },
+          },
+        },
+      ];
+
+      const result = estimateTokenUsage(messages);
+
+      expect(result.totalCostUsd).toBe(0);
     });
   });
 });

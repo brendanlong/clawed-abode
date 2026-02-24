@@ -103,7 +103,10 @@ export const ServerToolUseSchema = z.object({
 export type ServerToolUse = z.infer<typeof ServerToolUseSchema>;
 
 /**
- * Aggregated usage for result messages
+ * Aggregated usage for result messages.
+ * Per the Anthropic Agent SDK, result messages use NonNullableUsage where
+ * all fields are required numbers. We keep them optional in our schema for
+ * backwards compatibility with older stored messages.
  */
 export const ResultUsageSchema = z.object({
   input_tokens: z.number().optional(),
@@ -113,6 +116,8 @@ export const ResultUsageSchema = z.object({
   server_tool_use: ServerToolUseSchema.optional(),
   service_tier: z.string().optional(),
   cache_creation: CacheCreationSchema.optional(),
+  inference_geo: z.string().nullable().optional(),
+  speed: z.enum(['standard', 'fast']).nullable().optional(),
 });
 export type ResultUsage = z.infer<typeof ResultUsageSchema>;
 
@@ -264,6 +269,7 @@ export const ResultContentSchema = z.object({
   duration_ms: z.number().optional(),
   duration_api_ms: z.number().optional(),
   num_turns: z.number().optional(),
+  stop_reason: z.string().nullable().optional(),
   result: z.string().optional(),
   errors: z.array(z.string()).optional(),
   session_id: z.string(),
