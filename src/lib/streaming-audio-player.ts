@@ -140,7 +140,7 @@ export class StreamingAudioPlayer {
 
     const segment = this.segmentQueue.shift()!;
     try {
-      this.sourceBuffer.appendBuffer(segment.buffer as ArrayBuffer);
+      this.sourceBuffer.appendBuffer(segment);
     } catch (e) {
       this.callbacks.onError?.(e instanceof Error ? e : new Error('SourceBuffer append failed'));
     }
