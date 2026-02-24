@@ -65,6 +65,35 @@ export type CommandsCallback = (commands: SlashCommand[]) => void;
 const USER_INPUT_TOOLS = new Set(['AskUserQuestion', 'ExitPlanMode']);
 
 /**
+ * All standard Claude Code tools that should be auto-allowed without permission prompts.
+ * Tools NOT in this list (specifically AskUserQuestion and ExitPlanMode) will trigger
+ * the canUseTool callback, enabling interactive approval flows.
+ *
+ * We use permissionMode 'default' + allowedTools instead of 'bypassPermissions' because
+ * bypassPermissions causes the SDK's internal permission flow to auto-deny interactive
+ * tools (those with requiresUserInteraction) without routing through the canUseTool callback.
+ */
+const ALLOWED_TOOLS = [
+  'Bash',
+  'Read',
+  'Edit',
+  'Write',
+  'Glob',
+  'Grep',
+  'WebFetch',
+  'WebSearch',
+  'Task',
+  'TaskOutput',
+  'TaskStop',
+  'TodoWrite',
+  'NotebookEdit',
+  'Skill',
+  'EnterPlanMode',
+  'ListMcpResourcesTool',
+  'ReadMcpResourceTool',
+];
+
+/**
  * An input request emitted when the SDK calls a tool that needs user input.
  * The HTTP server surfaces this to clients, who respond via POST /respond.
  */
@@ -250,41 +279,22 @@ export class QueryRunner {
     try {
       const sdkOptions: Parameters<typeof query>[0]['options'] = {
         abortController: this.currentAbortController,
-        permissionMode: 'bypassPermissions' as const,
-        allowDangerouslySkipPermissions: true,
+        // Use 'default' permission mode with allowedTools to auto-allow standard tools
+        // while routing interactive tools (AskUserQuestion, ExitPlanMode) through canUseTool.
+        // We avoid 'bypassPermissions' because it causes the SDK's internal CLI to
+        // auto-deny interactive tools without sending them through the IPC callback.
+        permissionMode: 'default' as const,
+        allowedTools: ALLOWED_TOOLS,
         // Enable partial message streaming for real-time UI updates
         includePartialMessages: true,
-        // Enable debug mode to capture SDK internal behavior
-        debug: true,
-        stderr: (data: string) => {
-          // Log SDK stderr output for debugging permission flow
-          if (
-            data.includes('permission') ||
-            data.includes('canUseTool') ||
-            data.includes('can_use_tool') ||
-            data.includes('ExitPlanMode') ||
-            data.includes('AskUserQuestion') ||
-            data.includes('shouldAvoidPermission') ||
-            data.includes('requiresUserInteraction') ||
-            data.includes('control_request') ||
-            data.includes('permission-prompt-tool')
-          ) {
-            log.info('SDK stderr (permission-related)', { data: data.substring(0, 500) });
-          }
-        },
-        // canUseTool callback: pauses execution for user-input tools
-        // (AskUserQuestion, ExitPlanMode). The SDK still calls canUseTool for
-        // tools with requiresUserInteraction even in bypassPermissions mode.
+        // canUseTool callback: called for tools NOT in allowedTools.
+        // For interactive tools (AskUserQuestion, ExitPlanMode), this pauses execution
+        // until the user responds via the web UI. For any other tool that somehow
+        // isn't in allowedTools, we auto-allow it.
         canUseTool: async (toolName, toolInput, callbackOptions) => {
-          log.info('canUseTool called', {
-            toolName,
-            toolUseId: callbackOptions.toolUseID,
-            isUserInputTool: USER_INPUT_TOOLS.has(toolName),
-          });
-
           if (!USER_INPUT_TOOLS.has(toolName)) {
-            // Auto-allow all non-user-input tools (bypassPermissions handles most,
-            // but this is a safety net)
+            // Auto-allow any tool not in ALLOWED_TOOLS (e.g. MCP tools, new tools)
+            log.debug('canUseTool: Auto-allowing tool', { toolName });
             return { behavior: 'allow' as const, updatedInput: toolInput };
           }
 
@@ -421,62 +431,6 @@ export class QueryRunner {
 
       // Iterate through all messages from the SDK
       for await (const message of this.currentQuery) {
-        // Log tool_use and tool_result for permission-related tools
-        if (message.type === 'assistant' && 'message' in message) {
-          const content = (message as { message: { content: unknown[] } }).message?.content;
-          if (Array.isArray(content)) {
-            for (const block of content) {
-              if (
-                block &&
-                typeof block === 'object' &&
-                'type' in block &&
-                block.type === 'tool_use' &&
-                'name' in block
-              ) {
-                const name = block.name as string;
-                if (
-                  name === 'ExitPlanMode' ||
-                  name === 'AskUserQuestion' ||
-                  name === 'EnterPlanMode'
-                ) {
-                  log.info('SDK yielded tool_use for interactive tool', {
-                    toolName: name,
-                    toolUseId: 'id' in block ? block.id : undefined,
-                  });
-                }
-              }
-            }
-          }
-        }
-        if (message.type === 'user' && 'message' in message) {
-          const content = (message as { message: { content: unknown[] } }).message?.content;
-          if (Array.isArray(content)) {
-            for (const block of content) {
-              if (
-                block &&
-                typeof block === 'object' &&
-                'type' in block &&
-                block.type === 'tool_result'
-              ) {
-                const toolResult = block as {
-                  tool_use_id?: string;
-                  is_error?: boolean;
-                  content?: unknown;
-                };
-                const contentStr =
-                  typeof toolResult.content === 'string'
-                    ? toolResult.content
-                    : JSON.stringify(toolResult.content);
-                log.info('SDK yielded tool_result', {
-                  toolUseId: toolResult.tool_use_id,
-                  isError: toolResult.is_error,
-                  content: contentStr?.substring(0, 200),
-                });
-              }
-            }
-          }
-        }
-
         // Handle stream_events: accumulate into partial messages for real-time UI
         if (message.type === 'stream_event') {
           const partial = accumulator.accumulate(
@@ -505,22 +459,6 @@ export class QueryRunner {
         // Reset the accumulator when a full assistant message arrives
         if (message.type === 'assistant') {
           accumulator.reset();
-        }
-
-        // Log result messages with permission denials
-        if (message.type === 'result') {
-          const result = message as {
-            type: 'result';
-            permission_denials?: Array<{
-              tool_name: string;
-              tool_use_id: string;
-            }>;
-          };
-          if (result.permission_denials && result.permission_denials.length > 0) {
-            log.info('SDK result has permission_denials', {
-              denials: result.permission_denials,
-            });
-          }
         }
 
         const type = getMessageType(message);
