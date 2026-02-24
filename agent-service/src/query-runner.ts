@@ -277,6 +277,12 @@ export class QueryRunner {
     const accumulator = new StreamAccumulator();
 
     try {
+      log.info('Starting query with permissionMode=default and allowedTools', {
+        allowedToolsCount: ALLOWED_TOOLS.length,
+        hasCanUseTool: true,
+        permissionMode: 'default',
+      });
+
       const sdkOptions: Parameters<typeof query>[0]['options'] = {
         abortController: this.currentAbortController,
         // Use 'default' permission mode with allowedTools to auto-allow standard tools
@@ -292,9 +298,14 @@ export class QueryRunner {
         // until the user responds via the web UI. For any other tool that somehow
         // isn't in allowedTools, we auto-allow it.
         canUseTool: async (toolName, toolInput, callbackOptions) => {
+          log.info('canUseTool called', {
+            toolName,
+            toolUseId: callbackOptions.toolUseID,
+            isUserInputTool: USER_INPUT_TOOLS.has(toolName),
+          });
+
           if (!USER_INPUT_TOOLS.has(toolName)) {
             // Auto-allow any tool not in ALLOWED_TOOLS (e.g. MCP tools, new tools)
-            log.debug('canUseTool: Auto-allowing tool', { toolName });
             return { behavior: 'allow' as const, updatedInput: toolInput };
           }
 
