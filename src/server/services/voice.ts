@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import OpenAI from 'openai';
 import Anthropic from '@anthropic-ai/sdk';
 import { prisma } from '@/lib/prisma';
@@ -102,8 +103,27 @@ export async function transformTextForSpeech(text: string, apiKey: string): Prom
 }
 
 /**
+ * Split text at a word boundary, returning [chunk, remainder].
+ * If no word boundary is found, splits at maxLength.
+ */
+export function splitTextAtWordBoundary(text: string, maxLength: number): [string, string] {
+  if (text.length <= maxLength) {
+    return [text, ''];
+  }
+
+  // Look for the last space within the limit
+  const lastSpace = text.lastIndexOf(' ', maxLength);
+  if (lastSpace > 0) {
+    return [text.slice(0, lastSpace), text.slice(lastSpace + 1)];
+  }
+
+  // No word boundary found — hard split
+  return [text.slice(0, maxLength), text.slice(maxLength)];
+}
+
+/**
  * Split text into chunks that fit within TTS character limits.
- * Splits on paragraph boundaries when possible.
+ * Splits on paragraph boundaries when possible, then sentences, then word boundaries.
  */
 export function splitTextForTTS(text: string): string[] {
   if (text.length <= TTS_MAX_CHARS) {
@@ -129,9 +149,17 @@ export function splitTextForTTS(text: string): string[] {
               chunks.push(current.trim());
               current = '';
             }
-            // If even a single sentence is too long, just truncate it
+            // If even a single sentence is too long, split at word boundaries
             if (sentence.length > TTS_MAX_CHARS) {
-              chunks.push(sentence.slice(0, TTS_MAX_CHARS));
+              let remaining = sentence;
+              while (remaining.length > TTS_MAX_CHARS) {
+                const [chunk, rest] = splitTextAtWordBoundary(remaining, TTS_MAX_CHARS);
+                chunks.push(chunk);
+                remaining = rest;
+              }
+              if (remaining) {
+                current = remaining;
+              }
             } else {
               current = sentence;
             }
@@ -154,9 +182,34 @@ export function splitTextForTTS(text: string): string[] {
   return chunks;
 }
 
+export const ttsVoiceSchema = z.enum(['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer']);
+export type TTSVoice = z.infer<typeof ttsVoiceSchema>;
+export type TTSFormat = 'mp3' | 'aac';
+
+/**
+ * Generate speech audio for a single text chunk via OpenAI TTS.
+ * Returns raw audio data as an ArrayBuffer.
+ */
+export async function generateSpeechChunk(
+  openai: OpenAI,
+  text: string,
+  voice: TTSVoice,
+  speed: number,
+  format: TTSFormat = 'mp3'
+): Promise<ArrayBuffer> {
+  const response = await openai.audio.speech.create({
+    model: 'tts-1',
+    voice,
+    input: text,
+    response_format: format,
+    speed,
+  });
+  return response.arrayBuffer();
+}
+
 /**
  * Generate speech audio via OpenAI TTS.
- * Returns a ReadableStream of audio data (mp3 format).
+ * Returns a Response with audio data (mp3 format).
  * For long text, chunks are generated sequentially and concatenated.
  */
 export async function generateSpeech(
@@ -167,6 +220,7 @@ export async function generateSpeech(
 ): Promise<Response> {
   const openai = new OpenAI({ apiKey });
   const chunks = splitTextForTTS(text);
+  const ttsVoice = voice as TTSVoice;
 
   log.info('Generating speech', {
     textLength: text.length,
@@ -176,18 +230,11 @@ export async function generateSpeech(
   });
 
   if (chunks.length === 1) {
-    const response = await openai.audio.speech.create({
-      model: 'tts-1',
-      voice: voice as 'alloy' | 'echo' | 'fable' | 'onyx' | 'nova' | 'shimmer',
-      input: chunks[0],
-      response_format: 'mp3',
-      speed,
-    });
-
-    return new Response(response.body, {
+    const audioBuffer = await generateSpeechChunk(openai, chunks[0], ttsVoice, speed, 'mp3');
+    return new Response(audioBuffer, {
       headers: {
         'Content-Type': 'audio/mpeg',
-        'Transfer-Encoding': 'chunked',
+        'Content-Length': String(audioBuffer.byteLength),
       },
     });
   }
@@ -195,14 +242,7 @@ export async function generateSpeech(
   // For multiple chunks, generate all and concatenate
   const audioBuffers: ArrayBuffer[] = [];
   for (const chunk of chunks) {
-    const response = await openai.audio.speech.create({
-      model: 'tts-1',
-      voice: voice as 'alloy' | 'echo' | 'fable' | 'onyx' | 'nova' | 'shimmer',
-      input: chunk,
-      response_format: 'mp3',
-      speed,
-    });
-    audioBuffers.push(await response.arrayBuffer());
+    audioBuffers.push(await generateSpeechChunk(openai, chunk, ttsVoice, speed, 'mp3'));
   }
 
   const totalLength = audioBuffers.reduce((sum, buf) => sum + buf.byteLength, 0);

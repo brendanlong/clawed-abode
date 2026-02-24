@@ -6,6 +6,7 @@ import {
   needsTransformation,
   transformTextForSpeech,
   generateSpeech,
+  ttsVoiceSchema,
 } from '@/server/services/voice';
 import { createLogger } from '@/lib/logger';
 
@@ -13,7 +14,7 @@ const log = createLogger('api:voice:speak');
 
 const speakInputSchema = z.object({
   text: z.string().min(1).max(100000),
-  voice: z.string().optional(),
+  voice: ttsVoiceSchema.optional(),
 });
 
 export async function POST(req: Request) {
