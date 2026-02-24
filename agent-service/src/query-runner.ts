@@ -254,10 +254,34 @@ export class QueryRunner {
         allowDangerouslySkipPermissions: true,
         // Enable partial message streaming for real-time UI updates
         includePartialMessages: true,
+        // Enable debug mode to capture SDK internal behavior
+        debug: true,
+        stderr: (data: string) => {
+          // Log SDK stderr output for debugging permission flow
+          if (
+            data.includes('permission') ||
+            data.includes('canUseTool') ||
+            data.includes('can_use_tool') ||
+            data.includes('ExitPlanMode') ||
+            data.includes('AskUserQuestion') ||
+            data.includes('shouldAvoidPermission') ||
+            data.includes('requiresUserInteraction') ||
+            data.includes('control_request') ||
+            data.includes('permission-prompt-tool')
+          ) {
+            log.info('SDK stderr (permission-related)', { data: data.substring(0, 500) });
+          }
+        },
         // canUseTool callback: pauses execution for user-input tools
         // (AskUserQuestion, ExitPlanMode). The SDK still calls canUseTool for
         // tools with requiresUserInteraction even in bypassPermissions mode.
         canUseTool: async (toolName, toolInput, callbackOptions) => {
+          log.info('canUseTool called', {
+            toolName,
+            toolUseId: callbackOptions.toolUseID,
+            isUserInputTool: USER_INPUT_TOOLS.has(toolName),
+          });
+
           if (!USER_INPUT_TOOLS.has(toolName)) {
             // Auto-allow all non-user-input tools (bypassPermissions handles most,
             // but this is a safety net)
@@ -397,6 +421,62 @@ export class QueryRunner {
 
       // Iterate through all messages from the SDK
       for await (const message of this.currentQuery) {
+        // Log tool_use and tool_result for permission-related tools
+        if (message.type === 'assistant' && 'message' in message) {
+          const content = (message as { message: { content: unknown[] } }).message?.content;
+          if (Array.isArray(content)) {
+            for (const block of content) {
+              if (
+                block &&
+                typeof block === 'object' &&
+                'type' in block &&
+                block.type === 'tool_use' &&
+                'name' in block
+              ) {
+                const name = block.name as string;
+                if (
+                  name === 'ExitPlanMode' ||
+                  name === 'AskUserQuestion' ||
+                  name === 'EnterPlanMode'
+                ) {
+                  log.info('SDK yielded tool_use for interactive tool', {
+                    toolName: name,
+                    toolUseId: 'id' in block ? block.id : undefined,
+                  });
+                }
+              }
+            }
+          }
+        }
+        if (message.type === 'user' && 'message' in message) {
+          const content = (message as { message: { content: unknown[] } }).message?.content;
+          if (Array.isArray(content)) {
+            for (const block of content) {
+              if (
+                block &&
+                typeof block === 'object' &&
+                'type' in block &&
+                block.type === 'tool_result'
+              ) {
+                const toolResult = block as {
+                  tool_use_id?: string;
+                  is_error?: boolean;
+                  content?: unknown;
+                };
+                const contentStr =
+                  typeof toolResult.content === 'string'
+                    ? toolResult.content
+                    : JSON.stringify(toolResult.content);
+                log.info('SDK yielded tool_result', {
+                  toolUseId: toolResult.tool_use_id,
+                  isError: toolResult.is_error,
+                  content: contentStr?.substring(0, 200),
+                });
+              }
+            }
+          }
+        }
+
         // Handle stream_events: accumulate into partial messages for real-time UI
         if (message.type === 'stream_event') {
           const partial = accumulator.accumulate(
@@ -425,6 +505,22 @@ export class QueryRunner {
         // Reset the accumulator when a full assistant message arrives
         if (message.type === 'assistant') {
           accumulator.reset();
+        }
+
+        // Log result messages with permission denials
+        if (message.type === 'result') {
+          const result = message as {
+            type: 'result';
+            permission_denials?: Array<{
+              tool_name: string;
+              tool_use_id: string;
+            }>;
+          };
+          if (result.permission_denials && result.permission_denials.length > 0) {
+            log.info('SDK result has permission_denials', {
+              denials: result.permission_denials,
+            });
+          }
         }
 
         const type = getMessageType(message);
