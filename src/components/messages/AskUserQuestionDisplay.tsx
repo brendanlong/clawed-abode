@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
@@ -108,6 +108,9 @@ function buildAskUserQuestionResponse(
  * When a pendingInputRequest is available (canUseTool callback flow),
  * user responses are sent via onRespond with updatedInput containing
  * the questions and answers. Otherwise falls back to onSendResponse.
+ *
+ * When there are multiple questions, all selections are collected first
+ * and sent together via a "Submit Answers" button.
  */
 export function AskUserQuestionDisplay({ tool }: { tool: ToolCall }) {
   const ctx = useMessageListContext();
@@ -115,7 +118,11 @@ export function AskUserQuestionDisplay({ tool }: { tool: ToolCall }) {
   const onRespond = ctx?.onRespond;
   const pendingInputRequest = ctx?.pendingInputRequest;
   const isClaudeRunning = ctx?.isClaudeRunning;
-  const [selectedOptions, setSelectedOptions] = useState<Map<number, Set<number>>>(new Map());
+
+  // For multi-select questions: track toggled option indices per question
+  const [multiSelectOptions, setMultiSelectOptions] = useState<Map<number, Set<number>>>(new Map());
+  // For single-select questions: track the selected option index per question
+  const [singleSelectOptions, setSingleSelectOptions] = useState<Map<number, number>>(new Map());
 
   const hasOutput = tool.output !== undefined;
 
@@ -123,9 +130,6 @@ export function AskUserQuestionDisplay({ tool }: { tool: ToolCall }) {
   const hasPendingRequest = pendingInputRequest?.toolName === 'AskUserQuestion';
 
   // Check if this is a "real" error vs just waiting for input
-  // With the canUseTool flow, the tool hasn't executed yet when pending,
-  // so there's no output. Without canUseTool, Claude Code returns is_error: true
-  // with "Answer questions?" when waiting for input.
   const isWaitingForInput =
     tool.is_error && typeof tool.output === 'string' && tool.output.includes('Answer questions');
   const isRealError = tool.is_error && !isWaitingForInput;
@@ -140,24 +144,75 @@ export function AskUserQuestionDisplay({ tool }: { tool: ToolCall }) {
     return inputObj?.questions ?? [];
   }, [tool.input]);
 
+  const hasMultipleQuestions = questions.length > 1;
+
   /**
-   * Send the user's answer back to Claude.
-   * If a pending input request exists (canUseTool flow), uses onRespond with the proper format.
-   * Otherwise falls back to onSendResponse (legacy flow).
+   * Send all answers back to Claude at once.
    */
-  const sendAnswer = (answers: Record<string, string>) => {
-    if (hasPendingRequest && onRespond && pendingInputRequest) {
-      onRespond({
-        requestId: pendingInputRequest.requestId,
-        behavior: 'allow',
-        updatedInput: buildAskUserQuestionResponse(questions, answers),
-      });
-    } else if (onSendResponse) {
-      // Legacy fallback: send the answer labels as a plain text response
-      const answerValues = Object.values(answers);
-      onSendResponse(answerValues.join(', '));
+  const sendAllAnswers = useCallback(
+    (answers: Record<string, string>) => {
+      if (hasPendingRequest && onRespond && pendingInputRequest) {
+        onRespond({
+          requestId: pendingInputRequest.requestId,
+          behavior: 'allow',
+          updatedInput: buildAskUserQuestionResponse(questions, answers),
+        });
+      } else if (onSendResponse) {
+        // Legacy fallback: send the answer labels as a plain text response
+        const answerValues = Object.values(answers);
+        onSendResponse(answerValues.join(', '));
+      }
+    },
+    [hasPendingRequest, onRespond, pendingInputRequest, onSendResponse, questions]
+  );
+
+  /**
+   * Build the answers map from current selections across all questions.
+   */
+  const buildAnswersFromSelections = useCallback((): Record<string, string> => {
+    const answers: Record<string, string> = {};
+    for (let qIdx = 0; qIdx < questions.length; qIdx++) {
+      const question = questions[qIdx];
+      if (!question) continue;
+
+      if (question.multiSelect) {
+        const selected = multiSelectOptions.get(qIdx);
+        if (selected && selected.size > 0) {
+          const labels = Array.from(selected)
+            .map((idx) => question.options[idx]?.label)
+            .filter(Boolean);
+          answers[question.question] = labels.join(', ');
+        }
+      } else {
+        const selectedIdx = singleSelectOptions.get(qIdx);
+        if (selectedIdx !== undefined) {
+          const option = question.options[selectedIdx];
+          if (option) {
+            answers[question.question] = option.label;
+          }
+        }
+      }
     }
-  };
+    return answers;
+  }, [questions, multiSelectOptions, singleSelectOptions]);
+
+  /**
+   * Check if all questions have at least one selection.
+   */
+  const allQuestionsAnswered = useMemo(() => {
+    for (let qIdx = 0; qIdx < questions.length; qIdx++) {
+      const question = questions[qIdx];
+      if (!question) return false;
+
+      if (question.multiSelect) {
+        const selected = multiSelectOptions.get(qIdx);
+        if (!selected || selected.size === 0) return false;
+      } else {
+        if (!singleSelectOptions.has(qIdx)) return false;
+      }
+    }
+    return questions.length > 0;
+  }, [questions, multiSelectOptions, singleSelectOptions]);
 
   // Handle clicking an option
   const handleOptionClick = (questionIndex: number, optionIndex: number, multiSelect: boolean) => {
@@ -168,7 +223,7 @@ export function AskUserQuestionDisplay({ tool }: { tool: ToolCall }) {
 
     if (multiSelect) {
       // Toggle selection for multi-select
-      setSelectedOptions((prev) => {
+      setMultiSelectOptions((prev) => {
         const newMap = new Map(prev);
         const currentSet = newMap.get(questionIndex) ?? new Set();
         const newSet = new Set(currentSet);
@@ -180,40 +235,56 @@ export function AskUserQuestionDisplay({ tool }: { tool: ToolCall }) {
         newMap.set(questionIndex, newSet);
         return newMap;
       });
+    } else if (hasMultipleQuestions) {
+      // Multiple questions: just select, don't send yet
+      setSingleSelectOptions((prev) => {
+        const newMap = new Map(prev);
+        newMap.set(questionIndex, optionIndex);
+        return newMap;
+      });
     } else {
-      // For single select, immediately send the response
+      // Single question, single select: send immediately
       const option = question.options[optionIndex];
       if (option) {
-        sendAnswer({ [question.question]: option.label });
+        sendAllAnswers({ [question.question]: option.label });
       }
     }
   };
 
-  // Handle submitting multi-select responses
-  const handleSubmitMultiSelect = (questionIndex: number) => {
-    const question = questions[questionIndex];
-    const selected = selectedOptions.get(questionIndex);
-    if (!question || !selected || selected.size === 0) return;
-
-    const selectedLabels = Array.from(selected)
-      .map((idx) => question.options[idx]?.label)
-      .filter(Boolean);
-
-    sendAnswer({ [question.question]: selectedLabels.join(', ') });
+  // Handle the unified submit button
+  const handleSubmitAll = () => {
+    const answers = buildAnswersFromSelections();
+    if (Object.keys(answers).length > 0) {
+      sendAllAnswers(answers);
+    }
   };
 
-  // Check if an option is selected (for multi-select during selection)
-  const isOptionSelected = (questionIndex: number, optionIndex: number) => {
-    return selectedOptions.get(questionIndex)?.has(optionIndex) ?? false;
+  // Check if an option is selected
+  const isOptionSelected = (questionIndex: number, optionIndex: number, multiSelect: boolean) => {
+    if (multiSelect) {
+      return multiSelectOptions.get(questionIndex)?.has(optionIndex) ?? false;
+    }
+    return singleSelectOptions.get(questionIndex) === optionIndex;
   };
 
   // Check if an option was the answered option (match output with option label)
   const isAnsweredOption = (option: QuestionOption) => {
     if (isPending || !hasOutput || typeof tool.output !== 'string') return false;
     const output = tool.output.trim();
-    // Check if this option's label matches the output (or is contained in multi-select output)
     return output === option.label || output.split(', ').includes(option.label);
   };
+
+  // Determine whether to show the unified submit button:
+  // Show when multiple questions exist and at least one has a selection,
+  // OR when a single multi-select question has selections.
+  const showSubmitButton =
+    isActionable &&
+    (hasMultipleQuestions
+      ? singleSelectOptions.size > 0 ||
+        Array.from(multiSelectOptions.values()).some((s) => s.size > 0)
+      : questions.length === 1 &&
+        questions[0]?.multiSelect &&
+        (multiSelectOptions.get(0)?.size ?? 0) > 0);
 
   return (
     <ToolDisplayWrapper
@@ -253,7 +324,7 @@ export function AskUserQuestionDisplay({ tool }: { tool: ToolCall }) {
           {/* Options */}
           <div className="space-y-1.5 ml-1">
             {question.options.map((option, oIndex) => {
-              const isSelected = isOptionSelected(qIndex, oIndex);
+              const isSelected = isOptionSelected(qIndex, oIndex, question.multiSelect);
               const wasAnswered = isAnsweredOption(option);
 
               return (
@@ -272,8 +343,12 @@ export function AskUserQuestionDisplay({ tool }: { tool: ToolCall }) {
                     wasAnswered && 'bg-green-100 dark:bg-green-900/50 ring-1 ring-green-400'
                   )}
                 >
-                  {question.multiSelect ? (
-                    <CheckboxIcon checked={isSelected || wasAnswered} />
+                  {question.multiSelect || hasMultipleQuestions ? (
+                    question.multiSelect ? (
+                      <CheckboxIcon checked={isSelected || wasAnswered} />
+                    ) : (
+                      <RadioIcon selected={isSelected || wasAnswered} />
+                    )
                   ) : (
                     <RadioIcon selected={isSelected || wasAnswered} />
                   )}
@@ -289,22 +364,32 @@ export function AskUserQuestionDisplay({ tool }: { tool: ToolCall }) {
               );
             })}
           </div>
-
-          {/* Submit button for multi-select */}
-          {question.multiSelect &&
-            isPending &&
-            isActionable &&
-            (selectedOptions.get(qIndex)?.size ?? 0) > 0 && (
-              <button
-                type="button"
-                onClick={() => handleSubmitMultiSelect(qIndex)}
-                className="mt-2 px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white text-sm rounded transition-colors"
-              >
-                Submit Selected
-              </button>
-            )}
         </div>
       ))}
+
+      {/* Unified submit button for multiple questions or multi-select */}
+      {showSubmitButton && (
+        <div className="pt-2 border-t">
+          <button
+            type="button"
+            onClick={handleSubmitAll}
+            disabled={hasMultipleQuestions && !allQuestionsAnswered}
+            className={cn(
+              'px-4 py-2 text-sm rounded transition-colors font-medium',
+              hasMultipleQuestions && !allQuestionsAnswered
+                ? 'bg-purple-400 text-white cursor-not-allowed opacity-60'
+                : 'bg-purple-600 hover:bg-purple-700 text-white'
+            )}
+          >
+            {hasMultipleQuestions ? 'Submit Answers' : 'Submit Selected'}
+          </button>
+          {hasMultipleQuestions && !allQuestionsAnswered && (
+            <p className="text-xs text-muted-foreground mt-1">
+              Please answer all questions before submitting
+            </p>
+          )}
+        </div>
+      )}
 
       {/* Show the response if answered (but not the "Answer questions?" error) */}
       {hasOutput && !isWaitingForInput && (
