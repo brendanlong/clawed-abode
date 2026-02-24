@@ -562,16 +562,23 @@ clawed-abode/
 │   │   ├── index.ts            # HTTP server with query/interrupt/status endpoints
 │   │   ├── query-runner.ts     # Wraps Claude Agent SDK query()
 │   │   ├── stream-accumulator.ts # Accumulates stream_events into partial messages
-│   │   └── message-store.ts    # SQLite message persistence
+│   │   ├── message-store.ts    # SQLite message persistence
+│   │   └── logger.ts           # Logging utilities
 │   ├── package.json
 │   └── tsconfig.json
+├── shared/
+│   └── agent-types.ts          # Shared types between agent-service and app
+├── scripts/
+│   └── hash-password.ts        # Password hashing utility
 ├── src/
 │   ├── server/
 │   │   ├── routers/
+│   │   │   ├── index.ts           # Router exports
 │   │   │   ├── auth.ts
 │   │   │   ├── github.ts
 │   │   │   ├── sessions.ts
 │   │   │   ├── claude.ts
+│   │   │   ├── sse.ts             # SSE event streaming
 │   │   │   ├── repoSettings.ts
 │   │   │   └── globalSettings.ts
 │   │   ├── services/
@@ -582,21 +589,37 @@ clawed-abode/
 │   │   │   ├── repo-settings.ts   # Per-repo settings service
 │   │   │   ├── settings-helpers.ts # Shared schemas, encryption, decrypt helpers
 │   │   │   ├── settings-merger.ts # Merges global + per-repo env vars and MCP servers
-│   │   │   └── events.ts         # SSE event emitter
+│   │   │   ├── events.ts         # SSE event emitter
+│   │   │   ├── anthropic-models.ts # Claude model configuration
+│   │   │   ├── github.ts         # GitHub API service
+│   │   │   ├── mcp-validator.ts  # MCP server config validation
+│   │   │   └── session-reconciler.ts # Reconciles container/DB state
 │   │   └── trpc.ts
+│   ├── lib/
+│   │   ├── auth.ts               # Authentication utilities
+│   │   ├── crypto.ts             # Encryption/decryption (AES-256-GCM)
+│   │   ├── logger.ts             # Centralized logging (createLogger)
+│   │   ├── prisma.ts             # Prisma client initialization
+│   │   ├── trpc.ts               # tRPC client setup
+│   │   └── types.ts              # Global TypeScript types
+│   ├── hooks/                    # React hooks (session state, messages, etc.)
 │   ├── app/
 │   │   ├── page.tsx              # Session list
 │   │   ├── new/page.tsx          # New session
 │   │   ├── session/[id]/page.tsx # Session view
+│   │   ├── settings/page.tsx     # Settings
 │   │   └── login/page.tsx
 │   └── components/
 │       ├── MessageList.tsx
-│       ├── MessageBubble.tsx
-│       ├── ToolCallDisplay.tsx
-│       └── PromptInput.tsx
+│       ├── PromptInput.tsx
+│       ├── SessionList.tsx
+│       ├── Header.tsx
+│       ├── messages/             # Tool-specific display components (Bash, Edit, Read, etc.)
+│       ├── settings/             # Settings UI (global settings, repo settings, env vars, MCP)
+│       └── ui/                   # shadcn/ui primitives (button, dialog, input, etc.)
 ├── docker/
 │   ├── Dockerfile.claude-code
-│   └── docker-compose.yml
+│   └── entrypoint.sh            # Container entrypoint script
 ├── prisma/
 │   └── schema.prisma
 └── package.json
