@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useCallback, createContext, useContext } from 'react';
+import { useState, useRef, useCallback, useEffect, createContext, useContext } from 'react';
 
 function getAuthToken(): string | null {
   if (typeof window === 'undefined') return null;
@@ -138,6 +138,11 @@ export function useVoicePlayback(): VoicePlaybackState {
     },
     [currentMessageId, isPlaying, cleanupAudio]
   );
+
+  // Stop playback when the component unmounts (e.g. navigating away)
+  useEffect(() => {
+    return () => cleanupAudio();
+  }, [cleanupAudio]);
 
   return {
     enabled: true,
