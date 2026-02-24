@@ -48,31 +48,6 @@ CONTAINER ISSUE REPORTING: This container should have all standard development t
 const log = createLogger('claude-runner');
 
 /**
- * Tool names that should trigger an automatic interrupt.
- * When the agent calls these tools, the query should be interrupted
- * so the user can respond before the agent continues.
- */
-const AUTO_INTERRUPT_TOOLS = new Set(['AskUserQuestion', 'ExitPlanMode']);
-
-/**
- * Check if an SDK message contains a tool call that should trigger auto-interrupt.
- */
-export function shouldAutoInterrupt(message: unknown): boolean {
-  if (!message || typeof message !== 'object') return false;
-  const msg = message as Record<string, unknown>;
-  if (msg.type !== 'assistant') return false;
-
-  const innerMessage = msg.message as
-    | { content?: Array<{ type: string; name?: string }> }
-    | undefined;
-  if (!Array.isArray(innerMessage?.content)) return false;
-
-  return innerMessage.content.some(
-    (block) => block.type === 'tool_use' && block.name && AUTO_INTERRUPT_TOOLS.has(block.name)
-  );
-}
-
-/**
  * Build the full system prompt from global settings and per-repo custom prompt.
  */
 export function buildSystemPrompt(options: {
@@ -419,6 +394,23 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
         continue;
       }
 
+      // Handle input request events (canUseTool paused for user input)
+      if (agentEvent.kind === 'inputRequest') {
+        log.info('runClaudeCommand: Input request received', {
+          sessionId,
+          toolName: agentEvent.toolName,
+          requestId: agentEvent.requestId,
+        });
+        sseEvents.emitInputRequest(
+          sessionId,
+          agentEvent.requestId,
+          agentEvent.toolName,
+          agentEvent.toolInput,
+          agentEvent.toolUseId
+        );
+        continue;
+      }
+
       // Handle complete messages - persist and emit
       const agentMessage = agentEvent;
       const messageContent = JSON.stringify(agentMessage.message);
@@ -455,17 +447,6 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
           continue;
         }
         throw err;
-      }
-
-      // Auto-interrupt when the agent calls tools that need user input
-      // (e.g., AskUserQuestion, ExitPlanMode). Without this, the SDK
-      // returns an error tool_result and the agent continues processing.
-      if (shouldAutoInterrupt(agentMessage.message)) {
-        log.info('runClaudeCommand: Auto-interrupting for user input tool', {
-          sessionId,
-          messageType,
-        });
-        await client.interrupt();
       }
     }
 
@@ -528,6 +509,67 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
     })();
 
     log.debug('runClaudeCommand: Cleanup complete', { sessionId });
+  }
+}
+
+/**
+ * Respond to a pending input request (canUseTool callback) via the agent service.
+ * Used when the user answers an AskUserQuestion or approves/denies a plan.
+ */
+export async function respondToInputRequest(
+  sessionId: string,
+  options: {
+    requestId: string;
+    behavior: 'allow' | 'deny';
+    updatedInput?: Record<string, unknown>;
+    message?: string;
+  }
+): Promise<boolean> {
+  log.info('respondToInputRequest', {
+    sessionId,
+    requestId: options.requestId,
+    behavior: options.behavior,
+  });
+
+  // Check in-memory active queries first
+  const active = activeQueries.get(sessionId);
+  if (active) {
+    try {
+      const result = await active.client.respond(options);
+      return result.success;
+    } catch (err) {
+      log.error('respondToInputRequest: Failed', toError(err), { sessionId });
+      return false;
+    }
+  }
+
+  // Fall back to looking up the session's container
+  const session = await prisma.session.findUnique({
+    where: { id: sessionId },
+    select: { containerId: true },
+  });
+
+  if (!session?.containerId) {
+    log.info('respondToInputRequest: No container for session', { sessionId });
+    return false;
+  }
+
+  const containerStatus = await getContainerStatus(session.containerId);
+  if (containerStatus !== 'running') {
+    log.info('respondToInputRequest: Container not running', { sessionId, containerStatus });
+    return false;
+  }
+
+  const client = getClientForSession(sessionId);
+  try {
+    const result = await client.respond(options);
+    return result.success;
+  } catch (err) {
+    log.warn('respondToInputRequest: Failed', {
+      sessionId,
+      error: toError(err).message,
+    });
+    return false;
   }
 }
 

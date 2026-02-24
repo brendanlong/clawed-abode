@@ -88,32 +88,80 @@ function RadioIcon({ selected }: { selected?: boolean }) {
 }
 
 /**
+ * Build the updatedInput for responding to an AskUserQuestion via canUseTool.
+ * Format: { questions: [...], answers: { "question text": "selected label(s)" } }
+ */
+function buildAskUserQuestionResponse(
+  questions: Question[],
+  answers: Record<string, string>
+): Record<string, unknown> {
+  return {
+    questions,
+    answers,
+  };
+}
+
+/**
  * Specialized display for AskUserQuestion tool calls.
  * Shows a nicely formatted question with clickable options.
+ *
+ * When a pendingInputRequest is available (canUseTool callback flow),
+ * user responses are sent via onRespond with updatedInput containing
+ * the questions and answers. Otherwise falls back to onSendResponse.
  */
 export function AskUserQuestionDisplay({ tool }: { tool: ToolCall }) {
   const ctx = useMessageListContext();
   const onSendResponse = ctx?.onSendResponse;
+  const onRespond = ctx?.onRespond;
+  const pendingInputRequest = ctx?.pendingInputRequest;
   const isClaudeRunning = ctx?.isClaudeRunning;
   const [selectedOptions, setSelectedOptions] = useState<Map<number, Set<number>>>(new Map());
 
   const hasOutput = tool.output !== undefined;
 
+  // Check if this tool call has a matching pending input request
+  const hasPendingRequest = pendingInputRequest?.toolName === 'AskUserQuestion';
+
   // Check if this is a "real" error vs just waiting for input
-  // Claude Code returns is_error: true with "Answer questions?" when waiting for input
+  // With the canUseTool flow, the tool hasn't executed yet when pending,
+  // so there's no output. Without canUseTool, Claude Code returns is_error: true
+  // with "Answer questions?" when waiting for input.
   const isWaitingForInput =
     tool.is_error && typeof tool.output === 'string' && tool.output.includes('Answer questions');
   const isRealError = tool.is_error && !isWaitingForInput;
   const isPending = !hasOutput || isWaitingForInput;
+
+  // The question is actionable if pending AND we have a way to respond
+  const isActionable =
+    isPending && !isClaudeRunning && (hasPendingRequest ? !!onRespond : !!onSendResponse);
 
   const questions = useMemo(() => {
     const inputObj = tool.input as AskUserQuestionInput | undefined;
     return inputObj?.questions ?? [];
   }, [tool.input]);
 
+  /**
+   * Send the user's answer back to Claude.
+   * If a pending input request exists (canUseTool flow), uses onRespond with the proper format.
+   * Otherwise falls back to onSendResponse (legacy flow).
+   */
+  const sendAnswer = (answers: Record<string, string>) => {
+    if (hasPendingRequest && onRespond && pendingInputRequest) {
+      onRespond({
+        requestId: pendingInputRequest.requestId,
+        behavior: 'allow',
+        updatedInput: buildAskUserQuestionResponse(questions, answers),
+      });
+    } else if (onSendResponse) {
+      // Legacy fallback: send the answer labels as a plain text response
+      const answerValues = Object.values(answers);
+      onSendResponse(answerValues.join(', '));
+    }
+  };
+
   // Handle clicking an option
   const handleOptionClick = (questionIndex: number, optionIndex: number, multiSelect: boolean) => {
-    if (!isPending || isClaudeRunning || !onSendResponse) return;
+    if (!isActionable) return;
 
     const question = questions[questionIndex];
     if (!question) return;
@@ -136,15 +184,13 @@ export function AskUserQuestionDisplay({ tool }: { tool: ToolCall }) {
       // For single select, immediately send the response
       const option = question.options[optionIndex];
       if (option) {
-        onSendResponse(option.label);
+        sendAnswer({ [question.question]: option.label });
       }
     }
   };
 
   // Handle submitting multi-select responses
   const handleSubmitMultiSelect = (questionIndex: number) => {
-    if (!onSendResponse) return;
-
     const question = questions[questionIndex];
     const selected = selectedOptions.get(questionIndex);
     if (!question || !selected || selected.size === 0) return;
@@ -153,7 +199,7 @@ export function AskUserQuestionDisplay({ tool }: { tool: ToolCall }) {
       .map((idx) => question.options[idx]?.label)
       .filter(Boolean);
 
-    onSendResponse(selectedLabels.join(', '));
+    sendAnswer({ [question.question]: selectedLabels.join(', ') });
   };
 
   // Check if an option is selected (for multi-select during selection)
@@ -209,18 +255,17 @@ export function AskUserQuestionDisplay({ tool }: { tool: ToolCall }) {
             {question.options.map((option, oIndex) => {
               const isSelected = isOptionSelected(qIndex, oIndex);
               const wasAnswered = isAnsweredOption(option);
-              const canClick = isPending && !isClaudeRunning && onSendResponse;
 
               return (
                 <button
                   key={oIndex}
                   type="button"
-                  disabled={!canClick}
+                  disabled={!isActionable}
                   onClick={() => handleOptionClick(qIndex, oIndex, question.multiSelect)}
                   className={cn(
                     'flex items-start gap-2 py-1.5 px-2 rounded text-sm w-full text-left',
                     'transition-colors',
-                    canClick
+                    isActionable
                       ? 'bg-muted/50 hover:bg-purple-100 dark:hover:bg-purple-900/50 cursor-pointer'
                       : 'bg-muted/50',
                     isSelected && 'bg-purple-100 dark:bg-purple-900/50 ring-1 ring-purple-400',
@@ -248,8 +293,7 @@ export function AskUserQuestionDisplay({ tool }: { tool: ToolCall }) {
           {/* Submit button for multi-select */}
           {question.multiSelect &&
             isPending &&
-            !isClaudeRunning &&
-            onSendResponse &&
+            isActionable &&
             (selectedOptions.get(qIndex)?.size ?? 0) > 0 && (
               <button
                 type="button"

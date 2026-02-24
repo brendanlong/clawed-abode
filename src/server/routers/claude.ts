@@ -5,6 +5,7 @@ import { TRPCError } from '@trpc/server';
 import {
   runClaudeCommand,
   interruptClaude,
+  respondToInputRequest,
   isClaudeRunningAsync,
   markLastMessageAsInterrupted,
 } from '../services/claude-runner';
@@ -100,6 +101,45 @@ export const claudeRouter = router({
       }
 
       return { success: interrupted };
+    }),
+
+  respond: protectedProcedure
+    .input(
+      z.object({
+        sessionId: z.string().uuid(),
+        requestId: z.string().uuid(),
+        behavior: z.enum(['allow', 'deny']),
+        updatedInput: z.record(z.string(), z.unknown()).optional(),
+        message: z.string().optional(),
+      })
+    )
+    .mutation(async ({ input }) => {
+      const session = await prisma.session.findUnique({
+        where: { id: input.sessionId },
+      });
+
+      if (!session) {
+        throw new TRPCError({
+          code: 'NOT_FOUND',
+          message: 'Session not found',
+        });
+      }
+
+      if (session.status !== 'running') {
+        throw new TRPCError({
+          code: 'PRECONDITION_FAILED',
+          message: 'Session is not running',
+        });
+      }
+
+      const success = await respondToInputRequest(input.sessionId, {
+        requestId: input.requestId,
+        behavior: input.behavior,
+        updatedInput: input.updatedInput,
+        message: input.message,
+      });
+
+      return { success };
     }),
 
   getHistory: protectedProcedure

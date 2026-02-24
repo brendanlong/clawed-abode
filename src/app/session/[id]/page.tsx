@@ -41,13 +41,15 @@ function SessionView({ sessionId }: { sessionId: string }) {
     tokenUsage,
   } = useSessionMessages(sessionId);
 
-  // Claude state: running, send, interrupt, commands
+  // Claude state: running, send, interrupt, respond, commands
   const {
     isRunning: isClaudeRunning,
     send: sendPrompt,
     interrupt,
+    respond,
     isInterrupting,
     commands,
+    pendingInputRequest,
   } = useClaudeState(sessionId);
 
   // Working indicator: page title and favicon
@@ -176,6 +178,8 @@ function SessionView({ sessionId }: { sessionId: string }) {
         tokenUsage={tokenUsage}
         onSendResponse={handleSendPrompt}
         isClaudeRunning={isClaudeRunning}
+        pendingInputRequest={pendingInputRequest}
+        onRespond={respond}
       />
 
       <ClaudeStatusIndicator isRunning={isClaudeRunning} containerStatus={session.status} />

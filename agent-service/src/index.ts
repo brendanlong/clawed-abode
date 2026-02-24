@@ -3,7 +3,12 @@ import fs from 'node:fs';
 import { execFile } from 'node:child_process';
 import { z } from 'zod';
 import { MessageStore } from './message-store.js';
-import { QueryRunner, type QueryOptions } from './query-runner.js';
+import {
+  QueryRunner,
+  type QueryOptions,
+  type InputRequest,
+  type InputResponse,
+} from './query-runner.js';
 import { createLogger, toError } from './logger.js';
 import type { SDKMessage, SlashCommand } from '@anthropic-ai/claude-agent-sdk';
 import type { PartialAssistantMessage } from './stream-accumulator.js';
@@ -54,6 +59,13 @@ const QueryRequestSchema = z.object({
 
 const MessagesQuerySchema = z.object({
   after: z.coerce.number().int().min(0).default(0),
+});
+
+const RespondRequestSchema = z.object({
+  requestId: z.string().uuid(),
+  behavior: z.enum(['allow', 'deny']),
+  updatedInput: z.record(z.string(), z.unknown()).optional(),
+  message: z.string().optional(),
 });
 
 /**
@@ -141,11 +153,18 @@ async function handleQuery(req: http.IncomingMessage, res: http.ServerResponse):
     res.write(`data: ${data}\n\n`);
   });
 
+  // Subscribe to input request events (canUseTool pauses for user input)
+  const unsubscribeInputRequests = runner.onInputRequest((request: InputRequest) => {
+    const data = JSON.stringify({ inputRequest: request });
+    res.write(`data: ${data}\n\n`);
+  });
+
   // Handle client disconnect
   req.on('close', () => {
     unsubscribeMessages();
     unsubscribePartials();
     unsubscribeCommands();
+    unsubscribeInputRequests();
   });
 
   const options: QueryOptions = {
@@ -170,8 +189,38 @@ async function handleQuery(req: http.IncomingMessage, res: http.ServerResponse):
     unsubscribeMessages();
     unsubscribePartials();
     unsubscribeCommands();
+    unsubscribeInputRequests();
     res.end();
   }
+}
+
+/**
+ * Handle POST /respond
+ * Resolves a pending canUseTool input request with the user's response.
+ * Body: { requestId: string, behavior: 'allow' | 'deny', updatedInput?: Record<string, unknown>, message?: string }
+ */
+async function handleRespond(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  const raw = await parseBody(req);
+  const parsed = RespondRequestSchema.safeParse(raw);
+
+  if (!parsed.success) {
+    sendError(
+      res,
+      400,
+      parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')
+    );
+    return;
+  }
+
+  const response: InputResponse = parsed.data;
+
+  if (!runner.hasPendingInputRequest) {
+    sendError(res, 409, 'No pending input request');
+    return;
+  }
+
+  const success = runner.respond(response);
+  sendJson(res, 200, { success });
 }
 
 /**
@@ -194,6 +243,7 @@ function handleStatus(_req: http.IncomingMessage, res: http.ServerResponse): voi
     messageCount: store.getLastSequence(),
     lastSequence: store.getLastSequence(),
     commands: runner.supportedCommands,
+    hasPendingInputRequest: runner.hasPendingInputRequest,
   });
 }
 
@@ -264,6 +314,8 @@ const server = http.createServer(async (req, res) => {
   try {
     if (method === 'POST' && path === '/query') {
       await handleQuery(req, res);
+    } else if (method === 'POST' && path === '/respond') {
+      await handleRespond(req, res);
     } else if (method === 'POST' && path === '/interrupt') {
       await handleInterrupt(req, res);
     } else if (method === 'GET' && path === '/status') {

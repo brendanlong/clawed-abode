@@ -78,12 +78,18 @@ function CheckIcon() {
 export function ExitPlanModeDisplay({ tool }: { tool: ToolCall }) {
   const ctx = useMessageListContext();
   const planContent = ctx?.latestPlanContent;
+  const onRespond = ctx?.onRespond;
+  const pendingInputRequest = ctx?.pendingInputRequest;
   const hasOutput = tool.output !== undefined;
   const isPending = !hasOutput;
   const [copied, setCopied] = useState(false);
 
   const inputObj = tool.input as ExitPlanModeInput | undefined;
   const allowedPrompts = inputObj?.allowedPrompts ?? [];
+
+  // Check if this tool call has a matching pending input request
+  const hasPendingRequest = pendingInputRequest?.toolName === 'ExitPlanMode';
+  const isActionable = isPending && hasPendingRequest && !!onRespond;
 
   const handleCopyPlan = useCallback(async () => {
     if (!planContent) return;
@@ -171,8 +177,40 @@ export function ExitPlanModeDisplay({ tool }: { tool: ToolCall }) {
         </div>
       )}
 
-      {/* Show status message if no plan content available */}
-      {!planContent && isPending && (
+      {/* Approve/Reject buttons when there's a pending input request */}
+      {isActionable && pendingInputRequest && (
+        <div className="flex gap-2 pt-2 border-t">
+          <button
+            type="button"
+            onClick={() =>
+              onRespond({
+                requestId: pendingInputRequest.requestId,
+                behavior: 'allow',
+                updatedInput: tool.input as Record<string, unknown>,
+              })
+            }
+            className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white text-sm rounded transition-colors font-medium"
+          >
+            Approve Plan
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              onRespond({
+                requestId: pendingInputRequest.requestId,
+                behavior: 'deny',
+                message: 'User rejected the plan',
+              })
+            }
+            className="px-4 py-2 bg-muted hover:bg-muted/80 text-foreground text-sm rounded transition-colors border"
+          >
+            Reject
+          </button>
+        </div>
+      )}
+
+      {/* Show status message if no plan content available and no actionable request */}
+      {!planContent && isPending && !isActionable && (
         <div className="text-muted-foreground italic py-2">Waiting for plan approval...</div>
       )}
     </ToolDisplayWrapper>

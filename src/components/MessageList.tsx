@@ -6,6 +6,7 @@ import { MessageListProvider } from './messages/MessageListContext';
 import { Spinner } from '@/components/ui/spinner';
 import { ContextUsageIndicator } from '@/components/ContextUsageIndicator';
 import type { TokenUsageStats } from '@/lib/token-estimation';
+import type { PendingInputRequest } from '@/hooks/useClaudeState';
 import { useNotification } from '@/hooks/useNotification';
 import { isPlanFile } from './messages/plan-utils';
 
@@ -269,6 +270,13 @@ interface MessageListProps {
   tokenUsage?: TokenUsageStats | null;
   onSendResponse?: (response: string) => void;
   isClaudeRunning?: boolean;
+  pendingInputRequest?: PendingInputRequest | null;
+  onRespond?: (options: {
+    requestId: string;
+    behavior: 'allow' | 'deny';
+    updatedInput?: Record<string, unknown>;
+    message?: string;
+  }) => void;
 }
 
 export function MessageList({
@@ -279,6 +287,8 @@ export function MessageList({
   tokenUsage,
   onSendResponse,
   isClaudeRunning,
+  pendingInputRequest,
+  onRespond,
 }: MessageListProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const topSentinelRef = useRef<HTMLDivElement>(null);
@@ -417,6 +427,8 @@ export function MessageList({
       onSendResponse,
       isClaudeRunning,
       latestPlanContent,
+      pendingInputRequest,
+      onRespond,
     }),
     [
       latestTodoWriteId,
@@ -425,6 +437,8 @@ export function MessageList({
       onSendResponse,
       isClaudeRunning,
       latestPlanContent,
+      pendingInputRequest,
+      onRespond,
     ]
   );
 

@@ -45,8 +45,25 @@ export interface AgentCommandsEvent {
   commands: SlashCommand[];
 }
 
-/** Either a complete message, partial message, or commands update from the agent service query stream. */
-export type AgentStreamEvent = AgentMessage | AgentPartialMessage | AgentCommandsEvent;
+/**
+ * An input request event from the agent service.
+ * Emitted when Claude calls a tool that needs user input (AskUserQuestion, ExitPlanMode).
+ * The query is paused until the user responds via the respond() method.
+ */
+export interface AgentInputRequestEvent {
+  kind: 'inputRequest';
+  requestId: string;
+  toolName: string;
+  toolInput: Record<string, unknown>;
+  toolUseId: string;
+}
+
+/** Either a complete message, partial message, commands update, or input request from the agent service query stream. */
+export type AgentStreamEvent =
+  | AgentMessage
+  | AgentPartialMessage
+  | AgentCommandsEvent
+  | AgentInputRequestEvent;
 
 /**
  * Status response from the agent service.
@@ -56,6 +73,7 @@ export interface AgentStatus {
   messageCount: number;
   lastSequence: number;
   commands: SlashCommand[];
+  hasPendingInputRequest: boolean;
 }
 
 /**
@@ -66,6 +84,14 @@ type SSEEvent =
   | { sequence: number; message: SDKMessage }
   | { partial: AgentPartialMessage['partial'] }
   | { commands: SlashCommand[] }
+  | {
+      inputRequest: {
+        requestId: string;
+        toolName: string;
+        toolInput: Record<string, unknown>;
+        toolUseId: string;
+      };
+    }
   | { done: true }
   | { error: string };
 
@@ -106,6 +132,17 @@ export interface AgentClient {
    * Get the currently known supported slash commands.
    */
   getCommands(): Promise<SlashCommand[]>;
+
+  /**
+   * Respond to a pending input request (canUseTool callback).
+   * Used when Claude calls AskUserQuestion or ExitPlanMode.
+   */
+  respond(options: {
+    requestId: string;
+    behavior: 'allow' | 'deny';
+    updatedInput?: Record<string, unknown>;
+    message?: string;
+  }): Promise<{ success: boolean }>;
 
   /**
    * Get the current git branch in the container's working directory.
@@ -269,6 +306,18 @@ export function createAgentClient(socketPath: string): AgentClient {
                 continue;
               }
 
+              if ('inputRequest' in parsed) {
+                // User input required (canUseTool paused)
+                yield {
+                  kind: 'inputRequest',
+                  requestId: parsed.inputRequest.requestId,
+                  toolName: parsed.inputRequest.toolName,
+                  toolInput: parsed.inputRequest.toolInput,
+                  toolUseId: parsed.inputRequest.toolUseId,
+                };
+                continue;
+              }
+
               if ('sequence' in parsed && 'message' in parsed) {
                 yield {
                   kind: 'complete',
@@ -306,6 +355,10 @@ export function createAgentClient(socketPath: string): AgentClient {
     async getCommands() {
       const res = await fetchJson<{ commands: SlashCommand[] }>('/commands');
       return res.commands;
+    },
+
+    async respond(options) {
+      return fetchJson<{ success: boolean }>('/respond', 'POST', options);
     },
 
     async getCurrentBranch() {

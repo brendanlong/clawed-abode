@@ -5,6 +5,7 @@ import {
   type McpServerConfig,
   type SlashCommand,
 } from '@anthropic-ai/claude-agent-sdk';
+import { randomUUID } from 'node:crypto';
 import { MessageStore } from './message-store.js';
 import { StreamAccumulator, type PartialAssistantMessage } from './stream-accumulator.js';
 import { createLogger, toError } from './logger.js';
@@ -58,6 +59,46 @@ export type PartialMessageCallback = (partial: PartialAssistantMessage) => void;
 export type CommandsCallback = (commands: SlashCommand[]) => void;
 
 /**
+ * Tool names that require user input via the canUseTool callback.
+ * When Claude calls these tools, execution pauses until the user responds.
+ */
+const USER_INPUT_TOOLS = new Set(['AskUserQuestion', 'ExitPlanMode']);
+
+/**
+ * An input request emitted when the SDK calls a tool that needs user input.
+ * The HTTP server surfaces this to clients, who respond via POST /respond.
+ */
+export interface InputRequest {
+  /** Unique ID for this request, used to match the response */
+  requestId: string;
+  /** The tool that triggered the input request */
+  toolName: string;
+  /** The tool's input parameters */
+  toolInput: Record<string, unknown>;
+  /** The tool use ID from the SDK */
+  toolUseId: string;
+}
+
+/**
+ * The user's response to an input request.
+ */
+export interface InputResponse {
+  /** Must match the requestId from the InputRequest */
+  requestId: string;
+  /** 'allow' to proceed with (optionally modified) input, 'deny' to reject */
+  behavior: 'allow' | 'deny';
+  /** For 'allow': optionally updated tool input */
+  updatedInput?: Record<string, unknown>;
+  /** For 'deny': message explaining why */
+  message?: string;
+}
+
+/**
+ * Callback for when the SDK needs user input (via canUseTool).
+ */
+export type InputRequestCallback = (request: InputRequest) => void;
+
+/**
  * Manages SDK query() execution with message persistence.
  * Only one query can run at a time per QueryRunner instance.
  */
@@ -69,7 +110,18 @@ export class QueryRunner {
   private messageCallbacks: Set<MessageCallback> = new Set();
   private partialCallbacks: Set<PartialMessageCallback> = new Set();
   private commandsCallbacks: Set<CommandsCallback> = new Set();
+  private inputRequestCallbacks: Set<InputRequestCallback> = new Set();
   private _supportedCommands: SlashCommand[] = [];
+
+  /**
+   * Currently pending input request, if any.
+   * When the canUseTool callback fires for a user-input tool,
+   * we store the resolve function here so POST /respond can fulfill it.
+   */
+  private pendingInputRequest: {
+    requestId: string;
+    resolve: (response: InputResponse) => void;
+  } | null = null;
 
   constructor(store: MessageStore) {
     this.store = store;
@@ -80,6 +132,27 @@ export class QueryRunner {
    */
   get isRunning(): boolean {
     return this.running;
+  }
+
+  /**
+   * Get the currently pending input request, if any.
+   */
+  get currentInputRequest(): InputRequest | null {
+    return this.pendingInputRequest
+      ? {
+          requestId: this.pendingInputRequest.requestId,
+          toolName: '',
+          toolInput: {},
+          toolUseId: '',
+        }
+      : null;
+  }
+
+  /**
+   * Whether there is a pending input request waiting for a user response.
+   */
+  get hasPendingInputRequest(): boolean {
+    return this.pendingInputRequest !== null;
   }
 
   /**
@@ -115,10 +188,50 @@ export class QueryRunner {
   }
 
   /**
+   * Subscribe to input request events. Returns an unsubscribe function.
+   * Called when Claude calls a tool that needs user input (AskUserQuestion, ExitPlanMode).
+   */
+  onInputRequest(callback: InputRequestCallback): () => void {
+    this.inputRequestCallbacks.add(callback);
+    return () => {
+      this.inputRequestCallbacks.delete(callback);
+    };
+  }
+
+  /**
    * Get the currently known supported slash commands.
    */
   get supportedCommands(): SlashCommand[] {
     return this._supportedCommands;
+  }
+
+  /**
+   * Resolve a pending input request with a user response.
+   * Called by the HTTP server when it receives POST /respond.
+   * Returns true if a pending request was resolved, false otherwise.
+   */
+  respond(response: InputResponse): boolean {
+    if (!this.pendingInputRequest) {
+      log.warn('respond: No pending input request');
+      return false;
+    }
+
+    if (this.pendingInputRequest.requestId !== response.requestId) {
+      log.warn('respond: Request ID mismatch', {
+        expected: this.pendingInputRequest.requestId,
+        received: response.requestId,
+      });
+      return false;
+    }
+
+    log.info('respond: Resolving pending input request', {
+      requestId: response.requestId,
+      behavior: response.behavior,
+    });
+
+    this.pendingInputRequest.resolve(response);
+    this.pendingInputRequest = null;
+    return true;
   }
 
   /**
@@ -141,6 +254,56 @@ export class QueryRunner {
         allowDangerouslySkipPermissions: true,
         // Enable partial message streaming for real-time UI updates
         includePartialMessages: true,
+        // canUseTool callback: pauses execution for user-input tools
+        canUseTool: async (toolName, toolInput, callbackOptions) => {
+          if (!USER_INPUT_TOOLS.has(toolName)) {
+            // Auto-allow all non-user-input tools (bypassPermissions handles most,
+            // but this is a safety net)
+            return { behavior: 'allow' as const, updatedInput: toolInput };
+          }
+
+          log.info('canUseTool: User input required', {
+            toolName,
+            toolUseId: callbackOptions.toolUseID,
+          });
+
+          const requestId = randomUUID();
+          const request: InputRequest = {
+            requestId,
+            toolName,
+            toolInput,
+            toolUseId: callbackOptions.toolUseID,
+          };
+
+          // Create a promise that will be resolved when the user responds
+          const responsePromise = new Promise<InputResponse>((resolve) => {
+            this.pendingInputRequest = { requestId, resolve };
+          });
+
+          // Notify all listeners that input is needed
+          for (const callback of this.inputRequestCallbacks) {
+            try {
+              callback(request);
+            } catch {
+              // Don't let callback errors break the flow
+            }
+          }
+
+          // Wait for the user to respond (via POST /respond)
+          const response = await responsePromise;
+
+          if (response.behavior === 'allow') {
+            return {
+              behavior: 'allow' as const,
+              updatedInput: response.updatedInput ?? toolInput,
+            };
+          } else {
+            return {
+              behavior: 'deny' as const,
+              message: response.message ?? 'User denied this action',
+            };
+          }
+        },
       };
 
       // System prompt configuration
@@ -276,6 +439,13 @@ export class QueryRunner {
         }
       }
     } finally {
+      // Clean up any pending input request that was never resolved
+      if (this.pendingInputRequest) {
+        log.warn('run: Query ended with unresolved input request', {
+          requestId: this.pendingInputRequest.requestId,
+        });
+        this.pendingInputRequest = null;
+      }
       this.running = false;
       this.currentQuery = null;
       this.currentAbortController = null;
@@ -289,6 +459,20 @@ export class QueryRunner {
   async interrupt(): Promise<boolean> {
     if (!this.running || !this.currentQuery) {
       return false;
+    }
+
+    // If there's a pending input request, reject it so the canUseTool promise
+    // resolves and the query can proceed to handle the interruption
+    if (this.pendingInputRequest) {
+      log.info('interrupt: Rejecting pending input request', {
+        requestId: this.pendingInputRequest.requestId,
+      });
+      this.pendingInputRequest.resolve({
+        requestId: this.pendingInputRequest.requestId,
+        behavior: 'deny',
+        message: 'Interrupted by user',
+      });
+      this.pendingInputRequest = null;
     }
 
     try {

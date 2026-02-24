@@ -37,12 +37,22 @@ export interface PrUpdateEvent {
   pullRequest: PullRequestInfo | null;
 }
 
+export interface InputRequestEvent {
+  type: 'input_request';
+  sessionId: string;
+  requestId: string;
+  toolName: string;
+  toolInput: Record<string, unknown>;
+  toolUseId: string;
+}
+
 export type SSEEvent =
   | SessionUpdateEvent
   | MessageEvent
   | ClaudeRunningEvent
   | CommandsEvent
-  | PrUpdateEvent;
+  | PrUpdateEvent
+  | InputRequestEvent;
 
 // Create a typed event emitter
 class SSEEventEmitter extends EventEmitter {
@@ -102,6 +112,29 @@ class SSEEventEmitter extends EventEmitter {
   // Subscribe to commands updates for a specific session
   onCommands(sessionId: string, callback: (event: CommandsEvent) => void): () => void {
     const eventName = `commands:${sessionId}`;
+    this.on(eventName, callback);
+    return () => this.off(eventName, callback);
+  }
+
+  emitInputRequest(
+    sessionId: string,
+    requestId: string,
+    toolName: string,
+    toolInput: Record<string, unknown>,
+    toolUseId: string
+  ): void {
+    this.emit(`inputRequest:${sessionId}`, {
+      type: 'input_request',
+      sessionId,
+      requestId,
+      toolName,
+      toolInput,
+      toolUseId,
+    } satisfies InputRequestEvent);
+  }
+
+  onInputRequest(sessionId: string, callback: (event: InputRequestEvent) => void): () => void {
+    const eventName = `inputRequest:${sessionId}`;
     this.on(eventName, callback);
     return () => this.off(eventName, callback);
   }

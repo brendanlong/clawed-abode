@@ -1,6 +1,7 @@
 'use client';
 
 import { createContext, useContext } from 'react';
+import type { PendingInputRequest } from '@/hooks/useClaudeState';
 
 interface MessageListContextValue {
   /** The tool ID of the latest TodoWrite call (by sequence), or null */
@@ -9,12 +10,21 @@ interface MessageListContextValue {
   manuallyToggledTodoIds: Set<string>;
   /** Callback when a TodoWrite is manually toggled by the user */
   onTodoManualToggle: (toolId: string) => void;
-  /** Callback to send a response to Claude (for AskUserQuestion) */
+  /** Callback to send a response to Claude (for AskUserQuestion fallback) */
   onSendResponse?: (response: string) => void;
   /** Whether Claude is currently running (disables AskUserQuestion interactions) */
   isClaudeRunning?: boolean;
   /** The latest plan content from Write/Edit of plan files, or null */
   latestPlanContent: string | null;
+  /** Pending input request from canUseTool callback, if any */
+  pendingInputRequest?: PendingInputRequest | null;
+  /** Callback to respond to a pending input request (canUseTool) */
+  onRespond?: (options: {
+    requestId: string;
+    behavior: 'allow' | 'deny';
+    updatedInput?: Record<string, unknown>;
+    message?: string;
+  }) => void;
 }
 
 const MessageListContext = createContext<MessageListContextValue | null>(null);

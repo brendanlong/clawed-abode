@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { router, protectedProcedure } from '../trpc';
 import { sseEvents } from '../services/events';
-import type { PrUpdateEvent } from '../services/events';
+import type { PrUpdateEvent, InputRequestEvent } from '../services/events';
 import { tracked } from '@trpc/server';
 import { prisma } from '@/lib/prisma';
 
@@ -203,6 +203,41 @@ export const sseRouter = router({
           if (events.length > 0) {
             const event = events.shift()!;
             yield tracked(`${event.sessionId}-commands-${counter++}`, event);
+          } else {
+            await new Promise<void>((resolve) => {
+              resolveWait = resolve;
+              const onAbort = () => resolve();
+              signal?.addEventListener('abort', onAbort, { once: true });
+            });
+          }
+        }
+      } finally {
+        unsubscribe();
+      }
+    }),
+
+  // Subscribe to input request events (canUseTool paused for user input)
+  onInputRequest: protectedProcedure
+    .input(z.object({ sessionId: z.string().uuid() }))
+    .subscription(async function* ({ input, signal }) {
+      const events: InputRequestEvent[] = [];
+      let resolveWait: (() => void) | null = null;
+      let counter = 0;
+
+      const unsubscribe = sseEvents.onInputRequest(input.sessionId, (event) => {
+        events.push(event);
+        resolveWait?.();
+      });
+
+      signal?.addEventListener('abort', () => {
+        unsubscribe();
+      });
+
+      try {
+        while (!signal?.aborted) {
+          if (events.length > 0) {
+            const event = events.shift()!;
+            yield tracked(`${event.sessionId}-input-request-${counter++}`, event);
           } else {
             await new Promise<void>((resolve) => {
               resolveWait = resolve;
