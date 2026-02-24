@@ -250,15 +250,15 @@ export class QueryRunner {
     try {
       const sdkOptions: Parameters<typeof query>[0]['options'] = {
         abortController: this.currentAbortController,
-        permissionMode: 'bypassPermissions' as const,
-        allowDangerouslySkipPermissions: true,
         // Enable partial message streaming for real-time UI updates
         includePartialMessages: true,
-        // canUseTool callback: pauses execution for user-input tools
+        // canUseTool callback: auto-allows all tools except user-input tools
+        // (AskUserQuestion, ExitPlanMode) which pause for user response.
+        // We intentionally do NOT use bypassPermissions because it skips
+        // canUseTool entirely, preventing interactive tools from working.
         canUseTool: async (toolName, toolInput, callbackOptions) => {
           if (!USER_INPUT_TOOLS.has(toolName)) {
-            // Auto-allow all non-user-input tools (bypassPermissions handles most,
-            // but this is a safety net)
+            // Auto-allow all non-user-input tools
             return { behavior: 'allow' as const, updatedInput: toolInput };
           }
 

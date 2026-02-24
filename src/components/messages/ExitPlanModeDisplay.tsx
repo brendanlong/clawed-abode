@@ -72,6 +72,26 @@ function CheckIcon() {
 }
 
 /**
+ * Determine the plan approval status from the tool result.
+ * The SDK produces different tool_result content depending on whether the plan was approved or rejected.
+ */
+function getPlanStatus(tool: ToolCall): 'pending' | 'approved' | 'rejected' | 'not-handled' {
+  if (tool.output === undefined) return 'pending';
+
+  const output = typeof tool.output === 'string' ? tool.output : '';
+
+  // When is_error is true, the plan was rejected or not handled
+  if (tool.is_error) {
+    // The SDK's default "not handled" message when bypassPermissions skipped canUseTool
+    if (output === 'Exit plan mode?' || output === '') return 'not-handled';
+    return 'rejected';
+  }
+
+  // Approved - SDK sets various success messages containing "approved" or plan content
+  return 'approved';
+}
+
+/**
  * Specialized display for ExitPlanMode tool calls.
  * Shows the full rendered plan content and approval status.
  */
@@ -80,16 +100,19 @@ export function ExitPlanModeDisplay({ tool }: { tool: ToolCall }) {
   const planContent = ctx?.latestPlanContent;
   const onRespond = ctx?.onRespond;
   const pendingInputRequest = ctx?.pendingInputRequest;
-  const hasOutput = tool.output !== undefined;
-  const isPending = !hasOutput;
   const [copied, setCopied] = useState(false);
 
   const inputObj = tool.input as ExitPlanModeInput | undefined;
   const allowedPrompts = inputObj?.allowedPrompts ?? [];
+  const planStatus = getPlanStatus(tool);
 
   // Check if this tool call has a matching pending input request
   const hasPendingRequest = pendingInputRequest?.toolName === 'ExitPlanMode';
-  const isActionable = isPending && hasPendingRequest && !!onRespond;
+  const isActionable = planStatus === 'pending' && hasPendingRequest && !!onRespond;
+
+  // Don't show as error - ExitPlanMode with is_error just means it wasn't approved,
+  // not that something went wrong
+  const isError = false;
 
   const handleCopyPlan = useCallback(async () => {
     if (!planContent) return;
@@ -102,6 +125,48 @@ export function ExitPlanModeDisplay({ tool }: { tool: ToolCall }) {
     }
   }, [planContent]);
 
+  // Choose the done badge based on plan status
+  const doneBadge = (() => {
+    switch (planStatus) {
+      case 'approved':
+        return (
+          <Badge
+            variant="outline"
+            className="text-xs border-green-500 text-green-700 dark:text-green-400"
+          >
+            Approved
+          </Badge>
+        );
+      case 'rejected':
+        return (
+          <Badge
+            variant="outline"
+            className="text-xs border-orange-500 text-orange-700 dark:text-orange-400"
+          >
+            Rejected
+          </Badge>
+        );
+      case 'not-handled':
+        return (
+          <Badge
+            variant="outline"
+            className="text-xs border-yellow-500 text-yellow-700 dark:text-yellow-400"
+          >
+            Not handled
+          </Badge>
+        );
+      default:
+        return (
+          <Badge
+            variant="outline"
+            className="text-xs border-purple-500 text-purple-700 dark:text-purple-400"
+          >
+            Ready for review
+          </Badge>
+        );
+    }
+  })();
+
   return (
     <ToolDisplayWrapper
       tool={tool}
@@ -110,19 +175,13 @@ export function ExitPlanModeDisplay({ tool }: { tool: ToolCall }) {
       defaultExpanded={true}
       pendingText="Awaiting approval..."
       cardClassName="border-purple-300 dark:border-purple-700"
+      isErrorOverride={isError}
       subtitle={
         <div className="text-muted-foreground text-xs mt-1">
           Claude has finished planning and is ready for your review
         </div>
       }
-      doneBadge={
-        <Badge
-          variant="outline"
-          className="text-xs border-purple-500 text-purple-700 dark:text-purple-400"
-        >
-          Ready for review
-        </Badge>
-      }
+      doneBadge={doneBadge}
     >
       {/* Full plan content rendered as Markdown */}
       {planContent && (
@@ -210,7 +269,7 @@ export function ExitPlanModeDisplay({ tool }: { tool: ToolCall }) {
       )}
 
       {/* Show status message if no plan content available and no actionable request */}
-      {!planContent && isPending && !isActionable && (
+      {!planContent && planStatus === 'pending' && !isActionable && (
         <div className="text-muted-foreground italic py-2">Waiting for plan approval...</div>
       )}
     </ToolDisplayWrapper>
