@@ -208,6 +208,8 @@ jobs:
         with:
           context: .
           file: ./docker/Dockerfile.claude-code
+          build-args: |
+            CACHE_BREAKER=${{ github.run_id }}
           push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
