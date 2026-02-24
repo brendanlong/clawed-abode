@@ -140,14 +140,10 @@ export class StreamingAudioPlayer {
 
     const segment = this.segmentQueue.shift()!;
     try {
-      // Extract only this segment's slice of the underlying buffer.
-      // mse-audio-wrapper may return views into a shared ArrayBuffer,
-      // so segment.buffer could contain data from other segments.
-      const data = segment.buffer.slice(
-        segment.byteOffset,
-        segment.byteOffset + segment.byteLength
-      ) as ArrayBuffer;
-      this.sourceBuffer.appendBuffer(data);
+      // Copy the segment into its own ArrayBuffer. mse-audio-wrapper may
+      // return views into a shared buffer, so we can't pass segment.buffer
+      // directly (it would include data from other segments).
+      this.sourceBuffer.appendBuffer(new Uint8Array(segment).buffer);
     } catch (e) {
       this.callbacks.onError?.(e instanceof Error ? e : new Error('SourceBuffer append failed'));
     }
