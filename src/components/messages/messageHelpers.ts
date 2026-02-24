@@ -1,6 +1,15 @@
 import type { ContentBlock, MessageContent, ToolCall, ToolResultMap } from './types';
 import { formatAsJson, buildToolMessages } from './types';
 
+/**
+ * Strip XML wrapper tags from Claude Code local command output.
+ * Messages from slash commands like /context are wrapped in tags like
+ * <local-command-stdout>...</local-command-stdout>.
+ */
+function stripXmlTags(text: string): string {
+  return text.replace(/^<local-command-stdout>\n?/, '').replace(/\n?<\/local-command-stdout>$/, '');
+}
+
 export type MessageCategory =
   | 'assistant'
   | 'user'
@@ -33,6 +42,10 @@ export function extractTextContent(content: MessageContent): string | null {
     if (textBlocks.length > 0) {
       return textBlocks.join('\n');
     }
+  }
+  // For messages with string content in message.content (e.g., /context command output)
+  if (typeof content.message?.content === 'string') {
+    return stripXmlTags(content.message.content);
   }
   // For simple content strings
   if (typeof content.content === 'string') {
@@ -90,6 +103,10 @@ export function isRecognizedMessage(type: string, content: MessageContent): Reco
   if (type === 'user') {
     // User prompts typically have message.content with text blocks
     if (content.message?.content && Array.isArray(content.message.content)) {
+      return { recognized: true, category: 'user' };
+    }
+    // Or message.content as a string (e.g., /context command output)
+    if (typeof content.message?.content === 'string') {
       return { recognized: true, category: 'user' };
     }
     // Or simple content string
@@ -211,6 +228,10 @@ export function getDisplayContent(
 ): unknown {
   if (category === 'assistant' && content.message?.content) {
     return content.message.content;
+  }
+  // For user messages with string content in message.content (e.g., /context command output)
+  if (category === 'user' && typeof content.message?.content === 'string') {
+    return stripXmlTags(content.message.content);
   }
   return content.content;
 }

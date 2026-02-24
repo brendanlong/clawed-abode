@@ -44,6 +44,24 @@ describe('extractTextContent', () => {
     expect(extractTextContent(content)).toBeNull();
   });
 
+  it('extracts text from string message.content and strips XML tags', () => {
+    const content: MessageContent = {
+      message: {
+        content: '<local-command-stdout>\n## Context Usage\nSome content\n</local-command-stdout>',
+      },
+    };
+    expect(extractTextContent(content)).toBe('## Context Usage\nSome content');
+  });
+
+  it('extracts text from string message.content without XML tags', () => {
+    const content: MessageContent = {
+      message: {
+        content: 'plain text content',
+      },
+    };
+    expect(extractTextContent(content)).toBe('plain text content');
+  });
+
   it('skips non-text blocks in message content', () => {
     const content: MessageContent = {
       message: {
@@ -163,6 +181,19 @@ describe('isRecognizedMessage', () => {
   it('recognizes user messages with message content array', () => {
     const content: MessageContent = {
       message: { content: [{ type: 'text', text: 'hello' }] },
+    };
+    expect(isRecognizedMessage('user', content)).toEqual({
+      recognized: true,
+      category: 'user',
+    });
+  });
+
+  it('recognizes user messages with string message.content (e.g., /context output)', () => {
+    const content: MessageContent = {
+      message: {
+        role: 'user',
+        content: '<local-command-stdout>\n## Context Usage\n</local-command-stdout>',
+      },
     };
     expect(isRecognizedMessage('user', content)).toEqual({
       recognized: true,
@@ -355,6 +386,16 @@ describe('getDisplayContent', () => {
   it('returns content.content for user messages', () => {
     const content: MessageContent = { content: 'user text' };
     expect(getDisplayContent(content, 'user')).toBe('user text');
+  });
+
+  it('returns stripped string message.content for user messages with local command output', () => {
+    const content: MessageContent = {
+      message: {
+        role: 'user',
+        content: '<local-command-stdout>\n## Context Usage\nSome content\n</local-command-stdout>',
+      },
+    };
+    expect(getDisplayContent(content, 'user')).toBe('## Context Usage\nSome content');
   });
 
   it('returns content.content for system messages', () => {
