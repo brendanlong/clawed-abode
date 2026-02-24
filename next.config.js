@@ -21,6 +21,7 @@ const nextConfig = {
               "style-src 'self' 'unsafe-inline'",
               "img-src 'self' data: blob:",
               "font-src 'self' data:",
+              "media-src 'self' blob:",
               "connect-src 'self'",
               "manifest-src 'self'",
               "object-src 'none'",

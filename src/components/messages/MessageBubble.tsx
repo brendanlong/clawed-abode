@@ -101,6 +101,7 @@ export function MessageBubble({
 
   return (
     <MainMessageBubble
+      messageId={message.id}
       content={content}
       category={category!}
       isPartial={isPartial}
