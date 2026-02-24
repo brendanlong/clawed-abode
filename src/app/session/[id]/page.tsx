@@ -217,6 +217,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
               play: async () => {},
               pause: () => {},
               stop: () => {},
+              restart: async () => {},
             }
       }
     >
