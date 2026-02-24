@@ -40,6 +40,11 @@ export class StreamingAudioPlayer {
       this.mediaSource.addEventListener('sourceopen', () => {
         if (this.destroyed) return;
         this.sourceBuffer = this.mediaSource.addSourceBuffer('audio/mp4; codecs="mp4a.40.2"');
+        // Use 'sequence' mode so each segment is appended after the previous one,
+        // regardless of timestamps in the media. This is critical when concatenating
+        // audio from independent TTS calls — their fMP4 segments may have overlapping
+        // timestamps which would cause 'segments' mode to overwrite earlier audio.
+        this.sourceBuffer.mode = 'sequence';
         this.sourceBuffer.addEventListener('updateend', () => {
           this.drainQueue();
         });

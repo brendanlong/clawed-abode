@@ -9,6 +9,7 @@ import {
   splitTextForTTS,
   generateSpeechChunk,
   ttsVoiceSchema,
+  TTS_STREAM_TARGET_CHARS,
 } from '@/server/services/voice';
 import { createLogger } from '@/lib/logger';
 
@@ -75,7 +76,7 @@ export async function POST(req: Request) {
     }
   }
 
-  const chunks = splitTextForTTS(text);
+  const chunks = splitTextForTTS(text, TTS_STREAM_TARGET_CHARS);
   const openai = new OpenAI({ apiKey: openaiSettings.apiKey });
   const speed = openaiSettings.ttsSpeed;
 
