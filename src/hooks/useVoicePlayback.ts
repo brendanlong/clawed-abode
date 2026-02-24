@@ -35,34 +35,39 @@ export function useVoicePlaybackContext() {
 
 /**
  * Hook that manages audio playback state for voice TTS.
- * Handles the text -> TTS -> play pipeline.
+ * Handles the text -> TTS -> play pipeline with per-message blob caching.
  */
 export function useVoicePlayback(): VoicePlaybackState {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentMessageId, setCurrentMessageId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const blobUrlRef = useRef<string | null>(null);
+  // Cache of messageId -> blob URL, persists until unmount
+  const cacheRef = useRef<Map<string, string>>(new Map());
 
-  const cleanupAudio = useCallback(() => {
+  const stopCurrentAudio = useCallback(() => {
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current.onended = null;
       audioRef.current.onerror = null;
       audioRef.current = null;
     }
-    if (blobUrlRef.current) {
-      URL.revokeObjectURL(blobUrlRef.current);
-      blobUrlRef.current = null;
-    }
   }, []);
 
+  const cleanupAll = useCallback(() => {
+    stopCurrentAudio();
+    for (const url of cacheRef.current.values()) {
+      URL.revokeObjectURL(url);
+    }
+    cacheRef.current.clear();
+  }, [stopCurrentAudio]);
+
   const stop = useCallback(() => {
-    cleanupAudio();
+    stopCurrentAudio();
     setIsPlaying(false);
     setCurrentMessageId(null);
     setIsLoading(false);
-  }, [cleanupAudio]);
+  }, [stopCurrentAudio]);
 
   const pause = useCallback(() => {
     if (audioRef.current && isPlaying) {
@@ -70,6 +75,33 @@ export function useVoicePlayback(): VoicePlaybackState {
       setIsPlaying(false);
     }
   }, [isPlaying]);
+
+  const playBlobUrl = useCallback((messageId: string, blobUrl: string) => {
+    const audio = new Audio(blobUrl);
+    audioRef.current = audio;
+
+    audio.onended = () => {
+      setIsPlaying(false);
+      setCurrentMessageId(null);
+      // Don't revoke — keep cached for replay
+      audioRef.current = null;
+    };
+
+    audio.onerror = () => {
+      setIsPlaying(false);
+      setCurrentMessageId(null);
+      audioRef.current = null;
+      // Remove broken cache entry
+      const cached = cacheRef.current.get(messageId);
+      if (cached) {
+        URL.revokeObjectURL(cached);
+        cacheRef.current.delete(messageId);
+      }
+    };
+
+    setCurrentMessageId(messageId);
+    return audio.play().then(() => setIsPlaying(true));
+  }, []);
 
   const play = useCallback(
     async (messageId: string, text: string) => {
@@ -86,7 +118,14 @@ export function useVoicePlayback(): VoicePlaybackState {
       }
 
       // Stop any current playback
-      cleanupAudio();
+      stopCurrentAudio();
+
+      // Check cache for this message
+      const cached = cacheRef.current.get(messageId);
+      if (cached) {
+        await playBlobUrl(messageId, cached);
+        return;
+      }
 
       setIsLoading(true);
       setCurrentMessageId(messageId);
@@ -109,40 +148,23 @@ export function useVoicePlayback(): VoicePlaybackState {
 
         const audioBlob = await response.blob();
         const blobUrl = URL.createObjectURL(audioBlob);
-        blobUrlRef.current = blobUrl;
-
-        const audio = new Audio(blobUrl);
-        audioRef.current = audio;
-
-        audio.onended = () => {
-          setIsPlaying(false);
-          setCurrentMessageId(null);
-          cleanupAudio();
-        };
-
-        audio.onerror = () => {
-          setIsPlaying(false);
-          setCurrentMessageId(null);
-          cleanupAudio();
-        };
+        cacheRef.current.set(messageId, blobUrl);
 
         setIsLoading(false);
-        await audio.play();
-        setIsPlaying(true);
+        await playBlobUrl(messageId, blobUrl);
       } catch {
         setIsLoading(false);
         setIsPlaying(false);
         setCurrentMessageId(null);
-        cleanupAudio();
       }
     },
-    [currentMessageId, isPlaying, cleanupAudio]
+    [currentMessageId, isPlaying, stopCurrentAudio, playBlobUrl]
   );
 
-  // Stop playback when the component unmounts (e.g. navigating away)
+  // Clean up all cached blob URLs when the component unmounts
   useEffect(() => {
-    return () => cleanupAudio();
-  }, [cleanupAudio]);
+    return () => cleanupAll();
+  }, [cleanupAll]);
 
   return {
     enabled: true,
