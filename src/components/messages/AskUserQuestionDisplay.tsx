@@ -135,9 +135,11 @@ export function AskUserQuestionDisplay({ tool }: { tool: ToolCall }) {
   const isRealError = tool.is_error && !isWaitingForInput;
   const isPending = !hasOutput || isWaitingForInput;
 
-  // The question is actionable if pending AND we have a way to respond
+  // The question is actionable if pending AND we have a way to respond.
+  // When there's a pending canUseTool request, Claude is technically "running" (paused waiting
+  // for our response), so we allow interaction even when isClaudeRunning is true.
   const isActionable =
-    isPending && !isClaudeRunning && (hasPendingRequest ? !!onRespond : !!onSendResponse);
+    isPending && (hasPendingRequest ? !!onRespond : !isClaudeRunning && !!onSendResponse);
 
   const questions = useMemo(() => {
     const inputObj = tool.input as AskUserQuestionInput | undefined;
