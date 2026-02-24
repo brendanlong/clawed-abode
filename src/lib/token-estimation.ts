@@ -49,6 +49,12 @@ export interface TokenUsageStats {
   percentUsed: number;
   /** Detected model name */
   model?: string;
+  /**
+   * Authoritative total cost in USD from result messages.
+   * Per the Anthropic Agent SDK docs, total_cost_usd in the result message
+   * is the authoritative cost figure for billing purposes.
+   */
+  totalCostUsd: number;
 }
 
 /**
@@ -86,6 +92,7 @@ const SystemInitSchema = z.object({
 const AssistantContentSchema = z.object({
   type: z.literal('assistant'),
   message: z.object({
+    id: z.string().optional(),
     usage: MessageUsageSchema.optional(),
     model: z.string().optional(),
   }),
@@ -96,6 +103,7 @@ const AssistantContentSchema = z.object({
  */
 const ResultContentSchema = z.object({
   type: z.literal('result'),
+  total_cost_usd: z.number().optional(),
   usage: ResultUsageSchema.optional(),
   modelUsage: z
     .record(
@@ -121,9 +129,13 @@ interface Message {
 }
 
 /**
- * Extract usage from an assistant message
+ * Extract usage from an assistant message.
+ * Returns the message id for deduplication — per the Anthropic docs, multiple
+ * assistant messages in the same step share the same id and identical usage.
+ * We should only count usage once per unique message id.
  */
 function extractAssistantUsage(content: unknown): {
+  messageId?: string;
   inputTokens: number;
   outputTokens: number;
   cacheReadTokens: number;
@@ -137,6 +149,7 @@ function extractAssistantUsage(content: unknown): {
 
   const usage = parsed.data.message.usage;
   return {
+    messageId: parsed.data.message.id,
     inputTokens: usage.input_tokens ?? 0,
     outputTokens: usage.output_tokens ?? 0,
     cacheReadTokens: usage.cache_read_input_tokens ?? 0,
@@ -146,7 +159,9 @@ function extractAssistantUsage(content: unknown): {
 }
 
 /**
- * Extract usage from a result message
+ * Extract usage from a result message.
+ * Per the Anthropic Agent SDK docs, the result message contains authoritative
+ * cumulative usage and total_cost_usd for billing purposes.
  */
 function extractResultUsage(content: unknown): {
   inputTokens: number;
@@ -154,11 +169,14 @@ function extractResultUsage(content: unknown): {
   cacheReadTokens: number;
   cacheCreationTokens: number;
   contextWindow?: number;
+  totalCostUsd?: number;
 } | null {
   const parsed = ResultContentSchema.safeParse(content);
   if (!parsed.success) {
     return null;
   }
+
+  const totalCostUsd = parsed.data.total_cost_usd;
 
   // Try to get usage from top-level usage field
   const usage = parsed.data.usage;
@@ -168,6 +186,7 @@ function extractResultUsage(content: unknown): {
       outputTokens: usage.output_tokens ?? 0,
       cacheReadTokens: usage.cache_read_input_tokens ?? 0,
       cacheCreationTokens: usage.cache_creation_input_tokens ?? 0,
+      totalCostUsd,
     };
   }
 
@@ -190,7 +209,25 @@ function extractResultUsage(content: unknown): {
       }
     }
 
-    return { inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, contextWindow };
+    return {
+      inputTokens,
+      outputTokens,
+      cacheReadTokens,
+      cacheCreationTokens,
+      contextWindow,
+      totalCostUsd,
+    };
+  }
+
+  // If we have a total_cost_usd but no usage breakdown, still return it
+  if (totalCostUsd !== undefined) {
+    return {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+      totalCostUsd,
+    };
   }
 
   return null;
@@ -245,6 +282,7 @@ export function estimateTokenUsage(messages: Message[]): TokenUsageStats {
   let totalOutputTokens = 0;
   let totalCacheReadTokens = 0;
   let totalCacheCreationTokens = 0;
+  let totalCostUsd = 0;
   let detectedModel: string | undefined;
   let detectedContextWindow: number | undefined;
 
@@ -264,7 +302,9 @@ export function estimateTokenUsage(messages: Message[]): TokenUsageStats {
     }
   }
 
-  // Sum up total consumed tokens from result messages (for cost tracking)
+  // Sum up total consumed tokens and cost from result messages.
+  // Per the Anthropic Agent SDK docs, result messages contain authoritative
+  // cumulative usage and total_cost_usd for billing purposes.
   const resultMessages = messages.filter((m) => m.type === 'result');
   for (const resultMsg of resultMessages) {
     const usage = extractResultUsage(resultMsg.content);
@@ -275,6 +315,9 @@ export function estimateTokenUsage(messages: Message[]): TokenUsageStats {
       totalCacheCreationTokens += usage.cacheCreationTokens;
       if (usage.contextWindow) {
         detectedContextWindow = usage.contextWindow;
+      }
+      if (usage.totalCostUsd !== undefined) {
+        totalCostUsd += usage.totalCostUsd;
       }
     }
   }
@@ -299,12 +342,24 @@ export function estimateTokenUsage(messages: Message[]): TokenUsageStats {
     }
   }
 
-  // If we have no result messages yet, sum assistant messages for total consumed tokens
+  // If we have no result messages yet, sum assistant messages for total consumed tokens.
+  // Per the Anthropic Agent SDK docs, multiple assistant messages in the same step
+  // share the same message id and identical usage. We deduplicate by message id
+  // to avoid double-counting.
   if (resultMessages.length === 0) {
+    const processedMessageIds = new Set<string>();
     for (const msg of messages) {
       if (msg.type === 'assistant') {
         const usage = extractAssistantUsage(msg.content);
         if (usage) {
+          // Skip if we've already processed this message ID (parallel tool uses
+          // share the same id and usage per Anthropic docs)
+          if (usage.messageId) {
+            if (processedMessageIds.has(usage.messageId)) {
+              continue;
+            }
+            processedMessageIds.add(usage.messageId);
+          }
           totalInputTokens += usage.inputTokens;
           totalOutputTokens += usage.outputTokens;
           totalCacheReadTokens += usage.cacheReadTokens;
@@ -339,6 +394,7 @@ export function estimateTokenUsage(messages: Message[]): TokenUsageStats {
     contextWindow,
     percentUsed: Math.min(percentUsed, 100), // Cap at 100%
     model: detectedModel,
+    totalCostUsd,
   };
 }
 
