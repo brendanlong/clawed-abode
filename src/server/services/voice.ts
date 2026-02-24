@@ -11,6 +11,12 @@ const GLOBAL_SETTINGS_ID = 'global';
 
 const TTS_MAX_CHARS = 4096;
 
+/**
+ * Target chunk size for streaming TTS. Small enough for low-latency first audio
+ * (~1-2 sentences), while still sending meaningful text to the TTS model.
+ */
+export const TTS_STREAM_TARGET_CHARS = 200;
+
 const TRANSFORM_PROMPT = `You are converting markdown text into natural speech. The text will be read aloud by a text-to-speech system.
 
 Rules:
@@ -122,11 +128,23 @@ export function splitTextAtWordBoundary(text: string, maxLength: number): [strin
 }
 
 /**
- * Split text into chunks that fit within TTS character limits.
- * Splits on paragraph boundaries when possible, then sentences, then word boundaries.
+ * Split text into chunks for TTS generation.
+ *
+ * @param text - The text to split.
+ * @param targetSize - Target chunk size in characters. Defaults to TTS_MAX_CHARS (4096).
+ *   For streaming TTS, pass TTS_STREAM_TARGET_CHARS (~200) for low-latency first audio.
+ *   Chunks will generally be at or below this size, except when a single sentence
+ *   exceeds it (sentences are never split unless they exceed the TTS API hard limit).
+ *
+ * Splitting hierarchy:
+ * 1. Paragraph boundaries (\n\n)
+ * 2. Sentence boundaries (after . ! ?)
+ * 3. Word boundaries (last resort, only when a sentence exceeds TTS_MAX_CHARS)
  */
-export function splitTextForTTS(text: string): string[] {
-  if (text.length <= TTS_MAX_CHARS) {
+export function splitTextForTTS(text: string, targetSize: number = TTS_MAX_CHARS): string[] {
+  const target = Math.min(targetSize, TTS_MAX_CHARS);
+
+  if (text.length <= target) {
     return [text];
   }
 
@@ -135,21 +153,21 @@ export function splitTextForTTS(text: string): string[] {
   let current = '';
 
   for (const paragraph of paragraphs) {
-    if (current.length + paragraph.length + 2 > TTS_MAX_CHARS) {
+    if (current.length + paragraph.length + 2 > target) {
       if (current) {
         chunks.push(current.trim());
         current = '';
       }
-      // If a single paragraph exceeds the limit, split it by sentences
-      if (paragraph.length > TTS_MAX_CHARS) {
+      // If a single paragraph exceeds the target, split it by sentences
+      if (paragraph.length > target) {
         const sentences = paragraph.split(/(?<=[.!?])\s+/);
         for (const sentence of sentences) {
-          if (current.length + sentence.length + 1 > TTS_MAX_CHARS) {
+          if (current.length + sentence.length + 1 > target) {
             if (current) {
               chunks.push(current.trim());
               current = '';
             }
-            // If even a single sentence is too long, split at word boundaries
+            // Only split within a sentence if it exceeds the TTS API hard limit
             if (sentence.length > TTS_MAX_CHARS) {
               let remaining = sentence;
               while (remaining.length > TTS_MAX_CHARS) {

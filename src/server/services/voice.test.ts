@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { needsTransformation, splitTextForTTS, splitTextAtWordBoundary } from './voice';
+import {
+  needsTransformation,
+  splitTextForTTS,
+  splitTextAtWordBoundary,
+  TTS_STREAM_TARGET_CHARS,
+} from './voice';
 
 describe('needsTransformation', () => {
   it('should return true for text with markdown tables', () => {
@@ -135,5 +140,62 @@ describe('splitTextForTTS', () => {
     const totalChars = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
     // Allow for whitespace differences but total content should be close
     expect(totalChars).toBeGreaterThanOrEqual(longSentence.length * 0.95);
+  });
+
+  it('should accept a custom targetSize for smaller streaming chunks', () => {
+    const text =
+      'First sentence here. Second sentence here. Third sentence here. Fourth sentence here.';
+    // With default (4096), this short text is one chunk
+    expect(splitTextForTTS(text)).toHaveLength(1);
+    // With a small target, it should split into multiple chunks
+    const chunks = splitTextForTTS(text, 50);
+    expect(chunks.length).toBeGreaterThan(1);
+    // All content should be preserved
+    expect(chunks.join(' ')).toBe(text);
+  });
+
+  it('should split at sentence boundaries with streaming target', () => {
+    const text =
+      'I made the changes you requested. The function now handles edge cases. ' +
+      'Here is what I changed. First I added input validation. Second I updated error handling. ' +
+      'Third I added a test case for the empty input scenario. Let me know if you want adjustments.';
+    const chunks = splitTextForTTS(text, TTS_STREAM_TARGET_CHARS);
+    expect(chunks.length).toBeGreaterThan(1);
+    // Each chunk should end at a sentence boundary (or be the last chunk)
+    for (const chunk of chunks.slice(0, -1)) {
+      expect(chunk).toMatch(/[.!?]$/);
+    }
+    // No chunk should exceed the TTS API hard limit
+    for (const chunk of chunks) {
+      expect(chunk.length).toBeLessThanOrEqual(4096);
+    }
+  });
+
+  it('should keep single sentences intact even if they exceed targetSize', () => {
+    // A single sentence of ~300 chars (exceeds TTS_STREAM_TARGET_CHARS but below TTS_MAX_CHARS)
+    const longSentence =
+      'This is a single sentence that is deliberately quite long because we want to make sure ' +
+      'that the splitting function does not break it apart at word boundaries just because it ' +
+      'exceeds the streaming target size, since that would create unnatural speech breaks.';
+    expect(longSentence.length).toBeGreaterThan(TTS_STREAM_TARGET_CHARS);
+    const chunks = splitTextForTTS(longSentence, TTS_STREAM_TARGET_CHARS);
+    // Should be kept as one chunk since it's a single sentence under 4096
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0]).toBe(longSentence);
+  });
+
+  it('should produce multiple chunks from typical assistant messages with streaming target', () => {
+    const text =
+      'I have completed the implementation. The new feature adds user authentication ' +
+      'using JWT tokens. I created three new files for this. The auth middleware validates ' +
+      'tokens on each request. The login endpoint generates new tokens. The refresh endpoint ' +
+      'handles token renewal. All tests are passing. Let me know if you need any changes.';
+    const chunks = splitTextForTTS(text, TTS_STREAM_TARGET_CHARS);
+    // Should produce multiple chunks for good streaming latency (text is ~330 chars)
+    expect(chunks.length).toBeGreaterThanOrEqual(2);
+    // Each chunk should be reasonably small
+    for (const chunk of chunks) {
+      expect(chunk.length).toBeLessThanOrEqual(TTS_STREAM_TARGET_CHARS + 100);
+    }
   });
 });
