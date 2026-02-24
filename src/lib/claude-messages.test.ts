@@ -542,20 +542,28 @@ describe('claude-messages', () => {
       }
     });
 
-    it('should parse generic system messages (status, hooks, etc.)', () => {
+    it('should parse generic system messages and preserve extra fields', () => {
       const statusMessage = {
         type: 'system',
         subtype: 'status',
         status: 'compacting',
+        permissionMode: 'bypassPermissions',
         uuid: 'uuid-1',
         session_id: 'session-1',
       };
 
       const result = parseClaudeStreamLine(statusMessage);
       expect(result.success).toBe(true);
+      if (result.success) {
+        // Passthrough should preserve extra fields like status and permissionMode
+        const data = result.data as Record<string, unknown>;
+        expect(data.status).toBe('compacting');
+        expect(data.permissionMode).toBe('bypassPermissions');
+        expect(data.uuid).toBe('uuid-1');
+      }
     });
 
-    it('should parse tool_progress messages', () => {
+    it('should parse tool_progress messages and preserve original fields', () => {
       const json = {
         type: 'tool_progress',
         tool_use_id: 'tool-1',
@@ -568,6 +576,14 @@ describe('claude-messages', () => {
 
       const result = parseClaudeStreamLine(json);
       expect(result.success).toBe(true);
+      if (result.success) {
+        // Original fields should be preserved via passthrough
+        const data = result.data as Record<string, unknown>;
+        expect(data.subtype).toBe('tool_progress');
+        expect(data.tool_use_id).toBe('tool-1');
+        expect(data.tool_name).toBe('Bash');
+        expect(data.elapsed_time_seconds).toBe(5);
+      }
     });
 
     it('should parse tool_use_summary messages', () => {
