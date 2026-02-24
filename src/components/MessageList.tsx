@@ -257,19 +257,9 @@ function getLatestPlanContent(messages: Message[]): string | null {
   return planContent || null;
 }
 
-// Extract total cost from result messages
-function getTotalCostUsd(messages: Message[]): number {
-  let totalCost = 0;
-  for (const msg of messages) {
-    if (msg.type === 'result') {
-      const content = msg.content as { total_cost_usd?: number } | undefined;
-      if (typeof content?.total_cost_usd === 'number') {
-        totalCost += content.total_cost_usd;
-      }
-    }
-  }
-  return totalCost;
-}
+// Total cost is now provided by tokenUsage.totalCostUsd from the server-side
+// estimateTokenUsage function, which uses the authoritative total_cost_usd
+// from result messages per Anthropic's cost tracking docs.
 
 interface MessageListProps {
   messages: Message[];
@@ -342,8 +332,7 @@ export function MessageList({
     return todoIds.length > 0 ? todoIds[todoIds.length - 1] : null;
   }, [messages]);
 
-  // Calculate total cost from result messages
-  const totalCostUsd = useMemo(() => getTotalCostUsd(messages), [messages]);
+  // Total cost comes from tokenUsage (server-computed from authoritative result messages)
 
   // Track the latest plan content from Write/Edit calls to plan files
   const latestPlanContent = useMemo(() => getLatestPlanContent(messages), [messages]);
@@ -494,7 +483,7 @@ export function MessageList({
       {/* Context usage indicator - positioned in bottom right */}
       <ContextUsageIndicator
         stats={tokenUsage}
-        totalCostUsd={totalCostUsd}
+        totalCostUsd={tokenUsage?.totalCostUsd}
         className="absolute bottom-3 right-3 shadow-sm"
       />
     </div>
