@@ -15,6 +15,7 @@ export interface VoicePlaybackState {
   play: (messageId: string, text: string) => Promise<void>;
   pause: () => void;
   stop: () => void;
+  restart: () => Promise<void>;
 }
 
 const defaultPlaybackState: VoicePlaybackState = {
@@ -25,6 +26,7 @@ const defaultPlaybackState: VoicePlaybackState = {
   play: async () => {},
   pause: () => {},
   stop: () => {},
+  restart: async () => {},
 };
 
 export const VoicePlaybackContext = createContext<VoicePlaybackState>(defaultPlaybackState);
@@ -75,6 +77,14 @@ export function useVoicePlayback(): VoicePlaybackState {
       setIsPlaying(false);
     }
   }, [isPlaying]);
+
+  const restart = useCallback(async () => {
+    if (audioRef.current) {
+      audioRef.current.currentTime = 0;
+      await audioRef.current.play();
+      setIsPlaying(true);
+    }
+  }, []);
 
   const playBlobUrl = useCallback((messageId: string, blobUrl: string) => {
     const audio = new Audio(blobUrl);
@@ -174,5 +184,6 @@ export function useVoicePlayback(): VoicePlaybackState {
     play,
     pause,
     stop,
+    restart,
   };
 }
