@@ -110,6 +110,11 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/b
 # Install Fly CLI (system-wide)
 RUN curl -L https://fly.io/install.sh | FLYCTL_INSTALL=/usr/local sh
 
+# Cache breaker for tools that update frequently (e.g., Claude Code)
+# Pass --build-arg CACHE_BREAKER=$(date -u +%Y%m%d) to force a rebuild of
+# this and all subsequent layers. Without the arg, normal Docker caching applies.
+ARG CACHE_BREAKER
+
 # Enable corepack for pnpm (built into Node.js) and install Claude Code
 # This is placed late because Claude Code updates frequently, and we want to
 # preserve cache for the slow Android SDK layers above
