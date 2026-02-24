@@ -1,6 +1,16 @@
 'use client';
 
-import { useState, useRef, useCallback, useEffect, createContext, useContext } from 'react';
+import {
+  useState,
+  useRef,
+  useCallback,
+  useEffect,
+  createContext,
+  useContext,
+  useMemo,
+} from 'react';
+import { isMSESupported, StreamingAudioPlayer } from '@/lib/streaming-audio-player';
+import { startTTSStream, TTSStreamHandle } from '@/lib/tts-stream-client';
 
 function getAuthToken(): string | null {
   if (typeof window === 'undefined') return null;
@@ -35,19 +45,54 @@ export function useVoicePlaybackContext() {
   return useContext(VoicePlaybackContext);
 }
 
+/** Cached AAC chunks for a message, indexed by chunk number. */
+interface CachedAudio {
+  chunks: Uint8Array[];
+}
+
 /**
  * Hook that manages audio playback state for voice TTS.
- * Handles the text -> TTS -> play pipeline with per-message blob caching.
+ *
+ * When MSE is supported (most desktop browsers, Android Chrome), uses streaming
+ * playback via /api/voice/speak-stream SSE endpoint for low-latency first audio.
+ *
+ * When MSE is not supported (iPhone Safari), falls back to the existing
+ * blob-based approach via /api/voice/speak.
  */
 export function useVoicePlayback(): VoicePlaybackState {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentMessageId, setCurrentMessageId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  // Cache of messageId -> blob URL, persists until unmount
-  const cacheRef = useRef<Map<string, string>>(new Map());
 
-  const stopCurrentAudio = useCallback(() => {
+  // MSE streaming refs
+  const streamHandleRef = useRef<TTSStreamHandle | null>(null);
+  const playerRef = useRef<StreamingAudioPlayer | null>(null);
+  // Cache: messageId -> raw AAC chunks
+  const mseCacheRef = useRef<Map<string, CachedAudio>>(new Map());
+
+  // Legacy blob refs (fallback for non-MSE browsers)
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const blobCacheRef = useRef<Map<string, string>>(new Map());
+
+  const mseSupported = useMemo(() => {
+    if (typeof window === 'undefined') return false;
+    return isMSESupported();
+  }, []);
+
+  // --- Shared cleanup helpers ---
+
+  const stopStreamPlayback = useCallback(() => {
+    if (streamHandleRef.current) {
+      streamHandleRef.current.abort();
+      streamHandleRef.current = null;
+    }
+    if (playerRef.current) {
+      playerRef.current.destroy();
+      playerRef.current = null;
+    }
+  }, []);
+
+  const stopLegacyPlayback = useCallback(() => {
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current.onended = null;
@@ -56,12 +101,19 @@ export function useVoicePlayback(): VoicePlaybackState {
     }
   }, []);
 
+  const stopCurrentAudio = useCallback(() => {
+    stopStreamPlayback();
+    stopLegacyPlayback();
+  }, [stopStreamPlayback, stopLegacyPlayback]);
+
   const cleanupAll = useCallback(() => {
     stopCurrentAudio();
-    for (const url of cacheRef.current.values()) {
+    // Revoke blob URLs
+    for (const url of blobCacheRef.current.values()) {
       URL.revokeObjectURL(url);
     }
-    cacheRef.current.clear();
+    blobCacheRef.current.clear();
+    mseCacheRef.current.clear();
   }, [stopCurrentAudio]);
 
   const stop = useCallback(() => {
@@ -72,19 +124,28 @@ export function useVoicePlayback(): VoicePlaybackState {
   }, [stopCurrentAudio]);
 
   const pause = useCallback(() => {
-    if (audioRef.current && isPlaying) {
-      audioRef.current.pause();
+    if (isPlaying) {
+      if (playerRef.current) {
+        playerRef.current.pause();
+      } else if (audioRef.current) {
+        audioRef.current.pause();
+      }
       setIsPlaying(false);
     }
   }, [isPlaying]);
 
   const restart = useCallback(async () => {
-    if (audioRef.current) {
+    if (playerRef.current) {
+      playerRef.current.restart();
+      setIsPlaying(true);
+    } else if (audioRef.current) {
       audioRef.current.currentTime = 0;
       await audioRef.current.play();
       setIsPlaying(true);
     }
   }, []);
+
+  // --- Legacy blob playback (iPhone Safari fallback) ---
 
   const playBlobUrl = useCallback((messageId: string, blobUrl: string) => {
     const audio = new Audio(blobUrl);
@@ -93,7 +154,6 @@ export function useVoicePlayback(): VoicePlaybackState {
     audio.onended = () => {
       setIsPlaying(false);
       setCurrentMessageId(null);
-      // Don't revoke — keep cached for replay
       audioRef.current = null;
     };
 
@@ -101,11 +161,10 @@ export function useVoicePlayback(): VoicePlaybackState {
       setIsPlaying(false);
       setCurrentMessageId(null);
       audioRef.current = null;
-      // Remove broken cache entry
-      const cached = cacheRef.current.get(messageId);
+      const cached = blobCacheRef.current.get(messageId);
       if (cached) {
         URL.revokeObjectURL(cached);
-        cacheRef.current.delete(messageId);
+        blobCacheRef.current.delete(messageId);
       }
     };
 
@@ -113,25 +172,10 @@ export function useVoicePlayback(): VoicePlaybackState {
     return audio.play().then(() => setIsPlaying(true));
   }, []);
 
-  const play = useCallback(
+  const playLegacy = useCallback(
     async (messageId: string, text: string) => {
-      // If we're playing the same message, toggle pause/play
-      if (currentMessageId === messageId && audioRef.current) {
-        if (isPlaying) {
-          audioRef.current.pause();
-          setIsPlaying(false);
-        } else {
-          await audioRef.current.play();
-          setIsPlaying(true);
-        }
-        return;
-      }
-
-      // Stop any current playback
-      stopCurrentAudio();
-
-      // Check cache for this message
-      const cached = cacheRef.current.get(messageId);
+      // Check blob cache
+      const cached = blobCacheRef.current.get(messageId);
       if (cached) {
         await playBlobUrl(messageId, cached);
         return;
@@ -158,7 +202,7 @@ export function useVoicePlayback(): VoicePlaybackState {
 
         const audioBlob = await response.blob();
         const blobUrl = URL.createObjectURL(audioBlob);
-        cacheRef.current.set(messageId, blobUrl);
+        blobCacheRef.current.set(messageId, blobUrl);
 
         setIsLoading(false);
         await playBlobUrl(messageId, blobUrl);
@@ -168,10 +212,145 @@ export function useVoicePlayback(): VoicePlaybackState {
         setCurrentMessageId(null);
       }
     },
-    [currentMessageId, isPlaying, stopCurrentAudio, playBlobUrl]
+    [playBlobUrl]
   );
 
-  // Clean up all cached blob URLs when the component unmounts
+  // --- MSE streaming playback ---
+
+  const playCachedMSE = useCallback((messageId: string, cached: CachedAudio) => {
+    // Replay cached AAC chunks through a fresh player
+    const player = new StreamingAudioPlayer({
+      onPlaying: () => setIsPlaying(true),
+      onEnded: () => {
+        setIsPlaying(false);
+        setCurrentMessageId(null);
+        playerRef.current = null;
+      },
+      onError: () => {
+        setIsPlaying(false);
+        setCurrentMessageId(null);
+        playerRef.current = null;
+        mseCacheRef.current.delete(messageId);
+      },
+    });
+    playerRef.current = player;
+    setCurrentMessageId(messageId);
+
+    // Feed all cached chunks synchronously, then finalize
+    (async () => {
+      for (const chunk of cached.chunks) {
+        await player.appendChunk(chunk);
+      }
+      await player.finalize();
+    })().catch(() => {
+      setIsPlaying(false);
+      setCurrentMessageId(null);
+    });
+  }, []);
+
+  const playStreaming = useCallback((messageId: string, text: string) => {
+    setIsLoading(true);
+    setCurrentMessageId(messageId);
+    setIsPlaying(false);
+
+    const collectedChunks: Uint8Array[] = [];
+
+    const handle = startTTSStream({
+      text,
+      token: getAuthToken(),
+      onChunk: (_index, aacData) => {
+        collectedChunks.push(aacData);
+      },
+      playerCallbacks: {
+        onPlaying: () => {
+          setIsLoading(false);
+          setIsPlaying(true);
+        },
+        onEnded: () => {
+          setIsPlaying(false);
+          setCurrentMessageId(null);
+          streamHandleRef.current = null;
+          playerRef.current = null;
+        },
+        onError: () => {
+          setIsPlaying(false);
+          setIsLoading(false);
+          setCurrentMessageId(null);
+          streamHandleRef.current = null;
+          playerRef.current = null;
+          // Discard partial cache
+          mseCacheRef.current.delete(messageId);
+        },
+      },
+    });
+
+    streamHandleRef.current = handle;
+    playerRef.current = handle.player;
+
+    // When the stream finishes, save collected chunks to cache
+    handle.done
+      .then(() => {
+        if (collectedChunks.length > 0) {
+          mseCacheRef.current.set(messageId, { chunks: collectedChunks });
+        }
+      })
+      .catch(() => {
+        // Stream was aborted or errored — partial cache already discarded
+      });
+  }, []);
+
+  // --- Main play function ---
+
+  const play = useCallback(
+    async (messageId: string, text: string) => {
+      // If we're playing the same message, toggle pause/play
+      if (currentMessageId === messageId) {
+        if (isPlaying) {
+          if (playerRef.current) {
+            playerRef.current.pause();
+          } else if (audioRef.current) {
+            audioRef.current.pause();
+          }
+          setIsPlaying(false);
+        } else {
+          if (playerRef.current) {
+            playerRef.current.resume();
+            setIsPlaying(true);
+          } else if (audioRef.current) {
+            await audioRef.current.play();
+            setIsPlaying(true);
+          }
+        }
+        return;
+      }
+
+      // Stop any current playback
+      stopCurrentAudio();
+
+      if (mseSupported) {
+        // Check MSE cache
+        const cached = mseCacheRef.current.get(messageId);
+        if (cached) {
+          playCachedMSE(messageId, cached);
+          return;
+        }
+        playStreaming(messageId, text);
+      } else {
+        await playLegacy(messageId, text);
+      }
+    },
+    [
+      currentMessageId,
+      isPlaying,
+      stopCurrentAudio,
+      mseSupported,
+      playCachedMSE,
+      playStreaming,
+      playLegacy,
+    ]
+  );
+
+  // Clean up on unmount
   useEffect(() => {
     return () => cleanupAll();
   }, [cleanupAll]);

@@ -534,8 +534,27 @@ Voice mode provides speech-to-text input and text-to-speech output for hands-fre
 **Architecture**:
 
 - **Voice input**: Browser MediaRecorder captures audio → sent to `/api/voice/transcribe` → OpenAI `gpt-4o-mini-transcribe` → transcript inserted into prompt input
-- **Voice output**: Text from assistant message → optionally transformed by Claude Sonnet (if markdown detected) → sent to `/api/voice/speak` → OpenAI `tts-1` → streamed audio playback in browser
+- **Voice output (streaming, MSE)**: Text from assistant message → optionally transformed by Claude Sonnet → sent to `/api/voice/speak-stream` SSE endpoint → each text chunk generates AAC audio via OpenAI `tts-1` → raw AAC streamed as base64 SSE events → client wraps AAC into fMP4 via `mse-audio-wrapper` → `MediaSource` + `SourceBuffer` for gapless playback. First audio plays as soon as the first TTS chunk completes.
+- **Voice output (legacy fallback)**: When MSE is not supported (iPhone Safari), falls back to `/api/voice/speak` which buffers all audio before playback.
 - **API routes**: Voice endpoints use Next.js API routes (not tRPC) since they handle binary audio data and multipart form uploads
+
+**Streaming TTS SSE Protocol**:
+
+```
+event: metadata
+data: {"totalChunks": 3, "mimeType": "audio/aac"}
+
+event: chunk
+data: {"index": 0, "audio": "<base64 raw AAC>"}
+
+event: chunk
+data: {"index": 1, "audio": "<base64 raw AAC>"}
+
+event: done
+data: {}
+```
+
+On error: `event: error` with `data: {"message": "TTS failed for chunk N"}`
 
 **Components**:
 
@@ -547,11 +566,11 @@ Voice mode provides speech-to-text input and text-to-speech output for hands-fre
 
 - `useVoiceConfig`: Queries voice configuration (enabled status) and manages auto-read preference per session (localStorage)
 - `useVoiceRecording`: MediaRecorder lifecycle, audio capture, and transcription
-- `useVoicePlayback`: Central playback state via React Context, manages Audio element and blob URLs
+- `useVoicePlayback`: Central playback state via React Context. When MSE is supported, uses `StreamingAudioPlayer` and `startTTSStream()` for streaming playback; falls back to blob URLs on unsupported browsers (iPhone Safari).
 
 **Text transformation**: When the Anthropic API key is configured, text with markdown (tables, code blocks, headers, links, bullet lists) is transformed into natural speech via Claude Sonnet before being sent to TTS. This is detected by `needsTransformation()` in the voice service.
 
-**Implementation**: See [`src/server/services/voice.ts`](../src/server/services/voice.ts) for the voice service, [`src/app/api/voice/`](../src/app/api/voice/) for API routes, and [`src/components/voice/`](../src/components/voice/) for UI components.
+**Implementation**: See [`src/server/services/voice.ts`](../src/server/services/voice.ts) for the voice service, [`src/app/api/voice/`](../src/app/api/voice/) for API routes, [`src/lib/streaming-audio-player.ts`](../src/lib/streaming-audio-player.ts) for MSE playback, [`src/lib/tts-stream-client.ts`](../src/lib/tts-stream-client.ts) for the SSE client, and [`src/components/voice/`](../src/components/voice/) for UI components.
 
 ## UI Screens
 
@@ -631,8 +650,11 @@ clawed-abode/
 │   │   ├── auth.ts               # Authentication utilities
 │   │   ├── crypto.ts             # Encryption/decryption (AES-256-GCM)
 │   │   ├── logger.ts             # Centralized logging (createLogger)
+│   │   ├── mse-audio-wrapper.d.ts # Type declarations for mse-audio-wrapper
 │   │   ├── prisma.ts             # Prisma client initialization
+│   │   ├── streaming-audio-player.ts # MSE playback lifecycle for streaming TTS
 │   │   ├── trpc.ts               # tRPC client setup
+│   │   ├── tts-stream-client.ts  # SSE client for TTS streaming
 │   │   └── types.ts              # Global TypeScript types
 │   ├── hooks/                    # React hooks (session state, messages, etc.)
 │   ├── app/
@@ -641,7 +663,7 @@ clawed-abode/
 │   │   ├── session/[id]/page.tsx # Session view
 │   │   ├── settings/page.tsx     # Settings
 │   │   ├── login/page.tsx
-│   │   └── api/voice/           # Voice API routes (transcribe, speak)
+│   │   └── api/voice/           # Voice API routes (transcribe, speak, speak-stream)
 │   └── components/
 │       ├── MessageList.tsx
 │       ├── PromptInput.tsx
