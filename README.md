@@ -517,6 +517,42 @@ The application uses NVIDIA Container Toolkit with CDI (Container Device Interfa
 
    This should display your GPU information if everything is configured correctly.
 
+### Android Device Access (ADB)
+
+Runner containers include the Android SDK with ADB, build tools, and JDK 17 pre-installed. To use a physical Android device plugged into your host machine, you can forward ADB over the host network — no code changes required.
+
+**Setup:**
+
+1. **Install ADB on the host** (if not already installed):
+
+   ```bash
+   # Ubuntu/Debian
+   sudo apt-get install -y android-tools-adb
+
+   # Fedora
+   sudo dnf install -y android-tools
+   ```
+
+2. **Start the ADB server on the host** with the device plugged in:
+
+   ```bash
+   adb start-server
+   adb devices   # Verify your device appears and is authorized
+   ```
+
+3. **Use ADB from runner containers** — since containers use host networking by default (`CONTAINER_NETWORK_MODE=host`), they share the host's network namespace. The ADB client inside the container connects to the host's ADB server on `localhost:5037` automatically:
+
+   ```
+   # Inside a Claude session, just run:
+   adb devices
+   ```
+
+**Notes:**
+
+- The host ADB server must be running before the container tries to use `adb`. If you plug in the device later, run `adb start-server` on the host.
+- If you switch to `bridge` or `pasta` networking, you'll need to set `ADB_SERVER_SOCKET=tcp:host.containers.internal:5037` in the container environment or configure port forwarding for port 5037.
+- Multiple runner containers can share the same ADB server, but only one can use a device at a time for operations like `adb install` or `adb logcat`.
+
 ### Rootless Podman Setup
 
 For rootless operation (recommended for security):
