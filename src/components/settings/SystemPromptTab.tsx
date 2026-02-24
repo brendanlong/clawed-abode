@@ -779,10 +779,17 @@ function TtsSpeedSection({
         onValueChange={handleChange}
         onValueCommit={handleCommit}
       />
-      <div className="flex justify-between text-xs text-muted-foreground">
-        <span>0.25x</span>
-        <span>1.0x</span>
-        <span>4.0x</span>
+      <div className="relative text-xs text-muted-foreground">
+        <div className="flex justify-between">
+          <span>0.25x</span>
+          <span>4.0x</span>
+        </div>
+        <span
+          className="absolute -translate-x-1/2"
+          style={{ left: `${((1.0 - 0.25) / (4.0 - 0.25)) * 100}%` }}
+        >
+          1.0x
+        </span>
       </div>
       {error && <p className="text-sm text-destructive">{error}</p>}
     </div>
