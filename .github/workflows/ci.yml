@@ -203,11 +203,17 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=
 
+      - name: Compute weekly cache breaker
+        id: cache-breaker
+        run: echo "value=$(date -u +%Y-W%W)" >> "$GITHUB_OUTPUT"
+
       - name: Build and push runner image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./docker/Dockerfile.claude-code
+          build-args: |
+            CACHE_BREAKER=${{ steps.cache-breaker.outputs.value }}
           push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
