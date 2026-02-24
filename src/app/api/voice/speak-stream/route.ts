@@ -8,6 +8,7 @@ import {
   transformTextForSpeech,
   splitTextForTTS,
   generateSpeechChunk,
+  ttsVoiceSchema,
 } from '@/server/services/voice';
 import { createLogger } from '@/lib/logger';
 
@@ -15,10 +16,8 @@ const log = createLogger('api:voice:speak-stream');
 
 const speakStreamInputSchema = z.object({
   text: z.string().min(1).max(100000),
-  voice: z.string().optional(),
+  voice: ttsVoiceSchema.optional(),
 });
-
-type TTSVoice = 'alloy' | 'echo' | 'fable' | 'onyx' | 'nova' | 'shimmer';
 
 function sseEvent(event: string, data: unknown): string {
   return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
@@ -60,7 +59,7 @@ export async function POST(req: Request) {
   }
 
   let { text } = parsed.data;
-  const voice = (parsed.data.voice ?? 'nova') as TTSVoice;
+  const voice = parsed.data.voice ?? 'nova';
 
   // Optionally transform text for speech using Claude Sonnet
   if (needsTransformation(text)) {
