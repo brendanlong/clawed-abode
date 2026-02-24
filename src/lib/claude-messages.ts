@@ -223,12 +223,16 @@ export type SystemCompactBoundaryContent = z.infer<typeof SystemCompactBoundaryC
 
 /**
  * Generic system content (for other subtypes like status, hook_started, hook_response, etc.)
+ * Uses passthrough() to preserve all properties from the original message, since different
+ * system subtypes have varying fields (e.g., hook_id, status, task_id, etc.).
  */
-export const SystemGenericContentSchema = z.object({
-  type: z.literal('system'),
-  subtype: z.string().optional(),
-  content: z.unknown().optional(),
-});
+export const SystemGenericContentSchema = z
+  .object({
+    type: z.literal('system'),
+    subtype: z.string().optional(),
+    content: z.unknown().optional(),
+  })
+  .passthrough();
 export type SystemGenericContent = z.infer<typeof SystemGenericContentSchema>;
 
 /**
