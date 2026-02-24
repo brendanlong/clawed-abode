@@ -1,5 +1,5 @@
 import { verifyApiAuth } from '@/lib/api-auth';
-import { getOpenaiApiKey, transcribeAudio } from '@/server/services/voice';
+import { getOpenaiSettings, transcribeAudio } from '@/server/services/voice';
 import { createLogger } from '@/lib/logger';
 
 const log = createLogger('api:voice:transcribe');
@@ -13,8 +13,8 @@ export async function POST(req: Request) {
     });
   }
 
-  const apiKey = await getOpenaiApiKey();
-  if (!apiKey) {
+  const openaiSettings = await getOpenaiSettings();
+  if (!openaiSettings) {
     return new Response(JSON.stringify({ error: 'OpenAI API key not configured' }), {
       status: 400,
       headers: { 'Content-Type': 'application/json' },
@@ -32,7 +32,7 @@ export async function POST(req: Request) {
       });
     }
 
-    const text = await transcribeAudio(audioBlob, apiKey);
+    const text = await transcribeAudio(audioBlob, openaiSettings.apiKey);
 
     return new Response(JSON.stringify({ text }), {
       headers: { 'Content-Type': 'application/json' },

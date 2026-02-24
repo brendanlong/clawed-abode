@@ -18,6 +18,7 @@ import {
 } from '@/components/ui/command';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { trpc } from '@/lib/trpc';
+import { Slider } from '@/components/ui/slider';
 import { ChevronDown, ChevronRight, RotateCcw, Check, X, ChevronsUpDown } from 'lucide-react';
 import { GlobalEnvVarsCard, GlobalMcpServersCard } from './GlobalSettingsTab';
 import { cn } from '@/lib/utils';
@@ -90,6 +91,19 @@ export function SystemPromptTab() {
         </CardHeader>
         <CardContent>
           <OpenaiApiKeySection hasKey={settings?.hasOpenaiApiKey ?? false} onUpdate={refetch} />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>TTS Speed</CardTitle>
+          <CardDescription>
+            Controls how fast the text-to-speech voice speaks. Range: 0.25x (very slow) to 4.0x
+            (very fast). Default is 1.0x.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <TtsSpeedSection currentSpeed={settings?.ttsSpeed ?? null} onUpdate={refetch} />
         </CardContent>
       </Card>
 
@@ -707,6 +721,70 @@ function OpenaiApiKeySection({ hasKey, onUpdate }: { hasKey: boolean; onUpdate: 
           </Button>
         )}
       </div>
+    </div>
+  );
+}
+
+function TtsSpeedSection({
+  currentSpeed,
+  onUpdate,
+}: {
+  currentSpeed: number | null;
+  onUpdate: () => void;
+}) {
+  const [editValue, setEditValue] = useState(currentSpeed ?? 1.0);
+  const [error, setError] = useState<string | null>(null);
+
+  const mutation = trpc.globalSettings.setTtsSpeed.useMutation({
+    onSuccess: () => onUpdate(),
+    onError: (err) => setError(err.message),
+  });
+
+  const handleChange = (value: number[]) => {
+    setEditValue(value[0]);
+  };
+
+  const handleCommit = (value: number[]) => {
+    setError(null);
+    mutation.mutate({ ttsSpeed: value[0] });
+  };
+
+  const handleReset = () => {
+    setError(null);
+    setEditValue(1.0);
+    mutation.mutate({ ttsSpeed: null });
+  };
+
+  const displaySpeed = editValue;
+  const isDefault = currentSpeed === null;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <code className="text-sm font-mono bg-muted px-2 py-1 rounded">{displaySpeed}x</code>
+          {isDefault && <span className="text-xs text-muted-foreground">(default)</span>}
+        </div>
+        {!isDefault && (
+          <Button variant="outline" size="sm" onClick={handleReset} disabled={mutation.isPending}>
+            {mutation.isPending ? <Spinner size="sm" /> : 'Reset to Default'}
+          </Button>
+        )}
+      </div>
+      <Slider
+        value={[displaySpeed]}
+        min={0.25}
+        max={4.0}
+        step={0.25}
+        onValueChange={handleChange}
+        onValueCommit={handleCommit}
+      />
+      <div className="flex justify-between text-xs text-muted-foreground">
+        <span>0.25x</span>
+        <span>1.0x</span>
+        <span>4.0x</span>
+      </div>
+      {error && <p className="text-sm text-destructive">{error}</p>}
     </div>
   );
 }
