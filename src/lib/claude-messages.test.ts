@@ -8,6 +8,7 @@ import {
   UserContentSchema,
   SystemInitContentSchema,
   SystemErrorContentSchema,
+  SystemCompactBoundaryContentSchema,
   ResultContentSchema,
   StoredMessageSchema,
   parseStoredMessage,
@@ -187,6 +188,60 @@ describe('claude-messages', () => {
       });
     });
 
+    describe('SystemCompactBoundaryContentSchema', () => {
+      it('should parse compact boundary message', () => {
+        const content = {
+          type: 'system',
+          subtype: 'compact_boundary',
+          compact_metadata: {
+            trigger: 'manual',
+            pre_tokens: 45000,
+          },
+          uuid: 'uuid-123',
+          session_id: 'session-123',
+        };
+        const result = SystemCompactBoundaryContentSchema.safeParse(content);
+        expect(result.success).toBe(true);
+        if (result.success) {
+          expect(result.data.compact_metadata.trigger).toBe('manual');
+          expect(result.data.compact_metadata.pre_tokens).toBe(45000);
+        }
+      });
+
+      it('should parse auto-triggered compact boundary', () => {
+        const content = {
+          type: 'system',
+          subtype: 'compact_boundary',
+          compact_metadata: {
+            trigger: 'auto',
+            pre_tokens: 100000,
+          },
+          uuid: 'uuid-456',
+          session_id: 'session-456',
+        };
+        const result = SystemCompactBoundaryContentSchema.safeParse(content);
+        expect(result.success).toBe(true);
+        if (result.success) {
+          expect(result.data.compact_metadata.trigger).toBe('auto');
+        }
+      });
+
+      it('should reject invalid trigger type', () => {
+        const content = {
+          type: 'system',
+          subtype: 'compact_boundary',
+          compact_metadata: {
+            trigger: 'invalid',
+            pre_tokens: 45000,
+          },
+          uuid: 'uuid-123',
+          session_id: 'session-123',
+        };
+        const result = SystemCompactBoundaryContentSchema.safeParse(content);
+        expect(result.success).toBe(false);
+      });
+    });
+
     describe('ResultContentSchema', () => {
       it('should parse success result', () => {
         const content = {
@@ -351,6 +406,35 @@ describe('claude-messages', () => {
       }
     });
 
+    it('should parse compact boundary message', () => {
+      const stored = {
+        ...baseStored,
+        type: 'system' as const,
+        content: {
+          type: 'system',
+          subtype: 'compact_boundary',
+          compact_metadata: {
+            trigger: 'manual',
+            pre_tokens: 45000,
+          },
+          uuid: 'uuid-1',
+          session_id: 'session-1',
+        },
+      };
+
+      const parsed = parseStoredMessage(stored);
+      expect(parsed).toBeInstanceOf(SystemMessage);
+      if (parsed instanceof SystemMessage) {
+        expect(parsed.isCompactBoundary()).toBe(true);
+        expect(parsed.isInit()).toBe(false);
+        expect(parsed.isError()).toBe(false);
+        const compactInfo = parsed.getCompactInfo();
+        expect(compactInfo).toBeDefined();
+        expect(compactInfo!.trigger).toBe('manual');
+        expect(compactInfo!.preTokens).toBe(45000);
+      }
+    });
+
     it('should parse result message', () => {
       const stored = {
         ...baseStored,
@@ -438,6 +522,96 @@ describe('claude-messages', () => {
       }
     });
 
+    it('should parse compact boundary stream line', () => {
+      const json = {
+        type: 'system',
+        subtype: 'compact_boundary',
+        compact_metadata: {
+          trigger: 'manual',
+          pre_tokens: 45000,
+        },
+        uuid: 'uuid-1',
+        session_id: 'session-1',
+      };
+
+      const result = parseClaudeStreamLine(json);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.type).toBe('system');
+        expect('subtype' in result.data && result.data.subtype).toBe('compact_boundary');
+      }
+    });
+
+    it('should parse generic system messages and preserve extra fields', () => {
+      const statusMessage = {
+        type: 'system',
+        subtype: 'status',
+        status: 'compacting',
+        permissionMode: 'bypassPermissions',
+        uuid: 'uuid-1',
+        session_id: 'session-1',
+      };
+
+      const result = parseClaudeStreamLine(statusMessage);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        // Passthrough should preserve extra fields like status and permissionMode
+        const data = result.data as Record<string, unknown>;
+        expect(data.status).toBe('compacting');
+        expect(data.permissionMode).toBe('bypassPermissions');
+        expect(data.uuid).toBe('uuid-1');
+      }
+    });
+
+    it('should parse tool_progress messages and preserve original fields', () => {
+      const json = {
+        type: 'tool_progress',
+        tool_use_id: 'tool-1',
+        tool_name: 'Bash',
+        parent_tool_use_id: null,
+        elapsed_time_seconds: 5,
+        uuid: 'uuid-1',
+        session_id: 'session-1',
+      };
+
+      const result = parseClaudeStreamLine(json);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        // Original fields should be preserved via passthrough
+        const data = result.data as Record<string, unknown>;
+        expect(data.subtype).toBe('tool_progress');
+        expect(data.tool_use_id).toBe('tool-1');
+        expect(data.tool_name).toBe('Bash');
+        expect(data.elapsed_time_seconds).toBe(5);
+      }
+    });
+
+    it('should parse tool_use_summary messages', () => {
+      const json = {
+        type: 'tool_use_summary',
+        summary: 'Read 3 files',
+        preceding_tool_use_ids: ['tool-1', 'tool-2'],
+        uuid: 'uuid-1',
+        session_id: 'session-1',
+      };
+
+      const result = parseClaudeStreamLine(json);
+      expect(result.success).toBe(true);
+    });
+
+    it('should parse auth_status messages', () => {
+      const json = {
+        type: 'auth_status',
+        isAuthenticating: false,
+        output: [],
+        uuid: 'uuid-1',
+        session_id: 'session-1',
+      };
+
+      const result = parseClaudeStreamLine(json);
+      expect(result.success).toBe(true);
+    });
+
     it('should return error for unknown type', () => {
       const result = parseClaudeStreamLine({ type: 'unknown' });
       expect(result.success).toBe(false);
@@ -453,6 +627,14 @@ describe('claude-messages', () => {
       expect(getMessageType({ type: 'user' })).toBe('user');
       expect(getMessageType({ type: 'result' })).toBe('result');
       expect(getMessageType({ type: 'system' })).toBe('system');
+    });
+
+    it('should return system for SDK types that map to system', () => {
+      // These SDK message types all map to 'system' in the DB
+      expect(getMessageType({ type: 'tool_progress' })).toBe('system');
+      expect(getMessageType({ type: 'tool_use_summary' })).toBe('system');
+      expect(getMessageType({ type: 'auth_status' })).toBe('system');
+      expect(getMessageType({ type: 'stream_event' })).toBe('system');
     });
 
     it('should return system for unknown types', () => {
