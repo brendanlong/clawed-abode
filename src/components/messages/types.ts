@@ -26,7 +26,7 @@ export interface AssistantMessage {
   id?: string;
   model?: string;
   role?: string;
-  content?: ContentBlock[];
+  content?: ContentBlock[] | string;
   stop_reason?: string | null;
   usage?: {
     input_tokens?: number;
