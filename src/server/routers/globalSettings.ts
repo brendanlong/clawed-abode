@@ -61,6 +61,8 @@ export const globalSettingsRouter = router({
       systemPromptAppend: settings?.systemPromptAppend ?? null,
       claudeModel: settings?.claudeModel ?? null,
       hasClaudeApiKey: settings?.claudeApiKey !== null && settings?.claudeApiKey !== undefined,
+      hasOpenaiApiKey: settings?.openaiApiKey !== null && settings?.openaiApiKey !== undefined,
+      ttsSpeed: settings?.ttsSpeed ?? null,
       defaultClaudeModel: env.CLAUDE_MODEL,
       hasEnvApiKey: !!env.CLAUDE_CODE_OAUTH_TOKEN,
     };
@@ -400,6 +402,63 @@ export const globalSettingsRouter = router({
         });
         log.info('Set Claude API key');
       }
+
+      return { success: true };
+    }),
+
+  /**
+   * Set the OpenAI API key for voice STT/TTS.
+   * Stored encrypted at rest. Pass empty string to clear.
+   */
+  setOpenaiApiKey: protectedProcedure
+    .input(
+      z.object({
+        openaiApiKey: z.string().max(5000),
+      })
+    )
+    .mutation(async ({ input }) => {
+      const key = input.openaiApiKey.trim();
+
+      if (!key) {
+        // Clear the stored key
+        await prisma.globalSettings.upsert({
+          where: { id: GLOBAL_SETTINGS_ID },
+          create: { id: GLOBAL_SETTINGS_ID, openaiApiKey: null },
+          update: { openaiApiKey: null },
+        });
+        log.info('Cleared OpenAI API key');
+      } else {
+        requireEncryptionForSecrets(true);
+        const encrypted = encrypt(key);
+        await prisma.globalSettings.upsert({
+          where: { id: GLOBAL_SETTINGS_ID },
+          create: { id: GLOBAL_SETTINGS_ID, openaiApiKey: encrypted },
+          update: { openaiApiKey: encrypted },
+        });
+        log.info('Set OpenAI API key');
+      }
+
+      return { success: true };
+    }),
+
+  /**
+   * Set the TTS playback speed.
+   * Valid range: 0.25 to 4.0. Pass null to reset to default (1.0).
+   */
+  setTtsSpeed: protectedProcedure
+    .input(
+      z.object({
+        ttsSpeed: z.number().min(0.25).max(4.0).nullable(),
+      })
+    )
+    .mutation(async ({ input }) => {
+      await prisma.globalSettings.upsert({
+        where: { id: GLOBAL_SETTINGS_ID },
+        create: { id: GLOBAL_SETTINGS_ID, ttsSpeed: input.ttsSpeed },
+        update: { ttsSpeed: input.ttsSpeed },
+      });
+
+      log.info('Set TTS speed', { ttsSpeed: input.ttsSpeed });
 
       return { success: true };
     }),
