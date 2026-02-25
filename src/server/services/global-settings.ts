@@ -17,6 +17,7 @@ export interface GlobalDisplaySettings {
   hasClaudeApiKey: boolean;
   hasOpenaiApiKey: boolean;
   ttsSpeed: number | null;
+  voiceAutoSend: boolean;
 }
 
 /**
@@ -56,6 +57,7 @@ export async function getGlobalSettings(): Promise<GlobalDisplaySettings> {
       hasClaudeApiKey: false,
       hasOpenaiApiKey: false,
       ttsSpeed: null,
+      voiceAutoSend: true,
     };
   }
 
@@ -67,6 +69,7 @@ export async function getGlobalSettings(): Promise<GlobalDisplaySettings> {
     hasClaudeApiKey: settings.claudeApiKey !== null,
     hasOpenaiApiKey: settings.openaiApiKey !== null,
     ttsSpeed: settings.ttsSpeed,
+    voiceAutoSend: settings.voiceAutoSend,
   };
 }
 

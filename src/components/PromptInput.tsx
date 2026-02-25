@@ -19,6 +19,7 @@ interface PromptInputProps {
   disabled: boolean;
   commands?: SlashCommand[];
   voiceEnabled?: boolean;
+  voiceAutoSend?: boolean;
 }
 
 export function PromptInput({
@@ -29,6 +30,7 @@ export function PromptInput({
   disabled,
   commands = [],
   voiceEnabled = false,
+  voiceAutoSend = true,
 }: PromptInputProps) {
   const [prompt, setPrompt] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -122,10 +124,20 @@ export function PromptInput({
     setSelectedIndex(0);
   }, []);
 
-  const handleVoiceTranscript = useCallback((text: string) => {
-    setPrompt((prev) => (prev ? `${prev} ${text}` : text));
-    textareaRef.current?.focus();
-  }, []);
+  const handleVoiceTranscript = useCallback(
+    (text: string) => {
+      if (voiceAutoSend && text.trim() && !disabled && !isRunning) {
+        // Auto-send: combine any existing prompt text with the transcript
+        const combined = prompt.trim() ? `${prompt.trim()} ${text.trim()}` : text.trim();
+        onSubmit(combined);
+        setPrompt('');
+      } else {
+        setPrompt((prev) => (prev ? `${prev} ${text}` : text));
+        textareaRef.current?.focus();
+      }
+    },
+    [voiceAutoSend, disabled, isRunning, prompt, onSubmit]
+  );
 
   // Scroll selected item into view
   useEffect(() => {
