@@ -4,6 +4,8 @@
  * for sequential playback when Claude finishes responding.
  */
 
+import { z } from 'zod';
+
 /** Minimal message shape needed for auto-read logic */
 export interface AutoReadMessage {
   id: string;
@@ -18,6 +20,48 @@ export interface TextMessageForPlayback {
   text: string;
 }
 
+/** Schema for a text content block inside a message */
+const textBlockSchema = z
+  .object({
+    type: z.literal('text'),
+    text: z.string(),
+  })
+  .passthrough();
+
+/** Schema for a tool_result content block */
+const toolResultBlockSchema = z
+  .object({
+    type: z.literal('tool_result'),
+  })
+  .passthrough();
+
+/** Schema for any content block (text, tool_use, tool_result, etc.) */
+const contentBlockSchema = z
+  .object({
+    type: z.string(),
+  })
+  .passthrough();
+
+/** Schema for the nested message content structure: { message: { content: [...] } } */
+const messageContentSchema = z
+  .object({
+    message: z
+      .object({
+        content: z.array(contentBlockSchema),
+      })
+      .passthrough(),
+  })
+  .passthrough();
+
+/**
+ * Safely parse the nested content blocks from a message.
+ * Returns the array of content blocks, or null if the structure doesn't match.
+ */
+function parseContentBlocks(msg: AutoReadMessage): z.infer<typeof contentBlockSchema>[] | null {
+  const parsed = messageContentSchema.safeParse(msg.content);
+  return parsed.success ? parsed.data.message.content : null;
+}
+
 /**
  * Extract text content from an assistant message.
  * Returns the concatenated text blocks, or null if no meaningful text exists.
@@ -25,14 +69,16 @@ export interface TextMessageForPlayback {
  * Message structure: { content: { message: { content: [{ type: 'text', text: '...' }, ...] } } }
  */
 export function extractAssistantText(msg: AutoReadMessage): string | null {
-  const content = msg.content as Record<string, unknown> | undefined;
-  const innerMsg = content?.message as Record<string, unknown> | undefined;
-  const blocks = innerMsg?.content;
-  if (!Array.isArray(blocks)) return null;
+  const blocks = parseContentBlocks(msg);
+  if (!blocks) return null;
 
-  const textParts = blocks
-    .filter((b: Record<string, unknown>) => b.type === 'text' && typeof b.text === 'string')
-    .map((b: Record<string, unknown>) => b.text as string);
+  const textParts: string[] = [];
+  for (const block of blocks) {
+    const parsed = textBlockSchema.safeParse(block);
+    if (parsed.success) {
+      textParts.push(parsed.data.text);
+    }
+  }
 
   const fullText = textParts.join('\n');
   return fullText.trim() ? fullText : null;
@@ -100,9 +146,7 @@ export function getAutoReadMessages(messages: AutoReadMessage[]): TextMessageFor
  * Tool result messages have content blocks with type 'tool_result'.
  */
 function isToolResultMessage(msg: AutoReadMessage): boolean {
-  const content = msg.content as Record<string, unknown> | undefined;
-  const innerMsg = content?.message as Record<string, unknown> | undefined;
-  const blocks = innerMsg?.content;
-  if (!Array.isArray(blocks)) return false;
-  return blocks.some((b: Record<string, unknown>) => b.type === 'tool_result');
+  const blocks = parseContentBlocks(msg);
+  if (!blocks) return false;
+  return blocks.some((block) => toolResultBlockSchema.safeParse(block).success);
 }
