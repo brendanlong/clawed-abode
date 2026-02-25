@@ -30,6 +30,7 @@ export interface VoicePlaybackState {
   isLoading: boolean;
   play: (messageId: string, text: string) => Promise<void>;
   playSequential: (items: PlaybackQueueItem[]) => void;
+  enqueue: (item: PlaybackQueueItem) => void;
   pause: () => void;
   stop: () => void;
   restart: () => Promise<void>;
@@ -42,6 +43,7 @@ const defaultPlaybackState: VoicePlaybackState = {
   isLoading: false,
   play: async () => {},
   playSequential: () => {},
+  enqueue: () => {},
   pause: () => {},
   stop: () => {},
   restart: async () => {},
@@ -401,6 +403,22 @@ export function useVoicePlayback(): VoicePlaybackState {
     [stopCurrentAudio, playInternal]
   );
 
+  // --- Enqueue (append to in-progress queue without disrupting current playback) ---
+
+  const enqueue = useCallback(
+    (item: PlaybackQueueItem) => {
+      // If something is currently playing or loading, just append to the queue
+      if (currentMessageId !== null) {
+        queueRef.current.push(item);
+        return;
+      }
+
+      // Nothing is playing — start playing this item immediately
+      playInternal(item.messageId, item.text);
+    },
+    [currentMessageId, playInternal]
+  );
+
   // Clean up on unmount
   useEffect(() => {
     return () => cleanupAll();
@@ -413,6 +431,7 @@ export function useVoicePlayback(): VoicePlaybackState {
     isLoading,
     play,
     playSequential,
+    enqueue,
     pause,
     stop,
     restart,
