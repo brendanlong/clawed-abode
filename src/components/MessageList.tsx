@@ -400,13 +400,30 @@ export function MessageList({
     }
   }, [messages, scrollToBottom]);
 
-  // Track if user is at bottom (for auto-scroll on new messages)
-  const handleScroll = useCallback(() => {
+  // Track if user is at bottom using IntersectionObserver (for auto-scroll on new messages)
+  // This is more reliable than scroll-position math because layout changes (textarea resize,
+  // tool call expansion) change scrollHeight without firing scroll events.
+  useEffect(() => {
     const container = containerRef.current;
-    if (!container) return;
+    const bottom = bottomRef.current;
+    if (!container || !bottom) return;
 
-    const { scrollTop, scrollHeight, clientHeight } = container;
-    isAtBottomRef.current = scrollHeight - scrollTop - clientHeight < 50;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (entry) {
+          isAtBottomRef.current = entry.isIntersecting;
+        }
+      },
+      {
+        root: container,
+        rootMargin: '0px 0px 150px 0px',
+        threshold: 0,
+      }
+    );
+
+    observer.observe(bottom);
+    return () => observer.disconnect();
   }, []);
 
   const contextValue = useMemo(
@@ -430,11 +447,7 @@ export function MessageList({
 
   return (
     <div className="relative flex-1 min-h-0">
-      <div
-        ref={containerRef}
-        onScroll={handleScroll}
-        className="h-full overflow-y-auto p-4 space-y-4"
-      >
+      <div ref={containerRef} className="h-full overflow-y-auto p-4 space-y-4">
         {/* Sentinel for triggering infinite scroll - placed before messages */}
         {/* overflow-anchor:none prevents browser from anchoring to these elements */}
         {/* so when new messages load above, the view stays on current messages */}
