@@ -17,12 +17,19 @@ function getAuthToken(): string | null {
   return localStorage.getItem('auth_token');
 }
 
+/** Item in the sequential playback queue */
+export interface PlaybackQueueItem {
+  messageId: string;
+  text: string;
+}
+
 export interface VoicePlaybackState {
   enabled: boolean;
   isPlaying: boolean;
   currentMessageId: string | null;
   isLoading: boolean;
   play: (messageId: string, text: string) => Promise<void>;
+  playSequential: (items: PlaybackQueueItem[]) => void;
   pause: () => void;
   stop: () => void;
   restart: () => Promise<void>;
@@ -34,6 +41,7 @@ const defaultPlaybackState: VoicePlaybackState = {
   currentMessageId: null,
   isLoading: false,
   play: async () => {},
+  playSequential: () => {},
   pause: () => {},
   stop: () => {},
   restart: async () => {},
@@ -74,6 +82,11 @@ export function useVoicePlayback(): VoicePlaybackState {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const blobCacheRef = useRef<Map<string, string>>(new Map());
 
+  // Sequential playback queue: remaining items to play after current finishes
+  const queueRef = useRef<PlaybackQueueItem[]>([]);
+  // Ref to the "play next from queue" function, set after playInternal is defined
+  const playNextFromQueueRef = useRef<() => void>(() => {});
+
   const mseSupported = useMemo(() => {
     if (typeof window === 'undefined') return false;
     return isMSESupported();
@@ -108,6 +121,7 @@ export function useVoicePlayback(): VoicePlaybackState {
 
   const cleanupAll = useCallback(() => {
     stopCurrentAudio();
+    queueRef.current = [];
     // Revoke blob URLs
     for (const url of blobCacheRef.current.values()) {
       URL.revokeObjectURL(url);
@@ -117,6 +131,7 @@ export function useVoicePlayback(): VoicePlaybackState {
   }, [stopCurrentAudio]);
 
   const stop = useCallback(() => {
+    queueRef.current = [];
     stopCurrentAudio();
     setIsPlaying(false);
     setCurrentMessageId(null);
@@ -152,12 +167,12 @@ export function useVoicePlayback(): VoicePlaybackState {
     audioRef.current = audio;
 
     audio.onended = () => {
-      setIsPlaying(false);
-      setCurrentMessageId(null);
       audioRef.current = null;
+      playNextFromQueueRef.current();
     };
 
     audio.onerror = () => {
+      queueRef.current = [];
       setIsPlaying(false);
       setCurrentMessageId(null);
       audioRef.current = null;
@@ -207,6 +222,7 @@ export function useVoicePlayback(): VoicePlaybackState {
         setIsLoading(false);
         await playBlobUrl(messageId, blobUrl);
       } catch {
+        queueRef.current = [];
         setIsLoading(false);
         setIsPlaying(false);
         setCurrentMessageId(null);
@@ -222,11 +238,11 @@ export function useVoicePlayback(): VoicePlaybackState {
     const player = new StreamingAudioPlayer({
       onPlaying: () => setIsPlaying(true),
       onEnded: () => {
-        setIsPlaying(false);
-        setCurrentMessageId(null);
         playerRef.current = null;
+        playNextFromQueueRef.current();
       },
       onError: () => {
+        queueRef.current = [];
         setIsPlaying(false);
         setCurrentMessageId(null);
         playerRef.current = null;
@@ -267,12 +283,12 @@ export function useVoicePlayback(): VoicePlaybackState {
           setIsPlaying(true);
         },
         onEnded: () => {
-          setIsPlaying(false);
-          setCurrentMessageId(null);
           streamHandleRef.current = null;
           playerRef.current = null;
+          playNextFromQueueRef.current();
         },
         onError: () => {
+          queueRef.current = [];
           setIsPlaying(false);
           setIsLoading(false);
           setCurrentMessageId(null);
@@ -299,10 +315,47 @@ export function useVoicePlayback(): VoicePlaybackState {
       });
   }, []);
 
+  // --- Internal play (no toggle logic, used by play and playSequential) ---
+
+  const playInternal = useCallback(
+    async (messageId: string, text: string) => {
+      stopCurrentAudio();
+
+      if (mseSupported) {
+        const cached = mseCacheRef.current.get(messageId);
+        if (cached) {
+          playCachedMSE(messageId, cached);
+          return;
+        }
+        playStreaming(messageId, text);
+      } else {
+        await playLegacy(messageId, text);
+      }
+    },
+    [stopCurrentAudio, mseSupported, playCachedMSE, playStreaming, playLegacy]
+  );
+
+  // Wire up the playNextFromQueue ref — called by onEnded callbacks
+  useEffect(() => {
+    playNextFromQueueRef.current = () => {
+      const next = queueRef.current.shift();
+      if (next) {
+        playInternal(next.messageId, next.text);
+      } else {
+        // Queue exhausted, reset state
+        setIsPlaying(false);
+        setCurrentMessageId(null);
+      }
+    };
+  }, [playInternal]);
+
   // --- Main play function ---
 
   const play = useCallback(
     async (messageId: string, text: string) => {
+      // Clear any pending queue when user manually plays a message
+      queueRef.current = [];
+
       // If we're playing the same message, toggle pause/play
       if (currentMessageId === messageId) {
         if (isPlaying) {
@@ -324,30 +377,28 @@ export function useVoicePlayback(): VoicePlaybackState {
         return;
       }
 
-      // Stop any current playback
+      await playInternal(messageId, text);
+    },
+    [currentMessageId, isPlaying, playInternal]
+  );
+
+  // --- Sequential playback (auto-read) ---
+
+  const playSequential = useCallback(
+    (items: PlaybackQueueItem[]) => {
+      if (items.length === 0) return;
+
+      // Clear any existing queue and stop current playback
+      queueRef.current = [];
       stopCurrentAudio();
 
-      if (mseSupported) {
-        // Check MSE cache
-        const cached = mseCacheRef.current.get(messageId);
-        if (cached) {
-          playCachedMSE(messageId, cached);
-          return;
-        }
-        playStreaming(messageId, text);
-      } else {
-        await playLegacy(messageId, text);
-      }
+      // Set up queue with remaining items (all after the first)
+      queueRef.current = items.slice(1);
+
+      // Start playing the first item
+      playInternal(items[0].messageId, items[0].text);
     },
-    [
-      currentMessageId,
-      isPlaying,
-      stopCurrentAudio,
-      mseSupported,
-      playCachedMSE,
-      playStreaming,
-      playLegacy,
-    ]
+    [stopCurrentAudio, playInternal]
   );
 
   // Clean up on unmount
@@ -361,6 +412,7 @@ export function useVoicePlayback(): VoicePlaybackState {
     currentMessageId,
     isLoading,
     play,
+    playSequential,
     pause,
     stop,
     restart,
