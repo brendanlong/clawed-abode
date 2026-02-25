@@ -36,5 +36,6 @@ export function useVoiceConfig(sessionId?: string) {
     hasAnthropicKey: config?.hasAnthropicKey ?? false,
     autoRead,
     setAutoRead,
+    autoSend: config?.autoSend ?? true,
   };
 }
