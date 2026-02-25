@@ -32,7 +32,7 @@ async function setupSession(
   sessionId: string,
   repoFullName: string,
   branch: string,
-  initialPrompt: string,
+  initialPrompt: string | undefined,
   githubToken?: string
 ): Promise<void> {
   log.info('Starting session setup', { sessionId, repoFullName, branch });
@@ -100,20 +100,23 @@ async function setupSession(
     });
     sseEvents.emitSessionUpdate(sessionId, session);
 
-    log.info('Session setup complete, sending initial prompt', { sessionId });
+    log.info('Session setup complete', { sessionId });
 
-    // Send the initial prompt now that the session is running
+    // Send the initial prompt if provided
     // Reuse settings already loaded above for container creation
-    runClaudeCommand({
-      sessionId,
-      containerId,
-      prompt: initialPrompt,
-      customSystemPrompt: settings.customSystemPrompt,
-      globalSettings: settings.globalSettings,
-      mcpServers: settings.mcpServers,
-    }).catch((err) => {
-      log.error('Initial prompt failed', toError(err), { sessionId });
-    });
+    if (initialPrompt?.trim()) {
+      log.info('Sending initial prompt', { sessionId });
+      runClaudeCommand({
+        sessionId,
+        containerId,
+        prompt: initialPrompt.trim(),
+        customSystemPrompt: settings.customSystemPrompt,
+        globalSettings: settings.globalSettings,
+        mcpServers: settings.mcpServers,
+      }).catch((err) => {
+        log.error('Initial prompt failed', toError(err), { sessionId });
+      });
+    }
   } catch (error) {
     // Log the full error with stack trace
     log.error('Session setup failed', toError(error), { sessionId, repoFullName, branch });
@@ -138,7 +141,7 @@ export const sessionsRouter = router({
         name: z.string().min(1).max(100),
         repoFullName: z.string().regex(/^[\w-]+\/[\w.-]+$/),
         branch: z.string().min(1),
-        initialPrompt: z.string().min(1).max(100000),
+        initialPrompt: z.string().max(100000).optional(),
       })
     )
     .mutation(async ({ input }) => {
