@@ -12,13 +12,14 @@ export const voiceRouter = router({
   getConfig: protectedProcedure.query(async () => {
     const settings = await prisma.globalSettings.findUnique({
       where: { id: GLOBAL_SETTINGS_ID },
-      select: { openaiApiKey: true, claudeApiKey: true, ttsSpeed: true },
+      select: { openaiApiKey: true, claudeApiKey: true, ttsSpeed: true, voiceAutoSend: true },
     });
 
     return {
       enabled: settings?.openaiApiKey !== null && settings?.openaiApiKey !== undefined,
       hasAnthropicKey: settings?.claudeApiKey !== null && settings?.claudeApiKey !== undefined,
       ttsSpeed: settings?.ttsSpeed ?? 1.0,
+      autoSend: settings?.voiceAutoSend ?? true,
     };
   }),
 });

@@ -117,6 +117,7 @@ model GlobalSettings {
   claudeApiKey              String?  // If set (encrypted), overrides CLAUDE_CODE_OAUTH_TOKEN env var
   openaiApiKey              String?  // If set (encrypted), used for voice STT/TTS
   ttsSpeed                  Float?   // TTS playback speed (0.25-4.0, default 1.0)
+  voiceAutoSend             Boolean  @default(true) // Auto-send after speech-to-text transcription
   createdAt                 DateTime @default(now())
   updatedAt                 DateTime @updatedAt
 }

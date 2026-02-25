@@ -52,7 +52,7 @@ The database schema is defined in [`prisma/schema.prisma`](../prisma/schema.pris
 - **Session**: Claude Code sessions tied to git clones (includes `agentPort` for the agent service)
 - **Message**: Chat messages with sequence numbers for cursor-based pagination
 - **AuthSession**: Login sessions with tokens and audit info
-- **GlobalSettings**: Global application settings (system prompt override and append, Claude model, Claude API key, OpenAI API key for voice, TTS speed)
+- **GlobalSettings**: Global application settings (system prompt override and append, Claude model, Claude API key, OpenAI API key for voice, TTS speed, voice auto-send)
 - **RepoSettings**: Per-repository settings (favorites, custom system prompt)
 - **EnvVar**: Environment variables for a repository or global (encrypted if secret). When `repoSettingsId` is null, the variable is global and applies to all sessions.
 - **McpServer**: MCP server configurations for a repository or global. When `repoSettingsId` is null, the server is global and applies to all sessions.
@@ -505,8 +505,9 @@ Users can configure global settings that apply to all sessions:
 - **Global System Prompt Append**: Additional content appended to the base prompt (default or override) for all sessions. This is applied before any per-repo custom prompts.
 - **Global Environment Variables**: Environment variables applied to all sessions. Per-repo variables with the same name take precedence.
 - **Global MCP Servers**: MCP server configurations available in all sessions. Per-repo servers with the same name take precedence. Supports stdio, HTTP, and SSE transport types.
-- **OpenAI API Key**: API key for voice features (speech-to-text and text-to-speech). Stored encrypted at rest. When configured, enables voice input/output in session views.
-- **TTS Speed**: Controls text-to-speech playback speed (0.25x to 4.0x, default 1.0x). Passed to OpenAI TTS API as the `speed` parameter.
+- **OpenAI API Key**: API key for voice features (speech-to-text and text-to-speech). Stored encrypted at rest. When configured, enables voice input/output in session views. Configured in Settings → Audio.
+- **TTS Speed**: Controls text-to-speech playback speed (0.25x to 4.0x, default 1.0x). Passed to OpenAI TTS API as the `speed` parameter. Configured in Settings → Audio.
+- **Voice Auto-Send**: When enabled (default: true), speech-to-text transcripts are automatically sent as prompts after recording stops. When disabled, transcripts are inserted into the input field for editing. Configured in Settings → Audio.
 
 **Prompt Order**: When Claude runs, the system prompt is built in this order:
 
@@ -519,7 +520,7 @@ Users can configure global settings that apply to all sessions:
 - **Environment Variables**: Global env vars are included in all sessions. If a per-repo env var has the same name as a global one, the per-repo value takes precedence.
 - **MCP Servers**: Global MCP servers are included in all sessions. If a per-repo MCP server has the same name as a global one, the per-repo configuration takes precedence.
 
-**Configuration**: Go to Settings → System Prompt to manage these settings.
+**Configuration**: Go to Settings → System Prompt to manage prompt and model settings. Go to Settings → Audio to manage voice/audio settings (OpenAI API key, TTS speed, voice auto-send).
 
 **Data Model**: Global env vars and MCP servers are stored in the same `EnvVar` and `McpServer` tables as per-repo ones, with `repoSettingsId = null` indicating a global setting. A partial unique index (`WHERE repoSettingsId IS NULL`) enforces name uniqueness for global entries at the database level.
 
@@ -529,11 +530,11 @@ Users can configure global settings that apply to all sessions:
 
 Voice mode provides speech-to-text input and text-to-speech output for hands-free interaction with Claude sessions.
 
-**Requirements**: OpenAI API key configured in Settings → System Prompt. Optionally, an Anthropic/Claude API key enables text transformation (markdown → natural speech) before TTS.
+**Requirements**: OpenAI API key configured in Settings → Audio. Optionally, an Anthropic/Claude API key (Settings → System Prompt) enables text transformation (markdown → natural speech) before TTS.
 
 **Architecture**:
 
-- **Voice input**: Browser MediaRecorder captures audio → sent to `/api/voice/transcribe` → OpenAI `gpt-4o-mini-transcribe` → transcript inserted into prompt input
+- **Voice input**: Browser MediaRecorder captures audio → sent to `/api/voice/transcribe` → OpenAI `gpt-4o-mini-transcribe` → transcript auto-sent as prompt (if voice auto-send enabled) or inserted into prompt input for editing
 - **Voice output (streaming, MSE)**: Text from assistant message → optionally transformed by Claude Sonnet → sent to `/api/voice/speak-stream` SSE endpoint → each text chunk generates AAC audio via OpenAI `tts-1` → raw AAC streamed as base64 SSE events → client wraps AAC into fMP4 via `mse-audio-wrapper` → `MediaSource` + `SourceBuffer` for gapless playback. First audio plays as soon as the first TTS chunk completes.
 - **Voice output (legacy fallback)**: When MSE is not supported (iPhone Safari), falls back to `/api/voice/speak` which buffers all audio before playback.
 - **API routes**: Voice endpoints use Next.js API routes (not tRPC) since they handle binary audio data and multipart form uploads
@@ -670,7 +671,7 @@ clawed-abode/
 │       ├── SessionList.tsx
 │       ├── Header.tsx
 │       ├── messages/             # Tool-specific display components (Bash, Edit, Read, etc.)
-│       ├── settings/             # Settings UI (global settings, repo settings, env vars, MCP)
+│       ├── settings/             # Settings UI (global settings, repo settings, audio, env vars, MCP)
 │       ├── ui/                   # shadcn/ui primitives (button, dialog, input, etc.)
 │       └── voice/               # Voice UI components
 │           ├── VoiceMicButton.tsx
