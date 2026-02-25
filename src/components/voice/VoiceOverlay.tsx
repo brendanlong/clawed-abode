@@ -131,10 +131,11 @@ export function VoiceOverlay({
 
   // Navigation: play previous assistant text message
   const handlePrev = useCallback(() => {
-    const targetIndex = currentIndex > 0 ? currentIndex - 1 : assistantTextMessages.length - 1;
-    if (targetIndex >= 0 && assistantTextMessages[targetIndex]) {
-      const entry = assistantTextMessages[targetIndex];
-      playback.play(entry.id, entry.text);
+    if (currentIndex <= 0) return;
+    const targetIndex = currentIndex - 1;
+    const target = assistantTextMessages[targetIndex];
+    if (target) {
+      playback.play(target.id, target.text);
     }
   }, [currentIndex, assistantTextMessages, playback]);
 
