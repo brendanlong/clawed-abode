@@ -473,11 +473,30 @@ export async function cloneRepoInVolume(config: CloneConfig): Promise<CloneResul
         'clone',
         '--branch',
         config.branch,
+        '--single-branch',
         ...(useCache ? ['--reference', cachePath, '--dissociate'] : []),
         repoUrl,
         repoName,
       ];
       await runPodman(cloneArgs);
+
+      // Widen the fetch refspec to track all remote branches.
+      // --single-branch only fetches the cloned branch's objects (fast),
+      // but restricts the refspec to that one branch. This prevents remote
+      // tracking refs from being created for feature branches pushed later,
+      // which breaks git push --force-with-lease. Widening the refspec
+      // allows tracking refs to be created on future fetches/pushes without
+      // downloading all branch history upfront.
+      await runPodman([
+        'exec',
+        containerId,
+        'git',
+        '-C',
+        repoName,
+        'config',
+        'remote.origin.fetch',
+        '+refs/heads/*:refs/remotes/origin/*',
+      ]);
 
       // Configure the remote URL without the token for security
       await runPodman([
