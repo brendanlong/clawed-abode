@@ -473,7 +473,6 @@ export async function cloneRepoInVolume(config: CloneConfig): Promise<CloneResul
         'clone',
         '--branch',
         config.branch,
-        '--single-branch',
         ...(useCache ? ['--reference', cachePath, '--dissociate'] : []),
         repoUrl,
         repoName,
