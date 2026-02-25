@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, use } from 'react';
+import { useCallback, useEffect, useRef, useState, use } from 'react';
 import Link from 'next/link';
 import { AuthGuard } from '@/components/AuthGuard';
 import { Header } from '@/components/Header';
@@ -20,6 +20,7 @@ import { useWorkCompleteNotification } from '@/hooks/useWorkCompleteNotification
 import { useVoiceConfig } from '@/hooks/useVoiceConfig';
 import { useVoicePlayback, VoicePlaybackContext } from '@/hooks/useVoicePlayback';
 import { getNewAutoReadMessages } from '@/lib/auto-read-helpers';
+import { VoiceOverlay } from '@/components/voice/VoiceOverlay';
 
 function SessionView({ sessionId }: { sessionId: string }) {
   // Session state: data, start/stop/archive
@@ -78,6 +79,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
   // Voice features
   const voiceConfig = useVoiceConfig(sessionId);
   const voicePlayback = useVoicePlayback();
+  const [voiceOverlayOpen, setVoiceOverlayOpen] = useState(false);
 
   const handleSendPrompt = useCallback(
     (prompt: string) => {
@@ -232,6 +234,15 @@ function SessionView({ sessionId }: { sessionId: string }) {
             }
       }
     >
+      {voiceOverlayOpen && voiceConfig.enabled && (
+        <VoiceOverlay
+          sessionId={sessionId}
+          messages={messages}
+          isClaudeRunning={isClaudeRunning}
+          onSendPrompt={handleSendPromptWithVoice}
+          onClose={() => setVoiceOverlayOpen(false)}
+        />
+      )}
       <div className="flex-1 flex flex-col min-h-0">
         <SessionHeader
           session={session}
@@ -244,6 +255,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
           voiceEnabled={voiceConfig.enabled}
           autoRead={voiceConfig.autoRead}
           onAutoReadToggle={voiceConfig.setAutoRead}
+          onOpenVoiceOverlay={() => setVoiceOverlayOpen(true)}
         />
 
         <MessageList

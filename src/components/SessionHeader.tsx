@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { Maximize2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { SessionStatusToggle } from '@/components/SessionStatusToggle';
 import { SessionActionButton } from '@/components/SessionActionButton';
@@ -25,6 +26,7 @@ interface SessionHeaderProps {
   voiceEnabled?: boolean;
   autoRead?: boolean;
   onAutoReadToggle?: (value: boolean) => void;
+  onOpenVoiceOverlay?: () => void;
 }
 
 export function SessionHeader({
@@ -38,6 +40,7 @@ export function SessionHeader({
   voiceEnabled = false,
   autoRead = false,
   onAutoReadToggle,
+  onOpenVoiceOverlay,
 }: SessionHeaderProps) {
   const repoName = session.repoUrl.replace('https://github.com/', '').replace('.git', '');
 
@@ -65,6 +68,17 @@ export function SessionHeader({
 
         <div className="flex flex-col items-end gap-1 shrink-0">
           <div className="flex items-center gap-1">
+            {voiceEnabled && onOpenVoiceOverlay && (
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={onOpenVoiceOverlay}
+                title="Open voice overlay"
+                className="shrink-0 h-8 w-8"
+              >
+                <Maximize2 className="h-4 w-4" />
+              </Button>
+            )}
             {voiceEnabled && onAutoReadToggle && (
               <VoiceAutoReadToggle autoRead={autoRead} onToggle={onAutoReadToggle} />
             )}
