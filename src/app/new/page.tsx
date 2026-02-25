@@ -112,16 +112,11 @@ function NewSessionForm() {
       return;
     }
 
-    if (!form.initialPrompt.trim()) {
-      setError('Please provide an initial prompt');
-      return;
-    }
-
     createMutation.mutate({
       name: form.sessionName || `${form.selectedRepo.name} - ${form.selectedBranch}`,
       repoFullName: form.selectedRepo.fullName,
       branch: form.selectedBranch,
-      initialPrompt: form.initialPrompt.trim(),
+      initialPrompt: form.initialPrompt.trim() || undefined,
     });
   };
 
@@ -161,7 +156,7 @@ function NewSessionForm() {
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="initialPrompt">Initial prompt</Label>
+            <Label htmlFor="initialPrompt">Initial prompt (optional)</Label>
             <Textarea
               id="initialPrompt"
               value={form.initialPrompt}
@@ -170,7 +165,7 @@ function NewSessionForm() {
               rows={6}
             />
             <p className="text-xs text-muted-foreground">
-              This prompt will be sent to Claude automatically when the session starts.
+              If provided, this prompt will be sent to Claude automatically when the session starts.
             </p>
           </div>
         </>
@@ -182,12 +177,7 @@ function NewSessionForm() {
         </Button>
         <Button
           type="submit"
-          disabled={
-            !form.selectedRepo ||
-            !form.selectedBranch ||
-            !form.initialPrompt.trim() ||
-            createMutation.isPending
-          }
+          disabled={!form.selectedRepo || !form.selectedBranch || createMutation.isPending}
         >
           {createMutation.isPending ? (
             <span className="flex items-center gap-2">
