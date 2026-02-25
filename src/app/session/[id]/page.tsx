@@ -19,6 +19,7 @@ import { useClaudeState } from '@/hooks/useClaudeState';
 import { useWorkCompleteNotification } from '@/hooks/useWorkCompleteNotification';
 import { useVoiceConfig } from '@/hooks/useVoiceConfig';
 import { useVoicePlayback, VoicePlaybackContext } from '@/hooks/useVoicePlayback';
+import { getAutoReadMessages } from '@/lib/auto-read-helpers';
 
 function SessionView({ sessionId }: { sessionId: string }) {
   // Session state: data, start/stop/archive
@@ -97,7 +98,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
     [handleSendPrompt, voicePlayback]
   );
 
-  // Auto-read: detect when Claude finishes a turn and speak the last assistant message
+  // Auto-read: detect when Claude finishes a turn and speak the first and last assistant text messages
   const prevRunningRef = useRef(false);
   useEffect(() => {
     const wasRunning = prevRunningRef.current;
@@ -105,27 +106,9 @@ function SessionView({ sessionId }: { sessionId: string }) {
 
     // Detect transition from running -> not running (turn complete)
     if (wasRunning && !isClaudeRunning && voiceConfig.autoRead && voiceConfig.enabled) {
-      // Find the last assistant message
-      for (let i = messages.length - 1; i >= 0; i--) {
-        const msg = messages[i];
-        if (msg.type === 'assistant' && msg.id && !msg.id.startsWith('partial-')) {
-          // Extract text content from the message
-          const content = msg.content as Record<string, unknown> | undefined;
-          const innerMsg = content?.message as Record<string, unknown> | undefined;
-          const blocks = innerMsg?.content;
-          if (Array.isArray(blocks)) {
-            const textParts = blocks
-              .filter(
-                (b: Record<string, unknown>) => b.type === 'text' && typeof b.text === 'string'
-              )
-              .map((b: Record<string, unknown>) => b.text as string);
-            const fullText = textParts.join('\n');
-            if (fullText.trim()) {
-              voicePlayback.play(msg.id, fullText);
-            }
-          }
-          break;
-        }
+      const toPlay = getAutoReadMessages(messages);
+      if (toPlay.length > 0) {
+        voicePlayback.playSequential(toPlay.map((m) => ({ messageId: m.id, text: m.text })));
       }
     }
   }, [isClaudeRunning, messages, voiceConfig.autoRead, voiceConfig.enabled, voicePlayback]);
@@ -215,6 +198,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
               currentMessageId: null,
               isLoading: false,
               play: async () => {},
+              playSequential: () => {},
               pause: () => {},
               stop: () => {},
               restart: async () => {},
