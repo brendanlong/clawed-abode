@@ -5,6 +5,7 @@ import { Header } from '@/components/Header';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AuthSessionsTab } from '@/components/settings/AuthSessionsTab';
 import { AppearanceTab } from '@/components/settings/AppearanceTab';
+import { AudioTab } from '@/components/settings/AudioTab';
 import { RepositoriesTab } from '@/components/settings/RepositoriesTab';
 import { SystemPromptTab } from '@/components/settings/SystemPromptTab';
 
@@ -22,6 +23,7 @@ export default function SettingsPage() {
               <TabsList className="mb-4 flex-wrap">
                 <TabsTrigger value="appearance">Appearance</TabsTrigger>
                 <TabsTrigger value="system-prompt">System Prompt</TabsTrigger>
+                <TabsTrigger value="audio">Audio</TabsTrigger>
                 <TabsTrigger value="repositories">Repositories</TabsTrigger>
                 <TabsTrigger value="sessions">Sessions</TabsTrigger>
               </TabsList>
@@ -32,6 +34,10 @@ export default function SettingsPage() {
 
               <TabsContent value="system-prompt">
                 <SystemPromptTab />
+              </TabsContent>
+
+              <TabsContent value="audio">
+                <AudioTab />
               </TabsContent>
 
               <TabsContent value="repositories">

@@ -239,6 +239,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
           disabled={session.status !== 'running'}
           commands={commands}
           voiceEnabled={voiceConfig.enabled}
+          voiceAutoSend={voiceConfig.autoSend}
         />
       </div>
     </VoicePlaybackContext.Provider>

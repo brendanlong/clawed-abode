@@ -63,6 +63,7 @@ export const globalSettingsRouter = router({
       hasClaudeApiKey: settings?.claudeApiKey !== null && settings?.claudeApiKey !== undefined,
       hasOpenaiApiKey: settings?.openaiApiKey !== null && settings?.openaiApiKey !== undefined,
       ttsSpeed: settings?.ttsSpeed ?? null,
+      voiceAutoSend: settings?.voiceAutoSend ?? true,
       defaultClaudeModel: env.CLAUDE_MODEL,
       hasEnvApiKey: !!env.CLAUDE_CODE_OAUTH_TOKEN,
     };
@@ -459,6 +460,28 @@ export const globalSettingsRouter = router({
       });
 
       log.info('Set TTS speed', { ttsSpeed: input.ttsSpeed });
+
+      return { success: true };
+    }),
+
+  /**
+   * Set the voice auto-send preference.
+   * When true, speech-to-text transcripts are automatically sent as prompts.
+   */
+  setVoiceAutoSend: protectedProcedure
+    .input(
+      z.object({
+        voiceAutoSend: z.boolean(),
+      })
+    )
+    .mutation(async ({ input }) => {
+      await prisma.globalSettings.upsert({
+        where: { id: GLOBAL_SETTINGS_ID },
+        create: { id: GLOBAL_SETTINGS_ID, voiceAutoSend: input.voiceAutoSend },
+        update: { voiceAutoSend: input.voiceAutoSend },
+      });
+
+      log.info('Set voice auto-send', { voiceAutoSend: input.voiceAutoSend });
 
       return { success: true };
     }),
