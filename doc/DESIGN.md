@@ -166,13 +166,13 @@ sessions.create({
   name: string,
   repoFullName: string,    // e.g., "brendanlong/math-llm"
   branch: string,
-  initialPrompt: string    // Prompt to auto-send when session starts
+  initialPrompt?: string   // Optional prompt to auto-send when session starts
 })
   → { session: Session }
   // Returns immediately with session in "creating" status
   // Cloning and container setup continues in background
   // UI polls session.get() to track progress via statusMessage
-  // initialPrompt is sent automatically server-side when session becomes running
+  // If initialPrompt is provided, it is sent automatically server-side when session becomes running
 
 sessions.list({ status?: SessionStatus })
   → { sessions: Session[] }
@@ -243,7 +243,7 @@ claude.getHistory({
 12. Background: Container starts the agent service (Node.js HTTP server using Claude Agent SDK)
 13. Background: Server waits for agent service health check to pass
 14. Session status → `running`, statusMessage → null
-15. Background: Server sends the initial prompt via `runClaudeCommand()` (no client interaction needed)
+15. Background: If an initial prompt was provided, server sends it via `runClaudeCommand()` (no client interaction needed)
 
 ### Interaction Flow
 
@@ -589,8 +589,9 @@ On error: `event: error` with `data: {"message": "TTS failed for chunk N"}`
   - When selected, auto-fills session name with issue title
   - Pre-fills initial prompt asking Claude to fix the issue (editable)
 - Name the session (optional, auto-filled from issue if selected)
-- Initial prompt (required) — editable textarea, pre-filled when issue is selected
-  - Sent server-side after session setup completes (works even if client disconnects)
+- Initial prompt (optional) — editable textarea, pre-filled when issue is selected
+  - If provided, sent server-side after session setup completes (works even if client disconnects)
+  - When omitted, session starts without a prompt (useful for voice mode)
 - Create button
 
 ### Session View (Chat)
