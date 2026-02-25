@@ -378,17 +378,22 @@ export function MessageList({
     [messages, pairedMessageIds, completedHookIds]
   );
 
-  const scrollToBottom = useCallback((instant = false) => {
-    bottomRef.current?.scrollIntoView({ behavior: instant ? 'instant' : 'smooth' });
+  const scrollToBottom = useCallback(() => {
+    // Always use instant scroll to avoid race conditions with smooth animation.
+    // Smooth scroll can cause auto-scroll to break: if messages arrive faster than
+    // the animation completes, the IntersectionObserver sees the sentinel as
+    // not-intersecting mid-animation, isAtBottomRef becomes false, and subsequent
+    // messages don't trigger auto-scroll.
+    bottomRef.current?.scrollIntoView({ behavior: 'instant' });
   }, []);
 
-  // Initial scroll to bottom - instant, no animation
+  // Initial scroll to bottom
   useEffect(() => {
     if (!hasInitialScrolled.current && messages.length > 0) {
       hasInitialScrolled.current = true;
       // Use requestAnimationFrame to ensure DOM has rendered
       requestAnimationFrame(() => {
-        scrollToBottom(true);
+        scrollToBottom();
       });
     }
   }, [messages, scrollToBottom]);
