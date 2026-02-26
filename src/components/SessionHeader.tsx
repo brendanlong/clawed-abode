@@ -11,8 +11,8 @@ interface SessionHeaderProps {
   session: {
     id: string;
     name: string;
-    repoUrl: string;
-    branch: string;
+    repoUrl: string | null;
+    branch: string | null;
     status: string;
     statusMessage?: string | null;
     initialPrompt?: string | null;
@@ -42,7 +42,9 @@ export function SessionHeader({
   onAutoReadToggle,
   onOpenVoiceOverlay,
 }: SessionHeaderProps) {
-  const repoName = session.repoUrl.replace('https://github.com/', '').replace('.git', '');
+  const repoName = session.repoUrl
+    ? session.repoUrl.replace('https://github.com/', '').replace('.git', '')
+    : null;
 
   return (
     <div className="border-b bg-background px-4 py-3">
@@ -62,7 +64,7 @@ export function SessionHeader({
           </Button>
           <div className="min-w-0">
             <h1 className="font-semibold break-words">{session.name}</h1>
-            <p className="text-sm text-muted-foreground truncate">{repoName}</p>
+            {repoName && <p className="text-sm text-muted-foreground truncate">{repoName}</p>}
           </div>
         </div>
 

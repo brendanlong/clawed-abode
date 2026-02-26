@@ -3,6 +3,7 @@ import { setupTestDb, teardownTestDb, testPrisma, clearTestDb } from '@/test/set
 
 // Mock external services that have real dependencies (Docker, git)
 const mockCloneRepoInVolume = vi.hoisted(() => vi.fn());
+const mockCreateWorkspaceVolume = vi.hoisted(() => vi.fn());
 const mockRemoveWorkspaceFromVolume = vi.hoisted(() => vi.fn());
 const mockCreateAndStartContainer = vi.hoisted(() => vi.fn());
 const mockStopContainer = vi.hoisted(() => vi.fn());
@@ -13,6 +14,7 @@ const mockCleanupSessionSocket = vi.hoisted(() => vi.fn());
 
 vi.mock('../services/podman', () => ({
   cloneRepoInVolume: mockCloneRepoInVolume,
+  createWorkspaceVolume: mockCreateWorkspaceVolume,
   removeWorkspaceFromVolume: mockRemoveWorkspaceFromVolume,
   createAndStartContainer: mockCreateAndStartContainer,
   stopContainer: mockStopContainer,
@@ -177,6 +179,26 @@ describe('sessionsRouter integration', () => {
           initialPrompt: 'Do something',
         })
       ).rejects.toThrow();
+    });
+
+    it('should create a no-repo session with null repoUrl and branch', async () => {
+      const caller = createCaller('auth-session-id');
+      const result = await caller.sessions.create({
+        name: 'Workspace Session',
+      });
+
+      expect(result.session.name).toBe('Workspace Session');
+      expect(result.session.status).toBe('creating');
+      expect(result.session.repoUrl).toBeNull();
+      expect(result.session.branch).toBeNull();
+
+      // Verify in database
+      const dbSession = await testPrisma.session.findUnique({
+        where: { id: result.session.id },
+      });
+      expect(dbSession).toBeDefined();
+      expect(dbSession!.repoUrl).toBeNull();
+      expect(dbSession!.branch).toBeNull();
     });
   });
 

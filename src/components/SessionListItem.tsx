@@ -19,7 +19,7 @@ export interface SessionListItemProps {
  * Each instance tracks its own pending start/stop/archive independently.
  */
 export function SessionListItem({ session, onMutationSuccess }: SessionListItemProps) {
-  const repoName = extractRepoFullName(session.repoUrl);
+  const repoName = session.repoUrl ? extractRepoFullName(session.repoUrl) : null;
   const isArchived = session.status === 'archived';
 
   const startMutation = trpc.sessions.start.useMutation({ onSuccess: onMutationSuccess });
@@ -39,9 +39,15 @@ export function SessionListItem({ session, onMutationSuccess }: SessionListItemP
               {session.name}
             </p>
             <p className="mt-1 text-sm text-muted-foreground truncate">
-              {repoName}
-              <span className="mx-1">·</span>
-              {session.branch}
+              {repoName ? (
+                <>
+                  {repoName}
+                  <span className="mx-1">·</span>
+                  {session.branch}
+                </>
+              ) : (
+                'No repository'
+              )}
             </p>
           </Link>
         </div>
