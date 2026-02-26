@@ -19,7 +19,7 @@ import { useClaudeState } from '@/hooks/useClaudeState';
 import { useWorkCompleteNotification } from '@/hooks/useWorkCompleteNotification';
 import { useVoiceConfig } from '@/hooks/useVoiceConfig';
 import { useVoicePlayback, VoicePlaybackContext } from '@/hooks/useVoicePlayback';
-import { getAutoReadMessages } from '@/lib/auto-read-helpers';
+import { getNewAutoReadMessages } from '@/lib/auto-read-helpers';
 
 function SessionView({ sessionId }: { sessionId: string }) {
   // Session state: data, start/stop/archive
@@ -89,29 +89,55 @@ function SessionView({ sessionId }: { sessionId: string }) {
     [session, sendPrompt]
   );
 
+  // Auto-read: stream TTS as assistant messages arrive during a turn
+  const prevRunningRef = useRef(false);
+  const autoReadQueuedIdsRef = useRef<Set<string>>(new Set());
+  const autoReadStoppedRef = useRef(false);
+
+  // Wrap voicePlayback.stop to also set the stopped flag for this turn.
+  // When the user manually stops playback during a turn, we don't want to
+  // keep auto-queuing new messages for the rest of that turn.
+  const stopWithAutoReadFlag = useCallback(() => {
+    autoReadStoppedRef.current = true;
+    voicePlayback.stop();
+  }, [voicePlayback]);
+
   // Stop playback when user sends a new prompt
   const handleSendPromptWithVoice = useCallback(
     (prompt: string) => {
-      voicePlayback.stop();
+      stopWithAutoReadFlag();
       handleSendPrompt(prompt);
     },
-    [handleSendPrompt, voicePlayback]
+    [handleSendPrompt, stopWithAutoReadFlag]
   );
 
-  // Auto-read: detect when Claude finishes a turn and speak the first and last assistant text messages
-  const prevRunningRef = useRef(false);
+  // During a turn: enqueue new assistant text messages as they arrive
   useEffect(() => {
     const wasRunning = prevRunningRef.current;
     prevRunningRef.current = isClaudeRunning;
 
-    // Detect transition from running -> not running (turn complete)
-    if (wasRunning && !isClaudeRunning && voiceConfig.autoRead && voiceConfig.enabled) {
-      const toPlay = getAutoReadMessages(messages);
-      if (toPlay.length > 0) {
-        voicePlayback.playSequential(toPlay.map((m) => ({ messageId: m.id, text: m.text })));
+    // Detect transition from not running -> running (new turn starts)
+    if (!wasRunning && isClaudeRunning) {
+      autoReadQueuedIdsRef.current = new Set();
+      autoReadStoppedRef.current = false;
+    }
+
+    // Enqueue new messages while running, and also do a final check on turn
+    // completion to catch any messages that arrived in the same render cycle.
+    const shouldEnqueue =
+      (isClaudeRunning || (wasRunning && !isClaudeRunning)) &&
+      voiceConfig.autoRead &&
+      voiceConfig.enabled &&
+      !autoReadStoppedRef.current;
+
+    if (shouldEnqueue) {
+      const newMessages = getNewAutoReadMessages(messages, autoReadQueuedIdsRef.current);
+      for (const msg of newMessages) {
+        autoReadQueuedIdsRef.current.add(msg.id);
+        voicePlayback.enqueue({ messageId: msg.id, text: msg.text });
       }
     }
-  }, [isClaudeRunning, messages, voiceConfig.autoRead, voiceConfig.enabled, voicePlayback]);
+  }, [isClaudeRunning, messages, voiceConfig.autoRead, voiceConfig.enabled, voicePlayback.enqueue]);
 
   if (sessionLoading) {
     return (
@@ -191,7 +217,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
     <VoicePlaybackContext.Provider
       value={
         voiceConfig.enabled
-          ? voicePlayback
+          ? { ...voicePlayback, stop: stopWithAutoReadFlag }
           : {
               enabled: false,
               isPlaying: false,
@@ -199,6 +225,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
               isLoading: false,
               play: async () => {},
               playSequential: () => {},
+              enqueue: () => {},
               pause: () => {},
               stop: () => {},
               restart: async () => {},
