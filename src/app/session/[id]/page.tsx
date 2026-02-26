@@ -122,26 +122,22 @@ function SessionView({ sessionId }: { sessionId: string }) {
       autoReadStoppedRef.current = false;
     }
 
-    // While Claude is running, enqueue new messages
-    if (isClaudeRunning && voiceConfig.autoRead && voiceConfig.enabled && !autoReadStoppedRef.current) {
-      const newMessages = getNewAutoReadMessages(messages, autoReadQueuedIdsRef.current);
-      for (const msg of newMessages) {
-        autoReadQueuedIdsRef.current.add(msg.id);
-        voicePlayback.enqueue({ messageId: msg.id, text: msg.text });
-      }
-    }
+    // Enqueue new messages while running, and also do a final check on turn
+    // completion to catch any messages that arrived in the same render cycle.
+    const shouldEnqueue =
+      (isClaudeRunning || (wasRunning && !isClaudeRunning)) &&
+      voiceConfig.autoRead &&
+      voiceConfig.enabled &&
+      !autoReadStoppedRef.current;
 
-    // Detect transition from running -> not running (turn complete)
-    if (wasRunning && !isClaudeRunning && voiceConfig.autoRead && voiceConfig.enabled && !autoReadStoppedRef.current) {
-      // Ensure the last assistant message gets played even if it arrived in the same
-      // render cycle as the turn completion. Check for any unqueued messages.
+    if (shouldEnqueue) {
       const newMessages = getNewAutoReadMessages(messages, autoReadQueuedIdsRef.current);
       for (const msg of newMessages) {
         autoReadQueuedIdsRef.current.add(msg.id);
         voicePlayback.enqueue({ messageId: msg.id, text: msg.text });
       }
     }
-  }, [isClaudeRunning, messages, voiceConfig.autoRead, voiceConfig.enabled, voicePlayback]);
+  }, [isClaudeRunning, messages, voiceConfig.autoRead, voiceConfig.enabled, voicePlayback.enqueue]);
 
   if (sessionLoading) {
     return (

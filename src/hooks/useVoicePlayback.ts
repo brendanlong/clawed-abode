@@ -88,6 +88,8 @@ export function useVoicePlayback(): VoicePlaybackState {
   const queueRef = useRef<PlaybackQueueItem[]>([]);
   // Ref to the "play next from queue" function, set after playInternal is defined
   const playNextFromQueueRef = useRef<() => void>(() => {});
+  // Synchronous flag to track whether playback is active (avoids stale closure on currentMessageId)
+  const isActiveRef = useRef(false);
 
   const mseSupported = useMemo(() => {
     if (typeof window === 'undefined') return false;
@@ -124,6 +126,7 @@ export function useVoicePlayback(): VoicePlaybackState {
   const cleanupAll = useCallback(() => {
     stopCurrentAudio();
     queueRef.current = [];
+    isActiveRef.current = false;
     // Revoke blob URLs
     for (const url of blobCacheRef.current.values()) {
       URL.revokeObjectURL(url);
@@ -134,6 +137,7 @@ export function useVoicePlayback(): VoicePlaybackState {
 
   const stop = useCallback(() => {
     queueRef.current = [];
+    isActiveRef.current = false;
     stopCurrentAudio();
     setIsPlaying(false);
     setCurrentMessageId(null);
@@ -175,6 +179,7 @@ export function useVoicePlayback(): VoicePlaybackState {
 
     audio.onerror = () => {
       queueRef.current = [];
+      isActiveRef.current = false;
       setIsPlaying(false);
       setCurrentMessageId(null);
       audioRef.current = null;
@@ -225,6 +230,7 @@ export function useVoicePlayback(): VoicePlaybackState {
         await playBlobUrl(messageId, blobUrl);
       } catch {
         queueRef.current = [];
+        isActiveRef.current = false;
         setIsLoading(false);
         setIsPlaying(false);
         setCurrentMessageId(null);
@@ -245,6 +251,7 @@ export function useVoicePlayback(): VoicePlaybackState {
       },
       onError: () => {
         queueRef.current = [];
+        isActiveRef.current = false;
         setIsPlaying(false);
         setCurrentMessageId(null);
         playerRef.current = null;
@@ -261,6 +268,7 @@ export function useVoicePlayback(): VoicePlaybackState {
       }
       await player.finalize();
     })().catch(() => {
+      isActiveRef.current = false;
       setIsPlaying(false);
       setCurrentMessageId(null);
     });
@@ -291,6 +299,7 @@ export function useVoicePlayback(): VoicePlaybackState {
         },
         onError: () => {
           queueRef.current = [];
+          isActiveRef.current = false;
           setIsPlaying(false);
           setIsLoading(false);
           setCurrentMessageId(null);
@@ -321,6 +330,7 @@ export function useVoicePlayback(): VoicePlaybackState {
 
   const playInternal = useCallback(
     async (messageId: string, text: string) => {
+      isActiveRef.current = true;
       stopCurrentAudio();
 
       if (mseSupported) {
@@ -345,6 +355,7 @@ export function useVoicePlayback(): VoicePlaybackState {
         playInternal(next.messageId, next.text);
       } else {
         // Queue exhausted, reset state
+        isActiveRef.current = false;
         setIsPlaying(false);
         setCurrentMessageId(null);
       }
@@ -407,8 +418,10 @@ export function useVoicePlayback(): VoicePlaybackState {
 
   const enqueue = useCallback(
     (item: PlaybackQueueItem) => {
-      // If something is currently playing or loading, just append to the queue
-      if (currentMessageId !== null) {
+      // If something is currently playing or loading, just append to the queue.
+      // Use isActiveRef (synchronous) instead of currentMessageId (React state)
+      // to avoid stale closure when multiple enqueue calls happen in the same render.
+      if (isActiveRef.current) {
         queueRef.current.push(item);
         return;
       }
@@ -416,7 +429,7 @@ export function useVoicePlayback(): VoicePlaybackState {
       // Nothing is playing — start playing this item immediately
       playInternal(item.messageId, item.text);
     },
-    [currentMessageId, playInternal]
+    [playInternal]
   );
 
   // Clean up on unmount
