@@ -250,6 +250,32 @@ The container includes the `io.containers.autoupdate=registry` label which tells
 
 **Note:** The `--new` flag in `podman generate systemd` is required for auto-updates to work. This ensures systemd creates a fresh container from the latest image on each restart rather than restarting the old container.
 
+#### Minimizing downtime during updates (recommended)
+
+When `--userns=keep-id` is used, Podman must create ID-mapped copies of new image layers the first time a container starts from a new image. For a 3+ GB image this can take 30-60 seconds — during which the service is down if the mapping happens after the old container stops.
+
+To fix this, create two systemd drop-in files that pre-warm the layer cache. The auto-update drop-in runs the pull and pre-warm **while the old container is still running**, so the actual restart only takes a few seconds.
+
+```bash
+# Drop-in 1: pre-warm during auto-update (old container stays up during the slow part)
+mkdir -p ~/.config/systemd/user/podman-auto-update.service.d
+cat > ~/.config/systemd/user/podman-auto-update.service.d/prewarm.conf << 'EOF'
+[Service]
+ExecStartPre=/usr/bin/podman pull ghcr.io/brendanlong/clawed-abode:latest
+ExecStartPre=-/usr/bin/podman run --rm --userns=keep-id ghcr.io/brendanlong/clawed-abode:latest /bin/sh -c exit
+EOF
+
+# Drop-in 2: fallback pre-warm for manual restarts, plus retry delay to avoid storage races
+mkdir -p ~/.config/systemd/user/clawed-abode.service.d
+cat > ~/.config/systemd/user/clawed-abode.service.d/idmap-prewarm.conf << 'EOF'
+[Service]
+RestartSec=10
+ExecStartPre=-/usr/bin/podman run --rm --userns=keep-id ghcr.io/brendanlong/clawed-abode:latest /bin/sh -c exit
+EOF
+
+systemctl --user daemon-reload
+```
+
 ### Running as a Dedicated Unprivileged User
 
 For improved isolation, you can run Clawed Abode as a dedicated unprivileged user instead of your main user account. This provides a layer of security since the Podman socket gives Claude Code agents the ability to run arbitrary containers on your system.
