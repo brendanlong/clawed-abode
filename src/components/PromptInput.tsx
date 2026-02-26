@@ -20,6 +20,7 @@ interface PromptInputProps {
   commands?: SlashCommand[];
   voiceEnabled?: boolean;
   voiceAutoSend?: boolean;
+  voiceTriggerWord?: string | null;
 }
 
 export function PromptInput({
@@ -31,8 +32,10 @@ export function PromptInput({
   commands = [],
   voiceEnabled = false,
   voiceAutoSend = true,
+  voiceTriggerWord,
 }: PromptInputProps) {
   const [prompt, setPrompt] = useState('');
+  const [liveTranscript, setLiveTranscript] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
   // Track the prompt value when user explicitly dismissed the dropdown
   const [dismissedForPrompt, setDismissedForPrompt] = useState<string | null>(null);
@@ -126,6 +129,7 @@ export function PromptInput({
 
   const handleVoiceTranscript = useCallback(
     (text: string) => {
+      setLiveTranscript('');
       if (voiceAutoSend && text.trim() && !disabled && !isRunning) {
         // Auto-send: combine any existing prompt text with the transcript
         const combined = prompt.trim() ? `${prompt.trim()} ${text.trim()}` : text.trim();
@@ -138,6 +142,10 @@ export function PromptInput({
     },
     [voiceAutoSend, disabled, isRunning, prompt, onSubmit]
   );
+
+  const handleLiveTranscript = useCallback((text: string) => {
+    setLiveTranscript(text);
+  }, []);
 
   // Scroll selected item into view
   useEffect(() => {
@@ -183,6 +191,13 @@ export function PromptInput({
           </div>
         )}
 
+        {/* Live transcript preview */}
+        {liveTranscript && (
+          <div className="mb-2 px-3 py-2 rounded-md bg-muted/50 border border-dashed border-muted-foreground/30">
+            <p className="text-sm text-muted-foreground italic">{liveTranscript}</p>
+          </div>
+        )}
+
         <div className="flex items-end gap-2">
           <div className="flex-1">
             <Textarea
@@ -204,7 +219,12 @@ export function PromptInput({
           </div>
 
           {voiceEnabled && !isRunning && (
-            <VoiceMicButton onTranscript={handleVoiceTranscript} disabled={disabled} />
+            <VoiceMicButton
+              onTranscript={handleVoiceTranscript}
+              onLiveTranscript={handleLiveTranscript}
+              disabled={disabled}
+              triggerWord={voiceTriggerWord}
+            />
           )}
 
           {isRunning ? (

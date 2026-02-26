@@ -37,5 +37,6 @@ export function useVoiceConfig(sessionId?: string) {
     autoRead,
     setAutoRead,
     autoSend: config?.autoSend ?? true,
+    triggerWord: config?.triggerWord ?? null,
   };
 }

@@ -279,6 +279,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
           commands={commands}
           voiceEnabled={voiceConfig.enabled}
           voiceAutoSend={voiceConfig.autoSend}
+          voiceTriggerWord={voiceConfig.triggerWord}
         />
       </div>
     </VoicePlaybackContext.Provider>

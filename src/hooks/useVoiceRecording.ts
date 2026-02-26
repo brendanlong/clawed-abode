@@ -1,106 +1,218 @@
 'use client';
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 
 function getAuthToken(): string | null {
   if (typeof window === 'undefined') return null;
   return localStorage.getItem('auth_token');
 }
 
+interface RealtimeToken {
+  client_secret: string;
+  expires_at: number;
+}
+
+async function fetchRealtimeToken(): Promise<RealtimeToken> {
+  const token = getAuthToken();
+  const response = await fetch('/api/voice/realtime-token', {
+    method: 'POST',
+    headers: token ? { authorization: `Bearer ${token}` } : {},
+  });
+
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({ error: 'Failed to get token' }));
+    throw new Error(data.error || 'Failed to get realtime token');
+  }
+
+  return response.json();
+}
+
 /**
- * Hook for managing push-to-talk voice recording.
- * Uses MediaRecorder API to capture audio and sends it to the transcription endpoint.
+ * Hook for streaming voice recording using OpenAI Realtime API.
+ *
+ * The browser connects directly to OpenAI's Realtime WebSocket using an ephemeral
+ * token from our backend. Audio is captured as PCM16 at 24kHz via AudioWorklet
+ * and streamed to the WebSocket. Transcription results arrive in real-time.
  */
 export function useVoiceRecording() {
   const [isRecording, setIsRecording] = useState(false);
-  const [isTranscribing, setIsTranscribing] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [liveTranscript, setLiveTranscript] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
 
-  const startRecording = useCallback(async () => {
-    setError(null);
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
-      mediaRecorderRef.current = mediaRecorder;
-      chunksRef.current = [];
+  // Refs to manage WebSocket and audio resources
+  const wsRef = useRef<WebSocket | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const workletNodeRef = useRef<AudioWorkletNode | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const transcriptRef = useRef('');
 
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          chunksRef.current.push(event.data);
-        }
-      };
-
-      mediaRecorder.start();
-      setIsRecording(true);
-    } catch (err) {
-      if (err instanceof DOMException && err.name === 'NotAllowedError') {
-        setError('Microphone permission denied. Please allow microphone access.');
-      } else {
-        setError('Failed to start recording');
+  const cleanup = useCallback(() => {
+    // Close WebSocket
+    if (wsRef.current) {
+      if (
+        wsRef.current.readyState === WebSocket.OPEN ||
+        wsRef.current.readyState === WebSocket.CONNECTING
+      ) {
+        wsRef.current.close();
       }
+      wsRef.current = null;
+    }
+
+    // Stop AudioWorklet
+    if (workletNodeRef.current) {
+      workletNodeRef.current.port.postMessage({ type: 'stop' });
+      workletNodeRef.current.disconnect();
+      workletNodeRef.current = null;
+    }
+
+    // Close AudioContext
+    if (audioContextRef.current) {
+      audioContextRef.current.close();
+      audioContextRef.current = null;
+    }
+
+    // Stop media stream tracks
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach((track) => track.stop());
+      mediaStreamRef.current = null;
     }
   }, []);
 
-  const stopRecording = useCallback(async (): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const mediaRecorder = mediaRecorderRef.current;
-      if (!mediaRecorder || mediaRecorder.state === 'inactive') {
-        setIsRecording(false);
-        reject(new Error('No active recording'));
-        return;
-      }
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      cleanup();
+    };
+  }, [cleanup]);
 
-      mediaRecorder.onstop = async () => {
-        setIsRecording(false);
-        setIsTranscribing(true);
+  const startRecording = useCallback(async () => {
+    setError(null);
+    setLiveTranscript('');
+    transcriptRef.current = '';
+    setIsConnecting(true);
 
-        // Stop all tracks to release the microphone
-        mediaRecorder.stream.getTracks().forEach((track) => track.stop());
+    try {
+      // Get ephemeral token from our backend
+      const { client_secret } = await fetchRealtimeToken();
 
+      // Get microphone access
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaStreamRef.current = stream;
+
+      // Create AudioContext at 24kHz (required by Realtime API)
+      const audioContext = new AudioContext({ sampleRate: 24000 });
+      audioContextRef.current = audioContext;
+
+      // Load the PCM16 AudioWorklet processor
+      await audioContext.audioWorklet.addModule('/pcm-audio-worklet.js');
+
+      // Connect microphone → AudioWorklet
+      const source = audioContext.createMediaStreamSource(stream);
+      const workletNode = new AudioWorkletNode(audioContext, 'pcm-audio-processor');
+      workletNodeRef.current = workletNode;
+      source.connect(workletNode);
+      // Don't connect to destination — we don't want to play back the mic audio
+
+      // Open WebSocket to OpenAI Realtime API
+      const ws = new WebSocket('wss://api.openai.com/v1/realtime?intent=transcription', [
+        'realtime',
+        `openai-insecure-api-key.${client_secret}`,
+        'openai-beta.realtime-v1',
+      ]);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        setIsConnecting(false);
+        setIsRecording(true);
+
+        // Start forwarding audio data from AudioWorklet to WebSocket
+        workletNode.port.onmessage = (event) => {
+          if (event.data.type === 'audio' && ws.readyState === WebSocket.OPEN) {
+            // Convert ArrayBuffer to base64
+            const bytes = new Uint8Array(event.data.buffer);
+            let binary = '';
+            for (let i = 0; i < bytes.length; i++) {
+              binary += String.fromCharCode(bytes[i]);
+            }
+            const base64 = btoa(binary);
+            ws.send(
+              JSON.stringify({
+                type: 'input_audio_buffer.append',
+                audio: base64,
+              })
+            );
+          }
+        };
+      };
+
+      ws.onmessage = (event) => {
         try {
-          const blob = new Blob(chunksRef.current, { type: mediaRecorder.mimeType });
-          chunksRef.current = [];
+          const data = JSON.parse(event.data as string);
 
-          // Determine file extension from MIME type
-          let ext = 'webm';
-          if (mediaRecorder.mimeType.includes('ogg')) ext = 'ogg';
-          else if (mediaRecorder.mimeType.includes('mp4')) ext = 'mp4';
-
-          const formData = new FormData();
-          formData.append('audio', blob, `recording.${ext}`);
-
-          const token = getAuthToken();
-          const response = await fetch('/api/voice/transcribe', {
-            method: 'POST',
-            headers: token ? { authorization: `Bearer ${token}` } : {},
-            body: formData,
-          });
-
-          if (!response.ok) {
-            const data = await response.json().catch(() => ({ error: 'Transcription failed' }));
-            throw new Error(data.error || 'Transcription failed');
+          if (data.type === 'conversation.item.input_audio_transcription.completed') {
+            const text = (data.transcript as string)?.trim();
+            if (text) {
+              transcriptRef.current = transcriptRef.current
+                ? `${transcriptRef.current} ${text}`
+                : text;
+              setLiveTranscript(transcriptRef.current);
+            }
           }
 
-          const data = await response.json();
-          setIsTranscribing(false);
-          resolve(data.text);
-        } catch (err) {
-          setIsTranscribing(false);
-          const message = err instanceof Error ? err.message : 'Transcription failed';
-          setError(message);
-          reject(err);
+          if (data.type === 'error') {
+            console.error('Realtime API error:', data.error);
+            if (data.error?.code === 'session_expired') {
+              setError('Voice session expired. Please try again.');
+              cleanup();
+              setIsRecording(false);
+              setIsConnecting(false);
+            }
+          }
+        } catch {
+          // Ignore unparseable messages
         }
       };
 
-      mediaRecorder.stop();
-    });
-  }, []);
+      ws.onerror = () => {
+        setError('Voice connection error. Please try again.');
+        cleanup();
+        setIsRecording(false);
+        setIsConnecting(false);
+      };
+
+      ws.onclose = () => {
+        // Only set states if we didn't already clean up
+        if (wsRef.current === ws) {
+          setIsRecording(false);
+          setIsConnecting(false);
+        }
+      };
+    } catch (err) {
+      cleanup();
+      setIsConnecting(false);
+      setIsRecording(false);
+
+      if (err instanceof DOMException && err.name === 'NotAllowedError') {
+        setError('Microphone permission denied. Please allow microphone access.');
+      } else {
+        setError(err instanceof Error ? err.message : 'Failed to start recording');
+      }
+    }
+  }, [cleanup]);
+
+  const stopRecording = useCallback((): string => {
+    const transcript = transcriptRef.current;
+    cleanup();
+    setIsRecording(false);
+    setIsConnecting(false);
+    return transcript;
+  }, [cleanup]);
 
   return {
     isRecording,
-    isTranscribing,
+    isConnecting,
+    liveTranscript,
     startRecording,
     stopRecording,
     error,

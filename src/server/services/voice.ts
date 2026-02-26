@@ -66,23 +66,6 @@ export function needsTransformation(text: string): boolean {
 }
 
 /**
- * Transcribe audio via OpenAI Whisper.
- */
-export async function transcribeAudio(audioFile: File, apiKey: string): Promise<string> {
-  const openai = new OpenAI({ apiKey });
-
-  log.info('Transcribing audio', { size: audioFile.size, type: audioFile.type });
-
-  const transcription = await openai.audio.transcriptions.create({
-    file: audioFile,
-    model: 'gpt-4o-mini-transcribe',
-  });
-
-  log.info('Transcription complete', { textLength: transcription.text.length });
-  return transcription.text;
-}
-
-/**
  * Transform markdown text to speech-friendly text via Claude Sonnet.
  */
 export async function transformTextForSpeech(text: string, apiKey: string): Promise<string> {

@@ -73,6 +73,24 @@ export function AudioTab() {
           <VoiceAutoSendSection autoSend={settings?.voiceAutoSend ?? true} onUpdate={refetch} />
         </CardContent>
       </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Voice Trigger Word</CardTitle>
+          <CardDescription>
+            When set, saying this word during streaming voice input will automatically submit the
+            transcript to Claude. The trigger word itself is stripped from the message. For example,
+            set to &quot;Over.&quot; and say &quot;Fix the bug. Over.&quot; to auto-submit &quot;Fix
+            the bug.&quot; Leave empty to disable.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <VoiceTriggerWordSection
+            triggerWord={settings?.voiceTriggerWord ?? null}
+            onUpdate={refetch}
+          />
+        </CardContent>
+      </Card>
     </div>
   );
 }
@@ -260,6 +278,62 @@ function VoiceAutoSendSection({ autoSend, onUpdate }: { autoSend: boolean; onUpd
           {autoSend ? 'Auto-send enabled' : 'Auto-send disabled'}
         </Label>
       </div>
+      {error && <p className="text-sm text-destructive">{error}</p>}
+    </div>
+  );
+}
+
+function VoiceTriggerWordSection({
+  triggerWord,
+  onUpdate,
+}: {
+  triggerWord: string | null;
+  onUpdate: () => void;
+}) {
+  const [editValue, setEditValue] = useState(triggerWord ?? '');
+  const [error, setError] = useState<string | null>(null);
+
+  const mutation = trpc.globalSettings.setVoiceTriggerWord.useMutation({
+    onSuccess: () => onUpdate(),
+    onError: (err) => setError(err.message),
+  });
+
+  const handleSave = () => {
+    setError(null);
+    mutation.mutate({ voiceTriggerWord: editValue.trim() || null });
+  };
+
+  const handleClear = () => {
+    setError(null);
+    setEditValue('');
+    mutation.mutate({ voiceTriggerWord: null });
+  };
+
+  const hasChanged = (editValue.trim() || null) !== (triggerWord || null);
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <Input
+          value={editValue}
+          onChange={(e) => setEditValue(e.target.value)}
+          placeholder='e.g., "Over."'
+          className="max-w-xs"
+        />
+        <Button size="sm" onClick={handleSave} disabled={mutation.isPending || !hasChanged}>
+          {mutation.isPending ? <Spinner size="sm" /> : 'Save'}
+        </Button>
+        {triggerWord && (
+          <Button variant="outline" size="sm" onClick={handleClear} disabled={mutation.isPending}>
+            Clear
+          </Button>
+        )}
+      </div>
+      {triggerWord && (
+        <p className="text-sm text-muted-foreground">
+          Current trigger word: <code className="bg-muted px-1 rounded">{triggerWord}</code>
+        </p>
+      )}
       {error && <p className="text-sm text-destructive">{error}</p>}
     </div>
   );

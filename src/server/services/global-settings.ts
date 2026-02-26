@@ -18,6 +18,7 @@ export interface GlobalDisplaySettings {
   hasOpenaiApiKey: boolean;
   ttsSpeed: number | null;
   voiceAutoSend: boolean;
+  voiceTriggerWord: string | null;
 }
 
 /**
@@ -58,6 +59,7 @@ export async function getGlobalSettings(): Promise<GlobalDisplaySettings> {
       hasOpenaiApiKey: false,
       ttsSpeed: null,
       voiceAutoSend: true,
+      voiceTriggerWord: null,
     };
   }
 
@@ -70,6 +72,7 @@ export async function getGlobalSettings(): Promise<GlobalDisplaySettings> {
     hasOpenaiApiKey: settings.openaiApiKey !== null,
     ttsSpeed: settings.ttsSpeed,
     voiceAutoSend: settings.voiceAutoSend,
+    voiceTriggerWord: settings.voiceTriggerWord,
   };
 }
 

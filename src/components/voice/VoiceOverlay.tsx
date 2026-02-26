@@ -7,6 +7,7 @@ import { X, Mic, Square, Play, Pause, SkipBack, SkipForward, Send, Loader2 } fro
 import { useVoicePlaybackContext } from '@/hooks/useVoicePlayback';
 import { useVoiceRecording } from '@/hooks/useVoiceRecording';
 import { useVoiceConfig } from '@/hooks/useVoiceConfig';
+import { detectTriggerWord } from '@/lib/trigger-word';
 import { extractAssistantText } from '@/lib/auto-read-helpers';
 import { cn } from '@/lib/utils';
 
@@ -63,7 +64,8 @@ export function VoiceOverlay({
   const playback = useVoicePlaybackContext();
   const {
     isRecording,
-    isTranscribing,
+    isConnecting,
+    liveTranscript,
     startRecording,
     stopRecording,
     error: recordingError,
@@ -72,6 +74,8 @@ export function VoiceOverlay({
 
   // Transcript from the last recording, before user decides to send or cancel
   const [transcript, setTranscript] = useState<string | null>(null);
+  // Track if we already auto-submitted via trigger word
+  const autoSubmittedRef = useRef(false);
 
   // Wake Lock to keep screen awake while overlay is open
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
@@ -111,6 +115,22 @@ export function VoiceOverlay({
       }
     };
   }, []);
+
+  // Check for trigger word in live transcript
+  useEffect(() => {
+    if (!voiceConfig.triggerWord || !liveTranscript || !isRecording || autoSubmittedRef.current) {
+      return;
+    }
+
+    const result = detectTriggerWord(liveTranscript, voiceConfig.triggerWord);
+    if (result !== null) {
+      autoSubmittedRef.current = true;
+      stopRecording();
+      if (result.trim()) {
+        onSendPrompt(result);
+      }
+    }
+  }, [liveTranscript, voiceConfig.triggerWord, isRecording, stopRecording, onSendPrompt]);
 
   // Build list of assistant text messages for navigation
   const assistantTextMessages = useMemo(() => getAssistantTextMessages(messages), [messages]);
@@ -168,21 +188,19 @@ export function VoiceOverlay({
   // Recording: start or stop
   const handleMicPress = useCallback(async () => {
     if (isRecording) {
-      try {
-        const text = await stopRecording();
-        if (text.trim()) {
-          if (voiceConfig.autoRead) {
-            // Auto-send mode: send immediately without showing transcript
-            onSendPrompt(text.trim());
-          } else {
-            setTranscript(text.trim());
-          }
+      const text = stopRecording();
+      autoSubmittedRef.current = false;
+      if (text.trim()) {
+        if (voiceConfig.autoRead) {
+          // Auto-send mode: send immediately without showing transcript
+          onSendPrompt(text.trim());
+        } else {
+          setTranscript(text.trim());
         }
-      } catch {
-        // Error handled by hook
       }
     } else {
       setTranscript(null);
+      autoSubmittedRef.current = false;
       await startRecording();
     }
   }, [isRecording, startRecording, stopRecording, voiceConfig.autoRead, onSendPrompt]);
@@ -202,12 +220,12 @@ export function VoiceOverlay({
 
   // Determine status text when not playing
   const statusText = useMemo(() => {
+    if (isConnecting) return 'Connecting...';
     if (isRecording) return 'Listening...';
-    if (isTranscribing) return 'Transcribing...';
     if (isClaudeRunning) return 'Waiting for Claude...';
     if (transcript) return 'Review transcript below';
     return 'Ready';
-  }, [isRecording, isTranscribing, isClaudeRunning, transcript]);
+  }, [isConnecting, isRecording, isClaudeRunning, transcript]);
 
   const hasPrev = assistantTextMessages.length > 0 && currentIndex > 0;
   const hasNext = currentIndex >= 0 && currentIndex < assistantTextMessages.length - 1;
@@ -235,6 +253,11 @@ export function VoiceOverlay({
             <p className="text-lg leading-relaxed text-foreground whitespace-pre-wrap">
               {currentDisplayText}
             </p>
+          ) : liveTranscript && isRecording ? (
+            <div className="space-y-2">
+              <p className="text-sm font-medium text-muted-foreground">Listening:</p>
+              <p className="text-lg leading-relaxed text-foreground italic">{liveTranscript}</p>
+            </div>
           ) : transcript ? (
             <div className="space-y-2">
               <p className="text-sm font-medium text-muted-foreground">Your message:</p>
@@ -243,7 +266,7 @@ export function VoiceOverlay({
           ) : (
             <div className="h-full flex items-center justify-center">
               <div className="text-center">
-                {isClaudeRunning || isTranscribing ? (
+                {isClaudeRunning || isConnecting ? (
                   <Loader2 className="h-8 w-8 animate-spin text-muted-foreground mx-auto mb-4" />
                 ) : null}
                 <p className="text-xl text-muted-foreground">{statusText}</p>
@@ -317,16 +340,12 @@ export function VoiceOverlay({
             size="icon"
             className={cn('h-24 w-24 rounded-full', isRecording && 'animate-pulse')}
             onClick={handleMicPress}
-            disabled={isTranscribing}
+            disabled={isConnecting}
             title={
-              isTranscribing
-                ? 'Transcribing...'
-                : isRecording
-                  ? 'Stop recording'
-                  : 'Start recording'
+              isConnecting ? 'Connecting...' : isRecording ? 'Stop recording' : 'Start recording'
             }
           >
-            {isTranscribing ? (
+            {isConnecting ? (
               <Loader2 className="h-10 w-10 animate-spin" />
             ) : (
               <Mic className="h-10 w-10" />

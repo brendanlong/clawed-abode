@@ -64,6 +64,7 @@ export const globalSettingsRouter = router({
       hasOpenaiApiKey: settings?.openaiApiKey !== null && settings?.openaiApiKey !== undefined,
       ttsSpeed: settings?.ttsSpeed ?? null,
       voiceAutoSend: settings?.voiceAutoSend ?? true,
+      voiceTriggerWord: settings?.voiceTriggerWord ?? null,
       defaultClaudeModel: env.CLAUDE_MODEL,
       hasEnvApiKey: !!env.CLAUDE_CODE_OAUTH_TOKEN,
     };
@@ -482,6 +483,31 @@ export const globalSettingsRouter = router({
       });
 
       log.info('Set voice auto-send', { voiceAutoSend: input.voiceAutoSend });
+
+      return { success: true };
+    }),
+
+  /**
+   * Set the voice trigger word.
+   * When configured, saying this word during streaming voice input auto-submits the transcript.
+   * Pass null or empty string to disable trigger word.
+   */
+  setVoiceTriggerWord: protectedProcedure
+    .input(
+      z.object({
+        voiceTriggerWord: z.string().max(100).nullable(),
+      })
+    )
+    .mutation(async ({ input }) => {
+      const triggerWord = input.voiceTriggerWord?.trim() || null;
+
+      await prisma.globalSettings.upsert({
+        where: { id: GLOBAL_SETTINGS_ID },
+        create: { id: GLOBAL_SETTINGS_ID, voiceTriggerWord: triggerWord },
+        update: { voiceTriggerWord: triggerWord },
+      });
+
+      log.info('Set voice trigger word', { voiceTriggerWord: triggerWord });
 
       return { success: true };
     }),
