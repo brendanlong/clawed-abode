@@ -15,7 +15,8 @@ import { Spinner } from '@/components/ui/spinner';
 import { Separator } from '@/components/ui/separator';
 import { Textarea } from '@/components/ui/textarea';
 import { trpc } from '@/lib/trpc';
-import { Plus, Star, FileText } from 'lucide-react';
+import { Plus, Star, FileText, FolderOpen } from 'lucide-react';
+import { NO_REPO_SENTINEL } from '@/components/RepoSelector';
 import { EnvVarSection } from './shared/EnvVarSection';
 import { McpServerSection } from './shared/McpServerSection';
 import type { EnvVarMutations } from './shared/EnvVarSection';
@@ -74,7 +75,16 @@ export function RepoSettingsEditor({ repoFullName, onClose }: RepoSettingsEditor
     <Sheet open onOpenChange={(open) => !open && onClose()}>
       <SheetContent className="w-full sm:max-w-lg overflow-y-auto">
         <SheetHeader>
-          <SheetTitle className="font-mono text-sm">{repoFullName}</SheetTitle>
+          <SheetTitle className="text-sm">
+            {repoFullName === NO_REPO_SENTINEL ? (
+              <span className="flex items-center gap-1.5">
+                <FolderOpen className="h-4 w-4 text-muted-foreground" />
+                No Repository
+              </span>
+            ) : (
+              <span className="font-mono">{repoFullName}</span>
+            )}
+          </SheetTitle>
           <SheetDescription>Configure environment variables and MCP servers</SheetDescription>
         </SheetHeader>
 

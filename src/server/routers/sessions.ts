@@ -7,6 +7,7 @@ import {
   stopContainer,
   removeContainer,
   cloneRepoInVolume,
+  createWorkspaceVolume,
   removeWorkspaceFromVolume,
   verifyContainerHealth,
   cleanupSessionSocket,
@@ -27,11 +28,14 @@ const log = createLogger('sessions');
 
 const sessionStatusSchema = z.enum(['creating', 'running', 'stopped', 'error', 'archived']);
 
+/** Sentinel value for no-repo sessions in RepoSettings */
+const NO_REPO_SENTINEL = '__no_repo__';
+
 // Background session setup - runs after create mutation returns
 async function setupSession(
   sessionId: string,
-  repoFullName: string,
-  branch: string,
+  repoFullName: string | null,
+  branch: string | null,
   initialPrompt: string | undefined,
   githubToken?: string
 ): Promise<void> {
@@ -46,21 +50,33 @@ async function setupSession(
   };
 
   try {
-    // Clone the repository into the workspaces volume
-    log.info('Cloning repository', { sessionId, repoFullName, branch });
-    const { repoPath } = await cloneRepoInVolume({
-      sessionId,
-      repoFullName,
-      branch,
-      githubToken,
-    });
-    log.info('Repository cloned', { sessionId, repoPath });
+    let repoPath = '';
+
+    if (repoFullName && branch) {
+      // Clone the repository into the workspaces volume
+      log.info('Cloning repository', { sessionId, repoFullName, branch });
+      const cloneResult = await cloneRepoInVolume({
+        sessionId,
+        repoFullName,
+        branch,
+        githubToken,
+      });
+      repoPath = cloneResult.repoPath;
+      log.info('Repository cloned', { sessionId, repoPath });
+    } else {
+      // No-repo session: create an empty workspace volume
+      log.info('Creating empty workspace for no-repo session', { sessionId });
+      await updateStatus('Creating workspace...');
+      await createWorkspaceVolume(sessionId);
+    }
 
     // Update status
     await updateStatus('Starting container...');
 
     // Load and merge global + per-repo settings
-    const settings = await loadMergedSessionSettings(repoFullName);
+    // For no-repo sessions, use the sentinel value to load no-repo-specific settings
+    const settingsKey = repoFullName ?? NO_REPO_SENTINEL;
+    const settings = await loadMergedSessionSettings(settingsKey);
 
     // Start container with GitHub token for push/pull access and merged settings
     log.info('Starting container', { sessionId });
@@ -139,23 +155,27 @@ export const sessionsRouter = router({
     .input(
       z.object({
         name: z.string().min(1).max(100),
-        repoFullName: z.string().regex(/^[\w-]+\/[\w.-]+$/),
-        branch: z.string().min(1),
+        repoFullName: z
+          .string()
+          .regex(/^[\w-]+\/[\w.-]+$/)
+          .optional(),
+        branch: z.string().min(1).optional(),
         initialPrompt: z.string().max(100000).optional(),
       })
     )
     .mutation(async ({ input }) => {
       const githubToken = env.GITHUB_TOKEN;
+      const hasRepo = !!input.repoFullName && !!input.branch;
 
       // Create session record first
       const session = await prisma.session.create({
         data: {
           name: input.name,
-          repoUrl: `https://github.com/${input.repoFullName}.git`,
-          branch: input.branch,
+          repoUrl: hasRepo ? `https://github.com/${input.repoFullName}.git` : null,
+          branch: hasRepo ? input.branch! : null,
           workspacePath: '', // Deprecated - workspaces now use named volumes
           status: 'creating',
-          statusMessage: 'Cloning repository...',
+          statusMessage: hasRepo ? 'Cloning repository...' : 'Creating workspace...',
           initialPrompt: input.initialPrompt,
         },
       });
@@ -165,8 +185,8 @@ export const sessionsRouter = router({
       // to prevent unhandled promise rejections
       setupSession(
         session.id,
-        input.repoFullName,
-        input.branch,
+        input.repoFullName ?? null,
+        input.branch ?? null,
         input.initialPrompt,
         githubToken
       ).catch((error) => {
@@ -251,11 +271,14 @@ export const sessionsRouter = router({
         const githubToken = env.GITHUB_TOKEN;
 
         // Extract repoFullName from repoUrl (e.g., "https://github.com/owner/repo.git" -> "owner/repo")
-        const repoFullNameMatch = session.repoUrl.match(/github\.com\/([^/]+\/[^/.]+)/);
+        // For no-repo sessions, repoUrl is null
+        const repoFullNameMatch = session.repoUrl?.match(/github\.com\/([^/]+\/[^/.]+)/);
         const repoFullName = repoFullNameMatch?.[1];
 
         // Load and merge global + per-repo settings
-        const settings = await loadMergedSessionSettings(repoFullName);
+        // For no-repo sessions, use the sentinel value
+        const settingsKey = repoFullName ?? NO_REPO_SENTINEL;
+        const settings = await loadMergedSessionSettings(settingsKey);
 
         const containerId = await createAndStartContainer({
           sessionId: session.id,

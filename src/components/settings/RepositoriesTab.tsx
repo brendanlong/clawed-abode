@@ -6,8 +6,9 @@ import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
 import { trpc } from '@/lib/trpc';
 import { RepoSettingsEditor } from './RepoSettingsEditor';
-import { Star, Settings, Trash2 } from 'lucide-react';
+import { Star, Settings, Trash2, FolderOpen } from 'lucide-react';
 import { DeleteConfirmDialog } from './shared/DeleteConfirmDialog';
+import { NO_REPO_SENTINEL } from '@/components/RepoSelector';
 
 export function RepositoriesTab() {
   const [selectedRepo, setSelectedRepo] = useState<string | null>(null);
@@ -54,7 +55,14 @@ export function RepositoriesTab() {
                     {setting.isFavorite && (
                       <Star className="h-4 w-4 text-yellow-500 fill-yellow-500 shrink-0" />
                     )}
-                    <span className="font-mono text-sm truncate">{setting.repoFullName}</span>
+                    {setting.repoFullName === NO_REPO_SENTINEL ? (
+                      <span className="flex items-center gap-1.5 text-sm truncate">
+                        <FolderOpen className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                        No Repository
+                      </span>
+                    ) : (
+                      <span className="font-mono text-sm truncate">{setting.repoFullName}</span>
+                    )}
                     <span className="text-xs text-muted-foreground shrink-0">
                       {setting.envVarCount > 0 && `${setting.envVarCount} env vars`}
                       {setting.envVarCount > 0 && setting.mcpServerCount > 0 && ', '}

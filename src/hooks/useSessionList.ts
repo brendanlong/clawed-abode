@@ -5,8 +5,8 @@ import { trpc } from '@/lib/trpc';
 export interface Session {
   id: string;
   name: string;
-  repoUrl: string;
-  branch: string;
+  repoUrl: string | null;
+  branch: string | null;
   status: string;
   updatedAt: Date;
 }
