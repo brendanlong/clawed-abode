@@ -2,28 +2,28 @@
 
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { X, Mic, Square, Play, Pause, SkipBack, SkipForward, Send, Loader2 } from 'lucide-react';
+import { X, Mic, Square, Play, Pause, SkipBack, SkipForward, Send } from 'lucide-react';
 import { useVoicePlaybackContext } from '@/hooks/useVoicePlayback';
 import { useVoiceRecording } from '@/hooks/useVoiceRecording';
 import { useVoiceConfig } from '@/hooks/useVoiceConfig';
 import { extractAssistantText } from '@/lib/auto-read-helpers';
 import { cn } from '@/lib/utils';
 
-/** Minimal message shape passed into the overlay */
-interface OverlayMessage {
+/** Minimal message shape passed into the panel */
+interface PanelMessage {
   id: string;
   type: string;
   content: unknown;
   sequence: number;
 }
 
-interface VoiceOverlayProps {
+interface VoiceControlPanelProps {
   sessionId: string;
-  messages: OverlayMessage[];
-  isClaudeRunning: boolean;
+  messages: PanelMessage[];
+  isRunning: boolean;
   onSendPrompt: (prompt: string) => void;
   onClose: () => void;
+  onInterrupt: () => void;
 }
 
 /** An assistant message with extractable text, for prev/next navigation */
@@ -34,9 +34,9 @@ interface AssistantTextEntry {
 
 /**
  * Build a list of assistant messages that have meaningful text content.
- * Used for prev/next navigation in the overlay.
+ * Used for prev/next navigation in the panel.
  */
-function getAssistantTextMessages(messages: OverlayMessage[]): AssistantTextEntry[] {
+function getAssistantTextMessages(messages: PanelMessage[]): AssistantTextEntry[] {
   const results: AssistantTextEntry[] = [];
   for (const msg of messages) {
     if (msg.type !== 'assistant') continue;
@@ -50,16 +50,18 @@ function getAssistantTextMessages(messages: OverlayMessage[]): AssistantTextEntr
 }
 
 /**
- * Full-screen voice overlay for hands-free interaction with Claude.
- * Large touch targets, high contrast, designed for mobile use.
+ * Inline voice controls panel that replaces PromptInput when voice mode is active.
+ * Renders as a normal flow element (not a modal/overlay) at the bottom of the session view.
+ * Provides playback navigation, a large mic button, and send/cancel for transcripts.
  */
-export function VoiceOverlay({
+export function VoiceControlPanel({
   sessionId,
   messages,
-  isClaudeRunning,
+  isRunning,
   onSendPrompt,
   onClose,
-}: VoiceOverlayProps) {
+  onInterrupt,
+}: VoiceControlPanelProps) {
   const playback = useVoicePlaybackContext();
   const {
     isRecording,
@@ -74,7 +76,7 @@ export function VoiceOverlay({
   // Transcript from the last recording, before user decides to send or cancel
   const [transcript, setTranscript] = useState<string | null>(null);
 
-  // Wake Lock to keep screen awake while overlay is open
+  // Wake Lock to keep screen awake while voice panel is open
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
 
   useEffect(() => {
@@ -122,14 +124,6 @@ export function VoiceOverlay({
     return assistantTextMessages.findIndex((m) => m.id === playback.currentMessageId);
   }, [playback.currentMessageId, assistantTextMessages]);
 
-  // Get the text of the currently playing message
-  const currentDisplayText = useMemo(() => {
-    if (currentIndex >= 0) {
-      return assistantTextMessages[currentIndex].text;
-    }
-    return null;
-  }, [currentIndex, assistantTextMessages]);
-
   // Navigation: play previous assistant text message
   const handlePrev = useCallback(() => {
     if (currentIndex <= 0) return;
@@ -176,7 +170,7 @@ export function VoiceOverlay({
       try {
         const text = await stopRecording();
         if (text.trim()) {
-          if (voiceConfig.autoRead) {
+          if (voiceConfig.autoSend) {
             // Auto-send mode: send immediately without showing transcript
             onSendPrompt(text.trim());
           } else {
@@ -190,7 +184,7 @@ export function VoiceOverlay({
       setTranscript(null);
       await startRecording();
     }
-  }, [isRecording, startRecording, stopRecording, voiceConfig.autoRead, onSendPrompt]);
+  }, [isRecording, startRecording, stopRecording, voiceConfig.autoSend, onSendPrompt]);
 
   // Send the transcript
   const handleSend = useCallback(() => {
@@ -205,158 +199,154 @@ export function VoiceOverlay({
     setTranscript(null);
   }, []);
 
-  // Determine status text when not playing
-  const statusText = useMemo(() => {
-    if (isRecording) return interimTranscript ? `"${interimTranscript}"` : 'Listening...';
-    if (isTranscribing) return 'Processing...';
-    if (isClaudeRunning) return 'Waiting for Claude...';
-    if (transcript) return 'Review transcript below';
-    return 'Ready';
-  }, [isRecording, isTranscribing, isClaudeRunning, transcript, interimTranscript]);
-
   const hasPrev = assistantTextMessages.length > 0 && currentIndex > 0;
   const hasNext = currentIndex >= 0 && currentIndex < assistantTextMessages.length - 1;
   const hasPlayableContent = assistantTextMessages.length > 0;
 
   return (
-    <div className="fixed inset-0 z-50 bg-background flex flex-col">
-      {/* Close button */}
-      <div className="flex justify-end p-4">
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={onClose}
-          className="h-12 w-12"
-          title="Close voice overlay"
-        >
-          <X className="h-6 w-6" />
-        </Button>
+    <div className="border-t bg-background flex-shrink-0">
+      {/* Status line */}
+      <div className="px-4 py-2 text-center text-sm text-muted-foreground">
+        {isRecording
+          ? interimTranscript
+            ? `"${interimTranscript}"`
+            : 'Listening...'
+          : isTranscribing
+            ? 'Processing...'
+            : isRunning
+              ? 'Claude is working...'
+              : transcript
+                ? 'Review transcript'
+                : 'Voice mode'}
       </div>
 
-      {/* Message display / status area */}
-      <div className="flex-1 min-h-0 px-6 pb-4">
-        <ScrollArea className="h-full">
-          {currentDisplayText ? (
-            <p className="text-lg leading-relaxed text-foreground whitespace-pre-wrap">
-              {currentDisplayText}
-            </p>
-          ) : transcript ? (
-            <div className="space-y-2">
-              <p className="text-sm font-medium text-muted-foreground">Your message:</p>
-              <p className="text-lg leading-relaxed text-foreground">{transcript}</p>
-            </div>
-          ) : (
-            <div className="h-full flex items-center justify-center">
-              <div className="text-center">
-                {isClaudeRunning || isTranscribing ? (
-                  <Loader2 className="h-8 w-8 animate-spin text-muted-foreground mx-auto mb-4" />
-                ) : null}
-                <p className="text-xl text-muted-foreground">{statusText}</p>
-              </div>
-            </div>
-          )}
-        </ScrollArea>
-      </div>
+      {/* Transcript review area */}
+      {transcript && (
+        <div className="px-4 pb-2">
+          <div className="rounded-md border bg-muted/50 p-3">
+            <p className="text-sm text-foreground">{transcript}</p>
+          </div>
+        </div>
+      )}
+
+      {/* Recording error display */}
+      {recordingError && (
+        <p className="text-center text-sm text-destructive px-4 pb-2">{recordingError}</p>
+      )}
 
       {/* Playback controls row */}
-      <div className="border-t px-6 py-4">
-        <div className="flex items-center justify-center gap-4">
+      <div className="px-4 py-2">
+        <div className="flex items-center justify-center gap-3">
           <Button
             variant="outline"
             size="icon"
-            className="h-16 w-16 rounded-full"
+            className="h-12 w-12 rounded-full"
             onClick={handlePrev}
             disabled={!hasPrev}
             title="Previous message"
           >
-            <SkipBack className="h-6 w-6" />
+            <SkipBack className="h-5 w-5" />
           </Button>
 
           <Button
             variant={playback.isPlaying ? 'secondary' : 'default'}
             size="icon"
-            className="h-16 w-16 rounded-full"
+            className="h-12 w-12 rounded-full"
             onClick={handlePlayPause}
             disabled={!hasPlayableContent && !playback.isPlaying}
             title={playback.isPlaying ? (playback.supportsPause ? 'Pause' : 'Stop') : 'Play'}
           >
             {playback.isPlaying ? (
               playback.supportsPause ? (
-                <Pause className="h-6 w-6" />
+                <Pause className="h-5 w-5" />
               ) : (
-                <Square className="h-6 w-6" />
+                <Square className="h-5 w-5" />
               )
             ) : (
-              <Play className="h-6 w-6" />
+              <Play className="h-5 w-5" />
             )}
           </Button>
 
           <Button
             variant="outline"
             size="icon"
-            className="h-16 w-16 rounded-full"
+            className="h-12 w-12 rounded-full"
             onClick={handleNext}
             disabled={!hasNext}
             title="Next message"
           >
-            <SkipForward className="h-6 w-6" />
+            <SkipForward className="h-5 w-5" />
           </Button>
 
           {playback.supportsPause && (
             <Button
               variant="outline"
               size="icon"
-              className="h-16 w-16 rounded-full"
+              className="h-12 w-12 rounded-full"
               onClick={playback.stop}
               disabled={!playback.currentMessageId}
-              title="Stop"
+              title="Stop playback"
             >
-              <Square className="h-6 w-6" />
+              <Square className="h-5 w-5" />
             </Button>
           )}
         </div>
       </div>
 
-      {/* Record area + send/cancel */}
-      <div className="border-t px-6 py-6 pb-8">
-        {/* Large mic button */}
-        <div className="flex justify-center mb-6">
+      {/* Large mic button + interrupt */}
+      <div className="px-4 py-3">
+        <div className="flex items-center justify-center gap-4">
+          {isRunning && (
+            <Button
+              variant="destructive"
+              size="icon"
+              className="h-14 w-14 rounded-full"
+              onClick={onInterrupt}
+              title="Interrupt Claude"
+            >
+              <Square className="h-6 w-6" />
+            </Button>
+          )}
+
           <Button
             variant={isRecording ? 'destructive' : 'default'}
             size="icon"
-            className={cn('h-24 w-24 rounded-full', isRecording && 'animate-pulse')}
+            className={cn('h-20 w-20 rounded-full', isRecording && 'animate-pulse')}
             onClick={handleMicPress}
             disabled={isTranscribing}
             title={
               isTranscribing ? 'Processing...' : isRecording ? 'Stop recording' : 'Start recording'
             }
           >
-            <Mic className="h-10 w-10" />
+            <Mic className="h-8 w-8" />
           </Button>
         </div>
+      </div>
 
-        {/* Recording error display */}
-        {recordingError && (
-          <p className="text-center text-sm text-destructive mb-4">{recordingError}</p>
-        )}
+      {/* Send / Cancel buttons - only visible after transcript is ready */}
+      {transcript && (
+        <div className="flex gap-3 px-4 pb-3">
+          <Button
+            variant="default"
+            className="h-12 flex-1 bg-green-600 hover:bg-green-700 text-white"
+            onClick={handleSend}
+          >
+            <Send className="h-4 w-4 mr-2" />
+            Send
+          </Button>
+          <Button variant="destructive" className="h-12 flex-1" onClick={handleCancel}>
+            <X className="h-4 w-4 mr-2" />
+            Cancel
+          </Button>
+        </div>
+      )}
 
-        {/* Send / Cancel buttons - only visible after transcript is ready */}
-        {transcript && (
-          <div className="flex justify-between gap-4">
-            <Button
-              variant="default"
-              className="h-16 flex-1 bg-green-600 hover:bg-green-700 text-white text-lg"
-              onClick={handleSend}
-            >
-              <Send className="h-5 w-5 mr-2" />
-              Send
-            </Button>
-            <Button variant="destructive" className="h-16 flex-1 text-lg" onClick={handleCancel}>
-              <X className="h-5 w-5 mr-2" />
-              Cancel
-            </Button>
-          </div>
-        )}
+      {/* Exit voice mode */}
+      <div className="px-4 pb-4">
+        <Button variant="ghost" className="w-full text-muted-foreground" onClick={onClose}>
+          <X className="h-4 w-4 mr-1" />
+          Exit Voice Mode
+        </Button>
       </div>
     </div>
   );

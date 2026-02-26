@@ -20,7 +20,7 @@ import { useWorkCompleteNotification } from '@/hooks/useWorkCompleteNotification
 import { useVoiceConfig } from '@/hooks/useVoiceConfig';
 import { useVoicePlayback, VoicePlaybackContext } from '@/hooks/useVoicePlayback';
 import { getNewAutoReadMessages } from '@/lib/auto-read-helpers';
-import { VoiceOverlay } from '@/components/voice/VoiceOverlay';
+import { VoiceControlPanel } from '@/components/voice/VoiceControlPanel';
 
 function SessionView({ sessionId }: { sessionId: string }) {
   // Session state: data, start/stop/archive
@@ -235,15 +235,6 @@ function SessionView({ sessionId }: { sessionId: string }) {
             }
       }
     >
-      {voiceOverlayOpen && voiceConfig.enabled && (
-        <VoiceOverlay
-          sessionId={sessionId}
-          messages={messages}
-          isClaudeRunning={isClaudeRunning}
-          onSendPrompt={handleSendPromptWithVoice}
-          onClose={() => setVoiceOverlayOpen(false)}
-        />
-      )}
       <div className="flex-1 flex flex-col min-h-0">
         <SessionHeader
           session={session}
@@ -256,7 +247,8 @@ function SessionView({ sessionId }: { sessionId: string }) {
           voiceEnabled={voiceConfig.enabled}
           autoRead={voiceConfig.autoRead}
           onAutoReadToggle={voiceConfig.setAutoRead}
-          onOpenVoiceOverlay={() => setVoiceOverlayOpen(true)}
+          onToggleVoiceMode={() => setVoiceOverlayOpen((prev) => !prev)}
+          voiceModeActive={voiceOverlayOpen}
         />
 
         <MessageList
@@ -269,18 +261,30 @@ function SessionView({ sessionId }: { sessionId: string }) {
           isClaudeRunning={isClaudeRunning}
         />
 
-        <ClaudeStatusIndicator isRunning={isClaudeRunning} containerStatus={session.status} />
-
-        <PromptInput
-          onSubmit={handleSendPromptWithVoice}
-          onInterrupt={interrupt}
-          isRunning={isClaudeRunning}
-          isInterrupting={isInterrupting}
-          disabled={session.status !== 'running'}
-          commands={commands}
-          voiceEnabled={voiceConfig.enabled}
-          voiceAutoSend={voiceConfig.autoSend}
-        />
+        {voiceOverlayOpen && voiceConfig.enabled ? (
+          <VoiceControlPanel
+            sessionId={sessionId}
+            messages={messages}
+            isRunning={isClaudeRunning}
+            onSendPrompt={handleSendPromptWithVoice}
+            onClose={() => setVoiceOverlayOpen(false)}
+            onInterrupt={interrupt}
+          />
+        ) : (
+          <>
+            <ClaudeStatusIndicator isRunning={isClaudeRunning} containerStatus={session.status} />
+            <PromptInput
+              onSubmit={handleSendPromptWithVoice}
+              onInterrupt={interrupt}
+              isRunning={isClaudeRunning}
+              isInterrupting={isInterrupting}
+              disabled={session.status !== 'running'}
+              commands={commands}
+              voiceEnabled={voiceConfig.enabled}
+              voiceAutoSend={voiceConfig.autoSend}
+            />
+          </>
+        )}
       </div>
     </VoicePlaybackContext.Provider>
   );
