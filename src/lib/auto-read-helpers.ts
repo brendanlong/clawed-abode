@@ -1,7 +1,7 @@
 /**
  * Pure helper functions for auto-read voice feature.
- * Extracts the first and last assistant text messages from a turn
- * for sequential playback when Claude finishes responding.
+ * Finds new assistant text messages during a turn for streaming TTS playback,
+ * so users hear responses as they arrive instead of waiting for turn completion.
  */
 
 import { z } from 'zod';
@@ -85,25 +85,21 @@ export function extractAssistantText(msg: AutoReadMessage): string | null {
 }
 
 /**
- * Given all messages in a session, find the messages from the current turn
- * (messages after the last user-sent prompt) and return the first and last
- * assistant messages that have meaningful text content.
+ * Given all messages in a session, find new assistant text messages from the
+ * current turn that haven't been queued for playback yet.
  *
- * Filters out:
- * - Non-assistant messages
- * - Partial messages (id starts with "partial-")
- * - Messages with no text content (tool-use-only messages)
+ * Used during a turn (while Claude is running) to stream TTS as messages arrive,
+ * rather than waiting for the entire turn to complete.
  *
- * Returns an array of 0, 1, or 2 TextMessageForPlayback items:
- * - [] if no text messages found
- * - [msg] if only one text message (or first === last)
- * - [first, last] if multiple text messages exist
+ * @param messages All messages in the session
+ * @param queuedIds Set of message IDs that have already been queued for playback
+ * @returns Array of new TextMessageForPlayback items to enqueue
  */
-export function getAutoReadMessages(messages: AutoReadMessage[]): TextMessageForPlayback[] {
-  // Find the last user-sent prompt to identify the turn boundary.
-  // User-sent prompts have type 'user' but we need to skip tool_result messages
-  // which also have type 'user'. Tool results have content.message.content
-  // with blocks of type 'tool_result'.
+export function getNewAutoReadMessages(
+  messages: AutoReadMessage[],
+  queuedIds: ReadonlySet<string>
+): TextMessageForPlayback[] {
+  // Find the last user-sent prompt to identify the turn boundary
   let turnStartIndex = 0;
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i];
@@ -113,8 +109,7 @@ export function getAutoReadMessages(messages: AutoReadMessage[]): TextMessageFor
     }
   }
 
-  // Filter to assistant messages with meaningful text content from the current turn
-  const textMessages: TextMessageForPlayback[] = [];
+  const newMessages: TextMessageForPlayback[] = [];
   for (let i = turnStartIndex; i < messages.length; i++) {
     const msg = messages[i];
 
@@ -124,21 +119,17 @@ export function getAutoReadMessages(messages: AutoReadMessage[]): TextMessageFor
     // Skip partial messages
     if (msg.id.startsWith('partial-')) continue;
 
+    // Skip already-queued messages
+    if (queuedIds.has(msg.id)) continue;
+
     // Extract text and skip if no meaningful text
     const text = extractAssistantText(msg);
     if (text === null) continue;
 
-    textMessages.push({ id: msg.id, text });
+    newMessages.push({ id: msg.id, text });
   }
 
-  if (textMessages.length === 0) return [];
-  if (textMessages.length === 1) return [textMessages[0]];
-
-  // Return first and last (deduplicated if same)
-  const first = textMessages[0];
-  const last = textMessages[textMessages.length - 1];
-  if (first.id === last.id) return [first];
-  return [first, last];
+  return newMessages;
 }
 
 /**
