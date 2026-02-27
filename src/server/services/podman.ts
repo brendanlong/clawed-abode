@@ -556,7 +556,6 @@ export async function createWorkspaceVolume(sessionId: string): Promise<void> {
   log.info('Creating empty workspace volume', { sessionId, volumeName });
 
   try {
-    await ensureImagePulled(CLAUDE_CODE_IMAGE);
     await runPodman(['volume', 'create', volumeName]);
     log.info('Created empty workspace volume', { sessionId, volumeName });
   } catch (error) {
