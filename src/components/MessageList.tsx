@@ -1,31 +1,14 @@
 'use client';
 
 import { useRef, useEffect, useCallback, useMemo, useState } from 'react';
-import { MessageBubble, type ToolResultMap } from './messages';
+import { MessageBubble } from './messages/MessageBubble';
+import type { ToolResultMap, ContentBlock, MessageContent } from './messages/types';
 import { MessageListProvider } from './messages/MessageListContext';
 import { Spinner } from '@/components/ui/spinner';
 import { ContextUsageIndicator } from '@/components/ContextUsageIndicator';
 import type { TokenUsageStats } from '@/lib/token-estimation';
 import { useNotification } from '@/hooks/useNotification';
 import { isPlanFile } from './messages/plan-utils';
-
-interface ContentBlock {
-  type: string;
-  id?: string;
-  name?: string;
-  tool_use_id?: string;
-  content?: string;
-  is_error?: boolean;
-  input?: unknown;
-}
-
-interface MessageContent {
-  message?: {
-    content?: ContentBlock[];
-  };
-  subtype?: string;
-  hook_id?: string;
-}
 
 interface Message {
   id: string;
@@ -138,11 +121,7 @@ function getTodoWriteIds(messages: Message[]): string[] {
       const blocks = content?.message?.content;
       if (Array.isArray(blocks)) {
         for (const block of blocks) {
-          if (
-            block.type === 'tool_use' &&
-            (block as ContentBlock & { name?: string }).name === 'TodoWrite' &&
-            block.id
-          ) {
+          if (block.type === 'tool_use' && block.name === 'TodoWrite' && block.id) {
             ids.push(block.id);
           }
         }

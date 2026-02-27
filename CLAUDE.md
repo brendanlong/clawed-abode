@@ -17,3 +17,4 @@
 - When writing test, don't mock components where the real version is easy to run (like SQLite in-memory)
 - Always write tests for the intended behavior of functions, not the actual behavior. If the actual behavior is wrong and the issue is pre-existing, write the test correctly, mark it skipped, and file a GitHub issue on brendanlong/clawed-abode
 - Always import at the top of files, not in the middle of functions
+- Never use barrel files (index.ts that re-export from other modules). Import directly from the source file instead.
