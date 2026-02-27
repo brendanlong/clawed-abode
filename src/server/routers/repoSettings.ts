@@ -20,8 +20,8 @@ import { validateMcpServer } from '../services/mcp-validator';
 
 const log = createLogger('repoSettings');
 
-const repoFullNameSchema = z.string().regex(/^[\w.-]+\/[\w.-]+$/, {
-  message: 'Invalid repository name format. Expected "owner/repo"',
+const repoFullNameSchema = z.string().regex(/^(?:__no_repo__|[\w.-]+\/[\w.-]+)$/, {
+  message: 'Invalid repository name format. Expected "owner/repo" or "__no_repo__"',
 });
 
 export const repoSettingsRouter = router({

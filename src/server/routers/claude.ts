@@ -52,8 +52,10 @@ export const claudeRouter = router({
       }
 
       // Load and merge global + per-repo settings
-      const repoFullName = extractRepoFullName(session.repoUrl);
-      const settings = await loadMergedSessionSettings(repoFullName);
+      // For no-repo sessions, repoUrl is null; use the sentinel value
+      const repoFullName = session.repoUrl ? extractRepoFullName(session.repoUrl) : null;
+      const settingsKey = repoFullName ?? '__no_repo__';
+      const settings = await loadMergedSessionSettings(settingsKey);
 
       // Start Claude in the background - don't await
       log.info('Starting Claude command', {

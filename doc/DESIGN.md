@@ -49,7 +49,7 @@ The system uses **rootless Podman** for container management, which provides:
 
 The database schema is defined in [`prisma/schema.prisma`](../prisma/schema.prisma). Key models:
 
-- **Session**: Claude Code sessions tied to git clones (includes `agentPort` for the agent service)
+- **Session**: Claude Code sessions tied to git clones or standalone workspaces. `repoUrl` and `branch` are nullable — when null, the session has no repository (workspace-only).
 - **Message**: Chat messages with sequence numbers for cursor-based pagination
 - **AuthSession**: Login sessions with tokens and audit info
 - **GlobalSettings**: Global application settings (system prompt override and append, Claude model, Claude API key, OpenAI API key for voice, TTS speed, voice auto-send)
@@ -103,7 +103,7 @@ Each session has a dedicated volume that contains the cloned repository:
 └── ...                   # Agent can create other files/directories as needed
 ```
 
-Each runner container mounts only its own session's volume at `/workspace`, with the working directory set to `/workspace/{repo-name}`. This provides complete session isolation - each agent can only access its own workspace. This gives the agent:
+Each runner container mounts only its own session's volume at `/workspace`, with the working directory set to `/workspace/{repo-name}` (or just `/workspace` for no-repo sessions). This provides complete session isolation - each agent can only access its own workspace. This gives the agent:
 
 - Full write access to the workspace for worktrees, temp files, etc.
 - Clean separation between the repo and working files
@@ -164,13 +164,13 @@ github.getIssue({ repoFullName: string, issueNumber: number })
 ```typescript
 sessions.create({
   name: string,
-  repoFullName: string,    // e.g., "brendanlong/math-llm"
-  branch: string,
+  repoFullName?: string,   // e.g., "brendanlong/math-llm" — omit for no-repo sessions
+  branch?: string,         // omit for no-repo sessions
   initialPrompt?: string   // Optional prompt to auto-send when session starts
 })
   → { session: Session }
   // Returns immediately with session in "creating" status
-  // Cloning and container setup continues in background
+  // Cloning and container setup continues in background (skipped for no-repo sessions)
   // UI polls session.get() to track progress via statusMessage
   // If initialPrompt is provided, it is sent automatically server-side when session becomes running
 
@@ -218,20 +218,19 @@ claude.getHistory({
 
 ### Creation Flow
 
-1. User selects repo and branch from UI
+1. User selects repo and branch from UI (or "No Repository" for workspace-only sessions)
 2. Server calls `sessions.create()`
 3. Server creates session record with status `creating` and returns immediately
 4. UI navigates to session page, polls for status updates
-5. Background: Server updates or creates the git reference cache for the repo (see Git Cache below)
-6. Background: Server creates a dedicated volume for the session (`clawed-abode-workspace-{sessionId}`)
-7. Background: Server spawns a temporary container with the session's volume and cache mounted
-8. Background: Clone runs inside the container via `git clone --reference` to `/workspace/{repo-name}` (uses cache if available, falls back to normal clone)
-9. Background: Temporary container is removed
-10. Background: Server allocates an agent port (for host networking, finds next available port starting from 10000)
-11. Background: Server starts the session container with:
+5. **For repo sessions**: Background: Server updates or creates the git reference cache for the repo (see Git Cache below)
+6. **For repo sessions**: Background: Server creates a dedicated volume and clones the repository via `git clone --reference` to `/workspace/{repo-name}`
+   **For no-repo sessions**: Background: Server creates an empty workspace volume
+7. Background: Temporary clone container is removed (repo sessions only)
+8. Background: Server allocates an agent port (for host networking, finds next available port starting from 10000)
+9. Background: Server starts the session container with:
 
 - Session's volume mounted at `/workspace`
-- Working directory set to `/workspace/{repo-name}` (the cloned repo)
+- Working directory set to `/workspace/{repo-name}` (repo sessions) or `/workspace` (no-repo sessions)
 - GPU access via CDI (`--device nvidia.com/gpu=all`)
 - Claude auth passed via environment variable
 - Podman socket mounted (for podman-in-podman)
@@ -471,9 +470,9 @@ The system maintains a cache of bare git repositories to speed up session creati
 
 ### Per-Repository Settings & Secrets
 
-Users can configure per-repository settings that are automatically applied when creating sessions:
+Users can configure per-repository settings that are automatically applied when creating sessions. This also applies to "No Repository" sessions, which use the sentinel value `__no_repo__` as their `repoFullName` in `RepoSettings`.
 
-- **Favorites**: Mark repositories as favorites so they appear at the top of the repo selector
+- **Favorites**: Mark repositories (or "No Repository") as favorites so they appear at the top of the repo selector
 - **Custom System Prompt**: Additional instructions appended to the default system prompt for all sessions using this repository
 - **Environment Variables**: Custom env vars passed to the container (e.g., API keys, config values)
 - **MCP Servers**: Configure [MCP servers](https://modelcontextprotocol.io/) for Claude to use, supporting three transport types:
@@ -583,13 +582,15 @@ On error: `event: error` with `data: {"message": "TTS failed for chunk N"}`
 
 ### New Session
 
-- Search/select GitHub repo
-- Select branch (defaults to default branch)
-- Optional: Select a GitHub issue to work on
+- Search/select GitHub repo **or** "No Repository (workspace only)" for repo-free sessions
+  - "No Repository" is shown in the repo selector, favoritable, and configurable via RepoSettings (uses `__no_repo__` sentinel)
+  - When "No Repository" is selected, branch and issue selectors are hidden
+- Select branch (defaults to default branch) — only shown for repo sessions
+- Optional: Select a GitHub issue to work on — only shown for repo sessions
   - Searchable dropdown with open issues
   - When selected, auto-fills session name with issue title
   - Pre-fills initial prompt asking Claude to fix the issue (editable)
-- Name the session (optional, auto-filled from issue if selected)
+- Name the session (optional, auto-filled from issue if selected, defaults to "Workspace" for no-repo)
 - Initial prompt (optional) — editable textarea, pre-filled when issue is selected
   - If provided, sent server-side after session setup completes (works even if client disconnects)
   - When omitted, session starts without a prompt (useful for voice mode)

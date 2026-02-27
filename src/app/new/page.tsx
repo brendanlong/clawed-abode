@@ -13,7 +13,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Spinner } from '@/components/ui/spinner';
-import { RepoSelector } from '@/components/RepoSelector';
+import { RepoSelector, NO_REPO_SENTINEL } from '@/components/RepoSelector';
 import { BranchSelector } from '@/components/BranchSelector';
 import { IssueSelector } from '@/components/IssueSelector';
 import type { Repo } from '@/components/RepoSelector';
@@ -49,6 +49,9 @@ function NewSessionForm() {
   const router = useRouter();
   const [form, dispatch] = useReducer(formReducer, initialFormState);
   const [error, setError] = useState('');
+
+  const isNoRepo = form.selectedRepo?.fullName === NO_REPO_SENTINEL;
+  const hasRepo = form.selectedRepo && !isNoRepo;
 
   const createMutation = trpc.sessions.create.useMutation({
     onSuccess: (data) => {
@@ -103,22 +106,28 @@ function NewSessionForm() {
     setError('');
 
     if (!form.selectedRepo) {
-      setError('Please select a repository');
+      setError('Please select a repository or "No Repository"');
       return;
     }
 
-    if (!form.selectedBranch) {
+    if (hasRepo && !form.selectedBranch) {
       setError('Please select a branch');
       return;
     }
 
+    const defaultName = isNoRepo
+      ? 'Workspace'
+      : `${form.selectedRepo.name} - ${form.selectedBranch}`;
+
     createMutation.mutate({
-      name: form.sessionName || `${form.selectedRepo.name} - ${form.selectedBranch}`,
-      repoFullName: form.selectedRepo.fullName,
-      branch: form.selectedBranch,
+      name: form.sessionName || defaultName,
+      repoFullName: isNoRepo ? undefined : form.selectedRepo.fullName,
+      branch: isNoRepo ? undefined : form.selectedBranch,
       initialPrompt: form.initialPrompt.trim() || undefined,
     });
   };
+
+  const canSubmit = isNoRepo || (hasRepo && !!form.selectedBranch);
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
@@ -130,7 +139,7 @@ function NewSessionForm() {
 
       <RepoSelector selectedRepo={form.selectedRepo} onSelect={handleRepoSelect} />
 
-      {form.selectedRepo && (
+      {form.selectedRepo && !isNoRepo && (
         <>
           <BranchSelector
             repoFullName={form.selectedRepo.fullName}
@@ -143,7 +152,11 @@ function NewSessionForm() {
             selectedIssue={form.selectedIssue}
             onSelect={handleIssueSelect}
           />
+        </>
+      )}
 
+      {form.selectedRepo && (
+        <>
           <div className="space-y-2">
             <Label htmlFor="sessionName">Session name (optional)</Label>
             <Input
@@ -151,7 +164,11 @@ function NewSessionForm() {
               type="text"
               value={form.sessionName}
               onChange={handleNameChange}
-              placeholder={`${form.selectedRepo.name} - ${form.selectedBranch || 'branch'}`}
+              placeholder={
+                isNoRepo
+                  ? 'Workspace'
+                  : `${form.selectedRepo.name} - ${form.selectedBranch || 'branch'}`
+              }
             />
           </div>
 
@@ -175,10 +192,7 @@ function NewSessionForm() {
         <Button variant="outline" asChild>
           <Link href="/">Cancel</Link>
         </Button>
-        <Button
-          type="submit"
-          disabled={!form.selectedRepo || !form.selectedBranch || createMutation.isPending}
-        >
+        <Button type="submit" disabled={!canSubmit || createMutation.isPending}>
           {createMutation.isPending ? (
             <span className="flex items-center gap-2">
               <Spinner size="sm" className="text-primary-foreground" />

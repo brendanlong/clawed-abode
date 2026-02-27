@@ -318,7 +318,7 @@ export const githubRouter = router({
         });
       }
 
-      if (!session.currentBranch) {
+      if (!session.currentBranch || !session.repoUrl) {
         return { pullRequest: null };
       }
 

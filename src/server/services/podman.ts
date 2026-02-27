@@ -548,6 +548,24 @@ export async function cloneRepoInVolume(config: CloneConfig): Promise<CloneResul
 }
 
 /**
+ * Create an empty workspace volume for a session (no git clone).
+ * Used for no-repo sessions where agents work in a blank workspace.
+ */
+export async function createWorkspaceVolume(sessionId: string): Promise<void> {
+  const volumeName = `clawed-abode-workspace-${sessionId}`;
+  log.info('Creating empty workspace volume', { sessionId, volumeName });
+
+  try {
+    await runPodman(['volume', 'create', volumeName]);
+    log.info('Created empty workspace volume', { sessionId, volumeName });
+  } catch (error) {
+    log.error('Failed to create workspace volume', toError(error), { sessionId, volumeName });
+    await runPodmanIgnoreErrors(['volume', 'rm', volumeName]);
+    throw error;
+  }
+}
+
+/**
  * Remove a session's workspace volume.
  */
 export async function removeWorkspaceFromVolume(sessionId: string): Promise<void> {
