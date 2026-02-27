@@ -24,8 +24,8 @@ model AuthSession {
 model Session {
   id            String    @id @default(uuid())
   name          String
-  repoUrl       String
-  branch        String
+  repoUrl       String?   // null for no-repo sessions
+  branch        String?   // null for no-repo sessions
   workspacePath String    // Path to workspace directory on host (contains the repo)
   repoPath      String    @default("") // Path to repo relative to workspace (e.g., "my-repo")
   containerId   String?
