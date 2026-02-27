@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import { execFile } from 'node:child_process';
 import { z } from 'zod';
 import { MessageStore } from './message-store.js';
-import { QueryRunner, type QueryOptions } from './query-runner.js';
+import { QueryRunner, type InitOptions } from './query-runner.js';
 import { createLogger, toError } from './logger.js';
 import type { SDKMessage, SlashCommand } from '@anthropic-ai/claude-agent-sdk';
 import type { PartialAssistantMessage } from './stream-accumulator.js';
@@ -44,12 +44,16 @@ const McpServerConfigSchema = z.union([
   McpHttpServerConfigSchema,
 ]);
 
-const QueryRequestSchema = z.object({
-  prompt: z.string().min(1).max(1_000_000),
+const InitRequestSchema = z.object({
   sessionId: z.string().min(1),
   resume: z.boolean().optional().default(false),
   cwd: z.string().min(1).optional(),
   mcpServers: z.record(z.string(), McpServerConfigSchema).optional(),
+});
+
+const SendRequestSchema = z.object({
+  prompt: z.string().min(1).max(1_000_000),
+  sessionId: z.string().min(1),
 });
 
 const MessagesQuerySchema = z.object({
@@ -92,13 +96,14 @@ function sendError(res: http.ServerResponse, status: number, message: string): v
 }
 
 /**
- * Handle POST /query
- * Starts a query and streams results via SSE.
- * Body: { prompt: string, sessionId: string, resume?: boolean, cwd?: string, mcpServers?: Record<string, McpServerConfig> }
+ * Handle POST /init
+ * Initializes the persistent query session. Must be called before /send.
+ * Returns initialization data (commands, etc.) and starts the message processing loop.
+ * Body: { sessionId: string, resume?: boolean, cwd?: string, mcpServers?: Record<string, McpServerConfig> }
  */
-async function handleQuery(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+async function handleInit(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   const raw = await parseBody(req);
-  const parsed = QueryRequestSchema.safeParse(raw);
+  const parsed = InitRequestSchema.safeParse(raw);
 
   if (!parsed.success) {
     sendError(
@@ -111,8 +116,60 @@ async function handleQuery(req: http.IncomingMessage, res: http.ServerResponse):
 
   const body = parsed.data;
 
-  if (runner.isRunning) {
-    sendError(res, 409, 'A query is already running');
+  if (runner.isInitialized) {
+    sendError(res, 409, 'Query session is already initialized');
+    return;
+  }
+
+  const initOptions: InitOptions = {
+    sessionId: body.sessionId,
+    resume: body.resume,
+    systemPrompt: SYSTEM_PROMPT || undefined,
+    model: CLAUDE_MODEL || undefined,
+    cwd: body.cwd,
+    mcpServers: body.mcpServers,
+  };
+
+  try {
+    await runner.initialize(initOptions);
+    sendJson(res, 200, {
+      initialized: true,
+      commands: runner.supportedCommands,
+    });
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    log.error('Init failed', toError(err));
+    sendError(res, 500, errorMessage);
+  }
+}
+
+/**
+ * Handle POST /send
+ * Sends a user prompt into the persistent query session and streams results via SSE.
+ * Body: { prompt: string, sessionId: string }
+ */
+async function handleSend(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  const raw = await parseBody(req);
+  const parsed = SendRequestSchema.safeParse(raw);
+
+  if (!parsed.success) {
+    sendError(
+      res,
+      400,
+      parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')
+    );
+    return;
+  }
+
+  const body = parsed.data;
+
+  if (!runner.isInitialized) {
+    sendError(res, 400, 'Query session is not initialized. Call /init first.');
+    return;
+  }
+
+  if (runner.isProcessing) {
+    sendError(res, 409, 'A prompt is already being processed');
     return;
   }
 
@@ -148,23 +205,13 @@ async function handleQuery(req: http.IncomingMessage, res: http.ServerResponse):
     unsubscribeCommands();
   });
 
-  const options: QueryOptions = {
-    prompt: body.prompt,
-    sessionId: body.sessionId,
-    resume: body.resume,
-    systemPrompt: SYSTEM_PROMPT || undefined,
-    model: CLAUDE_MODEL || undefined,
-    cwd: body.cwd,
-    mcpServers: body.mcpServers,
-  };
-
   try {
-    await runner.run(options);
+    await runner.sendPrompt(body.prompt, body.sessionId);
     // Send completion event
     res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
-    log.error('Query failed', toError(err));
+    log.error('Send failed', toError(err));
     res.write(`data: ${JSON.stringify({ error: errorMessage })}\n\n`);
   } finally {
     unsubscribeMessages();
@@ -190,7 +237,8 @@ async function handleInterrupt(
  */
 function handleStatus(_req: http.IncomingMessage, res: http.ServerResponse): void {
   sendJson(res, 200, {
-    running: runner.isRunning,
+    running: runner.isProcessing,
+    initialized: runner.isInitialized,
     messageCount: store.getLastSequence(),
     lastSequence: store.getLastSequence(),
     commands: runner.supportedCommands,
@@ -262,8 +310,10 @@ const server = http.createServer(async (req, res) => {
   const method = req.method?.toUpperCase();
 
   try {
-    if (method === 'POST' && path === '/query') {
-      await handleQuery(req, res);
+    if (method === 'POST' && path === '/init') {
+      await handleInit(req, res);
+    } else if (method === 'POST' && path === '/send') {
+      await handleSend(req, res);
     } else if (method === 'POST' && path === '/interrupt') {
       await handleInterrupt(req, res);
     } else if (method === 'GET' && path === '/status') {
@@ -321,32 +371,38 @@ server.on('error', (err: NodeJS.ErrnoException) => {
 // Graceful shutdown
 process.on('SIGTERM', () => {
   log.info('Received SIGTERM, shutting down');
-  server.close(() => {
-    // Clean up socket file
-    try {
-      if (fs.existsSync(SOCKET_PATH)) {
-        fs.unlinkSync(SOCKET_PATH);
+  // Shut down the persistent query session
+  void runner.shutdown().finally(() => {
+    server.close(() => {
+      // Clean up socket file
+      try {
+        if (fs.existsSync(SOCKET_PATH)) {
+          fs.unlinkSync(SOCKET_PATH);
+        }
+      } catch (err) {
+        log.error('Failed to clean up socket file', toError(err));
       }
-    } catch (err) {
-      log.error('Failed to clean up socket file', toError(err));
-    }
-    store.close();
-    process.exit(0);
+      store.close();
+      process.exit(0);
+    });
   });
 });
 
 process.on('SIGINT', () => {
   log.info('Received SIGINT, shutting down');
-  server.close(() => {
-    // Clean up socket file
-    try {
-      if (fs.existsSync(SOCKET_PATH)) {
-        fs.unlinkSync(SOCKET_PATH);
+  // Shut down the persistent query session
+  void runner.shutdown().finally(() => {
+    server.close(() => {
+      // Clean up socket file
+      try {
+        if (fs.existsSync(SOCKET_PATH)) {
+          fs.unlinkSync(SOCKET_PATH);
+        }
+      } catch (err) {
+        log.error('Failed to clean up socket file', toError(err));
       }
-    } catch (err) {
-      log.error('Failed to clean up socket file', toError(err));
-    }
-    store.close();
-    process.exit(0);
+      store.close();
+      process.exit(0);
+    });
   });
 });

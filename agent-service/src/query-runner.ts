@@ -2,6 +2,7 @@ import {
   query,
   type Query,
   type SDKMessage,
+  type SDKUserMessage,
   type McpServerConfig,
   type SlashCommand,
 } from '@anthropic-ai/claude-agent-sdk';
@@ -20,10 +21,9 @@ function getMessageType(message: SDKMessage): string {
 }
 
 /**
- * Options for starting a new query.
+ * Options for initializing the persistent query session.
  */
-export interface QueryOptions {
-  prompt: string;
+export interface InitOptions {
   sessionId: string;
   /** If true, resume the session instead of starting a new one */
   resume: boolean;
@@ -58,28 +58,140 @@ export type PartialMessageCallback = (partial: PartialAssistantMessage) => void;
 export type CommandsCallback = (commands: SlashCommand[]) => void;
 
 /**
- * Manages SDK query() execution with message persistence.
- * Only one query can run at a time per QueryRunner instance.
+ * Controller for the async generator that feeds prompts to the SDK.
+ * Allows external code to yield new messages into the persistent query.
+ */
+interface PromptController {
+  /** Yield a new user message to the query. Resolves when the SDK consumes it. */
+  send(message: SDKUserMessage): void;
+  /** Signal that no more messages will be sent (session ending). */
+  close(): void;
+}
+
+/**
+ * Creates an async generator and a controller to push messages into it.
+ * The generator yields SDKUserMessages that are sent via the controller.
+ */
+function createPromptStream(): {
+  stream: AsyncIterable<SDKUserMessage>;
+  controller: PromptController;
+} {
+  // Queue of messages waiting to be yielded
+  const queue: SDKUserMessage[] = [];
+  // Resolve function for the current wait (when queue is empty and generator is waiting)
+  let resolveWait: (() => void) | null = null;
+  let closed = false;
+
+  const stream: AsyncIterable<SDKUserMessage> = {
+    [Symbol.asyncIterator]() {
+      return {
+        async next(): Promise<IteratorResult<SDKUserMessage>> {
+          // If there are queued messages, yield the next one
+          if (queue.length > 0) {
+            return { value: queue.shift()!, done: false };
+          }
+
+          // If closed, we're done
+          if (closed) {
+            return { value: undefined as unknown as SDKUserMessage, done: true };
+          }
+
+          // Wait for a new message or close
+          await new Promise<void>((resolve) => {
+            resolveWait = resolve;
+          });
+
+          // After waking up, check again
+          if (queue.length > 0) {
+            return { value: queue.shift()!, done: false };
+          }
+
+          // Must be closed
+          return { value: undefined as unknown as SDKUserMessage, done: true };
+        },
+        async return(): Promise<IteratorResult<SDKUserMessage>> {
+          closed = true;
+          return { value: undefined as unknown as SDKUserMessage, done: true };
+        },
+        async throw(err: Error): Promise<IteratorResult<SDKUserMessage>> {
+          closed = true;
+          throw err;
+        },
+      };
+    },
+  };
+
+  const controller: PromptController = {
+    send(message: SDKUserMessage) {
+      if (closed) {
+        throw new Error('Prompt stream is closed');
+      }
+      queue.push(message);
+      if (resolveWait) {
+        const resolve = resolveWait;
+        resolveWait = null;
+        resolve();
+      }
+    },
+    close() {
+      closed = true;
+      if (resolveWait) {
+        const resolve = resolveWait;
+        resolveWait = null;
+        resolve();
+      }
+    },
+  };
+
+  return { stream, controller };
+}
+
+/**
+ * Manages a persistent SDK query() session with streaming input mode.
+ *
+ * Instead of creating a new query() per user prompt, this class maintains
+ * a single long-lived query that receives messages through an async generator.
+ * This enables:
+ * - Commands available at session startup (before any user message)
+ * - No re-initialization per prompt
+ * - Plan mode / AskUserQuestion work correctly with persistent sessions
+ * - setModel() / setPermissionMode() become available
  */
 export class QueryRunner {
   private store: MessageStore;
   private currentQuery: Query | null = null;
-  private currentAbortController: AbortController | null = null;
-  private running = false;
+  private promptController: PromptController | null = null;
   private messageCallbacks: Set<MessageCallback> = new Set();
   private partialCallbacks: Set<PartialMessageCallback> = new Set();
   private commandsCallbacks: Set<CommandsCallback> = new Set();
   private _supportedCommands: SlashCommand[] = [];
+  /** Whether a user prompt is currently being processed (assistant is responding) */
+  private _isProcessing = false;
+  /** Whether the persistent query session is active (initialized and running) */
+  private _isInitialized = false;
+  /** Session ID for the persistent query */
+  private _sessionId: string | null = null;
+  /** Promise that resolves when the message processing loop finishes */
+  private messageLoopPromise: Promise<void> | null = null;
+  /** Resolves when the current turn (user prompt → result) completes */
+  private turnCompleteResolve: (() => void) | null = null;
 
   constructor(store: MessageStore) {
     this.store = store;
   }
 
   /**
-   * Whether a query is currently running.
+   * Whether a user prompt is currently being processed by the agent.
    */
-  get isRunning(): boolean {
-    return this.running;
+  get isProcessing(): boolean {
+    return this._isProcessing;
+  }
+
+  /**
+   * Whether the persistent query session has been initialized.
+   */
+  get isInitialized(): boolean {
+    return this._isInitialized;
   }
 
   /**
@@ -122,115 +234,182 @@ export class QueryRunner {
   }
 
   /**
-   * Start a new query. Throws if a query is already running.
-   * This method runs the query to completion and returns when done.
+   * Initialize the persistent query session.
+   * This starts the SDK query with an async generator for streaming input,
+   * fetches initialization data (commands, etc.), and begins processing messages.
+   *
+   * Must be called before sendPrompt(). Can only be called once per QueryRunner lifetime
+   * (unless the previous session has been shut down).
    */
-  async run(options: QueryOptions): Promise<void> {
-    if (this.running) {
-      throw new Error('A query is already running');
+  async initialize(options: InitOptions): Promise<void> {
+    if (this._isInitialized) {
+      throw new Error('Query session is already initialized');
     }
 
-    this.running = true;
-    this.currentAbortController = new AbortController();
+    const { stream, controller } = createPromptStream();
+    this.promptController = controller;
+    this._sessionId = options.sessionId;
+
+    const sdkOptions: Parameters<typeof query>[0]['options'] = {
+      permissionMode: 'bypassPermissions' as const,
+      allowDangerouslySkipPermissions: true,
+      // Enable partial message streaming for real-time UI updates
+      includePartialMessages: true,
+    };
+
+    // System prompt configuration
+    if (options.systemPrompt) {
+      sdkOptions.systemPrompt = {
+        type: 'preset' as const,
+        preset: 'claude_code' as const,
+        append: options.systemPrompt,
+      };
+    } else {
+      sdkOptions.systemPrompt = {
+        type: 'preset' as const,
+        preset: 'claude_code' as const,
+      };
+    }
+
+    // Tools configuration - use Claude Code preset
+    sdkOptions.tools = { type: 'preset' as const, preset: 'claude_code' as const };
+
+    // Resume or start fresh
+    if (options.resume) {
+      sdkOptions.resume = options.sessionId;
+    } else {
+      sdkOptions.sessionId = options.sessionId;
+    }
+
+    // Model configuration
+    if (options.model) {
+      sdkOptions.model = options.model;
+    }
+
+    // Working directory
+    if (options.cwd) {
+      sdkOptions.cwd = options.cwd;
+    }
+
+    // MCP server configurations
+    if (options.mcpServers && Object.keys(options.mcpServers).length > 0) {
+      sdkOptions.mcpServers = options.mcpServers;
+    }
+
+    // Load project settings (for CLAUDE.md)
+    sdkOptions.settingSources = ['project'];
+
+    // Start the persistent query with the streaming input
+    this.currentQuery = query({
+      prompt: stream,
+      options: sdkOptions,
+    });
+
+    this._isInitialized = true;
+
+    // Fetch supported commands from the query object.
+    // In streaming input mode, initializationResult() resolves before any user message.
+    try {
+      let commands: SlashCommand[] = [];
+
+      try {
+        const initResult = await this.currentQuery.initializationResult();
+        commands = initResult.commands ?? [];
+        log.debug('initializationResult() returned commands', { count: commands.length });
+      } catch (initErr) {
+        log.warn(
+          'initializationResult() failed, trying supportedCommands()',
+          undefined,
+          toError(initErr)
+        );
+        commands = await this.currentQuery.supportedCommands();
+        log.debug('supportedCommands() returned commands', { count: commands.length });
+      }
+
+      if (commands.length > 0) {
+        this._supportedCommands = commands;
+        for (const callback of this.commandsCallbacks) {
+          try {
+            callback(commands);
+          } catch {
+            // Don't let callback errors break anything
+          }
+        }
+      }
+    } catch (err) {
+      log.error('Failed to fetch supported commands', toError(err));
+    }
+
+    // Start the message processing loop in the background.
+    // This loop runs for the lifetime of the persistent query, processing
+    // messages from all user prompts.
+    this.messageLoopPromise = this.processMessages();
+    // Attach error handler to prevent unhandled rejection
+    this.messageLoopPromise.catch((err) => {
+      log.error('Message processing loop failed', toError(err));
+    });
+
+    log.info('Persistent query session initialized', { sessionId: options.sessionId });
+  }
+
+  /**
+   * Send a user prompt into the persistent query session.
+   * The prompt is yielded to the SDK through the async generator.
+   *
+   * Returns a promise that resolves when the turn completes (result message received).
+   * Throws if the session is not initialized or if a prompt is already being processed.
+   */
+  async sendPrompt(prompt: string, sessionId: string): Promise<void> {
+    if (!this._isInitialized || !this.promptController) {
+      throw new Error('Query session is not initialized. Call initialize() first.');
+    }
+
+    if (this._isProcessing) {
+      throw new Error('A prompt is already being processed');
+    }
+
+    this._isProcessing = true;
+
+    // Create a promise that resolves when the turn completes
+    const turnComplete = new Promise<void>((resolve) => {
+      this.turnCompleteResolve = resolve;
+    });
+
+    try {
+      // Create the SDKUserMessage to yield to the SDK
+      const userMessage: SDKUserMessage = {
+        type: 'user',
+        message: {
+          role: 'user',
+          content: prompt,
+        },
+        parent_tool_use_id: null,
+        session_id: sessionId,
+      };
+
+      // Yield the message to the SDK
+      this.promptController.send(userMessage);
+
+      // Wait for the turn to complete (result message received)
+      await turnComplete;
+    } finally {
+      this._isProcessing = false;
+      this.turnCompleteResolve = null;
+    }
+  }
+
+  /**
+   * Process messages from the SDK query in a long-running loop.
+   * This runs for the lifetime of the persistent query session.
+   */
+  private async processMessages(): Promise<void> {
+    if (!this.currentQuery || !this._sessionId) {
+      throw new Error('No active query');
+    }
+
     const accumulator = new StreamAccumulator();
 
     try {
-      const sdkOptions: Parameters<typeof query>[0]['options'] = {
-        abortController: this.currentAbortController,
-        permissionMode: 'bypassPermissions' as const,
-        allowDangerouslySkipPermissions: true,
-        // Enable partial message streaming for real-time UI updates
-        includePartialMessages: true,
-      };
-
-      // System prompt configuration
-      if (options.systemPrompt) {
-        sdkOptions.systemPrompt = {
-          type: 'preset' as const,
-          preset: 'claude_code' as const,
-          append: options.systemPrompt,
-        };
-      } else {
-        sdkOptions.systemPrompt = {
-          type: 'preset' as const,
-          preset: 'claude_code' as const,
-        };
-      }
-
-      // Tools configuration - use Claude Code preset
-      sdkOptions.tools = { type: 'preset' as const, preset: 'claude_code' as const };
-
-      // Resume or start fresh
-      // We use our own sessionId so resume can find it by the same ID
-      if (options.resume) {
-        sdkOptions.resume = options.sessionId;
-      } else {
-        sdkOptions.sessionId = options.sessionId;
-      }
-
-      // Model configuration
-      if (options.model) {
-        sdkOptions.model = options.model;
-      }
-
-      // Working directory
-      if (options.cwd) {
-        sdkOptions.cwd = options.cwd;
-      }
-
-      // MCP server configurations
-      if (options.mcpServers && Object.keys(options.mcpServers).length > 0) {
-        sdkOptions.mcpServers = options.mcpServers;
-      }
-
-      // Load project settings (for CLAUDE.md)
-      sdkOptions.settingSources = ['project'];
-
-      this.currentQuery = query({
-        prompt: options.prompt,
-        options: sdkOptions,
-      });
-
-      // Fetch supported commands from the query object.
-      // We try initializationResult() first (which includes commands along with
-      // other init data), then fall back to supportedCommands().
-      // We await this before iterating messages so the commands are available
-      // to send via SSE while the response is still open.
-      try {
-        let commands: SlashCommand[] = [];
-
-        // Try initializationResult() first - it returns the full init response
-        // including commands from the SDK control channel
-        try {
-          const initResult = await this.currentQuery.initializationResult();
-          commands = initResult.commands ?? [];
-          log.debug('initializationResult() returned commands', { count: commands.length });
-        } catch (initErr) {
-          log.warn(
-            'initializationResult() failed, trying supportedCommands()',
-            undefined,
-            toError(initErr)
-          );
-          // Fall back to supportedCommands()
-          commands = await this.currentQuery.supportedCommands();
-          log.debug('supportedCommands() returned commands', { count: commands.length });
-        }
-
-        if (commands.length > 0) {
-          this._supportedCommands = commands;
-          for (const callback of this.commandsCallbacks) {
-            try {
-              callback(commands);
-            } catch {
-              // Don't let callback errors break anything
-            }
-          }
-        }
-      } catch (err) {
-        log.error('Failed to fetch supported commands', toError(err));
-      }
-
-      // Iterate through all messages from the SDK
       for await (const message of this.currentQuery) {
         // Handle stream_events: accumulate into partial messages for real-time UI
         if (message.type === 'stream_event') {
@@ -264,7 +443,7 @@ export class QueryRunner {
 
         const type = getMessageType(message);
         const content = JSON.stringify(message);
-        const sequence = this.store.append(options.sessionId, type, content);
+        const sequence = this.store.append(this._sessionId, type, content);
 
         // Notify all connected SSE clients
         for (const callback of this.messageCallbacks) {
@@ -274,11 +453,24 @@ export class QueryRunner {
             // Don't let callback errors break the query loop
           }
         }
+
+        // When a result message arrives, the turn is complete.
+        // Signal the waiting sendPrompt() call.
+        if (message.type === 'result') {
+          if (this.turnCompleteResolve) {
+            this.turnCompleteResolve();
+          }
+        }
       }
     } finally {
-      this.running = false;
+      log.info('Message processing loop ended', { sessionId: this._sessionId });
+      this._isInitialized = false;
       this.currentQuery = null;
-      this.currentAbortController = null;
+      this.promptController = null;
+      // If a prompt was in progress, resolve it so it doesn't hang
+      if (this.turnCompleteResolve) {
+        this.turnCompleteResolve();
+      }
     }
   }
 
@@ -287,20 +479,53 @@ export class QueryRunner {
    * Uses the SDK's interrupt() method for clean interruption.
    */
   async interrupt(): Promise<boolean> {
-    if (!this.running || !this.currentQuery) {
+    if (!this._isInitialized || !this.currentQuery) {
       return false;
     }
 
     try {
       await this.currentQuery.interrupt();
       return true;
-    } catch {
-      // If interrupt fails, try aborting via the controller
-      if (this.currentAbortController) {
-        this.currentAbortController.abort();
-        return true;
-      }
+    } catch (err) {
+      log.warn('Interrupt failed', undefined, toError(err));
       return false;
     }
+  }
+
+  /**
+   * Shut down the persistent query session.
+   * Closes the prompt stream and waits for the message loop to finish.
+   */
+  async shutdown(): Promise<void> {
+    if (!this._isInitialized) {
+      return;
+    }
+
+    log.info('Shutting down persistent query session', { sessionId: this._sessionId });
+
+    // Close the prompt stream, which will end the query
+    if (this.promptController) {
+      this.promptController.close();
+    }
+
+    // Close the query
+    if (this.currentQuery) {
+      this.currentQuery.close();
+    }
+
+    // Wait for the message loop to finish
+    if (this.messageLoopPromise) {
+      try {
+        await this.messageLoopPromise;
+      } catch {
+        // Expected - the loop may error when the query is closed
+      }
+    }
+
+    this._isInitialized = false;
+    this.currentQuery = null;
+    this.promptController = null;
+    this._sessionId = null;
+    this.messageLoopPromise = null;
   }
 }

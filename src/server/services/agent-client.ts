@@ -1,9 +1,9 @@
 /**
  * HTTP client for communicating with the agent service running inside containers.
  *
- * The agent service exposes an HTTP API with endpoints for querying Claude,
- * interrupting queries, checking status, and fetching persisted messages.
- * This client provides a typed interface for all those operations.
+ * The agent service exposes an HTTP API with endpoints for initializing a persistent
+ * query session, sending prompts, interrupting queries, checking status, and fetching
+ * persisted messages. This client provides a typed interface for all those operations.
  *
  * Uses Unix domain sockets for communication instead of TCP ports.
  */
@@ -11,7 +11,7 @@
 import http from 'node:http';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import type { SDKMessage, SlashCommand } from '@anthropic-ai/claude-agent-sdk';
+import type { SDKMessage, SlashCommand, McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import { createLogger, toError } from '@/lib/logger';
 import { env } from '@/lib/env';
 import type { PartialAssistantMessage } from '../../../shared/agent-types';
@@ -53,13 +53,22 @@ export type AgentStreamEvent = AgentMessage | AgentPartialMessage | AgentCommand
  */
 export interface AgentStatus {
   running: boolean;
+  initialized: boolean;
   messageCount: number;
   lastSequence: number;
   commands: SlashCommand[];
 }
 
 /**
- * SSE event from the /query endpoint.
+ * Response from the /init endpoint.
+ */
+export interface AgentInitResponse {
+  initialized: boolean;
+  commands: SlashCommand[];
+}
+
+/**
+ * SSE event from the /send endpoint.
  * Either a complete message, a partial message, a completion marker, or an error.
  */
 type SSEEvent =
@@ -74,17 +83,23 @@ type SSEEvent =
  */
 export interface AgentClient {
   /**
-   * Start a query and stream results as an async iterable.
-   * Yields both complete messages (with sequence numbers, persisted) and
-   * partial messages (transient streaming updates for real-time UI).
+   * Initialize the persistent query session.
+   * Must be called before send(). Sets up the SDK query with streaming input mode,
+   * fetches initialization data (commands, etc.).
    */
-  query(options: {
-    prompt: string;
+  init(options: {
     sessionId: string;
     resume?: boolean;
     cwd?: string;
-    mcpServers?: Record<string, unknown>;
-  }): AsyncGenerator<AgentStreamEvent>;
+    mcpServers?: Record<string, McpServerConfig>;
+  }): Promise<AgentInitResponse>;
+
+  /**
+   * Send a prompt to the persistent query session and stream results.
+   * Yields both complete messages (with sequence numbers, persisted) and
+   * partial messages (transient streaming updates for real-time UI).
+   */
+  send(options: { prompt: string; sessionId: string }): AsyncGenerator<AgentStreamEvent>;
 
   /**
    * Interrupt the currently running query.
@@ -192,27 +207,33 @@ export function createAgentClient(socketPath: string): AgentClient {
   }
 
   return {
-    async *query(options) {
+    async init(options) {
+      return fetchJson<AgentInitResponse>('/init', 'POST', {
+        sessionId: options.sessionId,
+        resume: options.resume ?? false,
+        cwd: options.cwd,
+        mcpServers: options.mcpServers,
+      });
+    },
+
+    async *send(options) {
       const res = await httpRequest(
         socketPath,
         {
-          path: '/query',
+          path: '/send',
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
         },
         JSON.stringify({
           prompt: options.prompt,
           sessionId: options.sessionId,
-          resume: options.resume ?? false,
-          cwd: options.cwd,
-          mcpServers: options.mcpServers,
         })
       );
 
       if (res.statusCode && (res.statusCode < 200 || res.statusCode >= 300)) {
         const text = await readJsonResponse<{ error?: string }>(res);
         throw new Error(
-          `Agent service query failed (${res.statusCode}): ${text.error || 'Unknown error'}`
+          `Agent service send failed (${res.statusCode}): ${text.error || 'Unknown error'}`
         );
       }
 

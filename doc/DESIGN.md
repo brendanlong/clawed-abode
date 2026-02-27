@@ -248,18 +248,22 @@ claude.getHistory({
 ### Interaction Flow
 
 1. User sends prompt via `claude.send()`
-2. Next.js server sends HTTP POST to the agent service inside the container (`/query` endpoint)
-3. Agent service calls `query()` from `@anthropic-ai/claude-agent-sdk` with `includePartialMessages: true`
-4. Agent service streams results back as Server-Sent Events (SSE):
+2. Next.js server ensures the agent service has an initialized persistent session:
+   - Calls `GET /status` to check if already initialized
+   - If not initialized, calls `POST /init` with session ID, resume flag, working directory, and MCP servers
+   - The `/init` call starts the SDK `query()` with an `AsyncIterable<SDKUserMessage>` prompt stream, fetches slash commands via `initializationResult()`, and begins the background message processing loop
+3. Next.js server sends the prompt via `POST /send` to the agent service
+4. Agent service yields the user message into the persistent query's async generator
+5. Agent service streams results back as Server-Sent Events (SSE):
    - **Partial messages**: `stream_event` messages from the SDK are accumulated by `StreamAccumulator` into synthetic partial assistant messages. These are emitted as `{ partial }` SSE events for real-time UI updates (text streaming, tool call progress) but are **not persisted** to the database.
    - **Complete messages**: Full `assistant`, `user`, `result`, and `system` messages are emitted as `{ sequence, message }` SSE events and persisted.
-5. Next.js server reads SSE stream:
+6. Next.js server reads SSE stream:
    - For partial messages: emits SSE event with `partial-{uuid}` ID to browser (not saved to DB)
    - For complete messages: saves to database with incrementing sequence number, emits SSE event
-6. Browser client receives SSE events and updates the message cache:
+7. Browser client receives SSE events and updates the message cache:
    - Partial messages replace any existing partial in the cache (only one active partial at a time)
    - Complete messages remove any partial messages and are added to the cache
-7. On completion, `result` message marks end of turn
+8. On completion, `result` message marks end of turn. The persistent session stays alive for the next prompt.
 
 ### System Prompt
 
@@ -340,20 +344,28 @@ Runner containers are created with (see [`createAndStartContainer`](../src/serve
 
 Each runner container includes a built-in agent service (`/opt/agent-service/`) that uses the `@anthropic-ai/claude-agent-sdk` to interact with Claude programmatically instead of spawning CLI processes.
 
+The agent service uses **persistent streaming input mode**: instead of creating a new `query()` call per user prompt, it maintains a single long-lived `query()` per session lifetime with an `AsyncIterable<SDKUserMessage>` prompt stream. User messages are yielded into this stream as they arrive.
+
 **Agent service endpoints:**
 
-- `POST /query` — Start a new Claude query. Streams results as SSE (Server-Sent Events). Emits two types of events: `{ partial }` for real-time streaming updates (accumulated from SDK `stream_event` messages) and `{ sequence, message }` for complete persisted messages.
+- `POST /init` — Initialize the persistent query session. Sets up the SDK `query()` with streaming input, fetches initialization data (slash commands, supported models, etc.), and starts the background message processing loop. Must be called before `/send`. Returns `{ initialized, commands }`.
+- `POST /send` — Send a user prompt into the persistent session. Yields the message through the async generator and streams results as SSE (Server-Sent Events). Emits: `{ partial }` for real-time streaming updates, `{ sequence, message }` for complete persisted messages, `{ commands }` for slash command updates, and `{ done: true }` on completion.
 - `POST /interrupt` — Interrupt the currently running query.
-- `GET /status` — Check if a query is running and get the last sequence number.
+- `GET /status` — Check if a prompt is being processed (`running`), whether the session is initialized (`initialized`), and get the last sequence number and cached commands.
 - `GET /messages?after=N` — Fetch complete messages after a given sequence number (for reconnection/catch-up).
+- `GET /commands` — Get the currently known supported slash commands.
+- `GET /branch` — Get the current git branch in the container's working directory.
 - `GET /health` — Health check endpoint.
 
-**Benefits over the previous CLI approach:**
+**Benefits of persistent streaming input mode:**
 
+- **Commands available at session startup** — `initializationResult()` resolves before any user message is sent, so slash commands are available immediately
+- **No re-initialization per prompt** — session stays alive between prompts, avoiding repeated loading of CLAUDE.md, MCP servers, skills, etc.
+- **Plan mode / AskUserQuestion work correctly** — interactive tools work naturally since the session persists between prompts
+- **`setModel()` / `setPermissionMode()` become available** — these SDK methods only work in streaming input mode
 - No file-based communication (output files, tailing, PID tracking)
 - Clean interrupt via SDK API instead of signal-based process management
 - Message persistence inside the container (SQLite) for reconnection
-- Simpler error handling and lifecycle management
 - Direct programmatic access to Claude sessions, resume, and settings
 
 **Implementation:**
