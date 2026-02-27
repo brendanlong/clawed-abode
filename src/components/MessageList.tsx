@@ -491,15 +491,10 @@ export function MessageList({
     if (!messageEl) return;
 
     // Mark this scroll as programmatic so the scroll listener ignores it.
+    // Use instant scroll to avoid race conditions (same reason as scrollToBottom).
     programmaticScrollRef.current = true;
-    messageEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-
-    // Clear the programmatic flag after scroll animation settles.
-    const timer = setTimeout(() => {
-      programmaticScrollRef.current = false;
-    }, 500);
-
-    return () => clearTimeout(timer);
+    messageEl.scrollIntoView({ behavior: 'instant', block: 'center' });
+    programmaticScrollRef.current = false;
   }, [voiceIsPlaying, voiceCurrentMessageId]);
 
   // Detect user-initiated scrolls during playback.
