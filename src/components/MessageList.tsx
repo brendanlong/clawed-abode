@@ -426,6 +426,48 @@ export function MessageList({
     return () => observer.disconnect();
   }, []);
 
+  // Re-scroll to bottom when the scroll container shrinks (e.g., VoiceControlPanel
+  // appearing/disappearing changes the flex layout). Without this, the container
+  // shrinks, the bottom sentinel exits the viewport, isAtBottomRef becomes false,
+  // and auto-scroll stops working even though the user was at the bottom.
+  //
+  // We can't rely on isAtBottomRef here because the IntersectionObserver may have
+  // already set it to false by the time the ResizeObserver fires. Instead, we track
+  // the previous container height and compute whether the user was at the bottom
+  // before the resize by comparing the distance-from-bottom to the height lost.
+  const prevContainerHeightRef = useRef(0);
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    prevContainerHeightRef.current = container.clientHeight;
+
+    const resizeObserver = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+
+      const newHeight = entry.contentRect.height;
+      const prevHeight = prevContainerHeightRef.current;
+      prevContainerHeightRef.current = newHeight;
+
+      // Only act when the container shrinks (e.g., taller input panel appeared)
+      if (prevHeight > 0 && newHeight < prevHeight) {
+        const heightLost = prevHeight - newHeight;
+        const { scrollTop, scrollHeight, clientHeight } = container;
+        const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
+
+        // If distance from bottom ≈ the height lost, the user was at the bottom
+        // before the resize. Re-scroll to bottom to maintain their position.
+        if (distanceFromBottom <= heightLost + 50) {
+          scrollToBottom();
+        }
+      }
+    });
+
+    resizeObserver.observe(container);
+    return () => resizeObserver.disconnect();
+  }, [scrollToBottom]);
+
   // Playback-tracking scroll: when voice playback advances to a new message,
   // scroll to keep that message visible (centered in view).
   // Only triggers when voiceCurrentMessageId changes (not on play/pause toggles).
