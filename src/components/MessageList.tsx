@@ -1,7 +1,8 @@
 'use client';
 
 import { useRef, useEffect, useCallback, useMemo, useState } from 'react';
-import { MessageBubble, type ToolResultMap } from './messages';
+import { MessageBubble } from './messages/MessageBubble';
+import type { ToolResultMap } from './messages/types';
 import { MessageListProvider } from './messages/MessageListContext';
 import { Spinner } from '@/components/ui/spinner';
 import { ContextUsageIndicator } from '@/components/ContextUsageIndicator';
