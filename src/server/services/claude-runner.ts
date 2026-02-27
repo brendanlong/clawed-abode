@@ -235,6 +235,52 @@ function getClientForSession(sessionId: string): AgentClient {
   return createAgentClient(getAgentSocketPath(sessionId));
 }
 
+/**
+ * Ensure the agent service has an initialized persistent query session.
+ * If not yet initialized, calls /init to set it up.
+ * Returns the commands from initialization (if newly initialized) or from status.
+ */
+async function ensureAgentInitialized(
+  client: AgentClient,
+  options: {
+    sessionId: string;
+    lastSequence: number;
+    workingDir: string;
+    mcpServersRecord?: Record<string, unknown>;
+  }
+): Promise<{ commands: import('@anthropic-ai/claude-agent-sdk').SlashCommand[] }> {
+  const status = await client.getStatus();
+
+  if (status.initialized) {
+    // Already initialized - check if a prompt is being processed
+    if (status.running) {
+      throw new Error('A Claude process is already running for this session');
+    }
+    return { commands: status.commands };
+  }
+
+  // Need to initialize the persistent session
+  const shouldResume = status.lastSequence > 0;
+
+  log.info('Initializing agent persistent session', {
+    sessionId: options.sessionId,
+    resume: shouldResume,
+    lastSequence: status.lastSequence,
+  });
+
+  const initResult = await client.init({
+    sessionId: options.sessionId,
+    resume: shouldResume,
+    cwd: options.workingDir,
+    mcpServers: options.mcpServersRecord as Record<
+      string,
+      import('@anthropic-ai/claude-agent-sdk').McpServerConfig
+    >,
+  });
+
+  return { commands: initResult.commands };
+}
+
 export interface RunClaudeCommandOptions {
   sessionId: string;
   containerId: string;
@@ -264,6 +310,10 @@ export interface RunClaudeCommandOptions {
 /**
  * Run a Claude command via the agent service running inside the container.
  * Streams messages from the agent service, saves them to DB, and emits SSE events.
+ *
+ * The agent service uses persistent streaming input mode: one long-lived query()
+ * per session lifetime. This function initializes the session if needed, then
+ * sends the prompt through the persistent query.
  */
 export async function runClaudeCommand(options: RunClaudeCommandOptions): Promise<void> {
   const { sessionId, containerId, prompt } = options;
@@ -302,15 +352,40 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
     throw new Error('Agent service is not healthy');
   }
 
-  // Check if agent already has a running query
-  const status = await client.getStatus();
-  if (status.running) {
-    throw new Error('A Claude process is already running for this session');
-  }
+  // Build working directory
+  const workingDir = session.repoPath ? `/workspace/${session.repoPath}` : '/workspace';
 
-  // Emit any cached commands from the agent service (from a previous query in this container)
-  if (status.commands?.length > 0) {
-    sseEvents.emitCommands(sessionId, status.commands);
+  // Build MCP servers config as Record<string, McpServerConfig> for the SDK
+  const mcpServersRecord = options.mcpServers?.length
+    ? Object.fromEntries(
+        options.mcpServers.map((server) => {
+          if (server.type === 'http' || server.type === 'sse') {
+            const config: Record<string, unknown> = { type: server.type, url: server.url };
+            if (server.headers && Object.keys(server.headers).length > 0) {
+              config.headers = server.headers;
+            }
+            return [server.name, config];
+          }
+          // stdio (default)
+          const config: Record<string, unknown> = { command: server.command };
+          if (server.args?.length) config.args = server.args;
+          if (server.env && Object.keys(server.env).length > 0) config.env = server.env;
+          return [server.name, config];
+        })
+      )
+    : undefined;
+
+  // Ensure the agent has an initialized persistent session
+  const { commands } = await ensureAgentInitialized(client, {
+    sessionId,
+    lastSequence: 0, // Will be checked by the agent service
+    workingDir,
+    mcpServersRecord,
+  });
+
+  // Emit any commands from initialization
+  if (commands.length > 0) {
+    sseEvents.emitCommands(sessionId, commands);
   }
 
   // Get the next sequence number for this session
@@ -346,13 +421,6 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
     createdAt: new Date(),
   });
 
-  // Determine if we should resume an existing SDK session.
-  // We ask the agent service for its last sequence number. If it has processed
-  // messages before (sequence > 0), it has an active Claude Code session
-  // that we can resume. If it's 0 (fresh container), we start a new session
-  // even if our DB has messages from a previous container lifecycle.
-  const shouldResume = status.lastSequence > 0;
-
   // Track the active query
   activeQueries.set(sessionId, { client });
 
@@ -360,41 +428,15 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
   sseEvents.emitClaudeRunning(sessionId, true);
 
   try {
-    // Build working directory
-    const workingDir = session.repoPath ? `/workspace/${session.repoPath}` : '/workspace';
-
-    // Build MCP servers config as Record<string, McpServerConfig> for the SDK
-    const mcpServersRecord = options.mcpServers?.length
-      ? Object.fromEntries(
-          options.mcpServers.map((server) => {
-            if (server.type === 'http' || server.type === 'sse') {
-              const config: Record<string, unknown> = { type: server.type, url: server.url };
-              if (server.headers && Object.keys(server.headers).length > 0) {
-                config.headers = server.headers;
-              }
-              return [server.name, config];
-            }
-            // stdio (default)
-            const config: Record<string, unknown> = { command: server.command };
-            if (server.args?.length) config.args = server.args;
-            if (server.env && Object.keys(server.env).length > 0) config.env = server.env;
-            return [server.name, config];
-          })
-        )
-      : undefined;
-
     // Use a stable ID for partial messages so the frontend can track and replace them.
     // The partial message UUID from the stream_event is used as the partial ID.
     // When the final assistant message arrives, the frontend removes the partial.
     const PARTIAL_MESSAGE_ID_PREFIX = 'partial-';
 
-    // Start the query through the agent service
-    for await (const agentEvent of client.query({
+    // Send the prompt through the persistent query session
+    for await (const agentEvent of client.send({
       prompt,
       sessionId,
-      resume: shouldResume,
-      cwd: workingDir,
-      mcpServers: mcpServersRecord,
     })) {
       // Handle commands update - emit via SSE for frontend autocomplete
       if (agentEvent.kind === 'commands') {
@@ -821,6 +863,11 @@ export async function reconcileOrphanedProcesses(): Promise<{
             });
           }
         }
+      }
+
+      // Emit any cached commands
+      if (agentStatus.commands?.length > 0) {
+        sseEvents.emitCommands(session.id, agentStatus.commands);
       }
 
       if (agentStatus.running) {
