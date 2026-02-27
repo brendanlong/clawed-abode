@@ -58,6 +58,8 @@ export interface MessageContent {
     cache_read_input_tokens?: number;
     cache_creation_input_tokens?: number;
   };
+  // Hook fields
+  hook_id?: string;
   // Interrupt flag - set when this message was interrupted by the user
   interrupted?: boolean;
   [key: string]: unknown;
