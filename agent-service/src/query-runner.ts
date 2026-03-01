@@ -22,8 +22,9 @@ function getMessageType(message: SDKMessage): string {
 
 /**
  * Options for initializing the persistent query session.
+ * Passed with every query() call; used only on the first call.
  */
-export interface InitOptions {
+export interface QueryOptions {
   sessionId: string;
   /** If true, resume the session instead of starting a new one */
   resume: boolean;
@@ -156,6 +157,9 @@ function createPromptStream(): {
  * - No re-initialization per prompt
  * - Plan mode / AskUserQuestion work correctly with persistent sessions
  * - setModel() / setPermissionMode() become available
+ *
+ * The persistent session is auto-initialized on the first query() call.
+ * Subsequent calls reuse the existing session.
  */
 export class QueryRunner {
   private store: MessageStore;
@@ -235,13 +239,9 @@ export class QueryRunner {
 
   /**
    * Initialize the persistent query session.
-   * This starts the SDK query with an async generator for streaming input,
-   * fetches initialization data (commands, etc.), and begins processing messages.
-   *
-   * Must be called before sendPrompt(). Can only be called once per QueryRunner lifetime
-   * (unless the previous session has been shut down).
+   * Called automatically by sendQuery() on the first call.
    */
-  async initialize(options: InitOptions): Promise<void> {
+  private async initialize(options: QueryOptions): Promise<void> {
     if (this._isInitialized) {
       throw new Error('Query session is already initialized');
     }
@@ -353,19 +353,25 @@ export class QueryRunner {
   }
 
   /**
-   * Send a user prompt into the persistent query session.
-   * The prompt is yielded to the SDK through the async generator.
+   * Send a query to the persistent session.
+   * Auto-initializes the session on the first call using the provided options.
+   * On subsequent calls, the init options are ignored (session is already initialized).
    *
    * Returns a promise that resolves when the turn completes (result message received).
-   * Throws if the session is not initialized or if a prompt is already being processed.
+   * Throws if a prompt is already being processed.
    */
-  async sendPrompt(prompt: string, sessionId: string): Promise<void> {
-    if (!this._isInitialized || !this.promptController) {
-      throw new Error('Query session is not initialized. Call initialize() first.');
-    }
-
+  async sendQuery(prompt: string, sessionId: string, options: QueryOptions): Promise<void> {
     if (this._isProcessing) {
       throw new Error('A prompt is already being processed');
+    }
+
+    // Auto-initialize on first call
+    if (!this._isInitialized) {
+      await this.initialize(options);
+    }
+
+    if (!this.promptController) {
+      throw new Error('Query session failed to initialize');
     }
 
     this._isProcessing = true;
@@ -455,7 +461,7 @@ export class QueryRunner {
         }
 
         // When a result message arrives, the turn is complete.
-        // Signal the waiting sendPrompt() call.
+        // Signal the waiting sendQuery() call.
         if (message.type === 'result') {
           if (this.turnCompleteResolve) {
             this.turnCompleteResolve();

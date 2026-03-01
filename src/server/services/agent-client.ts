@@ -1,9 +1,10 @@
 /**
  * HTTP client for communicating with the agent service running inside containers.
  *
- * The agent service exposes an HTTP API with endpoints for initializing a persistent
- * query session, sending prompts, interrupting queries, checking status, and fetching
- * persisted messages. This client provides a typed interface for all those operations.
+ * The agent service exposes an HTTP API with a /query endpoint for sending prompts
+ * (auto-initializing the persistent session on first call), plus endpoints for
+ * interrupting queries, checking status, and fetching persisted messages.
+ * This client provides a typed interface for all those operations.
  *
  * Uses Unix domain sockets for communication instead of TCP ports.
  */
@@ -60,15 +61,7 @@ export interface AgentStatus {
 }
 
 /**
- * Response from the /init endpoint.
- */
-export interface AgentInitResponse {
-  initialized: boolean;
-  commands: SlashCommand[];
-}
-
-/**
- * SSE event from the /send endpoint.
+ * SSE event from the /query endpoint.
  * Either a complete message, a partial message, a completion marker, or an error.
  */
 type SSEEvent =
@@ -79,27 +72,32 @@ type SSEEvent =
   | { error: string };
 
 /**
+ * Options for sending a query to the agent service.
+ * Init options (resume, cwd, mcpServers) are used for auto-initialization
+ * on the first call and ignored on subsequent calls.
+ */
+export interface AgentQueryOptions {
+  prompt: string;
+  sessionId: string;
+  /** Whether to resume the session (used on first call only) */
+  resume?: boolean;
+  /** Working directory (used on first call only) */
+  cwd?: string;
+  /** MCP server configurations (used on first call only) */
+  mcpServers?: Record<string, McpServerConfig>;
+}
+
+/**
  * Client for communicating with the agent service running inside a container.
  */
 export interface AgentClient {
   /**
-   * Initialize the persistent query session.
-   * Must be called before send(). Sets up the SDK query with streaming input mode,
-   * fetches initialization data (commands, etc.).
-   */
-  init(options: {
-    sessionId: string;
-    resume?: boolean;
-    cwd?: string;
-    mcpServers?: Record<string, McpServerConfig>;
-  }): Promise<AgentInitResponse>;
-
-  /**
-   * Send a prompt to the persistent query session and stream results.
+   * Send a prompt to the agent service and stream results.
+   * Auto-initializes the persistent session on the first call.
    * Yields both complete messages (with sequence numbers, persisted) and
    * partial messages (transient streaming updates for real-time UI).
    */
-  send(options: { prompt: string; sessionId: string }): AsyncGenerator<AgentStreamEvent>;
+  query(options: AgentQueryOptions): AsyncGenerator<AgentStreamEvent>;
 
   /**
    * Interrupt the currently running query.
@@ -207,33 +205,27 @@ export function createAgentClient(socketPath: string): AgentClient {
   }
 
   return {
-    async init(options) {
-      return fetchJson<AgentInitResponse>('/init', 'POST', {
-        sessionId: options.sessionId,
-        resume: options.resume ?? false,
-        cwd: options.cwd,
-        mcpServers: options.mcpServers,
-      });
-    },
-
-    async *send(options) {
+    async *query(options) {
       const res = await httpRequest(
         socketPath,
         {
-          path: '/send',
+          path: '/query',
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
         },
         JSON.stringify({
           prompt: options.prompt,
           sessionId: options.sessionId,
+          resume: options.resume ?? false,
+          cwd: options.cwd,
+          mcpServers: options.mcpServers,
         })
       );
 
       if (res.statusCode && (res.statusCode < 200 || res.statusCode >= 300)) {
         const text = await readJsonResponse<{ error?: string }>(res);
         throw new Error(
-          `Agent service send failed (${res.statusCode}): ${text.error || 'Unknown error'}`
+          `Agent service query failed (${res.statusCode}): ${text.error || 'Unknown error'}`
         );
       }
 
