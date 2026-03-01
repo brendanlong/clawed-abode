@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { router, protectedProcedure } from '../trpc';
 import { prisma } from '@/lib/prisma';
 import { TRPCError } from '@trpc/server';
+import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import {
   runClaudeCommand,
   interruptClaude,
@@ -272,6 +273,61 @@ export const claudeRouter = router({
       } catch (err) {
         log.debug('Failed to fetch commands', { error: toError(err).message });
         return { commands: [] };
+      }
+    }),
+
+  respondToUserInput: protectedProcedure
+    .input(
+      z.object({
+        sessionId: z.string().uuid(),
+        toolUseId: z.string().min(1),
+        response: z.discriminatedUnion('behavior', [
+          z.object({
+            behavior: z.literal('allow'),
+            updatedInput: z.record(z.string(), z.unknown()).optional(),
+          }),
+          z.object({
+            behavior: z.literal('deny'),
+            message: z.string().optional(),
+          }),
+        ]),
+      })
+    )
+    .mutation(async ({ input }) => {
+      const session = await prisma.session.findUnique({
+        where: { id: input.sessionId },
+      });
+
+      if (!session) {
+        throw new TRPCError({
+          code: 'NOT_FOUND',
+          message: 'Session not found',
+        });
+      }
+
+      if (session.status !== 'running' || !session.containerId) {
+        throw new TRPCError({
+          code: 'PRECONDITION_FAILED',
+          message: 'Session is not running',
+        });
+      }
+
+      try {
+        const client = createAgentClient(getAgentSocketPath(input.sessionId));
+        const result = await client.respondToUserInput(
+          input.toolUseId,
+          input.response as PermissionResult
+        );
+        return result;
+      } catch (err) {
+        log.error('Failed to respond to user input', toError(err), {
+          sessionId: input.sessionId,
+          toolUseId: input.toolUseId,
+        });
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: `Failed to respond to user input: ${toError(err).message}`,
+        });
       }
     }),
 });

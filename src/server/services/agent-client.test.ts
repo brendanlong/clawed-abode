@@ -375,6 +375,7 @@ describe('waitForAgentHealth', () => {
       getMessages: vi.fn(),
       getCommands: vi.fn(),
       getCurrentBranch: vi.fn(),
+      respondToUserInput: vi.fn(),
     };
 
     const result = await waitForAgentHealth(mockClient, {
@@ -398,6 +399,7 @@ describe('waitForAgentHealth', () => {
       getMessages: vi.fn(),
       getCommands: vi.fn(),
       getCurrentBranch: vi.fn(),
+      respondToUserInput: vi.fn(),
     };
 
     const result = await waitForAgentHealth(mockClient, {
@@ -417,6 +419,7 @@ describe('waitForAgentHealth', () => {
       getMessages: vi.fn(),
       getCommands: vi.fn(),
       getCurrentBranch: vi.fn(),
+      respondToUserInput: vi.fn(),
     };
 
     const result = await waitForAgentHealth(mockClient, {

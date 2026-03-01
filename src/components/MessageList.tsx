@@ -249,6 +249,8 @@ interface MessageListProps {
   tokenUsage?: TokenUsageStats | null;
   onSendResponse?: (response: string) => void;
   isClaudeRunning?: boolean;
+  /** Whether Claude is waiting for user input (canUseTool callback paused) */
+  isWaitingForUserInput?: boolean;
 }
 
 export function MessageList({
@@ -259,6 +261,7 @@ export function MessageList({
   tokenUsage,
   onSendResponse,
   isClaudeRunning,
+  isWaitingForUserInput,
 }: MessageListProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const topSentinelRef = useRef<HTMLDivElement>(null);
@@ -538,6 +541,7 @@ export function MessageList({
       onTodoManualToggle: handleTodoManualToggle,
       onSendResponse,
       isClaudeRunning,
+      isWaitingForUserInput,
       latestPlanContent,
     }),
     [
@@ -546,6 +550,7 @@ export function MessageList({
       handleTodoManualToggle,
       onSendResponse,
       isClaudeRunning,
+      isWaitingForUserInput,
       latestPlanContent,
     ]
   );

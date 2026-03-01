@@ -48,31 +48,6 @@ CONTAINER ISSUE REPORTING: This container should have all standard development t
 const log = createLogger('claude-runner');
 
 /**
- * Tool names that should trigger an automatic interrupt.
- * When the agent calls these tools, the query should be interrupted
- * so the user can respond before the agent continues.
- */
-const AUTO_INTERRUPT_TOOLS = new Set(['AskUserQuestion', 'ExitPlanMode']);
-
-/**
- * Check if an SDK message contains a tool call that should trigger auto-interrupt.
- */
-export function shouldAutoInterrupt(message: unknown): boolean {
-  if (!message || typeof message !== 'object') return false;
-  const msg = message as Record<string, unknown>;
-  if (msg.type !== 'assistant') return false;
-
-  const innerMessage = msg.message as
-    | { content?: Array<{ type: string; name?: string }> }
-    | undefined;
-  if (!Array.isArray(innerMessage?.content)) return false;
-
-  return innerMessage.content.some(
-    (block) => block.type === 'tool_use' && block.name && AUTO_INTERRUPT_TOOLS.has(block.name)
-  );
-}
-
-/**
  * Build the full system prompt from global settings and per-repo custom prompt.
  */
 export function buildSystemPrompt(options: {
@@ -408,6 +383,21 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
         continue;
       }
 
+      // Handle user input requests (canUseTool waiting for response)
+      if (agentEvent.kind === 'userInputRequest') {
+        log.info('runClaudeCommand: User input requested', {
+          sessionId,
+          toolName: agentEvent.toolName,
+          toolUseId: agentEvent.toolUseId,
+        });
+        sseEvents.emitUserInputRequest(sessionId, {
+          toolName: agentEvent.toolName,
+          toolUseId: agentEvent.toolUseId,
+          input: agentEvent.input,
+        });
+        continue;
+      }
+
       // Handle partial (streaming) messages - emit via SSE but don't persist
       if (agentEvent.kind === 'partial') {
         const partialContent = agentEvent.partial;
@@ -461,17 +451,6 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
           continue;
         }
         throw err;
-      }
-
-      // Auto-interrupt when the agent calls tools that need user input
-      // (e.g., AskUserQuestion, ExitPlanMode). Without this, the SDK
-      // returns an error tool_result and the agent continues processing.
-      if (shouldAutoInterrupt(agentMessage.message)) {
-        log.info('runClaudeCommand: Auto-interrupting for user input tool', {
-          sessionId,
-          messageType,
-        });
-        await client.interrupt();
       }
     }
 

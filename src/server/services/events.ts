@@ -2,6 +2,7 @@ import { EventEmitter } from 'events';
 import type { Message, Session } from '@prisma/client';
 import type { SlashCommand } from '@anthropic-ai/claude-agent-sdk';
 import type { PullRequestInfo } from './github';
+import type { UserInputRequest } from '../../../shared/agent-types';
 
 // Message with parsed content (for SSE events)
 export type ParsedMessage = Omit<Message, 'content'> & { content: unknown };
@@ -37,12 +38,21 @@ export interface PrUpdateEvent {
   pullRequest: PullRequestInfo | null;
 }
 
+export interface UserInputRequestEvent {
+  type: 'user_input_request';
+  sessionId: string;
+  toolName: string;
+  toolUseId: string;
+  input: Record<string, unknown>;
+}
+
 export type SSEEvent =
   | SessionUpdateEvent
   | MessageEvent
   | ClaudeRunningEvent
   | CommandsEvent
-  | PrUpdateEvent;
+  | PrUpdateEvent
+  | UserInputRequestEvent;
 
 // Create a typed event emitter
 class SSEEventEmitter extends EventEmitter {
@@ -116,6 +126,25 @@ class SSEEventEmitter extends EventEmitter {
 
   onPrUpdate(sessionId: string, callback: (event: PrUpdateEvent) => void): () => void {
     const eventName = `pr:${sessionId}`;
+    this.on(eventName, callback);
+    return () => this.off(eventName, callback);
+  }
+
+  emitUserInputRequest(sessionId: string, request: UserInputRequest): void {
+    this.emit(`userinput:${sessionId}`, {
+      type: 'user_input_request',
+      sessionId,
+      toolName: request.toolName,
+      toolUseId: request.toolUseId,
+      input: request.input,
+    } satisfies UserInputRequestEvent);
+  }
+
+  onUserInputRequest(
+    sessionId: string,
+    callback: (event: UserInputRequestEvent) => void
+  ): () => void {
+    const eventName = `userinput:${sessionId}`;
     this.on(eventName, callback);
     return () => this.off(eventName, callback);
   }

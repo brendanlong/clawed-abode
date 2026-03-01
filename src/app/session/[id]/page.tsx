@@ -45,14 +45,19 @@ function SessionView({ sessionId }: { sessionId: string }) {
     tokenUsage,
   } = useSessionMessages(sessionId);
 
-  // Claude state: running, send, interrupt, commands
+  // Claude state: running, send, interrupt, commands, user input
   const {
     isRunning: isClaudeRunning,
     send: sendPrompt,
     interrupt,
     isInterrupting,
     commands,
+    pendingUserInput,
+    respondToUserInput,
   } = useClaudeState(sessionId);
+
+  // Whether Claude is waiting for user input (canUseTool callback paused)
+  const isWaitingForUserInput = !!pendingUserInput;
 
   // Working indicator: page title and favicon
   useWorkingIndicator(session?.name, isClaudeRunning);
@@ -91,6 +96,50 @@ function SessionView({ sessionId }: { sessionId: string }) {
     [session, sendPrompt]
   );
 
+  /**
+   * Unified callback for sending prompts or responding to user input requests.
+   * Routes through respondToUserInput when the SDK is waiting for a canUseTool response.
+   */
+  const handleSendOrRespond = useCallback(
+    (text: string) => {
+      if (!session || session.status !== 'running') {
+        return;
+      }
+
+      if (pendingUserInput) {
+        const { toolName, toolUseId, input } = pendingUserInput;
+
+        if (toolName === 'AskUserQuestion') {
+          // Map response text to question answers
+          const questions = (input.questions as Array<{ question: string }>) || [];
+          const answers: Record<string, string> = {};
+          for (const q of questions) {
+            answers[q.question] = text;
+          }
+          respondToUserInput(toolUseId, {
+            behavior: 'allow',
+            updatedInput: { questions: input.questions, answers },
+          });
+        } else if (toolName === 'ExitPlanMode') {
+          // Allow the plan
+          respondToUserInput(toolUseId, {
+            behavior: 'allow',
+            updatedInput: input,
+          });
+        } else {
+          // Unknown user input tool - allow with original input
+          respondToUserInput(toolUseId, {
+            behavior: 'allow',
+            updatedInput: input,
+          });
+        }
+      } else {
+        handleSendPrompt(text);
+      }
+    },
+    [session, pendingUserInput, respondToUserInput, handleSendPrompt]
+  );
+
   // Auto-read: stream TTS as assistant messages arrive during a turn
   const prevRunningRef = useRef(false);
   const autoReadQueuedIdsRef = useRef<Set<string>>(new Set());
@@ -104,13 +153,13 @@ function SessionView({ sessionId }: { sessionId: string }) {
     voicePlayback.stop();
   }, [voicePlayback]);
 
-  // Stop playback when user sends a new prompt
+  // Stop playback when user sends a new prompt or responds to user input
   const handleSendPromptWithVoice = useCallback(
     (prompt: string) => {
       stopWithAutoReadFlag();
-      handleSendPrompt(prompt);
+      handleSendOrRespond(prompt);
     },
-    [handleSendPrompt, stopWithAutoReadFlag]
+    [handleSendOrRespond, stopWithAutoReadFlag]
   );
 
   // During a turn: enqueue new assistant text messages as they arrive
@@ -259,24 +308,28 @@ function SessionView({ sessionId }: { sessionId: string }) {
           tokenUsage={tokenUsage}
           onSendResponse={handleSendPromptWithVoice}
           isClaudeRunning={isClaudeRunning}
+          isWaitingForUserInput={isWaitingForUserInput}
         />
 
         {voiceOverlayOpen && voiceConfig.enabled ? (
           <VoiceControlPanel
             sessionId={sessionId}
             messages={messages}
-            isRunning={isClaudeRunning}
+            isRunning={isClaudeRunning && !isWaitingForUserInput}
             onSendPrompt={handleSendPromptWithVoice}
             onClose={() => setVoiceOverlayOpen(false)}
             onInterrupt={interrupt}
           />
         ) : (
           <>
-            <ClaudeStatusIndicator isRunning={isClaudeRunning} containerStatus={session.status} />
+            <ClaudeStatusIndicator
+              isRunning={isClaudeRunning && !isWaitingForUserInput}
+              containerStatus={session.status}
+            />
             <PromptInput
               onSubmit={handleSendPromptWithVoice}
               onInterrupt={interrupt}
-              isRunning={isClaudeRunning}
+              isRunning={isClaudeRunning && !isWaitingForUserInput}
               isInterrupting={isInterrupting}
               disabled={session.status !== 'running'}
               commands={commands}

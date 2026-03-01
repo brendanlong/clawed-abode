@@ -13,6 +13,8 @@ interface MessageListContextValue {
   onSendResponse?: (response: string) => void;
   /** Whether Claude is currently running (disables AskUserQuestion interactions) */
   isClaudeRunning?: boolean;
+  /** Whether Claude is waiting for user input via canUseTool callback */
+  isWaitingForUserInput?: boolean;
   /** The latest plan content from Write/Edit of plan files, or null */
   latestPlanContent: string | null;
 }

@@ -31,3 +31,14 @@ export interface PartialAssistantMessage {
   uuid: string;
   session_id: string;
 }
+
+/**
+ * A user input request emitted when the SDK's canUseTool callback fires
+ * for tools that need user interaction (AskUserQuestion, ExitPlanMode).
+ * The SDK is paused until a response is submitted via POST /respond.
+ */
+export interface UserInputRequest {
+  toolName: string;
+  toolUseId: string;
+  input: Record<string, unknown>;
+}

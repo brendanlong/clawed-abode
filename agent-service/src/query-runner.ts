@@ -5,12 +5,20 @@ import {
   type SDKUserMessage,
   type McpServerConfig,
   type SlashCommand,
+  type PermissionResult,
 } from '@anthropic-ai/claude-agent-sdk';
 import { MessageStore } from './message-store.js';
 import { StreamAccumulator, type PartialAssistantMessage } from './stream-accumulator.js';
 import { createLogger, toError } from './logger.js';
 
 const log = createLogger('query-runner');
+
+/**
+ * Tool names that require user input via the canUseTool callback.
+ * When Claude calls these tools, the SDK pauses execution and waits
+ * for a response from the user before continuing.
+ */
+const USER_INPUT_TOOLS = new Set(['AskUserQuestion', 'ExitPlanMode']);
 
 /**
  * Extracts the message type from an SDKMessage for storage categorization.
@@ -57,6 +65,23 @@ export type PartialMessageCallback = (partial: PartialAssistantMessage) => void;
  * Called after each query() call when commands are retrieved from the SDK.
  */
 export type CommandsCallback = (commands: SlashCommand[]) => void;
+
+/**
+ * Describes a pending user input request.
+ * Emitted when the SDK's canUseTool callback fires for tools that need user interaction
+ * (e.g., AskUserQuestion, ExitPlanMode).
+ */
+export interface UserInputRequest {
+  toolName: string;
+  toolUseId: string;
+  input: Record<string, unknown>;
+}
+
+/**
+ * Callback for when the agent needs user input to continue.
+ * The SDK is paused until respondToUserInput() is called with the matching toolUseId.
+ */
+export type UserInputRequestCallback = (request: UserInputRequest) => void;
 
 /**
  * Controller for the async generator that feeds prompts to the SDK.
@@ -168,6 +193,7 @@ export class QueryRunner {
   private messageCallbacks: Set<MessageCallback> = new Set();
   private partialCallbacks: Set<PartialMessageCallback> = new Set();
   private commandsCallbacks: Set<CommandsCallback> = new Set();
+  private userInputCallbacks: Set<UserInputRequestCallback> = new Set();
   private _supportedCommands: SlashCommand[] = [];
   /** Whether a user prompt is currently being processed (assistant is responding) */
   private _isProcessing = false;
@@ -179,6 +205,11 @@ export class QueryRunner {
   private messageLoopPromise: Promise<void> | null = null;
   /** Resolves when the current turn (user prompt → result) completes */
   private turnCompleteResolve: (() => void) | null = null;
+  /** Pending user input requests waiting for a response (toolUseId → resolver) */
+  private pendingUserInputs: Map<
+    string,
+    { resolve: (result: PermissionResult) => void; toolName: string }
+  > = new Map();
 
   constructor(store: MessageStore) {
     this.store = store;
@@ -228,6 +259,47 @@ export class QueryRunner {
     return () => {
       this.commandsCallbacks.delete(callback);
     };
+  }
+
+  /**
+   * Subscribe to user input request events. Returns an unsubscribe function.
+   * These fire when the SDK's canUseTool callback detects a tool that needs user interaction.
+   */
+  onUserInputRequest(callback: UserInputRequestCallback): () => void {
+    this.userInputCallbacks.add(callback);
+    return () => {
+      this.userInputCallbacks.delete(callback);
+    };
+  }
+
+  /**
+   * Respond to a pending user input request.
+   * Resolves the canUseTool callback for the given toolUseId, allowing the SDK to continue.
+   * Returns true if the response was delivered, false if no pending request was found.
+   */
+  respondToUserInput(toolUseId: string, response: PermissionResult): boolean {
+    const pending = this.pendingUserInputs.get(toolUseId);
+    if (!pending) {
+      log.warn('respondToUserInput: No pending request found', { toolUseId });
+      return false;
+    }
+
+    log.info('respondToUserInput: Resolving pending input', {
+      toolUseId,
+      toolName: pending.toolName,
+      behavior: response.behavior,
+    });
+
+    this.pendingUserInputs.delete(toolUseId);
+    pending.resolve(response);
+    return true;
+  }
+
+  /**
+   * Whether there are pending user input requests.
+   */
+  get hasPendingUserInput(): boolean {
+    return this.pendingUserInputs.size > 0;
   }
 
   /**
@@ -298,6 +370,55 @@ export class QueryRunner {
 
     // Load project settings (for CLAUDE.md)
     sdkOptions.settingSources = ['project'];
+
+    // canUseTool callback: handles user input tools (AskUserQuestion, ExitPlanMode)
+    // by pausing execution and waiting for a response from the user.
+    // All other tools are auto-approved (we use bypassPermissions mode).
+    sdkOptions.canUseTool = async (
+      toolName: string,
+      input: Record<string, unknown>,
+      callbackOptions: { toolUseID: string; signal: AbortSignal }
+    ): Promise<PermissionResult> => {
+      if (!USER_INPUT_TOOLS.has(toolName)) {
+        // Auto-approve all non-user-input tools
+        return { behavior: 'allow' as const, updatedInput: input };
+      }
+
+      const toolUseId = callbackOptions.toolUseID;
+      log.info('canUseTool: User input required', { toolName, toolUseId });
+
+      // Create a Promise that will be resolved when the user responds
+      const responsePromise = new Promise<PermissionResult>((resolve) => {
+        this.pendingUserInputs.set(toolUseId, { resolve, toolName });
+      });
+
+      // Notify subscribers that user input is needed
+      const request: UserInputRequest = { toolName, toolUseId, input };
+      for (const callback of this.userInputCallbacks) {
+        try {
+          callback(request);
+        } catch {
+          // Don't let callback errors break the flow
+        }
+      }
+
+      // Handle abort signal (e.g., from interrupt)
+      const abortHandler = () => {
+        const pending = this.pendingUserInputs.get(toolUseId);
+        if (pending) {
+          this.pendingUserInputs.delete(toolUseId);
+          pending.resolve({ behavior: 'deny' as const, message: 'Request was interrupted' });
+        }
+      };
+      callbackOptions.signal.addEventListener('abort', abortHandler, { once: true });
+
+      try {
+        // Wait for the user's response
+        return await responsePromise;
+      } finally {
+        callbackOptions.signal.removeEventListener('abort', abortHandler);
+      }
+    };
 
     // Start the persistent query with the streaming input
     this.currentQuery = query({
@@ -534,5 +655,11 @@ export class QueryRunner {
     this.promptController = null;
     this._sessionId = null;
     this.messageLoopPromise = null;
+
+    // Reject any pending user input requests
+    for (const [toolUseId, pending] of this.pendingUserInputs) {
+      pending.resolve({ behavior: 'deny' as const, message: 'Session is shutting down' });
+      this.pendingUserInputs.delete(toolUseId);
+    }
   }
 }

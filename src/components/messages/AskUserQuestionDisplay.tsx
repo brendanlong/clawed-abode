@@ -95,16 +95,18 @@ export function AskUserQuestionDisplay({ tool }: { tool: ToolCall }) {
   const ctx = useMessageListContext();
   const onSendResponse = ctx?.onSendResponse;
   const isClaudeRunning = ctx?.isClaudeRunning;
+  const isWaitingForUserInput = ctx?.isWaitingForUserInput;
   const [selectedOptions, setSelectedOptions] = useState<Map<number, Set<number>>>(new Map());
 
   const hasOutput = tool.output !== undefined;
 
   // Check if this is a "real" error vs just waiting for input
-  // Claude Code returns is_error: true with "Answer questions?" when waiting for input
-  const isWaitingForInput =
+  // Legacy: Claude Code returns is_error: true with "Answer questions?" when using interrupt flow
+  // New: With canUseTool callback flow, the tool has no output yet (hasOutput is false)
+  const isWaitingForInputLegacy =
     tool.is_error && typeof tool.output === 'string' && tool.output.includes('Answer questions');
-  const isRealError = tool.is_error && !isWaitingForInput;
-  const isPending = !hasOutput || isWaitingForInput;
+  const isRealError = tool.is_error && !isWaitingForInputLegacy;
+  const isPending = !hasOutput || isWaitingForInputLegacy;
 
   const questions = useMemo(() => {
     const inputObj = tool.input as AskUserQuestionInput | undefined;
@@ -112,8 +114,10 @@ export function AskUserQuestionDisplay({ tool }: { tool: ToolCall }) {
   }, [tool.input]);
 
   // Handle clicking an option
+  // Allow interaction when waiting for user input (canUseTool callback flow)
+  // even though isClaudeRunning may be true
   const handleOptionClick = (questionIndex: number, optionIndex: number, multiSelect: boolean) => {
-    if (!isPending || isClaudeRunning || !onSendResponse) return;
+    if (!isPending || (isClaudeRunning && !isWaitingForUserInput) || !onSendResponse) return;
 
     const question = questions[questionIndex];
     if (!question) return;
@@ -209,7 +213,8 @@ export function AskUserQuestionDisplay({ tool }: { tool: ToolCall }) {
             {question.options.map((option, oIndex) => {
               const isSelected = isOptionSelected(qIndex, oIndex);
               const wasAnswered = isAnsweredOption(option);
-              const canClick = isPending && !isClaudeRunning && onSendResponse;
+              const canClick =
+                isPending && (!isClaudeRunning || isWaitingForUserInput) && onSendResponse;
 
               return (
                 <button
@@ -248,7 +253,7 @@ export function AskUserQuestionDisplay({ tool }: { tool: ToolCall }) {
           {/* Submit button for multi-select */}
           {question.multiSelect &&
             isPending &&
-            !isClaudeRunning &&
+            (!isClaudeRunning || isWaitingForUserInput) &&
             onSendResponse &&
             (selectedOptions.get(qIndex)?.size ?? 0) > 0 && (
               <button
@@ -263,7 +268,7 @@ export function AskUserQuestionDisplay({ tool }: { tool: ToolCall }) {
       ))}
 
       {/* Show the response if answered (but not the "Answer questions?" error) */}
-      {hasOutput && !isWaitingForInput && (
+      {hasOutput && !isWaitingForInputLegacy && (
         <div className="pt-2 border-t">
           <div className="text-xs text-muted-foreground mb-1">Response:</div>
           <pre

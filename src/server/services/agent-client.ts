@@ -12,10 +12,15 @@
 import http from 'node:http';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import type { SDKMessage, SlashCommand, McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
+import type {
+  SDKMessage,
+  SlashCommand,
+  McpServerConfig,
+  PermissionResult,
+} from '@anthropic-ai/claude-agent-sdk';
 import { createLogger, toError } from '@/lib/logger';
 import { env } from '@/lib/env';
-import type { PartialAssistantMessage } from '../../../shared/agent-types';
+import type { PartialAssistantMessage, UserInputRequest } from '../../../shared/agent-types';
 
 const log = createLogger('agent-client');
 
@@ -46,8 +51,25 @@ export interface AgentCommandsEvent {
   commands: SlashCommand[];
 }
 
-/** Either a complete message, partial message, or commands update from the agent service query stream. */
-export type AgentStreamEvent = AgentMessage | AgentPartialMessage | AgentCommandsEvent;
+/**
+ * A user input request event from the agent service.
+ * Emitted when the SDK's canUseTool callback fires for a tool that needs
+ * user interaction (e.g., AskUserQuestion, ExitPlanMode).
+ * The SDK is paused until respondToUserInput() is called.
+ */
+export interface AgentUserInputRequestEvent {
+  kind: 'userInputRequest';
+  toolName: string;
+  toolUseId: string;
+  input: Record<string, unknown>;
+}
+
+/** Events from the agent service query stream. */
+export type AgentStreamEvent =
+  | AgentMessage
+  | AgentPartialMessage
+  | AgentCommandsEvent
+  | AgentUserInputRequestEvent;
 
 /**
  * Status response from the agent service.
@@ -58,16 +80,19 @@ export interface AgentStatus {
   messageCount: number;
   lastSequence: number;
   commands: SlashCommand[];
+  waitingForUserInput: boolean;
 }
 
 /**
  * SSE event from the /query endpoint.
- * Either a complete message, a partial message, a completion marker, or an error.
+ * Either a complete message, a partial message, a user input request,
+ * a completion marker, or an error.
  */
 type SSEEvent =
   | { sequence: number; message: SDKMessage }
   | { partial: AgentPartialMessage['partial'] }
   | { commands: SlashCommand[] }
+  | { userInputRequest: UserInputRequest }
   | { done: true }
   | { error: string };
 
@@ -125,6 +150,12 @@ export interface AgentClient {
    * Returns null if the branch cannot be determined (e.g., detached HEAD, error).
    */
   getCurrentBranch(): Promise<string | null>;
+
+  /**
+   * Respond to a pending user input request (canUseTool callback).
+   * Used when the SDK is waiting for user input on AskUserQuestion or ExitPlanMode.
+   */
+  respondToUserInput(toolUseId: string, response: PermissionResult): Promise<{ success: boolean }>;
 
   /**
    * Health check - returns true if the agent service is reachable.
@@ -282,6 +313,17 @@ export function createAgentClient(socketPath: string): AgentClient {
                 continue;
               }
 
+              if ('userInputRequest' in parsed) {
+                // User input request (canUseTool waiting for response)
+                yield {
+                  kind: 'userInputRequest',
+                  toolName: parsed.userInputRequest.toolName,
+                  toolUseId: parsed.userInputRequest.toolUseId,
+                  input: parsed.userInputRequest.input,
+                };
+                continue;
+              }
+
               if ('sequence' in parsed && 'message' in parsed) {
                 yield {
                   kind: 'complete',
@@ -319,6 +361,10 @@ export function createAgentClient(socketPath: string): AgentClient {
     async getCommands() {
       const res = await fetchJson<{ commands: SlashCommand[] }>('/commands');
       return res.commands;
+    },
+
+    async respondToUserInput(toolUseId, response) {
+      return fetchJson<{ success: boolean }>('/respond', 'POST', { toolUseId, response });
     },
 
     async getCurrentBranch() {
