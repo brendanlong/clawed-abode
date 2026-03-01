@@ -2,7 +2,7 @@
 
 import { useCallback } from 'react';
 import { Button } from '@/components/ui/button';
-import { Mic, Loader2 } from 'lucide-react';
+import { Mic } from 'lucide-react';
 import { useVoiceRecording } from '@/hooks/useVoiceRecording';
 import { cn } from '@/lib/utils';
 
@@ -12,12 +12,13 @@ interface VoiceMicButtonProps {
 }
 
 /**
- * Push-to-talk microphone button.
- * First click starts recording, second click stops and transcribes.
- * Transcript is returned to parent (not auto-sent).
+ * Push-to-talk microphone button using browser SpeechRecognition.
+ * First click starts recording, second click stops and returns transcript.
+ * Shows interim transcript while recording.
  */
 export function VoiceMicButton({ onTranscript, disabled }: VoiceMicButtonProps) {
-  const { isRecording, isTranscribing, startRecording, stopRecording, error } = useVoiceRecording();
+  const { isRecording, isTranscribing, interimTranscript, startRecording, stopRecording, error } =
+    useVoiceRecording();
 
   const handleClick = useCallback(async () => {
     if (isRecording) {
@@ -43,16 +44,17 @@ export function VoiceMicButton({ onTranscript, disabled }: VoiceMicButtonProps) 
         onClick={handleClick}
         disabled={disabled || isTranscribing}
         title={
-          isTranscribing ? 'Transcribing...' : isRecording ? 'Stop recording' : 'Start voice input'
+          isTranscribing ? 'Processing...' : isRecording ? 'Stop recording' : 'Start voice input'
         }
         className={cn('shrink-0', isRecording && 'animate-pulse')}
       >
-        {isTranscribing ? (
-          <Loader2 className="h-4 w-4 animate-spin" />
-        ) : (
-          <Mic className="h-4 w-4" />
-        )}
+        <Mic className="h-4 w-4" />
       </Button>
+      {isRecording && interimTranscript && (
+        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-muted text-muted-foreground text-xs rounded whitespace-nowrap max-w-[200px] truncate">
+          {interimTranscript}
+        </div>
+      )}
       {error && (
         <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-destructive text-destructive-foreground text-xs rounded whitespace-nowrap">
           {error}

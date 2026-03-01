@@ -5,17 +5,10 @@ import {
   useRef,
   useCallback,
   useEffect,
+  useMemo,
   createContext,
   useContext,
-  useMemo,
 } from 'react';
-import { isMSESupported, StreamingAudioPlayer } from '@/lib/streaming-audio-player';
-import { startTTSStream, TTSStreamHandle } from '@/lib/tts-stream-client';
-
-function getAuthToken(): string | null {
-  if (typeof window === 'undefined') return null;
-  return localStorage.getItem('auth_token');
-}
 
 /** Item in the sequential playback queue */
 export interface PlaybackQueueItem {
@@ -28,6 +21,7 @@ export interface VoicePlaybackState {
   isPlaying: boolean;
   currentMessageId: string | null;
   isLoading: boolean;
+  supportsPause: boolean;
   play: (messageId: string, text: string) => Promise<void>;
   playSequential: (items: PlaybackQueueItem[]) => void;
   enqueue: (item: PlaybackQueueItem) => void;
@@ -41,6 +35,7 @@ const defaultPlaybackState: VoicePlaybackState = {
   isPlaying: false,
   currentMessageId: null,
   isLoading: false,
+  supportsPause: false,
   play: async () => {},
   playSequential: () => {},
   enqueue: () => {},
@@ -55,312 +50,332 @@ export function useVoicePlaybackContext() {
   return useContext(VoicePlaybackContext);
 }
 
-/** Cached AAC chunks for a message, indexed by chunk number. */
-interface CachedAudio {
-  chunks: Uint8Array[];
+/**
+ * Chrome has a bug where utterances over ~15 seconds stop abruptly.
+ * Workaround: split text into chunks at sentence boundaries.
+ * https://issues.chromium.org/issues/41294170
+ */
+const CHUNK_MAX_LENGTH = 200;
+
+function splitTextIntoChunks(text: string): string[] {
+  if (text.length <= CHUNK_MAX_LENGTH) return [text];
+
+  const chunks: string[] = [];
+  let remaining = text;
+
+  while (remaining.length > 0) {
+    if (remaining.length <= CHUNK_MAX_LENGTH) {
+      chunks.push(remaining);
+      break;
+    }
+
+    // Try to split at sentence boundary
+    let splitIndex = -1;
+    const sentenceEnders = ['. ', '! ', '? ', '.\n', '!\n', '?\n'];
+    for (const ender of sentenceEnders) {
+      const idx = remaining.lastIndexOf(ender, CHUNK_MAX_LENGTH);
+      if (idx > 0 && idx > splitIndex) {
+        splitIndex = idx + ender.length;
+      }
+    }
+
+    // Fall back to comma/semicolon
+    if (splitIndex <= 0) {
+      const commaIdx = remaining.lastIndexOf(', ', CHUNK_MAX_LENGTH);
+      const semiIdx = remaining.lastIndexOf('; ', CHUNK_MAX_LENGTH);
+      splitIndex = Math.max(commaIdx, semiIdx);
+      if (splitIndex > 0) splitIndex += 2;
+    }
+
+    // Fall back to space
+    if (splitIndex <= 0) {
+      splitIndex = remaining.lastIndexOf(' ', CHUNK_MAX_LENGTH);
+      if (splitIndex > 0) splitIndex += 1;
+    }
+
+    // Last resort: hard split
+    if (splitIndex <= 0) {
+      splitIndex = CHUNK_MAX_LENGTH;
+    }
+
+    chunks.push(remaining.slice(0, splitIndex));
+    remaining = remaining.slice(splitIndex);
+  }
+
+  return chunks;
 }
 
 /**
- * Hook that manages audio playback state for voice TTS.
- *
- * When MSE is supported (most desktop browsers, Android Chrome), uses streaming
- * playback via /api/voice/speak-stream SSE endpoint for low-latency first audio.
- *
- * When MSE is not supported (iPhone Safari), falls back to the existing
- * blob-based approach via /api/voice/speak.
+ * Hook that manages audio playback state for voice TTS using the browser's
+ * SpeechSynthesis API. No server calls or API keys needed.
  */
-export function useVoicePlayback(): VoicePlaybackState {
+/**
+ * Returns a promise that resolves once speechSynthesis voices are available.
+ * Chrome loads voices asynchronously; calling speak() before they're ready
+ * causes "synthesis-failed". This waits for the voiceschanged event with a timeout.
+ */
+function waitForVoices(synth: SpeechSynthesis): Promise<SpeechSynthesisVoice[]> {
+  const voices = synth.getVoices();
+  if (voices.length > 0) return Promise.resolve(voices);
+
+  return new Promise((resolve) => {
+    const onChanged = () => {
+      const v = synth.getVoices();
+      if (v.length > 0) {
+        synth.removeEventListener('voiceschanged', onChanged);
+        clearTimeout(timer);
+        resolve(v);
+      }
+    };
+    // Timeout after 2s — if no voices, resolve empty and let speak() fail gracefully
+    const timer = setTimeout(() => {
+      synth.removeEventListener('voiceschanged', onChanged);
+      resolve(synth.getVoices());
+    }, 2000);
+    synth.addEventListener('voiceschanged', onChanged);
+  });
+}
+
+export function useVoicePlayback(
+  ttsSpeed: number = 1.0,
+  preferredVoiceURI: string | null = null
+): VoicePlaybackState {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentMessageId, setCurrentMessageId] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading] = useState(false);
 
-  // MSE streaming refs
-  const streamHandleRef = useRef<TTSStreamHandle | null>(null);
-  const playerRef = useRef<StreamingAudioPlayer | null>(null);
-  // Cache: messageId -> raw AAC chunks
-  const mseCacheRef = useRef<Map<string, CachedAudio>>(new Map());
+  // Track the current text for restart functionality
+  const currentTextRef = useRef<string | null>(null);
 
-  // Legacy blob refs (fallback for non-MSE browsers)
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const blobCacheRef = useRef<Map<string, string>>(new Map());
+  // Keep a ref to the current utterance to prevent Chrome from garbage-collecting it.
+  // Chrome GCs unreferenced utterances, causing onend to fire immediately.
+  // See https://bugs.chromium.org/p/chromium/issues/detail?id=509488
+  const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
 
-  // Sequential playback queue: remaining items to play after current finishes
+  // Cached voices list — Chrome loads these asynchronously
+  const voicesRef = useRef<SpeechSynthesisVoice[]>([]);
+
+  // Sequential playback queue
   const queueRef = useRef<PlaybackQueueItem[]>([]);
-  // Ref to the "play next from queue" function, set after playInternal is defined
   const playNextFromQueueRef = useRef<() => void>(() => {});
-  // Synchronous flag to track whether playback is active (avoids stale closure on currentMessageId)
   const isActiveRef = useRef(false);
 
-  const mseSupported = useMemo(() => {
-    if (typeof window === 'undefined') return false;
-    return isMSESupported();
+  // Pause/resume is broken on Firefox (pause acts as cancel) and Android (resume doesn't work)
+  const supportsPause = useMemo(() => {
+    if (typeof navigator === 'undefined') return false;
+    const ua = navigator.userAgent;
+    if (ua.includes('Firefox')) return false;
+    if (ua.includes('Android')) return false;
+    return true;
   }, []);
 
-  // --- Shared cleanup helpers ---
+  // TTS speed ref (avoid stale closures)
+  const ttsSpeedRef = useRef(ttsSpeed);
+  useEffect(() => {
+    ttsSpeedRef.current = ttsSpeed;
+  }, [ttsSpeed]);
 
-  const stopStreamPlayback = useCallback(() => {
-    if (streamHandleRef.current) {
-      streamHandleRef.current.abort();
-      streamHandleRef.current = null;
-    }
-    if (playerRef.current) {
-      playerRef.current.destroy();
-      playerRef.current = null;
-    }
-  }, []);
+  // Preferred voice URI ref
+  const preferredVoiceURIRef = useRef(preferredVoiceURI);
+  useEffect(() => {
+    preferredVoiceURIRef.current = preferredVoiceURI;
+  }, [preferredVoiceURI]);
 
-  const stopLegacyPlayback = useCallback(() => {
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.onended = null;
-      audioRef.current.onerror = null;
-      audioRef.current = null;
-    }
-  }, []);
+  // Pre-load voices on mount so they're ready when user clicks play
+  useEffect(() => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
 
-  const stopCurrentAudio = useCallback(() => {
-    stopStreamPlayback();
-    stopLegacyPlayback();
-  }, [stopStreamPlayback, stopLegacyPlayback]);
-
-  const cleanupAll = useCallback(() => {
-    stopCurrentAudio();
-    queueRef.current = [];
-    isActiveRef.current = false;
-    // Revoke blob URLs
-    for (const url of blobCacheRef.current.values()) {
-      URL.revokeObjectURL(url);
-    }
-    blobCacheRef.current.clear();
-    mseCacheRef.current.clear();
-  }, [stopCurrentAudio]);
-
-  const stop = useCallback(() => {
-    queueRef.current = [];
-    isActiveRef.current = false;
-    stopCurrentAudio();
-    setIsPlaying(false);
-    setCurrentMessageId(null);
-    setIsLoading(false);
-  }, [stopCurrentAudio]);
-
-  const pause = useCallback(() => {
-    if (isPlaying) {
-      if (playerRef.current) {
-        playerRef.current.pause();
-      } else if (audioRef.current) {
-        audioRef.current.pause();
-      }
-      setIsPlaying(false);
-    }
-  }, [isPlaying]);
-
-  const restart = useCallback(async () => {
-    if (playerRef.current) {
-      playerRef.current.restart();
-      setIsPlaying(true);
-    } else if (audioRef.current) {
-      audioRef.current.currentTime = 0;
-      await audioRef.current.play();
-      setIsPlaying(true);
-    }
-  }, []);
-
-  // --- Legacy blob playback (iPhone Safari fallback) ---
-
-  const playBlobUrl = useCallback((messageId: string, blobUrl: string) => {
-    const audio = new Audio(blobUrl);
-    audioRef.current = audio;
-
-    audio.onended = () => {
-      audioRef.current = null;
-      playNextFromQueueRef.current();
+    const synth = window.speechSynthesis;
+    const loadVoices = () => {
+      voicesRef.current = synth.getVoices();
+      console.debug('[TTS] voices loaded:', voicesRef.current.length);
     };
 
-    audio.onerror = () => {
-      queueRef.current = [];
-      isActiveRef.current = false;
-      setIsPlaying(false);
-      setCurrentMessageId(null);
-      audioRef.current = null;
-      const cached = blobCacheRef.current.get(messageId);
-      if (cached) {
-        URL.revokeObjectURL(cached);
-        blobCacheRef.current.delete(messageId);
-      }
+    loadVoices();
+    synth.addEventListener('voiceschanged', loadVoices);
+    return () => {
+      synth.removeEventListener('voiceschanged', loadVoices);
     };
+  }, []);
 
+  // --- Core speak function ---
+
+  const speakText = useCallback(async (messageId: string, text: string) => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+
+    const synth = window.speechSynthesis;
+
+    // Cancel any ongoing speech, but only if actually speaking/pending
+    if (synth.speaking || synth.pending) {
+      synth.cancel();
+    }
+
+    isActiveRef.current = true;
     setCurrentMessageId(messageId);
-    return audio.play().then(() => setIsPlaying(true));
-  }, []);
+    setIsPlaying(true);
+    currentTextRef.current = text;
 
-  const playLegacy = useCallback(
-    async (messageId: string, text: string) => {
-      // Check blob cache
-      const cached = blobCacheRef.current.get(messageId);
-      if (cached) {
-        await playBlobUrl(messageId, cached);
+    // Ensure voices are loaded — Chrome loads them asynchronously and
+    // speak() fails with "synthesis-failed" if called before they're ready
+    if (voicesRef.current.length === 0) {
+      console.debug('[TTS] waiting for voices to load...');
+      voicesRef.current = await waitForVoices(synth);
+    }
+
+    // Pick a voice: user preference > language match > first available
+    // May be null if no voices loaded (let the browser use its default)
+    const voices = voicesRef.current;
+    const prefURI = preferredVoiceURIRef.current;
+    const primaryLang = navigator.language.split('-')[0]; // e.g. 'en' from 'en-US'
+
+    const selectedVoice =
+      // 1. User's explicit preference
+      (prefURI ? voices.find((v) => v.voiceURI === prefURI) : null) ??
+      // 2. Local voice matching full locale (e.g. en-US)
+      voices.find(
+        (v) => v.localService && v.lang.replace('_', '-').startsWith(navigator.language)
+      ) ??
+      // 3. Local voice matching primary language (e.g. en)
+      voices.find((v) => v.localService && v.lang.split(/[-_]/)[0] === primaryLang) ??
+      // 4. Any voice matching primary language
+      voices.find((v) => v.lang.split(/[-_]/)[0] === primaryLang) ??
+      // 5. First available (may be undefined if no voices loaded)
+      voices[0] ??
+      null;
+
+    if (selectedVoice) {
+      console.debug(
+        '[TTS] using voice:',
+        selectedVoice.name,
+        selectedVoice.lang,
+        selectedVoice.localService ? '(local)' : '(network)'
+      );
+    } else {
+      console.debug('[TTS] no voice selected, using browser default');
+    }
+
+    const chunks = splitTextIntoChunks(text);
+    let currentChunk = 0;
+    let stopped = false;
+    let retriedWithoutVoice = false;
+
+    const speakNextChunk = () => {
+      if (stopped) return;
+
+      if (currentChunk >= chunks.length) {
+        // All chunks done
+        utteranceRef.current = null;
+        setIsPlaying(false);
+        setCurrentMessageId(null);
+        currentTextRef.current = null;
+        playNextFromQueueRef.current();
         return;
       }
 
-      setIsLoading(true);
-      setCurrentMessageId(messageId);
-      setIsPlaying(false);
-
-      try {
-        const token = getAuthToken();
-        const response = await fetch('/api/voice/speak', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(token ? { authorization: `Bearer ${token}` } : {}),
-          },
-          body: JSON.stringify({ text }),
-        });
-
-        if (!response.ok) {
-          throw new Error('Speech generation failed');
-        }
-
-        const audioBlob = await response.blob();
-        const blobUrl = URL.createObjectURL(audioBlob);
-        blobCacheRef.current.set(messageId, blobUrl);
-
-        setIsLoading(false);
-        await playBlobUrl(messageId, blobUrl);
-      } catch {
-        queueRef.current = [];
-        isActiveRef.current = false;
-        setIsLoading(false);
-        setIsPlaying(false);
-        setCurrentMessageId(null);
+      const utterance = new SpeechSynthesisUtterance(chunks[currentChunk]);
+      utterance.rate = ttsSpeedRef.current;
+      // Only set voice if we have one and haven't failed with it already
+      if (selectedVoice && !retriedWithoutVoice) {
+        utterance.voice = selectedVoice;
       }
-    },
-    [playBlobUrl]
-  );
 
-  // --- MSE streaming playback ---
+      // Store in ref to prevent Chrome from garbage-collecting the utterance
+      utteranceRef.current = utterance;
 
-  const playCachedMSE = useCallback((messageId: string, cached: CachedAudio) => {
-    // Replay cached AAC chunks through a fresh player
-    const player = new StreamingAudioPlayer({
-      onPlaying: () => setIsPlaying(true),
-      onEnded: () => {
-        playerRef.current = null;
-        playNextFromQueueRef.current();
-      },
-      onError: () => {
-        queueRef.current = [];
-        isActiveRef.current = false;
-        setIsPlaying(false);
-        setCurrentMessageId(null);
-        playerRef.current = null;
-        mseCacheRef.current.delete(messageId);
-      },
-    });
-    playerRef.current = player;
-    setCurrentMessageId(messageId);
+      utterance.onstart = () => {
+        console.debug('[TTS] chunk started', currentChunk, '/', chunks.length);
+      };
 
-    // Feed all cached chunks synchronously, then finalize
-    (async () => {
-      for (const chunk of cached.chunks) {
-        await player.appendChunk(chunk);
-      }
-      await player.finalize();
-    })().catch(() => {
-      isActiveRef.current = false;
-      setIsPlaying(false);
-      setCurrentMessageId(null);
-    });
-  }, []);
+      utterance.onend = () => {
+        console.debug('[TTS] chunk ended', currentChunk, '/', chunks.length);
+        currentChunk++;
+        speakNextChunk();
+      };
 
-  const playStreaming = useCallback((messageId: string, text: string) => {
-    setIsLoading(true);
-    setCurrentMessageId(messageId);
-    setIsPlaying(false);
-
-    const collectedChunks: Uint8Array[] = [];
-
-    const handle = startTTSStream({
-      text,
-      token: getAuthToken(),
-      onChunk: (_index, aacData) => {
-        collectedChunks.push(aacData);
-      },
-      playerCallbacks: {
-        onPlaying: () => {
-          setIsLoading(false);
-          setIsPlaying(true);
-        },
-        onEnded: () => {
-          streamHandleRef.current = null;
-          playerRef.current = null;
-          playNextFromQueueRef.current();
-        },
-        onError: () => {
-          queueRef.current = [];
-          isActiveRef.current = false;
-          setIsPlaying(false);
-          setIsLoading(false);
-          setCurrentMessageId(null);
-          streamHandleRef.current = null;
-          playerRef.current = null;
-          // Discard partial cache
-          mseCacheRef.current.delete(messageId);
-        },
-      },
-    });
-
-    streamHandleRef.current = handle;
-    playerRef.current = handle.player;
-
-    // When the stream finishes, save collected chunks to cache
-    handle.done
-      .then(() => {
-        if (collectedChunks.length > 0) {
-          mseCacheRef.current.set(messageId, { chunks: collectedChunks });
-        }
-      })
-      .catch(() => {
-        // Stream was aborted or errored — partial cache already discarded
-      });
-  }, []);
-
-  // --- Internal play (no toggle logic, used by play and playSequential) ---
-
-  const playInternal = useCallback(
-    async (messageId: string, text: string) => {
-      isActiveRef.current = true;
-      stopCurrentAudio();
-
-      if (mseSupported) {
-        const cached = mseCacheRef.current.get(messageId);
-        if (cached) {
-          playCachedMSE(messageId, cached);
+      utterance.onerror = (event) => {
+        console.debug('[TTS] error', event.error, 'chunk', currentChunk);
+        if (event.error === 'interrupted' || event.error === 'canceled') {
+          // Expected when stopping/switching — don't reset state here,
+          // the stop() function handles that.
           return;
         }
-        playStreaming(messageId, text);
-      } else {
-        await playLegacy(messageId, text);
-      }
-    },
-    [stopCurrentAudio, mseSupported, playCachedMSE, playStreaming, playLegacy]
-  );
+        // On synthesis-failed, retry once without setting an explicit voice.
+        // Some platforms (especially Android) fail when a voice is explicitly set.
+        if (event.error === 'synthesis-failed' && selectedVoice && !retriedWithoutVoice) {
+          console.debug('[TTS] retrying without explicit voice...');
+          retriedWithoutVoice = true;
+          speakNextChunk();
+          return;
+        }
+        stopped = true;
+        utteranceRef.current = null;
+        queueRef.current = [];
+        isActiveRef.current = false;
+        setIsPlaying(false);
+        setCurrentMessageId(null);
+        currentTextRef.current = null;
+      };
 
-  // Wire up the playNextFromQueue ref — called by onEnded callbacks
+      console.debug(
+        '[TTS] speaking chunk',
+        currentChunk,
+        '/',
+        chunks.length,
+        JSON.stringify(chunks[currentChunk].slice(0, 50))
+      );
+      synth.speak(utterance);
+    };
+
+    speakNextChunk();
+  }, []);
+
+  // Wire up playNextFromQueue
   useEffect(() => {
     playNextFromQueueRef.current = () => {
       const next = queueRef.current.shift();
       if (next) {
-        playInternal(next.messageId, next.text);
+        speakText(next.messageId, next.text);
       } else {
-        // Queue exhausted, reset state
         isActiveRef.current = false;
         setIsPlaying(false);
         setCurrentMessageId(null);
       }
     };
-  }, [playInternal]);
+  }, [speakText]);
+
+  const stop = useCallback(() => {
+    utteranceRef.current = null;
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
+    queueRef.current = [];
+    isActiveRef.current = false;
+    setIsPlaying(false);
+    setCurrentMessageId(null);
+    currentTextRef.current = null;
+  }, []);
+
+  const pause = useCallback(() => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+
+    if (!supportsPause) {
+      // Firefox: pause() acts as cancel() — https://bugzilla.mozilla.org/show_bug.cgi?id=1038508
+      // Android: resume() doesn't work — https://issues.chromium.org/issues/40459219
+      stop();
+      return;
+    }
+
+    window.speechSynthesis.pause();
+    setIsPlaying(false);
+  }, [stop, supportsPause]);
+
+  const restart = useCallback(async () => {
+    const text = currentTextRef.current;
+    const msgId = currentMessageId;
+    if (text && msgId) {
+      speakText(msgId, text);
+    }
+  }, [currentMessageId, speakText]);
 
   // --- Main play function ---
 
@@ -372,27 +387,19 @@ export function useVoicePlayback(): VoicePlaybackState {
       // If we're playing the same message, toggle pause/play
       if (currentMessageId === messageId) {
         if (isPlaying) {
-          if (playerRef.current) {
-            playerRef.current.pause();
-          } else if (audioRef.current) {
-            audioRef.current.pause();
-          }
-          setIsPlaying(false);
-        } else {
-          if (playerRef.current) {
-            playerRef.current.resume();
-            setIsPlaying(true);
-          } else if (audioRef.current) {
-            await audioRef.current.play();
-            setIsPlaying(true);
-          }
+          pause();
+        } else if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+          // Resume (only reachable on platforms where supportsPause is true,
+          // since pause() calls stop() on unsupported platforms which clears currentMessageId)
+          window.speechSynthesis.resume();
+          setIsPlaying(true);
         }
         return;
       }
 
-      await playInternal(messageId, text);
+      speakText(messageId, text);
     },
-    [currentMessageId, isPlaying, playInternal]
+    [currentMessageId, isPlaying, speakText, pause]
   );
 
   // --- Sequential playback (auto-read) ---
@@ -401,47 +408,43 @@ export function useVoicePlayback(): VoicePlaybackState {
     (items: PlaybackQueueItem[]) => {
       if (items.length === 0) return;
 
-      // Clear any existing queue and stop current playback
-      queueRef.current = [];
-      stopCurrentAudio();
-
-      // Set up queue with remaining items (all after the first)
       queueRef.current = items.slice(1);
-
-      // Start playing the first item
-      playInternal(items[0].messageId, items[0].text);
+      speakText(items[0].messageId, items[0].text);
     },
-    [stopCurrentAudio, playInternal]
+    [speakText]
   );
 
-  // --- Enqueue (append to in-progress queue without disrupting current playback) ---
+  // --- Enqueue ---
 
   const enqueue = useCallback(
     (item: PlaybackQueueItem) => {
-      // If something is currently playing or loading, just append to the queue.
-      // Use isActiveRef (synchronous) instead of currentMessageId (React state)
-      // to avoid stale closure when multiple enqueue calls happen in the same render.
       if (isActiveRef.current) {
         queueRef.current.push(item);
         return;
       }
-
-      // Nothing is playing — start playing this item immediately
-      playInternal(item.messageId, item.text);
+      speakText(item.messageId, item.text);
     },
-    [playInternal]
+    [speakText]
   );
 
   // Clean up on unmount
   useEffect(() => {
-    return () => cleanupAll();
-  }, [cleanupAll]);
+    return () => {
+      utteranceRef.current = null;
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
+      queueRef.current = [];
+      isActiveRef.current = false;
+    };
+  }, []);
 
   return {
     enabled: true,
     isPlaying,
     currentMessageId,
     isLoading,
+    supportsPause,
     play,
     playSequential,
     enqueue,

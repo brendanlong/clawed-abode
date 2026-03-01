@@ -52,7 +52,7 @@ The database schema is defined in [`prisma/schema.prisma`](../prisma/schema.pris
 - **Session**: Claude Code sessions tied to git clones or standalone workspaces. `repoUrl` and `branch` are nullable — when null, the session has no repository (workspace-only).
 - **Message**: Chat messages with sequence numbers for cursor-based pagination
 - **AuthSession**: Login sessions with tokens and audit info
-- **GlobalSettings**: Global application settings (system prompt override and append, Claude model, Claude API key, OpenAI API key for voice, TTS speed, voice auto-send)
+- **GlobalSettings**: Global application settings (system prompt override and append, Claude model, Claude API key, TTS speed, voice auto-send)
 - **RepoSettings**: Per-repository settings (favorites, custom system prompt)
 - **EnvVar**: Environment variables for a repository or global (encrypted if secret). When `repoSettingsId` is null, the variable is global and applies to all sessions.
 - **McpServer**: MCP server configurations for a repository or global. When `repoSettingsId` is null, the server is global and applies to all sessions.
@@ -504,8 +504,7 @@ Users can configure global settings that apply to all sessions:
 - **Global System Prompt Append**: Additional content appended to the base prompt (default or override) for all sessions. This is applied before any per-repo custom prompts.
 - **Global Environment Variables**: Environment variables applied to all sessions. Per-repo variables with the same name take precedence.
 - **Global MCP Servers**: MCP server configurations available in all sessions. Per-repo servers with the same name take precedence. Supports stdio, HTTP, and SSE transport types.
-- **OpenAI API Key**: API key for voice features (speech-to-text and text-to-speech). Stored encrypted at rest. When configured, enables voice input/output in session views. Configured in Settings → Audio.
-- **TTS Speed**: Controls text-to-speech playback speed (0.25x to 4.0x, default 1.0x). Passed to OpenAI TTS API as the `speed` parameter. Configured in Settings → Audio.
+- **TTS Speed**: Controls text-to-speech playback speed (0.25x to 4.0x, default 1.0x). Passed to `SpeechSynthesis.rate` via the browser's Web Speech API. Configured in Settings → Audio.
 - **Voice Auto-Send**: When enabled (default: true), speech-to-text transcripts are automatically sent as prompts after recording stops. When disabled, transcripts are inserted into the input field for editing. Configured in Settings → Audio.
 
 **Prompt Order**: When Claude runs, the system prompt is built in this order:
@@ -519,7 +518,7 @@ Users can configure global settings that apply to all sessions:
 - **Environment Variables**: Global env vars are included in all sessions. If a per-repo env var has the same name as a global one, the per-repo value takes precedence.
 - **MCP Servers**: Global MCP servers are included in all sessions. If a per-repo MCP server has the same name as a global one, the per-repo configuration takes precedence.
 
-**Configuration**: Go to Settings → System Prompt to manage prompt and model settings. Go to Settings → Audio to manage voice/audio settings (OpenAI API key, TTS speed, voice auto-send).
+**Configuration**: Go to Settings → System Prompt to manage prompt and model settings. Go to Settings → Audio to manage voice/audio settings (TTS speed, voice auto-send).
 
 **Data Model**: Global env vars and MCP servers are stored in the same `EnvVar` and `McpServer` tables as per-repo ones, with `repoSettingsId = null` indicating a global setting. A partial unique index (`WHERE repoSettingsId IS NULL`) enforces name uniqueness for global entries at the database level.
 
@@ -527,50 +526,37 @@ Users can configure global settings that apply to all sessions:
 
 ### Voice Mode
 
-Voice mode provides speech-to-text input and text-to-speech output for hands-free interaction with Claude sessions.
+Voice mode provides speech-to-text input and text-to-speech output for hands-free interaction with Claude sessions using browser-native Web Speech APIs. No API keys or server-side processing required.
 
-**Requirements**: OpenAI API key configured in Settings → Audio. Optionally, an Anthropic/Claude API key (Settings → System Prompt) enables text transformation (markdown → natural speech) before TTS.
+**Requirements**: A browser that supports the Web Speech API. `SpeechRecognition` provides STT (Chrome, Edge, Safari; not Firefox without a flag). `SpeechSynthesis` provides TTS (all major browsers).
 
 **Architecture**:
 
-- **Voice input**: Browser MediaRecorder captures audio → sent to `/api/voice/transcribe` → OpenAI `gpt-4o-mini-transcribe` → transcript auto-sent as prompt (if voice auto-send enabled) or inserted into prompt input for editing
-- **Voice output (streaming, MSE)**: Text from assistant message → optionally transformed by Claude Sonnet → sent to `/api/voice/speak-stream` SSE endpoint → each text chunk generates AAC audio via OpenAI `tts-1` → raw AAC streamed as base64 SSE events → client wraps AAC into fMP4 via `mse-audio-wrapper` → `MediaSource` + `SourceBuffer` for gapless playback. First audio plays as soon as the first TTS chunk completes.
-- **Voice output (legacy fallback)**: When MSE is not supported (iPhone Safari), falls back to `/api/voice/speak` which buffers all audio before playback.
-- **API routes**: Voice endpoints use Next.js API routes (not tRPC) since they handle binary audio data and multipart form uploads
+- **Voice input (STT)**: Browser `SpeechRecognition` API provides real-time transcription directly in the browser. No server round-trip needed. Supports interim results for real-time feedback during recording.
+- **Voice output (TTS)**: Browser `SpeechSynthesis` API speaks text locally. Long text is chunked at sentence boundaries to work around Chrome's ~15-second utterance bug ([Chromium bug](https://issues.chromium.org/issues/41294170)). `SpeechSynthesisUtterance.rate` is set from the TTS Speed setting.
 
-**Streaming TTS SSE Protocol**:
+**Known Limitations**:
 
-```
-event: metadata
-data: {"totalChunks": 3, "mimeType": "audio/aac"}
-
-event: chunk
-data: {"index": 0, "audio": "<base64 raw AAC>"}
-
-event: chunk
-data: {"index": 1, "audio": "<base64 raw AAC>"}
-
-event: done
-data: {}
-```
-
-On error: `event: error` with `data: {"message": "TTS failed for chunk N"}`
+- TTS quality is lower than cloud-based solutions (varies by OS/browser)
+- Chrome: utterances over ~15s stop abruptly (worked around by chunking)
+- Android: `speechSynthesis.pause()` acts as `cancel()` — pause/resume doesn't work
+- Background tabs: `SpeechSynthesis` may be silenced/cancelled when tab is backgrounded
+- STT: `SpeechRecognition` not available in Firefox (without a flag)
+- iOS: requires user activation for `speak()` calls
 
 **Components**:
 
-- `VoiceMicButton`: Push-to-talk button in PromptInput. Click to start recording, click again to stop and transcribe.
+- `VoiceMicButton`: Push-to-talk button in PromptInput. Click to start recording, click again to stop. Shows interim transcript during recording.
 - `MessagePlayButton`: Per-message play/pause button on assistant messages. Visible when voice is enabled.
 - `VoiceAutoReadToggle`: Toggle in SessionHeader. When enabled, automatically speaks the last assistant message when Claude finishes a turn.
 
 **Hooks**:
 
-- `useVoiceConfig`: Queries voice configuration (enabled status) and manages auto-read preference per session (localStorage)
-- `useVoiceRecording`: MediaRecorder lifecycle, audio capture, and transcription
-- `useVoicePlayback`: Central playback state via React Context. When MSE is supported, uses `StreamingAudioPlayer` and `startTTSStream()` for streaming playback; falls back to blob URLs on unsupported browsers (iPhone Safari).
+- `useVoiceConfig`: Detects browser Web Speech API support and manages auto-read preference per session (localStorage). Queries server for `ttsSpeed` and `voiceAutoSend` settings.
+- `useVoiceRecording`: Wraps the browser `SpeechRecognition` API. Provides real-time interim transcripts and final results.
+- `useVoicePlayback`: Central playback state via React Context. Uses `SpeechSynthesis` for TTS with text chunking for Chrome compatibility. Supports sequential playback queue for auto-read.
 
-**Text transformation**: When the Anthropic API key is configured, text with markdown (tables, code blocks, headers, links, bullet lists) is transformed into natural speech via Claude Sonnet before being sent to TTS. This is detected by `needsTransformation()` in the voice service.
-
-**Implementation**: See [`src/server/services/voice.ts`](../src/server/services/voice.ts) for the voice service, [`src/app/api/voice/`](../src/app/api/voice/) for API routes, [`src/lib/streaming-audio-player.ts`](../src/lib/streaming-audio-player.ts) for MSE playback, [`src/lib/tts-stream-client.ts`](../src/lib/tts-stream-client.ts) for the SSE client, and [`src/components/voice/`](../src/components/voice/) for UI components.
+**Implementation**: See [`src/hooks/useVoiceRecording.ts`](../src/hooks/useVoiceRecording.ts), [`src/hooks/useVoicePlayback.ts`](../src/hooks/useVoicePlayback.ts), [`src/hooks/useVoiceConfig.ts`](../src/hooks/useVoiceConfig.ts), and [`src/components/voice/`](../src/components/voice/) for UI components.
 
 ## UI Screens
 
@@ -632,8 +618,7 @@ clawed-abode/
 │   │   │   ├── claude.ts
 │   │   │   ├── sse.ts             # SSE event streaming
 │   │   │   ├── repoSettings.ts
-│   │   │   ├── globalSettings.ts
-│   │   │   └── voice.ts
+│   │   │   └── globalSettings.ts
 │   │   ├── services/
 │   │   │   ├── podman.ts          # Container management via Podman CLI
 │   │   │   ├── agent-client.ts    # HTTP client for agent service
@@ -646,18 +631,14 @@ clawed-abode/
 │   │   │   ├── anthropic-models.ts # Claude model configuration
 │   │   │   ├── github.ts         # GitHub API service
 │   │   │   ├── mcp-validator.ts  # MCP server config validation
-│   │   │   ├── session-reconciler.ts # Reconciles container/DB state
-│   │   │   └── voice.ts          # Voice service (STT, TTS, text transformation)
+│   │   │   └── session-reconciler.ts # Reconciles container/DB state
 │   │   └── trpc.ts
 │   ├── lib/
 │   │   ├── auth.ts               # Authentication utilities
 │   │   ├── crypto.ts             # Encryption/decryption (AES-256-GCM)
 │   │   ├── logger.ts             # Centralized logging (createLogger)
-│   │   ├── mse-audio-wrapper.d.ts # Type declarations for mse-audio-wrapper
 │   │   ├── prisma.ts             # Prisma client initialization
-│   │   ├── streaming-audio-player.ts # MSE playback lifecycle for streaming TTS
 │   │   ├── trpc.ts               # tRPC client setup
-│   │   ├── tts-stream-client.ts  # SSE client for TTS streaming
 │   │   └── types.ts              # Global TypeScript types
 │   ├── hooks/                    # React hooks (session state, messages, etc.)
 │   ├── app/
@@ -665,8 +646,7 @@ clawed-abode/
 │   │   ├── new/page.tsx          # New session
 │   │   ├── session/[id]/page.tsx # Session view
 │   │   ├── settings/page.tsx     # Settings
-│   │   ├── login/page.tsx
-│   │   └── api/voice/           # Voice API routes (transcribe, speak, speak-stream)
+│   │   └── login/page.tsx
 │   └── components/
 │       ├── MessageList.tsx
 │       ├── PromptInput.tsx
