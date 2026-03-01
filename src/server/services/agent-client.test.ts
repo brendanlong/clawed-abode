@@ -300,7 +300,7 @@ describe('AgentClient', () => {
       }).rejects.toThrow('Something went wrong');
     });
 
-    it('should send correct request body', async () => {
+    it('should send correct request body with init options', async () => {
       let receivedBody = '';
 
       mockServer.setHandler((req, res) => {
@@ -322,7 +322,7 @@ describe('AgentClient', () => {
         prompt: 'hello',
         sessionId: 'sess-123',
         resume: true,
-        cwd: '/workspace/repo',
+        cwd: '/workspace/my-repo',
       })) {
         // consume iterator
       }
@@ -331,7 +331,36 @@ describe('AgentClient', () => {
       expect(parsed.prompt).toBe('hello');
       expect(parsed.sessionId).toBe('sess-123');
       expect(parsed.resume).toBe(true);
-      expect(parsed.cwd).toBe('/workspace/repo');
+      expect(parsed.cwd).toBe('/workspace/my-repo');
+    });
+
+    it('should default resume to false when not specified', async () => {
+      let receivedBody = '';
+
+      mockServer.setHandler((req, res) => {
+        let body = '';
+        req.on('data', (chunk: Buffer) => {
+          body += chunk.toString();
+        });
+        req.on('end', () => {
+          receivedBody = body;
+          res.writeHead(200, {
+            'Content-Type': 'text/event-stream',
+          });
+          res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+          res.end();
+        });
+      });
+
+      for await (const _msg of client.query({
+        prompt: 'hello',
+        sessionId: 'sess-123',
+      })) {
+        // consume iterator
+      }
+
+      const parsed = JSON.parse(receivedBody);
+      expect(parsed.resume).toBe(false);
     });
   });
 });

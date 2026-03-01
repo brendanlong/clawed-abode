@@ -1,7 +1,8 @@
 /**
  * HTTP client for communicating with the agent service running inside containers.
  *
- * The agent service exposes an HTTP API with endpoints for querying Claude,
+ * The agent service exposes an HTTP API with a /query endpoint for sending prompts
+ * (auto-initializing the persistent session on first call), plus endpoints for
  * interrupting queries, checking status, and fetching persisted messages.
  * This client provides a typed interface for all those operations.
  *
@@ -11,7 +12,7 @@
 import http from 'node:http';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import type { SDKMessage, SlashCommand } from '@anthropic-ai/claude-agent-sdk';
+import type { SDKMessage, SlashCommand, McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import { createLogger, toError } from '@/lib/logger';
 import { env } from '@/lib/env';
 import type { PartialAssistantMessage } from '../../../shared/agent-types';
@@ -53,6 +54,7 @@ export type AgentStreamEvent = AgentMessage | AgentPartialMessage | AgentCommand
  */
 export interface AgentStatus {
   running: boolean;
+  initialized: boolean;
   messageCount: number;
   lastSequence: number;
   commands: SlashCommand[];
@@ -70,21 +72,32 @@ type SSEEvent =
   | { error: string };
 
 /**
+ * Options for sending a query to the agent service.
+ * Init options (resume, cwd, mcpServers) are used for auto-initialization
+ * on the first call and ignored on subsequent calls.
+ */
+export interface AgentQueryOptions {
+  prompt: string;
+  sessionId: string;
+  /** Whether to resume the session (used on first call only) */
+  resume?: boolean;
+  /** Working directory (used on first call only) */
+  cwd?: string;
+  /** MCP server configurations (used on first call only) */
+  mcpServers?: Record<string, McpServerConfig>;
+}
+
+/**
  * Client for communicating with the agent service running inside a container.
  */
 export interface AgentClient {
   /**
-   * Start a query and stream results as an async iterable.
+   * Send a prompt to the agent service and stream results.
+   * Auto-initializes the persistent session on the first call.
    * Yields both complete messages (with sequence numbers, persisted) and
    * partial messages (transient streaming updates for real-time UI).
    */
-  query(options: {
-    prompt: string;
-    sessionId: string;
-    resume?: boolean;
-    cwd?: string;
-    mcpServers?: Record<string, unknown>;
-  }): AsyncGenerator<AgentStreamEvent>;
+  query(options: AgentQueryOptions): AsyncGenerator<AgentStreamEvent>;
 
   /**
    * Interrupt the currently running query.

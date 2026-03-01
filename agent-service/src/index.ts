@@ -93,7 +93,8 @@ function sendError(res: http.ServerResponse, status: number, message: string): v
 
 /**
  * Handle POST /query
- * Starts a query and streams results via SSE.
+ * Sends a user prompt and streams results via SSE.
+ * Auto-initializes the persistent session on the first call.
  * Body: { prompt: string, sessionId: string, resume?: boolean, cwd?: string, mcpServers?: Record<string, McpServerConfig> }
  */
 async function handleQuery(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
@@ -111,10 +112,20 @@ async function handleQuery(req: http.IncomingMessage, res: http.ServerResponse):
 
   const body = parsed.data;
 
-  if (runner.isRunning) {
-    sendError(res, 409, 'A query is already running');
+  if (runner.isProcessing) {
+    sendError(res, 409, 'A prompt is already being processed');
     return;
   }
+
+  // Build query options (used for auto-initialization on first call)
+  const queryOptions: QueryOptions = {
+    sessionId: body.sessionId,
+    resume: body.resume,
+    systemPrompt: SYSTEM_PROMPT || undefined,
+    model: CLAUDE_MODEL || undefined,
+    cwd: body.cwd,
+    mcpServers: body.mcpServers,
+  };
 
   // Set up SSE response
   res.writeHead(200, {
@@ -148,18 +159,8 @@ async function handleQuery(req: http.IncomingMessage, res: http.ServerResponse):
     unsubscribeCommands();
   });
 
-  const options: QueryOptions = {
-    prompt: body.prompt,
-    sessionId: body.sessionId,
-    resume: body.resume,
-    systemPrompt: SYSTEM_PROMPT || undefined,
-    model: CLAUDE_MODEL || undefined,
-    cwd: body.cwd,
-    mcpServers: body.mcpServers,
-  };
-
   try {
-    await runner.run(options);
+    await runner.sendQuery(body.prompt, body.sessionId, queryOptions);
     // Send completion event
     res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
   } catch (err) {
@@ -190,7 +191,8 @@ async function handleInterrupt(
  */
 function handleStatus(_req: http.IncomingMessage, res: http.ServerResponse): void {
   sendJson(res, 200, {
-    running: runner.isRunning,
+    running: runner.isProcessing,
+    initialized: runner.isInitialized,
     messageCount: store.getLastSequence(),
     lastSequence: store.getLastSequence(),
     commands: runner.supportedCommands,
@@ -319,34 +321,22 @@ server.on('error', (err: NodeJS.ErrnoException) => {
 });
 
 // Graceful shutdown
-process.on('SIGTERM', () => {
-  log.info('Received SIGTERM, shutting down');
-  server.close(() => {
-    // Clean up socket file
-    try {
-      if (fs.existsSync(SOCKET_PATH)) {
-        fs.unlinkSync(SOCKET_PATH);
+function gracefulShutdown(signal: string): void {
+  log.info(`Received ${signal}, shutting down`);
+  void runner.shutdown().finally(() => {
+    server.close(() => {
+      try {
+        if (fs.existsSync(SOCKET_PATH)) {
+          fs.unlinkSync(SOCKET_PATH);
+        }
+      } catch (err) {
+        log.error('Failed to clean up socket file', toError(err));
       }
-    } catch (err) {
-      log.error('Failed to clean up socket file', toError(err));
-    }
-    store.close();
-    process.exit(0);
+      store.close();
+      process.exit(0);
+    });
   });
-});
+}
 
-process.on('SIGINT', () => {
-  log.info('Received SIGINT, shutting down');
-  server.close(() => {
-    // Clean up socket file
-    try {
-      if (fs.existsSync(SOCKET_PATH)) {
-        fs.unlinkSync(SOCKET_PATH);
-      }
-    } catch (err) {
-      log.error('Failed to clean up socket file', toError(err));
-    }
-    store.close();
-    process.exit(0);
-  });
-});
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
