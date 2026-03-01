@@ -1,15 +1,21 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Spinner } from '@/components/ui/spinner';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Slider } from '@/components/ui/slider';
-import { Check, X } from 'lucide-react';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { trpc } from '@/lib/trpc';
+import { useVoiceConfig } from '@/hooks/useVoiceConfig';
 
 export function AudioTab() {
   const { data: settings, isLoading, refetch } = trpc.globalSettings.get.useQuery();
@@ -26,24 +32,14 @@ export function AudioTab() {
     <div className="space-y-6">
       <Card>
         <CardHeader>
-          <CardTitle>OpenAI API Key</CardTitle>
+          <CardTitle>TTS Voice</CardTitle>
           <CardDescription>
-            Required for voice input (speech-to-text) and voice output (text-to-speech). Get a key
-            at{' '}
-            <a
-              href="https://platform.openai.com/api-keys"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="underline"
-            >
-              platform.openai.com
-            </a>
-            . Text transformation (markdown to speech) also requires a Claude API key in the System
-            Prompt tab.
+            Select the voice for text-to-speech playback. Available voices depend on your device and
+            browser. This preference is stored per-device.
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <OpenaiApiKeySection hasKey={settings?.hasOpenaiApiKey ?? false} onUpdate={refetch} />
+          <TtsVoiceSection />
         </CardContent>
       </Card>
 
@@ -51,8 +47,8 @@ export function AudioTab() {
         <CardHeader>
           <CardTitle>TTS Speed</CardTitle>
           <CardDescription>
-            Controls how fast the text-to-speech voice speaks. Range: 0.25x (very slow) to 4.0x
-            (very fast). Default is 1.0x.
+            Controls how fast the browser text-to-speech voice speaks (using the Web Speech API).
+            Range: 0.25x (very slow) to 4.0x (very fast). Default is 1.0x.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -66,7 +62,8 @@ export function AudioTab() {
           <CardDescription>
             When enabled, speech-to-text transcripts are automatically sent as prompts after
             recording stops. When disabled, transcripts are inserted into the input field for
-            editing before sending.
+            editing before sending. Uses the browser&apos;s built-in speech recognition (Web Speech
+            API).
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -77,87 +74,90 @@ export function AudioTab() {
   );
 }
 
-function OpenaiApiKeySection({ hasKey, onUpdate }: { hasKey: boolean; onUpdate: () => void }) {
-  const [isEditing, setIsEditing] = useState(false);
-  const [editValue, setEditValue] = useState('');
-  const [error, setError] = useState<string | null>(null);
+const AUTO_DETECT_VALUE = '__auto__';
 
-  const mutation = trpc.globalSettings.setOpenaiApiKey.useMutation({
-    onSuccess: () => {
-      setIsEditing(false);
-      setEditValue('');
-      onUpdate();
-    },
-    onError: (err) => setError(err.message),
-  });
+function TtsVoiceSection() {
+  const { voiceURI, setVoiceURI } = useVoiceConfig();
+  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
 
-  const handleSave = () => {
-    setError(null);
-    if (!editValue.trim()) {
-      setError('API key cannot be empty');
-      return;
+  useEffect(() => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+
+    const synth = window.speechSynthesis;
+    const loadVoices = () => {
+      const available = synth.getVoices();
+      // Deduplicate by voiceURI (some platforms report duplicates)
+      const seen = new Set<string>();
+      const unique = available.filter((v) => {
+        if (seen.has(v.voiceURI)) return false;
+        seen.add(v.voiceURI);
+        return true;
+      });
+      // Sort by language then name
+      unique.sort((a, b) => a.lang.localeCompare(b.lang) || a.name.localeCompare(b.name));
+      setVoices(unique);
+    };
+
+    loadVoices();
+    synth.addEventListener('voiceschanged', loadVoices);
+    return () => {
+      synth.removeEventListener('voiceschanged', loadVoices);
+    };
+  }, []);
+
+  const handleChange = (value: string) => {
+    setVoiceURI(value === AUTO_DETECT_VALUE ? null : value);
+  };
+
+  const handleTest = () => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+
+    const synth = window.speechSynthesis;
+    synth.cancel();
+
+    const utterance = new SpeechSynthesisUtterance('This is a test of the selected voice.');
+    const selectedVoice = voiceURI ? voices.find((v) => v.voiceURI === voiceURI) : null;
+    if (selectedVoice) {
+      utterance.voice = selectedVoice;
     }
-    mutation.mutate({ openaiApiKey: editValue.trim() });
+    synth.speak(utterance);
   };
 
-  const handleClear = () => {
-    setError(null);
-    mutation.mutate({ openaiApiKey: '' });
-  };
-
-  const handleCancel = () => {
-    setIsEditing(false);
-    setEditValue('');
-    setError(null);
-  };
-
-  if (isEditing) {
+  if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
     return (
-      <div className="space-y-3">
-        <Input
-          type="password"
-          value={editValue}
-          onChange={(e) => setEditValue(e.target.value)}
-          placeholder="Enter OpenAI API key (sk-...)..."
-          className="font-mono text-sm"
-        />
-        {error && <p className="text-sm text-destructive">{error}</p>}
-        <div className="flex justify-end gap-2">
-          <Button variant="outline" size="sm" onClick={handleCancel}>
-            Cancel
-          </Button>
-          <Button size="sm" onClick={handleSave} disabled={mutation.isPending}>
-            {mutation.isPending ? <Spinner size="sm" /> : 'Save'}
-          </Button>
-        </div>
-      </div>
+      <p className="text-sm text-muted-foreground">
+        Text-to-speech is not supported in this browser.
+      </p>
+    );
+  }
+
+  if (voices.length === 0) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        No voices available. Your browser may still be loading them.
+      </p>
     );
   }
 
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2">
-        {hasKey ? (
-          <>
-            <Check className="h-4 w-4 text-green-500" />
-            <span className="text-sm">Configured</span>
-          </>
-        ) : (
-          <>
-            <X className="h-4 w-4 text-destructive" />
-            <span className="text-sm text-destructive">Not configured</span>
-          </>
-        )}
-      </div>
-      <div className="flex gap-2">
-        <Button variant="outline" size="sm" onClick={() => setIsEditing(true)}>
-          {hasKey ? 'Update Key' : 'Set Key'}
+        <Select value={voiceURI ?? AUTO_DETECT_VALUE} onValueChange={handleChange}>
+          <SelectTrigger className="w-full">
+            <SelectValue placeholder="Auto-detect" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={AUTO_DETECT_VALUE}>Auto-detect (match browser language)</SelectItem>
+            {voices.map((v) => (
+              <SelectItem key={v.voiceURI} value={v.voiceURI}>
+                {v.name} ({v.lang}){v.localService ? '' : ' [network]'}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Button variant="outline" size="sm" onClick={handleTest}>
+          Test
         </Button>
-        {hasKey && (
-          <Button variant="outline" size="sm" onClick={handleClear} disabled={mutation.isPending}>
-            {mutation.isPending ? <Spinner size="sm" /> : 'Remove Key'}
-          </Button>
-        )}
       </div>
     </div>
   );
