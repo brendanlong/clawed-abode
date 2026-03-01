@@ -8,6 +8,7 @@ import { Spinner } from '@/components/ui/spinner';
 import { ContextUsageIndicator } from '@/components/ContextUsageIndicator';
 import type { TokenUsageStats } from '@/lib/token-estimation';
 import { useNotification } from '@/hooks/useNotification';
+import { useVoicePlaybackContext } from '@/hooks/useVoicePlayback';
 import { isPlanFile } from './messages/plan-utils';
 
 interface Message {
@@ -265,6 +266,18 @@ export function MessageList({
   const isAtBottomRef = useRef(true);
   const hasInitialScrolled = useRef(false);
 
+  // Voice playback state for playback-aware scrolling
+  const { isPlaying: voiceIsPlaying, currentMessageId: voiceCurrentMessageId } =
+    useVoicePlaybackContext();
+
+  // Whether the user has manually scrolled away from the currently-playing message.
+  // Reset each time playback advances to a new message (giving user a fresh chance to follow).
+  const userScrolledAwayFromPlaybackRef = useRef(false);
+
+  // Flag to distinguish programmatic scrolls (our scrollIntoView) from user-initiated scrolls.
+  // Set to true before scrollIntoView, cleared after a short timeout.
+  const programmaticScrollRef = useRef(false);
+
   // Track which TodoWrite components have been manually toggled by the user
   const [manuallyToggledTodoIds, setManuallyToggledTodoIds] = useState<Set<string>>(new Set());
 
@@ -377,12 +390,15 @@ export function MessageList({
     }
   }, [messages, scrollToBottom]);
 
-  // Auto-scroll to bottom when new messages arrive, if user was at bottom
+  // Auto-scroll to bottom when new messages arrive, if user was at bottom.
+  // Suppressed when voice playback is actively reading a specific message —
+  // in that case, playback-tracking scroll (below) handles positioning instead.
   useEffect(() => {
-    if (hasInitialScrolled.current && isAtBottomRef.current) {
+    const voiceIsTrackingMessage = voiceIsPlaying && voiceCurrentMessageId;
+    if (hasInitialScrolled.current && isAtBottomRef.current && !voiceIsTrackingMessage) {
       scrollToBottom();
     }
-  }, [messages, scrollToBottom]);
+  }, [messages, scrollToBottom, voiceIsPlaying, voiceCurrentMessageId]);
 
   // Track if user is at bottom using IntersectionObserver (for auto-scroll on new messages)
   // This is more reliable than scroll-position math because layout changes (textarea resize,
@@ -409,6 +425,111 @@ export function MessageList({
     observer.observe(bottom);
     return () => observer.disconnect();
   }, []);
+
+  // Re-scroll to bottom when the scroll container shrinks (e.g., VoiceControlPanel
+  // appearing/disappearing changes the flex layout). Without this, the container
+  // shrinks, the bottom sentinel exits the viewport, isAtBottomRef becomes false,
+  // and auto-scroll stops working even though the user was at the bottom.
+  //
+  // We can't rely on isAtBottomRef here because the IntersectionObserver may have
+  // already set it to false by the time the ResizeObserver fires. Instead, we track
+  // the previous container height and compute whether the user was at the bottom
+  // before the resize by comparing the distance-from-bottom to the height lost.
+  const prevContainerHeightRef = useRef(0);
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    prevContainerHeightRef.current = container.clientHeight;
+
+    const resizeObserver = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+
+      const newHeight = entry.contentRect.height;
+      const prevHeight = prevContainerHeightRef.current;
+      prevContainerHeightRef.current = newHeight;
+
+      // Only act when the container shrinks (e.g., taller input panel appeared)
+      if (prevHeight > 0 && newHeight < prevHeight) {
+        const heightLost = prevHeight - newHeight;
+        const { scrollTop, scrollHeight, clientHeight } = container;
+        const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
+
+        // If distance from bottom ≈ the height lost, the user was at the bottom
+        // before the resize. Re-scroll to bottom to maintain their position.
+        if (distanceFromBottom <= heightLost + 50) {
+          scrollToBottom();
+        }
+      }
+    });
+
+    resizeObserver.observe(container);
+    return () => resizeObserver.disconnect();
+  }, [scrollToBottom]);
+
+  // Playback-tracking scroll: when voice playback advances to a new message,
+  // scroll to keep that message visible (centered in view).
+  // Only triggers when voiceCurrentMessageId changes (not on play/pause toggles).
+  const prevVoiceMessageIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    const prevId = prevVoiceMessageIdRef.current;
+    prevVoiceMessageIdRef.current = voiceCurrentMessageId;
+
+    // Only scroll when the message ID changes to a new truthy value while playing.
+    // Don't scroll on pause/resume (same ID) or when playback stops (null ID).
+    if (!voiceIsPlaying || !voiceCurrentMessageId || voiceCurrentMessageId === prevId) return;
+
+    // New message started playing — reset the "user scrolled away" flag
+    // so user gets a fresh chance to follow along.
+    userScrolledAwayFromPlaybackRef.current = false;
+
+    const container = containerRef.current;
+    if (!container) return;
+
+    const messageEl = container.querySelector(`[data-message-id="${voiceCurrentMessageId}"]`);
+    if (!messageEl) return;
+
+    // Mark this scroll as programmatic so the scroll listener ignores it.
+    // Use instant scroll to avoid race conditions (same reason as scrollToBottom).
+    programmaticScrollRef.current = true;
+    messageEl.scrollIntoView({ behavior: 'instant', block: 'center' });
+    programmaticScrollRef.current = false;
+  }, [voiceIsPlaying, voiceCurrentMessageId]);
+
+  // Detect user-initiated scrolls during playback.
+  // If the user scrolls while voice is playing, set userScrolledAwayFromPlaybackRef
+  // so we stop chasing the playing message (don't fight the user).
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || !voiceIsPlaying) return;
+
+    const handleScroll = () => {
+      if (programmaticScrollRef.current) return; // Ignore our own scrollIntoView
+      userScrolledAwayFromPlaybackRef.current = true;
+    };
+
+    container.addEventListener('scroll', handleScroll, { passive: true });
+    return () => container.removeEventListener('scroll', handleScroll);
+  }, [voiceIsPlaying]);
+
+  // When playback stops, transition back to normal auto-scroll behavior.
+  // If the user is near the bottom, do a final scroll to bottom.
+  const prevVoiceIsPlayingRef = useRef(false);
+  useEffect(() => {
+    const wasPlaying = prevVoiceIsPlayingRef.current;
+    prevVoiceIsPlayingRef.current = voiceIsPlaying;
+
+    if (wasPlaying && !voiceIsPlaying) {
+      // Playback just stopped — reset the flag
+      userScrolledAwayFromPlaybackRef.current = false;
+
+      // If user is near the bottom, snap to bottom for normal behavior
+      if (isAtBottomRef.current) {
+        scrollToBottom();
+      }
+    }
+  }, [voiceIsPlaying, scrollToBottom]);
 
   const contextValue = useMemo(
     () => ({
@@ -459,6 +580,7 @@ export function MessageList({
             return (
               <div
                 key={message.id}
+                data-message-id={message.id}
                 className={`flex ${isUserMessage ? 'justify-end' : 'justify-start'}`}
               >
                 <MessageBubble
