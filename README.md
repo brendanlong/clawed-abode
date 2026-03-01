@@ -93,7 +93,7 @@ npx prisma migrate dev
 ### 4. Build the Claude Code Runner Image
 
 ```bash
-pnpm run docker:build
+pnpm run podman:build
 ```
 
 ### 5. Start the Application
