@@ -21,6 +21,35 @@ function getMessageType(message: SDKMessage): string {
 }
 
 /**
+ * Merges slash command names from the system init message with rich SlashCommand
+ * objects from `initializationResult().commands`.
+ *
+ * The SDK's `initializationResult().commands` (and `supportedCommands()`) only
+ * returns "skills" — a subset of all available slash commands with rich metadata
+ * (name, description, argumentHint). The system init message's `slash_commands`
+ * array contains ALL available commands as bare strings.
+ *
+ * This function merges both: keeping the rich metadata for known skills and
+ * synthesizing minimal SlashCommand objects for commands that only appear in
+ * the slash_commands list.
+ */
+export function mergeSlashCommands(
+  existingCommands: SlashCommand[],
+  slashCommandNames: string[]
+): SlashCommand[] {
+  const existingNames = new Set(existingCommands.map((cmd) => cmd.name));
+  const merged = [...existingCommands];
+
+  for (const name of slashCommandNames) {
+    if (!existingNames.has(name)) {
+      merged.push({ name, description: '', argumentHint: '' });
+    }
+  }
+
+  return merged;
+}
+
+/**
  * Options for initializing the persistent query session.
  * Passed with every query() call; used only on the first call.
  */
@@ -458,6 +487,38 @@ export class QueryRunner {
             callback(sequence, message);
           } catch {
             // Don't let callback errors break the query loop
+          }
+        }
+
+        // Extract slash_commands from system init messages and merge with
+        // existing commands. The SDK's initializationResult().commands only
+        // returns "skills", but the system init message contains all slash
+        // commands. See: https://github.com/brendanlong/clawed-abode/issues/294
+        if (
+          message.type === 'system' &&
+          'subtype' in message &&
+          message.subtype === 'init' &&
+          'slash_commands' in message &&
+          Array.isArray(message.slash_commands)
+        ) {
+          const merged = mergeSlashCommands(
+            this._supportedCommands,
+            message.slash_commands as string[]
+          );
+          if (merged.length > this._supportedCommands.length) {
+            log.info('Merged slash_commands from system init message', {
+              before: this._supportedCommands.length,
+              after: merged.length,
+              slashCommands: message.slash_commands.length,
+            });
+            this._supportedCommands = merged;
+            for (const callback of this.commandsCallbacks) {
+              try {
+                callback(merged);
+              } catch {
+                // Don't let callback errors break the query loop
+              }
+            }
           }
         }
 
