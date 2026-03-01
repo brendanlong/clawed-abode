@@ -15,7 +15,7 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",
-    "docker:build": "docker build --build-arg CACHE_BREAKER=$(date -u +%Y%m%d) -t claude-code-runner:latest -f docker/Dockerfile.claude-code .",
+    "podman:build": "podman build --build-arg CACHE_BREAKER=$(date -u +%Y%m%d) -t claude-code-runner:latest -f docker/Dockerfile.claude-code .",
     "postinstall": "prisma generate",
     "prepare": "husky",
     "hash-password": "tsx scripts/hash-password.ts",
