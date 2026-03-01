@@ -54,7 +54,6 @@ describe('globalSettings router', () => {
         systemPromptAppend: null,
         claudeModel: null,
         hasClaudeApiKey: false,
-        hasOpenaiApiKey: false,
         ttsSpeed: null,
         voiceAutoSend: true,
         defaultClaudeModel: 'opus',

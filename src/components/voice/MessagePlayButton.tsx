@@ -2,7 +2,7 @@
 
 import { useCallback } from 'react';
 import { Button } from '@/components/ui/button';
-import { Play, Pause, Square, RotateCcw, Loader2 } from 'lucide-react';
+import { Play, Pause, Square, RotateCcw } from 'lucide-react';
 import { useVoicePlaybackContext } from '@/hooks/useVoicePlayback';
 
 interface MessagePlayButtonProps {
@@ -12,16 +12,16 @@ interface MessagePlayButtonProps {
 }
 
 /**
- * Play/pause/stop/restart controls for reading assistant messages aloud via TTS.
+ * Play/pause/stop/restart controls for reading assistant messages aloud via browser TTS.
  * Synchronizes with global playback state.
  */
 export function MessagePlayButton({ messageId, text, className }: MessagePlayButtonProps) {
-  const { isPlaying, currentMessageId, isLoading, play, stop, restart } = useVoicePlaybackContext();
+  const { isPlaying, currentMessageId, supportsPause, play, stop, restart } =
+    useVoicePlaybackContext();
 
   const isThisMessage = currentMessageId === messageId;
   const isThisPlaying = isThisMessage && isPlaying;
-  const isThisLoading = isThisMessage && isLoading;
-  const isThisPaused = isThisMessage && !isPlaying && !isLoading;
+  const isThisPaused = isThisMessage && !isPlaying;
 
   const handlePlay = useCallback(() => {
     play(messageId, text);
@@ -42,22 +42,15 @@ export function MessagePlayButton({ messageId, text, className }: MessagePlayBut
     );
   }
 
-  // Loading: show spinner
-  if (isThisLoading) {
-    return (
-      <Button variant="ghost" size="sm" disabled className={className} title="Loading audio...">
-        <Loader2 className="h-3 w-3 animate-spin" />
-      </Button>
-    );
-  }
-
   // Playing or paused: show control group
   return (
     <span className={`inline-flex items-center gap-0 ${className ?? ''}`}>
       {isThisPlaying ? (
-        <Button variant="ghost" size="sm" onClick={handlePlay} title="Pause">
-          <Pause className="h-3 w-3" />
-        </Button>
+        supportsPause ? (
+          <Button variant="ghost" size="sm" onClick={handlePlay} title="Pause">
+            <Pause className="h-3 w-3" />
+          </Button>
+        ) : null
       ) : isThisPaused ? (
         <>
           <Button variant="ghost" size="sm" onClick={handlePlay} title="Resume">
