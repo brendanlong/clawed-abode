@@ -175,47 +175,11 @@ describe('AgentClient', () => {
     });
   });
 
-  describe('init', () => {
-    it('should send init request and return result', async () => {
-      mockServer.setHandler((req, res) => {
-        expect(req.method).toBe('POST');
-        expect(req.url).toBe('/init');
-
-        let body = '';
-        req.on('data', (chunk: Buffer) => {
-          body += chunk.toString();
-        });
-        req.on('end', () => {
-          const parsed = JSON.parse(body);
-          expect(parsed.sessionId).toBe('test-session');
-          expect(parsed.resume).toBe(false);
-
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(
-            JSON.stringify({
-              initialized: true,
-              commands: [{ name: '/help', description: 'Show help' }],
-            })
-          );
-        });
-      });
-
-      const result = await client.init({
-        sessionId: 'test-session',
-        resume: false,
-      });
-
-      expect(result.initialized).toBe(true);
-      expect(result.commands).toHaveLength(1);
-      expect(result.commands[0].name).toBe('/help');
-    });
-  });
-
-  describe('send', () => {
+  describe('query', () => {
     it('should stream messages from SSE response', async () => {
       mockServer.setHandler((req, res) => {
         expect(req.method).toBe('POST');
-        expect(req.url).toBe('/send');
+        expect(req.url).toBe('/query');
 
         res.writeHead(200, {
           'Content-Type': 'text/event-stream',
@@ -248,7 +212,7 @@ describe('AgentClient', () => {
       });
 
       const messages: AgentStreamEvent[] = [];
-      for await (const msg of client.send({
+      for await (const msg of client.query({
         prompt: 'test',
         sessionId: 'test-session',
       })) {
@@ -299,7 +263,7 @@ describe('AgentClient', () => {
       });
 
       const events: AgentStreamEvent[] = [];
-      for await (const msg of client.send({
+      for await (const msg of client.query({
         prompt: 'test',
         sessionId: 'test-session',
       })) {
@@ -315,7 +279,7 @@ describe('AgentClient', () => {
       }
     });
 
-    it('should throw on send error event', async () => {
+    it('should throw on query error event', async () => {
       mockServer.setHandler((_req, res) => {
         res.writeHead(200, {
           'Content-Type': 'text/event-stream',
@@ -327,7 +291,7 @@ describe('AgentClient', () => {
 
       const messages: unknown[] = [];
       await expect(async () => {
-        for await (const msg of client.send({
+        for await (const msg of client.query({
           prompt: 'test',
           sessionId: 'test-session',
         })) {
@@ -336,7 +300,7 @@ describe('AgentClient', () => {
       }).rejects.toThrow('Something went wrong');
     });
 
-    it('should send correct request body', async () => {
+    it('should send correct request body with init options', async () => {
       let receivedBody = '';
 
       mockServer.setHandler((req, res) => {
@@ -354,9 +318,11 @@ describe('AgentClient', () => {
         });
       });
 
-      for await (const _msg of client.send({
+      for await (const _msg of client.query({
         prompt: 'hello',
         sessionId: 'sess-123',
+        resume: true,
+        cwd: '/workspace/my-repo',
       })) {
         // consume iterator
       }
@@ -364,6 +330,37 @@ describe('AgentClient', () => {
       const parsed = JSON.parse(receivedBody);
       expect(parsed.prompt).toBe('hello');
       expect(parsed.sessionId).toBe('sess-123');
+      expect(parsed.resume).toBe(true);
+      expect(parsed.cwd).toBe('/workspace/my-repo');
+    });
+
+    it('should default resume to false when not specified', async () => {
+      let receivedBody = '';
+
+      mockServer.setHandler((req, res) => {
+        let body = '';
+        req.on('data', (chunk: Buffer) => {
+          body += chunk.toString();
+        });
+        req.on('end', () => {
+          receivedBody = body;
+          res.writeHead(200, {
+            'Content-Type': 'text/event-stream',
+          });
+          res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+          res.end();
+        });
+      });
+
+      for await (const _msg of client.query({
+        prompt: 'hello',
+        sessionId: 'sess-123',
+      })) {
+        // consume iterator
+      }
+
+      const parsed = JSON.parse(receivedBody);
+      expect(parsed.resume).toBe(false);
     });
   });
 });
@@ -372,8 +369,7 @@ describe('waitForAgentHealth', () => {
   it('should return true when health check passes', async () => {
     const mockClient: AgentClient = {
       health: vi.fn().mockResolvedValue(true),
-      init: vi.fn() as unknown as AgentClient['init'],
-      send: vi.fn() as unknown as AgentClient['send'],
+      query: vi.fn() as unknown as AgentClient['query'],
       interrupt: vi.fn(),
       getStatus: vi.fn(),
       getMessages: vi.fn(),
@@ -396,8 +392,7 @@ describe('waitForAgentHealth', () => {
         attempts++;
         return attempts >= 3;
       }),
-      init: vi.fn() as unknown as AgentClient['init'],
-      send: vi.fn() as unknown as AgentClient['send'],
+      query: vi.fn() as unknown as AgentClient['query'],
       interrupt: vi.fn(),
       getStatus: vi.fn(),
       getMessages: vi.fn(),
@@ -416,8 +411,7 @@ describe('waitForAgentHealth', () => {
   it('should return false after max attempts', async () => {
     const mockClient: AgentClient = {
       health: vi.fn().mockResolvedValue(false),
-      init: vi.fn() as unknown as AgentClient['init'],
-      send: vi.fn() as unknown as AgentClient['send'],
+      query: vi.fn() as unknown as AgentClient['query'],
       interrupt: vi.fn(),
       getStatus: vi.fn(),
       getMessages: vi.fn(),

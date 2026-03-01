@@ -236,49 +236,16 @@ function getClientForSession(sessionId: string): AgentClient {
 }
 
 /**
- * Ensure the agent service has an initialized persistent query session.
- * If not yet initialized, calls /init to set it up.
- * Returns the commands from initialization (if newly initialized) or from status.
+ * Determine whether the agent should resume an existing session.
+ * Checks the agent's lastSequence: if > 0, the agent has prior messages
+ * from a previous query in the same container lifecycle.
  */
-async function ensureAgentInitialized(
-  client: AgentClient,
-  options: {
-    sessionId: string;
-    lastSequence: number;
-    workingDir: string;
-    mcpServersRecord?: Record<string, unknown>;
-  }
-): Promise<{ commands: import('@anthropic-ai/claude-agent-sdk').SlashCommand[] }> {
+async function shouldResumeAgent(client: AgentClient): Promise<boolean> {
   const status = await client.getStatus();
-
-  if (status.initialized) {
-    // Already initialized - check if a prompt is being processed
-    if (status.running) {
-      throw new Error('A Claude process is already running for this session');
-    }
-    return { commands: status.commands };
+  if (status.running) {
+    throw new Error('A Claude process is already running for this session');
   }
-
-  // Need to initialize the persistent session
-  const shouldResume = status.lastSequence > 0;
-
-  log.info('Initializing agent persistent session', {
-    sessionId: options.sessionId,
-    resume: shouldResume,
-    lastSequence: status.lastSequence,
-  });
-
-  const initResult = await client.init({
-    sessionId: options.sessionId,
-    resume: shouldResume,
-    cwd: options.workingDir,
-    mcpServers: options.mcpServersRecord as Record<
-      string,
-      import('@anthropic-ai/claude-agent-sdk').McpServerConfig
-    >,
-  });
-
-  return { commands: initResult.commands };
+  return status.lastSequence > 0;
 }
 
 export interface RunClaudeCommandOptions {
@@ -375,18 +342,8 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
       )
     : undefined;
 
-  // Ensure the agent has an initialized persistent session
-  const { commands } = await ensureAgentInitialized(client, {
-    sessionId,
-    lastSequence: 0, // Will be checked by the agent service
-    workingDir,
-    mcpServersRecord,
-  });
-
-  // Emit any commands from initialization
-  if (commands.length > 0) {
-    sseEvents.emitCommands(sessionId, commands);
-  }
+  // Determine if we should resume (agent has prior messages in this container lifecycle)
+  const resume = await shouldResumeAgent(client);
 
   // Get the next sequence number for this session
   const lastMessage = await prisma.message.findFirst({
@@ -434,9 +391,16 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
     const PARTIAL_MESSAGE_ID_PREFIX = 'partial-';
 
     // Send the prompt through the persistent query session
-    for await (const agentEvent of client.send({
+    // The agent service auto-initializes on the first call
+    for await (const agentEvent of client.query({
       prompt,
       sessionId,
+      resume,
+      cwd: workingDir,
+      mcpServers: mcpServersRecord as Record<
+        string,
+        import('@anthropic-ai/claude-agent-sdk').McpServerConfig
+      >,
     })) {
       // Handle commands update - emit via SSE for frontend autocomplete
       if (agentEvent.kind === 'commands') {
