@@ -546,6 +546,7 @@ Voice mode provides speech-to-text input and text-to-speech output for hands-fre
 
 **Components**:
 
+- `VoiceControlPanel`: Inline voice controls panel that replaces PromptInput when voice mode is active. Provides playback navigation (prev/next/play/pause/stop), a large mic button for recording, send/cancel for transcripts, and an exit button. Renders as a normal flow element at the bottom of the session view (not a modal).
 - `VoiceMicButton`: Push-to-talk button in PromptInput. Click to start recording, click again to stop. Shows interim transcript during recording.
 - `MessagePlayButton`: Per-message play/pause button on assistant messages. Visible when voice is enabled.
 - `VoiceAutoReadToggle`: Toggle in SessionHeader. When enabled, automatically speaks the last assistant message when Claude finishes a turn.
@@ -656,6 +657,7 @@ clawed-abode/
 │       ├── settings/             # Settings UI (global settings, repo settings, audio, env vars, MCP)
 │       ├── ui/                   # shadcn/ui primitives (button, dialog, input, etc.)
 │       └── voice/               # Voice UI components
+│           ├── VoiceControlPanel.tsx
 │           ├── VoiceMicButton.tsx
 │           ├── MessagePlayButton.tsx
 │           └── VoiceAutoReadToggle.tsx
