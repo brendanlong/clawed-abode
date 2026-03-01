@@ -2,6 +2,7 @@ import {
   query,
   type Query,
   type SDKMessage,
+  type SDKSystemMessage,
   type SDKUserMessage,
   type McpServerConfig,
   type SlashCommand,
@@ -18,6 +19,43 @@ const log = createLogger('query-runner');
 function getMessageType(message: SDKMessage): string {
   if (message.type === 'stream_event') return 'stream_event';
   return message.type;
+}
+
+/**
+ * Type guard for SDKSystemMessage (the system init message).
+ * Narrows SDKMessage to SDKSystemMessage by checking type and subtype.
+ */
+function isSystemInitMessage(message: SDKMessage): message is SDKSystemMessage {
+  return message.type === 'system' && 'subtype' in message && message.subtype === 'init';
+}
+
+/**
+ * Merges slash command names from the system init message with rich SlashCommand
+ * objects from `initializationResult().commands`.
+ *
+ * The SDK's `initializationResult().commands` (and `supportedCommands()`) only
+ * returns "skills" — a subset of all available slash commands with rich metadata
+ * (name, description, argumentHint). The system init message's `slash_commands`
+ * array contains ALL available commands as bare strings.
+ *
+ * This function merges both: keeping the rich metadata for known skills and
+ * synthesizing minimal SlashCommand objects for commands that only appear in
+ * the slash_commands list.
+ */
+export function mergeSlashCommands(
+  existingCommands: SlashCommand[],
+  slashCommandNames: string[]
+): SlashCommand[] {
+  const existingNames = new Set(existingCommands.map((cmd) => cmd.name));
+  const merged = [...existingCommands];
+
+  for (const name of slashCommandNames) {
+    if (!existingNames.has(name)) {
+      merged.push({ name, description: '', argumentHint: '' });
+    }
+  }
+
+  return merged;
 }
 
 /**
@@ -458,6 +496,29 @@ export class QueryRunner {
             callback(sequence, message);
           } catch {
             // Don't let callback errors break the query loop
+          }
+        }
+
+        // Extract slash_commands from system init messages and merge with
+        // existing commands. The SDK's initializationResult().commands only
+        // returns "skills", but the system init message contains all slash
+        // commands. See: https://github.com/brendanlong/clawed-abode/issues/294
+        if (isSystemInitMessage(message)) {
+          const merged = mergeSlashCommands(this._supportedCommands, message.slash_commands);
+          if (merged.length > this._supportedCommands.length) {
+            log.info('Merged slash_commands from system init message', {
+              before: this._supportedCommands.length,
+              after: merged.length,
+              slashCommands: message.slash_commands.length,
+            });
+            this._supportedCommands = merged;
+            for (const callback of this.commandsCallbacks) {
+              try {
+                callback(merged);
+              } catch (err) {
+                log.warn('Commands callback failed', undefined, toError(err));
+              }
+            }
           }
         }
 
