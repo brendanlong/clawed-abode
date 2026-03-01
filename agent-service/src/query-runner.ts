@@ -365,23 +365,24 @@ export class QueryRunner {
       throw new Error('A prompt is already being processed');
     }
 
-    // Auto-initialize on first call
-    if (!this._isInitialized) {
-      await this.initialize(options);
-    }
-
-    if (!this.promptController) {
-      throw new Error('Query session failed to initialize');
-    }
-
+    // Set processing flag early to prevent concurrent calls during initialization
     this._isProcessing = true;
 
-    // Create a promise that resolves when the turn completes
-    const turnComplete = new Promise<void>((resolve) => {
-      this.turnCompleteResolve = resolve;
-    });
-
     try {
+      // Auto-initialize on first call
+      if (!this._isInitialized) {
+        await this.initialize(options);
+      }
+
+      if (!this.promptController) {
+        throw new Error('Query session failed to initialize');
+      }
+
+      // Create a promise that resolves when the turn completes
+      const turnComplete = new Promise<void>((resolve) => {
+        this.turnCompleteResolve = resolve;
+      });
+
       // Create the SDKUserMessage to yield to the SDK
       const userMessage: SDKUserMessage = {
         type: 'user',
