@@ -2,6 +2,7 @@ import {
   query,
   type Query,
   type SDKMessage,
+  type SDKSystemMessage,
   type SDKUserMessage,
   type McpServerConfig,
   type SlashCommand,
@@ -18,6 +19,14 @@ const log = createLogger('query-runner');
 function getMessageType(message: SDKMessage): string {
   if (message.type === 'stream_event') return 'stream_event';
   return message.type;
+}
+
+/**
+ * Type guard for SDKSystemMessage (the system init message).
+ * Narrows SDKMessage to SDKSystemMessage by checking type and subtype.
+ */
+function isSystemInitMessage(message: SDKMessage): message is SDKSystemMessage {
+  return message.type === 'system' && 'subtype' in message && message.subtype === 'init';
 }
 
 /**
@@ -494,17 +503,8 @@ export class QueryRunner {
         // existing commands. The SDK's initializationResult().commands only
         // returns "skills", but the system init message contains all slash
         // commands. See: https://github.com/brendanlong/clawed-abode/issues/294
-        if (
-          message.type === 'system' &&
-          'subtype' in message &&
-          message.subtype === 'init' &&
-          'slash_commands' in message &&
-          Array.isArray(message.slash_commands)
-        ) {
-          const merged = mergeSlashCommands(
-            this._supportedCommands,
-            message.slash_commands as string[]
-          );
+        if (isSystemInitMessage(message)) {
+          const merged = mergeSlashCommands(this._supportedCommands, message.slash_commands);
           if (merged.length > this._supportedCommands.length) {
             log.info('Merged slash_commands from system init message', {
               before: this._supportedCommands.length,
@@ -515,8 +515,8 @@ export class QueryRunner {
             for (const callback of this.commandsCallbacks) {
               try {
                 callback(merged);
-              } catch {
-                // Don't let callback errors break the query loop
+              } catch (err) {
+                log.warn('Commands callback failed', undefined, toError(err));
               }
             }
           }
