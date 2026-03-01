@@ -6,7 +6,6 @@ import { githubRouter } from './github';
 import { sseRouter } from './sse';
 import { repoSettingsRouter } from './repoSettings';
 import { globalSettingsRouter } from './globalSettings';
-import { voiceRouter } from './voice';
 
 export const appRouter = router({
   auth: authRouter,
@@ -16,7 +15,6 @@ export const appRouter = router({
   sse: sseRouter,
   repoSettings: repoSettingsRouter,
   globalSettings: globalSettingsRouter,
-  voice: voiceRouter,
 });
 
 export type AppRouter = typeof appRouter;

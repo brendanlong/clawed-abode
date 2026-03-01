@@ -78,7 +78,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
 
   // Voice features
   const voiceConfig = useVoiceConfig(sessionId);
-  const voicePlayback = useVoicePlayback();
+  const voicePlayback = useVoicePlayback(voiceConfig.ttsSpeed, voiceConfig.voiceURI);
   const [voiceOverlayOpen, setVoiceOverlayOpen] = useState(false);
 
   const handleSendPrompt = useCallback(
@@ -225,6 +225,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
               isPlaying: false,
               currentMessageId: null,
               isLoading: false,
+              supportsPause: false,
               play: async () => {},
               playSequential: () => {},
               enqueue: () => {},

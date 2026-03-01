@@ -64,6 +64,7 @@ export function VoiceOverlay({
   const {
     isRecording,
     isTranscribing,
+    interimTranscript,
     startRecording,
     stopRecording,
     error: recordingError,
@@ -148,10 +149,14 @@ export function VoiceOverlay({
     }
   }, [currentIndex, assistantTextMessages, playback]);
 
-  // Play/pause toggle
+  // Play/pause/stop toggle
   const handlePlayPause = useCallback(() => {
     if (playback.isPlaying) {
-      playback.pause();
+      if (playback.supportsPause) {
+        playback.pause();
+      } else {
+        playback.stop();
+      }
     } else if (playback.currentMessageId) {
       // Resume the current message
       const entry = assistantTextMessages.find((m) => m.id === playback.currentMessageId);
@@ -202,12 +207,12 @@ export function VoiceOverlay({
 
   // Determine status text when not playing
   const statusText = useMemo(() => {
-    if (isRecording) return 'Listening...';
-    if (isTranscribing) return 'Transcribing...';
+    if (isRecording) return interimTranscript ? `"${interimTranscript}"` : 'Listening...';
+    if (isTranscribing) return 'Processing...';
     if (isClaudeRunning) return 'Waiting for Claude...';
     if (transcript) return 'Review transcript below';
     return 'Ready';
-  }, [isRecording, isTranscribing, isClaudeRunning, transcript]);
+  }, [isRecording, isTranscribing, isClaudeRunning, transcript, interimTranscript]);
 
   const hasPrev = assistantTextMessages.length > 0 && currentIndex > 0;
   const hasNext = currentIndex >= 0 && currentIndex < assistantTextMessages.length - 1;
@@ -273,12 +278,14 @@ export function VoiceOverlay({
             className="h-16 w-16 rounded-full"
             onClick={handlePlayPause}
             disabled={!hasPlayableContent && !playback.isPlaying}
-            title={playback.isPlaying ? 'Pause' : 'Play'}
+            title={playback.isPlaying ? (playback.supportsPause ? 'Pause' : 'Stop') : 'Play'}
           >
-            {playback.isLoading ? (
-              <Loader2 className="h-6 w-6 animate-spin" />
-            ) : playback.isPlaying ? (
-              <Pause className="h-6 w-6" />
+            {playback.isPlaying ? (
+              playback.supportsPause ? (
+                <Pause className="h-6 w-6" />
+              ) : (
+                <Square className="h-6 w-6" />
+              )
             ) : (
               <Play className="h-6 w-6" />
             )}
@@ -295,16 +302,18 @@ export function VoiceOverlay({
             <SkipForward className="h-6 w-6" />
           </Button>
 
-          <Button
-            variant="outline"
-            size="icon"
-            className="h-16 w-16 rounded-full"
-            onClick={playback.stop}
-            disabled={!playback.currentMessageId}
-            title="Stop"
-          >
-            <Square className="h-6 w-6" />
-          </Button>
+          {playback.supportsPause && (
+            <Button
+              variant="outline"
+              size="icon"
+              className="h-16 w-16 rounded-full"
+              onClick={playback.stop}
+              disabled={!playback.currentMessageId}
+              title="Stop"
+            >
+              <Square className="h-6 w-6" />
+            </Button>
+          )}
         </div>
       </div>
 
@@ -319,18 +328,10 @@ export function VoiceOverlay({
             onClick={handleMicPress}
             disabled={isTranscribing}
             title={
-              isTranscribing
-                ? 'Transcribing...'
-                : isRecording
-                  ? 'Stop recording'
-                  : 'Start recording'
+              isTranscribing ? 'Processing...' : isRecording ? 'Stop recording' : 'Start recording'
             }
           >
-            {isTranscribing ? (
-              <Loader2 className="h-10 w-10 animate-spin" />
-            ) : (
-              <Mic className="h-10 w-10" />
-            )}
+            <Mic className="h-10 w-10" />
           </Button>
         </div>
 
