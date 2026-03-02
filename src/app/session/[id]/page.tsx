@@ -110,11 +110,24 @@ function SessionView({ sessionId }: { sessionId: string }) {
         const { toolName, toolUseId, input } = pendingUserInput;
 
         if (toolName === 'AskUserQuestion') {
-          // Map response text to question answers
-          const questions = (input.questions as Array<{ question: string }>) || [];
+          // Map response text to the correct question's answer.
+          // The UI sends the selected option label (single-select) or comma-separated
+          // labels (multi-select). Find the question whose options match the response.
+          const questions =
+            (input.questions as Array<{
+              question: string;
+              options: Array<{ label: string }>;
+            }>) || [];
           const answers: Record<string, string> = {};
-          for (const q of questions) {
-            answers[q.question] = text;
+          const responseLabels = text.split(', ');
+          const matchedQuestion = questions.find((q) =>
+            responseLabels.some((label) => q.options?.some((o) => o.label === label))
+          );
+          if (matchedQuestion) {
+            answers[matchedQuestion.question] = text;
+          } else if (questions.length > 0) {
+            // Fallback: assign to the first question (e.g. "Other" free-text input)
+            answers[questions[0].question] = text;
           }
           respondToUserInput(toolUseId, {
             behavior: 'allow',

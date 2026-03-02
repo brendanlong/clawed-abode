@@ -397,8 +397,8 @@ export class QueryRunner {
       for (const callback of this.userInputCallbacks) {
         try {
           callback(request);
-        } catch {
-          // Don't let callback errors break the flow
+        } catch (err) {
+          log.warn('onUserInputRequest callback failed', toError(err));
         }
       }
 
