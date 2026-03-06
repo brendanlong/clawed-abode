@@ -1,9 +1,10 @@
 'use client';
 
-import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo, type FormEvent } from 'react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { VoiceMicButton } from '@/components/voice/VoiceMicButton';
+import { useVoiceRecording } from '@/hooks/useVoiceRecording';
 
 export interface SlashCommand {
   name: string;
@@ -39,12 +40,33 @@ export function PromptInput({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const commandsRef = useRef<HTMLDivElement>(null);
 
+  // Voice recording — lifted here so transcript goes directly into the input
+  const {
+    isRecording,
+    transcript,
+    startRecording,
+    stopRecording,
+    error: voiceError,
+  } = useVoiceRecording();
+  // Save the prompt value from before recording started so we can prepend it
+  const [promptBeforeRecording, setPromptBeforeRecording] = useState('');
+
+  // When recording, derive the displayed value from the live transcript
+  // instead of syncing via effect (which would violate the set-state-in-effect rule)
+  const displayedPrompt = isRecording
+    ? transcript
+      ? promptBeforeRecording
+        ? `${promptBeforeRecording} ${transcript}`
+        : transcript
+      : promptBeforeRecording
+    : prompt;
+
   useEffect(() => {
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
       textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 200)}px`;
     }
-  }, [prompt]);
+  }, [displayedPrompt]);
 
   // Determine which commands to show based on input
   const filteredCommands = useMemo(() => {
@@ -79,10 +101,10 @@ export function PromptInput({
     textareaRef.current?.focus();
   }, []);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
-    if (prompt.trim() && !disabled && !isRunning) {
-      onSubmit(prompt.trim());
+    if (displayedPrompt.trim() && !disabled && !isRunning) {
+      onSubmit(displayedPrompt.trim());
       setPrompt('');
     }
   };
@@ -124,20 +146,40 @@ export function PromptInput({
     setSelectedIndex(0);
   }, []);
 
-  const handleVoiceTranscript = useCallback(
-    (text: string) => {
-      if (voiceAutoSend && text.trim() && !disabled && !isRunning) {
-        // Auto-send: combine any existing prompt text with the transcript
-        const combined = prompt.trim() ? `${prompt.trim()} ${text.trim()}` : text.trim();
-        onSubmit(combined);
+  const handleMicClick = useCallback(() => {
+    if (isRecording) {
+      const text = stopRecording();
+      // Build final prompt from the pre-recording base + finalized text
+      const finalPrompt = text.trim()
+        ? promptBeforeRecording
+          ? `${promptBeforeRecording} ${text.trim()}`
+          : text.trim()
+        : promptBeforeRecording;
+      setPrompt(finalPrompt);
+
+      // Auto-send if enabled
+      if (voiceAutoSend && finalPrompt.trim() && !disabled && !isRunning) {
+        onSubmit(finalPrompt.trim());
         setPrompt('');
       } else {
-        setPrompt((prev) => (prev ? `${prev} ${text}` : text));
+        // Focus the textarea so user can edit or hit Enter
         textareaRef.current?.focus();
       }
-    },
-    [voiceAutoSend, disabled, isRunning, prompt, onSubmit]
-  );
+    } else {
+      setPromptBeforeRecording(prompt);
+      startRecording();
+    }
+  }, [
+    isRecording,
+    startRecording,
+    stopRecording,
+    prompt,
+    promptBeforeRecording,
+    voiceAutoSend,
+    disabled,
+    isRunning,
+    onSubmit,
+  ]);
 
   // Scroll selected item into view
   useEffect(() => {
@@ -187,7 +229,7 @@ export function PromptInput({
           <div className="flex-1">
             <Textarea
               ref={textareaRef}
-              value={prompt}
+              value={displayedPrompt}
               onChange={handleChange}
               onKeyDown={handleKeyDown}
               placeholder={
@@ -195,16 +237,24 @@ export function PromptInput({
                   ? 'Session is not running'
                   : isRunning
                     ? 'Claude is thinking...'
-                    : 'Type your message... (Enter to send, Shift+Enter for new line)'
+                    : isRecording
+                      ? 'Listening...'
+                      : 'Type your message... (Enter to send, Shift+Enter for new line)'
               }
               disabled={disabled || isRunning}
+              readOnly={isRecording}
               rows={1}
               className="min-h-[44px] resize-none"
             />
           </div>
 
           {voiceEnabled && !isRunning && (
-            <VoiceMicButton onTranscript={handleVoiceTranscript} disabled={disabled} />
+            <VoiceMicButton
+              isRecording={isRecording}
+              onClick={handleMicClick}
+              disabled={disabled}
+              error={voiceError}
+            />
           )}
 
           {isRunning ? (
@@ -217,7 +267,7 @@ export function PromptInput({
               {isInterrupting ? 'Stopping...' : 'Stop'}
             </Button>
           ) : (
-            <Button type="submit" disabled={!prompt.trim() || disabled}>
+            <Button type="submit" disabled={!displayedPrompt.trim() || disabled}>
               Send
             </Button>
           )}

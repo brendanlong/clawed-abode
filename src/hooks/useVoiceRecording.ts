@@ -38,20 +38,20 @@ function getSpeechRecognition(): SpeechRecognitionConstructor | null {
 
 /**
  * Hook for managing voice recording using the Web Speech API (SpeechRecognition).
- * Provides real-time transcription in the browser with no server round-trip.
+ * Uses continuous mode to keep listening through pauses in speech.
+ * Accumulates all recognized text and exposes a live-updating transcript.
  */
 export function useVoiceRecording() {
   const [isRecording, setIsRecording] = useState(false);
-  const [isTranscribing, setIsTranscribing] = useState(false);
-  const [interimTranscript, setInterimTranscript] = useState<string | null>(null);
+  const [transcript, setTranscript] = useState('');
   const [error, setError] = useState<string | null>(null);
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
-  const resolveRef = useRef<((text: string) => void) | null>(null);
-  const rejectRef = useRef<((err: Error) => void) | null>(null);
+  const transcriptRef = useRef('');
 
-  const startRecording = useCallback(async () => {
+  const startRecording = useCallback(() => {
     setError(null);
-    setInterimTranscript(null);
+    setTranscript('');
+    transcriptRef.current = '';
 
     const SpeechRecognition = getSpeechRecognition();
     if (!SpeechRecognition) {
@@ -60,31 +60,24 @@ export function useVoiceRecording() {
     }
 
     const recognition = new SpeechRecognition();
-    recognition.continuous = false;
+    recognition.continuous = true;
     recognition.interimResults = true;
     recognition.lang = 'en-US';
     recognitionRef.current = recognition;
 
     recognition.onresult = (event: SpeechRecognitionEvent) => {
+      let finals = '';
       let interim = '';
-      let final = '';
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const result = event.results[i];
-        if (result.isFinal) {
-          final += result[0].transcript;
+      for (let i = 0; i < event.results.length; i++) {
+        if (event.results[i].isFinal) {
+          finals += event.results[i][0].transcript;
         } else {
-          interim += result[0].transcript;
+          interim += event.results[i][0].transcript;
         }
       }
-      if (interim) {
-        setInterimTranscript(interim);
-      }
-      if (final) {
-        setInterimTranscript(null);
-        resolveRef.current?.(final);
-        resolveRef.current = null;
-        rejectRef.current = null;
-      }
+      const full = (finals + interim).trimStart();
+      transcriptRef.current = full;
+      setTranscript(full);
     };
 
     recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
@@ -97,20 +90,20 @@ export function useVoiceRecording() {
           ? 'Microphone permission denied. Please allow microphone access.'
           : `Speech recognition error: ${event.error}`;
       setError(message);
-      rejectRef.current?.(new Error(message));
-      resolveRef.current = null;
-      rejectRef.current = null;
     };
 
     recognition.onend = () => {
-      setIsRecording(false);
-      setIsTranscribing(false);
-      setInterimTranscript(null);
-      // If we haven't resolved yet (e.g. no speech detected), resolve with empty string
-      if (resolveRef.current) {
-        resolveRef.current('');
-        resolveRef.current = null;
-        rejectRef.current = null;
+      // If the recognition ended but we still hold a reference to it,
+      // the browser stopped unexpectedly (e.g. silence timeout in some browsers).
+      // Auto-restart to maintain continuous recording.
+      if (recognitionRef.current === recognition) {
+        try {
+          recognition.start();
+        } catch {
+          // Can't restart — mark as stopped
+          setIsRecording(false);
+          recognitionRef.current = null;
+        }
       }
     };
 
@@ -122,33 +115,24 @@ export function useVoiceRecording() {
     }
   }, []);
 
-  const stopRecording = useCallback(async (): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const recognition = recognitionRef.current;
-      if (!recognition) {
-        setIsRecording(false);
-        reject(new Error('No active recording'));
-        return;
-      }
-
-      resolveRef.current = (text: string) => {
-        setIsTranscribing(false);
-        resolve(text);
-      };
-      rejectRef.current = (err: Error) => {
-        setIsTranscribing(false);
-        reject(err);
-      };
-
-      setIsTranscribing(true);
+  /**
+   * Stop recording and return the current transcript (including any interim text).
+   */
+  const stopRecording = useCallback((): string => {
+    const recognition = recognitionRef.current;
+    if (recognition) {
+      // Clear ref first so onend handler doesn't auto-restart
+      recognitionRef.current = null;
       recognition.stop();
-    });
+    }
+    setIsRecording(false);
+    return transcriptRef.current;
   }, []);
 
   return {
     isRecording,
-    isTranscribing,
-    interimTranscript,
+    /** Live-updating transcript: accumulated final results + current interim */
+    transcript,
     startRecording,
     stopRecording,
     error,

@@ -65,8 +65,7 @@ export function VoiceControlPanel({
   const playback = useVoicePlaybackContext();
   const {
     isRecording,
-    isTranscribing,
-    interimTranscript,
+    transcript: liveTranscript,
     startRecording,
     stopRecording,
     error: recordingError,
@@ -74,7 +73,7 @@ export function VoiceControlPanel({
   const voiceConfig = useVoiceConfig(sessionId);
 
   // Transcript from the last recording, before user decides to send or cancel
-  const [transcript, setTranscript] = useState<string | null>(null);
+  const [pendingTranscript, setPendingTranscript] = useState<string | null>(null);
 
   // Wake Lock to keep screen awake while voice panel is open
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
@@ -165,38 +164,34 @@ export function VoiceControlPanel({
   }, [playback, assistantTextMessages]);
 
   // Recording: start or stop
-  const handleMicPress = useCallback(async () => {
+  const handleMicPress = useCallback(() => {
     if (isRecording) {
-      try {
-        const text = await stopRecording();
-        if (text.trim()) {
-          if (voiceConfig.autoSend) {
-            // Auto-send mode: send immediately without showing transcript
-            onSendPrompt(text.trim());
-          } else {
-            setTranscript(text.trim());
-          }
+      const text = stopRecording();
+      if (text.trim()) {
+        if (voiceConfig.autoSend) {
+          // Auto-send mode: send immediately without showing transcript
+          onSendPrompt(text.trim());
+        } else {
+          setPendingTranscript(text.trim());
         }
-      } catch {
-        // Error handled by hook
       }
     } else {
-      setTranscript(null);
-      await startRecording();
+      setPendingTranscript(null);
+      startRecording();
     }
   }, [isRecording, startRecording, stopRecording, voiceConfig.autoSend, onSendPrompt]);
 
   // Send the transcript
   const handleSend = useCallback(() => {
-    if (transcript) {
-      onSendPrompt(transcript);
-      setTranscript(null);
+    if (pendingTranscript) {
+      onSendPrompt(pendingTranscript);
+      setPendingTranscript(null);
     }
-  }, [transcript, onSendPrompt]);
+  }, [pendingTranscript, onSendPrompt]);
 
   // Cancel the transcript
   const handleCancel = useCallback(() => {
-    setTranscript(null);
+    setPendingTranscript(null);
   }, []);
 
   const hasPrev = assistantTextMessages.length > 0 && currentIndex > 0;
@@ -208,23 +203,21 @@ export function VoiceControlPanel({
       {/* Status line */}
       <div className="px-4 py-2 text-center text-sm text-muted-foreground">
         {isRecording
-          ? interimTranscript
-            ? `"${interimTranscript}"`
+          ? liveTranscript
+            ? `"${liveTranscript}"`
             : 'Listening...'
-          : isTranscribing
-            ? 'Processing...'
-            : isRunning
-              ? 'Claude is working...'
-              : transcript
-                ? 'Review transcript'
-                : 'Voice mode'}
+          : isRunning
+            ? 'Claude is working...'
+            : pendingTranscript
+              ? 'Review transcript'
+              : 'Voice mode'}
       </div>
 
       {/* Transcript review area */}
-      {transcript && (
+      {pendingTranscript && (
         <div className="px-4 pb-2">
           <div className="rounded-md border bg-muted/50 p-3">
-            <p className="text-sm text-foreground">{transcript}</p>
+            <p className="text-sm text-foreground">{pendingTranscript}</p>
           </div>
         </div>
       )}
@@ -313,10 +306,7 @@ export function VoiceControlPanel({
             size="icon"
             className={cn('h-20 w-20 rounded-full', isRecording && 'animate-pulse')}
             onClick={handleMicPress}
-            disabled={isTranscribing}
-            title={
-              isTranscribing ? 'Processing...' : isRecording ? 'Stop recording' : 'Start recording'
-            }
+            title={isRecording ? 'Stop recording' : 'Start recording'}
           >
             <Mic className="h-8 w-8" />
           </Button>
@@ -324,7 +314,7 @@ export function VoiceControlPanel({
       </div>
 
       {/* Send / Cancel buttons - only visible after transcript is ready */}
-      {transcript && (
+      {pendingTranscript && (
         <div className="flex gap-3 px-4 pb-3">
           <Button
             variant="default"
