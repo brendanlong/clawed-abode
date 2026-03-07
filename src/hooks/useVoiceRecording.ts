@@ -55,7 +55,18 @@ export function useVoiceRecording(onFinalizedText?: (text: string) => void) {
   // Keep callback ref fresh without reading it during render
   useEffect(() => {
     onFinalizedTextRef.current = onFinalizedText;
-  });
+  }, [onFinalizedText]);
+
+  // Cleanup: stop recognition if the component unmounts while recording
+  useEffect(() => {
+    return () => {
+      const recognition = recognitionRef.current;
+      if (recognition) {
+        recognitionRef.current = null;
+        recognition.stop();
+      }
+    };
+  }, []);
 
   const startRecording = useCallback(() => {
     setError(null);
