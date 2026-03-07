@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect, useCallback, useMemo, type FormEvent } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { VoiceMicButton } from '@/components/voice/VoiceMicButton';
@@ -40,33 +40,25 @@ export function PromptInput({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const commandsRef = useRef<HTMLDivElement>(null);
 
-  // Voice recording — lifted here so transcript goes directly into the input
+  // Voice recording — finalized text appends directly to prompt
+  const onFinalizedText = useCallback((text: string) => {
+    setPrompt((prev) => prev + text);
+  }, []);
+
   const {
     isRecording,
-    transcript,
+    interimTranscript,
     startRecording,
     stopRecording,
     error: voiceError,
-  } = useVoiceRecording();
-  // Save the prompt value from before recording started so we can prepend it
-  const [promptBeforeRecording, setPromptBeforeRecording] = useState('');
-
-  // When recording, derive the displayed value from the live transcript
-  // instead of syncing via effect (which would violate the set-state-in-effect rule)
-  const displayedPrompt = isRecording
-    ? transcript
-      ? promptBeforeRecording
-        ? `${promptBeforeRecording} ${transcript}`
-        : transcript
-      : promptBeforeRecording
-    : prompt;
+  } = useVoiceRecording(voiceEnabled ? onFinalizedText : undefined);
 
   useEffect(() => {
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
       textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 200)}px`;
     }
-  }, [displayedPrompt]);
+  }, [prompt, interimTranscript]);
 
   // Determine which commands to show based on input
   const filteredCommands = useMemo(() => {
@@ -101,10 +93,10 @@ export function PromptInput({
     textareaRef.current?.focus();
   }, []);
 
-  const handleSubmit = (e: FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (displayedPrompt.trim() && !disabled && !isRunning) {
-      onSubmit(displayedPrompt.trim());
+    if (prompt.trim() && !disabled && !isRunning) {
+      onSubmit(prompt.trim());
       setPrompt('');
     }
   };
@@ -146,40 +138,24 @@ export function PromptInput({
     setSelectedIndex(0);
   }, []);
 
-  const handleMicClick = useCallback(() => {
+  const handleMicClick = () => {
     if (isRecording) {
-      const text = stopRecording();
-      // Build final prompt from the pre-recording base + finalized text
-      const finalPrompt = text.trim()
-        ? promptBeforeRecording
-          ? `${promptBeforeRecording} ${text.trim()}`
-          : text.trim()
-        : promptBeforeRecording;
-      setPrompt(finalPrompt);
+      const remaining = stopRecording();
+      // prompt already has all finalized text via onFinalizedText callback;
+      // append any remaining interim text that wasn't finalized yet
+      const fullPrompt = (prompt + remaining).trim();
+      setPrompt(fullPrompt);
 
-      // Auto-send if enabled
-      if (voiceAutoSend && finalPrompt.trim() && !disabled && !isRunning) {
-        onSubmit(finalPrompt.trim());
+      if (voiceAutoSend && fullPrompt && !disabled && !isRunning) {
+        onSubmit(fullPrompt);
         setPrompt('');
       } else {
-        // Focus the textarea so user can edit or hit Enter
         textareaRef.current?.focus();
       }
     } else {
-      setPromptBeforeRecording(prompt);
       startRecording();
     }
-  }, [
-    isRecording,
-    startRecording,
-    stopRecording,
-    prompt,
-    promptBeforeRecording,
-    voiceAutoSend,
-    disabled,
-    isRunning,
-    onSubmit,
-  ]);
+  };
 
   // Scroll selected item into view
   useEffect(() => {
@@ -229,7 +205,7 @@ export function PromptInput({
           <div className="flex-1">
             <Textarea
               ref={textareaRef}
-              value={displayedPrompt}
+              value={isRecording && interimTranscript ? prompt + interimTranscript : prompt}
               onChange={handleChange}
               onKeyDown={handleKeyDown}
               placeholder={
@@ -267,7 +243,7 @@ export function PromptInput({
               {isInterrupting ? 'Stopping...' : 'Stop'}
             </Button>
           ) : (
-            <Button type="submit" disabled={!displayedPrompt.trim() || disabled}>
+            <Button type="submit" disabled={!prompt.trim() || disabled}>
               Send
             </Button>
           )}
