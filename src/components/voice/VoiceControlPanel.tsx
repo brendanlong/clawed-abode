@@ -63,14 +63,21 @@ export function VoiceControlPanel({
   onInterrupt,
 }: VoiceControlPanelProps) {
   const playback = useVoicePlaybackContext();
+  const voiceConfig = useVoiceConfig(sessionId);
+
+  // Accumulate finalized text from the current recording
+  const [accumulated, setAccumulated] = useState('');
+  const onFinalizedText = useCallback((text: string) => {
+    setAccumulated((prev) => prev + text);
+  }, []);
+
   const {
     isRecording,
-    transcript: liveTranscript,
+    interimTranscript,
     startRecording,
     stopRecording,
     error: recordingError,
-  } = useVoiceRecording();
-  const voiceConfig = useVoiceConfig(sessionId);
+  } = useVoiceRecording(onFinalizedText);
 
   // Transcript from the last recording, before user decides to send or cancel
   const [pendingTranscript, setPendingTranscript] = useState<string | null>(null);
@@ -164,22 +171,25 @@ export function VoiceControlPanel({
   }, [playback, assistantTextMessages]);
 
   // Recording: start or stop
-  const handleMicPress = useCallback(() => {
+  const handleMicPress = () => {
     if (isRecording) {
-      const text = stopRecording();
-      if (text.trim()) {
+      const remaining = stopRecording();
+      const fullText = (accumulated + remaining).trim();
+
+      if (fullText) {
         if (voiceConfig.autoSend) {
-          // Auto-send mode: send immediately without showing transcript
-          onSendPrompt(text.trim());
+          onSendPrompt(fullText);
         } else {
-          setPendingTranscript(text.trim());
+          setPendingTranscript(fullText);
         }
       }
+      setAccumulated('');
     } else {
       setPendingTranscript(null);
+      setAccumulated('');
       startRecording();
     }
-  }, [isRecording, startRecording, stopRecording, voiceConfig.autoSend, onSendPrompt]);
+  };
 
   // Send the transcript
   const handleSend = useCallback(() => {
@@ -198,13 +208,16 @@ export function VoiceControlPanel({
   const hasNext = currentIndex >= 0 && currentIndex < assistantTextMessages.length - 1;
   const hasPlayableContent = assistantTextMessages.length > 0;
 
+  // Live display text during recording
+  const liveText = (accumulated + interimTranscript).trim();
+
   return (
     <div className="border-t bg-background flex-shrink-0">
       {/* Status line */}
       <div className="px-4 py-2 text-center text-sm text-muted-foreground">
         {isRecording
-          ? liveTranscript
-            ? `"${liveTranscript}"`
+          ? liveText
+            ? `"${liveText}"`
             : 'Listening...'
           : isRunning
             ? 'Claude is working...'

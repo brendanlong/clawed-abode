@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 
 // Web Speech API types (not in all TS libs)
 interface SpeechRecognitionEvent extends Event {
@@ -39,19 +39,29 @@ function getSpeechRecognition(): SpeechRecognitionConstructor | null {
 /**
  * Hook for managing voice recording using the Web Speech API (SpeechRecognition).
  * Uses continuous mode to keep listening through pauses in speech.
- * Accumulates all recognized text and exposes a live-updating transcript.
+ *
+ * @param onFinalizedText - Called with each new chunk of finalized (confirmed) text.
+ *   Consumers can use this to append text directly to their own state (e.g. a prompt input).
  */
-export function useVoiceRecording() {
+export function useVoiceRecording(onFinalizedText?: (text: string) => void) {
   const [isRecording, setIsRecording] = useState(false);
-  const [transcript, setTranscript] = useState('');
+  const [interimTranscript, setInterimTranscript] = useState('');
   const [error, setError] = useState<string | null>(null);
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
-  const transcriptRef = useRef('');
+  const lastFinalizedLengthRef = useRef(0);
+  const interimRef = useRef('');
+  const onFinalizedTextRef = useRef(onFinalizedText);
+
+  // Keep callback ref fresh without reading it during render
+  useEffect(() => {
+    onFinalizedTextRef.current = onFinalizedText;
+  });
 
   const startRecording = useCallback(() => {
     setError(null);
-    setTranscript('');
-    transcriptRef.current = '';
+    setInterimTranscript('');
+    lastFinalizedLengthRef.current = 0;
+    interimRef.current = '';
 
     const SpeechRecognition = getSpeechRecognition();
     if (!SpeechRecognition) {
@@ -75,9 +85,16 @@ export function useVoiceRecording() {
           interim += event.results[i][0].transcript;
         }
       }
-      const full = (finals + interim).trimStart();
-      transcriptRef.current = full;
-      setTranscript(full);
+
+      // Call back with new finalized text (the delta since last callback)
+      if (finals.length > lastFinalizedLengthRef.current) {
+        const newText = finals.substring(lastFinalizedLengthRef.current);
+        lastFinalizedLengthRef.current = finals.length;
+        onFinalizedTextRef.current?.(newText);
+      }
+
+      interimRef.current = interim;
+      setInterimTranscript(interim);
     };
 
     recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
@@ -116,7 +133,7 @@ export function useVoiceRecording() {
   }, []);
 
   /**
-   * Stop recording and return the current transcript (including any interim text).
+   * Stop recording and return any remaining interim text that wasn't finalized.
    */
   const stopRecording = useCallback((): string => {
     const recognition = recognitionRef.current;
@@ -126,13 +143,16 @@ export function useVoiceRecording() {
       recognition.stop();
     }
     setIsRecording(false);
-    return transcriptRef.current;
+    const remaining = interimRef.current;
+    interimRef.current = '';
+    setInterimTranscript('');
+    return remaining;
   }, []);
 
   return {
     isRecording,
-    /** Live-updating transcript: accumulated final results + current interim */
-    transcript,
+    /** Current interim (not yet confirmed) text, for display hints */
+    interimTranscript,
     startRecording,
     stopRecording,
     error,
