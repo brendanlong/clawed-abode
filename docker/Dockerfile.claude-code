@@ -111,7 +111,10 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/b
 RUN curl -L https://fly.io/install.sh | FLYCTL_INSTALL=/usr/local sh
 
 # Install RunPod CLI (system-wide)
-RUN wget --quiet https://github.com/runpod/runpodctl/releases/download/v1.14.3/runpodctl-linux-amd64 -O /usr/local/bin/runpodctl && \
+ARG RUNPODCTL_VERSION=v1.14.3
+ARG RUNPODCTL_CHECKSUM=f0446026602606aa0b3a35af2e048137a8a5e5e09ccd0d0a65ba0304296ea42a
+RUN curl -fsSL "https://github.com/runpod/runpodctl/releases/download/${RUNPODCTL_VERSION}/runpodctl-linux-amd64" -o /usr/local/bin/runpodctl && \
+    echo "${RUNPODCTL_CHECKSUM}  /usr/local/bin/runpodctl" | sha256sum --check && \
     chmod +x /usr/local/bin/runpodctl
 
 # Cache breaker for tools that update frequently (e.g., Claude Code)
