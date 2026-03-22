@@ -110,6 +110,10 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/b
 # Install Fly CLI (system-wide)
 RUN curl -L https://fly.io/install.sh | FLYCTL_INSTALL=/usr/local sh
 
+# Install RunPod CLI (system-wide)
+RUN wget --quiet https://github.com/runpod/runpodctl/releases/download/v1.14.3/runpodctl-linux-amd64 -O /usr/local/bin/runpodctl && \
+    chmod +x /usr/local/bin/runpodctl
+
 # Cache breaker for tools that update frequently (e.g., Claude Code)
 # Pass --build-arg CACHE_BREAKER=$(date -u +%Y%m%d) to force a rebuild of
 # this and all subsequent layers. Without the arg, normal Docker caching applies.
