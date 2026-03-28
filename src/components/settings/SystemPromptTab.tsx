@@ -47,7 +47,7 @@ export function SystemPromptTab() {
         <CardContent>
           <ClaudeModelSection
             currentModel={settings?.claudeModel ?? null}
-            defaultModel={settings?.defaultClaudeModel ?? 'opus'}
+            defaultModel={settings?.defaultClaudeModel ?? 'opus[1m]'}
             onUpdate={refetch}
           />
         </CardContent>
