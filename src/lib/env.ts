@@ -9,7 +9,7 @@ const envSchema = z.object({
   CLAUDE_CODE_OAUTH_TOKEN: z.string().optional().default(''),
   // Claude model to use in runner containers (e.g., "opus", "sonnet", "claude-opus-4-5-20251101")
   // Passed as --model to the claude CLI
-  CLAUDE_MODEL: z.string().default('opus'),
+  CLAUDE_MODEL: z.string().default('opus[1m]'),
   // Named volume for pnpm store - shared across all runner containers
   // Speeds up package installs by caching downloaded packages
   PNPM_STORE_VOLUME: z.string().default('clawed-abode-pnpm-store'),
