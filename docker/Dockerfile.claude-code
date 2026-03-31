@@ -1,6 +1,6 @@
 # Stage 1: Install Android SDK in a separate stage so we can COPY --chown
 # into the final image without creating a duplicate layer from chown -R
-FROM docker.io/nvidia/cuda:12.6.3-base-ubuntu24.04 AS android-sdk-builder
+FROM docker.io/nvidia/cuda:12.6.3-cudnn-devel-ubuntu24.04 AS android-sdk-builder
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV ANDROID_HOME=/opt/android-sdk
@@ -23,7 +23,10 @@ RUN yes | sdkmanager --licenses > /dev/null 2>&1 && \
     sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
 # Stage 2: Final image
-FROM docker.io/nvidia/cuda:12.6.3-base-ubuntu24.04
+# Use cudnn-devel variant to include CUDA development toolkit (nvcc, headers)
+# and cuDNN development libraries, enabling compilation of CUDA extensions
+# like mamba-ssm, causal-conv1d, and other torch.utils.cpp_extension packages
+FROM docker.io/nvidia/cuda:12.6.3-cudnn-devel-ubuntu24.04
 
 # Avoid prompts from apt
 ENV DEBIAN_FRONTEND=noninteractive
