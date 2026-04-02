@@ -1,4 +1,5 @@
 import { useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import { trpc } from '@/lib/trpc';
 import { useRefetchOnReconnect } from './useRefetchOnReconnect';
 
@@ -6,6 +7,7 @@ import { useRefetchOnReconnect } from './useRefetchOnReconnect';
  * Hook for managing session state: fetching session data, SSE updates, and start/stop mutations.
  */
 export function useSessionState(sessionId: string) {
+  const router = useRouter();
   const utils = trpc.useUtils();
 
   // Fetch session details
@@ -42,8 +44,11 @@ export function useSessionState(sessionId: string) {
   });
 
   // The API endpoint is "delete" but it now archives instead of permanently deleting
-  // Session update comes via SSE subscription, so no onSuccess handler needed
-  const archiveMutation = trpc.sessions.delete.useMutation();
+  const archiveMutation = trpc.sessions.delete.useMutation({
+    onSuccess: () => {
+      router.push('/');
+    },
+  });
 
   const start = useCallback(() => {
     startMutation.mutate({ sessionId });
