@@ -1,6 +1,6 @@
 # Stage 1: Install Android SDK in a separate stage so we can COPY --chown
 # into the final image without creating a duplicate layer from chown -R
-FROM docker.io/nvidia/cuda:12.6.3-cudnn-devel-ubuntu24.04 AS android-sdk-builder
+FROM ubuntu:24.04 AS android-sdk-builder
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV ANDROID_HOME=/opt/android-sdk
