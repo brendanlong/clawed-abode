@@ -46,6 +46,7 @@ export function useSessionState(sessionId: string) {
   // The API endpoint is "delete" but it now archives instead of permanently deleting
   const archiveMutation = trpc.sessions.delete.useMutation({
     onSuccess: () => {
+      void utils.sessions.list.invalidate();
       router.push('/');
     },
   });
