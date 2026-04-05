@@ -56,8 +56,11 @@ describe('globalSettings router', () => {
         hasClaudeApiKey: false,
         ttsSpeed: null,
         voiceAutoSend: true,
+        enablePodman: false,
+        enableGpu: true,
         defaultClaudeModel: 'opus[1m]',
         hasEnvApiKey: true,
+        hasPodmanSocket: false,
       });
     });
 
