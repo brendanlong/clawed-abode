@@ -501,6 +501,8 @@ export const repoSettingsRouter = router({
 
       return {
         customSystemPrompt: settings.customSystemPrompt,
+        enablePodman: settings.enablePodman,
+        enableGpu: settings.enableGpu,
         envVars: decryptEnvVarsForContainer(settings.envVars),
         mcpServers: decryptMcpServersForContainer(settings.mcpServers),
       };

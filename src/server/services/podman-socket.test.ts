@@ -145,5 +145,130 @@ describe('podman service with PODMAN_SOCKET_PATH', () => {
       const argsString = createArgs.join(' ');
       expect(argsString).toContain('/run/user/1000/podman/podman.sock:/var/run/docker.sock');
     });
+
+    it('should NOT mount socket or set CONTAINER_HOST when enablePodman is false', async () => {
+      mockSpawn.mockImplementation((_cmd: string, args: string[]) => {
+        const proc = createMockProcess();
+        const command = args[0];
+
+        process.nextTick(() => {
+          if (command === 'ps') {
+            proc.stdout.emit('data', Buffer.from(''));
+            proc.emit('close', 0);
+          } else if (command === 'pull') {
+            proc.emit('close', 0);
+          } else if (command === 'create') {
+            proc.stdout.emit('data', Buffer.from('new-container-id\n'));
+            proc.emit('close', 0);
+          } else if (command === 'start') {
+            proc.emit('close', 0);
+          } else {
+            proc.emit('close', 0);
+          }
+        });
+
+        return proc;
+      });
+
+      await createAndStartContainer({
+        sessionId: 'test-session',
+        repoPath: 'my-repo',
+        enablePodman: false,
+      });
+
+      const createCall = mockSpawn.mock.calls.find((call) => call[1] && call[1].includes('create'));
+      expect(createCall).toBeDefined();
+      const createArgs = createCall![1] as string[];
+
+      // Should NOT include CONTAINER_HOST env var
+      const envArgs = createArgs.filter((arg, i) => i > 0 && createArgs[i - 1] === '-e');
+      expect(envArgs).not.toContain('CONTAINER_HOST=unix:///var/run/docker.sock');
+
+      // Should NOT include socket mount
+      const argsString = createArgs.join(' ');
+      expect(argsString).not.toContain('podman.sock:/var/run/docker.sock');
+    });
+
+    it('should NOT mount socket when enablePodman is undefined (default off)', async () => {
+      mockSpawn.mockImplementation((_cmd: string, args: string[]) => {
+        const proc = createMockProcess();
+        const command = args[0];
+
+        process.nextTick(() => {
+          if (command === 'ps') {
+            proc.stdout.emit('data', Buffer.from(''));
+            proc.emit('close', 0);
+          } else if (command === 'pull') {
+            proc.emit('close', 0);
+          } else if (command === 'create') {
+            proc.stdout.emit('data', Buffer.from('new-container-id\n'));
+            proc.emit('close', 0);
+          } else if (command === 'start') {
+            proc.emit('close', 0);
+          } else {
+            proc.emit('close', 0);
+          }
+        });
+
+        return proc;
+      });
+
+      await createAndStartContainer({
+        sessionId: 'test-session',
+        repoPath: 'my-repo',
+        // enablePodman not set — should default to off
+      });
+
+      const createCall = mockSpawn.mock.calls.find((call) => call[1] && call[1].includes('create'));
+      const createArgs = createCall![1] as string[];
+
+      const envArgs = createArgs.filter((arg, i) => i > 0 && createArgs[i - 1] === '-e');
+      expect(envArgs).not.toContain('CONTAINER_HOST=unix:///var/run/docker.sock');
+
+      const argsString = createArgs.join(' ');
+      expect(argsString).not.toContain('podman.sock:/var/run/docker.sock');
+    });
+
+    it('should NOT include GPU device when enableGpu is false', async () => {
+      mockSpawn.mockImplementation((_cmd: string, args: string[]) => {
+        const proc = createMockProcess();
+        const command = args[0];
+
+        process.nextTick(() => {
+          if (command === 'ps') {
+            proc.stdout.emit('data', Buffer.from(''));
+            proc.emit('close', 0);
+          } else if (command === 'pull') {
+            proc.emit('close', 0);
+          } else if (command === 'create') {
+            proc.stdout.emit('data', Buffer.from('new-container-id\n'));
+            proc.emit('close', 0);
+          } else if (command === 'start') {
+            proc.emit('close', 0);
+          } else {
+            proc.emit('close', 0);
+          }
+        });
+
+        return proc;
+      });
+
+      await createAndStartContainer({
+        sessionId: 'test-session',
+        repoPath: 'my-repo',
+        enableGpu: false,
+      });
+
+      const createCall = mockSpawn.mock.calls.find((call) => call[1] && call[1].includes('create'));
+      const createArgs = createCall![1] as string[];
+
+      // Should NOT include GPU device
+      expect(createArgs).not.toContain('nvidia.com/gpu=all');
+
+      // Should NOT include NVIDIA env vars
+      const envArgs = createArgs.filter((arg, i) => i > 0 && createArgs[i - 1] === '-e');
+      expect(envArgs).not.toContain('NVIDIA_VISIBLE_DEVICES=all');
+      expect(envArgs).not.toContain('NVIDIA_DRIVER_CAPABILITIES=all');
+    });
   });
 });

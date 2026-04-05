@@ -1,6 +1,28 @@
 import { describe, it, expect } from 'vitest';
-import { mergeEnvVars, mergeMcpServers } from './settings-merger';
+import { mergeCapability, mergeEnvVars, mergeMcpServers } from './settings-merger';
 import type { ContainerEnvVar, ContainerMcpServer } from './repo-settings';
+
+describe('mergeCapability', () => {
+  it('should return global default when repo value is null', () => {
+    expect(mergeCapability(null, false)).toBe(false);
+    expect(mergeCapability(null, true)).toBe(true);
+  });
+
+  it('should return global default when repo value is undefined', () => {
+    expect(mergeCapability(undefined, false)).toBe(false);
+    expect(mergeCapability(undefined, true)).toBe(true);
+  });
+
+  it('should return repo value when explicitly true', () => {
+    expect(mergeCapability(true, false)).toBe(true);
+    expect(mergeCapability(true, true)).toBe(true);
+  });
+
+  it('should return repo value when explicitly false (override global default)', () => {
+    expect(mergeCapability(false, true)).toBe(false);
+    expect(mergeCapability(false, false)).toBe(false);
+  });
+});
 
 describe('mergeEnvVars', () => {
   it('should return empty array when both inputs are empty', () => {

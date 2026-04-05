@@ -39,9 +39,8 @@ export async function loadMergedSessionSettings(
   const envVars = mergeEnvVars(globalSettings.envVars, repoSettings?.envVars ?? []);
   const mcpServers = mergeMcpServers(globalSettings.mcpServers, repoSettings?.mcpServers ?? []);
 
-  // Per-repo overrides global; null means "use global default"
-  const enablePodman = repoSettings?.enablePodman ?? globalSettings.enablePodman;
-  const enableGpu = repoSettings?.enableGpu ?? globalSettings.enableGpu;
+  const enablePodman = mergeCapability(repoSettings?.enablePodman, globalSettings.enablePodman);
+  const enableGpu = mergeCapability(repoSettings?.enableGpu, globalSettings.enableGpu);
 
   return {
     systemPrompt,
@@ -54,6 +53,17 @@ export async function loadMergedSessionSettings(
     customSystemPrompt: repoSettings?.customSystemPrompt,
     globalSettings,
   };
+}
+
+/**
+ * Merge a per-repo nullable boolean capability with the global default.
+ * Per-repo value wins when non-null; otherwise the global default is used.
+ */
+export function mergeCapability(
+  repoValue: boolean | null | undefined,
+  globalDefault: boolean
+): boolean {
+  return repoValue ?? globalDefault;
 }
 
 /**
