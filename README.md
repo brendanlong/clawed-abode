@@ -670,7 +670,9 @@ pnpm start
 - Each session has its own container with an isolated git clone
 - Use Fine-grained PATs scoped to specific repos with minimal permissions
 - **Rootless Podman**: Claude Code agents have sudo access inside containers, but this doesn't grant root on the host
-- Podman socket access is provided for container-in-container capability
+- **Podman socket is off by default** — only enabled per-repo or globally via Settings → Security. The socket allows containers to create other containers with arbitrary host mounts, so it should only be enabled for trusted repositories.
+- **GPU access is on by default** — can be disabled per-repo or globally via Settings → Security
+- **[Dedicated user recommended](#running-as-a-dedicated-unprivileged-user)** — limits blast radius of container escape to a throwaway user account
 - Use Tailscale Funnel or similar for secure remote access (don't expose port 3000 directly)
 
 ## Troubleshooting

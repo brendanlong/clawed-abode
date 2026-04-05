@@ -593,6 +593,10 @@ export interface ContainerConfig {
   claudeModel?: string;
   // Claude API key override (from global settings DB). Falls back to CLAUDE_CODE_OAUTH_TOKEN env var.
   claudeApiKey?: string;
+  // Whether to mount the host's podman socket (enables container-in-container). Default: false.
+  enablePodman?: boolean;
+  // Whether to pass GPU device access to the container. Default: true.
+  enableGpu?: boolean;
 }
 
 export async function createAndStartContainer(config: ContainerConfig): Promise<string> {
@@ -644,11 +648,14 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
     envArgs.push('-e', `CLAUDE_CODE_OAUTH_TOKEN=${oauthToken}`);
     // Set Gradle user home to use the shared cache volume
     envArgs.push('-e', 'GRADLE_USER_HOME=/gradle-cache');
-    // Add NVIDIA environment variables for GPU access
-    envArgs.push('-e', 'NVIDIA_VISIBLE_DEVICES=all');
-    envArgs.push('-e', 'NVIDIA_DRIVER_CAPABILITIES=all');
+    // Add NVIDIA environment variables for GPU access (only when GPU is enabled)
+    if (config.enableGpu !== false) {
+      envArgs.push('-e', 'NVIDIA_VISIBLE_DEVICES=all');
+      envArgs.push('-e', 'NVIDIA_DRIVER_CAPABILITIES=all');
+    }
     // Set CONTAINER_HOST so podman/docker commands inside the container use the host's socket
-    if (env.PODMAN_SOCKET_PATH) {
+    // Only when podman access is explicitly enabled (security: socket allows arbitrary container creation)
+    if (config.enablePodman && env.PODMAN_SOCKET_PATH) {
       envArgs.push('-e', 'CONTAINER_HOST=unix:///var/run/docker.sock');
     }
     // Agent service configuration - use Unix socket instead of TCP port
@@ -683,8 +690,9 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
     const socketsMount = `${getSocketsPath(env.SOCKETS_VOLUME)}:/sockets`;
     volumeArgs.push('-v', socketsMount);
 
-    // Mount host's podman socket for container-in-container support (read-only)
-    if (env.PODMAN_SOCKET_PATH) {
+    // Mount host's podman socket for container-in-container support
+    // Only when podman access is explicitly enabled (security: socket allows arbitrary container creation)
+    if (config.enablePodman && env.PODMAN_SOCKET_PATH) {
       volumeArgs.push('-v', `${env.PODMAN_SOCKET_PATH}:/var/run/docker.sock`);
     }
 
@@ -722,8 +730,8 @@ export async function createAndStartContainer(config: ContainerConfig): Promise<
       env.CONTAINER_NETWORK_MODE,
       '--security-opt',
       'label=disable',
-      '--device',
-      'nvidia.com/gpu=all',
+      // GPU access via CDI - only when GPU is enabled
+      ...(config.enableGpu !== false ? ['--device', 'nvidia.com/gpu=all'] : []),
       '-w',
       workingDir,
       ...envArgs,

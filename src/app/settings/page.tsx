@@ -8,6 +8,7 @@ import { AppearanceTab } from '@/components/settings/AppearanceTab';
 import { AudioTab } from '@/components/settings/AudioTab';
 import { RepositoriesTab } from '@/components/settings/RepositoriesTab';
 import { SystemPromptTab } from '@/components/settings/SystemPromptTab';
+import { SecurityTab } from '@/components/settings/SecurityTab';
 
 export default function SettingsPage() {
   return (
@@ -24,6 +25,7 @@ export default function SettingsPage() {
                 <TabsTrigger value="appearance">Appearance</TabsTrigger>
                 <TabsTrigger value="system-prompt">System Prompt</TabsTrigger>
                 <TabsTrigger value="audio">Audio</TabsTrigger>
+                <TabsTrigger value="security">Security</TabsTrigger>
                 <TabsTrigger value="repositories">Repositories</TabsTrigger>
                 <TabsTrigger value="sessions">Sessions</TabsTrigger>
               </TabsList>
@@ -38,6 +40,10 @@ export default function SettingsPage() {
 
               <TabsContent value="audio">
                 <AudioTab />
+              </TabsContent>
+
+              <TabsContent value="security">
+                <SecurityTab />
               </TabsContent>
 
               <TabsContent value="repositories">

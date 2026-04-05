@@ -53,7 +53,7 @@ The database schema is defined in [`prisma/schema.prisma`](../prisma/schema.pris
 - **Message**: Chat messages with sequence numbers for cursor-based pagination
 - **AuthSession**: Login sessions with tokens and audit info
 - **GlobalSettings**: Global application settings (system prompt override and append, Claude model, Claude API key, TTS speed, voice auto-send)
-- **RepoSettings**: Per-repository settings (favorites, custom system prompt)
+- **RepoSettings**: Per-repository settings (favorites, custom system prompt, container capabilities)
 - **EnvVar**: Environment variables for a repository or global (encrypted if secret). When `repoSettingsId` is null, the variable is global and applies to all sessions.
 - **McpServer**: MCP server configurations for a repository or global. When `repoSettingsId` is null, the server is global and applies to all sessions.
 
@@ -332,7 +332,7 @@ Runner containers are created with (see [`createAndStartContainer`](../src/serve
 - **Network mode**: Configurable via `CONTAINER_NETWORK_MODE` (default: `host`). Host networking allows containers to connect to services started via podman-compose on localhost. See [issue #147](https://github.com/brendanlong/clawed-abode/issues/147) for details.
 - **Workspace**: Session's dedicated volume mounted at `/workspace`
 - **Claude auth**: OAuth token passed via `CLAUDE_CODE_OAUTH_TOKEN` environment variable
-- **Podman socket**: Bind-mounted for container-in-container support (read-only)
+- **Podman socket**: Optionally bind-mounted for container-in-container support. Controlled by `enablePodman` setting (default: off). See [Container Capabilities](#container-capabilities).
 - **pnpm store**: Named volume mounted at `/pnpm-store` for shared package cache
 - **Gradle cache**: Named volumes for `caches/` and `wrapper/` subdirectories mounted under `/gradle-cache`. The `daemon/` directory is ephemeral per-container to prevent stale daemon issues.
 - **Agent service**: Configured via `AGENT_PORT`, `SYSTEM_PROMPT`, and `CLAUDE_MODEL` environment variables. The container's CMD runs the agent service, which provides an HTTP API for the Next.js server to interact with Claude.
@@ -417,7 +417,6 @@ ORDER BY sequence ASC;
 
 - Each session runs in its own container
 - Containers can't access each other's workspaces
-- Podman socket access is intentional for podman-in-podman capability
 - **Rootless Podman**: Claude Code agents have passwordless sudo inside containers, but:
   - The container user is not root on the host
   - User namespace isolation prevents host privilege escalation
@@ -426,6 +425,19 @@ ORDER BY sequence ASC;
   - Only authenticated user can access
   - Container provides isolation boundary
   - Workspace is disposable
+
+### Container Capabilities
+
+GPU and Podman socket access are configurable per-repo with global defaults to limit supply chain attack blast radius:
+
+- **GPU Access** (`enableGpu`): Controls whether NVIDIA GPU devices are passed to containers via CDI (`--device nvidia.com/gpu=all`) and whether `NVIDIA_VISIBLE_DEVICES`/`NVIDIA_DRIVER_CAPABILITIES` env vars are set. Default: **on** (GPU is the primary reason this app exists). Low security risk — mainly prevents cryptomining.
+- **Podman Socket Access** (`enablePodman`): Controls whether the host's Podman socket is mounted into containers. Default: **off**. This is the highest-risk capability — the socket allows containers to create new containers with arbitrary host mounts, effectively granting full access to the user running the service. Only enable for repositories that need container-in-container workflows (e.g., `docker compose`).
+
+**Settings merge**: Global settings (`GlobalSettings.enablePodman`, `GlobalSettings.enableGpu`) provide defaults. Per-repo settings (`RepoSettings.enablePodman`, `RepoSettings.enableGpu`) override when non-null. A null per-repo value means "inherit global default."
+
+**Recommendation**: Run the service as a [dedicated unprivileged user](../README.md#running-as-a-dedicated-unprivileged-user) to limit the blast radius even when the Podman socket is enabled. This ensures container escape only affects a throwaway user account, not your main desktop session.
+
+**Settings UI**: Global defaults in Settings → Security. Per-repo overrides in Settings → Repositories → (select repo).
 
 ### GitHub Token Security
 
@@ -472,8 +484,9 @@ The system maintains a cache of bare git repositories to speed up session creati
 ### Podman Socket (Container-in-Container)
 
 - Set `PODMAN_SOCKET_PATH` to the host's Podman socket path (e.g., `/run/user/1000/podman/podman.sock`)
-- The socket is mounted at `/var/run/docker.sock` in runner containers
-- `CONTAINER_HOST=unix:///var/run/docker.sock` is set in runner containers so `podman`/`docker` commands use the host's Podman
+- The socket is only mounted when `enablePodman` is true for the session (see [Container Capabilities](#container-capabilities))
+- When mounted, the socket appears at `/var/run/docker.sock` in runner containers
+- `CONTAINER_HOST=unix:///var/run/docker.sock` is set so `podman`/`docker` commands use the host's Podman
 - This enables Claude Code agents to build and run containers inside their sessions
 - Without this, agents would need to use nested Podman which has UID/GID mapping limitations
 
@@ -483,6 +496,7 @@ Users can configure per-repository settings that are automatically applied when 
 
 - **Favorites**: Mark repositories (or "No Repository") as favorites so they appear at the top of the repo selector
 - **Custom System Prompt**: Additional instructions appended to the default system prompt for all sessions using this repository
+- **Container Capabilities**: Per-repo overrides for GPU access (`enableGpu`) and Podman socket access (`enablePodman`). Null values inherit the global default. See [Container Capabilities](#container-capabilities).
 - **Environment Variables**: Custom env vars passed to the container (e.g., API keys, config values)
 - **MCP Servers**: Configure [MCP servers](https://modelcontextprotocol.io/) for Claude to use, supporting three transport types:
   - **Stdio**: Traditional command-based servers (e.g., `npx @anthropic/mcp-server-memory`)
@@ -515,6 +529,8 @@ Users can configure global settings that apply to all sessions:
 - **Global MCP Servers**: MCP server configurations available in all sessions. Per-repo servers with the same name take precedence. Supports stdio, HTTP, and SSE transport types.
 - **TTS Speed**: Controls text-to-speech playback speed (0.25x to 4.0x, default 1.0x). Passed to `SpeechSynthesis.rate` via the browser's Web Speech API. Configured in Settings → Audio.
 - **Voice Auto-Send**: When enabled (default: true), speech-to-text transcripts are automatically sent as prompts after recording stops. When disabled, transcripts are inserted into the input field for editing. Configured in Settings → Audio.
+- **GPU Access Default** (`enableGpu`): Whether GPU devices are passed to containers by default (default: true). Configured in Settings → Security. See [Container Capabilities](#container-capabilities).
+- **Podman Socket Default** (`enablePodman`): Whether the Podman socket is mounted by default (default: false). Configured in Settings → Security. See [Container Capabilities](#container-capabilities).
 
 **Prompt Order**: When Claude runs, the system prompt is built in this order:
 
@@ -526,8 +542,9 @@ Users can configure global settings that apply to all sessions:
 
 - **Environment Variables**: Global env vars are included in all sessions. If a per-repo env var has the same name as a global one, the per-repo value takes precedence.
 - **MCP Servers**: Global MCP servers are included in all sessions. If a per-repo MCP server has the same name as a global one, the per-repo configuration takes precedence.
+- **Container Capabilities**: Per-repo `enableGpu`/`enablePodman` override global defaults when non-null.
 
-**Configuration**: Go to Settings → System Prompt to manage prompt and model settings. Go to Settings → Audio to manage voice/audio settings (TTS speed, voice auto-send).
+**Configuration**: Go to Settings → System Prompt to manage prompt and model settings. Go to Settings → Audio to manage voice/audio settings (TTS speed, voice auto-send). Go to Settings → Security to manage container capabilities defaults.
 
 **Data Model**: Global env vars and MCP servers are stored in the same `EnvVar` and `McpServer` tables as per-repo ones, with `repoSettingsId = null` indicating a global setting. A partial unique index (`WHERE repoSettingsId IS NULL`) enforces name uniqueness for global entries at the database level.
 

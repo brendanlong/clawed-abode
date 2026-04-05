@@ -62,6 +62,8 @@ model RepoSettings {
   isFavorite         Boolean  @default(false)
   displayOrder       Int      @default(0) // For custom ordering within favorites
   customSystemPrompt String?  // Optional prompt appended to the default system prompt
+  enablePodman       Boolean? // null = use global default; controls podman socket mounting
+  enableGpu          Boolean? // null = use global default; controls GPU device access
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
@@ -117,6 +119,8 @@ model GlobalSettings {
   claudeApiKey              String?  // If set (encrypted), overrides CLAUDE_CODE_OAUTH_TOKEN env var
   ttsSpeed                  Float?   // TTS playback speed (0.25-4.0, default 1.0)
   voiceAutoSend             Boolean  @default(true) // Auto-send after speech-to-text transcription
+  enablePodman              Boolean  @default(false) // Default: podman socket NOT mounted (security)
+  enableGpu                 Boolean  @default(true)  // Default: GPU access enabled
   createdAt                 DateTime @default(now())
   updatedAt                 DateTime @updatedAt
 }

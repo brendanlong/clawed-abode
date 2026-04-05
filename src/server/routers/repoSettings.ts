@@ -48,6 +48,8 @@ export const repoSettingsRouter = router({
         isFavorite: settings.isFavorite,
         displayOrder: settings.displayOrder,
         customSystemPrompt: settings.customSystemPrompt,
+        enablePodman: settings.enablePodman,
+        enableGpu: settings.enableGpu,
         createdAt: settings.createdAt,
         updatedAt: settings.updatedAt,
         envVars: formatEnvVarsForDisplay(settings.envVars),
@@ -115,6 +117,64 @@ export const repoSettingsRouter = router({
     }),
 
   /**
+   * Set podman socket access for a repository.
+   * Pass null to inherit the global default. true/false to explicitly override.
+   */
+  setEnablePodman: protectedProcedure
+    .input(
+      z.object({
+        repoFullName: repoFullNameSchema,
+        enablePodman: z.boolean().nullable(),
+      })
+    )
+    .mutation(async ({ input }) => {
+      await prisma.repoSettings.upsert({
+        where: { repoFullName: input.repoFullName },
+        create: {
+          repoFullName: input.repoFullName,
+          enablePodman: input.enablePodman,
+        },
+        update: { enablePodman: input.enablePodman },
+      });
+
+      log.info('Set podman access', {
+        repoFullName: input.repoFullName,
+        enablePodman: input.enablePodman,
+      });
+
+      return { success: true };
+    }),
+
+  /**
+   * Set GPU access for a repository.
+   * Pass null to inherit the global default. true/false to explicitly override.
+   */
+  setEnableGpu: protectedProcedure
+    .input(
+      z.object({
+        repoFullName: repoFullNameSchema,
+        enableGpu: z.boolean().nullable(),
+      })
+    )
+    .mutation(async ({ input }) => {
+      await prisma.repoSettings.upsert({
+        where: { repoFullName: input.repoFullName },
+        create: {
+          repoFullName: input.repoFullName,
+          enableGpu: input.enableGpu,
+        },
+        update: { enableGpu: input.enableGpu },
+      });
+
+      log.info('Set GPU access', {
+        repoFullName: input.repoFullName,
+        enableGpu: input.enableGpu,
+      });
+
+      return { success: true };
+    }),
+
+  /**
    * List all favorite repository names
    */
   listFavorites: protectedProcedure.query(async () => {
@@ -145,6 +205,8 @@ export const repoSettingsRouter = router({
         repoFullName: s.repoFullName,
         isFavorite: s.isFavorite,
         customSystemPrompt: s.customSystemPrompt,
+        enablePodman: s.enablePodman,
+        enableGpu: s.enableGpu,
         envVarCount: s.envVars.length,
         mcpServerCount: s.mcpServers.length,
         envVars: s.envVars,

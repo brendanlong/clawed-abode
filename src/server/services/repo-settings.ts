@@ -58,6 +58,8 @@ export type ContainerMcpServer =
  */
 export interface ContainerRepoSettings {
   customSystemPrompt: string | null;
+  enablePodman: boolean | null;
+  enableGpu: boolean | null;
   envVars: ContainerEnvVar[];
   mcpServers: ContainerMcpServer[];
 }
@@ -80,6 +82,8 @@ export async function getRepoSettingsForContainer(
 
   return {
     customSystemPrompt: settings.customSystemPrompt,
+    enablePodman: settings.enablePodman,
+    enableGpu: settings.enableGpu,
     envVars: decryptEnvVarsForContainer(settings.envVars),
     mcpServers: decryptMcpServersForContainer(settings.mcpServers),
   };

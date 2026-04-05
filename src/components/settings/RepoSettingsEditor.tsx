@@ -14,6 +14,13 @@ import { Switch } from '@/components/ui/switch';
 import { Spinner } from '@/components/ui/spinner';
 import { Separator } from '@/components/ui/separator';
 import { Textarea } from '@/components/ui/textarea';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { trpc } from '@/lib/trpc';
 import { Plus, Star, FileText, FolderOpen } from 'lucide-react';
 import { NO_REPO_SENTINEL } from '@/components/RepoSelector';
@@ -65,9 +72,12 @@ function useRepoMcpServerMutations(repoFullName: string, onUpdate: () => void): 
 
 export function RepoSettingsEditor({ repoFullName, onClose }: RepoSettingsEditorProps) {
   const { data, isLoading, refetch } = trpc.repoSettings.get.useQuery({ repoFullName });
+  const { data: globalSettings } = trpc.globalSettings.get.useQuery();
   const toggleFavorite = trpc.repoSettings.toggleFavorite.useMutation({
     onSuccess: () => refetch(),
   });
+  const setPodman = trpc.repoSettings.setEnablePodman.useMutation({ onSuccess: () => refetch() });
+  const setGpu = trpc.repoSettings.setEnableGpu.useMutation({ onSuccess: () => refetch() });
   const envVarMutations = useRepoEnvVarMutations(repoFullName, refetch);
   const mcpServerMutations = useRepoMcpServerMutations(repoFullName, refetch);
 
@@ -108,6 +118,79 @@ export function RepoSettingsEditor({ repoFullName, onClose }: RepoSettingsEditor
                   toggleFavorite.mutate({ repoFullName, isFavorite: checked })
                 }
               />
+            </div>
+
+            <Separator />
+
+            {/* Container Capabilities */}
+            <div className="space-y-4">
+              <h3 className="font-medium">Container Capabilities</h3>
+
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <Label className="text-sm">GPU Access</Label>
+                  <Select
+                    value={
+                      data?.enableGpu === null || data?.enableGpu === undefined
+                        ? 'default'
+                        : data.enableGpu
+                          ? 'on'
+                          : 'off'
+                    }
+                    onValueChange={(v) =>
+                      setGpu.mutate({
+                        repoFullName,
+                        enableGpu: v === 'default' ? null : v === 'on',
+                      })
+                    }
+                  >
+                    <SelectTrigger className="w-[180px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="default">
+                        Default ({globalSettings?.enableGpu ? 'On' : 'Off'})
+                      </SelectItem>
+                      <SelectItem value="on">Enabled</SelectItem>
+                      <SelectItem value="off">Disabled</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <Label className="text-sm">Podman Socket</Label>
+                  <Select
+                    value={
+                      data?.enablePodman === null || data?.enablePodman === undefined
+                        ? 'default'
+                        : data.enablePodman
+                          ? 'on'
+                          : 'off'
+                    }
+                    onValueChange={(v) =>
+                      setPodman.mutate({
+                        repoFullName,
+                        enablePodman: v === 'default' ? null : v === 'on',
+                      })
+                    }
+                  >
+                    <SelectTrigger className="w-[180px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="default">
+                        Default ({globalSettings?.enablePodman ? 'On' : 'Off'})
+                      </SelectItem>
+                      <SelectItem value="on">Enabled</SelectItem>
+                      <SelectItem value="off">Disabled</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Podman socket gives containers the ability to create other containers with host
+                  access. Only enable for repos where you need docker/podman commands.
+                </p>
+              </div>
             </div>
 
             <Separator />

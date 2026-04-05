@@ -17,6 +17,8 @@ export interface GlobalDisplaySettings {
   hasClaudeApiKey: boolean;
   ttsSpeed: number | null;
   voiceAutoSend: boolean;
+  enablePodman: boolean;
+  enableGpu: boolean;
 }
 
 /**
@@ -34,6 +36,8 @@ export interface GlobalSystemPromptSettings {
 export interface GlobalContainerSettings extends GlobalSystemPromptSettings {
   claudeModel: string | null;
   claudeApiKey: string | null;
+  enablePodman: boolean;
+  enableGpu: boolean;
   envVars: ContainerEnvVar[];
   mcpServers: ContainerMcpServer[];
 }
@@ -56,6 +60,8 @@ export async function getGlobalSettings(): Promise<GlobalDisplaySettings> {
       hasClaudeApiKey: false,
       ttsSpeed: null,
       voiceAutoSend: true,
+      enablePodman: false,
+      enableGpu: true,
     };
   }
 
@@ -67,6 +73,8 @@ export async function getGlobalSettings(): Promise<GlobalDisplaySettings> {
     hasClaudeApiKey: settings.claudeApiKey !== null,
     ttsSpeed: settings.ttsSpeed,
     voiceAutoSend: settings.voiceAutoSend,
+    enablePodman: settings.enablePodman,
+    enableGpu: settings.enableGpu,
   };
 }
 
@@ -95,6 +103,8 @@ export async function getGlobalSettingsForContainer(): Promise<GlobalContainerSe
     systemPromptAppend: settings?.systemPromptAppend ?? null,
     claudeModel: settings?.claudeModel ?? null,
     claudeApiKey,
+    enablePodman: settings?.enablePodman ?? false,
+    enableGpu: settings?.enableGpu ?? true,
     envVars: decryptEnvVarsForContainer(envVarRows),
     mcpServers: decryptMcpServersForContainer(mcpServerRows),
   };

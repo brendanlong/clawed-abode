@@ -88,6 +88,8 @@ async function setupSession(
       repoEnvVars: settings.envVars,
       claudeModel: settings.claudeModel,
       claudeApiKey: settings.claudeApiKey,
+      enablePodman: settings.enablePodman,
+      enableGpu: settings.enableGpu,
     });
     log.info('Container started', { sessionId, containerId });
 
@@ -288,6 +290,8 @@ export const sessionsRouter = router({
           repoEnvVars: settings.envVars,
           claudeModel: settings.claudeModel,
           claudeApiKey: settings.claudeApiKey,
+          enablePodman: settings.enablePodman,
+          enableGpu: settings.enableGpu,
         });
 
         // Wait for agent service to be healthy

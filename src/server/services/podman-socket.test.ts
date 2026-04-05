@@ -127,6 +127,7 @@ describe('podman service with PODMAN_SOCKET_PATH', () => {
       const containerId = await createAndStartContainer({
         sessionId: 'test-session',
         repoPath: 'my-repo',
+        enablePodman: true,
       });
 
       expect(containerId).toBe('new-container-id');

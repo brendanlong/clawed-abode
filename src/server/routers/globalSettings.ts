@@ -63,8 +63,11 @@ export const globalSettingsRouter = router({
       hasClaudeApiKey: settings?.claudeApiKey !== null && settings?.claudeApiKey !== undefined,
       ttsSpeed: settings?.ttsSpeed ?? null,
       voiceAutoSend: settings?.voiceAutoSend ?? true,
+      enablePodman: settings?.enablePodman ?? false,
+      enableGpu: settings?.enableGpu ?? true,
       defaultClaudeModel: env.CLAUDE_MODEL,
       hasEnvApiKey: !!env.CLAUDE_CODE_OAUTH_TOKEN,
+      hasPodmanSocket: !!env.PODMAN_SOCKET_PATH,
     };
   }),
 
@@ -446,6 +449,45 @@ export const globalSettingsRouter = router({
       });
 
       log.info('Set voice auto-send', { voiceAutoSend: input.voiceAutoSend });
+
+      return { success: true };
+    }),
+
+  /**
+   * Set the default podman socket access for new sessions.
+   * When true, the host's podman socket is mounted into containers, enabling
+   * container-in-container workflows (e.g., docker compose).
+   * WARNING: This gives containers the ability to create other containers with
+   * arbitrary host mounts, which is effectively full user account access.
+   */
+  setEnablePodman: protectedProcedure
+    .input(z.object({ enablePodman: z.boolean() }))
+    .mutation(async ({ input }) => {
+      await prisma.globalSettings.upsert({
+        where: { id: GLOBAL_SETTINGS_ID },
+        create: { id: GLOBAL_SETTINGS_ID, enablePodman: input.enablePodman },
+        update: { enablePodman: input.enablePodman },
+      });
+
+      log.info('Set default podman access', { enablePodman: input.enablePodman });
+
+      return { success: true };
+    }),
+
+  /**
+   * Set the default GPU access for new sessions.
+   * When true, NVIDIA GPU devices are passed to containers via CDI.
+   */
+  setEnableGpu: protectedProcedure
+    .input(z.object({ enableGpu: z.boolean() }))
+    .mutation(async ({ input }) => {
+      await prisma.globalSettings.upsert({
+        where: { id: GLOBAL_SETTINGS_ID },
+        create: { id: GLOBAL_SETTINGS_ID, enableGpu: input.enableGpu },
+        update: { enableGpu: input.enableGpu },
+      });
+
+      log.info('Set default GPU access', { enableGpu: input.enableGpu });
 
       return { success: true };
     }),

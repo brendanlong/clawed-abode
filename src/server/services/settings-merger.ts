@@ -12,6 +12,8 @@ export interface MergedSessionSettings {
   mcpServers: ContainerMcpServer[];
   claudeModel: string | undefined;
   claudeApiKey: string | undefined;
+  enablePodman: boolean;
+  enableGpu: boolean;
   customSystemPrompt: string | null | undefined;
   globalSettings: GlobalContainerSettings;
 }
@@ -37,12 +39,18 @@ export async function loadMergedSessionSettings(
   const envVars = mergeEnvVars(globalSettings.envVars, repoSettings?.envVars ?? []);
   const mcpServers = mergeMcpServers(globalSettings.mcpServers, repoSettings?.mcpServers ?? []);
 
+  // Per-repo overrides global; null means "use global default"
+  const enablePodman = repoSettings?.enablePodman ?? globalSettings.enablePodman;
+  const enableGpu = repoSettings?.enableGpu ?? globalSettings.enableGpu;
+
   return {
     systemPrompt,
     envVars,
     mcpServers,
     claudeModel: globalSettings.claudeModel ?? undefined,
     claudeApiKey: globalSettings.claudeApiKey ?? undefined,
+    enablePodman,
+    enableGpu,
     customSystemPrompt: repoSettings?.customSystemPrompt,
     globalSettings,
   };
