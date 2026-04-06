@@ -94,26 +94,41 @@ function RadioIcon({ selected }: { selected?: boolean }) {
 export function AskUserQuestionDisplay({ tool }: { tool: ToolCall }) {
   const ctx = useMessageListContext();
   const onSendResponse = ctx?.onSendResponse;
+  const onAnswerQuestion = ctx?.onAnswerQuestion;
   const isClaudeRunning = ctx?.isClaudeRunning;
   const [selectedOptions, setSelectedOptions] = useState<Map<number, Set<number>>>(new Map());
 
   const hasOutput = tool.output !== undefined;
 
-  // Check if this is a "real" error vs just waiting for input
-  // Claude Code returns is_error: true with "Answer questions?" when waiting for input
+  // With canUseTool, the tool won't have an error output while waiting.
+  // The query is parked in the canUseTool callback - no output yet.
   const isWaitingForInput =
-    tool.is_error && typeof tool.output === 'string' && tool.output.includes('Answer questions');
+    !hasOutput ||
+    (tool.is_error && typeof tool.output === 'string' && tool.output.includes('Answer questions'));
   const isRealError = tool.is_error && !isWaitingForInput;
-  const isPending = !hasOutput || isWaitingForInput;
+  const isPending = isWaitingForInput;
 
   const questions = useMemo(() => {
     const inputObj = tool.input as AskUserQuestionInput | undefined;
     return inputObj?.questions ?? [];
   }, [tool.input]);
 
+  /** Send an answer, preferring the canUseTool callback over the legacy prompt approach */
+  const sendAnswer = (question: Question, answer: string) => {
+    if (onAnswerQuestion) {
+      // Use canUseTool callback - send structured answers
+      onAnswerQuestion({ [question.question]: answer });
+    } else if (onSendResponse) {
+      // Fallback: send as a text prompt
+      onSendResponse(answer);
+    }
+  };
+
+  const canInteract = isPending && !isClaudeRunning && (!!onAnswerQuestion || !!onSendResponse);
+
   // Handle clicking an option
   const handleOptionClick = (questionIndex: number, optionIndex: number, multiSelect: boolean) => {
-    if (!isPending || isClaudeRunning || !onSendResponse) return;
+    if (!canInteract) return;
 
     const question = questions[questionIndex];
     if (!question) return;
@@ -136,15 +151,13 @@ export function AskUserQuestionDisplay({ tool }: { tool: ToolCall }) {
       // For single select, immediately send the response
       const option = question.options[optionIndex];
       if (option) {
-        onSendResponse(option.label);
+        sendAnswer(question, option.label);
       }
     }
   };
 
   // Handle submitting multi-select responses
   const handleSubmitMultiSelect = (questionIndex: number) => {
-    if (!onSendResponse) return;
-
     const question = questions[questionIndex];
     const selected = selectedOptions.get(questionIndex);
     if (!question || !selected || selected.size === 0) return;
@@ -153,7 +166,7 @@ export function AskUserQuestionDisplay({ tool }: { tool: ToolCall }) {
       .map((idx) => question.options[idx]?.label)
       .filter(Boolean);
 
-    onSendResponse(selectedLabels.join(', '));
+    sendAnswer(question, selectedLabels.join(', '));
   };
 
   // Check if an option is selected (for multi-select during selection)
@@ -209,7 +222,7 @@ export function AskUserQuestionDisplay({ tool }: { tool: ToolCall }) {
             {question.options.map((option, oIndex) => {
               const isSelected = isOptionSelected(qIndex, oIndex);
               const wasAnswered = isAnsweredOption(option);
-              const canClick = isPending && !isClaudeRunning && onSendResponse;
+              const canClick = canInteract;
 
               return (
                 <button
@@ -246,19 +259,15 @@ export function AskUserQuestionDisplay({ tool }: { tool: ToolCall }) {
           </div>
 
           {/* Submit button for multi-select */}
-          {question.multiSelect &&
-            isPending &&
-            !isClaudeRunning &&
-            onSendResponse &&
-            (selectedOptions.get(qIndex)?.size ?? 0) > 0 && (
-              <button
-                type="button"
-                onClick={() => handleSubmitMultiSelect(qIndex)}
-                className="mt-2 px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white text-sm rounded transition-colors"
-              >
-                Submit Selected
-              </button>
-            )}
+          {question.multiSelect && canInteract && (selectedOptions.get(qIndex)?.size ?? 0) > 0 && (
+            <button
+              type="button"
+              onClick={() => handleSubmitMultiSelect(qIndex)}
+              className="mt-2 px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white text-sm rounded transition-colors"
+            >
+              Submit Selected
+            </button>
+          )}
         </div>
       ))}
 
