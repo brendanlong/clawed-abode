@@ -56,6 +56,7 @@ export function useClaudeState(sessionId: string) {
 
   const sendMutation = trpc.claude.send.useMutation();
   const interruptMutation = trpc.claude.interrupt.useMutation();
+  const answerMutation = trpc.claude.answerQuestion.useMutation();
 
   const send = useCallback(
     (prompt: string) => {
@@ -68,6 +69,13 @@ export function useClaudeState(sessionId: string) {
     interruptMutation.mutate({ sessionId });
   }, [sessionId, interruptMutation]);
 
+  const answerQuestion = useCallback(
+    (answers: Record<string, string>) => {
+      answerMutation.mutate({ sessionId, answers });
+    },
+    [sessionId, answerMutation]
+  );
+
   const isRunning = runningData?.running ?? false;
   const commands = commandsData?.commands ?? [];
 
@@ -76,6 +84,7 @@ export function useClaudeState(sessionId: string) {
     send,
     interrupt,
     isInterrupting: interruptMutation.isPending,
+    answerQuestion,
     commands,
   };
 }
