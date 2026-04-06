@@ -2,14 +2,14 @@
 
 ## Overview
 
-A self-hosted web application that provides mobile-friendly access to Claude Code running on local machines with GPU support. The system exposes Claude Code sessions through a web interface, with persistent sessions tied to git clones in Podman containers.
+A self-hosted web application that provides mobile-friendly access to Claude Code running on local machines with GPU support. The system exposes Claude Code sessions through a web interface, with persistent sessions using git worktrees for isolation.
 
-The system uses **rootless Podman** for container management, which provides:
+The system runs **directly on the host** without containers:
 
-- **Safe sudo access**: Claude Code agents have passwordless sudo inside containers without root on the host
-- **Container-in-container support**: Podman-in-Podman allows agents to build and run containers
-- **GPU access via CDI**: NVIDIA GPUs are exposed using Container Device Interface (CDI)
-- **No Docker daemon**: Podman runs daemonless, reducing attack surface
+- **Git worktrees** provide session isolation — each session gets its own worktree from a shared bare repo cache
+- **Claude Agent SDK** runs in-process in the Next.js server — no per-session child processes or IPC
+- **Native GPU access** — agents use the host's GPU directly
+- **Host tools** — agents use whatever development tools are installed on the host
 
 ## Goals
 
@@ -28,20 +28,14 @@ The system uses **rootless Podman** for container management, which provides:
 │                 │     │                 │     │  │    Next.js + tRPC      │      │
 └─────────────────┘     └─────────────────┘     │  │    - Auth              │      │
                                                 │  │    - Session mgmt      │      │
-                                                │  │    - Agent Client      │      │
+                                                │  │    - Claude Agent SDK  │      │
                                                 │  │    - SSE to browser    │      │
-                                                │  └──────────┬─────────────┘      │
-                                                │             │ HTTP/SSE           │
-                                                │  ┌──────────▼─────────────┐      │
-                                                │  │   Podman Containers    │      │
-                                                │  │  ┌──────────────────┐  │      │
-                                                │  │  │ Agent Service    │  │      │
-                                                │  │  │ (Claude SDK)    │  │      │
-                                                │  │  │ + Git Clone     │  │      │
-                                                │  │  │ + GPU (CDI)     │  │      │
-                                                │  │  │ + sudo access   │  │      │
-                                                │  │  └──────────────────┘  │      │
+                                                │  │    - Git worktree mgmt │      │
                                                 │  └────────────────────────┘      │
+                                                │                                  │
+                                                │  /repos/  - bare repo cache      │
+                                                │  /worktrees/{sessionId}/          │
+                                                │  /data/db/ - SQLite               │
                                                 └──────────────────────────────────┘
 ```
 
@@ -62,52 +56,32 @@ The database schema is defined in [`prisma/schema.prisma`](../prisma/schema.pris
 When a session is deleted, it is archived rather than permanently removed. This preserves the message history for later viewing. Archived sessions:
 
 - Have status set to `archived` and archivedAt timestamp recorded
-- Have their container removed and workspace volume deleted
+- Have their worktree removed
 - Keep all messages in the database for viewing
 - Are excluded from the session list by default (toggle available to show them)
 - Are read-only: no start/stop controls, no prompt input
 
 ### Data Storage
 
-The system uses **named Docker volumes** to avoid permission issues with rootless Podman:
+The system uses **host filesystem directories**:
 
-1. **Database** (`clawed-abode-db`): SQLite database for the service container at `/data/db`.
+1. **Database** (`/data/db/`): SQLite database.
 
-2. **Session Workspaces** (`clawed-abode-workspace-{sessionId}`): Each session gets its own dedicated volume. This provides complete isolation between sessions and makes cleanup trivial (just delete the volume).
+2. **Bare Repo Cache** (`/repos/{owner}--{repo}.git`): Shared bare git repositories used as a reference cache. Subsequent sessions for the same repo share git objects for fast worktree creation.
 
-3. **pnpm Store** (`clawed-abode-pnpm-store`): Shared pnpm cache at `/pnpm-store` in runner containers. Speeds up package installs.
+3. **Session Worktrees** (`/worktrees/{sessionId}/{repoName}`): Each session gets its own git worktree created from the bare repo cache. Provides filesystem isolation between sessions.
 
-4. **Gradle Caches** (`clawed-abode-gradle-caches`): Shared Gradle dependency cache at `/gradle-cache/caches` in runner containers. Contains downloaded dependencies and artifact transforms (~3.7 GB). Speeds up builds.
-
-5. **Gradle Wrapper** (`clawed-abode-gradle-wrapper`): Shared Gradle wrapper distribution at `/gradle-cache/wrapper` in runner containers. Contains the Gradle distribution binary (~291 MB).
+4. **Gradle Wrapper** (`clawed-abode-gradle-wrapper`): Shared Gradle wrapper distribution at `/gradle-cache/wrapper` in runner containers. Contains the Gradle distribution binary (~291 MB).
 
    Note: Only `caches/` and `wrapper/` are shared. The `daemon/` directory and other ephemeral state live on the container's overlay filesystem and are recreated fresh each session. This prevents stale Gradle daemons from previous sessions from causing phantom builds (see issue #238).
 
-6. **Git Cache** (`clawed-abode-git-cache`): Shared bare repository cache at `/cache` in clone containers. Used as `--reference` during clones to avoid re-downloading git objects for repos that have been cloned before.
-
-Using named volumes instead of bind mounts:
-
-- Avoids the slow startup caused by `--userns=keep-id` (Podman re-chowning the image)
-- Avoids permission issues since volumes are owned by the container user
-- Simplifies the architecture by removing the need for host path translation
-- Each volume can be managed independently (cleared, backed up, etc.)
+5. **Git Cache** (`clawed-abode-git-cache`): Shared bare repository cache at `/cache` in clone containers. Used as `--reference` during clones to avoid re-downloading git objects for repos that have been cloned before.
 
 ### Workspace Structure
 
-Each session has a dedicated volume that contains the cloned repository:
+Each session's worktree is at `/worktrees/{sessionId}/{repo-name}`. For no-repo sessions, just `/worktrees/{sessionId}/`.
 
-```
-/workspace/                # Session's volume mounted here
-├── {repo-name}/          # The cloned git repository (working directory)
-├── .worktrees/           # Optional: git worktrees for parallel work
-└── ...                   # Agent can create other files/directories as needed
-```
-
-Each runner container mounts only its own session's volume at `/workspace`, with the working directory set to `/workspace/{repo-name}` (or just `/workspace` for no-repo sessions). This provides complete session isolation - each agent can only access its own workspace. This gives the agent:
-
-- Full write access to the workspace for worktrees, temp files, etc.
-- Clean separation between the repo and working files
-- The repo as the default working directory for Claude
+The worktree is the agent's working directory. Each session is fully isolated — agents can only access their own worktree.
 
 ## API Design (tRPC)
 
@@ -182,24 +156,28 @@ sessions.get({ sessionId: string })
 
 sessions.start({ sessionId: string })
   → { session: Session }
-  // Starts stopped container
+  // Marks session as running (worktree already exists on disk)
 
 sessions.stop({ sessionId: string })
   → { session: Session }
-  // Stops container but preserves workspace
+  // Stops any running Claude query, marks session as stopped
 
 sessions.delete({ sessionId: string })
   → { success: true }
-  // Stops container, deletes workspace
+  // Stops query, removes worktree, archives session
 ```
 
 ### Claude Interaction
 
 ```typescript
 claude.send({ sessionId: string, prompt: string })
-  → ReadableStream<Message>
-  // Spawns: claude -p <prompt> --resume <sessionId> --output-format stream-json
-  // Streams parsed JSON lines as they arrive
+  → { success: true }
+  // Starts a query() call in-process using the Claude Agent SDK
+  // Messages stream to the client via SSE
+
+claude.answerQuestion({ sessionId: string, answers: Record<string, string> })
+  → { success: true }
+  // Resolves a pending AskUserQuestion canUseTool callback
 
 claude.interrupt({ sessionId: string })
   → { success: true }
@@ -222,45 +200,25 @@ claude.getHistory({
 2. Server calls `sessions.create()`
 3. Server creates session record with status `creating` and returns immediately
 4. UI navigates to session page, polls for status updates
-5. **For repo sessions**: Background: Server updates or creates the git reference cache for the repo (see Git Cache below)
-6. **For repo sessions**: Background: Server creates a dedicated volume and clones the repository via `git clone --reference` to `/workspace/{repo-name}`
-   **For no-repo sessions**: Background: Server creates an empty workspace volume
-7. Background: Temporary clone container is removed (repo sessions only)
-8. Background: Server allocates an agent port (for host networking, finds next available port starting from 10000)
-9. Background: Server starts the session container with:
-
-- Session's volume mounted at `/workspace`
-- Working directory set to `/workspace/{repo-name}` (repo sessions) or `/workspace` (no-repo sessions)
-- GPU access via CDI (`--device nvidia.com/gpu=all`)
-- Claude auth passed via environment variable
-- Podman socket mounted (for podman-in-podman)
-- GITHUB_TOKEN env var for push/pull access
-- Git credential helper configured automatically
-- Passwordless sudo for package installation
-- Agent service configuration: `AGENT_PORT`, `SYSTEM_PROMPT`, `CLAUDE_MODEL`
-
-12. Background: Container starts the agent service (Node.js HTTP server using Claude Agent SDK)
-13. Background: Server waits for agent service health check to pass
-14. Session status → `running`, statusMessage → null
-15. Background: If an initial prompt was provided, server sends it via `runClaudeCommand()` (no client interaction needed)
+5. **For repo sessions**: Background: Server updates or creates the bare repo cache at `/repos/{owner}--{repo}.git`
+6. **For repo sessions**: Background: Server creates a worktree from the cache at `/worktrees/{sessionId}/{repoName}`
+   **For no-repo sessions**: Background: Server creates an empty directory at `/worktrees/{sessionId}/`
+7. Session status → `running`, statusMessage → null
+8. Background: If an initial prompt was provided, server sends it via `runClaudeCommand()` (no client interaction needed)
 
 ### Interaction Flow
 
 1. User sends prompt via `claude.send()`
-2. Next.js server checks the agent's `/status` to determine if the session should resume (has prior messages) and whether a query is already running
-3. Next.js server sends the prompt via `POST /query` to the agent service, including init options (session ID, resume flag, working directory, MCP servers)
-4. Agent service auto-initializes the persistent session on the first `/query` call (starts the SDK `query()` with an `AsyncIterable<SDKUserMessage>` prompt stream, fetches slash commands, begins the message processing loop). Subsequent calls reuse the existing session.
-5. Agent service yields the user message into the persistent query's async generator
-6. Agent service streams results back as Server-Sent Events (SSE):
-   - **Partial messages**: `stream_event` messages from the SDK are accumulated by `StreamAccumulator` into synthetic partial assistant messages. These are emitted as `{ partial }` SSE events for real-time UI updates (text streaming, tool call progress) but are **not persisted** to the database.
-   - **Complete messages**: Full `assistant`, `user`, `result`, and `system` messages are emitted as `{ sequence, message }` SSE events and persisted.
-7. Next.js server reads SSE stream:
-   - For partial messages: emits SSE event with `partial-{uuid}` ID to browser (not saved to DB)
-   - For complete messages: saves to database with incrementing sequence number, emits SSE event
-8. Browser client receives SSE events and updates the message cache:
-   - Partial messages replace any existing partial in the cache (only one active partial at a time)
-   - Complete messages remove any partial messages and are added to the cache
-9. On completion, `result` message marks end of turn. The persistent session stays alive for the next prompt.
+2. Next.js server calls `query()` from the Claude Agent SDK directly in-process, with `resume: sessionId` for follow-up messages
+3. The `canUseTool` callback handles:
+   - **AskUserQuestion**: Parks a promise, sends the question to the browser via SSE (as a normal assistant message with tool_use). User answers via `claude.answerQuestion()` mutation, which resolves the promise.
+   - **ExitPlanMode**: Similar flow — user approves/rejects the plan.
+   - **All other tools**: Auto-approved (bypass permissions mode).
+4. Messages stream from the SDK:
+   - **Partial messages**: `stream_event` messages are accumulated by `StreamAccumulator` and emitted via SSE for real-time UI updates (not persisted).
+   - **Complete messages**: Saved to database with incrementing sequence numbers, emitted via SSE.
+5. Browser client receives SSE events and updates the message cache.
+6. On completion, `result` message marks end of turn.
 
 ### System Prompt
 
@@ -275,22 +233,14 @@ The system prompt instructs Claude to:
 
 This ensures users can see all changes through GitHub, which is their only way to access the codebase.
 
-#### Container Issue Reporting
-
-The system prompt also instructs Claude to report container issues (missing tools, misconfigured environments) to the clawed-abode repository. Before creating an issue, Claude should:
-
-1. Search existing issues to avoid duplicates: `gh issue list --repo brendanlong/clawed-abode --search "<issue>" --state all`
-2. If no matching issue exists, create one with labels `bug` and `reported-by-claude`
-3. Continue with workarounds if possible, or inform the user if the task cannot be completed
-
 ### Interruption Flow
 
 1. User clicks "Stop" in UI
 2. Server calls `claude.interrupt()`
-3. Next.js server sends HTTP POST to the agent service (`/interrupt` endpoint)
-4. Agent service calls `interrupt()` on the running SDK query (falls back to `abort()`)
-5. Claude Code cleans up, doesn't persist the interrupted tool call
-6. User can send new prompt to continue
+3. Server calls `interrupt()` on the in-process SDK query
+4. Any pending `canUseTool` promise is rejected
+5. Claude Code cleans up
+6. User can send new prompt to continue (with resume)
 
 ### Reconnection Flow
 
@@ -303,72 +253,35 @@ The system prompt also instructs Claude to report container issues (missing tool
 ### Deletion Flow
 
 1. User deletes session
-2. Server stops container if running
-3. Server removes container
-4. Server deletes workspace directory at `/data/workspaces/{sessionId}`
-5. Server deletes messages from database
-6. Server deletes session record
+2. Server stops any running Claude query
+3. Server removes worktree and workspace directory
+4. Session is archived (messages preserved for viewing)
 
-## Podman Setup
+## Claude Agent SDK Integration
 
-### Base Image
+The Next.js server uses the `@anthropic-ai/claude-agent-sdk` directly in-process to interact with Claude. No per-session processes, containers, or IPC.
 
-The runner container image is defined in [`docker/Dockerfile.claude-code`](../docker/Dockerfile.claude-code). Key features:
+### Query Model
 
-- NVIDIA CUDA base for GPU workloads
-- Podman for container-in-container operations
-- Common development tools (Node.js, Python, JDK, Android SDK)
-- Passwordless sudo for package installation
-- Docker/docker-compose aliases pointing to Podman equivalents
-- Rootless Podman configured with fuse-overlayfs
-- Built-in agent service (`/opt/agent-service/`) that runs as the container's CMD, providing an HTTP API for Claude Agent SDK interaction
+Each user prompt is a separate `query()` call with `resume: sessionId` for multi-turn conversations. This approach:
 
-### Container Launch
+- Requires no persistent processes between prompts
+- Handles server restarts gracefully (just resume with the session ID)
+- Simplifies the architecture significantly
 
-The application uses Podman CLI commands to manage containers, routing them through the Docker-compatible socket via `CONTAINER_HOST` env var.
+### User Input (canUseTool)
 
-Runner containers are created with (see [`createAndStartContainer`](../src/server/services/podman.ts) for implementation):
+The SDK's `canUseTool` callback handles interactive tools:
 
-- **Network mode**: Configurable via `CONTAINER_NETWORK_MODE` (default: `host`). Host networking allows containers to connect to services started via podman-compose on localhost. See [issue #147](https://github.com/brendanlong/clawed-abode/issues/147) for details.
-- **Workspace**: Session's dedicated volume mounted at `/workspace`
-- **Claude auth**: OAuth token passed via `CLAUDE_CODE_OAUTH_TOKEN` environment variable
-- **Podman socket**: Bind-mounted for container-in-container support (read-only)
-- **pnpm store**: Named volume mounted at `/pnpm-store` for shared package cache
-- **Gradle cache**: Named volumes for `caches/` and `wrapper/` subdirectories mounted under `/gradle-cache`. The `daemon/` directory is ephemeral per-container to prevent stale daemon issues.
-- **Agent service**: Configured via `AGENT_PORT`, `SYSTEM_PROMPT`, and `CLAUDE_MODEL` environment variables. The container's CMD runs the agent service, which provides an HTTP API for the Next.js server to interact with Claude.
+- **AskUserQuestion**: The callback parks a `Promise` that resolves when the user answers via the `claude.answerQuestion` tRPC mutation. The question appears as a normal assistant message (tool_use block) in the UI.
+- **ExitPlanMode**: Similar flow — user approves/rejects the plan.
+- **All other tools**: Auto-approved (`bypassPermissions` mode).
 
-### Agent Service Architecture
+### Streaming
 
-Each runner container includes a built-in agent service (`/opt/agent-service/`) that uses the `@anthropic-ai/claude-agent-sdk` to interact with Claude programmatically instead of spawning CLI processes.
+The SDK emits `stream_event` messages which are accumulated by `StreamAccumulator` into partial assistant messages for real-time UI updates. These are emitted to the browser via SSE but not persisted.
 
-The agent service uses **persistent streaming input mode**: instead of creating a new `query()` call per user prompt, it maintains a single long-lived `query()` per session lifetime with an `AsyncIterable<SDKUserMessage>` prompt stream. User messages are yielded into this stream as they arrive.
-
-**Agent service endpoints:**
-
-- `POST /query` — Send a user prompt and stream results via SSE. Auto-initializes the persistent query session on the first call (sets up the SDK `query()` with streaming input, fetches slash commands, starts the message processing loop). Subsequent calls reuse the existing session. Body: `{ prompt, sessionId, resume?, cwd?, mcpServers? }`. Emits: `{ partial }` for real-time streaming updates, `{ sequence, message }` for complete persisted messages, `{ commands }` for slash command updates, and `{ done: true }` on completion.
-- `POST /interrupt` — Interrupt the currently running query.
-- `GET /status` — Check if a prompt is being processed (`running`), whether the session is initialized (`initialized`), and get the last sequence number and cached commands.
-- `GET /messages?after=N` — Fetch complete messages after a given sequence number (for reconnection/catch-up).
-- `GET /commands` — Get the currently known supported slash commands.
-- `GET /branch` — Get the current git branch in the container's working directory.
-- `GET /health` — Health check endpoint.
-
-**Benefits of persistent streaming input mode:**
-
-- **Commands available at first query** — `initializationResult()` resolves during auto-init, so slash commands are emitted through the first query's SSE stream
-- **No re-initialization per prompt** — session stays alive between prompts, avoiding repeated loading of CLAUDE.md, MCP servers, skills, etc.
-- **Plan mode / AskUserQuestion work correctly** — interactive tools work naturally since the session persists between prompts
-- **`setModel()` / `setPermissionMode()` become available** — these SDK methods only work in streaming input mode
-- No file-based communication (output files, tailing, PID tracking)
-- Clean interrupt via SDK API instead of signal-based process management
-- Message persistence inside the container (SQLite) for reconnection
-- Direct programmatic access to Claude sessions, resume, and settings
-
-**Implementation:**
-
-- Agent service: [`agent-service/`](../agent-service/) (Node.js + TypeScript)
-- Agent client (Next.js side): [`src/server/services/agent-client.ts`](../src/server/services/agent-client.ts)
-- Claude runner (orchestration): [`src/server/services/claude-runner.ts`](../src/server/services/claude-runner.ts)
+**Implementation:** [`src/server/services/claude-runner.ts`](../src/server/services/claude-runner.ts)
 
 ## Message Storage & Pagination
 
@@ -413,19 +326,12 @@ ORDER BY sequence ASC;
    - 7-day session expiration
    - Session tracking (IP address, user agent) for audit
 
-### Container Isolation
+### Session Isolation
 
-- Each session runs in its own container
-- Containers can't access each other's workspaces
-- Podman socket access is intentional for podman-in-podman capability
-- **Rootless Podman**: Claude Code agents have passwordless sudo inside containers, but:
-  - The container user is not root on the host
-  - User namespace isolation prevents host privilege escalation
-  - This solves [issue #39](https://github.com/brendanlong/clawed-abode/issues/39) (no sudo for package installation)
-- `--dangerously-skip-permissions` is acceptable because:
-  - Only authenticated user can access
-  - Container provides isolation boundary
-  - Workspace is disposable
+- Each session runs in its own git worktree at `/worktrees/{sessionId}/`
+- Agents share the host filesystem, user, and installed tools
+- `bypassPermissions` mode is used since the machine is dedicated to running this app
+- The machine should be dedicated to this application — not shared with other users
 
 ### GitHub Token Security
 
@@ -433,49 +339,16 @@ ORDER BY sequence ASC;
 - Scope the token to only the repositories you want to use
 - Grant only "Contents: Read and write" permission (for push/pull)
 - Create at: https://github.com/settings/personal-access-tokens/new
-- The token is passed as an environment variable to containers
-- A git credential helper is configured automatically inside containers
+- The token is configured via a git credential helper in each worktree
 
-### Shared pnpm Store
+### Bare Repo Cache
 
-- Set `PNPM_STORE_PATH` to the host's pnpm store path (e.g., `/home/user/.local/share/pnpm/store`)
-- The store is mounted at `/pnpm-store` in containers and pnpm is configured to use it
-- pnpm's store is safe for concurrent access (atomic operations)
-- Only `pnpm store prune` should not run while installs are in progress
+The system maintains bare git repositories at `/repos/` to speed up session creation:
 
-### Shared Gradle Cache
-
-- `GRADLE_USER_HOME` is set to `/gradle-cache` in containers
-- Only the `caches/` and `wrapper/` subdirectories are shared via named volumes:
-  - `clawed-abode-gradle-caches` → `/gradle-cache/caches` (dependencies, artifact transforms)
-  - `clawed-abode-gradle-wrapper` → `/gradle-cache/wrapper` (Gradle distribution binary)
-- The `daemon/` directory and other ephemeral state are NOT shared — they live on the container's overlay filesystem and are recreated fresh each session
-- This prevents stale Gradle daemons from previous sessions from causing phantom builds (see issue #238)
-- Gradle's cache is safe for concurrent access (uses file locking)
-
-### Git Reference Cache
-
-The system maintains a cache of bare git repositories to speed up session creation:
-
-- **Volume**: `clawed-abode-git-cache` (configurable via `GIT_CACHE_VOLUME` env var)
-- **Cache path format**: `/cache/{owner}--{repo}.git` (e.g., `/cache/brendanlong--clawed-abode.git`)
-- **How it works**:
-  1. Before cloning, the system fetches the latest refs into the cached bare repo (or creates it if missing)
-  2. Clone uses `git clone --reference <cache-path> --dissociate` to share objects with the cache
-  3. The `--dissociate` flag ensures cloned repos are independent - they work even if the cache is deleted
-- **Benefits**:
-  - Subsequent sessions for the same repo only download new commits (typically a few MB instead of the full history)
-  - First clone still works normally if caching fails
-- **Git handles concurrent access**: Multiple fetches/clones can safely use the same cache
-- **Cleanup**: Old cached repos can be pruned by deleting files from the volume; sessions already cloned are unaffected
-
-### Podman Socket (Container-in-Container)
-
-- Set `PODMAN_SOCKET_PATH` to the host's Podman socket path (e.g., `/run/user/1000/podman/podman.sock`)
-- The socket is mounted at `/var/run/docker.sock` in runner containers
-- `CONTAINER_HOST=unix:///var/run/docker.sock` is set in runner containers so `podman`/`docker` commands use the host's Podman
-- This enables Claude Code agents to build and run containers inside their sessions
-- Without this, agents would need to use nested Podman which has UID/GID mapping limitations
+- **Cache path format**: `/repos/{owner}--{repo}.git`
+- **How it works**: Before creating a worktree, the system fetches latest refs into the cached bare repo (or creates it if missing). Worktrees are created from this cache.
+- **Benefits**: Subsequent sessions for the same repo share git objects — worktree creation is near-instant.
+- **Cleanup**: Old cached repos can be pruned by deleting files from `/repos/`; existing worktrees are unaffected.
 
 ### Per-Repository Settings & Secrets
 
@@ -483,7 +356,7 @@ Users can configure per-repository settings that are automatically applied when 
 
 - **Favorites**: Mark repositories (or "No Repository") as favorites so they appear at the top of the repo selector
 - **Custom System Prompt**: Additional instructions appended to the default system prompt for all sessions using this repository
-- **Environment Variables**: Custom env vars passed to the container (e.g., API keys, config values)
+- **Environment Variables**: Custom env vars set for Claude sessions (e.g., API keys, config values)
 - **MCP Servers**: Configure [MCP servers](https://modelcontextprotocol.io/) for Claude to use, supporting three transport types:
   - **Stdio**: Traditional command-based servers (e.g., `npx @anthropic/mcp-server-memory`)
   - **HTTP**: Streamable HTTP MCP servers with optional auth headers
@@ -605,17 +478,8 @@ Voice mode provides speech-to-text input and text-to-speech output for hands-fre
 
 ```
 clawed-abode/
-├── agent-service/              # Agent service (runs inside containers)
-│   ├── src/
-│   │   ├── index.ts            # HTTP server with query/interrupt/status endpoints
-│   │   ├── query-runner.ts     # Wraps Claude Agent SDK query()
-│   │   ├── stream-accumulator.ts # Accumulates stream_events into partial messages
-│   │   ├── message-store.ts    # SQLite message persistence
-│   │   └── logger.ts           # Logging utilities
-│   ├── package.json
-│   └── tsconfig.json
 ├── shared/
-│   └── agent-types.ts          # Shared types between agent-service and app
+│   └── agent-types.ts          # Shared types (PartialAssistantMessage)
 ├── scripts/
 │   └── hash-password.ts        # Password hashing utility
 ├── src/
@@ -630,10 +494,10 @@ clawed-abode/
 │   │   │   ├── repoSettings.ts
 │   │   │   └── globalSettings.ts
 │   │   ├── services/
-│   │   │   ├── podman.ts          # Container management via Podman CLI
-│   │   │   ├── agent-client.ts    # HTTP client for agent service
-│   │   │   ├── claude-runner.ts   # Orchestrates Claude queries via agent client
-│   │   │   ├── global-settings.ts # Global settings service (prompts, global env vars/MCP)
+│   │   │   ├── worktree-manager.ts # Git worktree lifecycle
+│   │   │   ├── claude-runner.ts   # In-process Claude Agent SDK queries
+│   │   │   ├── stream-accumulator.ts # Accumulates stream_events into partials
+│   │   │   ├── global-settings.ts # Global settings service
 │   │   │   ├── repo-settings.ts   # Per-repo settings service
 │   │   │   ├── settings-helpers.ts # Shared schemas, encryption, decrypt helpers
 │   │   │   ├── settings-merger.ts # Merges global + per-repo env vars and MCP servers
@@ -641,7 +505,7 @@ clawed-abode/
 │   │   │   ├── anthropic-models.ts # Claude model configuration
 │   │   │   ├── github.ts         # GitHub API service
 │   │   │   ├── mcp-validator.ts  # MCP server config validation
-│   │   │   └── session-reconciler.ts # Reconciles container/DB state
+│   │   │   └── session-reconciler.ts # Marks sessions stopped on restart
 │   │   └── trpc.ts
 │   ├── lib/
 │   │   ├── auth.ts               # Authentication utilities
@@ -670,9 +534,6 @@ clawed-abode/
 │           ├── VoiceMicButton.tsx
 │           ├── MessagePlayButton.tsx
 │           └── VoiceAutoReadToggle.tsx
-├── docker/
-│   ├── Dockerfile.claude-code
-│   └── entrypoint.sh            # Container entrypoint script
 ├── prisma/
 │   └── schema.prisma
 └── package.json
