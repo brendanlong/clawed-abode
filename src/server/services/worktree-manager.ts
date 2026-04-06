@@ -96,9 +96,28 @@ async function updateBareRepoCache(repoFullName: string, githubToken?: string): 
 
   try {
     if (await pathExists(cachePath)) {
-      // Fetch latest refs into existing cache
+      // Temporarily set the remote URL with token for fetching private repos,
+      // then strip it afterward
+      if (githubToken) {
+        await run('git', ['-C', cachePath, 'remote', 'set-url', 'origin', repoUrl]);
+      }
+
       log.info('Fetching updates for cached repo', { repoFullName });
-      await run('git', ['-C', cachePath, 'fetch', '--all', '--prune']);
+      try {
+        await run('git', ['-C', cachePath, 'fetch', '--all', '--prune']);
+      } finally {
+        // Always strip the token from the URL, even if fetch fails
+        if (githubToken) {
+          await run('git', [
+            '-C',
+            cachePath,
+            'remote',
+            'set-url',
+            'origin',
+            `https://github.com/${repoFullName}.git`,
+          ]);
+        }
+      }
     } else {
       // Create new bare repo cache
       log.info('Creating new bare repo cache', { repoFullName });
@@ -171,8 +190,18 @@ export async function setupWorktree(config: WorktreeConfig): Promise<WorktreeRes
     const cachePath = bareRepoPath(repoFullName);
     await mkdir(workspacePath, { recursive: true });
 
-    // Add worktree from the bare repo, checking out the specified branch
-    await run('git', ['-C', cachePath, 'worktree', 'add', worktreePath, branch]);
+    // Add worktree detached at the branch's commit, then create a session branch.
+    // Using --detach avoids conflicts when multiple sessions target the same branch
+    // (git won't allow the same branch checked out in multiple worktrees).
+    await run('git', [
+      '-C',
+      cachePath,
+      'worktree',
+      'add',
+      '--detach',
+      worktreePath,
+      `origin/${branch}`,
+    ]);
   }
 
   // Widen fetch refspec to track all remote branches

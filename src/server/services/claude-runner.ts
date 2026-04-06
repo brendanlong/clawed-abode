@@ -404,7 +404,13 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
   } finally {
     state.isRunning = false;
     state.currentQuery = null;
-    state.pendingInput = null;
+
+    // Reject any pending user input promise so the SDK doesn't hang
+    if (state.pendingInput) {
+      state.pendingInput.reject(new Error('Query ended'));
+      state.pendingInput = null;
+    }
+
     sessions.delete(sessionId);
 
     sseEvents.emitClaudeRunning(sessionId, false);
@@ -482,7 +488,7 @@ export function answerUserInput(sessionId: string, answers: Record<string, strin
  * Check if a session has a pending user input request.
  */
 export function hasPendingInput(sessionId: string): boolean {
-  return sessions.get(sessionId)?.pendingInput !== null;
+  return sessions.get(sessionId)?.pendingInput != null;
 }
 
 /**
