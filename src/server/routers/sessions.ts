@@ -3,23 +3,13 @@ import { router, protectedProcedure } from '../trpc';
 import { prisma } from '@/lib/prisma';
 import { TRPCError } from '@trpc/server';
 import {
-  createAndStartContainer,
-  stopContainer,
-  removeContainer,
-  cloneRepoInVolume,
-  createWorkspaceVolume,
-  removeWorkspaceFromVolume,
-  verifyContainerHealth,
-  cleanupSessionSocket,
-} from '../services/podman';
+  setupWorktree,
+  createEmptyWorkspace,
+  removeWorkspace,
+  getSessionWorkingDir,
+} from '../services/worktree-manager';
 import { loadMergedSessionSettings } from '../services/settings-merger';
-import {
-  createAgentClient,
-  getAgentSocketPath,
-  waitForAgentHealth,
-} from '../services/agent-client';
-import { runClaudeCommand } from '../services/claude-runner';
-import { syncSessionStatus } from '../services/session-reconciler';
+import { runClaudeCommand, stopSession } from '../services/claude-runner';
 import { sseEvents } from '../services/events';
 import { createLogger, toError } from '@/lib/logger';
 import { env } from '@/lib/env';
@@ -32,7 +22,7 @@ const sessionStatusSchema = z.enum(['creating', 'running', 'stopped', 'error', '
 const NO_REPO_SENTINEL = '__no_repo__';
 
 // Background session setup - runs after create mutation returns
-async function setupSession(
+async function setupSessionBackground(
   sessionId: string,
   repoFullName: string | null,
   branch: string | null,
@@ -53,63 +43,27 @@ async function setupSession(
     let repoPath = '';
 
     if (repoFullName && branch) {
-      // Clone the repository into the workspaces volume
-      log.info('Cloning repository', { sessionId, repoFullName, branch });
-      const cloneResult = await cloneRepoInVolume({
+      // Set up a git worktree for this session
+      await updateStatus('Cloning repository...');
+      const result = await setupWorktree({
         sessionId,
         repoFullName,
         branch,
         githubToken,
       });
-      repoPath = cloneResult.repoPath;
-      log.info('Repository cloned', { sessionId, repoPath });
+      repoPath = result.repoPath;
+      log.info('Worktree created', { sessionId, repoPath });
     } else {
-      // No-repo session: create an empty workspace volume
-      log.info('Creating empty workspace for no-repo session', { sessionId });
+      // No-repo session: create an empty workspace directory
       await updateStatus('Creating workspace...');
-      await createWorkspaceVolume(sessionId);
+      await createEmptyWorkspace(sessionId);
     }
 
-    // Update status
-    await updateStatus('Starting container...');
-
-    // Load and merge global + per-repo settings
-    // For no-repo sessions, use the sentinel value to load no-repo-specific settings
-    const settingsKey = repoFullName ?? NO_REPO_SENTINEL;
-    const settings = await loadMergedSessionSettings(settingsKey);
-
-    // Start container with GitHub token for push/pull access and merged settings
-    log.info('Starting container', { sessionId });
-    const containerId = await createAndStartContainer({
-      sessionId,
-      repoPath,
-      githubToken,
-      systemPrompt: settings.systemPrompt,
-      repoEnvVars: settings.envVars,
-      claudeModel: settings.claudeModel,
-      claudeApiKey: settings.claudeApiKey,
-    });
-    log.info('Container started', { sessionId, containerId });
-
-    // Verify container is healthy before marking session as running
-    await updateStatus('Verifying container health...');
-    await verifyContainerHealth(containerId);
-
-    // Wait for the agent service inside the container to become healthy
-    await updateStatus('Waiting for agent service...');
-    const agentClient = createAgentClient(getAgentSocketPath(sessionId));
-    const agentHealthy = await waitForAgentHealth(agentClient);
-    if (!agentHealthy) {
-      throw new Error('Agent service did not become healthy');
-    }
-    log.info('Agent service healthy', { sessionId, containerId });
-
-    // Update session with container info
+    // Session is ready - mark as running
     const session = await prisma.session.update({
       where: { id: sessionId },
       data: {
         repoPath,
-        containerId,
         status: 'running',
         statusMessage: null,
       },
@@ -119,25 +73,28 @@ async function setupSession(
     log.info('Session setup complete', { sessionId });
 
     // Send the initial prompt if provided
-    // Reuse settings already loaded above for container creation
     if (initialPrompt?.trim()) {
       log.info('Sending initial prompt', { sessionId });
+
+      const settingsKey = repoFullName ?? NO_REPO_SENTINEL;
+      const settings = await loadMergedSessionSettings(settingsKey);
+      const workingDir = getSessionWorkingDir(sessionId, repoPath);
+
       runClaudeCommand({
         sessionId,
-        containerId,
         prompt: initialPrompt.trim(),
+        workingDir,
         customSystemPrompt: settings.customSystemPrompt,
         globalSettings: settings.globalSettings,
+        claudeModel: settings.claudeModel,
         mcpServers: settings.mcpServers,
       }).catch((err) => {
         log.error('Initial prompt failed', toError(err), { sessionId });
       });
     }
   } catch (error) {
-    // Log the full error with stack trace
     log.error('Session setup failed', toError(error), { sessionId, repoFullName, branch });
 
-    // Mark session as error with message
     const errorMessage = error instanceof Error ? error.message : 'Failed to create session';
     const session = await prisma.session.update({
       where: { id: sessionId },
@@ -167,23 +124,20 @@ export const sessionsRouter = router({
       const githubToken = env.GITHUB_TOKEN;
       const hasRepo = !!input.repoFullName && !!input.branch;
 
-      // Create session record first
       const session = await prisma.session.create({
         data: {
           name: input.name,
           repoUrl: hasRepo ? `https://github.com/${input.repoFullName}.git` : null,
           branch: hasRepo ? input.branch! : null,
-          workspacePath: '', // Deprecated - workspaces now use named volumes
+          workspacePath: '',
           status: 'creating',
           statusMessage: hasRepo ? 'Cloning repository...' : 'Creating workspace...',
           initialPrompt: input.initialPrompt,
         },
       });
 
-      // Start setup in background (don't await)
-      // Note: setupSession already logs errors internally, but we catch here
-      // to prevent unhandled promise rejections
-      setupSession(
+      // Start setup in background
+      setupSessionBackground(
         session.id,
         input.repoFullName ?? null,
         input.branch ?? null,
@@ -193,7 +147,6 @@ export const sessionsRouter = router({
         log.error('Unhandled error in session setup', toError(error), { sessionId: session.id });
       });
 
-      // Return immediately so UI can navigate to session page
       return { session };
     }),
 
@@ -202,7 +155,7 @@ export const sessionsRouter = router({
       z
         .object({
           status: sessionStatusSchema.optional(),
-          includeArchived: z.boolean().optional(), // Default false - excludes archived sessions
+          includeArchived: z.boolean().optional(),
         })
         .optional()
     )
@@ -212,7 +165,6 @@ export const sessionsRouter = router({
       const sessions = await prisma.session.findMany({
         where: {
           ...(input?.status ? { status: input.status } : {}),
-          // By default, exclude archived sessions unless explicitly requested
           ...(!includeArchived && !input?.status ? { status: { not: 'archived' } } : {}),
         },
         orderBy: { updatedAt: 'desc' },
@@ -224,9 +176,6 @@ export const sessionsRouter = router({
   get: protectedProcedure
     .input(z.object({ sessionId: z.string().uuid() }))
     .query(async ({ input }) => {
-      // Sync session status with actual container state before returning
-      const newStatus = await syncSessionStatus(input.sessionId);
-
       const session = await prisma.session.findUnique({
         where: { id: input.sessionId },
       });
@@ -238,20 +187,12 @@ export const sessionsRouter = router({
         });
       }
 
-      // If status was updated, emit SSE event so other clients are notified
-      if (newStatus !== null) {
-        sseEvents.emitSessionUpdate(input.sessionId, session);
-      }
-
       return { session };
     }),
 
   start: protectedProcedure
     .input(z.object({ sessionId: z.string().uuid() }))
     .mutation(async ({ input }) => {
-      // Sync status with actual container state first
-      await syncSessionStatus(input.sessionId);
-
       const session = await prisma.session.findUnique({
         where: { id: input.sessionId },
       });
@@ -267,49 +208,16 @@ export const sessionsRouter = router({
         return { session };
       }
 
-      try {
-        const githubToken = env.GITHUB_TOKEN;
+      // For the new architecture, "starting" just means marking as running.
+      // The workspace (worktree) already exists on disk.
+      // Claude queries run in-process when the user sends a prompt.
+      const updatedSession = await prisma.session.update({
+        where: { id: session.id },
+        data: { status: 'running' },
+      });
 
-        // Extract repoFullName from repoUrl (e.g., "https://github.com/owner/repo.git" -> "owner/repo")
-        // For no-repo sessions, repoUrl is null
-        const repoFullNameMatch = session.repoUrl?.match(/github\.com\/([^/]+\/[^/.]+)/);
-        const repoFullName = repoFullNameMatch?.[1];
-
-        // Load and merge global + per-repo settings
-        // For no-repo sessions, use the sentinel value
-        const settingsKey = repoFullName ?? NO_REPO_SENTINEL;
-        const settings = await loadMergedSessionSettings(settingsKey);
-
-        const containerId = await createAndStartContainer({
-          sessionId: session.id,
-          repoPath: session.repoPath,
-          githubToken,
-          systemPrompt: settings.systemPrompt,
-          repoEnvVars: settings.envVars,
-          claudeModel: settings.claudeModel,
-          claudeApiKey: settings.claudeApiKey,
-        });
-
-        // Wait for agent service to be healthy
-        const agentClient = createAgentClient(getAgentSocketPath(session.id));
-        await waitForAgentHealth(agentClient, { maxAttempts: 30, intervalMs: 1000 });
-
-        const updatedSession = await prisma.session.update({
-          where: { id: session.id },
-          data: {
-            containerId,
-            status: 'running',
-          },
-        });
-
-        sseEvents.emitSessionUpdate(input.sessionId, updatedSession);
-        return { session: updatedSession };
-      } catch (error) {
-        throw new TRPCError({
-          code: 'INTERNAL_SERVER_ERROR',
-          message: error instanceof Error ? error.message : 'Failed to start session',
-        });
-      }
+      sseEvents.emitSessionUpdate(input.sessionId, updatedSession);
+      return { session: updatedSession };
     }),
 
   stop: protectedProcedure
@@ -326,9 +234,8 @@ export const sessionsRouter = router({
         });
       }
 
-      if (session.containerId) {
-        await stopContainer(session.containerId);
-      }
+      // Stop any running Claude query
+      await stopSession(input.sessionId);
 
       const updatedSession = await prisma.session.update({
         where: { id: session.id },
@@ -353,29 +260,27 @@ export const sessionsRouter = router({
         });
       }
 
-      // If already archived, nothing to do
       if (session.status === 'archived') {
         return { success: true };
       }
 
-      // Stop and remove container
-      if (session.containerId) {
-        await removeContainer(session.containerId);
-      }
+      // Stop any running query
+      await stopSession(input.sessionId);
 
-      // Remove workspace from volume
-      await removeWorkspaceFromVolume(session.id);
+      // Extract repo full name for worktree cleanup
+      const repoFullNameMatch = session.repoUrl?.match(/github\.com\/([^/]+\/[^/.]+)/);
+      const repoFullName = repoFullNameMatch?.[1] ?? null;
 
-      // Clean up socket file
-      await cleanupSessionSocket(session.id);
+      // Remove workspace (worktree + directory)
+      await removeWorkspace(session.id, repoFullName);
 
-      // Archive session instead of deleting (keep messages for later viewing)
+      // Archive session (keep messages for viewing)
       const updatedSession = await prisma.session.update({
         where: { id: session.id },
         data: {
           status: 'archived',
           archivedAt: new Date(),
-          containerId: null, // Clear container ID since container is removed
+          containerId: null,
         },
       });
 
@@ -386,21 +291,11 @@ export const sessionsRouter = router({
   syncStatus: protectedProcedure
     .input(z.object({ sessionId: z.string().uuid() }))
     .mutation(async ({ input }) => {
-      // Use the centralized syncSessionStatus function
-      const newStatus = await syncSessionStatus(input.sessionId);
-
+      // In the new architecture, session status is authoritative in the DB.
+      // No external process/container to sync with.
       const session = await prisma.session.findUnique({
         where: { id: input.sessionId },
       });
-
-      if (!session) {
-        return { session: null };
-      }
-
-      // If status was updated, emit SSE event so other clients are notified
-      if (newStatus !== null) {
-        sseEvents.emitSessionUpdate(input.sessionId, session);
-      }
 
       return { session };
     }),
