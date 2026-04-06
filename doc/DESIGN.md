@@ -2,11 +2,11 @@
 
 ## Overview
 
-A self-hosted web application that provides mobile-friendly access to Claude Code running on local machines with GPU support. The system exposes Claude Code sessions through a web interface, with persistent sessions using git worktrees for isolation.
+A self-hosted web application that provides mobile-friendly access to Claude Code running on local machines with GPU support. The system exposes Claude Code sessions through a web interface, with persistent sessions using separate git clones for isolation.
 
 The system runs **directly on the host** without containers:
 
-- **Git worktrees** provide session isolation — each session gets its own worktree from a shared bare repo cache
+- **Separate git clones** provide session isolation — each session gets its own clone at `/worktrees/{sessionId}/`
 - **Claude Agent SDK** runs in-process in the Next.js server — no per-session child processes or IPC
 - **Native GPU access** — agents use the host's GPU directly
 - **Host tools** — agents use whatever development tools are installed on the host
@@ -30,10 +30,9 @@ The system runs **directly on the host** without containers:
                                                 │  │    - Session mgmt      │      │
                                                 │  │    - Claude Agent SDK  │      │
                                                 │  │    - SSE to browser    │      │
-                                                │  │    - Git worktree mgmt │      │
+                                                │  │    - Git clone mgmt    │      │
                                                 │  └────────────────────────┘      │
                                                 │                                  │
-                                                │  /repos/  - bare repo cache      │
                                                 │  /worktrees/{sessionId}/          │
                                                 │  /data/db/ - SQLite               │
                                                 └──────────────────────────────────┘
@@ -56,7 +55,7 @@ The database schema is defined in [`prisma/schema.prisma`](../prisma/schema.pris
 When a session is deleted, it is archived rather than permanently removed. This preserves the message history for later viewing. Archived sessions:
 
 - Have status set to `archived` and archivedAt timestamp recorded
-- Have their worktree removed
+- Have their workspace directory removed
 - Keep all messages in the database for viewing
 - Are excluded from the session list by default (toggle available to show them)
 - Are read-only: no start/stop controls, no prompt input
@@ -67,15 +66,13 @@ The system uses **host filesystem directories**:
 
 1. **Database** (`/data/db/`): SQLite database.
 
-2. **Bare Repo Cache** (`/repos/{owner}--{repo}.git`): Shared bare git repositories used as a reference cache. Subsequent sessions for the same repo share git objects for fast worktree creation.
-
-3. **Session Worktrees** (`/worktrees/{sessionId}/{repoName}`): Each session gets its own git worktree created from the bare repo cache. Provides filesystem isolation between sessions.
+2. **Session Workspaces** (`/worktrees/{sessionId}/{repoName}`): Each session gets its own git clone. Provides filesystem isolation between sessions.
 
 ### Workspace Structure
 
-Each session's worktree is at `/worktrees/{sessionId}/{repo-name}`. For no-repo sessions, just `/worktrees/{sessionId}/`.
+Each session's clone is at `/worktrees/{sessionId}/{repo-name}`. For no-repo sessions, just `/worktrees/{sessionId}/`.
 
-The worktree is the agent's working directory. Each session is fully isolated — agents can only access their own worktree.
+The clone is the agent's working directory. Each session is fully isolated.
 
 ## API Design (tRPC)
 
@@ -150,7 +147,7 @@ sessions.get({ sessionId: string })
 
 sessions.start({ sessionId: string })
   → { session: Session }
-  // Marks session as running (worktree already exists on disk)
+  // Marks session as running (workspace already exists on disk)
 
 sessions.stop({ sessionId: string })
   → { session: Session }
@@ -158,7 +155,7 @@ sessions.stop({ sessionId: string })
 
 sessions.delete({ sessionId: string })
   → { success: true }
-  // Stops query, removes worktree, archives session
+  // Stops query, removes workspace, archives session
 ```
 
 ### Claude Interaction
@@ -194,11 +191,10 @@ claude.getHistory({
 2. Server calls `sessions.create()`
 3. Server creates session record with status `creating` and returns immediately
 4. UI navigates to session page, polls for status updates
-5. **For repo sessions**: Background: Server updates or creates the bare repo cache at `/repos/{owner}--{repo}.git`
-6. **For repo sessions**: Background: Server creates a worktree from the cache at `/worktrees/{sessionId}/{repoName}`
+5. **For repo sessions**: Background: Server clones the repository to `/worktrees/{sessionId}/{repoName}`
    **For no-repo sessions**: Background: Server creates an empty directory at `/worktrees/{sessionId}/`
-7. Session status → `running`, statusMessage → null
-8. Background: If an initial prompt was provided, server sends it via `runClaudeCommand()` (no client interaction needed)
+6. Session status → `running`, statusMessage → null
+7. Background: If an initial prompt was provided, server sends it via `runClaudeCommand()` (no client interaction needed)
 
 ### Interaction Flow
 
@@ -248,7 +244,7 @@ This ensures users can see all changes through GitHub, which is their only way t
 
 1. User deletes session
 2. Server stops any running Claude query
-3. Server removes worktree and workspace directory
+3. Server removes workspace directory
 4. Session is archived (messages preserved for viewing)
 
 ## Claude Agent SDK Integration
@@ -322,7 +318,7 @@ ORDER BY sequence ASC;
 
 ### Session Isolation
 
-- Each session runs in its own git worktree at `/worktrees/{sessionId}/`
+- Each session runs in its own git clone at `/worktrees/{sessionId}/`
 - Agents share the host filesystem, user, and installed tools
 - `bypassPermissions` mode is used since the machine is dedicated to running this app
 - The machine should be dedicated to this application — not shared with other users
@@ -333,16 +329,7 @@ ORDER BY sequence ASC;
 - Scope the token to only the repositories you want to use
 - Grant only "Contents: Read and write" permission (for push/pull)
 - Create at: https://github.com/settings/personal-access-tokens/new
-- The token is configured via a git credential helper in each worktree
-
-### Bare Repo Cache
-
-The system maintains bare git repositories at `/repos/` to speed up session creation:
-
-- **Cache path format**: `/repos/{owner}--{repo}.git`
-- **How it works**: Before creating a worktree, the system fetches latest refs into the cached bare repo (or creates it if missing). Worktrees are created from this cache.
-- **Benefits**: Subsequent sessions for the same repo share git objects — worktree creation is near-instant.
-- **Cleanup**: Old cached repos can be pruned by deleting files from `/repos/`; existing worktrees are unaffected.
+- The token is configured via a git credential helper in each clone
 
 ### Per-Repository Settings & Secrets
 
@@ -488,7 +475,7 @@ clawed-abode/
 │   │   │   ├── repoSettings.ts
 │   │   │   └── globalSettings.ts
 │   │   ├── services/
-│   │   │   ├── worktree-manager.ts # Git worktree lifecycle
+│   │   │   ├── worktree-manager.ts # Git clone lifecycle
 │   │   │   ├── claude-runner.ts   # In-process Claude Agent SDK queries
 │   │   │   ├── stream-accumulator.ts # Accumulates stream_events into partials
 │   │   │   ├── global-settings.ts # Global settings service
