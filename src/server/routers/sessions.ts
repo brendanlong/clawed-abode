@@ -208,6 +208,15 @@ export const sessionsRouter = router({
         return { session };
       }
 
+      // Only stopped or error sessions can be started.
+      // Archived sessions have their workspace removed, creating sessions are in progress.
+      if (session.status !== 'stopped' && session.status !== 'error') {
+        throw new TRPCError({
+          code: 'PRECONDITION_FAILED',
+          message: `Cannot start session in '${session.status}' state`,
+        });
+      }
+
       // For the new architecture, "starting" just means marking as running.
       // The workspace (worktree) already exists on disk.
       // Claude queries run in-process when the user sends a prompt.
