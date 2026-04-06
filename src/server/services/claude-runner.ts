@@ -1,3 +1,16 @@
+/**
+ * Orchestrates Claude SDK queries directly in-process.
+ *
+ * Replaces the previous architecture where each session ran an agent-service
+ * process inside a container, communicated via Unix sockets. Now the SDK's
+ * query() function runs directly in the Next.js server process.
+ *
+ * Each session uses separate query() calls with resume for multi-turn
+ * conversations. The canUseTool callback handles AskUserQuestion by
+ * parking a promise that resolves when the user answers via tRPC.
+ */
+
+import { query, type McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import { prisma } from '@/lib/prisma';
 import { getMessageType } from '@/lib/claude-messages';
 import { extractRepoFullName } from '@/lib/utils';
@@ -5,29 +18,43 @@ import { v4 as uuid, v5 as uuidv5 } from 'uuid';
 import { sseEvents } from './events';
 import { createLogger, toError } from '@/lib/logger';
 import { fetchPullRequestForBranch } from './github';
-import {
-  describeExitCode,
-  getContainerStatus,
-  getContainerState,
-  getContainerLogs,
-} from './podman';
-import {
-  createAgentClient,
-  getAgentSocketPath,
-  waitForAgentHealth,
-  type AgentClient,
-} from './agent-client';
+import { getCurrentBranch } from './worktree-manager';
+import { StreamAccumulator } from './stream-accumulator';
 
-// Namespace UUID for generating deterministic IDs from error line content
+const log = createLogger('claude-runner');
+
+// Namespace UUID for generating deterministic IDs from error content
 const ERROR_LINE_NAMESPACE = '6ba7b810-9dad-11d1-80b4-00c04fd430c8';
 
-// Track active queries per session (in-memory for quick lookups)
-const activeQueries = new Map<string, { client: AgentClient }>();
+/**
+ * State for a pending user input request (AskUserQuestion / ExitPlanMode).
+ * The canUseTool callback parks a promise here; the answerQuestion mutation resolves it.
+ */
+interface PendingUserInput {
+  toolName: string;
+  input: Record<string, unknown>;
+  resolve: (response: { behavior: 'allow'; updatedInput: Record<string, unknown> }) => void;
+  reject: (error: Error) => void;
+}
 
-// Default system prompt appended to all Claude sessions to ensure proper workflow
-// Since users interact through GitHub PRs (no local access), Claude must always
-// commit, push, and open PRs for any changes to be visible
-// This is exported so the UI can display it when setting up an override
+/**
+ * In-memory state for each active session.
+ */
+interface SessionState {
+  /** Whether a query is currently running */
+  isRunning: boolean;
+  /** The current Query object (if running), for interruption */
+  currentQuery: ReturnType<typeof query> | null;
+  /** Pending user input request, if any */
+  pendingInput: PendingUserInput | null;
+  /** Working directory for this session */
+  workingDir: string;
+}
+
+/** Active sessions tracked in memory */
+const sessions = new Map<string, SessionState>();
+
+// Default system prompt appended to all Claude sessions
 export const DEFAULT_SYSTEM_PROMPT = `IMPORTANT: The user is accessing this session remotely through a web interface and has no local access to the files. They can only see your changes through GitHub. Therefore, you MUST follow this workflow for ANY code changes:
 
 1. Always commit your changes with clear, descriptive commit messages
@@ -35,42 +62,7 @@ export const DEFAULT_SYSTEM_PROMPT = `IMPORTANT: The user is accessing this sess
 3. If you're working on a new branch or the changes would benefit from review, open a Pull Request using the GitHub CLI (gh pr create)
 4. If a PR already exists for the current branch, just push to update it
 
-Never leave uncommitted or unpushed changes - the user cannot see them otherwise.
-
-CONTAINER ENVIRONMENT: This container uses Podman for container operations (not Docker). Use \`podman\` and \`podman-compose\` commands for container management. Aliases for \`docker\` and \`docker-compose\` are available and will work, but prefer using the podman commands directly. You have passwordless sudo access for installing additional packages if needed.
-
-CONTAINER ISSUE REPORTING: This container should have all standard development tools pre-installed and properly configured. If you encounter missing tools, misconfigured environments, or other container setup issues that prevent you from completing tasks:
-
-1. First, check if the issue has already been reported by searching existing issues: \`gh issue list --repo brendanlong/clawed-abode --search "<issue description>" --state all\`
-2. If no existing issue matches, report it to the clawed-abode repository: \`gh issue create --repo brendanlong/clawed-abode --title "<brief description>" --body "<detailed description of the problem and what you were trying to do>" --label bug --label reported-by-claude\`
-3. Then continue with your task using workarounds if possible, or inform the user that the task cannot be completed due to the container issue.`;
-
-const log = createLogger('claude-runner');
-
-/**
- * Tool names that should trigger an automatic interrupt.
- * When the agent calls these tools, the query should be interrupted
- * so the user can respond before the agent continues.
- */
-const AUTO_INTERRUPT_TOOLS = new Set(['AskUserQuestion', 'ExitPlanMode']);
-
-/**
- * Check if an SDK message contains a tool call that should trigger auto-interrupt.
- */
-export function shouldAutoInterrupt(message: unknown): boolean {
-  if (!message || typeof message !== 'object') return false;
-  const msg = message as Record<string, unknown>;
-  if (msg.type !== 'assistant') return false;
-
-  const innerMessage = msg.message as
-    | { content?: Array<{ type: string; name?: string }> }
-    | undefined;
-  if (!Array.isArray(innerMessage?.content)) return false;
-
-  return innerMessage.content.some(
-    (block) => block.type === 'tool_use' && block.name && AUTO_INTERRUPT_TOOLS.has(block.name)
-  );
-}
+Never leave uncommitted or unpushed changes - the user cannot see them otherwise.`;
 
 /**
  * Build the full system prompt from global settings and per-repo custom prompt.
@@ -85,7 +77,6 @@ export function buildSystemPrompt(options: {
 }): string {
   const { customSystemPrompt, globalSettings } = options;
 
-  // Start with either the global override (if enabled) or the default prompt
   let basePrompt = DEFAULT_SYSTEM_PROMPT;
   if (globalSettings?.systemPromptOverrideEnabled && globalSettings.systemPromptOverride) {
     basePrompt = globalSettings.systemPromptOverride;
@@ -93,12 +84,10 @@ export function buildSystemPrompt(options: {
 
   let fullSystemPrompt = basePrompt;
 
-  // Add global append content
   if (globalSettings?.systemPromptAppend) {
     fullSystemPrompt += '\n\n' + globalSettings.systemPromptAppend;
   }
 
-  // Add per-repo custom prompt
   if (customSystemPrompt) {
     fullSystemPrompt += '\n\n' + customSystemPrompt;
   }
@@ -108,16 +97,8 @@ export function buildSystemPrompt(options: {
 
 /**
  * Create and save a system error message for display to the user.
- * Used when Claude process fails unexpectedly.
  */
-async function createErrorMessage(
-  sessionId: string,
-  errorText: string,
-  details?: {
-    exitCode?: number | null;
-    containerLogs?: string | null;
-  }
-): Promise<void> {
+async function createErrorMessage(sessionId: string, errorText: string): Promise<void> {
   const lastMessage = await prisma.message.findFirst({
     where: { sessionId },
     orderBy: { sequence: 'desc' },
@@ -127,25 +108,10 @@ async function createErrorMessage(
   const sequence = (lastMessage?.sequence ?? -1) + 1;
   const errorId = uuidv5(`${sessionId}:error:${Date.now()}:${errorText}`, ERROR_LINE_NAMESPACE);
 
-  // Build detailed error content
-  let fullText = errorText;
-  if (details?.exitCode !== undefined && details.exitCode !== null && details.exitCode !== 0) {
-    fullText += `\n\nExit code: ${details.exitCode} (${describeExitCode(details.exitCode)})`;
-  }
-  if (details?.containerLogs) {
-    // Truncate logs if too long
-    const maxLogLength = 2000;
-    const logs =
-      details.containerLogs.length > maxLogLength
-        ? details.containerLogs.slice(-maxLogLength) + '\n...(truncated)'
-        : details.containerLogs;
-    fullText += `\n\nContainer logs:\n${logs}`;
-  }
-
   const errorContent = {
     type: 'system',
     subtype: 'error',
-    content: [{ type: 'text', text: fullText }],
+    content: [{ type: 'text', text: errorText }],
   };
 
   try {
@@ -167,10 +133,7 @@ async function createErrorMessage(
       content: errorContent,
       createdAt: message.createdAt,
     });
-
-    log.info('Created error message', { sessionId, errorId, sequence });
   } catch (err) {
-    // Ignore duplicate errors
     if (err && typeof err === 'object' && 'code' in err && err.code === 'P2002') {
       return;
     }
@@ -179,79 +142,26 @@ async function createErrorMessage(
 }
 
 /**
- * Check container health and create error message if container has failed.
- * Returns true if container is healthy, false if it has failed.
+ * Get or create session state.
  */
-async function checkContainerHealthAndReport(
-  sessionId: string,
-  containerId: string
-): Promise<boolean> {
-  const containerState = await getContainerState(containerId);
-
-  if (containerState.status === 'not_found') {
-    log.error('Container not found during health check', undefined, {
-      sessionId,
-      containerId,
-    });
-
-    await createErrorMessage(sessionId, 'Container was terminated unexpectedly.', {
-      exitCode: null,
-    });
-    return false;
+function getSessionState(sessionId: string, workingDir: string): SessionState {
+  let state = sessions.get(sessionId);
+  if (!state) {
+    state = {
+      isRunning: false,
+      currentQuery: null,
+      pendingInput: null,
+      workingDir,
+    };
+    sessions.set(sessionId, state);
   }
-
-  if (containerState.status === 'stopped') {
-    log.error('Container stopped unexpectedly', undefined, {
-      sessionId,
-      containerId,
-      exitCode: containerState.exitCode,
-      error: containerState.error,
-      oomKilled: containerState.oomKilled,
-    });
-
-    let errorText = 'Container stopped unexpectedly.';
-    if (containerState.oomKilled) {
-      errorText = 'Container was killed due to out of memory.';
-    } else if (containerState.error) {
-      errorText = `Container stopped with error: ${containerState.error}`;
-    }
-
-    const containerLogs = await getContainerLogs(containerId, { tail: 50 });
-    await createErrorMessage(sessionId, errorText, {
-      exitCode: containerState.exitCode,
-      containerLogs,
-    });
-    return false;
-  }
-
-  return true;
-}
-
-/**
- * Get an agent client for a session.
- * Uses the session's Unix socket path for communication.
- */
-function getClientForSession(sessionId: string): AgentClient {
-  return createAgentClient(getAgentSocketPath(sessionId));
-}
-
-/**
- * Determine whether the agent should resume an existing session.
- * Checks the agent's lastSequence: if > 0, the agent has prior messages
- * from a previous query in the same container lifecycle.
- */
-async function shouldResumeAgent(client: AgentClient): Promise<boolean> {
-  const status = await client.getStatus();
-  if (status.running) {
-    throw new Error('A Claude process is already running for this session');
-  }
-  return status.lastSequence > 0;
+  return state;
 }
 
 export interface RunClaudeCommandOptions {
   sessionId: string;
-  containerId: string;
   prompt: string;
+  workingDir: string;
   /** Optional per-repo custom system prompt appended after the base system prompt */
   customSystemPrompt?: string | null;
   /** Global settings for system prompt override/append */
@@ -260,7 +170,9 @@ export interface RunClaudeCommandOptions {
     systemPromptOverrideEnabled: boolean;
     systemPromptAppend: string | null;
   } | null;
-  /** MCP server configurations passed to the SDK at query time */
+  /** Claude model override */
+  claudeModel?: string | null;
+  /** MCP server configurations passed to the SDK */
   mcpServers?: Array<
     | {
         name: string;
@@ -275,24 +187,20 @@ export interface RunClaudeCommandOptions {
 }
 
 /**
- * Run a Claude command via the agent service running inside the container.
- * Streams messages from the agent service, saves them to DB, and emits SSE events.
- *
- * The agent service uses persistent streaming input mode: one long-lived query()
- * per session lifetime. This function initializes the session if needed, then
- * sends the prompt through the persistent query.
+ * Run a Claude query directly using the Agent SDK.
+ * Streams messages, saves them to DB, and emits SSE events.
  */
 export async function runClaudeCommand(options: RunClaudeCommandOptions): Promise<void> {
-  const { sessionId, containerId, prompt } = options;
-  log.info('runClaudeCommand: Starting', { sessionId, containerId, promptLength: prompt.length });
+  const { sessionId, prompt, workingDir } = options;
+  log.info('runClaudeCommand: Starting', { sessionId, promptLength: prompt.length });
 
-  // Check if session already has a running query
-  if (activeQueries.has(sessionId)) {
-    log.warn('runClaudeCommand: Query already running', { sessionId });
+  const state = getSessionState(sessionId, workingDir);
+
+  if (state.isRunning) {
     throw new Error('A Claude process is already running for this session');
   }
 
-  // Look up the session to get the repoPath, repoUrl, branch, and currentBranch
+  // Look up the session
   const session = await prisma.session.findUnique({
     where: { id: sessionId },
     select: { repoPath: true, repoUrl: true, branch: true, currentBranch: true },
@@ -302,28 +210,16 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
     throw new Error('Session not found');
   }
 
-  // Verify the container is still running
-  const containerStatus = await getContainerStatus(containerId);
-  if (containerStatus !== 'running') {
-    throw new Error(
-      `Cannot execute Claude command: container is ${containerStatus === 'not_found' ? 'not found' : 'stopped'}`
-    );
-  }
+  state.isRunning = true;
 
-  // Get the agent client
-  const client = getClientForSession(sessionId);
+  // Build system prompt
+  const systemPrompt = buildSystemPrompt({
+    customSystemPrompt: options.customSystemPrompt,
+    globalSettings: options.globalSettings,
+  });
 
-  // Check if agent service is healthy
-  const healthy = await client.health();
-  if (!healthy) {
-    throw new Error('Agent service is not healthy');
-  }
-
-  // Build working directory
-  const workingDir = session.repoPath ? `/workspace/${session.repoPath}` : '/workspace';
-
-  // Build MCP servers config as Record<string, McpServerConfig> for the SDK
-  const mcpServersRecord = options.mcpServers?.length
+  // Build MCP servers config
+  const mcpServersRecord: Record<string, McpServerConfig> | undefined = options.mcpServers?.length
     ? Object.fromEntries(
         options.mcpServers.map((server) => {
           if (server.type === 'http' || server.type === 'sse') {
@@ -333,7 +229,6 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
             }
             return [server.name, config];
           }
-          // stdio (default)
           const config: Record<string, unknown> = { command: server.command };
           if (server.args?.length) config.args = server.args;
           if (server.env && Object.keys(server.env).length > 0) config.env = server.env;
@@ -342,16 +237,18 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
       )
     : undefined;
 
-  // Determine if we should resume (agent has prior messages in this container lifecycle)
-  const resume = await shouldResumeAgent(client);
+  // Determine if we should resume (has existing messages)
+  const existingMessages = await prisma.message.count({
+    where: { sessionId },
+  });
+  const shouldResume = existingMessages > 0;
 
-  // Get the next sequence number for this session
+  // Get the next sequence number
   const lastMessage = await prisma.message.findFirst({
     where: { sessionId },
     orderBy: { sequence: 'desc' },
     select: { sequence: true },
   });
-
   let sequence = (lastMessage?.sequence ?? -1) + 1;
 
   // Store the user prompt first
@@ -368,7 +265,6 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
     },
   });
 
-  // Emit SSE event for the user message
   sseEvents.emitNewMessage(sessionId, {
     id: userMessageId,
     sessionId,
@@ -378,62 +274,101 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
     createdAt: new Date(),
   });
 
-  // Track the active query
-  activeQueries.set(sessionId, { client });
-
   // Emit Claude running event
   sseEvents.emitClaudeRunning(sessionId, true);
 
+  // Build SDK query options
+  const sdkOptions: Parameters<typeof query>[0]['options'] = {
+    permissionMode: 'bypassPermissions' as const,
+    allowDangerouslySkipPermissions: true,
+    includePartialMessages: true,
+    cwd: workingDir,
+    settingSources: ['project'],
+    systemPrompt: {
+      type: 'preset' as const,
+      preset: 'claude_code' as const,
+      append: systemPrompt,
+    },
+    tools: { type: 'preset' as const, preset: 'claude_code' as const },
+    canUseTool: async (toolName: string, input: Record<string, unknown>) => {
+      // Handle tools that require user input
+      if (toolName === 'AskUserQuestion' || toolName === 'ExitPlanMode') {
+        log.info('canUseTool: Waiting for user input', { sessionId, toolName });
+
+        // Park a promise that will be resolved when the user answers
+        return new Promise((resolve, reject) => {
+          state.pendingInput = { toolName, input, resolve, reject };
+        });
+      }
+
+      // Auto-approve all other tools (bypass permissions mode)
+      return { behavior: 'allow' as const, updatedInput: input };
+    },
+  };
+
+  // Resume or start fresh
+  if (shouldResume) {
+    sdkOptions.resume = sessionId;
+  } else {
+    sdkOptions.sessionId = sessionId;
+  }
+
+  // Model configuration
+  if (options.claudeModel) {
+    sdkOptions.model = options.claudeModel;
+  }
+
+  // MCP server configurations
+  if (mcpServersRecord && Object.keys(mcpServersRecord).length > 0) {
+    sdkOptions.mcpServers = mcpServersRecord;
+  }
+
   try {
-    // Use a stable ID for partial messages so the frontend can track and replace them.
-    // The partial message UUID from the stream_event is used as the partial ID.
-    // When the final assistant message arrives, the frontend removes the partial.
+    const accumulator = new StreamAccumulator();
     const PARTIAL_MESSAGE_ID_PREFIX = 'partial-';
 
-    // Send the prompt through the persistent query session
-    // The agent service auto-initializes on the first call
-    for await (const agentEvent of client.query({
-      prompt,
-      sessionId,
-      resume,
-      cwd: workingDir,
-      mcpServers: mcpServersRecord as Record<
-        string,
-        import('@anthropic-ai/claude-agent-sdk').McpServerConfig
-      >,
-    })) {
-      // Handle commands update - emit via SSE for frontend autocomplete
-      if (agentEvent.kind === 'commands') {
-        sseEvents.emitCommands(sessionId, agentEvent.commands);
+    // Start the query
+    const q = query({ prompt, options: sdkOptions });
+    state.currentQuery = q;
+
+    for await (const message of q) {
+      // Handle stream_events for partial messages
+      if (message.type === 'stream_event') {
+        const partial = accumulator.accumulate(
+          message as {
+            type: 'stream_event';
+            event: { type: string; [key: string]: unknown };
+            parent_tool_use_id: string | null;
+            uuid: string;
+            session_id: string;
+          }
+        );
+        if (partial) {
+          const partialId = PARTIAL_MESSAGE_ID_PREFIX + partial.uuid;
+          sseEvents.emitNewMessage(sessionId, {
+            id: partialId,
+            sessionId,
+            sequence,
+            type: 'assistant',
+            content: partial,
+            createdAt: new Date(),
+          });
+        }
         continue;
       }
 
-      // Handle partial (streaming) messages - emit via SSE but don't persist
-      if (agentEvent.kind === 'partial') {
-        const partialContent = agentEvent.partial;
-        const partialId = PARTIAL_MESSAGE_ID_PREFIX + partialContent.uuid;
-
-        sseEvents.emitNewMessage(sessionId, {
-          id: partialId,
-          sessionId,
-          // Use the next sequence number (will be taken by the final message)
-          sequence,
-          type: 'assistant',
-          content: partialContent,
-          createdAt: new Date(),
-        });
-        continue;
+      // Reset accumulator when full assistant message arrives
+      if (message.type === 'assistant') {
+        accumulator.reset();
       }
 
-      // Handle complete messages - persist and emit
-      const agentMessage = agentEvent;
-      const messageContent = JSON.stringify(agentMessage.message);
-      const messageType = getMessageType(agentMessage.message);
-      const msgId = (agentMessage.message as { uuid?: string }).uuid || uuid();
+      // Persist complete messages
+      const messageContent = JSON.stringify(message);
+      const messageType = getMessageType(message);
+      const msgId = (message as { uuid?: string }).uuid || uuid();
 
-      // Save to database
       try {
-        const message = await prisma.message.create({
+        const dbMessage = await prisma.message.create({
           data: {
             id: msgId,
             sessionId,
@@ -443,71 +378,42 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
           },
         });
 
-        // Emit SSE event
         sseEvents.emitNewMessage(sessionId, {
-          id: message.id,
+          id: dbMessage.id,
           sessionId,
           sequence,
           type: messageType,
-          content: agentMessage.message,
-          createdAt: message.createdAt,
+          content: message,
+          createdAt: dbMessage.createdAt,
         });
 
         sequence++;
       } catch (err) {
-        // Handle unique constraint violations (duplicate messages)
         if (err && typeof err === 'object' && 'code' in err && err.code === 'P2002') {
-          log.debug('runClaudeCommand: Skipping duplicate message', { sessionId, msgId });
+          log.debug('Skipping duplicate message', { sessionId, msgId });
           continue;
         }
         throw err;
-      }
-
-      // Auto-interrupt when the agent calls tools that need user input
-      // (e.g., AskUserQuestion, ExitPlanMode). Without this, the SDK
-      // returns an error tool_result and the agent continues processing.
-      if (shouldAutoInterrupt(agentMessage.message)) {
-        log.info('runClaudeCommand: Auto-interrupting for user input tool', {
-          sessionId,
-          messageType,
-        });
-        await client.interrupt();
       }
     }
 
     log.info('runClaudeCommand: Completed', { sessionId, totalMessages: sequence });
   } catch (err) {
     log.error('runClaudeCommand: Error', toError(err), { sessionId });
-
-    // Fetch container logs for debugging
-    const containerLogs = await getContainerLogs(containerId, { tail: 50 });
-    if (containerLogs) {
-      log.error('runClaudeCommand: Container logs after error', undefined, {
-        sessionId,
-        logs: containerLogs,
-      });
-    }
-
-    // Check if container is still healthy
-    await checkContainerHealthAndReport(sessionId, containerId);
-
-    // Create error message for the user (includes logs for visibility)
-    await createErrorMessage(sessionId, `Claude query failed: ${toError(err).message}`, {
-      containerLogs,
-    });
+    await createErrorMessage(sessionId, `Claude query failed: ${toError(err).message}`);
   } finally {
-    activeQueries.delete(sessionId);
+    state.isRunning = false;
+    state.currentQuery = null;
+    state.pendingInput = null;
+    sessions.delete(sessionId);
 
-    // Emit Claude stopped event
     sseEvents.emitClaudeRunning(sessionId, false);
 
-    // Detect current branch, persist it, and check for PR updates (fire-and-forget)
+    // Detect branch changes and check for PR updates (fire-and-forget)
     void (async () => {
       try {
-        // Detect the current branch from the container
-        const detectedBranch = await client.getCurrentBranch();
+        const detectedBranch = await getCurrentBranch(workingDir);
 
-        // If branch changed, persist it and emit session update
         if (detectedBranch && detectedBranch !== session.currentBranch) {
           const updatedSession = await prisma.session.update({
             where: { id: sessionId },
@@ -516,7 +422,6 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
           sseEvents.emitSessionUpdate(sessionId, updatedSession);
         }
 
-        // Look up PR using the detected branch (or fall back to stored currentBranch)
         const branchForPr = detectedBranch ?? session.currentBranch;
         if (session.repoUrl && branchForPr) {
           const repoFullName = extractRepoFullName(session.repoUrl);
@@ -526,57 +431,89 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
           }
         }
       } catch (err) {
-        log.debug('runClaudeCommand: Failed to detect branch or check PR status', {
+        log.debug('Failed to detect branch or check PR', {
           sessionId,
           error: toError(err).message,
         });
       }
     })();
-
-    log.debug('runClaudeCommand: Cleanup complete', { sessionId });
   }
 }
 
 /**
- * Interrupt a running Claude query via the agent service.
+ * Submit an answer to a pending AskUserQuestion or ExitPlanMode tool call.
+ * Resolves the parked canUseTool promise so the SDK continues.
+ *
+ * @returns true if there was a pending input to answer, false otherwise
+ */
+export function answerUserInput(sessionId: string, answers: Record<string, string>): boolean {
+  const state = sessions.get(sessionId);
+  if (!state?.pendingInput) {
+    log.warn('answerUserInput: No pending input', { sessionId });
+    return false;
+  }
+
+  const { toolName, input, resolve } = state.pendingInput;
+  state.pendingInput = null;
+
+  log.info('answerUserInput: Resolving', { sessionId, toolName });
+
+  if (toolName === 'AskUserQuestion') {
+    // Return answers in the format the SDK expects
+    resolve({
+      behavior: 'allow',
+      updatedInput: {
+        questions: (input as { questions?: unknown }).questions,
+        answers,
+      },
+    });
+  } else if (toolName === 'ExitPlanMode') {
+    // For ExitPlanMode, just allow it to proceed
+    resolve({
+      behavior: 'allow',
+      updatedInput: input,
+    });
+  }
+
+  return true;
+}
+
+/**
+ * Check if a session has a pending user input request.
+ */
+export function hasPendingInput(sessionId: string): boolean {
+  return sessions.get(sessionId)?.pendingInput !== null;
+}
+
+/**
+ * Get the pending input details for a session (for rendering in the UI on reconnect).
+ */
+export function getPendingInput(
+  sessionId: string
+): { toolName: string; input: Record<string, unknown> } | null {
+  const state = sessions.get(sessionId);
+  if (!state?.pendingInput) return null;
+  return {
+    toolName: state.pendingInput.toolName,
+    input: state.pendingInput.input,
+  };
+}
+
+/**
+ * Interrupt a running Claude query.
  */
 export async function interruptClaude(sessionId: string): Promise<boolean> {
-  log.info('interruptClaude: Interrupt requested', { sessionId });
-
-  // Check in-memory active queries first
-  const active = activeQueries.get(sessionId);
-  if (active) {
-    const result = await active.client.interrupt();
-    return result.success;
-  }
-
-  // Fall back to looking up the session's container
-  const session = await prisma.session.findUnique({
-    where: { id: sessionId },
-    select: { containerId: true },
-  });
-
-  if (!session?.containerId) {
-    log.info('interruptClaude: No container for session', { sessionId });
+  const state = sessions.get(sessionId);
+  if (!state?.currentQuery) {
+    log.info('interruptClaude: No active query', { sessionId });
     return false;
   }
 
-  // Verify container is running
-  const containerStatus = await getContainerStatus(session.containerId);
-  if (containerStatus !== 'running') {
-    log.info('interruptClaude: Container not running', { sessionId, containerStatus });
-    return false;
-  }
-
-  const client = getClientForSession(sessionId);
   try {
-    const result = await client.interrupt();
-    return result.success;
+    await state.currentQuery.interrupt();
+    return true;
   } catch (err) {
-    log.warn('interruptClaude: Failed to interrupt', {
-      sessionId,
-      error: toError(err).message,
-    });
+    log.warn('interruptClaude: Failed', { sessionId, error: toError(err).message });
     return false;
   }
 }
@@ -585,70 +522,32 @@ export async function interruptClaude(sessionId: string): Promise<boolean> {
  * Check if Claude is running for a session (in-memory check).
  */
 export function isClaudeRunning(sessionId: string): boolean {
-  return activeQueries.has(sessionId);
+  return sessions.get(sessionId)?.isRunning ?? false;
 }
 
 /**
- * Check if Claude is running, including checking the agent service.
- * More thorough than isClaudeRunning() but involves a network call.
+ * Check if Claude is running (same as isClaudeRunning since everything is in-process now).
  */
 export async function isClaudeRunningAsync(sessionId: string): Promise<boolean> {
-  // Check in-memory first
-  if (activeQueries.has(sessionId)) {
-    return true;
-  }
-
-  // Look up the session's container
-  const session = await prisma.session.findUnique({
-    where: { id: sessionId },
-    select: { containerId: true },
-  });
-
-  if (!session?.containerId) {
-    return false;
-  }
-
-  // Check container status
-  const containerStatus = await getContainerStatus(session.containerId);
-  if (containerStatus !== 'running') {
-    return false;
-  }
-
-  // Ask the agent service directly
-  try {
-    const client = getClientForSession(sessionId);
-    const status = await client.getStatus();
-    return status.running;
-  } catch {
-    return false;
-  }
+  return isClaudeRunning(sessionId);
 }
 
 /**
- * Mark the last non-user message as potentially interrupted and add an interrupt indicator message.
- * Called after successfully sending interrupt to the agent service.
+ * Mark the last non-user message as interrupted and add an interrupt indicator.
  */
 export async function markLastMessageAsInterrupted(sessionId: string): Promise<void> {
-  log.info('markLastMessageAsInterrupted: Marking message as interrupted', { sessionId });
+  log.info('markLastMessageAsInterrupted', { sessionId });
 
-  // Get the last message to find the current max sequence
   const lastMessage = await prisma.message.findFirst({
     where: { sessionId },
     orderBy: { sequence: 'desc' },
     select: { id: true, sequence: true, type: true, content: true },
   });
 
-  if (!lastMessage) {
-    log.warn('markLastMessageAsInterrupted: No messages found', { sessionId });
-    return;
-  }
+  if (!lastMessage) return;
 
-  // Find the last non-user message to mark as interrupted
   const lastNonUserMessage = await prisma.message.findFirst({
-    where: {
-      sessionId,
-      type: { not: 'user' },
-    },
+    where: { sessionId, type: { not: 'user' } },
     orderBy: { sequence: 'desc' },
     select: { id: true, sequence: true, type: true, content: true },
   });
@@ -661,13 +560,7 @@ export async function markLastMessageAsInterrupted(sessionId: string): Promise<v
         where: { id: lastNonUserMessage.id },
         data: { content: JSON.stringify(content) },
       });
-      log.debug('markLastMessageAsInterrupted: Marked message as interrupted', {
-        sessionId,
-        messageId: lastNonUserMessage.id,
-        type: lastNonUserMessage.type,
-      });
 
-      // Emit update for the modified message
       sseEvents.emitNewMessage(sessionId, {
         id: lastNonUserMessage.id,
         sessionId,
@@ -677,15 +570,13 @@ export async function markLastMessageAsInterrupted(sessionId: string): Promise<v
         createdAt: new Date(),
       });
     } catch (err) {
-      log.warn('markLastMessageAsInterrupted: Failed to parse message content', {
+      log.warn('Failed to mark message as interrupted', {
         sessionId,
-        messageId: lastNonUserMessage.id,
         error: toError(err).message,
       });
     }
   }
 
-  // Add an interrupt indicator message
   const interruptMessageId = uuid();
   const interruptSequence = lastMessage.sequence + 1;
   const interruptContent = {
@@ -704,13 +595,6 @@ export async function markLastMessageAsInterrupted(sessionId: string): Promise<v
     },
   });
 
-  log.info('markLastMessageAsInterrupted: Added interrupt message', {
-    sessionId,
-    messageId: interruptMessageId,
-    sequence: interruptSequence,
-  });
-
-  // Emit the new interrupt message
   sseEvents.emitNewMessage(sessionId, {
     id: interruptMessageId,
     sessionId,
@@ -722,134 +606,49 @@ export async function markLastMessageAsInterrupted(sessionId: string): Promise<v
 }
 
 /**
- * Reconcile running sessions on startup.
- * For each running session with an agent port, checks the agent service
- * and catches up on any missed messages.
+ * Stop a session's Claude query and clean up state.
+ * Called when a session is stopped.
  */
-export async function reconcileOrphanedProcesses(): Promise<{
-  total: number;
-  reconnected: number;
-  cleaned: number;
-}> {
-  // Find running sessions with containers
-  const runningSessions = await prisma.session.findMany({
-    where: {
-      status: 'running',
-      containerId: { not: null },
-    },
-    select: {
-      id: true,
-      containerId: true,
-    },
-  });
+export async function stopSession(sessionId: string): Promise<void> {
+  const state = sessions.get(sessionId);
+  if (!state) return;
 
-  let reconnected = 0;
-  let cleaned = 0;
-
-  for (const session of runningSessions) {
-    if (!session.containerId) continue;
-
-    log.info('Reconciling session', { sessionId: session.id });
-
+  if (state.currentQuery) {
     try {
-      // Check if container is running
-      const containerStatus = await getContainerStatus(session.containerId);
-      if (containerStatus !== 'running') {
-        log.info('Container not running, checking health', {
-          sessionId: session.id,
-          containerStatus,
-        });
-        await checkContainerHealthAndReport(session.id, session.containerId);
-        cleaned++;
-        continue;
-      }
-
-      // Try to connect to agent service
-      const client = getClientForSession(session.id);
-      const healthy = await waitForAgentHealth(client, { maxAttempts: 5, intervalMs: 1000 });
-
-      if (!healthy) {
-        log.warn('Agent service not healthy during reconciliation', {
-          sessionId: session.id,
-        });
-        cleaned++;
-        continue;
-      }
-
-      // Get the agent's status and catch up on any missed messages
-      const agentStatus = await client.getStatus();
-
-      // Get our last stored sequence
-      const lastMessage = await prisma.message.findFirst({
-        where: { sessionId: session.id },
-        orderBy: { sequence: 'desc' },
-        select: { sequence: true },
-      });
-      const lastSequence = lastMessage?.sequence ?? 0;
-
-      // Fetch any messages we missed
-      if (agentStatus.lastSequence > 0) {
-        const missedMessages = await client.getMessages(0); // Get all from agent
-        let sequence = lastSequence + 1;
-
-        for (const agentMsg of missedMessages) {
-          const messageContent = JSON.stringify(agentMsg.message);
-          const messageType = getMessageType(agentMsg.message);
-          const msgId = (agentMsg.message as { uuid?: string }).uuid || uuid();
-
-          try {
-            const message = await prisma.message.create({
-              data: {
-                id: msgId,
-                sessionId: session.id,
-                sequence,
-                type: messageType,
-                content: messageContent,
-              },
-            });
-            sseEvents.emitNewMessage(session.id, {
-              id: message.id,
-              sessionId: session.id,
-              sequence,
-              type: messageType,
-              content: agentMsg.message,
-              createdAt: message.createdAt,
-            });
-            sequence++;
-          } catch (err) {
-            // Skip duplicates
-            if (err && typeof err === 'object' && 'code' in err && err.code === 'P2002') {
-              continue;
-            }
-            log.warn('Failed to save missed message during reconciliation', {
-              sessionId: session.id,
-              error: toError(err).message,
-            });
-          }
-        }
-      }
-
-      // Emit any cached commands
-      if (agentStatus.commands?.length > 0) {
-        sseEvents.emitCommands(session.id, agentStatus.commands);
-      }
-
-      if (agentStatus.running) {
-        log.info('Session has active query, marking as reconnected', { sessionId: session.id });
-        reconnected++;
-      } else {
-        log.info('Session agent service is idle', { sessionId: session.id });
-        reconnected++;
-      }
-    } catch (err) {
-      log.error('Error reconciling session', toError(err), { sessionId: session.id });
-      cleaned++;
+      state.currentQuery.abort();
+    } catch {
+      // Ignore abort errors
     }
   }
 
-  return {
-    total: runningSessions.length,
-    reconnected,
-    cleaned,
-  };
+  // Reject any pending user input
+  if (state.pendingInput) {
+    state.pendingInput.reject(new Error('Session stopped'));
+    state.pendingInput = null;
+  }
+
+  state.isRunning = false;
+  state.currentQuery = null;
+  sessions.delete(sessionId);
+}
+
+/**
+ * Mark all running sessions as stopped.
+ * Called on server startup since all in-memory state is lost.
+ */
+export async function markAllSessionsStopped(): Promise<number> {
+  const result = await prisma.session.updateMany({
+    where: {
+      status: 'running',
+    },
+    data: {
+      status: 'stopped',
+    },
+  });
+
+  if (result.count > 0) {
+    log.info('Marked running sessions as stopped on startup', { count: result.count });
+  }
+
+  return result.count;
 }
