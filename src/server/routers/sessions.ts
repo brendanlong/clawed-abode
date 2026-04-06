@@ -3,7 +3,7 @@ import { router, protectedProcedure } from '../trpc';
 import { prisma } from '@/lib/prisma';
 import { TRPCError } from '@trpc/server';
 import {
-  setupWorktree,
+  cloneRepo,
   createEmptyWorkspace,
   removeWorkspace,
   getSessionWorkingDir,
@@ -45,7 +45,7 @@ async function setupSessionBackground(
     if (repoFullName && branch) {
       // Set up a git worktree for this session
       await updateStatus('Cloning repository...');
-      const result = await setupWorktree({
+      const result = await cloneRepo({
         sessionId,
         repoFullName,
         branch,
@@ -276,12 +276,8 @@ export const sessionsRouter = router({
       // Stop any running query
       await stopSession(input.sessionId);
 
-      // Extract repo full name for worktree cleanup
-      const repoFullNameMatch = session.repoUrl?.match(/github\.com\/([^/]+\/[^/.]+)/);
-      const repoFullName = repoFullNameMatch?.[1] ?? null;
-
-      // Remove workspace (worktree + directory)
-      await removeWorkspace(session.id, repoFullName);
+      // Remove workspace directory
+      await removeWorkspace(session.id);
 
       // Archive session (keep messages for viewing)
       const updatedSession = await prisma.session.update({
