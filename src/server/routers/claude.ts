@@ -7,13 +7,15 @@ import {
   interruptClaude,
   isClaudeRunningAsync,
   markLastMessageAsInterrupted,
+  answerUserInput,
+  hasPendingInput,
+  getPendingInput,
 } from '../services/claude-runner';
 import { loadMergedSessionSettings } from '../services/settings-merger';
+import { getSessionWorkingDir } from '../services/worktree-manager';
 import { estimateTokenUsage } from '@/lib/token-estimation';
 import { createLogger, toError } from '@/lib/logger';
 import { extractRepoFullName } from '@/lib/utils';
-import { createAgentClient, getAgentSocketPath } from '../services/agent-client';
-import { getContainerStatus } from '../services/podman';
 
 const log = createLogger('claude');
 
@@ -37,7 +39,7 @@ export const claudeRouter = router({
         });
       }
 
-      if (session.status !== 'running' || !session.containerId) {
+      if (session.status !== 'running') {
         throw new TRPCError({
           code: 'PRECONDITION_FAILED',
           message: 'Session is not running',
@@ -52,31 +54,59 @@ export const claudeRouter = router({
       }
 
       // Load and merge global + per-repo settings
-      // For no-repo sessions, repoUrl is null; use the sentinel value
       const repoFullName = session.repoUrl ? extractRepoFullName(session.repoUrl) : null;
       const settingsKey = repoFullName ?? '__no_repo__';
       const settings = await loadMergedSessionSettings(settingsKey);
 
-      // Start Claude in the background - don't await
+      // Build working directory
+      const workingDir = getSessionWorkingDir(input.sessionId, session.repoPath);
+
       log.info('Starting Claude command', {
         sessionId: input.sessionId,
-        containerId: session.containerId,
-        hasCustomSystemPrompt: !!settings.customSystemPrompt,
-        hasGlobalOverride: settings.globalSettings.systemPromptOverrideEnabled,
-        hasGlobalAppend: !!settings.globalSettings.systemPromptAppend,
+        workingDir,
       });
+
+      // Start Claude in the background - don't await
       runClaudeCommand({
         sessionId: input.sessionId,
-        containerId: session.containerId,
         prompt: input.prompt,
+        workingDir,
         customSystemPrompt: settings.customSystemPrompt,
         globalSettings: settings.globalSettings,
+        claudeModel: settings.claudeModel,
         mcpServers: settings.mcpServers,
       }).catch((err) => {
         log.error('Claude command failed', toError(err), { sessionId: input.sessionId });
       });
 
       return { success: true };
+    }),
+
+  answerQuestion: protectedProcedure
+    .input(
+      z.object({
+        sessionId: z.string().uuid(),
+        answers: z.record(z.string(), z.string()),
+      })
+    )
+    .mutation(async ({ input }) => {
+      const answered = answerUserInput(input.sessionId, input.answers);
+
+      if (!answered) {
+        throw new TRPCError({
+          code: 'PRECONDITION_FAILED',
+          message: 'No pending question for this session',
+        });
+      }
+
+      return { success: true };
+    }),
+
+  getPendingQuestion: protectedProcedure
+    .input(z.object({ sessionId: z.string().uuid() }))
+    .query(({ input }) => {
+      const pending = getPendingInput(input.sessionId);
+      return { pending };
     }),
 
   interrupt: protectedProcedure
@@ -96,8 +126,6 @@ export const claudeRouter = router({
       const interrupted = await interruptClaude(input.sessionId);
 
       if (interrupted) {
-        // Mark the last non-user message as potentially interrupted
-        // and add an interrupt indicator message
         await markLastMessageAsInterrupted(input.sessionId);
       }
 
@@ -108,8 +136,6 @@ export const claudeRouter = router({
     .input(
       z.object({
         sessionId: z.string().uuid(),
-        // Cursor encodes both position and direction for bidirectional pagination
-        // sequence is optional - when missing, no bound is applied (fetch from start/end)
         cursor: z
           .object({
             sequence: z.number().int().optional(),
@@ -132,13 +158,8 @@ export const claudeRouter = router({
       }
 
       const isBackward = input.cursor?.direction === 'backward';
-      // Get the newest data in each page for backward cursors
-      // Get the oldest data in each page for forward cursors
-      // No cursor is a special case since we want the newest data
-      // paging backward
       const getNewest = isBackward || input.cursor?.sequence == null;
 
-      // Build where clause based on direction
       const whereClause: {
         sessionId: string;
         sequence?: { lt: number } | { gt: number };
@@ -147,8 +168,6 @@ export const claudeRouter = router({
       };
 
       if (input.cursor?.sequence !== undefined) {
-        // backward: load older (sequence < cursor)
-        // forward: load newer (sequence > cursor)
         whereClause.sequence = isBackward
           ? { lt: input.cursor.sequence }
           : { gt: input.cursor.sequence };
@@ -156,8 +175,6 @@ export const claudeRouter = router({
 
       const messages = await prisma.message.findMany({
         where: whereClause,
-        // backward: newest first (so we get the N most recent before cursor)
-        // forward: oldest first (so we get the N oldest after cursor)
         orderBy: { sequence: getNewest ? 'desc' : 'asc' },
         take: input.limit + 1,
       });
@@ -172,7 +189,6 @@ export const claudeRouter = router({
         content: JSON.parse(m.content),
       }));
 
-      // For newest first, reverse so client gets chronological order
       if (getNewest) {
         parsedMessages.reverse();
       }
@@ -186,7 +202,10 @@ export const claudeRouter = router({
   isRunning: protectedProcedure
     .input(z.object({ sessionId: z.string().uuid() }))
     .query(async ({ input }) => {
-      return { running: await isClaudeRunningAsync(input.sessionId) };
+      return {
+        running: await isClaudeRunningAsync(input.sessionId),
+        hasPendingInput: hasPendingInput(input.sessionId),
+      };
     }),
 
   getTokenUsage: protectedProcedure
@@ -203,19 +222,13 @@ export const claudeRouter = router({
         });
       }
 
-      // Fetch result and system messages for total consumed tokens and model info,
-      // plus the most recent assistant message for current context window occupancy.
       const [resultAndSystemMessages, lastAssistantMessage] = await Promise.all([
         prisma.message.findMany({
           where: {
             sessionId: input.sessionId,
             type: { in: ['result', 'system'] },
           },
-          select: {
-            type: true,
-            content: true,
-            sequence: true,
-          },
+          select: { type: true, content: true, sequence: true },
           orderBy: { sequence: 'asc' },
         }),
         prisma.message.findFirst({
@@ -223,16 +236,11 @@ export const claudeRouter = router({
             sessionId: input.sessionId,
             type: 'assistant',
           },
-          select: {
-            type: true,
-            content: true,
-            sequence: true,
-          },
+          select: { type: true, content: true, sequence: true },
           orderBy: { sequence: 'desc' },
         }),
       ]);
 
-      // Combine and sort by sequence so estimateTokenUsage sees them in order
       const allMessages = [...resultAndSystemMessages];
       if (lastAssistantMessage) {
         allMessages.push(lastAssistantMessage);
@@ -249,29 +257,9 @@ export const claudeRouter = router({
 
   getCommands: protectedProcedure
     .input(z.object({ sessionId: z.string().uuid() }))
-    .query(async ({ input }) => {
-      const session = await prisma.session.findUnique({
-        where: { id: input.sessionId },
-        select: { containerId: true },
-      });
-
-      if (!session?.containerId) {
-        return { commands: [] };
-      }
-
-      // Check container is running
-      const containerStatus = await getContainerStatus(session.containerId);
-      if (containerStatus !== 'running') {
-        return { commands: [] };
-      }
-
-      try {
-        const client = createAgentClient(getAgentSocketPath(input.sessionId));
-        const commands = await client.getCommands();
-        return { commands };
-      } catch (err) {
-        log.debug('Failed to fetch commands', { error: toError(err).message });
-        return { commands: [] };
-      }
+    .query(async () => {
+      // Commands are now emitted via SSE during query initialization.
+      // This endpoint returns empty for now - the frontend gets commands via SSE.
+      return { commands: [] };
     }),
 });
