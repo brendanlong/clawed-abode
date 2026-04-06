@@ -71,12 +71,6 @@ The system uses **host filesystem directories**:
 
 3. **Session Worktrees** (`/worktrees/{sessionId}/{repoName}`): Each session gets its own git worktree created from the bare repo cache. Provides filesystem isolation between sessions.
 
-4. **Gradle Wrapper** (`clawed-abode-gradle-wrapper`): Shared Gradle wrapper distribution at `/gradle-cache/wrapper` in runner containers. Contains the Gradle distribution binary (~291 MB).
-
-   Note: Only `caches/` and `wrapper/` are shared. The `daemon/` directory and other ephemeral state live on the container's overlay filesystem and are recreated fresh each session. This prevents stale Gradle daemons from previous sessions from causing phantom builds (see issue #238).
-
-5. **Git Cache** (`clawed-abode-git-cache`): Shared bare repository cache at `/cache` in clone containers. Used as `--reference` during clones to avoid re-downloading git objects for repos that have been cloned before.
-
 ### Workspace Structure
 
 Each session's worktree is at `/worktrees/{sessionId}/{repo-name}`. For no-repo sessions, just `/worktrees/{sessionId}/`.
