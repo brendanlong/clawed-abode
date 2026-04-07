@@ -1,6 +1,8 @@
 import type { Repo } from '@/components/RepoSelector';
 import type { Issue } from '@/lib/types';
 
+export const SESSION_NAME_MAX_LENGTH = 100;
+
 export interface FormState {
   selectedRepo: Repo | null;
   selectedBranch: string;
@@ -44,7 +46,7 @@ export function formReducer(state: FormState, action: FormAction): FormState {
         sessionName: state.nameManuallyEdited
           ? state.sessionName
           : action.issue
-            ? `#${action.issue.number}: ${action.issue.title}`
+            ? `#${action.issue.number}: ${action.issue.title}`.slice(0, SESSION_NAME_MAX_LENGTH)
             : '',
         initialPrompt: state.promptManuallyEdited
           ? state.initialPrompt
