@@ -126,9 +126,11 @@ export function useVoiceRecording(onFinalizedText?: (text: string) => void) {
       // Auto-restart to maintain continuous recording.
       if (recognitionRef.current === recognition) {
         try {
-          // Reset the finalized length counter — the new session starts a fresh
-          // results list from index 0, so the old offset would cause garbled output.
+          // Reset state — the new session starts a fresh results list from index 0,
+          // so the old offset would cause garbled output. Also clear any stale interim text.
           lastFinalizedLengthRef.current = 0;
+          interimRef.current = '';
+          setInterimTranscript('');
           recognition.start();
         } catch {
           // Can't restart — mark as stopped
