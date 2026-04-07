@@ -1,19 +1,20 @@
 /**
  * Manages git clones for session isolation.
  *
- * Each session gets its own git clone at /worktrees/{sessionId}/{repoName}.
+ * Each session gets its own git clone at ~/worktrees/{sessionId}/{repoName}.
  */
 
 import { execFile } from 'child_process';
 import { mkdir, rm } from 'fs/promises';
 import { join } from 'path';
+import { homedir } from 'os';
 import { createLogger, toError } from '@/lib/logger';
 import { env } from '@/lib/env';
 
 const log = createLogger('worktree-manager');
 
 /** Base directory for session workspaces */
-const WORKTREES_DIR = '/worktrees';
+const WORKTREES_DIR = join(homedir(), 'worktrees');
 
 /**
  * Run a command and return stdout.
