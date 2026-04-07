@@ -635,7 +635,7 @@ export async function markLastMessageAsInterrupted(sessionId: string): Promise<v
  * Stop a session's Claude query and clean up state.
  * Called when a session is stopped.
  */
-export async function stopSession(sessionId: string): Promise<void> {
+export function stopSession(sessionId: string): void {
   const state = sessions.get(sessionId);
   if (!state) return;
 
