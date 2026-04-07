@@ -43,6 +43,13 @@ function registerShutdownHandler() {
     shuttingDown = true;
     console.log(`Received ${signal}, shutting down gracefully...`);
 
+    // Force exit after 10s if graceful shutdown hangs
+    // (important for SIGTERM from systemd where there's no second signal)
+    setTimeout(() => {
+      console.error('Graceful shutdown timed out, forcing exit');
+      process.exit(1);
+    }, 10_000).unref();
+
     try {
       // Stop all active Claude queries
       const { stopAllSessions } = await import('@/server/services/claude-runner');
