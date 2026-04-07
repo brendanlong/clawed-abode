@@ -187,7 +187,12 @@ export function useVoicePlayback(
 
     const synth = window.speechSynthesis;
     const loadVoices = () => {
-      voicesRef.current = synth.getVoices();
+      const available = synth.getVoices();
+      // In Firefox, voiceschanged can fire repeatedly as getVoices() is called.
+      // Stop listening once voices are loaded to avoid unnecessary repeated calls.
+      if (available.length === 0) return;
+      synth.removeEventListener('voiceschanged', loadVoices);
+      voicesRef.current = available;
       console.debug('[TTS] voices loaded:', voicesRef.current.length);
     };
 
