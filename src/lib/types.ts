@@ -19,6 +19,9 @@ export const MessageType = {
 
 export type MessageType = (typeof MessageType)[keyof typeof MessageType];
 
+// Session constants
+export const SESSION_NAME_MAX_LENGTH = 100;
+
 // Session interface
 export interface Session {
   id: string;

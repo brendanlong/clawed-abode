@@ -1,7 +1,5 @@
 import type { Repo } from '@/components/RepoSelector';
-import type { Issue } from '@/lib/types';
-
-export const SESSION_NAME_MAX_LENGTH = 100;
+import { SESSION_NAME_MAX_LENGTH, type Issue } from '@/lib/types';
 
 export interface FormState {
   selectedRepo: Repo | null;

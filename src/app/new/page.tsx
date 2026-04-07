@@ -18,7 +18,8 @@ import { BranchSelector } from '@/components/BranchSelector';
 import { IssueSelector } from '@/components/IssueSelector';
 import type { Repo } from '@/components/RepoSelector';
 import type { Issue } from '@/lib/types';
-import { formReducer, initialFormState, SESSION_NAME_MAX_LENGTH } from './form-reducer';
+import { SESSION_NAME_MAX_LENGTH } from '@/lib/types';
+import { formReducer, initialFormState } from './form-reducer';
 
 function generateIssuePrompt(issue: Issue, repoFullName: string): string {
   const issueUrl = `https://github.com/${repoFullName}/issues/${issue.number}`;
