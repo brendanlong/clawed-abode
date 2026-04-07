@@ -2,6 +2,7 @@ import type { ContainerEnvVar, ContainerMcpServer } from './repo-settings';
 import { getRepoSettingsForContainer } from './repo-settings';
 import { getGlobalSettingsForContainer, type GlobalContainerSettings } from './global-settings';
 import { buildSystemPrompt } from './claude-runner';
+import { env } from '@/lib/env';
 
 /**
  * Fully merged session settings ready for container creation and Claude queries.
@@ -41,7 +42,7 @@ export async function loadMergedSessionSettings(
     systemPrompt,
     envVars,
     mcpServers,
-    claudeModel: globalSettings.claudeModel ?? undefined,
+    claudeModel: globalSettings.claudeModel ?? env.CLAUDE_MODEL,
     claudeApiKey: globalSettings.claudeApiKey ?? undefined,
     customSystemPrompt: repoSettings?.customSystemPrompt,
     globalSettings,
