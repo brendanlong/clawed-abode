@@ -296,10 +296,21 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
       if (toolName === 'AskUserQuestion' || toolName === 'ExitPlanMode') {
         log.info('canUseTool: Waiting for user input', { sessionId, toolName });
 
+        // Signal that Claude is waiting for input (not actively running)
+        // so the frontend enables the answer UI
+        sseEvents.emitClaudeRunning(sessionId, false);
+
         // Park a promise that will be resolved when the user answers
-        return new Promise((resolve, reject) => {
-          state.pendingInput = { toolName, input, resolve, reject };
-        });
+        try {
+          return await new Promise<{ behavior: 'allow'; updatedInput: Record<string, unknown> }>(
+            (resolve, reject) => {
+              state.pendingInput = { toolName, input, resolve, reject };
+            }
+          );
+        } finally {
+          // Resume "running" state after user answers
+          sseEvents.emitClaudeRunning(sessionId, true);
+        }
       }
 
       // Auto-approve all other tools (bypass permissions mode)
