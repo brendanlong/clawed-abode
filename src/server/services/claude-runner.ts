@@ -11,6 +11,7 @@
  */
 
 import { query, type McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
+import { execFile } from 'child_process';
 import { prisma } from '@/lib/prisma';
 import { getMessageType } from '@/lib/claude-messages';
 import { extractRepoFullName } from '@/lib/utils';
@@ -20,11 +21,111 @@ import { createLogger, toError } from '@/lib/logger';
 import { fetchPullRequestForBranch } from './github';
 import { getCurrentBranch } from './worktree-manager';
 import { StreamAccumulator } from './stream-accumulator';
+import type { ContainerEnvVar } from './repo-settings';
 
 const log = createLogger('claude-runner');
 
 // Namespace UUID for generating deterministic IDs from error content
 const ERROR_LINE_NAMESPACE = '6ba7b810-9dad-11d1-80b4-00c04fd430c8';
+
+/**
+ * Parse null-delimited `env -0` output into a Record.
+ * Each entry is KEY=VALUE separated by null bytes.
+ */
+export function parseShellEnv(envOutput: string): Record<string, string> {
+  const env: Record<string, string> = {};
+  // Split on null bytes, filter empty trailing entry
+  const entries = envOutput.split('\0').filter((e) => e.length > 0);
+  for (const entry of entries) {
+    const eqIndex = entry.indexOf('=');
+    if (eqIndex > 0) {
+      env[entry.slice(0, eqIndex)] = entry.slice(eqIndex + 1);
+    }
+  }
+  return env;
+}
+
+/** Cached base shell environment (loaded once at first use). */
+let baseShellEnvCache: Record<string, string> | null = null;
+
+/**
+ * Get the base shell environment by spawning a clean login shell.
+ * Uses `env -i` to start with an empty environment, then `bash -l` to load
+ * the user's shell profile (~/.bashrc, etc.). This ensures the agent gets
+ * a normal shell environment (PATH, HOME, etc.) without inheriting any
+ * server-specific env vars (PASSWORD_HASH, ENCRYPTION_KEY, etc.).
+ *
+ * The result is cached since the shell environment doesn't change at runtime.
+ */
+export async function getBaseShellEnv(): Promise<Record<string, string>> {
+  if (baseShellEnvCache) return baseShellEnvCache;
+
+  const result = await new Promise<string>((resolve, reject) => {
+    execFile(
+      'env',
+      [
+        '-i',
+        `HOME=${process.env.HOME ?? '/root'}`,
+        `USER=${process.env.USER ?? 'root'}`,
+        'bash',
+        '-l',
+        '-c',
+        'env -0',
+      ],
+      { timeout: 5000 },
+      (error, stdout) => {
+        if (error) reject(error);
+        else resolve(stdout);
+      }
+    );
+  });
+
+  baseShellEnvCache = parseShellEnv(result);
+  return baseShellEnvCache;
+}
+
+/** Reset the cached shell env (for testing). */
+export function resetBaseShellEnvCache(): void {
+  baseShellEnvCache = null;
+}
+
+/**
+ * Build the environment for a Claude agent session.
+ *
+ * Starts from a clean login shell environment (no server secrets),
+ * then explicitly adds only what the agent needs:
+ * - GITHUB_TOKEN for git operations
+ * - CLAUDE_CODE_OAUTH_TOKEN for the Claude API
+ * - User-defined env vars from global + per-repo settings
+ */
+export async function buildAgentEnv(options: {
+  /** GitHub token for git push/pull */
+  githubToken?: string;
+  /** Claude API key (from DB setting or server env) */
+  claudeApiKey?: string;
+  /** User-defined env vars (already merged global + per-repo) */
+  envVars?: ContainerEnvVar[];
+}): Promise<Record<string, string | undefined>> {
+  const shellEnv = await getBaseShellEnv();
+  const agentEnv: Record<string, string | undefined> = { ...shellEnv };
+
+  // Explicitly set tokens the agent needs
+  if (options.githubToken) {
+    agentEnv.GITHUB_TOKEN = options.githubToken;
+  }
+  if (options.claudeApiKey) {
+    agentEnv.CLAUDE_CODE_OAUTH_TOKEN = options.claudeApiKey;
+  }
+
+  // Merge user-defined env vars (highest precedence)
+  if (options.envVars) {
+    for (const envVar of options.envVars) {
+      agentEnv[envVar.name] = envVar.value;
+    }
+  }
+
+  return agentEnv;
+}
 
 /**
  * State for a pending user input request (AskUserQuestion / ExitPlanMode).
@@ -172,6 +273,10 @@ export interface RunClaudeCommandOptions {
   } | null;
   /** Claude model override */
   claudeModel?: string | null;
+  /** Claude API key (from DB global settings or server env fallback) */
+  claudeApiKey?: string | null;
+  /** User-defined environment variables (merged global + per-repo) */
+  envVars?: ContainerEnvVar[];
   /** MCP server configurations passed to the SDK */
   mcpServers?: Array<
     | {
@@ -240,6 +345,13 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
       )
     : undefined;
 
+  // Build clean-room environment for the agent
+  const agentEnv = await buildAgentEnv({
+    githubToken: process.env.GITHUB_TOKEN,
+    claudeApiKey: options.claudeApiKey ?? process.env.CLAUDE_CODE_OAUTH_TOKEN,
+    envVars: options.envVars,
+  });
+
   // Determine if we should resume (has existing messages)
   const existingMessages = await prisma.message.count({
     where: { sessionId },
@@ -287,6 +399,7 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
     allowDangerouslySkipPermissions: true,
     includePartialMessages: true,
     cwd: workingDir,
+    env: agentEnv,
     settingSources: ['project'],
     systemPrompt: {
       type: 'preset' as const,
