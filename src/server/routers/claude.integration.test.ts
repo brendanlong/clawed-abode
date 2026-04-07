@@ -97,7 +97,6 @@ describe('claudeRouter integration', () => {
           branch: 'main',
           workspacePath: '/workspace/test',
           status: 'running',
-          containerId: 'container-123',
         },
       });
 
@@ -165,7 +164,6 @@ describe('claudeRouter integration', () => {
           branch: 'main',
           workspacePath: '/workspace/test',
           status: 'running',
-          containerId: 'container-123',
         },
       });
 
@@ -218,7 +216,6 @@ describe('claudeRouter integration', () => {
           branch: 'main',
           workspacePath: '/workspace/test',
           status: 'running',
-          containerId: 'container-123',
         },
       });
 
@@ -241,7 +238,6 @@ describe('claudeRouter integration', () => {
           branch: 'main',
           workspacePath: '/workspace/test',
           status: 'running',
-          containerId: 'container-123',
         },
       });
 

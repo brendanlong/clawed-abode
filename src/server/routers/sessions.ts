@@ -285,7 +285,6 @@ export const sessionsRouter = router({
         data: {
           status: 'archived',
           archivedAt: new Date(),
-          containerId: null,
         },
       });
 

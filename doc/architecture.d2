@@ -6,7 +6,7 @@ direction: right
 mobile: Mobile/Web Browser
 
 # Tailscale
-tailscale: Tailscale Funnel {
+tailscale: Tailscale Serve/Funnel {
   style.fill: "#4A5568"
 }
 
@@ -20,186 +20,102 @@ server: Home Server {
 
     auth: Auth
     session_mgmt: Session Management
-    agent_client: Agent Client (HTTP/SSE)
-    websocket: WebSocket/SSE
+    sdk: Claude Agent SDK (in-process)
+    sse: SSE to Browser
   }
 
-  podman: Podman Containers {
-    style.fill: "#2496ED"
+  workspaces: ~/worktrees/ {
+    style.fill: "#48BB78"
     style.font-color: white
 
-    container1: Session Container {
-      agent_svc: Agent Service (HTTP)
-      claude_sdk: Claude Agent SDK
-      workspace: Git Clone
-      gpu: GPU Access
+    session1: "{sessionId1}/{repo}" {
+      style.fill: "#38A169"
     }
-
-    container2: Session Container {
-      agent_svc2: Agent Service (HTTP)
-      claude_sdk2: Claude Agent SDK
-      workspace2: Git Clone
-      gpu2: GPU Access
+    session2: "{sessionId2}/{repo}" {
+      style.fill: "#38A169"
     }
   }
 
-  storage: Storage {
-    style.fill: "#4DB33D"
-    style.font-color: white
+  db: SQLite {
+    style.fill: "#F6E05E"
 
-    sqlite: SQLite {
-      sessions: Sessions
-      messages: Messages
-      authSessions: AuthSessions
-    }
-
-    volumes: Named Volumes {
-      workspaces: Workspace Volumes
-      pnpm: pnpm Store
-      gradle_caches: Gradle Caches
-      gradle_wrapper: Gradle Wrapper
-      git_cache: Git Cache
-    }
+    sessions: Sessions
+    messages: Messages
+    settings: Settings
   }
-
-  app.agent_client -> podman.container1.agent_svc: HTTP/SSE
-  app.agent_client -> podman.container2.agent_svc2: HTTP/SSE
-  app -> storage.sqlite: Prisma
-  podman -> storage.volumes: mount
 }
 
 # Connections
 mobile -> tailscale: HTTPS
-tailscale -> server.app: Encrypted tunnel
+tailscale -> server.app: HTTP
+
+server.app.sdk -> server.workspaces: "cwd"
+server.app.session_mgmt -> server.db: "read/write"
+server.app.sdk -> server.db.messages: "persist"
+server.app.sse -> mobile: "stream messages"
 
 # Data Model
-data_model: Data Model {
-  style.fill: "#FFF3CD"
+data: Data Model {
+  style.fill: "#FFF5F5"
 
   session: Session {
-    shape: sql_table
-    id: string {constraint: primary_key}
+    shape: class
+    id: string
     name: string
-    repoUrl: string
-    branch: string
-    workspacePath: string
-    containerId: string | null
-    agentPort: int | null
-    status: enum
-    statusMessage: string | null
-    createdAt: timestamp
-    updatedAt: timestamp
+    repoUrl: string?
+    branch: string?
+    status: creating | running | stopped | error | archived
+    repoPath: string
   }
 
   message: Message {
-    shape: sql_table
-    id: string {constraint: primary_key}
-    sessionId: string {constraint: foreign_key}
+    shape: class
+    sessionId: string
     sequence: int
-    type: enum
-    content: jsonb
-    createdAt: timestamp
+    type: system | user | assistant | result
+    content: JSON
   }
 
-  authSession: AuthSession {
-    shape: sql_table
-    id: string {constraint: primary_key}
-    token: string
-    expiresAt: timestamp
-    createdAt: timestamp
-    ipAddress: string | null
-    userAgent: string | null
-  }
-
-  session.id <- message.sessionId
-}
-
-# API Routes
-api: tRPC API {
-  style.fill: "#E9ECEF"
-
-  auth_routes: auth {
-    login: login()
-    logout: logout()
-    logoutAll: logoutAll()
-    listSessions: listSessions()
-    deleteSession: deleteSession()
-  }
-
-  session_routes: sessions {
-    create: create()
-    list: list()
-    get: get()
-    start: start()
-    stop: stop()
-    delete: delete()
-  }
-
-  claude_routes: claude {
-    send: send() → Stream
-    interrupt: interrupt()
-    getHistory: getHistory()
-  }
-
-  github_routes: github {
-    listRepos: listRepos()
-    listBranches: listBranches()
-  }
+  session -> message: "has many"
 }
 
 # Session Lifecycle
 lifecycle: Session Lifecycle {
-  style.fill: "#F8D7DA"
-  direction: down
+  style.fill: "#F0FFF4"
 
-  creating: Creating {
-    style.fill: "#FFC107"
-  }
-  running: Running {
-    style.fill: "#28A745"
-    style.font-color: white
-  }
-  stopped: Stopped {
-    style.fill: "#6C757D"
-    style.font-color: white
-  }
-  error: Error {
-    style.fill: "#DC3545"
-    style.font-color: white
+  create: Create {
+    style.fill: "#C6F6D5"
+    1: "User selects repo + branch"
+    2: "Server clones to ~/worktrees/{id}/{repo}"
+    3: "Session status → running"
   }
 
-  creating -> running: Container + Agent ready
-  running -> stopped: User stops
-  stopped -> running: User starts
-  running -> error: Failure
-  creating -> error: Failure
-}
-
-# Agent Service Detail
-agent_detail: Agent Service (per container) {
-  style.fill: "#F0F4FF"
-  direction: down
-
-  http: HTTP Server {
-    query: POST /query → SSE stream
-    interrupt: POST /interrupt
-    status: GET /status
-    messages: GET /messages
-    health: GET /health
+  interact: Interact {
+    style.fill: "#BEE3F8"
+    1: "User sends prompt via tRPC"
+    2: "SDK query() runs in-process"
+    3: "canUseTool handles AskUserQuestion"
+    4: "Messages stream via SSE"
   }
 
-  sdk: Claude Agent SDK {
-    query_fn: query()
-    sessions: Session management
-    resume: Resume support
+  stop: Stop {
+    style.fill: "#FEFCBF"
+    1: "Abort running query"
+    2: "Session status → stopped"
+    3: "Worktree preserved on disk"
   }
 
-  msg_store: SQLite Message Store {
-    append: append()
-    get_after: getAfter()
+  archive: Archive {
+    style.fill: "#FED7D7"
+    1: "Stop query if running"
+    2: "Remove ~/worktrees/{id}/"
+    3: "Session status → archived"
+    4: "Messages preserved in DB"
   }
 
-  http.query -> sdk.query_fn: Start query
-  sdk.query_fn -> msg_store.append: Persist messages
-  http.messages -> msg_store.get_after: Catch-up
+  create -> interact: "ready"
+  interact -> stop: "user stops"
+  stop -> interact: "user restarts"
+  interact -> archive: "user deletes"
+  stop -> archive: "user deletes"
 }

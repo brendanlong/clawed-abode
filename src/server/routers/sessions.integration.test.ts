@@ -346,7 +346,6 @@ describe('sessionsRouter integration', () => {
           branch: 'main',
           workspacePath: '/workspace/test',
           status: 'running',
-          containerId: 'container-123',
         },
       });
 
@@ -509,8 +508,6 @@ describe('sessionsRouter integration', () => {
       expect(dbSession).not.toBeNull();
       expect(dbSession!.status).toBe('archived');
       expect(dbSession!.archivedAt).not.toBeNull();
-      expect(dbSession!.containerId).toBeNull();
-
       // Verify messages were preserved
       const messages = await testPrisma.message.findMany({ where: { sessionId: session.id } });
       expect(messages).toHaveLength(1);
