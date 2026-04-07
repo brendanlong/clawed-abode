@@ -6,9 +6,7 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     include: ['src/**/*.integration.test.ts'],
-    // Exclude e2e tests - they require special environment setup (images, podman socket, etc.)
-    exclude: ['src/test/e2e.integration.test.ts'],
-    testTimeout: 30000, // Longer timeout for Docker/git operations
+    testTimeout: 30000, // Longer timeout for git/SDK operations
   },
   resolve: {
     alias: {
