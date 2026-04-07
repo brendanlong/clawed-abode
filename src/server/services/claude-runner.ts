@@ -223,15 +223,16 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
     ? Object.fromEntries(
         options.mcpServers.map((server) => {
           if (server.type === 'http' || server.type === 'sse') {
-            const config: Record<string, unknown> = { type: server.type, url: server.url };
+            const config: McpServerConfig = { type: server.type, url: server.url };
             if (server.headers && Object.keys(server.headers).length > 0) {
-              config.headers = server.headers;
+              (config as { headers?: Record<string, string> }).headers = server.headers;
             }
             return [server.name, config];
           }
-          const config: Record<string, unknown> = { command: server.command };
-          if (server.args?.length) config.args = server.args;
-          if (server.env && Object.keys(server.env).length > 0) config.env = server.env;
+          const config: McpServerConfig = { command: server.command };
+          if (server.args?.length) (config as { args?: string[] }).args = server.args;
+          if (server.env && Object.keys(server.env).length > 0)
+            (config as { env?: Record<string, string> }).env = server.env;
           return [server.name, config];
         })
       )
@@ -621,9 +622,9 @@ export async function stopSession(sessionId: string): Promise<void> {
 
   if (state.currentQuery) {
     try {
-      state.currentQuery.abort();
+      state.currentQuery.close();
     } catch {
-      // Ignore abort errors
+      // Ignore close errors
     }
   }
 
