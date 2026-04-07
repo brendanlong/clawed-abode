@@ -48,6 +48,10 @@ import {
   isClaudeRunning,
   isClaudeRunningAsync,
   markAllSessionsStopped,
+  parseShellEnv,
+  buildAgentEnv,
+  getBaseShellEnv,
+  resetBaseShellEnvCache,
 } from './claude-runner';
 
 describe('claude-runner', () => {
@@ -159,6 +163,141 @@ describe('claude-runner', () => {
       mockPrisma.session.updateMany.mockResolvedValue({ count: 0 });
       const result = await markAllSessionsStopped();
       expect(result).toBe(0);
+    });
+  });
+
+  describe('parseShellEnv', () => {
+    it('parses null-delimited env output', () => {
+      const input = 'HOME=/home/user\0PATH=/usr/bin:/bin\0LANG=en_US.UTF-8\0';
+      const result = parseShellEnv(input);
+      expect(result).toEqual({
+        HOME: '/home/user',
+        PATH: '/usr/bin:/bin',
+        LANG: 'en_US.UTF-8',
+      });
+    });
+
+    it('handles values containing equals signs', () => {
+      const input = 'FOO=bar=baz\0';
+      const result = parseShellEnv(input);
+      expect(result).toEqual({ FOO: 'bar=baz' });
+    });
+
+    it('handles empty input', () => {
+      expect(parseShellEnv('')).toEqual({});
+    });
+
+    it('handles values containing newlines', () => {
+      const input = 'MULTI=line1\nline2\0SIMPLE=value\0';
+      const result = parseShellEnv(input);
+      expect(result).toEqual({
+        MULTI: 'line1\nline2',
+        SIMPLE: 'value',
+      });
+    });
+
+    it('skips entries without an equals sign', () => {
+      const input = 'VALID=yes\0invalid\0ALSO_VALID=yep\0';
+      const result = parseShellEnv(input);
+      expect(result).toEqual({
+        VALID: 'yes',
+        ALSO_VALID: 'yep',
+      });
+    });
+
+    it('handles empty values', () => {
+      const input = 'EMPTY=\0';
+      const result = parseShellEnv(input);
+      expect(result).toEqual({ EMPTY: '' });
+    });
+  });
+
+  describe('getBaseShellEnv', () => {
+    beforeEach(() => {
+      resetBaseShellEnvCache();
+    });
+
+    it('returns a shell environment with PATH and HOME', async () => {
+      const env = await getBaseShellEnv();
+      expect(env.PATH).toBeDefined();
+      expect(env.PATH).toContain('/usr');
+      expect(env.HOME).toBeDefined();
+    });
+
+    it('does not include server secrets', async () => {
+      const env = await getBaseShellEnv();
+      expect(env.PASSWORD_HASH).toBeUndefined();
+      expect(env.ENCRYPTION_KEY).toBeUndefined();
+      expect(env.DATABASE_URL).toBeUndefined();
+      expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+      expect(env.GITHUB_TOKEN).toBeUndefined();
+    });
+
+    it('caches the result across calls', async () => {
+      const env1 = await getBaseShellEnv();
+      const env2 = await getBaseShellEnv();
+      expect(env1).toBe(env2); // Same reference = cached
+    });
+  });
+
+  describe('buildAgentEnv', () => {
+    beforeEach(() => {
+      resetBaseShellEnvCache();
+    });
+
+    it('includes base shell env vars like PATH', async () => {
+      const env = await buildAgentEnv({});
+      expect(env.PATH).toBeDefined();
+      expect(env.HOME).toBeDefined();
+    });
+
+    it('does not include server secrets from process.env', async () => {
+      const env = await buildAgentEnv({});
+      expect(env.PASSWORD_HASH).toBeUndefined();
+      expect(env.ENCRYPTION_KEY).toBeUndefined();
+      expect(env.DATABASE_URL).toBeUndefined();
+    });
+
+    it('sets GITHUB_TOKEN when provided', async () => {
+      const env = await buildAgentEnv({ githubToken: 'ghp_test123' });
+      expect(env.GITHUB_TOKEN).toBe('ghp_test123');
+    });
+
+    it('sets CLAUDE_CODE_OAUTH_TOKEN when claudeApiKey is provided', async () => {
+      const env = await buildAgentEnv({ claudeApiKey: 'sk-ant-test' });
+      expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe('sk-ant-test');
+    });
+
+    it('does not set tokens when not provided', async () => {
+      const env = await buildAgentEnv({});
+      expect(env.GITHUB_TOKEN).toBeUndefined();
+      expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+    });
+
+    it('merges user-defined env vars', async () => {
+      const env = await buildAgentEnv({
+        envVars: [
+          { name: 'MY_API_KEY', value: 'secret123' },
+          { name: 'DEBUG', value: 'true' },
+        ],
+      });
+      expect(env.MY_API_KEY).toBe('secret123');
+      expect(env.DEBUG).toBe('true');
+    });
+
+    it('user env vars override base shell env', async () => {
+      const env = await buildAgentEnv({
+        envVars: [{ name: 'HOME', value: '/custom/home' }],
+      });
+      expect(env.HOME).toBe('/custom/home');
+    });
+
+    it('user env vars can override explicit tokens', async () => {
+      const env = await buildAgentEnv({
+        githubToken: 'ghp_default',
+        envVars: [{ name: 'GITHUB_TOKEN', value: 'ghp_override' }],
+      });
+      expect(env.GITHUB_TOKEN).toBe('ghp_override');
     });
   });
 });

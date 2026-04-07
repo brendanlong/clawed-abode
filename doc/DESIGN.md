@@ -267,6 +267,16 @@ The SDK's `canUseTool` callback handles interactive tools:
 - **ExitPlanMode**: Similar flow — user approves/rejects the plan.
 - **All other tools**: Auto-approved (`bypassPermissions` mode).
 
+### Agent Environment
+
+Agent sessions run with a **clean-room environment** — they do NOT inherit the Next.js server's `process.env`. Instead, the environment is built from scratch:
+
+1. **Base**: A login shell (`env -i bash -l -c env`) provides `PATH`, `HOME`, `LANG`, etc. from `~/.bashrc` — cached at first use since it doesn't change at runtime.
+2. **Explicit tokens**: Only `GITHUB_TOKEN` (for git operations) and `CLAUDE_CODE_OAUTH_TOKEN` (for the Claude API, from DB setting or server env fallback) are added.
+3. **User-defined env vars**: Global and per-repo env vars from the database are merged on top (per-repo takes precedence).
+
+This ensures server secrets (`PASSWORD_HASH`, `ENCRYPTION_KEY`, `DATABASE_URL`) are never exposed to agent sessions.
+
 ### Streaming
 
 The SDK emits `stream_event` messages which are accumulated by `StreamAccumulator` into partial assistant messages for real-time UI updates. These are emitted to the browser via SSE but not persisted.
