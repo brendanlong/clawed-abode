@@ -6,7 +6,11 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     include: ['src/**/*.test.ts'],
-    exclude: ['src/**/*.integration.test.ts', 'src/components/**/*.test.tsx'],
+    exclude: [
+      'src/**/*.integration.test.ts',
+      'src/components/**/*.test.tsx',
+      'src/hooks/**/*.test.ts',
+    ],
     setupFiles: ['src/test/setup-unit.ts'],
     coverage: {
       provider: 'v8',
