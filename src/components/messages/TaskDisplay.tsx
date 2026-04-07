@@ -24,11 +24,18 @@ interface TaskOutputContent {
   text: string;
 }
 
+interface TaskUsage {
+  totalTokens?: number;
+  toolUses?: number;
+  durationMs?: number;
+}
+
 /**
  * Parse the task output which comes as an array of content objects.
- * Returns the main text content and extracted agent ID if present.
+ * Returns the main text content, extracted agent ID, and usage stats if present.
+ * The metadata block contains: agentId, and optionally <usage> with token/tool/duration info.
  */
-function parseTaskOutput(output: unknown): { text: string; agentId?: string } {
+function parseTaskOutput(output: unknown): { text: string; agentId?: string; usage?: TaskUsage } {
   if (typeof output === 'string') {
     const agentIdMatch = output.match(/agentId:\s*(\w+)/);
     return {
@@ -40,6 +47,7 @@ function parseTaskOutput(output: unknown): { text: string; agentId?: string } {
   if (Array.isArray(output)) {
     const textParts: string[] = [];
     let agentId: string | undefined;
+    let usage: TaskUsage | undefined;
 
     for (const item of output) {
       if (typeof item === 'string') {
@@ -49,10 +57,22 @@ function parseTaskOutput(output: unknown): { text: string; agentId?: string } {
       } else if (item && typeof item === 'object') {
         const content = item as TaskOutputContent;
         if (content.type === 'text' && content.text) {
-          // Check if this is the agentId line
           const agentIdMatch = content.text.match(/agentId:\s*(\w+)/);
           if (agentIdMatch) {
+            // This is the metadata block — extract agentId and usage stats
             agentId = agentIdMatch[1];
+            const usageMatch = content.text.match(/<usage>([\s\S]*?)<\/usage>/);
+            if (usageMatch) {
+              const usageText = usageMatch[1];
+              const tokens = usageText.match(/total_tokens:\s*(\d+)/)?.[1];
+              const tools = usageText.match(/tool_uses:\s*(\d+)/)?.[1];
+              const duration = usageText.match(/duration_ms:\s*(\d+)/)?.[1];
+              usage = {
+                totalTokens: tokens ? parseInt(tokens, 10) : undefined,
+                toolUses: tools ? parseInt(tools, 10) : undefined,
+                durationMs: duration ? parseInt(duration, 10) : undefined,
+              };
+            }
           } else {
             textParts.push(content.text);
           }
@@ -63,6 +83,7 @@ function parseTaskOutput(output: unknown): { text: string; agentId?: string } {
     return {
       text: textParts.join('\n\n'),
       agentId,
+      usage,
     };
   }
 
@@ -177,7 +198,11 @@ export function TaskDisplay({ tool }: { tool: ToolCall }) {
     [subagentType]
   );
 
-  const { text: outputText, agentId } = useMemo(() => {
+  const {
+    text: outputText,
+    agentId,
+    usage,
+  } = useMemo(() => {
     if (!hasOutput) return { text: '' };
     return parseTaskOutput(tool.output);
   }, [tool.output, hasOutput]);
@@ -200,8 +225,21 @@ export function TaskDisplay({ tool }: { tool: ToolCall }) {
         </Badge>
       }
       subtitle={
-        description ? (
-          <div className="text-muted-foreground text-xs mt-1 truncate">{description}</div>
+        description || usage ? (
+          <div className="text-muted-foreground text-xs mt-1 flex items-center gap-2 flex-wrap">
+            {description && <span className="truncate">{description}</span>}
+            {usage && (
+              <span className="flex items-center gap-1 shrink-0">
+                {usage.toolUses !== undefined && <span>{usage.toolUses} tools</span>}
+                {usage.durationMs !== undefined && (
+                  <span>· {(usage.durationMs / 1000).toFixed(1)}s</span>
+                )}
+                {usage.totalTokens !== undefined && (
+                  <span>· {(usage.totalTokens / 1000).toFixed(1)}k tokens</span>
+                )}
+              </span>
+            )}
+          </div>
         ) : undefined
       }
     >
