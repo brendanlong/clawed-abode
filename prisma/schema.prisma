@@ -26,13 +26,12 @@ model Session {
   name          String
   repoUrl       String?   // null for no-repo sessions
   branch        String?   // null for no-repo sessions
-  workspacePath String    // Path to workspace directory on host (contains the repo)
+  workspacePath String    @default("") // Path to workspace directory (e.g., ~/worktrees/{sessionId})
   repoPath      String    @default("") // Path to repo relative to workspace (e.g., "my-repo")
-  containerId   String?
   status        String    @default("creating") // creating, running, stopped, error, archived
   statusMessage String?   // Human-readable progress message during creation
   initialPrompt  String?   // Optional prompt to send when session starts (e.g., from GitHub issue)
-  currentBranch  String?   // Current git branch in the container (detected after each query)
+  currentBranch  String?   // Current git branch (detected after each query)
   createdAt      DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
   archivedAt    DateTime? // When the session was archived (null if not archived)

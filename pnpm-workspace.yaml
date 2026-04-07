@@ -1,6 +1,5 @@
 packages:
   - '.'
-  - 'agent-service'
 
 onlyBuiltDependencies:
   - '@prisma/client'

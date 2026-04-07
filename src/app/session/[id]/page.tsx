@@ -51,6 +51,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
     send: sendPrompt,
     interrupt,
     isInterrupting,
+    answerQuestion,
     commands,
   } = useClaudeState(sessionId);
 
@@ -258,6 +259,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
           onLoadMore={fetchMore}
           tokenUsage={tokenUsage}
           onSendResponse={handleSendPromptWithVoice}
+          onAnswerQuestion={answerQuestion}
           isClaudeRunning={isClaudeRunning}
         />
 

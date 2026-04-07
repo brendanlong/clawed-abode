@@ -2,7 +2,7 @@
 const nextConfig = {
   reactStrictMode: true,
   // Mark native modules as external (moved from experimental in Next.js 16)
-  serverExternalPackages: ['dockerode', 'ssh2', 'simple-git'],
+  serverExternalPackages: ['ssh2', 'simple-git'],
   // Empty turbopack config to acknowledge Turbopack is enabled by default
   turbopack: {},
   // Exclude the data directory from production build output tracing.

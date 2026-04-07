@@ -21,6 +21,30 @@ vi.mock('../services/claude-runner', async (importOriginal) => {
 // Use real token estimation (pure function)
 // vi.mock('@/lib/token-estimation') - not mocked
 
+// Mock worktree-manager
+vi.mock('../services/worktree-manager', () => ({
+  getSessionWorkingDir: vi.fn((sessionId: string, repoPath: string) =>
+    repoPath ? `/worktrees/${sessionId}/${repoPath}` : `/worktrees/${sessionId}`
+  ),
+}));
+
+// Mock settings-merger
+vi.mock('../services/settings-merger', () => ({
+  loadMergedSessionSettings: vi.fn().mockResolvedValue({
+    systemPrompt: 'test prompt',
+    customSystemPrompt: null,
+    globalSettings: {
+      systemPromptOverride: null,
+      systemPromptOverrideEnabled: false,
+      systemPromptAppend: null,
+    },
+    envVars: [],
+    mcpServers: [],
+    claudeModel: null,
+    claudeApiKey: null,
+  }),
+}));
+
 // Mock logger
 vi.mock('@/lib/logger', () => ({
   createLogger: () => ({
@@ -73,7 +97,6 @@ describe('claudeRouter integration', () => {
           branch: 'main',
           workspacePath: '/workspace/test',
           status: 'running',
-          containerId: 'container-123',
         },
       });
 
@@ -90,7 +113,6 @@ describe('claudeRouter integration', () => {
       expect(mockRunClaudeCommand).toHaveBeenCalledWith(
         expect.objectContaining({
           sessionId: session.id,
-          containerId: 'container-123',
           prompt: 'Hello, Claude!',
         })
       );
@@ -142,7 +164,6 @@ describe('claudeRouter integration', () => {
           branch: 'main',
           workspacePath: '/workspace/test',
           status: 'running',
-          containerId: 'container-123',
         },
       });
 
@@ -195,7 +216,6 @@ describe('claudeRouter integration', () => {
           branch: 'main',
           workspacePath: '/workspace/test',
           status: 'running',
-          containerId: 'container-123',
         },
       });
 
@@ -218,7 +238,6 @@ describe('claudeRouter integration', () => {
           branch: 'main',
           workspacePath: '/workspace/test',
           status: 'running',
-          containerId: 'container-123',
         },
       });
 
@@ -402,7 +421,7 @@ describe('claudeRouter integration', () => {
         sessionId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',
       });
 
-      expect(result).toEqual({ running: true });
+      expect(result).toEqual({ running: true, hasPendingInput: false });
     });
 
     it('should return not running status', async () => {
@@ -413,7 +432,7 @@ describe('claudeRouter integration', () => {
         sessionId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',
       });
 
-      expect(result).toEqual({ running: false });
+      expect(result).toEqual({ running: false, hasPendingInput: false });
     });
 
     it('should require authentication', async () => {

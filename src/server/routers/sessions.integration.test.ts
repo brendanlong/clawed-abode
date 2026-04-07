@@ -1,62 +1,41 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { setupTestDb, teardownTestDb, testPrisma, clearTestDb } from '@/test/setup-test-db';
 
-// Mock external services that have real dependencies (Docker, git)
-const mockCloneRepoInVolume = vi.hoisted(() => vi.fn());
-const mockCreateWorkspaceVolume = vi.hoisted(() => vi.fn());
-const mockRemoveWorkspaceFromVolume = vi.hoisted(() => vi.fn());
-const mockCreateAndStartContainer = vi.hoisted(() => vi.fn());
-const mockStopContainer = vi.hoisted(() => vi.fn());
-const mockRemoveContainer = vi.hoisted(() => vi.fn());
-const mockGetContainerStatus = vi.hoisted(() => vi.fn());
-const mockVerifyContainerHealth = vi.hoisted(() => vi.fn());
-const mockCleanupSessionSocket = vi.hoisted(() => vi.fn());
+// Mock external services that have real dependencies (git clone)
+const mockCloneRepo = vi.hoisted(() => vi.fn());
+const mockCreateEmptyWorkspace = vi.hoisted(() => vi.fn());
+const mockRemoveWorkspace = vi.hoisted(() => vi.fn());
 
-vi.mock('../services/podman', () => ({
-  cloneRepoInVolume: mockCloneRepoInVolume,
-  createWorkspaceVolume: mockCreateWorkspaceVolume,
-  removeWorkspaceFromVolume: mockRemoveWorkspaceFromVolume,
-  createAndStartContainer: mockCreateAndStartContainer,
-  stopContainer: mockStopContainer,
-  removeContainer: mockRemoveContainer,
-  getContainerStatus: mockGetContainerStatus,
-  verifyContainerHealth: mockVerifyContainerHealth,
-  cleanupSessionSocket: mockCleanupSessionSocket,
+vi.mock('../services/worktree-manager', () => ({
+  cloneRepo: mockCloneRepo,
+  createEmptyWorkspace: mockCreateEmptyWorkspace,
+  removeWorkspace: mockRemoveWorkspace,
+  getSessionWorkingDir: vi.fn((sessionId: string, repoPath: string) =>
+    repoPath ? `/worktrees/${sessionId}/${repoPath}` : `/worktrees/${sessionId}`
+  ),
 }));
 
-// Mock claude-runner's buildSystemPrompt and runClaudeCommand
+// Mock claude-runner
 vi.mock('../services/claude-runner', () => ({
   buildSystemPrompt: vi.fn().mockReturnValue('test system prompt'),
   runClaudeCommand: vi.fn().mockResolvedValue(undefined),
+  stopSession: vi.fn().mockResolvedValue(undefined),
 }));
 
-// Mock agent-client
-vi.mock('../services/agent-client', () => ({
-  createAgentClient: vi.fn().mockReturnValue({
-    health: vi.fn().mockResolvedValue(true),
-  }),
-  getAgentSocketPath: vi.fn((sessionId: string) => `/sockets/${sessionId}.sock`),
-  waitForAgentHealth: vi.fn().mockResolvedValue(true),
-}));
-
-// Mock repo-settings
-vi.mock('../services/repo-settings', () => ({
-  getRepoSettingsForContainer: vi.fn().mockResolvedValue({
-    envVars: [],
-    mcpServers: [],
+// Mock settings-merger
+vi.mock('../services/settings-merger', () => ({
+  loadMergedSessionSettings: vi.fn().mockResolvedValue({
+    systemPrompt: 'test prompt',
     customSystemPrompt: null,
-  }),
-}));
-
-// Mock global-settings
-vi.mock('../services/global-settings', () => ({
-  getGlobalSettings: vi.fn().mockResolvedValue(null),
-  getGlobalSettingsForContainer: vi.fn().mockResolvedValue({
-    systemPromptOverride: null,
-    systemPromptOverrideEnabled: false,
-    systemPromptAppend: null,
+    globalSettings: {
+      systemPromptOverride: null,
+      systemPromptOverrideEnabled: false,
+      systemPromptAppend: null,
+    },
     envVars: [],
     mcpServers: [],
+    claudeModel: null,
+    claudeApiKey: null,
   }),
 }));
 
@@ -367,7 +346,6 @@ describe('sessionsRouter integration', () => {
           branch: 'main',
           workspacePath: '/workspace/test',
           status: 'running',
-          containerId: 'container-123',
         },
       });
 
@@ -410,19 +388,14 @@ describe('sessionsRouter integration', () => {
         },
       });
 
-      mockCreateAndStartContainer.mockResolvedValue('new-container-id');
-
       const caller = createCaller('auth-session-id');
       const result = await caller.sessions.start({ sessionId: session.id });
 
       expect(result.session.status).toBe('running');
-      expect(result.session.containerId).toBe('new-container-id');
-      expect(mockCreateAndStartContainer).toHaveBeenCalled();
 
       // Verify database was updated
       const dbSession = await testPrisma.session.findUnique({ where: { id: session.id } });
       expect(dbSession!.status).toBe('running');
-      expect(dbSession!.containerId).toBe('new-container-id');
     });
 
     it('should not start an already running session', async () => {
@@ -433,7 +406,6 @@ describe('sessionsRouter integration', () => {
           branch: 'main',
           workspacePath: '/workspace/test',
           status: 'running',
-          containerId: 'existing-container',
         },
       });
 
@@ -441,7 +413,24 @@ describe('sessionsRouter integration', () => {
       const result = await caller.sessions.start({ sessionId: session.id });
 
       expect(result.session.status).toBe('running');
-      expect(mockCreateAndStartContainer).not.toHaveBeenCalled();
+    });
+
+    it('should reject starting an archived session', async () => {
+      const session = await testPrisma.session.create({
+        data: {
+          name: 'Archived Session',
+          repoUrl: 'https://github.com/owner/repo.git',
+          branch: 'main',
+          workspacePath: '/workspace/test',
+          status: 'archived',
+          archivedAt: new Date(),
+        },
+      });
+
+      const caller = createCaller('auth-session-id');
+      await expect(caller.sessions.start({ sessionId: session.id })).rejects.toMatchObject({
+        code: 'PRECONDITION_FAILED',
+      });
     });
 
     it('should throw NOT_FOUND for non-existent session', async () => {
@@ -462,39 +451,17 @@ describe('sessionsRouter integration', () => {
           branch: 'main',
           workspacePath: '/workspace/test',
           status: 'running',
-          containerId: 'container-123',
         },
       });
-
-      mockStopContainer.mockResolvedValue(undefined);
 
       const caller = createCaller('auth-session-id');
       const result = await caller.sessions.stop({ sessionId: session.id });
 
       expect(result.session.status).toBe('stopped');
-      expect(mockStopContainer).toHaveBeenCalledWith('container-123');
 
       // Verify database was updated
       const dbSession = await testPrisma.session.findUnique({ where: { id: session.id } });
       expect(dbSession!.status).toBe('stopped');
-    });
-
-    it('should handle session without container', async () => {
-      const session = await testPrisma.session.create({
-        data: {
-          name: 'Creating Session',
-          repoUrl: 'https://github.com/owner/repo.git',
-          branch: 'main',
-          workspacePath: '/workspace/test',
-          status: 'creating',
-        },
-      });
-
-      const caller = createCaller('auth-session-id');
-      const result = await caller.sessions.stop({ sessionId: session.id });
-
-      expect(result.session.status).toBe('stopped');
-      expect(mockStopContainer).not.toHaveBeenCalled();
     });
 
     it('should throw NOT_FOUND for non-existent session', async () => {
@@ -515,7 +482,6 @@ describe('sessionsRouter integration', () => {
           branch: 'main',
           workspacePath: '/workspace/test',
           status: 'running',
-          containerId: 'container-123',
         },
       });
 
@@ -529,50 +495,22 @@ describe('sessionsRouter integration', () => {
         },
       });
 
-      mockRemoveContainer.mockResolvedValue(undefined);
-      mockRemoveWorkspaceFromVolume.mockResolvedValue(undefined);
+      mockRemoveWorkspace.mockResolvedValue(undefined);
 
       const caller = createCaller('auth-session-id');
       const result = await caller.sessions.delete({ sessionId: session.id });
 
       expect(result).toEqual({ success: true });
-      expect(mockRemoveContainer).toHaveBeenCalledWith('container-123');
-      expect(mockRemoveWorkspaceFromVolume).toHaveBeenCalledWith(session.id);
+      expect(mockRemoveWorkspace).toHaveBeenCalledWith(session.id);
 
       // Verify session was archived (not deleted)
       const dbSession = await testPrisma.session.findUnique({ where: { id: session.id } });
       expect(dbSession).not.toBeNull();
       expect(dbSession!.status).toBe('archived');
       expect(dbSession!.archivedAt).not.toBeNull();
-      expect(dbSession!.containerId).toBeNull();
-
       // Verify messages were preserved
       const messages = await testPrisma.message.findMany({ where: { sessionId: session.id } });
       expect(messages).toHaveLength(1);
-    });
-
-    it('should handle session without container', async () => {
-      const session = await testPrisma.session.create({
-        data: {
-          name: 'Session without container',
-          repoUrl: 'https://github.com/owner/repo.git',
-          branch: 'main',
-          workspacePath: '/workspace/test',
-          status: 'stopped',
-        },
-      });
-
-      mockRemoveWorkspaceFromVolume.mockResolvedValue(undefined);
-
-      const caller = createCaller('auth-session-id');
-      const result = await caller.sessions.delete({ sessionId: session.id });
-
-      expect(result).toEqual({ success: true });
-      expect(mockRemoveContainer).not.toHaveBeenCalled();
-
-      // Verify session was archived
-      const dbSession = await testPrisma.session.findUnique({ where: { id: session.id } });
-      expect(dbSession!.status).toBe('archived');
     });
 
     it('should be idempotent for already archived sessions', async () => {
@@ -591,9 +529,7 @@ describe('sessionsRouter integration', () => {
       const result = await caller.sessions.delete({ sessionId: session.id });
 
       expect(result).toEqual({ success: true });
-      // Should not attempt to remove container or workspace
-      expect(mockRemoveContainer).not.toHaveBeenCalled();
-      expect(mockRemoveWorkspaceFromVolume).not.toHaveBeenCalled();
+      expect(mockRemoveWorkspace).not.toHaveBeenCalled();
     });
 
     it('should throw NOT_FOUND for non-existent session', async () => {
@@ -606,66 +542,21 @@ describe('sessionsRouter integration', () => {
   });
 
   describe('syncStatus', () => {
-    it('should sync status from container to database', async () => {
+    it('should return session status as-is (no external state to sync)', async () => {
       const session = await testPrisma.session.create({
         data: {
           name: 'Session to sync',
           repoUrl: 'https://github.com/owner/repo.git',
           branch: 'main',
           workspacePath: '/workspace/test',
-          status: 'stopped',
-          containerId: 'container-123',
+          status: 'running',
         },
       });
-
-      mockGetContainerStatus.mockResolvedValue('running');
 
       const caller = createCaller('auth-session-id');
       const result = await caller.sessions.syncStatus({ sessionId: session.id });
 
       expect(result.session?.status).toBe('running');
-
-      // Verify database was updated
-      const dbSession = await testPrisma.session.findUnique({ where: { id: session.id } });
-      expect(dbSession!.status).toBe('running');
-    });
-
-    it('should mark as stopped if container not found', async () => {
-      const session = await testPrisma.session.create({
-        data: {
-          name: 'Session with missing container',
-          repoUrl: 'https://github.com/owner/repo.git',
-          branch: 'main',
-          workspacePath: '/workspace/test',
-          status: 'running',
-          containerId: 'missing-container',
-        },
-      });
-
-      mockGetContainerStatus.mockResolvedValue('not_found');
-
-      const caller = createCaller('auth-session-id');
-      const result = await caller.sessions.syncStatus({ sessionId: session.id });
-
-      expect(result.session?.status).toBe('stopped');
-    });
-
-    it('should return session as-is if no container', async () => {
-      const session = await testPrisma.session.create({
-        data: {
-          name: 'Session without container',
-          repoUrl: 'https://github.com/owner/repo.git',
-          branch: 'main',
-          workspacePath: '/workspace/test',
-          status: 'creating',
-        },
-      });
-
-      const caller = createCaller('auth-session-id');
-      const result = await caller.sessions.syncStatus({ sessionId: session.id });
-
-      expect(result.session?.status).toBe('creating');
-      expect(mockGetContainerStatus).not.toHaveBeenCalled();
     });
   });
 });

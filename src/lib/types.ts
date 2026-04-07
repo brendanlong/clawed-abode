@@ -26,7 +26,6 @@ export interface Session {
   repoUrl: string;
   branch: string;
   workspacePath: string;
-  containerId: string | null;
   status: SessionStatus;
   statusMessage: string | null;
   initialPrompt: string | null;
