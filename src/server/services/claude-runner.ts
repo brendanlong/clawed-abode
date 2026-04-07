@@ -635,7 +635,7 @@ export async function markLastMessageAsInterrupted(sessionId: string): Promise<v
  * Stop a session's Claude query and clean up state.
  * Called when a session is stopped.
  */
-export async function stopSession(sessionId: string): Promise<void> {
+export function stopSession(sessionId: string): void {
   const state = sessions.get(sessionId);
   if (!state) return;
 
@@ -656,6 +656,17 @@ export async function stopSession(sessionId: string): Promise<void> {
   state.isRunning = false;
   state.currentQuery = null;
   sessions.delete(sessionId);
+}
+
+/**
+ * Stop all active Claude queries. Called during graceful shutdown.
+ */
+export async function stopAllSessions(): Promise<void> {
+  const sessionIds = [...sessions.keys()];
+  if (sessionIds.length === 0) return;
+
+  log.info('Stopping all active sessions for shutdown', { count: sessionIds.length });
+  await Promise.allSettled(sessionIds.map((id) => stopSession(id)));
 }
 
 /**

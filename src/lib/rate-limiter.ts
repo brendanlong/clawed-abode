@@ -212,11 +212,12 @@ export class RateLimiter {
 export const loginRateLimiter = new RateLimiter();
 
 // Start cleanup interval (every hour)
+// Use .unref() so this timer doesn't prevent graceful shutdown
 if (typeof setInterval !== 'undefined') {
   setInterval(
     () => {
       loginRateLimiter.cleanup();
     },
     60 * 60 * 1000
-  );
+  ).unref();
 }
