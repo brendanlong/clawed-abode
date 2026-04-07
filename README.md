@@ -178,7 +178,14 @@ pnpm start
 
 ### 4. Run as a systemd service
 
-Create `~/.config/systemd/user/clawed-abode.service`:
+First, find the full path to your Node.js binary:
+
+```bash
+nvm which 20
+# Example output: /home/clawedabode/.nvm/versions/node/v20.19.0/bin/node
+```
+
+Create `~/.config/systemd/user/clawed-abode.service`, replacing the node path with the output of `nvm which 20`:
 
 ```ini
 [Unit]
@@ -187,8 +194,8 @@ After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=/home/clawedabode/clawed-abode
-ExecStart=/home/clawedabode/.nvm/versions/node/v20/bin/node node_modules/.bin/next start
+WorkingDirectory=%h/clawed-abode
+ExecStart=%h/.nvm/versions/node/v20.19.0/bin/node node_modules/next/dist/bin/next start
 Restart=always
 RestartSec=5
 Environment=NODE_ENV=production
