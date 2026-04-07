@@ -19,11 +19,6 @@ export const sseRouter = router({
         resolveWait?.();
       });
 
-      // Clean up on abort
-      signal?.addEventListener('abort', () => {
-        unsubscribe();
-      });
-
       try {
         while (!signal?.aborted) {
           if (events.length > 0) {
@@ -32,8 +27,11 @@ export const sseRouter = router({
           } else {
             // Wait for next event or abort
             await new Promise<void>((resolve) => {
-              resolveWait = resolve;
               const onAbort = () => resolve();
+              resolveWait = () => {
+                signal?.removeEventListener('abort', onAbort);
+                resolve();
+              };
               signal?.addEventListener('abort', onAbort, { once: true });
             });
           }
@@ -86,10 +84,6 @@ export const sseRouter = router({
         resolveWait?.();
       });
 
-      signal?.addEventListener('abort', () => {
-        unsubscribe();
-      });
-
       try {
         // Query for missed messages if cursor provided
         if (input.afterSequence !== undefined) {
@@ -132,8 +126,11 @@ export const sseRouter = router({
             yield tracked(trackingId, event);
           } else {
             await new Promise<void>((resolve) => {
-              resolveWait = resolve;
               const onAbort = () => resolve();
+              resolveWait = () => {
+                signal?.removeEventListener('abort', onAbort);
+                resolve();
+              };
               signal?.addEventListener('abort', onAbort, { once: true });
             });
           }
@@ -155,10 +152,6 @@ export const sseRouter = router({
         resolveWait?.();
       });
 
-      signal?.addEventListener('abort', () => {
-        unsubscribe();
-      });
-
       try {
         while (!signal?.aborted) {
           if (events.length > 0) {
@@ -166,8 +159,11 @@ export const sseRouter = router({
             yield tracked(`${event.sessionId}-${event.running}`, event);
           } else {
             await new Promise<void>((resolve) => {
-              resolveWait = resolve;
               const onAbort = () => resolve();
+              resolveWait = () => {
+                signal?.removeEventListener('abort', onAbort);
+                resolve();
+              };
               signal?.addEventListener('abort', onAbort, { once: true });
             });
           }
@@ -194,10 +190,6 @@ export const sseRouter = router({
         resolveWait?.();
       });
 
-      signal?.addEventListener('abort', () => {
-        unsubscribe();
-      });
-
       try {
         while (!signal?.aborted) {
           if (events.length > 0) {
@@ -205,8 +197,11 @@ export const sseRouter = router({
             yield tracked(`${event.sessionId}-commands-${counter++}`, event);
           } else {
             await new Promise<void>((resolve) => {
-              resolveWait = resolve;
               const onAbort = () => resolve();
+              resolveWait = () => {
+                signal?.removeEventListener('abort', onAbort);
+                resolve();
+              };
               signal?.addEventListener('abort', onAbort, { once: true });
             });
           }
@@ -229,10 +224,6 @@ export const sseRouter = router({
         resolveWait?.();
       });
 
-      signal?.addEventListener('abort', () => {
-        unsubscribe();
-      });
-
       try {
         while (!signal?.aborted) {
           if (events.length > 0) {
@@ -240,8 +231,11 @@ export const sseRouter = router({
             yield tracked(`${event.sessionId}-pr-${counter++}`, event);
           } else {
             await new Promise<void>((resolve) => {
-              resolveWait = resolve;
               const onAbort = () => resolve();
+              resolveWait = () => {
+                signal?.removeEventListener('abort', onAbort);
+                resolve();
+              };
               signal?.addEventListener('abort', onAbort, { once: true });
             });
           }
