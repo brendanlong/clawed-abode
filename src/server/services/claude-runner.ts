@@ -659,6 +659,17 @@ export async function stopSession(sessionId: string): Promise<void> {
 }
 
 /**
+ * Stop all active Claude queries. Called during graceful shutdown.
+ */
+export async function stopAllSessions(): Promise<void> {
+  const sessionIds = [...sessions.keys()];
+  if (sessionIds.length === 0) return;
+
+  log.info('Stopping all active sessions for shutdown', { count: sessionIds.length });
+  await Promise.allSettled(sessionIds.map((id) => stopSession(id)));
+}
+
+/**
  * Mark all running sessions as stopped.
  * Called on server startup since all in-memory state is lost.
  */
