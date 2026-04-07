@@ -29,7 +29,13 @@ export function useClaudeState(sessionId: string) {
     { sessionId },
     {
       onData: (trackedData) => {
-        utils.claude.isRunning.setData({ sessionId }, { running: trackedData.data.running });
+        utils.claude.isRunning.setData(
+          { sessionId },
+          {
+            running: trackedData.data.running,
+            hasPendingInput: false,
+          }
+        );
         // When Claude finishes running, refetch commands in case new ones were discovered
         if (!trackedData.data.running) {
           refetchCommands();

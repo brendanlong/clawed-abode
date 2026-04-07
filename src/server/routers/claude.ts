@@ -260,6 +260,6 @@ export const claudeRouter = router({
     .query(async () => {
       // Commands are now emitted via SSE during query initialization.
       // This endpoint returns empty for now - the frontend gets commands via SSE.
-      return { commands: [] };
+      return { commands: [] as Array<{ name: string; description: string; argumentHint: string }> };
     }),
 });
