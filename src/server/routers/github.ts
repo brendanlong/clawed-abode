@@ -52,7 +52,7 @@ async function githubFetchResponse(path: string, token?: string): Promise<Respon
   if (!response.ok) {
     if (response.status === 401) {
       throw new TRPCError({
-        code: 'UNAUTHORIZED',
+        code: 'PRECONDITION_FAILED',
         message: 'GitHub token is invalid or expired',
       });
     }
