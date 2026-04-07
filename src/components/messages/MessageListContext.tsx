@@ -4,7 +4,7 @@ import { createContext, useContext } from 'react';
 
 export interface SubagentMessage {
   id: string;
-  type: string;
+  type: 'assistant' | 'user' | 'system' | 'result';
   content: unknown;
   sequence: number;
 }

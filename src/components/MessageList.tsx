@@ -4,6 +4,11 @@ import { useRef, useEffect, useCallback, useMemo, useState } from 'react';
 import { MessageBubble } from './messages/MessageBubble';
 import type { ToolResultMap, ContentBlock, MessageContent } from './messages/types';
 import { MessageListProvider, type SubagentMessage } from './messages/MessageListContext';
+import {
+  getParentToolUseId,
+  isHiddenSystemMessage,
+  isToolOnlyAssistant,
+} from './messages/message-filters';
 import { Spinner } from '@/components/ui/spinner';
 import { ContextUsageIndicator } from '@/components/ContextUsageIndicator';
 import type { TokenUsageStats } from '@/lib/token-estimation';
@@ -32,38 +37,6 @@ function getToolResultBlocks(message: Message): ContentBlock[] {
   const blocks = content?.message?.content;
   if (!Array.isArray(blocks)) return [];
   return blocks.filter((b) => b.type === 'tool_result');
-}
-
-// Get parent_tool_use_id from message content (identifies subagent messages)
-function getParentToolUseId(message: Message): string | null {
-  const content = message.content as MessageContent | undefined;
-  const id = content?.parent_tool_use_id;
-  return typeof id === 'string' ? id : null;
-}
-
-// Check if a message is a "noise" system message that should be hidden
-// (init, hooks, compact_boundary). Keeps systemError visible.
-function isHiddenSystemMessage(message: Message): boolean {
-  if (message.type !== 'system') return false;
-  const content = message.content as MessageContent | undefined;
-  const subtype = content?.subtype;
-  return (
-    subtype === 'init' ||
-    subtype === 'compact_boundary' ||
-    subtype === 'hook_started' ||
-    subtype === 'hook_response' ||
-    subtype === undefined ||
-    subtype === null
-  );
-}
-
-// Check if an assistant message contains ONLY tool calls (no text)
-function isToolOnlyAssistant(message: Message): boolean {
-  if (message.type !== 'assistant') return false;
-  const content = message.content as MessageContent | undefined;
-  const blocks = content?.message?.content;
-  if (!Array.isArray(blocks) || blocks.length === 0) return false;
-  return blocks.every((b) => (b as ContentBlock).type === 'tool_use');
 }
 
 // Build a set of hook_ids that have corresponding hook_response messages
@@ -400,7 +373,12 @@ export function MessageList({
       const parentId = getParentToolUseId(msg);
       if (parentId) {
         const group = map.get(parentId) ?? [];
-        group.push({ id: msg.id, type: msg.type, content: msg.content, sequence: msg.sequence });
+        group.push({
+          id: msg.id,
+          type: msg.type as SubagentMessage['type'],
+          content: msg.content,
+          sequence: msg.sequence,
+        });
         map.set(parentId, group);
       }
     }
