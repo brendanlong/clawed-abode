@@ -13,7 +13,7 @@ import { runClaudeCommand, stopSession } from '../services/claude-runner';
 import { sseEvents } from '../services/events';
 import { createLogger, toError } from '@/lib/logger';
 import { env } from '@/lib/env';
-import { SESSION_NAME_MAX_LENGTH } from '@/app/new/form-reducer';
+import { SESSION_NAME_MAX_LENGTH } from '@/lib/types';
 
 const log = createLogger('sessions');
 
