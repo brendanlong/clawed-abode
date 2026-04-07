@@ -519,7 +519,7 @@ describe('githubRouter', () => {
       });
     });
 
-    it('should throw UNAUTHORIZED for invalid token', async () => {
+    it('should throw PRECONDITION_FAILED for invalid token', async () => {
       mockFetch.mockResolvedValue(createMockResponse({}, 401));
 
       const caller = createCaller('auth-session-id');
@@ -530,7 +530,7 @@ describe('githubRouter', () => {
           issueNumber: 123,
         })
       ).rejects.toMatchObject({
-        code: 'UNAUTHORIZED',
+        code: 'PRECONDITION_FAILED',
         message: 'GitHub token is invalid or expired',
       });
     });
