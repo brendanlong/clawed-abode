@@ -86,6 +86,10 @@ function TtsVoiceSection() {
     const synth = window.speechSynthesis;
     const loadVoices = () => {
       const available = synth.getVoices();
+      // In Firefox, voiceschanged can fire repeatedly as getVoices() is called,
+      // causing a near-infinite loop. Stop listening once voices are loaded.
+      if (available.length === 0) return;
+      synth.removeEventListener('voiceschanged', loadVoices);
       // Deduplicate by voiceURI (some platforms report duplicates)
       const seen = new Set<string>();
       const unique = available.filter((v) => {
