@@ -135,7 +135,7 @@ sessions.create({
 })
   → { session: Session }
   // Returns immediately with session in "creating" status
-  // Cloning and container setup continues in background (skipped for no-repo sessions)
+  // Cloning continues in background (skipped for no-repo sessions)
   // UI polls session.get() to track progress via statusMessage
   // If initialPrompt is provided, it is sent automatically server-side when session becomes running
 
@@ -347,7 +347,7 @@ Users can configure per-repository settings that are automatically applied when 
 
 - Encrypts the value at rest using AES-256-GCM with the `ENCRYPTION_KEY` env var
 - Displays masked values (`••••••••`) in the UI
-- Decrypts values only when creating/starting containers (values are passed to containers in plaintext)
+- Decrypts values only when starting a Claude query (passed as environment or SDK options)
 
 **Configuration**:
 
@@ -543,39 +543,3 @@ pnpm test:unit     # Unit tests only
 pnpm test:integration  # Integration tests only
 pnpm test:coverage # With coverage report
 ```
-
-## Implementation Phases
-
-### Phase 1: Core MVP
-
-- Basic auth (username/password only)
-- Session CRUD
-- Docker container lifecycle
-- Claude Code integration with streaming
-- Basic chat UI
-- Tailscale Serve/Funnel setup
-
-### Phase 2: Polish
-
-- Two-factor authentication
-- Better mobile UI/UX
-- Message search within session
-- Session templates (pre-configured repos)
-- Cost tracking display (from Claude Code JSON)
-
-### Phase 3: Nice-to-haves
-
-- Multiple machine support (coordinator pattern)
-- Shared sessions / collaboration
-- Scheduled tasks ("run tests every morning")
-- Integration with GitHub PRs
-
-## Open Questions
-
-1. **Container reuse** — Keep one container per session always running, or start/stop on demand? Leaning toward always-running for simplicity (low resource cost when idle).
-
-2. **Claude auth refresh** — Monitor for auth failures and surface in UI, or try to automate re-auth? Starting with manual re-auth on host seems fine.
-
-3. **Message retention** — Keep forever, or prune old sessions? Probably configurable per-session or global setting.
-
-4. **Workspace cleanup** — Consider periodic cleanup of old workspaces for deleted sessions that weren't cleaned up properly.
