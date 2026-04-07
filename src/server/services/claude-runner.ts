@@ -184,6 +184,8 @@ export interface RunClaudeCommandOptions {
     | { name: string; type: 'http'; url: string; headers?: Record<string, string> }
     | { name: string; type: 'sse'; url: string; headers?: Record<string, string> }
   >;
+  /** If true, deny all tool use (safe mode for testing) */
+  denyAllTools?: boolean;
 }
 
 /**
@@ -279,6 +281,7 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
   sseEvents.emitClaudeRunning(sessionId, true);
 
   // Build SDK query options
+  const denyAllTools = options.denyAllTools ?? false;
   const sdkOptions: Parameters<typeof query>[0]['options'] = {
     permissionMode: 'bypassPermissions' as const,
     allowDangerouslySkipPermissions: true,
@@ -292,6 +295,11 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
     },
     tools: { type: 'preset' as const, preset: 'claude_code' as const },
     canUseTool: async (toolName: string, input: Record<string, unknown>) => {
+      // In safe mode, deny all tools
+      if (denyAllTools) {
+        return { behavior: 'deny' as const, message: 'Tool use is disabled in safe mode' };
+      }
+
       // Handle tools that require user input
       if (toolName === 'AskUserQuestion' || toolName === 'ExitPlanMode') {
         log.info('canUseTool: Waiting for user input', { sessionId, toolName });
