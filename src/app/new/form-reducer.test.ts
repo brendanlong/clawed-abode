@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formReducer, initialFormState } from './form-reducer';
+import { formReducer, initialFormState, SESSION_NAME_MAX_LENGTH } from './form-reducer';
 import type { FormState } from './form-reducer';
 import type { Repo } from '@/components/RepoSelector';
 import type { Issue } from '@/lib/types';
@@ -202,6 +202,25 @@ describe('formReducer', () => {
 
       expect(result.selectedIssue).toBeNull();
       expect(result.initialPrompt).toBe('');
+    });
+
+    it('truncates session name to max length when issue title is very long', () => {
+      const longTitle = 'A'.repeat(200);
+      const longIssue: Issue = {
+        ...mockIssue,
+        number: 1,
+        title: longTitle,
+      };
+      const state: FormState = {
+        ...initialFormState,
+        selectedRepo: mockRepo,
+        selectedBranch: 'main',
+      };
+
+      const result = formReducer(state, { type: 'selectIssue', issue: longIssue });
+
+      expect(result.sessionName.length).toBe(SESSION_NAME_MAX_LENGTH);
+      expect(result.sessionName).toBe(`#1: ${longTitle}`.slice(0, SESSION_NAME_MAX_LENGTH));
     });
 
     it('preserves session name when issue is deselected and name was manually edited', () => {
