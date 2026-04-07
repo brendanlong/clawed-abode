@@ -188,7 +188,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=/home/clawedabode/clawed-abode
-ExecStart=/home/clawedabode/.nvm/versions/node/v20/bin/node node_modules/.bin/next start
+ExecStart=/home/clawedabode/.nvm/versions/node/v20/bin/node node_modules/next/dist/bin/next start
 Restart=always
 RestartSec=5
 Environment=NODE_ENV=production
