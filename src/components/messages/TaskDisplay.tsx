@@ -1,10 +1,12 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { MarkdownContent } from '@/components/MarkdownContent';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
+import { useMessageListContext, type SubagentMessage } from './MessageListContext';
 import type { ToolCall } from './types';
 
 interface TaskInput {
@@ -88,6 +90,55 @@ function getSubagentLabel(subagentType: string): { label: string; color: string 
   }
 }
 
+interface SubagentToolCall {
+  id?: string;
+  name: string;
+  hasResult: boolean;
+  isError: boolean;
+}
+
+/**
+ * Extract a flat list of tool calls made by the subagent, paired with their results.
+ */
+function extractSubagentToolCalls(messages: SubagentMessage[]): SubagentToolCall[] {
+  // First pass: collect all tool results by tool_use_id
+  const results = new Map<string, { isError: boolean }>();
+  for (const msg of messages) {
+    if (msg.type !== 'user') continue;
+    const content = msg.content as Record<string, unknown> | undefined;
+    const msgBlocks = (content?.message as Record<string, unknown> | undefined)?.content;
+    if (!Array.isArray(msgBlocks)) continue;
+    for (const block of msgBlocks) {
+      const b = block as Record<string, unknown>;
+      if (b.type === 'tool_result' && typeof b.tool_use_id === 'string') {
+        results.set(b.tool_use_id, { isError: b.is_error === true });
+      }
+    }
+  }
+
+  // Second pass: collect tool_use blocks from assistant messages
+  const toolCalls: SubagentToolCall[] = [];
+  for (const msg of messages) {
+    if (msg.type !== 'assistant') continue;
+    const content = msg.content as Record<string, unknown> | undefined;
+    const msgBlocks = (content?.message as Record<string, unknown> | undefined)?.content;
+    if (!Array.isArray(msgBlocks)) continue;
+    for (const block of msgBlocks) {
+      const b = block as Record<string, unknown>;
+      if (b.type !== 'tool_use') continue;
+      const id = typeof b.id === 'string' ? b.id : undefined;
+      const result = id ? results.get(id) : undefined;
+      toolCalls.push({
+        id,
+        name: typeof b.name === 'string' ? b.name : 'Unknown',
+        hasResult: result !== undefined,
+        isError: result?.isError ?? false,
+      });
+    }
+  }
+  return toolCalls;
+}
+
 // Agent icon component - extracted outside of render
 function AgentIcon() {
   return (
@@ -110,9 +161,11 @@ function AgentIcon() {
 /**
  * Specialized display for Task tool calls.
  * Shows the subagent type, description, prompt, and formatted output.
+ * Subagent messages are shown in a collapsible activity log.
  */
 export function TaskDisplay({ tool }: { tool: ToolCall }) {
   const hasOutput = tool.output !== undefined;
+  const [activityExpanded, setActivityExpanded] = useState(false);
 
   const inputObj = tool.input as TaskInput | undefined;
   const subagentType = inputObj?.subagent_type ?? 'Unknown';
@@ -128,6 +181,13 @@ export function TaskDisplay({ tool }: { tool: ToolCall }) {
     if (!hasOutput) return { text: '' };
     return parseTaskOutput(tool.output);
   }, [tool.output, hasOutput]);
+
+  const context = useMessageListContext();
+  const subagentMessages = tool.id ? (context?.subagentMessagesByTaskId.get(tool.id) ?? []) : [];
+  const subagentToolCalls = useMemo(
+    () => extractSubagentToolCalls(subagentMessages),
+    [subagentMessages]
+  );
 
   return (
     <ToolDisplayWrapper
@@ -152,6 +212,37 @@ export function TaskDisplay({ tool }: { tool: ToolCall }) {
           {prompt}
         </pre>
       </div>
+
+      {/* Subagent activity log */}
+      {subagentToolCalls.length > 0 && (
+        <Collapsible open={activityExpanded} onOpenChange={setActivityExpanded}>
+          <CollapsibleTrigger className="w-full text-left flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground py-1">
+            <span>{activityExpanded ? '−' : '+'}</span>
+            <span>
+              {subagentToolCalls.length} tool call{subagentToolCalls.length !== 1 ? 's' : ''}
+            </span>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <div className="space-y-0.5 mt-1">
+              {subagentToolCalls.map((tc, i) => (
+                <div key={tc.id ?? i} className="flex items-center gap-2 text-xs">
+                  <span
+                    className={cn(
+                      'w-2 h-2 rounded-full flex-shrink-0',
+                      tc.isError
+                        ? 'bg-red-500'
+                        : tc.hasResult
+                          ? 'bg-green-500'
+                          : 'bg-yellow-400 animate-pulse'
+                    )}
+                  />
+                  <span className="font-mono text-primary">{tc.name}</span>
+                </div>
+              ))}
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
+      )}
 
       {/* Agent ID section */}
       {agentId && (

@@ -3,7 +3,7 @@
 import { useRef, useEffect, useCallback, useMemo, useState } from 'react';
 import { MessageBubble } from './messages/MessageBubble';
 import type { ToolResultMap, ContentBlock, MessageContent } from './messages/types';
-import { MessageListProvider } from './messages/MessageListContext';
+import { MessageListProvider, type SubagentMessage } from './messages/MessageListContext';
 import { Spinner } from '@/components/ui/spinner';
 import { ContextUsageIndicator } from '@/components/ContextUsageIndicator';
 import type { TokenUsageStats } from '@/lib/token-estimation';
@@ -32,6 +32,38 @@ function getToolResultBlocks(message: Message): ContentBlock[] {
   const blocks = content?.message?.content;
   if (!Array.isArray(blocks)) return [];
   return blocks.filter((b) => b.type === 'tool_result');
+}
+
+// Get parent_tool_use_id from message content (identifies subagent messages)
+function getParentToolUseId(message: Message): string | null {
+  const content = message.content as MessageContent | undefined;
+  const id = content?.parent_tool_use_id;
+  return typeof id === 'string' ? id : null;
+}
+
+// Check if a message is a "noise" system message that should be hidden
+// (init, hooks, compact_boundary). Keeps systemError visible.
+function isHiddenSystemMessage(message: Message): boolean {
+  if (message.type !== 'system') return false;
+  const content = message.content as MessageContent | undefined;
+  const subtype = content?.subtype;
+  return (
+    subtype === 'init' ||
+    subtype === 'compact_boundary' ||
+    subtype === 'hook_started' ||
+    subtype === 'hook_response' ||
+    subtype === undefined ||
+    subtype === null
+  );
+}
+
+// Check if an assistant message contains ONLY tool calls (no text)
+function isToolOnlyAssistant(message: Message): boolean {
+  if (message.type !== 'assistant') return false;
+  const content = message.content as MessageContent | undefined;
+  const blocks = content?.message?.content;
+  if (!Array.isArray(blocks) || blocks.length === 0) return false;
+  return blocks.every((b) => (b as ContentBlock).type === 'tool_use');
 }
 
 // Build a set of hook_ids that have corresponding hook_response messages
@@ -361,13 +393,32 @@ export function MessageList({
     setManuallyToggledTodoIds((prev) => new Set([...prev, toolId]));
   }, []);
 
+  // Build map of task tool_use_id -> subagent messages (identified by parent_tool_use_id)
+  const subagentMessagesByTaskId = useMemo(() => {
+    const map = new Map<string, SubagentMessage[]>();
+    for (const msg of messages) {
+      const parentId = getParentToolUseId(msg);
+      if (parentId) {
+        const group = map.get(parentId) ?? [];
+        group.push({ id: msg.id, type: msg.type, content: msg.content, sequence: msg.sequence });
+        map.set(parentId, group);
+      }
+    }
+    return map;
+  }, [messages]);
+
   // Filter out messages that have been fully paired with their tool_use,
-  // and hook_started messages that have a corresponding hook_response
-  // (pending hook_started messages are kept to show loading state)
+  // hook_started messages that have a corresponding hook_response,
+  // noise system messages (init, hooks, compact_boundary),
+  // and subagent messages (shown grouped inside their Task tool display)
   const visibleMessages = useMemo(
     () =>
       messages.filter(
-        (msg) => !pairedMessageIds.has(msg.id) && !isCompletedHookStarted(msg, completedHookIds)
+        (msg) =>
+          !pairedMessageIds.has(msg.id) &&
+          !isCompletedHookStarted(msg, completedHookIds) &&
+          !isHiddenSystemMessage(msg) &&
+          getParentToolUseId(msg) === null
       ),
     [messages, pairedMessageIds, completedHookIds]
   );
@@ -542,6 +593,7 @@ export function MessageList({
       onAnswerQuestion,
       isClaudeRunning,
       latestPlanContent,
+      subagentMessagesByTaskId,
     }),
     [
       latestTodoWriteId,
@@ -551,12 +603,13 @@ export function MessageList({
       onAnswerQuestion,
       isClaudeRunning,
       latestPlanContent,
+      subagentMessagesByTaskId,
     ]
   );
 
   return (
     <div className="relative flex-1 min-h-0">
-      <div ref={containerRef} className="h-full overflow-y-auto p-4 space-y-4">
+      <div ref={containerRef} className="h-full overflow-y-auto p-4">
         {/* Sentinel for triggering infinite scroll - placed before messages */}
         {/* overflow-anchor:none prevents browser from anchoring to these elements */}
         {/* so when new messages load above, the view stays on current messages */}
@@ -578,14 +631,19 @@ export function MessageList({
         )}
 
         <MessageListProvider value={contextValue}>
-          {visibleMessages.map((message) => {
+          {visibleMessages.map((message, index) => {
             // Only right-align actual user messages, not tool results
             const isUserMessage = message.type === 'user' && !isToolResultMessage(message);
+            // Use compact spacing between consecutive tool-only assistant messages
+            const prevMessage = index > 0 ? visibleMessages[index - 1] : null;
+            const isToolOnly = isToolOnlyAssistant(message);
+            const prevIsToolOnly = prevMessage ? isToolOnlyAssistant(prevMessage) : false;
+            const spacingClass = index === 0 ? '' : isToolOnly && prevIsToolOnly ? 'mt-1' : 'mt-4';
             return (
               <div
                 key={message.id}
                 data-message-id={message.id}
-                className={`flex ${isUserMessage ? 'justify-end' : 'justify-start'}`}
+                className={`flex ${isUserMessage ? 'justify-end' : 'justify-start'} ${spacingClass}`}
               >
                 <MessageBubble
                   message={{

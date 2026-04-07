@@ -2,6 +2,13 @@
 
 import { createContext, useContext } from 'react';
 
+export interface SubagentMessage {
+  id: string;
+  type: string;
+  content: unknown;
+  sequence: number;
+}
+
 interface MessageListContextValue {
   /** The tool ID of the latest TodoWrite call (by sequence), or null */
   latestTodoWriteId: string | null;
@@ -17,6 +24,8 @@ interface MessageListContextValue {
   isClaudeRunning?: boolean;
   /** The latest plan content from Write/Edit of plan files, or null */
   latestPlanContent: string | null;
+  /** Map of task tool_use_id -> subagent messages belonging to that task */
+  subagentMessagesByTaskId: Map<string, SubagentMessage[]>;
 }
 
 const MessageListContext = createContext<MessageListContextValue | null>(null);
