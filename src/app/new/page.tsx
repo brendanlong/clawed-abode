@@ -18,6 +18,7 @@ import { BranchSelector } from '@/components/BranchSelector';
 import { IssueSelector } from '@/components/IssueSelector';
 import type { Repo } from '@/components/RepoSelector';
 import type { Issue } from '@/lib/types';
+import { SESSION_NAME_MAX_LENGTH } from '@/lib/types';
 import { formReducer, initialFormState } from './form-reducer';
 
 function generateIssuePrompt(issue: Issue, repoFullName: string): string {
@@ -115,9 +116,9 @@ function NewSessionForm() {
       return;
     }
 
-    const defaultName = isNoRepo
-      ? 'Workspace'
-      : `${form.selectedRepo.name} - ${form.selectedBranch}`;
+    const defaultName = (
+      isNoRepo ? 'Workspace' : `${form.selectedRepo.name} - ${form.selectedBranch}`
+    ).slice(0, SESSION_NAME_MAX_LENGTH);
 
     createMutation.mutate({
       name: form.sessionName || defaultName,
@@ -164,6 +165,7 @@ function NewSessionForm() {
               type="text"
               value={form.sessionName}
               onChange={handleNameChange}
+              maxLength={SESSION_NAME_MAX_LENGTH}
               placeholder={
                 isNoRepo
                   ? 'Workspace'
