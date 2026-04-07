@@ -13,6 +13,7 @@ import { runClaudeCommand, stopSession } from '../services/claude-runner';
 import { sseEvents } from '../services/events';
 import { createLogger, toError } from '@/lib/logger';
 import { env } from '@/lib/env';
+import { SESSION_NAME_MAX_LENGTH } from '@/lib/types';
 
 const log = createLogger('sessions');
 
@@ -111,7 +112,7 @@ export const sessionsRouter = router({
   create: protectedProcedure
     .input(
       z.object({
-        name: z.string().min(1).max(100),
+        name: z.string().min(1).max(SESSION_NAME_MAX_LENGTH),
         repoFullName: z
           .string()
           .regex(/^[\w-]+\/[\w.-]+$/)
