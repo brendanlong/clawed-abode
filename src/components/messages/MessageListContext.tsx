@@ -11,6 +11,8 @@ interface MessageListContextValue {
   onTodoManualToggle: (toolId: string) => void;
   /** Callback to send a response to Claude (for AskUserQuestion) */
   onSendResponse?: (response: string) => void;
+  /** Callback to answer an AskUserQuestion via canUseTool (preferred over onSendResponse) */
+  onAnswerQuestion?: (answers: Record<string, string>) => void;
   /** Whether Claude is currently running (disables AskUserQuestion interactions) */
   isClaudeRunning?: boolean;
   /** The latest plan content from Write/Edit of plan files, or null */

@@ -11,9 +11,27 @@
  * the frontend replaces the partial with the final version.
  */
 
-import type { PartialAssistantMessage } from '../../shared/agent-types.js';
-
-export type { PartialAssistantMessage };
+/**
+ * A partial assistant message built from accumulated stream events.
+ * Shaped to match the assistant message content structure so the frontend
+ * can render it identically to a complete message.
+ */
+export interface PartialAssistantMessage {
+  type: 'assistant';
+  partial: true;
+  message: {
+    role: 'assistant';
+    content: Array<
+      | { type: 'text'; text: string }
+      | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
+    >;
+    model?: string;
+    stop_reason?: string | null;
+  };
+  parent_tool_use_id: string | null;
+  uuid: string;
+  session_id: string;
+}
 
 /**
  * Represents a content block being accumulated from stream deltas.

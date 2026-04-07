@@ -248,6 +248,7 @@ interface MessageListProps {
   onLoadMore: () => void;
   tokenUsage?: TokenUsageStats | null;
   onSendResponse?: (response: string) => void;
+  onAnswerQuestion?: (answers: Record<string, string>) => void;
   isClaudeRunning?: boolean;
 }
 
@@ -258,6 +259,7 @@ export function MessageList({
   onLoadMore,
   tokenUsage,
   onSendResponse,
+  onAnswerQuestion,
   isClaudeRunning,
 }: MessageListProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -537,6 +539,7 @@ export function MessageList({
       manuallyToggledTodoIds,
       onTodoManualToggle: handleTodoManualToggle,
       onSendResponse,
+      onAnswerQuestion,
       isClaudeRunning,
       latestPlanContent,
     }),
@@ -545,6 +548,7 @@ export function MessageList({
       manuallyToggledTodoIds,
       handleTodoManualToggle,
       onSendResponse,
+      onAnswerQuestion,
       isClaudeRunning,
       latestPlanContent,
     ]
