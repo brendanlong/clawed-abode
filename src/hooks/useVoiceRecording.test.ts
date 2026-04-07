@@ -50,6 +50,11 @@ describe.skip('useVoiceRecording', () => {
     (window as any).SpeechRecognition = MockConstructor;
   });
 
+  /**
+   * Simulate a SpeechRecognition result event. `resultIndex` matches the Web
+   * Speech API spec: it is the index of the first NEW result in the list.
+   * Previous results are unchanged from the last event.
+   */
   function fireResult(results: Array<{ isFinal: boolean; transcript: string }>, resultIndex = 0) {
     mockInstance.onresult?.({
       resultIndex,
@@ -62,7 +67,7 @@ describe.skip('useVoiceRecording', () => {
     const { result } = renderHook(() => useVoiceRecording(onFinalized));
 
     act(() => result.current.startRecording());
-    act(() => fireResult([{ isFinal: true, transcript: 'hello ' }]));
+    act(() => fireResult([{ isFinal: true, transcript: 'hello ' }], 0));
 
     expect(onFinalized).toHaveBeenCalledWith('hello ');
   });
@@ -72,25 +77,28 @@ describe.skip('useVoiceRecording', () => {
     const { result } = renderHook(() => useVoiceRecording(onFinalized));
 
     act(() => result.current.startRecording());
-    act(() => fireResult([{ isFinal: false, transcript: 'hello' }]));
+    act(() => fireResult([{ isFinal: false, transcript: 'hello' }], 0));
 
     expect(onFinalized).not.toHaveBeenCalled();
     expect(result.current.interimTranscript).toBe('hello');
   });
 
-  it('only reports delta (not full text) when new finals arrive', () => {
+  it('only reports each result once using resultIndex', () => {
     const onFinalized = vi.fn();
     const { result } = renderHook(() => useVoiceRecording(onFinalized));
 
     act(() => result.current.startRecording());
-    // First word finalized
-    act(() => fireResult([{ isFinal: true, transcript: 'hello ' }]));
-    // Second word finalized — cumulative results list
+    // First word finalized — resultIndex=0, result[0] is new
+    act(() => fireResult([{ isFinal: true, transcript: 'hello ' }], 0));
+    // Second word finalized — resultIndex=1, only result[1] is new; result[0] already handled
     act(() =>
-      fireResult([
-        { isFinal: true, transcript: 'hello ' },
-        { isFinal: true, transcript: 'world ' },
-      ])
+      fireResult(
+        [
+          { isFinal: true, transcript: 'hello ' },
+          { isFinal: true, transcript: 'world ' },
+        ],
+        1
+      )
     );
 
     expect(onFinalized).toHaveBeenCalledTimes(2);
@@ -98,14 +106,14 @@ describe.skip('useVoiceRecording', () => {
     expect(onFinalized).toHaveBeenNthCalledWith(2, 'world ');
   });
 
-  it('resets the finalized offset when auto-restarting after silence timeout', () => {
+  it('correctly processes new results after silence timeout auto-restart', () => {
     const onFinalized = vi.fn();
     const { result } = renderHook(() => useVoiceRecording(onFinalized));
 
     act(() => result.current.startRecording());
 
     // First session: "hello " is finalized
-    act(() => fireResult([{ isFinal: true, transcript: 'hello ' }]));
+    act(() => fireResult([{ isFinal: true, transcript: 'hello ' }], 0));
     expect(onFinalized).toHaveBeenCalledWith('hello ');
     onFinalized.mockClear();
 
@@ -114,17 +122,32 @@ describe.skip('useVoiceRecording', () => {
     expect(mockInstance.start).toHaveBeenCalledTimes(2); // initial + restart
 
     // Second session starts fresh — results list resets to index 0
-    act(() => fireResult([{ isFinal: true, transcript: 'world ' }]));
+    act(() => fireResult([{ isFinal: true, transcript: 'world ' }], 0));
 
-    // "world " should be reported, not skipped or garbled
+    // "world " should be reported correctly, not skipped or garbled
     expect(onFinalized).toHaveBeenCalledWith('world ');
+  });
+
+  it('clears interim transcript on auto-restart', () => {
+    const { result } = renderHook(() => useVoiceRecording());
+
+    act(() => result.current.startRecording());
+    // Interim result before silence timeout
+    act(() => fireResult([{ isFinal: false, transcript: 'partial' }], 0));
+    expect(result.current.interimTranscript).toBe('partial');
+
+    // Auto-restart on silence timeout
+    act(() => mockInstance.onend?.());
+
+    // Stale interim should be cleared
+    expect(result.current.interimTranscript).toBe('');
   });
 
   it('returns remaining interim text when stopRecording is called', () => {
     const { result } = renderHook(() => useVoiceRecording());
 
     act(() => result.current.startRecording());
-    act(() => fireResult([{ isFinal: false, transcript: 'hey there' }]));
+    act(() => fireResult([{ isFinal: false, transcript: 'hey there' }], 0));
 
     let remaining: string | undefined;
     act(() => {
@@ -132,5 +155,59 @@ describe.skip('useVoiceRecording', () => {
     });
 
     expect(remaining).toBe('hey there');
+  });
+
+  it('does not auto-restart after intentional stopRecording', () => {
+    const { result } = renderHook(() => useVoiceRecording());
+
+    act(() => result.current.startRecording());
+    act(() => result.current.stopRecording());
+
+    // onend fires after stop() — should NOT restart
+    act(() => mockInstance.onend?.());
+
+    expect(mockInstance.start).toHaveBeenCalledTimes(1); // only the initial start
+  });
+
+  it('reports a user-friendly error for microphone permission denial', () => {
+    const { result } = renderHook(() => useVoiceRecording());
+
+    act(() => result.current.startRecording());
+    act(() => mockInstance.onerror?.({ error: 'not-allowed', message: '' }));
+
+    expect(result.current.error).toBe(
+      'Microphone permission denied. Please allow microphone access.'
+    );
+  });
+
+  it('ignores no-speech and aborted errors', () => {
+    const { result } = renderHook(() => useVoiceRecording());
+
+    act(() => result.current.startRecording());
+    act(() => mockInstance.onerror?.({ error: 'no-speech', message: '' }));
+    act(() => mockInstance.onerror?.({ error: 'aborted', message: '' }));
+
+    expect(result.current.error).toBeNull();
+  });
+
+  it('marks stopped and does not restart when start() throws in onend', () => {
+    const { result } = renderHook(() => useVoiceRecording());
+
+    act(() => result.current.startRecording());
+    mockInstance.start.mockImplementationOnce(() => {
+      throw new Error('cannot restart');
+    });
+    act(() => mockInstance.onend?.());
+
+    expect(result.current.isRecording).toBe(false);
+  });
+
+  it('stops recognition on unmount', () => {
+    const { result, unmount } = renderHook(() => useVoiceRecording());
+
+    act(() => result.current.startRecording());
+    unmount();
+
+    expect(mockInstance.stop).toHaveBeenCalled();
   });
 });

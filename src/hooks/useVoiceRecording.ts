@@ -48,7 +48,6 @@ export function useVoiceRecording(onFinalizedText?: (text: string) => void) {
   const [interimTranscript, setInterimTranscript] = useState('');
   const [error, setError] = useState<string | null>(null);
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
-  const lastFinalizedLengthRef = useRef(0);
   const interimRef = useRef('');
   const onFinalizedTextRef = useRef(onFinalizedText);
 
@@ -71,7 +70,6 @@ export function useVoiceRecording(onFinalizedText?: (text: string) => void) {
   const startRecording = useCallback(() => {
     setError(null);
     setInterimTranscript('');
-    lastFinalizedLengthRef.current = 0;
     interimRef.current = '';
 
     const SpeechRecognition = getSpeechRecognition();
@@ -87,23 +85,22 @@ export function useVoiceRecording(onFinalizedText?: (text: string) => void) {
     recognitionRef.current = recognition;
 
     recognition.onresult = (event: SpeechRecognitionEvent) => {
-      let finals = '';
-      let interim = '';
-      for (let i = 0; i < event.results.length; i++) {
+      // Only process results starting from resultIndex — previous results are already
+      // finalized and were handled by earlier events.
+      for (let i = event.resultIndex; i < event.results.length; i++) {
         if (event.results[i].isFinal) {
-          finals += event.results[i][0].transcript;
-        } else {
-          interim += event.results[i][0].transcript;
+          onFinalizedTextRef.current?.(event.results[i][0].transcript);
         }
       }
 
-      // Call back with new finalized text (the delta since last callback)
-      if (finals.length > lastFinalizedLengthRef.current) {
-        const newText = finals.substring(lastFinalizedLengthRef.current);
-        lastFinalizedLengthRef.current = finals.length;
-        onFinalizedTextRef.current?.(newText);
+      // Rebuild interim from all non-final results in the current session.
+      // In practice Chrome keeps at most one interim result at the end of the list.
+      let interim = '';
+      for (let i = 0; i < event.results.length; i++) {
+        if (!event.results[i].isFinal) {
+          interim += event.results[i][0].transcript;
+        }
       }
-
       interimRef.current = interim;
       setInterimTranscript(interim);
     };
@@ -126,9 +123,7 @@ export function useVoiceRecording(onFinalizedText?: (text: string) => void) {
       // Auto-restart to maintain continuous recording.
       if (recognitionRef.current === recognition) {
         try {
-          // Reset state — the new session starts a fresh results list from index 0,
-          // so the old offset would cause garbled output. Also clear any stale interim text.
-          lastFinalizedLengthRef.current = 0;
+          // Clear stale interim text from the ended session before starting fresh.
           interimRef.current = '';
           setInterimTranscript('');
           recognition.start();
