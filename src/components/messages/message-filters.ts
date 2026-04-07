@@ -17,15 +17,18 @@ export function getParentToolUseId(message: Message): string | null {
 }
 
 /**
- * Check if a message is a "noise" system message that should be hidden.
- * Hides init, compact_boundary, and hook_response (the response data is not useful on its own).
- * Keeps systemError, hook_started (pending hooks show loading), and unknown subtypes visible.
+ * Get the tool_use_id from a task-related system message (task_started, task_progress).
+ * These messages belong to a Task tool call and should be grouped with it rather than
+ * displayed as standalone system messages.
+ * Returns null for non-task system messages.
  */
-export function isHiddenSystemMessage(message: Message): boolean {
-  if (message.type !== 'system') return false;
+export function getTaskToolUseId(message: Message): string | null {
+  if (message.type !== 'system') return null;
   const content = message.content as MessageContent | undefined;
   const subtype = content?.subtype;
-  return subtype === 'init' || subtype === 'compact_boundary' || subtype === 'hook_response';
+  if (subtype !== 'task_started' && subtype !== 'task_progress') return null;
+  const toolUseId = content?.tool_use_id;
+  return typeof toolUseId === 'string' ? toolUseId : null;
 }
 
 /**

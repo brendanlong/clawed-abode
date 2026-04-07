@@ -6,7 +6,7 @@ import type { ToolResultMap, ContentBlock, MessageContent } from './messages/typ
 import { MessageListProvider, type SubagentMessage } from './messages/MessageListContext';
 import {
   getParentToolUseId,
-  isHiddenSystemMessage,
+  getTaskToolUseId,
   isToolOnlyAssistant,
 } from './messages/message-filters';
 import { Spinner } from '@/components/ui/spinner';
@@ -370,16 +370,20 @@ export function MessageList({
   const subagentMessagesByTaskId = useMemo(() => {
     const map = new Map<string, SubagentMessage[]>();
     for (const msg of messages) {
+      // Subagent messages have parent_tool_use_id pointing to the Task tool call
       const parentId = getParentToolUseId(msg);
-      if (parentId) {
-        const group = map.get(parentId) ?? [];
+      // Task-related system messages (task_started, task_progress) have tool_use_id
+      const taskToolUseId = getTaskToolUseId(msg);
+      const groupId = parentId ?? taskToolUseId;
+      if (groupId) {
+        const group = map.get(groupId) ?? [];
         group.push({
           id: msg.id,
           type: msg.type as SubagentMessage['type'],
           content: msg.content,
           sequence: msg.sequence,
         });
-        map.set(parentId, group);
+        map.set(groupId, group);
       }
     }
     return map;
@@ -387,16 +391,16 @@ export function MessageList({
 
   // Filter out messages that have been fully paired with their tool_use,
   // hook_started messages that have a corresponding hook_response,
-  // noise system messages (init, hooks, compact_boundary),
-  // and subagent messages (shown grouped inside their Task tool display)
+  // subagent messages (shown grouped inside their Task tool display),
+  // and task-related system messages (task_started, task_progress)
   const visibleMessages = useMemo(
     () =>
       messages.filter(
         (msg) =>
           !pairedMessageIds.has(msg.id) &&
           !isCompletedHookStarted(msg, completedHookIds) &&
-          !isHiddenSystemMessage(msg) &&
-          getParentToolUseId(msg) === null
+          getParentToolUseId(msg) === null &&
+          getTaskToolUseId(msg) === null
       ),
     [messages, pairedMessageIds, completedHookIds]
   );

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getParentToolUseId, isHiddenSystemMessage, isToolOnlyAssistant } from './message-filters';
+import { getParentToolUseId, getTaskToolUseId, isToolOnlyAssistant } from './message-filters';
 
 describe('getParentToolUseId', () => {
   it('returns the parent_tool_use_id when present', () => {
@@ -38,70 +38,67 @@ describe('getParentToolUseId', () => {
   });
 });
 
-describe('isHiddenSystemMessage', () => {
-  it('hides init messages', () => {
-    const msg = { id: '1', type: 'system', content: { subtype: 'init' }, sequence: 1 };
-    expect(isHiddenSystemMessage(msg)).toBe(true);
-  });
-
-  it('hides compact_boundary messages', () => {
+describe('getTaskToolUseId', () => {
+  it('returns tool_use_id for task_started messages', () => {
     const msg = {
       id: '1',
       type: 'system',
-      content: { subtype: 'compact_boundary' },
+      content: { subtype: 'task_started', tool_use_id: 'toolu_abc123' },
       sequence: 1,
     };
-    expect(isHiddenSystemMessage(msg)).toBe(true);
+    expect(getTaskToolUseId(msg)).toBe('toolu_abc123');
   });
 
-  it('hides hook_response messages', () => {
+  it('returns tool_use_id for task_progress messages', () => {
     const msg = {
       id: '1',
       type: 'system',
-      content: { subtype: 'hook_response' },
+      content: { subtype: 'task_progress', tool_use_id: 'toolu_xyz789' },
       sequence: 1,
     };
-    expect(isHiddenSystemMessage(msg)).toBe(true);
+    expect(getTaskToolUseId(msg)).toBe('toolu_xyz789');
   });
 
-  it('keeps hook_started messages visible', () => {
+  it('returns null for other system subtypes', () => {
+    for (const subtype of ['init', 'error', 'hook_started', 'task_notification', 'status']) {
+      const msg = {
+        id: '1',
+        type: 'system',
+        content: { subtype, tool_use_id: 'toolu_abc' },
+        sequence: 1,
+      };
+      expect(getTaskToolUseId(msg)).toBeNull();
+    }
+  });
+
+  it('returns null for non-system messages', () => {
+    const msg = {
+      id: '1',
+      type: 'assistant',
+      content: { subtype: 'task_started', tool_use_id: 'toolu_abc' },
+      sequence: 1,
+    };
+    expect(getTaskToolUseId(msg)).toBeNull();
+  });
+
+  it('returns null when tool_use_id is missing', () => {
     const msg = {
       id: '1',
       type: 'system',
-      content: { subtype: 'hook_started' },
+      content: { subtype: 'task_started' },
       sequence: 1,
     };
-    expect(isHiddenSystemMessage(msg)).toBe(false);
+    expect(getTaskToolUseId(msg)).toBeNull();
   });
 
-  it('keeps error messages visible', () => {
-    const msg = { id: '1', type: 'system', content: { subtype: 'error' }, sequence: 1 };
-    expect(isHiddenSystemMessage(msg)).toBe(false);
-  });
-
-  it('keeps messages with unknown subtypes visible', () => {
+  it('returns null when tool_use_id is not a string', () => {
     const msg = {
       id: '1',
       type: 'system',
-      content: { subtype: 'some_future_type' },
+      content: { subtype: 'task_started', tool_use_id: 42 },
       sequence: 1,
     };
-    expect(isHiddenSystemMessage(msg)).toBe(false);
-  });
-
-  it('keeps messages with no subtype visible', () => {
-    const msg = { id: '1', type: 'system', content: {}, sequence: 1 };
-    expect(isHiddenSystemMessage(msg)).toBe(false);
-  });
-
-  it('keeps messages with undefined content visible', () => {
-    const msg = { id: '1', type: 'system', content: undefined, sequence: 1 };
-    expect(isHiddenSystemMessage(msg)).toBe(false);
-  });
-
-  it('returns false for non-system messages', () => {
-    const msg = { id: '1', type: 'assistant', content: { subtype: 'init' }, sequence: 1 };
-    expect(isHiddenSystemMessage(msg)).toBe(false);
+    expect(getTaskToolUseId(msg)).toBeNull();
   });
 });
 
