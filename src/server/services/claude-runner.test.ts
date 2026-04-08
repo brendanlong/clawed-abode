@@ -44,6 +44,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 import {
   buildSystemPrompt,
   mergeSlashCommands,
+  getSessionCommands,
   answerUserInput,
   hasPendingInput,
   isClaudeRunning,
@@ -179,6 +180,12 @@ describe('claude-runner', () => {
       expect(result).toHaveLength(2);
       expect(result[0]).toEqual({ name: 'compact', description: '', argumentHint: '' });
       expect(result[1]).toEqual({ name: 'cost', description: '', argumentHint: '' });
+    });
+  });
+
+  describe('getSessionCommands', () => {
+    it('should return empty array for nonexistent sessions', () => {
+      expect(getSessionCommands('nonexistent-session')).toEqual([]);
     });
   });
 

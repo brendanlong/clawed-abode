@@ -12,7 +12,7 @@
 
 import { query, type McpServerConfig, type SlashCommand } from '@anthropic-ai/claude-agent-sdk';
 import { prisma } from '@/lib/prisma';
-import { getMessageType } from '@/lib/claude-messages';
+import { getMessageType, SystemInitContentSchema } from '@/lib/claude-messages';
 import { extractRepoFullName } from '@/lib/utils';
 import { v4 as uuid, v5 as uuidv5 } from 'uuid';
 import { sseEvents } from './events';
@@ -78,6 +78,8 @@ interface SessionState {
   pendingInput: PendingUserInput | null;
   /** Working directory for this session */
   workingDir: string;
+  /** Discovered slash commands (cached for getCommands endpoint) */
+  commands: SlashCommand[];
 }
 
 /** Active sessions tracked in memory */
@@ -181,6 +183,7 @@ function getSessionState(sessionId: string, workingDir: string): SessionState {
       currentQuery: null,
       pendingInput: null,
       workingDir,
+      commands: [],
     };
     sessions.set(sessionId, state);
   }
@@ -380,19 +383,18 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
     const q = query({ prompt, options: sdkOptions });
     state.currentQuery = q;
 
-    // Fetch rich command metadata from the SDK (fire-and-forget).
+    // Fetch rich command metadata from the SDK asynchronously.
     // The init message may arrive before this resolves, so we merge
     // with any names already discovered to avoid losing commands.
-    let supportedCommands: SlashCommand[] = [];
     void q
       .supportedCommands()
       .then((commands) => {
-        const alreadyDiscovered = supportedCommands.map((c) => c.name);
-        supportedCommands = mergeSlashCommands(commands, alreadyDiscovered);
-        sseEvents.emitCommands(sessionId, supportedCommands);
+        const alreadyDiscovered = state.commands.map((c) => c.name);
+        state.commands = mergeSlashCommands(commands, alreadyDiscovered);
+        sseEvents.emitCommands(sessionId, state.commands);
         log.info('Emitted supported commands from SDK', {
           sessionId,
-          count: supportedCommands.length,
+          count: state.commands.length,
         });
       })
       .catch((err) => {
@@ -404,16 +406,14 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
       // rich commands from supportedCommands(). The SDK's supportedCommands()
       // only returns "skills", but the system init message contains all
       // slash commands (e.g. /compact, /cost, /review, etc.)
-      if (
-        message.type === 'system' &&
-        'subtype' in message &&
-        message.subtype === 'init' &&
-        'slash_commands' in message &&
-        Array.isArray(message.slash_commands)
-      ) {
-        const merged = mergeSlashCommands(supportedCommands, message.slash_commands as string[]);
-        if (merged.length > supportedCommands.length) {
-          supportedCommands = merged;
+      const initParsed = SystemInitContentSchema.safeParse(message);
+      if (initParsed.success && initParsed.data.slash_commands) {
+        const merged = mergeSlashCommands(state.commands, initParsed.data.slash_commands);
+        const newNames = new Set(merged.map((c) => c.name));
+        const oldNames = new Set(state.commands.map((c) => c.name));
+        const hasNewCommands = [...newNames].some((n) => !oldNames.has(n));
+        if (hasNewCommands) {
+          state.commands = merged;
           sseEvents.emitCommands(sessionId, merged);
           log.info('Merged slash_commands from system init', {
             sessionId,
@@ -572,6 +572,14 @@ export function answerUserInput(sessionId: string, answers: Record<string, strin
   }
 
   return true;
+}
+
+/**
+ * Get cached slash commands for a session.
+ * Returns commands discovered during the last query, or empty if none.
+ */
+export function getSessionCommands(sessionId: string): SlashCommand[] {
+  return sessions.get(sessionId)?.commands ?? [];
 }
 
 /**
