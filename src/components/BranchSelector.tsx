@@ -39,11 +39,11 @@ export function BranchSelector({
     if (
       data?.defaultBranch &&
       !selectedBranch &&
-      branches.some((b) => b.name === data.defaultBranch)
+      data.branches.some((b) => b.name === data.defaultBranch)
     ) {
       handleSelect(data.defaultBranch);
     }
-  }, [data, selectedBranch, branches, handleSelect]);
+  }, [data, selectedBranch, handleSelect]);
 
   if (isLoading) {
     return (
