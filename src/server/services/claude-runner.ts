@@ -45,6 +45,7 @@ export function mergeSlashCommands(
   for (const name of slashCommandNames) {
     if (!existingNames.has(name)) {
       merged.push({ name, description: '', argumentHint: '' });
+      existingNames.add(name);
     }
   }
 
@@ -379,14 +380,20 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
     const q = query({ prompt, options: sdkOptions });
     state.currentQuery = q;
 
-    // Fetch rich command metadata from the SDK (fire-and-forget)
+    // Fetch rich command metadata from the SDK (fire-and-forget).
+    // The init message may arrive before this resolves, so we merge
+    // with any names already discovered to avoid losing commands.
     let supportedCommands: SlashCommand[] = [];
     void q
       .supportedCommands()
       .then((commands) => {
-        supportedCommands = commands;
-        sseEvents.emitCommands(sessionId, commands);
-        log.info('Emitted supported commands from SDK', { sessionId, count: commands.length });
+        const alreadyDiscovered = supportedCommands.map((c) => c.name);
+        supportedCommands = mergeSlashCommands(commands, alreadyDiscovered);
+        sseEvents.emitCommands(sessionId, supportedCommands);
+        log.info('Emitted supported commands from SDK', {
+          sessionId,
+          count: supportedCommands.length,
+        });
       })
       .catch((err) => {
         log.debug('Failed to fetch supportedCommands', { sessionId, error: toError(err).message });
