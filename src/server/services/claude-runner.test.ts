@@ -43,6 +43,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 
 import {
   buildSystemPrompt,
+  mergeSlashCommands,
   answerUserInput,
   hasPendingInput,
   isClaudeRunning,
@@ -116,6 +117,61 @@ describe('claude-runner', () => {
         },
       });
       expect(prompt).toBe('Override\n\nGlobal append\n\nRepo prompt');
+    });
+  });
+
+  describe('mergeSlashCommands', () => {
+    it('should return existing commands when no new names provided', () => {
+      const existing = [{ name: 'commit', description: 'Commit changes', argumentHint: '' }];
+      const result = mergeSlashCommands(existing, []);
+      expect(result).toEqual(existing);
+    });
+
+    it('should add new commands not in existing list', () => {
+      const existing = [{ name: 'commit', description: 'Commit changes', argumentHint: '' }];
+      const result = mergeSlashCommands(existing, ['compact', 'cost']);
+      expect(result).toHaveLength(3);
+      expect(result[0]).toEqual({
+        name: 'commit',
+        description: 'Commit changes',
+        argumentHint: '',
+      });
+      expect(result[1]).toEqual({ name: 'compact', description: '', argumentHint: '' });
+      expect(result[2]).toEqual({ name: 'cost', description: '', argumentHint: '' });
+    });
+
+    it('should not duplicate commands already in existing list', () => {
+      const existing = [
+        { name: 'commit', description: 'Commit changes', argumentHint: '' },
+        { name: 'review', description: 'Review code', argumentHint: '<pr>' },
+      ];
+      const result = mergeSlashCommands(existing, ['commit', 'review', 'compact']);
+      expect(result).toHaveLength(3);
+      // Original rich metadata preserved
+      expect(result[0]).toEqual({
+        name: 'commit',
+        description: 'Commit changes',
+        argumentHint: '',
+      });
+      expect(result[1]).toEqual({
+        name: 'review',
+        description: 'Review code',
+        argumentHint: '<pr>',
+      });
+      // New command added with empty metadata
+      expect(result[2]).toEqual({ name: 'compact', description: '', argumentHint: '' });
+    });
+
+    it('should handle empty existing commands', () => {
+      const result = mergeSlashCommands([], ['compact', 'cost']);
+      expect(result).toHaveLength(2);
+      expect(result[0]).toEqual({ name: 'compact', description: '', argumentHint: '' });
+      expect(result[1]).toEqual({ name: 'cost', description: '', argumentHint: '' });
+    });
+
+    it('should handle both empty', () => {
+      const result = mergeSlashCommands([], []);
+      expect(result).toEqual([]);
     });
   });
 

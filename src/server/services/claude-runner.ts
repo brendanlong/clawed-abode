@@ -10,7 +10,7 @@
  * parking a promise that resolves when the user answers via tRPC.
  */
 
-import { query, type McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
+import { query, type McpServerConfig, type SlashCommand } from '@anthropic-ai/claude-agent-sdk';
 import { prisma } from '@/lib/prisma';
 import { getMessageType } from '@/lib/claude-messages';
 import { extractRepoFullName } from '@/lib/utils';
@@ -22,6 +22,34 @@ import { getCurrentBranch } from './worktree-manager';
 import { StreamAccumulator } from './stream-accumulator';
 
 const log = createLogger('claude-runner');
+
+/**
+ * Merges slash command names from the system init message with rich SlashCommand
+ * objects from `supportedCommands()`.
+ *
+ * The SDK's `supportedCommands()` only returns "skills" — a subset with rich
+ * metadata (name, description, argumentHint). The system init message's
+ * `slash_commands` array contains ALL available commands as bare strings.
+ *
+ * This function merges both: keeping the rich metadata for known skills and
+ * synthesizing minimal SlashCommand objects for commands that only appear in
+ * the slash_commands list.
+ */
+export function mergeSlashCommands(
+  existingCommands: SlashCommand[],
+  slashCommandNames: string[]
+): SlashCommand[] {
+  const existingNames = new Set(existingCommands.map((cmd) => cmd.name));
+  const merged = [...existingCommands];
+
+  for (const name of slashCommandNames) {
+    if (!existingNames.has(name)) {
+      merged.push({ name, description: '', argumentHint: '' });
+    }
+  }
+
+  return merged;
+}
 
 // Namespace UUID for generating deterministic IDs from error content
 const ERROR_LINE_NAMESPACE = '6ba7b810-9dad-11d1-80b4-00c04fd430c8';
@@ -351,7 +379,42 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
     const q = query({ prompt, options: sdkOptions });
     state.currentQuery = q;
 
+    // Fetch rich command metadata from the SDK (fire-and-forget)
+    let supportedCommands: SlashCommand[] = [];
+    void q
+      .supportedCommands()
+      .then((commands) => {
+        supportedCommands = commands;
+        sseEvents.emitCommands(sessionId, commands);
+        log.info('Emitted supported commands from SDK', { sessionId, count: commands.length });
+      })
+      .catch((err) => {
+        log.debug('Failed to fetch supportedCommands', { sessionId, error: toError(err).message });
+      });
+
     for await (const message of q) {
+      // Extract slash_commands from system init messages and merge with
+      // rich commands from supportedCommands(). The SDK's supportedCommands()
+      // only returns "skills", but the system init message contains all
+      // slash commands (e.g. /compact, /cost, /review, etc.)
+      if (
+        message.type === 'system' &&
+        'subtype' in message &&
+        message.subtype === 'init' &&
+        'slash_commands' in message &&
+        Array.isArray(message.slash_commands)
+      ) {
+        const merged = mergeSlashCommands(supportedCommands, message.slash_commands as string[]);
+        if (merged.length > supportedCommands.length) {
+          supportedCommands = merged;
+          sseEvents.emitCommands(sessionId, merged);
+          log.info('Merged slash_commands from system init', {
+            sessionId,
+            total: merged.length,
+          });
+        }
+      }
+
       // Handle stream_events for partial messages
       if (message.type === 'stream_event') {
         const partial = accumulator.accumulate(
