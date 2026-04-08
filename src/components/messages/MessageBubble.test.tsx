@@ -329,6 +329,7 @@ describe('MessageBubble', () => {
             manuallyToggledTodoIds,
             onTodoManualToggle,
             latestPlanContent: null,
+            subagentMessagesByTaskId: new Map(),
           }}
         >
           <MessageBubble message={message} />

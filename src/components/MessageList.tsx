@@ -3,7 +3,12 @@
 import { useRef, useEffect, useCallback, useMemo, useState } from 'react';
 import { MessageBubble } from './messages/MessageBubble';
 import type { ToolResultMap, ContentBlock, MessageContent } from './messages/types';
-import { MessageListProvider } from './messages/MessageListContext';
+import { MessageListProvider, type SubagentMessage } from './messages/MessageListContext';
+import {
+  getParentToolUseId,
+  getTaskToolUseId,
+  isToolOnlyAssistant,
+} from './messages/message-filters';
 import { Spinner } from '@/components/ui/spinner';
 import { ContextUsageIndicator } from '@/components/ContextUsageIndicator';
 import type { TokenUsageStats } from '@/lib/token-estimation';
@@ -361,13 +366,41 @@ export function MessageList({
     setManuallyToggledTodoIds((prev) => new Set([...prev, toolId]));
   }, []);
 
+  // Build map of task tool_use_id -> subagent messages (identified by parent_tool_use_id)
+  const subagentMessagesByTaskId = useMemo(() => {
+    const map = new Map<string, SubagentMessage[]>();
+    for (const msg of messages) {
+      // Subagent messages have parent_tool_use_id pointing to the Task tool call
+      const parentId = getParentToolUseId(msg);
+      // Task-related system messages (task_started, task_progress) have tool_use_id
+      const taskToolUseId = getTaskToolUseId(msg);
+      const groupId = parentId ?? taskToolUseId;
+      if (groupId) {
+        const group = map.get(groupId) ?? [];
+        group.push({
+          id: msg.id,
+          type: msg.type as SubagentMessage['type'],
+          content: msg.content,
+          sequence: msg.sequence,
+        });
+        map.set(groupId, group);
+      }
+    }
+    return map;
+  }, [messages]);
+
   // Filter out messages that have been fully paired with their tool_use,
-  // and hook_started messages that have a corresponding hook_response
-  // (pending hook_started messages are kept to show loading state)
+  // hook_started messages that have a corresponding hook_response,
+  // subagent messages (shown grouped inside their Task tool display),
+  // and task-related system messages (task_started, task_progress)
   const visibleMessages = useMemo(
     () =>
       messages.filter(
-        (msg) => !pairedMessageIds.has(msg.id) && !isCompletedHookStarted(msg, completedHookIds)
+        (msg) =>
+          !pairedMessageIds.has(msg.id) &&
+          !isCompletedHookStarted(msg, completedHookIds) &&
+          getParentToolUseId(msg) === null &&
+          getTaskToolUseId(msg) === null
       ),
     [messages, pairedMessageIds, completedHookIds]
   );
@@ -542,6 +575,7 @@ export function MessageList({
       onAnswerQuestion,
       isClaudeRunning,
       latestPlanContent,
+      subagentMessagesByTaskId,
     }),
     [
       latestTodoWriteId,
@@ -551,12 +585,13 @@ export function MessageList({
       onAnswerQuestion,
       isClaudeRunning,
       latestPlanContent,
+      subagentMessagesByTaskId,
     ]
   );
 
   return (
     <div className="relative flex-1 min-h-0">
-      <div ref={containerRef} className="h-full overflow-y-auto p-4 space-y-4">
+      <div ref={containerRef} className="h-full overflow-y-auto p-4">
         {/* Sentinel for triggering infinite scroll - placed before messages */}
         {/* overflow-anchor:none prevents browser from anchoring to these elements */}
         {/* so when new messages load above, the view stays on current messages */}
@@ -578,14 +613,19 @@ export function MessageList({
         )}
 
         <MessageListProvider value={contextValue}>
-          {visibleMessages.map((message) => {
+          {visibleMessages.map((message, index) => {
             // Only right-align actual user messages, not tool results
             const isUserMessage = message.type === 'user' && !isToolResultMessage(message);
+            // Use compact spacing between consecutive tool-only assistant messages
+            const prevMessage = index > 0 ? visibleMessages[index - 1] : null;
+            const isToolOnly = isToolOnlyAssistant(message);
+            const prevIsToolOnly = prevMessage ? isToolOnlyAssistant(prevMessage) : false;
+            const spacingClass = index === 0 ? '' : isToolOnly && prevIsToolOnly ? 'mt-1' : 'mt-4';
             return (
               <div
                 key={message.id}
                 data-message-id={message.id}
-                className={`flex ${isUserMessage ? 'justify-end' : 'justify-start'}`}
+                className={`flex ${isUserMessage ? 'justify-end' : 'justify-start'} ${spacingClass}`}
               >
                 <MessageBubble
                   message={{

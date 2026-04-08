@@ -1,10 +1,13 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { MarkdownContent } from '@/components/MarkdownContent';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
+import { useMessageListContext } from './MessageListContext';
+import { parseTaskOutput, extractSubagentToolCalls } from './task-utils';
 import type { ToolCall } from './types';
 
 interface TaskInput {
@@ -15,56 +18,6 @@ interface TaskInput {
   max_turns?: number;
   resume?: string;
   run_in_background?: boolean;
-}
-
-interface TaskOutputContent {
-  type: 'text';
-  text: string;
-}
-
-/**
- * Parse the task output which comes as an array of content objects.
- * Returns the main text content and extracted agent ID if present.
- */
-function parseTaskOutput(output: unknown): { text: string; agentId?: string } {
-  if (typeof output === 'string') {
-    const agentIdMatch = output.match(/agentId:\s*(\w+)/);
-    return {
-      text: output,
-      agentId: agentIdMatch?.[1],
-    };
-  }
-
-  if (Array.isArray(output)) {
-    const textParts: string[] = [];
-    let agentId: string | undefined;
-
-    for (const item of output) {
-      if (typeof item === 'string') {
-        textParts.push(item);
-        const match = item.match(/agentId:\s*(\w+)/);
-        if (match) agentId = match[1];
-      } else if (item && typeof item === 'object') {
-        const content = item as TaskOutputContent;
-        if (content.type === 'text' && content.text) {
-          // Check if this is the agentId line
-          const agentIdMatch = content.text.match(/agentId:\s*(\w+)/);
-          if (agentIdMatch) {
-            agentId = agentIdMatch[1];
-          } else {
-            textParts.push(content.text);
-          }
-        }
-      }
-    }
-
-    return {
-      text: textParts.join('\n\n'),
-      agentId,
-    };
-  }
-
-  return { text: '' };
 }
 
 /**
@@ -110,9 +63,11 @@ function AgentIcon() {
 /**
  * Specialized display for Task tool calls.
  * Shows the subagent type, description, prompt, and formatted output.
+ * Subagent messages are shown in a collapsible activity log.
  */
 export function TaskDisplay({ tool }: { tool: ToolCall }) {
   const hasOutput = tool.output !== undefined;
+  const [activityExpanded, setActivityExpanded] = useState(false);
 
   const inputObj = tool.input as TaskInput | undefined;
   const subagentType = inputObj?.subagent_type ?? 'Unknown';
@@ -124,10 +79,24 @@ export function TaskDisplay({ tool }: { tool: ToolCall }) {
     [subagentType]
   );
 
-  const { text: outputText, agentId } = useMemo(() => {
+  const {
+    text: outputText,
+    agentId,
+    usage,
+  } = useMemo(() => {
     if (!hasOutput) return { text: '' };
     return parseTaskOutput(tool.output);
   }, [tool.output, hasOutput]);
+
+  const context = useMessageListContext();
+  const subagentMessages = useMemo(
+    () => (tool.id ? (context?.subagentMessagesByTaskId.get(tool.id) ?? []) : []),
+    [tool.id, context?.subagentMessagesByTaskId]
+  );
+  const subagentToolCalls = useMemo(
+    () => extractSubagentToolCalls(subagentMessages),
+    [subagentMessages]
+  );
 
   return (
     <ToolDisplayWrapper
@@ -140,8 +109,22 @@ export function TaskDisplay({ tool }: { tool: ToolCall }) {
         </Badge>
       }
       subtitle={
-        description ? (
-          <div className="text-muted-foreground text-xs mt-1 truncate">{description}</div>
+        description || usage ? (
+          <div className="text-muted-foreground text-xs mt-1 flex items-center gap-2 flex-wrap">
+            {description && <span className="truncate">{description}</span>}
+            {usage && (
+              <span className="shrink-0">
+                {[
+                  usage.toolUses !== undefined && `${usage.toolUses} tools`,
+                  usage.durationMs !== undefined && `${(usage.durationMs / 1000).toFixed(1)}s`,
+                  usage.totalTokens !== undefined &&
+                    `${(usage.totalTokens / 1000).toFixed(1)}k tokens`,
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
+              </span>
+            )}
+          </div>
         ) : undefined
       }
     >
@@ -152,6 +135,37 @@ export function TaskDisplay({ tool }: { tool: ToolCall }) {
           {prompt}
         </pre>
       </div>
+
+      {/* Subagent activity log */}
+      {subagentToolCalls.length > 0 && (
+        <Collapsible open={activityExpanded} onOpenChange={setActivityExpanded}>
+          <CollapsibleTrigger className="w-full text-left flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground py-1">
+            <span>{activityExpanded ? '−' : '+'}</span>
+            <span>
+              {subagentToolCalls.length} tool call{subagentToolCalls.length !== 1 ? 's' : ''}
+            </span>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <div className="space-y-0.5 mt-1">
+              {subagentToolCalls.map((tc, i) => (
+                <div key={tc.id ?? i} className="flex items-center gap-2 text-xs">
+                  <span
+                    className={cn(
+                      'w-2 h-2 rounded-full flex-shrink-0',
+                      tc.isError
+                        ? 'bg-red-500'
+                        : tc.hasResult
+                          ? 'bg-green-500'
+                          : 'bg-yellow-400 animate-pulse'
+                    )}
+                  />
+                  <span className="font-mono text-primary">{tc.name}</span>
+                </div>
+              ))}
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
+      )}
 
       {/* Agent ID section */}
       {agentId && (

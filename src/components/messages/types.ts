@@ -60,6 +60,8 @@ export interface MessageContent {
   };
   // Hook fields
   hook_id?: string;
+  // Task system message fields (task_started, task_progress)
+  tool_use_id?: string;
   // Interrupt flag - set when this message was interrupted by the user
   interrupted?: boolean;
   [key: string]: unknown;
