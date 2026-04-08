@@ -173,6 +173,13 @@ describe('claude-runner', () => {
       const result = mergeSlashCommands([], []);
       expect(result).toEqual([]);
     });
+
+    it('should deduplicate names within slashCommandNames', () => {
+      const result = mergeSlashCommands([], ['compact', 'compact', 'cost', 'cost']);
+      expect(result).toHaveLength(2);
+      expect(result[0]).toEqual({ name: 'compact', description: '', argumentHint: '' });
+      expect(result[1]).toEqual({ name: 'cost', description: '', argumentHint: '' });
+    });
   });
 
   describe('answerUserInput', () => {
