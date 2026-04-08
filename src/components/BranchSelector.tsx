@@ -33,11 +33,17 @@ export function BranchSelector({
     [onSelect]
   );
 
+  const branches = data?.branches ?? [];
+
   useEffect(() => {
-    if (data?.defaultBranch && !selectedBranch) {
+    if (
+      data?.defaultBranch &&
+      !selectedBranch &&
+      branches.some((b) => b.name === data.defaultBranch)
+    ) {
       handleSelect(data.defaultBranch);
     }
-  }, [data, selectedBranch, handleSelect]);
+  }, [data, selectedBranch, branches, handleSelect]);
 
   if (isLoading) {
     return (
@@ -48,7 +54,16 @@ export function BranchSelector({
     );
   }
 
-  const branches = data?.branches || [];
+  if (branches.length === 0) {
+    return (
+      <div className="space-y-2">
+        <Label>Branch</Label>
+        <p className="text-sm text-muted-foreground">
+          No branches found. The repository may be empty.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-2">
