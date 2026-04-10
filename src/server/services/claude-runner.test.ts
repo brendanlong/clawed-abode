@@ -150,7 +150,7 @@ describe('claude-runner', () => {
       const result = await markAllSessionsStopped();
       expect(result).toBe(3);
       expect(mockPrisma.session.updateMany).toHaveBeenCalledWith({
-        where: { status: 'running' },
+        where: { status: { in: ['running', 'archiving'] } },
         data: { status: 'stopped' },
       });
     });

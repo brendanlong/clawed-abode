@@ -28,7 +28,7 @@ model Session {
   branch        String?   // null for no-repo sessions
   workspacePath String    @default("") // Path to workspace directory (e.g., ~/worktrees/{sessionId})
   repoPath      String    @default("") // Path to repo relative to workspace (e.g., "my-repo")
-  status        String    @default("creating") // creating, running, stopped, error, archived
+  status        String    @default("creating") // creating, running, stopped, error, archiving, archived
   statusMessage String?   // Human-readable progress message during creation
   initialPrompt  String?   // Optional prompt to send when session starts (e.g., from GitHub issue)
   currentBranch  String?   // Current git branch (detected after each query)
@@ -116,6 +116,8 @@ model GlobalSettings {
   claudeApiKey              String?  // If set (encrypted), overrides CLAUDE_CODE_OAUTH_TOKEN env var
   ttsSpeed                  Float?   // TTS playback speed (0.25-4.0, default 1.0)
   voiceAutoSend             Boolean  @default(true) // Auto-send after speech-to-text transcription
+  shutdownHookPrompt        String?  // Template prompt to run when a session is archived
+  shutdownHookEnabled       Boolean  @default(false) // Whether to run the shutdown hook
   createdAt                 DateTime @default(now())
   updatedAt                 DateTime @updatedAt
 }

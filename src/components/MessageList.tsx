@@ -2,6 +2,7 @@
 
 import { useRef, useEffect, useCallback, useMemo, useState } from 'react';
 import { MessageBubble } from './messages/MessageBubble';
+import { ShutdownHookSeparator } from './messages/ShutdownHookSeparator';
 import type { ToolResultMap, ContentBlock, MessageContent } from './messages/types';
 import { MessageListProvider } from './messages/MessageListContext';
 import { Spinner } from '@/components/ui/spinner';
@@ -283,6 +284,9 @@ export function MessageList({
   // Track which TodoWrite components have been manually toggled by the user
   const [manuallyToggledTodoIds, setManuallyToggledTodoIds] = useState<Set<string>>(new Set());
 
+  // Track whether shutdown hook messages are expanded (collapsed by default)
+  const [shutdownHookExpanded, setShutdownHookExpanded] = useState(false);
+
   // Track which AskUserQuestion IDs we've already notified about (using ref to avoid re-renders)
   const notifiedQuestionIdsRef = useRef<Set<string>>(new Set());
 
@@ -370,6 +374,17 @@ export function MessageList({
         (msg) => !pairedMessageIds.has(msg.id) && !isCompletedHookStarted(msg, completedHookIds)
       ),
     [messages, pairedMessageIds, completedHookIds]
+  );
+
+  // Find shutdown hook separator index in visible messages (for collapsing)
+  const shutdownHookSeparatorIndex = useMemo(
+    () =>
+      visibleMessages.findIndex(
+        (m) =>
+          m.type === 'system' &&
+          (m.content as MessageContent | undefined)?.subtype === 'shutdown_hook_separator'
+      ),
+    [visibleMessages]
   );
 
   const scrollToBottom = useCallback(() => {
@@ -578,7 +593,30 @@ export function MessageList({
         )}
 
         <MessageListProvider value={contextValue}>
-          {visibleMessages.map((message) => {
+          {visibleMessages.map((message, index) => {
+            const content = message.content as MessageContent | undefined;
+
+            // Render shutdown hook separator with expand/collapse toggle
+            if (message.type === 'system' && content?.subtype === 'shutdown_hook_separator') {
+              return (
+                <div key={message.id} className="w-full">
+                  <ShutdownHookSeparator
+                    expanded={shutdownHookExpanded}
+                    onToggle={() => setShutdownHookExpanded((prev) => !prev)}
+                  />
+                </div>
+              );
+            }
+
+            // Hide messages after the shutdown hook separator when collapsed
+            if (
+              shutdownHookSeparatorIndex !== -1 &&
+              index > shutdownHookSeparatorIndex &&
+              !shutdownHookExpanded
+            ) {
+              return null;
+            }
+
             // Only right-align actual user messages, not tool results
             const isUserMessage = message.type === 'user' && !isToolResultMessage(message);
             return (

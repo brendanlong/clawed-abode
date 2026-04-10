@@ -20,7 +20,7 @@ export interface SessionListItemProps {
  */
 export function SessionListItem({ session, onMutationSuccess }: SessionListItemProps) {
   const repoName = session.repoUrl ? extractRepoFullName(session.repoUrl) : null;
-  const isArchived = session.status === 'archived';
+  const isArchived = session.status === 'archived' || session.status === 'archiving';
 
   const startMutation = trpc.sessions.start.useMutation({ onSuccess: onMutationSuccess });
   const stopMutation = trpc.sessions.stop.useMutation({ onSuccess: onMutationSuccess });

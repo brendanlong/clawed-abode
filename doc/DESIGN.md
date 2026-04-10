@@ -45,7 +45,7 @@ The database schema is defined in [`prisma/schema.prisma`](../prisma/schema.pris
 - **Session**: Claude Code sessions tied to git clones or standalone workspaces. `repoUrl` and `branch` are nullable — when null, the session has no repository (workspace-only).
 - **Message**: Chat messages with sequence numbers for cursor-based pagination
 - **AuthSession**: Login sessions with tokens and audit info
-- **GlobalSettings**: Global application settings (system prompt override and append, Claude model, Claude API key, TTS speed, voice auto-send)
+- **GlobalSettings**: Global application settings (system prompt override and append, Claude model, Claude API key, TTS speed, voice auto-send, shutdown hook)
 - **RepoSettings**: Per-repository settings (favorites, custom system prompt)
 - **EnvVar**: Environment variables for a repository or global (encrypted if secret). When `repoSettingsId` is null, the variable is global and applies to all sessions.
 - **McpServer**: MCP server configurations for a repository or global. When `repoSettingsId` is null, the server is global and applies to all sessions.
@@ -59,6 +59,23 @@ When a session is deleted, it is archived rather than permanently removed. This 
 - Keep all messages in the database for viewing
 - Are excluded from the session list by default (toggle available to show them)
 - Are read-only: no start/stop controls, no prompt input
+
+### Shutdown Hook
+
+A global shutdown hook can be configured to run a final Claude prompt when a session is archived. This is useful for writing journal entries, feedback, or summaries.
+
+- **Single prompt**: Stored as `shutdownHookPrompt` and `shutdownHookEnabled` on `GlobalSettings`
+- **Template variables**: `{{session.name}}`, `{{session.repo}}`, `{{session.branch}}`, `{{date}}` are expanded before sending
+- **Full context**: Runs with `resume: sessionId` so Claude has the full conversation history
+- **Archiving status**: Session transitions to `archiving` while the hook runs (workspace still exists)
+- **Interruptible**: Users can click Stop to interrupt the hook; archiving still completes
+- **Collapsed output**: Hook messages appear in the archived session behind a separator, collapsed by default
+- **Failure handling**: If the hook fails or is interrupted, archiving proceeds (workspace removed, status set to `archived`)
+- **Server restart**: `archiving` sessions are marked `stopped` on restart (user can re-archive to re-run the hook)
+
+**Configuration**: Go to Settings → Shutdown Hook to enable and configure the prompt template.
+
+**Implementation**: See [`src/server/services/shutdown-hooks.ts`](../src/server/services/shutdown-hooks.ts) for the service layer.
 
 ### Data Storage
 
@@ -244,8 +261,12 @@ This ensures users can see all changes through GitHub, which is their only way t
 
 1. User deletes session
 2. Server stops any running Claude query
-3. Server removes workspace directory
-4. Session is archived (messages preserved for viewing)
+3. **If shutdown hook is enabled**:
+   a. Session status → `archiving`, mutation returns immediately
+   b. Background: separator message inserted, hook prompt expanded and sent via `runClaudeCommand`
+   c. Hook messages stream to client via SSE (user can interrupt with Stop button)
+   d. On completion/failure/interruption: workspace removed, session status → `archived`
+4. **If no shutdown hook**: workspace removed immediately, session status → `archived`
 
 ## Claude Agent SDK Integration
 
@@ -369,6 +390,7 @@ Users can configure global settings that apply to all sessions:
 - **Global MCP Servers**: MCP server configurations available in all sessions. Per-repo servers with the same name take precedence. Supports stdio, HTTP, and SSE transport types.
 - **TTS Speed**: Controls text-to-speech playback speed (0.25x to 4.0x, default 1.0x). Passed to `SpeechSynthesis.rate` via the browser's Web Speech API. Configured in Settings → Audio.
 - **Voice Auto-Send**: When enabled (default: true), speech-to-text transcripts are automatically sent as prompts after recording stops. When disabled, transcripts are inserted into the input field for editing. Configured in Settings → Audio.
+- **Shutdown Hook**: A prompt template that runs automatically when sessions are archived. Supports template variables (`{{session.name}}`, `{{session.repo}}`, `{{session.branch}}`, `{{date}}`). Configured in Settings → Shutdown Hook. See [Shutdown Hook](#shutdown-hook) for details.
 
 **Prompt Order**: When Claude runs, the system prompt is built in this order:
 
@@ -486,6 +508,7 @@ clawed-abode/
 │   │   │   ├── anthropic-models.ts # Claude model configuration
 │   │   │   ├── github.ts         # GitHub API service
 │   │   │   ├── mcp-validator.ts  # MCP server config validation
+│   │   │   ├── shutdown-hooks.ts # Shutdown hook execution on session archive
 │   │   │   └── session-reconciler.ts # Marks sessions stopped on restart
 │   │   └── trpc.ts
 │   ├── lib/
@@ -508,7 +531,7 @@ clawed-abode/
 │       ├── SessionList.tsx
 │       ├── Header.tsx
 │       ├── messages/             # Tool-specific display components (Bash, Edit, Read, etc.)
-│       ├── settings/             # Settings UI (global settings, repo settings, audio, env vars, MCP)
+│       ├── settings/             # Settings UI (global settings, repo settings, audio, shutdown hook, env vars, MCP)
 │       ├── ui/                   # shadcn/ui primitives (button, dialog, input, etc.)
 │       └── voice/               # Voice UI components
 │           ├── VoiceControlPanel.tsx
