@@ -10,9 +10,9 @@
  * parking a promise that resolves when the user answers via tRPC.
  */
 
-import { query, type McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
+import { query, type McpServerConfig, type SlashCommand } from '@anthropic-ai/claude-agent-sdk';
 import { prisma } from '@/lib/prisma';
-import { getMessageType } from '@/lib/claude-messages';
+import { getMessageType, SystemInitContentSchema } from '@/lib/claude-messages';
 import { extractRepoFullName } from '@/lib/utils';
 import { v4 as uuid, v5 as uuidv5 } from 'uuid';
 import { sseEvents } from './events';
@@ -22,6 +22,35 @@ import { getCurrentBranch } from './worktree-manager';
 import { StreamAccumulator } from './stream-accumulator';
 
 const log = createLogger('claude-runner');
+
+/**
+ * Merges slash command names from the system init message with rich SlashCommand
+ * objects from `supportedCommands()`.
+ *
+ * The SDK's `supportedCommands()` only returns "skills" — a subset with rich
+ * metadata (name, description, argumentHint). The system init message's
+ * `slash_commands` array contains ALL available commands as bare strings.
+ *
+ * This function merges both: keeping the rich metadata for known skills and
+ * synthesizing minimal SlashCommand objects for commands that only appear in
+ * the slash_commands list.
+ */
+export function mergeSlashCommands(
+  existingCommands: SlashCommand[],
+  slashCommandNames: string[]
+): SlashCommand[] {
+  const existingNames = new Set(existingCommands.map((cmd) => cmd.name));
+  const merged = [...existingCommands];
+
+  for (const name of slashCommandNames) {
+    if (!existingNames.has(name)) {
+      merged.push({ name, description: '', argumentHint: '' });
+      existingNames.add(name);
+    }
+  }
+
+  return merged;
+}
 
 // Namespace UUID for generating deterministic IDs from error content
 const ERROR_LINE_NAMESPACE = '6ba7b810-9dad-11d1-80b4-00c04fd430c8';
@@ -49,6 +78,8 @@ interface SessionState {
   pendingInput: PendingUserInput | null;
   /** Working directory for this session */
   workingDir: string;
+  /** Discovered slash commands (cached for getCommands endpoint) */
+  commands: SlashCommand[];
 }
 
 /** Active sessions tracked in memory */
@@ -152,6 +183,7 @@ function getSessionState(sessionId: string, workingDir: string): SessionState {
       currentQuery: null,
       pendingInput: null,
       workingDir,
+      commands: [],
     };
     sessions.set(sessionId, state);
   }
@@ -351,7 +383,45 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
     const q = query({ prompt, options: sdkOptions });
     state.currentQuery = q;
 
+    // Fetch rich command metadata from the SDK asynchronously.
+    // The init message may arrive before this resolves, so we merge
+    // with any names already discovered to avoid losing commands.
+    void q
+      .supportedCommands()
+      .then((commands) => {
+        const alreadyDiscovered = state.commands.map((c) => c.name);
+        state.commands = mergeSlashCommands(commands, alreadyDiscovered);
+        sseEvents.emitCommands(sessionId, state.commands);
+        log.info('Emitted supported commands from SDK', {
+          sessionId,
+          count: state.commands.length,
+        });
+      })
+      .catch((err) => {
+        log.debug('Failed to fetch supportedCommands', { sessionId, error: toError(err).message });
+      });
+
     for await (const message of q) {
+      // Extract slash_commands from system init messages and merge with
+      // rich commands from supportedCommands(). The SDK's supportedCommands()
+      // only returns "skills", but the system init message contains all
+      // slash commands (e.g. /compact, /cost, /review, etc.)
+      const initParsed = SystemInitContentSchema.safeParse(message);
+      if (initParsed.success && initParsed.data.slash_commands) {
+        const merged = mergeSlashCommands(state.commands, initParsed.data.slash_commands);
+        const newNames = new Set(merged.map((c) => c.name));
+        const oldNames = new Set(state.commands.map((c) => c.name));
+        const hasNewCommands = [...newNames].some((n) => !oldNames.has(n));
+        if (hasNewCommands) {
+          state.commands = merged;
+          sseEvents.emitCommands(sessionId, merged);
+          log.info('Merged slash_commands from system init', {
+            sessionId,
+            total: merged.length,
+          });
+        }
+      }
+
       // Handle stream_events for partial messages
       if (message.type === 'stream_event') {
         const partial = accumulator.accumulate(
@@ -502,6 +572,14 @@ export function answerUserInput(sessionId: string, answers: Record<string, strin
   }
 
   return true;
+}
+
+/**
+ * Get cached slash commands for a session.
+ * Returns commands discovered during the last query, or empty if none.
+ */
+export function getSessionCommands(sessionId: string): SlashCommand[] {
+  return sessions.get(sessionId)?.commands ?? [];
 }
 
 /**

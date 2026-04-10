@@ -10,6 +10,7 @@ import {
   answerUserInput,
   hasPendingInput,
   getPendingInput,
+  getSessionCommands,
 } from '../services/claude-runner';
 import { loadMergedSessionSettings } from '../services/settings-merger';
 import { getSessionWorkingDir } from '../services/worktree-manager';
@@ -257,9 +258,7 @@ export const claudeRouter = router({
 
   getCommands: protectedProcedure
     .input(z.object({ sessionId: z.string().uuid() }))
-    .query(async () => {
-      // Commands are now emitted via SSE during query initialization.
-      // This endpoint returns empty for now - the frontend gets commands via SSE.
-      return { commands: [] as Array<{ name: string; description: string; argumentHint: string }> };
+    .query(async ({ input }) => {
+      return { commands: getSessionCommands(input.sessionId) };
     }),
 });
