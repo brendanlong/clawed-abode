@@ -98,7 +98,7 @@ export function buildSystemPrompt(options: {
 /**
  * Create and save a system error message for display to the user.
  */
-async function createErrorMessage(sessionId: string, errorText: string): Promise<void> {
+export async function createErrorMessage(sessionId: string, errorText: string): Promise<void> {
   const lastMessage = await prisma.message.findFirst({
     where: { sessionId },
     orderBy: { sequence: 'desc' },
@@ -676,7 +676,7 @@ export async function stopAllSessions(): Promise<void> {
 export async function markAllSessionsStopped(): Promise<number> {
   const result = await prisma.session.updateMany({
     where: {
-      status: 'running',
+      status: { in: ['running', 'archiving'] },
     },
     data: {
       status: 'stopped',
@@ -684,7 +684,7 @@ export async function markAllSessionsStopped(): Promise<number> {
   });
 
   if (result.count > 0) {
-    log.info('Marked running sessions as stopped on startup', { count: result.count });
+    log.info('Marked running/archiving sessions as stopped on startup', { count: result.count });
   }
 
   return result.count;

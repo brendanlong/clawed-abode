@@ -63,6 +63,8 @@ export const globalSettingsRouter = router({
       hasClaudeApiKey: settings?.claudeApiKey !== null && settings?.claudeApiKey !== undefined,
       ttsSpeed: settings?.ttsSpeed ?? null,
       voiceAutoSend: settings?.voiceAutoSend ?? true,
+      shutdownHookPrompt: settings?.shutdownHookPrompt ?? null,
+      shutdownHookEnabled: settings?.shutdownHookEnabled ?? false,
       defaultClaudeModel: env.CLAUDE_MODEL,
       hasEnvApiKey: !!env.CLAUDE_CODE_OAUTH_TOKEN,
     };
@@ -446,6 +448,41 @@ export const globalSettingsRouter = router({
       });
 
       log.info('Set voice auto-send', { voiceAutoSend: input.voiceAutoSend });
+
+      return { success: true };
+    }),
+
+  /**
+   * Set the shutdown hook configuration.
+   * Pass null prompt to clear. Enabled flag controls whether the hook runs.
+   */
+  setShutdownHook: protectedProcedure
+    .input(
+      z.object({
+        shutdownHookPrompt: z.string().max(50000).nullable(),
+        shutdownHookEnabled: z.boolean(),
+      })
+    )
+    .mutation(async ({ input }) => {
+      const prompt = input.shutdownHookPrompt?.trim() || null;
+
+      await prisma.globalSettings.upsert({
+        where: { id: GLOBAL_SETTINGS_ID },
+        create: {
+          id: GLOBAL_SETTINGS_ID,
+          shutdownHookPrompt: prompt,
+          shutdownHookEnabled: input.shutdownHookEnabled,
+        },
+        update: {
+          shutdownHookPrompt: prompt,
+          shutdownHookEnabled: input.shutdownHookEnabled,
+        },
+      });
+
+      log.info('Set shutdown hook', {
+        hasPrompt: prompt !== null,
+        enabled: input.shutdownHookEnabled,
+      });
 
       return { success: true };
     }),

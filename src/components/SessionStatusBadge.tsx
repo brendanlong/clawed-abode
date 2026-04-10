@@ -1,12 +1,13 @@
 import { Badge } from '@/components/ui/badge';
 
-type SessionStatus = 'running' | 'stopped' | 'creating' | 'error' | 'archived';
+type SessionStatus = 'running' | 'stopped' | 'creating' | 'error' | 'archiving' | 'archived';
 
 const statusVariants: Record<SessionStatus, 'default' | 'secondary' | 'destructive' | 'outline'> = {
   running: 'default',
   stopped: 'secondary',
   creating: 'outline',
   error: 'destructive',
+  archiving: 'outline',
   archived: 'outline',
 };
 

@@ -10,6 +10,7 @@ import {
 } from '../services/worktree-manager';
 import { loadMergedSessionSettings } from '../services/settings-merger';
 import { runClaudeCommand, stopSession } from '../services/claude-runner';
+import { runShutdownHook } from '../services/shutdown-hooks';
 import { sseEvents } from '../services/events';
 import { createLogger, toError } from '@/lib/logger';
 import { env } from '@/lib/env';
@@ -17,7 +18,14 @@ import { SESSION_NAME_MAX_LENGTH } from '@/lib/types';
 
 const log = createLogger('sessions');
 
-const sessionStatusSchema = z.enum(['creating', 'running', 'stopped', 'error', 'archived']);
+const sessionStatusSchema = z.enum([
+  'creating',
+  'running',
+  'stopped',
+  'error',
+  'archiving',
+  'archived',
+]);
 
 /** Sentinel value for no-repo sessions in RepoSettings */
 const NO_REPO_SENTINEL = '__no_repo__';
@@ -270,26 +278,56 @@ export const sessionsRouter = router({
         });
       }
 
-      if (session.status === 'archived') {
+      // Idempotent: already archived or archiving
+      if (session.status === 'archived' || session.status === 'archiving') {
         return { success: true };
       }
 
       // Stop any running query
       await stopSession(input.sessionId);
 
-      // Remove workspace directory
-      await removeWorkspace(session.id);
-
-      // Archive session (keep messages for viewing)
-      const updatedSession = await prisma.session.update({
-        where: { id: session.id },
-        data: {
-          status: 'archived',
-          archivedAt: new Date(),
-        },
+      // Check if there's an enabled shutdown hook
+      const globalSettings = await prisma.globalSettings.findUnique({
+        where: { id: 'global' },
+        select: { shutdownHookEnabled: true, shutdownHookPrompt: true },
       });
 
-      sseEvents.emitSessionUpdate(input.sessionId, updatedSession);
+      const hasShutdownHook =
+        globalSettings?.shutdownHookEnabled &&
+        globalSettings.shutdownHookPrompt &&
+        globalSettings.shutdownHookPrompt.trim().length > 0;
+
+      if (hasShutdownHook) {
+        // Set status to archiving and run hook in background
+        const updatedSession = await prisma.session.update({
+          where: { id: session.id },
+          data: {
+            status: 'archiving',
+            statusMessage: 'Running shutdown hook...',
+          },
+        });
+
+        sseEvents.emitSessionUpdate(input.sessionId, updatedSession);
+
+        // Run shutdown hook in background (don't await)
+        runShutdownHook(session, globalSettings.shutdownHookPrompt!).catch((err) => {
+          log.error('Shutdown hook failed', toError(err), { sessionId: session.id });
+        });
+      } else {
+        // No hook — archive immediately (existing fast path)
+        await removeWorkspace(session.id);
+
+        const updatedSession = await prisma.session.update({
+          where: { id: session.id },
+          data: {
+            status: 'archived',
+            archivedAt: new Date(),
+          },
+        });
+
+        sseEvents.emitSessionUpdate(input.sessionId, updatedSession);
+      }
+
       return { success: true };
     }),
 

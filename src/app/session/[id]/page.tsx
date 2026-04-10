@@ -161,10 +161,11 @@ function SessionView({ sessionId }: { sessionId: string }) {
     );
   }
 
-  // Show creation progress, error state, or archived state
+  // Show creation progress, error state, archiving state, or archived state
   if (
     session.status === 'creating' ||
     session.status === 'error' ||
+    session.status === 'archiving' ||
     session.status === 'archived'
   ) {
     return (
@@ -194,6 +195,31 @@ function SessionView({ sessionId }: { sessionId: string }) {
               <Link href="/">Back to sessions</Link>
             </Button>
           </div>
+        )}
+        {session.status === 'archiving' && (
+          <>
+            <MessageList
+              messages={messages}
+              isLoading={messagesLoading || isFetchingMore}
+              hasMore={hasMore}
+              onLoadMore={fetchMore}
+              tokenUsage={tokenUsage}
+              onSendResponse={() => {}}
+              isClaudeRunning={true}
+            />
+            <div className="border-t bg-muted/50 px-4 py-3 flex items-center justify-center gap-3 text-sm text-muted-foreground">
+              <Spinner size="sm" />
+              <span>{session.statusMessage || 'Running shutdown hook...'}</span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => interrupt()}
+                disabled={isInterrupting}
+              >
+                {isInterrupting ? 'Stopping...' : 'Stop'}
+              </Button>
+            </div>
+          </>
         )}
         {session.status === 'archived' && (
           <>

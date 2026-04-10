@@ -19,6 +19,7 @@ export type MessageCategory =
   | 'systemInit'
   | 'systemError'
   | 'systemCompactBoundary'
+  | 'shutdownHookSeparator'
   | 'hookStarted'
   | 'hookResponse'
   | 'result';
@@ -130,6 +131,11 @@ export function isRecognizedMessage(type: string, content: MessageContent): Reco
       return { recognized: true, category: 'systemError' };
     }
     return { recognized: false };
+  }
+
+  // Shutdown hook separator messages
+  if (type === 'system' && content.subtype === 'shutdown_hook_separator') {
+    return { recognized: true, category: 'shutdownHookSeparator' };
   }
 
   // Compact boundary messages

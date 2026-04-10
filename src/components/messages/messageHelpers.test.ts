@@ -239,6 +239,14 @@ describe('isRecognizedMessage', () => {
     expect(isRecognizedMessage('system', content)).toEqual({ recognized: false });
   });
 
+  it('recognizes shutdown hook separator messages', () => {
+    const content: MessageContent = { subtype: 'shutdown_hook_separator' };
+    expect(isRecognizedMessage('system', content)).toEqual({
+      recognized: true,
+      category: 'shutdownHookSeparator',
+    });
+  });
+
   it('recognizes system compact boundary messages', () => {
     const content: MessageContent = { subtype: 'compact_boundary' };
     expect(isRecognizedMessage('system', content)).toEqual({
