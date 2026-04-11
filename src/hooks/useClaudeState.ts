@@ -61,7 +61,13 @@ export function useClaudeState(sessionId: string) {
   );
 
   const sendMutation = trpc.claude.send.useMutation();
-  const interruptMutation = trpc.claude.interrupt.useMutation();
+  const interruptMutation = trpc.claude.interrupt.useMutation({
+    onError: () => {
+      // If interrupt fails (e.g. timeout), refetch running state
+      // so the UI doesn't stay stuck on "Interrupting..."
+      void refetch();
+    },
+  });
   const answerMutation = trpc.claude.answerQuestion.useMutation();
 
   const send = useCallback(

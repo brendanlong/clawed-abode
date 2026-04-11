@@ -604,7 +604,20 @@ export function getPendingInput(
 }
 
 /**
+ * Race a promise against a timeout. Resolves with `undefined` if the timeout fires first.
+ */
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | undefined> {
+  return Promise.race([
+    promise,
+    new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), ms)),
+  ]);
+}
+
+const INTERRUPT_TIMEOUT_MS = 5_000;
+
+/**
  * Interrupt a running Claude query.
+ * Uses a timeout to prevent hanging if the SDK's interrupt() never resolves.
  */
 export async function interruptClaude(sessionId: string): Promise<boolean> {
   const state = sessions.get(sessionId);
@@ -614,10 +627,18 @@ export async function interruptClaude(sessionId: string): Promise<boolean> {
   }
 
   try {
-    await state.currentQuery.interrupt();
+    const result = await withTimeout(state.currentQuery.interrupt(), INTERRUPT_TIMEOUT_MS);
+    if (result === undefined) {
+      log.warn('interruptClaude: Timed out, force-cleaning state', { sessionId });
+      forceCleanSession(sessionId);
+    }
     return true;
   } catch (err) {
-    log.warn('interruptClaude: Failed', { sessionId, error: toError(err).message });
+    log.warn('interruptClaude: Failed, force-cleaning state', {
+      sessionId,
+      error: toError(err).message,
+    });
+    forceCleanSession(sessionId);
     return false;
   }
 }
@@ -707,6 +728,37 @@ export async function markLastMessageAsInterrupted(sessionId: string): Promise<v
     content: interruptContent,
     createdAt: new Date(),
   });
+}
+
+/**
+ * Force-clean a session's in-memory state and kill the subprocess.
+ * Used as a fallback when interrupt() hangs or fails.
+ *
+ * Calls close() on the query to trigger the SDK's subprocess kill
+ * (SIGTERM immediately, SIGKILL after 5s), then cleans up our state.
+ */
+function forceCleanSession(sessionId: string): void {
+  const state = sessions.get(sessionId);
+  if (!state) return;
+
+  // close() is synchronous (fire-and-forget) and kills the subprocess
+  if (state.currentQuery) {
+    try {
+      state.currentQuery.close();
+    } catch {
+      // Ignore close errors
+    }
+  }
+
+  if (state.pendingInput) {
+    state.pendingInput.reject(new Error('Session force-cleaned'));
+    state.pendingInput = null;
+  }
+
+  state.isRunning = false;
+  state.currentQuery = null;
+  sessions.delete(sessionId);
+  sseEvents.emitClaudeRunning(sessionId, false);
 }
 
 /**

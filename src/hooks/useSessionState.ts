@@ -41,6 +41,11 @@ export function useSessionState(sessionId: string) {
     onSuccess: (data) => {
       utils.sessions.get.setData({ sessionId }, { session: data.session });
     },
+    onError: () => {
+      // If the stop mutation fails (e.g. timeout or server error),
+      // refetch session state so we don't stay stuck on "Stopping..."
+      void refetch();
+    },
   });
 
   // The API endpoint is "delete" but it now archives instead of permanently deleting
