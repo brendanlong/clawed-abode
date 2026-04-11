@@ -731,12 +731,24 @@ export async function markLastMessageAsInterrupted(sessionId: string): Promise<v
 }
 
 /**
- * Force-clean a session's in-memory state without waiting for the SDK.
- * Used as a fallback when interrupt/close hangs or fails.
+ * Force-clean a session's in-memory state and kill the subprocess.
+ * Used as a fallback when interrupt() hangs or fails.
+ *
+ * Calls close() on the query to trigger the SDK's subprocess kill
+ * (SIGTERM immediately, SIGKILL after 5s), then cleans up our state.
  */
 function forceCleanSession(sessionId: string): void {
   const state = sessions.get(sessionId);
   if (!state) return;
+
+  // close() is synchronous (fire-and-forget) and kills the subprocess
+  if (state.currentQuery) {
+    try {
+      state.currentQuery.close();
+    } catch {
+      // Ignore close errors
+    }
+  }
 
   if (state.pendingInput) {
     state.pendingInput.reject(new Error('Session force-cleaned'));
