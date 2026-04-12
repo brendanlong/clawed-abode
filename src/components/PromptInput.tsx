@@ -40,18 +40,13 @@ export function PromptInput({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const commandsRef = useRef<HTMLDivElement>(null);
 
-  // Voice recording — finalized text appends directly to prompt
-  const onFinalizedText = useCallback((text: string) => {
-    setPrompt((prev) => prev + text);
-  }, []);
-
   const {
     isRecording,
     interimTranscript,
     startRecording,
     stopRecording,
     error: voiceError,
-  } = useVoiceRecording(voiceEnabled ? onFinalizedText : undefined);
+  } = useVoiceRecording();
 
   useEffect(() => {
     if (textareaRef.current) {
@@ -140,10 +135,9 @@ export function PromptInput({
 
   const handleMicClick = () => {
     if (isRecording) {
-      const remaining = stopRecording();
-      // prompt already has all finalized text via onFinalizedText callback;
-      // append any remaining interim text that wasn't finalized yet
-      const fullPrompt = (prompt + remaining).trim();
+      const transcript = stopRecording();
+      // Append voice transcript to any text typed before recording started
+      const fullPrompt = (prompt + transcript).trim();
       setPrompt(fullPrompt);
 
       if (voiceAutoSend && fullPrompt && !disabled && !isRunning) {
