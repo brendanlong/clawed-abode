@@ -75,6 +75,8 @@ export const claudeRouter = router({
         customSystemPrompt: settings.customSystemPrompt,
         globalSettings: settings.globalSettings,
         claudeModel: settings.claudeModel,
+        envVars: settings.envVars,
+        claudeApiKey: settings.claudeApiKey,
         mcpServers: settings.mcpServers,
       }).catch((err) => {
         log.error('Claude command failed', toError(err), { sessionId: input.sessionId });

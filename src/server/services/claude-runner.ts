@@ -20,6 +20,7 @@ import { createLogger, toError } from '@/lib/logger';
 import { fetchPullRequestForBranch } from './github';
 import { getCurrentBranch } from './worktree-manager';
 import { StreamAccumulator } from './stream-accumulator';
+import type { ContainerEnvVar } from './repo-settings';
 
 const log = createLogger('claude-runner');
 
@@ -190,6 +191,112 @@ function getSessionState(sessionId: string, workingDir: string): SessionState {
   return state;
 }
 
+/**
+ * Cached base environment from a fresh login shell.
+ * Populated lazily on first call to getBaseEnv().
+ * This gives us the user's default shell environment (PATH, HOME, etc.)
+ * without any of the server's runtime env vars (PASSWORD_HASH, ENCRYPTION_KEY, etc.).
+ */
+let cachedBaseEnv: Record<string, string> | null = null;
+
+/**
+ * Get the base environment by spawning a fresh login shell.
+ * Uses `env -0` for null-separated output to safely handle values with newlines.
+ * Result is cached for the lifetime of the process.
+ */
+export async function getBaseEnv(): Promise<Record<string, string>> {
+  if (cachedBaseEnv) return cachedBaseEnv;
+
+  const { execFile } = await import('child_process');
+  const { promisify } = await import('util');
+  const execFileAsync = promisify(execFile);
+
+  try {
+    // Spawn a fresh login shell and capture its environment.
+    // -l: login shell (sources .profile, .bash_profile, etc.)
+    // env -0: null-separated output for safe parsing
+    //
+    // We seed with the minimal vars that the OS login process normally provides
+    // (HOME, USER, SHELL, LOGNAME, PATH) so profile scripts can source properly.
+    // This avoids inheriting any server-specific vars from process.env.
+    const seedEnv: Record<string, string> = {};
+    for (const key of ['HOME', 'USER', 'SHELL', 'LOGNAME', 'PATH', 'LANG', 'TERM']) {
+      if (process.env[key]) seedEnv[key] = process.env[key]!;
+    }
+    const { stdout } = await execFileAsync('bash', ['-lc', 'env -0'], {
+      timeout: 5000,
+      maxBuffer: 1024 * 1024,
+      env: seedEnv,
+    });
+
+    const baseEnv: Record<string, string> = {};
+    for (const entry of stdout.split('\0')) {
+      if (!entry) continue;
+      const eqIdx = entry.indexOf('=');
+      if (eqIdx === -1) continue;
+      baseEnv[entry.slice(0, eqIdx)] = entry.slice(eqIdx + 1);
+    }
+
+    cachedBaseEnv = baseEnv;
+    log.info('Captured base environment from login shell', {
+      varCount: Object.keys(baseEnv).length,
+    });
+    return baseEnv;
+  } catch (err) {
+    log.error(
+      'Failed to capture base environment from login shell, falling back to minimal env',
+      toError(err)
+    );
+    // Fallback: use a minimal set of essential vars from process.env
+    const fallback: Record<string, string> = {};
+    for (const key of [
+      'PATH',
+      'HOME',
+      'USER',
+      'SHELL',
+      'LANG',
+      'TERM',
+      'TMPDIR',
+      'XDG_RUNTIME_DIR',
+    ]) {
+      if (process.env[key]) fallback[key] = process.env[key]!;
+    }
+    cachedBaseEnv = fallback;
+    return fallback;
+  }
+}
+
+/** Reset the cached base env (for testing). */
+export function resetBaseEnvCache(): void {
+  cachedBaseEnv = null;
+}
+
+/**
+ * Build the environment variables to pass to the Claude SDK.
+ *
+ * Starts with a fresh login shell's environment (so agents get PATH, HOME, etc.
+ * but NOT server secrets like PASSWORD_HASH), then overlays user-configured env vars.
+ */
+export async function buildAgentEnv(
+  userEnvVars: ContainerEnvVar[],
+  claudeApiKey?: string | null
+): Promise<Record<string, string | undefined>> {
+  const baseEnv = await getBaseEnv();
+  const agentEnv: Record<string, string | undefined> = { ...baseEnv };
+
+  // Overlay user-configured env vars (merged global + per-repo, already decrypted)
+  for (const { name, value } of userEnvVars) {
+    agentEnv[name] = value;
+  }
+
+  // Override Claude API key if configured in settings
+  if (claudeApiKey) {
+    agentEnv['CLAUDE_CODE_OAUTH_TOKEN'] = claudeApiKey;
+  }
+
+  return agentEnv;
+}
+
 export interface RunClaudeCommandOptions {
   sessionId: string;
   prompt: string;
@@ -204,6 +311,10 @@ export interface RunClaudeCommandOptions {
   } | null;
   /** Claude model override */
   claudeModel?: string | null;
+  /** Environment variables to pass to the agent (merged global + per-repo, decrypted) */
+  envVars?: ContainerEnvVar[];
+  /** Claude API key override from settings */
+  claudeApiKey?: string | null;
   /** MCP server configurations passed to the SDK */
   mcpServers?: Array<
     | {
@@ -312,9 +423,13 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
   // Emit Claude running event
   sseEvents.emitClaudeRunning(sessionId, true);
 
+  // Build environment for the agent
+  const agentEnv = await buildAgentEnv(options.envVars ?? [], options.claudeApiKey);
+
   // Build SDK query options
   const denyAllTools = options.denyAllTools ?? false;
   const sdkOptions: Parameters<typeof query>[0]['options'] = {
+    env: agentEnv,
     permissionMode: 'bypassPermissions' as const,
     allowDangerouslySkipPermissions: true,
     includePartialMessages: true,
