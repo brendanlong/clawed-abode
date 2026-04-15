@@ -10,6 +10,8 @@
  * parking a promise that resolves when the user answers via tRPC.
  */
 
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 import { query, type McpServerConfig, type SlashCommand } from '@anthropic-ai/claude-agent-sdk';
 import { prisma } from '@/lib/prisma';
 import { getMessageType, SystemInitContentSchema } from '@/lib/claude-messages';
@@ -21,6 +23,8 @@ import { fetchPullRequestForBranch } from './github';
 import { getCurrentBranch } from './worktree-manager';
 import { StreamAccumulator } from './stream-accumulator';
 import type { ContainerEnvVar } from './repo-settings';
+
+const execFileAsync = promisify(execFile);
 
 const log = createLogger('claude-runner');
 
@@ -192,6 +196,23 @@ function getSessionState(sessionId: string, workingDir: string): SessionState {
 }
 
 /**
+ * Env vars to seed the login shell with (and to use as fallback).
+ * These are the minimal vars that the OS login process normally provides
+ * so profile scripts can source properly.
+ */
+const SEED_ENV_VARS = [
+  'HOME',
+  'USER',
+  'SHELL',
+  'LOGNAME',
+  'PATH',
+  'LANG',
+  'TERM',
+  'TMPDIR',
+  'XDG_RUNTIME_DIR',
+];
+
+/**
  * Cached base environment from a fresh login shell.
  * Populated lazily on first call to getBaseEnv().
  * This gives us the user's default shell environment (PATH, HOME, etc.)
@@ -199,28 +220,38 @@ function getSessionState(sessionId: string, workingDir: string): SessionState {
  */
 let cachedBaseEnv: Record<string, string> | null = null;
 
+/** In-flight promise for getBaseEnv() to coalesce concurrent calls. */
+let pendingBaseEnv: Promise<Record<string, string>> | null = null;
+
 /**
  * Get the base environment by spawning a fresh login shell.
  * Uses `env -0` for null-separated output to safely handle values with newlines.
- * Result is cached for the lifetime of the process.
+ * Successfully captured env is cached for the lifetime of the process.
+ * Concurrent calls are coalesced into a single shell spawn.
  */
 export async function getBaseEnv(): Promise<Record<string, string>> {
   if (cachedBaseEnv) return cachedBaseEnv;
+  if (pendingBaseEnv) return pendingBaseEnv;
 
-  const { execFile } = await import('child_process');
-  const { promisify } = await import('util');
-  const execFileAsync = promisify(execFile);
+  pendingBaseEnv = fetchBaseEnv();
+  try {
+    return await pendingBaseEnv;
+  } finally {
+    pendingBaseEnv = null;
+  }
+}
 
+async function fetchBaseEnv(): Promise<Record<string, string>> {
   try {
     // Spawn a fresh login shell and capture its environment.
     // -l: login shell (sources .profile, .bash_profile, etc.)
     // env -0: null-separated output for safe parsing
     //
     // We seed with the minimal vars that the OS login process normally provides
-    // (HOME, USER, SHELL, LOGNAME, PATH) so profile scripts can source properly.
+    // so profile scripts can source properly.
     // This avoids inheriting any server-specific vars from process.env.
     const seedEnv: Record<string, string> = {};
-    for (const key of ['HOME', 'USER', 'SHELL', 'LOGNAME', 'PATH', 'LANG', 'TERM']) {
+    for (const key of SEED_ENV_VARS) {
       if (process.env[key]) seedEnv[key] = process.env[key]!;
     }
     const { stdout } = await execFileAsync('bash', ['-lc', 'env -0'], {
@@ -247,21 +278,12 @@ export async function getBaseEnv(): Promise<Record<string, string>> {
       'Failed to capture base environment from login shell, falling back to minimal env',
       toError(err)
     );
-    // Fallback: use a minimal set of essential vars from process.env
+    // Fallback: use a minimal set of essential vars from process.env.
+    // NOT cached so a retry can succeed if the failure was transient.
     const fallback: Record<string, string> = {};
-    for (const key of [
-      'PATH',
-      'HOME',
-      'USER',
-      'SHELL',
-      'LANG',
-      'TERM',
-      'TMPDIR',
-      'XDG_RUNTIME_DIR',
-    ]) {
+    for (const key of SEED_ENV_VARS) {
       if (process.env[key]) fallback[key] = process.env[key]!;
     }
-    cachedBaseEnv = fallback;
     return fallback;
   }
 }
@@ -269,6 +291,7 @@ export async function getBaseEnv(): Promise<Record<string, string>> {
 /** Reset the cached base env (for testing). */
 export function resetBaseEnvCache(): void {
   cachedBaseEnv = null;
+  pendingBaseEnv = null;
 }
 
 /**
@@ -284,14 +307,16 @@ export async function buildAgentEnv(
   const baseEnv = await getBaseEnv();
   const agentEnv: Record<string, string | undefined> = { ...baseEnv };
 
-  // Overlay user-configured env vars (merged global + per-repo, already decrypted)
-  for (const { name, value } of userEnvVars) {
-    agentEnv[name] = value;
-  }
-
-  // Override Claude API key if configured in settings
+  // Apply global Claude API key before user env vars, so per-repo
+  // CLAUDE_CODE_OAUTH_TOKEN env vars can override the global key.
   if (claudeApiKey) {
     agentEnv['CLAUDE_CODE_OAUTH_TOKEN'] = claudeApiKey;
+  }
+
+  // Overlay user-configured env vars (merged global + per-repo, already decrypted).
+  // Applied last so per-repo vars take highest precedence.
+  for (const { name, value } of userEnvVars) {
+    agentEnv[name] = value;
   }
 
   return agentEnv;

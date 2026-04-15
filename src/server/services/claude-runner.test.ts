@@ -87,6 +87,13 @@ describe('claude-runner', () => {
       const second = await getBaseEnv();
       expect(first).toBe(second); // Same reference = cached
     });
+
+    it('should coalesce concurrent calls', async () => {
+      // Fire two calls before the first resolves
+      const [first, second] = await Promise.all([getBaseEnv(), getBaseEnv()]);
+      // Both should return the same cached object
+      expect(first).toBe(second);
+    });
   });
 
   describe('buildAgentEnv', () => {
@@ -132,6 +139,15 @@ describe('claude-runner', () => {
       // Should not have CLAUDE_CODE_OAUTH_TOKEN from the server process
       // (it wouldn't be in a clean login shell either)
       expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+    });
+
+    it('should allow per-repo env var to override claudeApiKey', async () => {
+      const env = await buildAgentEnv(
+        [{ name: 'CLAUDE_CODE_OAUTH_TOKEN', value: 'per-repo-key' }],
+        'global-api-key'
+      );
+      // Per-repo env var should take precedence over global API key
+      expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe('per-repo-key');
     });
   });
 
