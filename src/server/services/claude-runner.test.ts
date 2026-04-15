@@ -43,6 +43,9 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 
 import {
   buildSystemPrompt,
+  buildAgentEnv,
+  getBaseEnv,
+  resetBaseEnvCache,
   mergeSlashCommands,
   getSessionCommands,
   answerUserInput,
@@ -55,6 +58,97 @@ import {
 describe('claude-runner', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  describe('getBaseEnv', () => {
+    beforeEach(() => {
+      resetBaseEnvCache();
+    });
+
+    it('should capture environment from a login shell', async () => {
+      const baseEnv = await getBaseEnv();
+      // A login shell should always have PATH and HOME
+      expect(baseEnv.PATH).toBeDefined();
+      expect(baseEnv.HOME).toBeDefined();
+    });
+
+    it('should not include server-specific env vars', async () => {
+      // These are set in the server process but should not appear
+      // in a fresh login shell's environment
+      const baseEnv = await getBaseEnv();
+      expect(baseEnv.PASSWORD_HASH).toBeUndefined();
+      expect(baseEnv.ENCRYPTION_KEY).toBeUndefined();
+      expect(baseEnv.DATABASE_URL).toBeUndefined();
+      expect(baseEnv.NEXT_RUNTIME).toBeUndefined();
+    });
+
+    it('should cache results across calls', async () => {
+      const first = await getBaseEnv();
+      const second = await getBaseEnv();
+      expect(first).toBe(second); // Same reference = cached
+    });
+
+    it('should coalesce concurrent calls', async () => {
+      // Fire two calls before the first resolves
+      const [first, second] = await Promise.all([getBaseEnv(), getBaseEnv()]);
+      // Both should return the same cached object
+      expect(first).toBe(second);
+    });
+  });
+
+  describe('buildAgentEnv', () => {
+    beforeEach(() => {
+      resetBaseEnvCache();
+    });
+
+    it('should include base env vars from login shell', async () => {
+      const env = await buildAgentEnv([]);
+      // Should have standard shell vars
+      expect(env.PATH).toBeDefined();
+      expect(env.HOME).toBeDefined();
+    });
+
+    it('should not include server-only env vars', async () => {
+      const env = await buildAgentEnv([]);
+      expect(env.PASSWORD_HASH).toBeUndefined();
+      expect(env.ENCRYPTION_KEY).toBeUndefined();
+      expect(env.DATABASE_URL).toBeUndefined();
+    });
+
+    it('should overlay user-configured env vars', async () => {
+      const env = await buildAgentEnv([
+        { name: 'MY_API_KEY', value: 'key-123' },
+        { name: 'MY_SECRET', value: 'decrypted-secret' },
+      ]);
+      expect(env.MY_API_KEY).toBe('key-123');
+      expect(env.MY_SECRET).toBe('decrypted-secret');
+    });
+
+    it('should allow user env vars to override base env vars', async () => {
+      const env = await buildAgentEnv([{ name: 'HOME', value: '/custom/home' }]);
+      expect(env.HOME).toBe('/custom/home');
+    });
+
+    it('should set CLAUDE_CODE_OAUTH_TOKEN when claudeApiKey is provided', async () => {
+      const env = await buildAgentEnv([], 'custom-api-key');
+      expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe('custom-api-key');
+    });
+
+    it('should not set CLAUDE_CODE_OAUTH_TOKEN when claudeApiKey is null', async () => {
+      const env = await buildAgentEnv([], null);
+      // Should not have CLAUDE_CODE_OAUTH_TOKEN from the server process
+      // (it wouldn't be in a clean login shell either)
+      expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+    });
+
+    it('should allow per-repo env var to override claudeApiKey', async () => {
+      const env = await buildAgentEnv(
+        [{ name: 'CLAUDE_CODE_OAUTH_TOKEN', value: 'per-repo-key' }],
+        'global-api-key'
+      );
+      // Per-repo env var should take precedence over global API key
+      expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe('per-repo-key');
+    });
   });
 
   describe('buildSystemPrompt', () => {
