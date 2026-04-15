@@ -53,6 +53,9 @@ import {
   isClaudeRunning,
   isClaudeRunningAsync,
   markAllSessionsStopped,
+  cleanupSession,
+  _setPersistedCommands,
+  _clearPersistedCommands,
 } from './claude-runner';
 
 describe('claude-runner', () => {
@@ -280,6 +283,37 @@ describe('claude-runner', () => {
   describe('getSessionCommands', () => {
     it('should return empty array for nonexistent sessions', () => {
       expect(getSessionCommands('nonexistent-session')).toEqual([]);
+    });
+
+    it('should return persisted commands after they are set', () => {
+      const sessionId = 'test-persisted-commands';
+      const commands = [
+        { name: 'commit', description: 'Commit changes', argumentHint: '' },
+        { name: 'review', description: 'Review code', argumentHint: '<pr>' },
+      ];
+      _setPersistedCommands(sessionId, commands);
+      expect(getSessionCommands(sessionId)).toEqual(commands);
+      _clearPersistedCommands(sessionId);
+    });
+
+    it('should still return persisted commands after session state is cleaned up', () => {
+      const sessionId = 'test-persist-after-cleanup';
+      const commands = [{ name: 'compact', description: '', argumentHint: '' }];
+      _setPersistedCommands(sessionId, commands);
+      // Simulates what happens after a query completes (sessions.delete is called)
+      // getSessionCommands should still return persisted commands
+      expect(getSessionCommands(sessionId)).toEqual(commands);
+      _clearPersistedCommands(sessionId);
+    });
+
+    it('should return empty after cleanupSession removes persisted commands', () => {
+      const sessionId = 'test-cleanup-session';
+      const commands = [{ name: 'compact', description: '', argumentHint: '' }];
+      _setPersistedCommands(sessionId, commands);
+      expect(getSessionCommands(sessionId)).toEqual(commands);
+
+      cleanupSession(sessionId);
+      expect(getSessionCommands(sessionId)).toEqual([]);
     });
   });
 
