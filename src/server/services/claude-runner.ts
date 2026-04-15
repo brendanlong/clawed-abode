@@ -90,6 +90,13 @@ interface SessionState {
 /** Active sessions tracked in memory */
 const sessions = new Map<string, SessionState>();
 
+/**
+ * Persisted commands per session — survives query completion.
+ * The `sessions` map is cleared after each query, but commands should remain
+ * available so the frontend can fetch them between queries and after page reloads.
+ */
+const persistedCommands = new Map<string, SlashCommand[]>();
+
 // Default system prompt appended to all Claude sessions
 export const DEFAULT_SYSTEM_PROMPT = `IMPORTANT: The user is accessing this session remotely through a web interface and has no local access to the files. They can only see your changes through GitHub. Therefore, you MUST follow this workflow for ANY code changes:
 
@@ -188,7 +195,7 @@ function getSessionState(sessionId: string, workingDir: string): SessionState {
       currentQuery: null,
       pendingInput: null,
       workingDir,
-      commands: [],
+      commands: persistedCommands.get(sessionId) ?? [],
     };
     sessions.set(sessionId, state);
   }
@@ -292,6 +299,16 @@ async function fetchBaseEnv(): Promise<Record<string, string>> {
 export function resetBaseEnvCache(): void {
   cachedBaseEnv = null;
   pendingBaseEnv = null;
+}
+
+/** Set persisted commands for a session (for testing). */
+export function _setPersistedCommands(sessionId: string, commands: SlashCommand[]): void {
+  persistedCommands.set(sessionId, commands);
+}
+
+/** Clear persisted commands for a session (for testing). */
+export function _clearPersistedCommands(sessionId: string): void {
+  persistedCommands.delete(sessionId);
 }
 
 /**
@@ -531,6 +548,7 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
       .then((commands) => {
         const alreadyDiscovered = state.commands.map((c) => c.name);
         state.commands = mergeSlashCommands(commands, alreadyDiscovered);
+        persistedCommands.set(sessionId, state.commands);
         sseEvents.emitCommands(sessionId, state.commands);
         log.info('Emitted supported commands from SDK', {
           sessionId,
@@ -554,6 +572,7 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
         const hasNewCommands = [...newNames].some((n) => !oldNames.has(n));
         if (hasNewCommands) {
           state.commands = merged;
+          persistedCommands.set(sessionId, merged);
           sseEvents.emitCommands(sessionId, merged);
           log.info('Merged slash_commands from system init', {
             sessionId,
@@ -716,10 +735,11 @@ export function answerUserInput(sessionId: string, answers: Record<string, strin
 
 /**
  * Get cached slash commands for a session.
- * Returns commands discovered during the last query, or empty if none.
+ * Reads from the persisted map which survives query completion,
+ * falling back to the active session state during a query.
  */
 export function getSessionCommands(sessionId: string): SlashCommand[] {
-  return sessions.get(sessionId)?.commands ?? [];
+  return persistedCommands.get(sessionId) ?? sessions.get(sessionId)?.commands ?? [];
 }
 
 /**
@@ -874,6 +894,15 @@ export function stopSession(sessionId: string): void {
   state.isRunning = false;
   state.currentQuery = null;
   sessions.delete(sessionId);
+}
+
+/**
+ * Clean up all in-memory state for a session, including persisted commands.
+ * Called when a session is archived/deleted.
+ */
+export function cleanupSession(sessionId: string): void {
+  stopSession(sessionId);
+  persistedCommands.delete(sessionId);
 }
 
 /**
