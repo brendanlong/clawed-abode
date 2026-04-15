@@ -257,7 +257,7 @@ async function fetchBaseEnv(): Promise<Record<string, string>> {
     const { stdout } = await execFileAsync('bash', ['-lc', 'env -0'], {
       timeout: 5000,
       maxBuffer: 1024 * 1024,
-      env: seedEnv,
+      env: seedEnv as NodeJS.ProcessEnv,
     });
 
     const baseEnv: Record<string, string> = {};
