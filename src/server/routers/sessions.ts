@@ -9,7 +9,7 @@ import {
   getSessionWorkingDir,
 } from '../services/worktree-manager';
 import { loadMergedSessionSettings } from '../services/settings-merger';
-import { runClaudeCommand, stopSession } from '../services/claude-runner';
+import { runClaudeCommand, stopSession, cleanupSession } from '../services/claude-runner';
 import { sseEvents } from '../services/events';
 import { createLogger, toError } from '@/lib/logger';
 import { env } from '@/lib/env';
@@ -276,8 +276,8 @@ export const sessionsRouter = router({
         return { success: true };
       }
 
-      // Stop any running query
-      await stopSession(input.sessionId);
+      // Stop any running query and clean up all in-memory state
+      cleanupSession(input.sessionId);
 
       // Remove workspace directory
       await removeWorkspace(session.id);
