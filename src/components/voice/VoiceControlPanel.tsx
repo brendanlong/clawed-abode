@@ -65,19 +65,13 @@ export function VoiceControlPanel({
   const playback = useVoicePlaybackContext();
   const voiceConfig = useVoiceConfig(sessionId);
 
-  // Accumulate finalized text from the current recording
-  const [accumulated, setAccumulated] = useState('');
-  const onFinalizedText = useCallback((text: string) => {
-    setAccumulated((prev) => prev + text);
-  }, []);
-
   const {
     isRecording,
     interimTranscript,
     startRecording,
     stopRecording,
     error: recordingError,
-  } = useVoiceRecording(onFinalizedText);
+  } = useVoiceRecording();
 
   // Transcript from the last recording, before user decides to send or cancel
   const [pendingTranscript, setPendingTranscript] = useState<string | null>(null);
@@ -173,8 +167,8 @@ export function VoiceControlPanel({
   // Recording: start or stop
   const handleMicPress = () => {
     if (isRecording) {
-      const remaining = stopRecording();
-      const fullText = (accumulated + remaining).trim();
+      const transcript = stopRecording();
+      const fullText = transcript.trim();
 
       if (fullText) {
         if (voiceConfig.autoSend) {
@@ -183,10 +177,8 @@ export function VoiceControlPanel({
           setPendingTranscript(fullText);
         }
       }
-      setAccumulated('');
     } else {
       setPendingTranscript(null);
-      setAccumulated('');
       startRecording();
     }
   };
@@ -208,8 +200,8 @@ export function VoiceControlPanel({
   const hasNext = currentIndex >= 0 && currentIndex < assistantTextMessages.length - 1;
   const hasPlayableContent = assistantTextMessages.length > 0;
 
-  // Live display text during recording
-  const liveText = (accumulated + interimTranscript).trim();
+  // Live display text during recording (hook now tracks full transcript internally)
+  const liveText = interimTranscript.trim();
 
   return (
     <div className="border-t bg-background flex-shrink-0">
