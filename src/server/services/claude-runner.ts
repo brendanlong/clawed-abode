@@ -10,6 +10,8 @@
  * parking a promise that resolves when the user answers via tRPC.
  */
 
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 import { query, type McpServerConfig, type SlashCommand } from '@anthropic-ai/claude-agent-sdk';
 import { prisma } from '@/lib/prisma';
 import { getMessageType, SystemInitContentSchema } from '@/lib/claude-messages';
@@ -20,6 +22,9 @@ import { createLogger, toError } from '@/lib/logger';
 import { fetchPullRequestForBranch } from './github';
 import { getCurrentBranch } from './worktree-manager';
 import { StreamAccumulator } from './stream-accumulator';
+import type { ContainerEnvVar } from './repo-settings';
+
+const execFileAsync = promisify(execFile);
 
 const log = createLogger('claude-runner');
 
@@ -190,6 +195,133 @@ function getSessionState(sessionId: string, workingDir: string): SessionState {
   return state;
 }
 
+/**
+ * Env vars to seed the login shell with (and to use as fallback).
+ * These are the minimal vars that the OS login process normally provides
+ * so profile scripts can source properly.
+ */
+const SEED_ENV_VARS = [
+  'HOME',
+  'USER',
+  'SHELL',
+  'LOGNAME',
+  'PATH',
+  'LANG',
+  'TERM',
+  'TMPDIR',
+  'XDG_RUNTIME_DIR',
+];
+
+/**
+ * Cached base environment from a fresh login shell.
+ * Populated lazily on first call to getBaseEnv().
+ * This gives us the user's default shell environment (PATH, HOME, etc.)
+ * without any of the server's runtime env vars (PASSWORD_HASH, ENCRYPTION_KEY, etc.).
+ */
+let cachedBaseEnv: Record<string, string> | null = null;
+
+/** In-flight promise for getBaseEnv() to coalesce concurrent calls. */
+let pendingBaseEnv: Promise<Record<string, string>> | null = null;
+
+/**
+ * Get the base environment by spawning a fresh login shell.
+ * Uses `env -0` for null-separated output to safely handle values with newlines.
+ * Successfully captured env is cached for the lifetime of the process.
+ * Concurrent calls are coalesced into a single shell spawn.
+ */
+export async function getBaseEnv(): Promise<Record<string, string>> {
+  if (cachedBaseEnv) return cachedBaseEnv;
+  if (pendingBaseEnv) return pendingBaseEnv;
+
+  pendingBaseEnv = fetchBaseEnv();
+  try {
+    return await pendingBaseEnv;
+  } finally {
+    pendingBaseEnv = null;
+  }
+}
+
+async function fetchBaseEnv(): Promise<Record<string, string>> {
+  try {
+    // Spawn a fresh login shell and capture its environment.
+    // -l: login shell (sources .profile, .bash_profile, etc.)
+    // env -0: null-separated output for safe parsing
+    //
+    // We seed with the minimal vars that the OS login process normally provides
+    // so profile scripts can source properly.
+    // This avoids inheriting any server-specific vars from process.env.
+    const seedEnv: Record<string, string> = {};
+    for (const key of SEED_ENV_VARS) {
+      if (process.env[key]) seedEnv[key] = process.env[key]!;
+    }
+    const { stdout } = await execFileAsync('bash', ['-lc', 'env -0'], {
+      timeout: 5000,
+      maxBuffer: 1024 * 1024,
+      env: seedEnv as NodeJS.ProcessEnv,
+    });
+
+    const baseEnv: Record<string, string> = {};
+    for (const entry of stdout.split('\0')) {
+      if (!entry) continue;
+      const eqIdx = entry.indexOf('=');
+      if (eqIdx === -1) continue;
+      baseEnv[entry.slice(0, eqIdx)] = entry.slice(eqIdx + 1);
+    }
+
+    cachedBaseEnv = baseEnv;
+    log.info('Captured base environment from login shell', {
+      varCount: Object.keys(baseEnv).length,
+    });
+    return baseEnv;
+  } catch (err) {
+    log.error(
+      'Failed to capture base environment from login shell, falling back to minimal env',
+      toError(err)
+    );
+    // Fallback: use a minimal set of essential vars from process.env.
+    // NOT cached so a retry can succeed if the failure was transient.
+    const fallback: Record<string, string> = {};
+    for (const key of SEED_ENV_VARS) {
+      if (process.env[key]) fallback[key] = process.env[key]!;
+    }
+    return fallback;
+  }
+}
+
+/** Reset the cached base env (for testing). */
+export function resetBaseEnvCache(): void {
+  cachedBaseEnv = null;
+  pendingBaseEnv = null;
+}
+
+/**
+ * Build the environment variables to pass to the Claude SDK.
+ *
+ * Starts with a fresh login shell's environment (so agents get PATH, HOME, etc.
+ * but NOT server secrets like PASSWORD_HASH), then overlays user-configured env vars.
+ */
+export async function buildAgentEnv(
+  userEnvVars: ContainerEnvVar[],
+  claudeApiKey?: string | null
+): Promise<Record<string, string | undefined>> {
+  const baseEnv = await getBaseEnv();
+  const agentEnv: Record<string, string | undefined> = { ...baseEnv };
+
+  // Apply global Claude API key before user env vars, so per-repo
+  // CLAUDE_CODE_OAUTH_TOKEN env vars can override the global key.
+  if (claudeApiKey) {
+    agentEnv['CLAUDE_CODE_OAUTH_TOKEN'] = claudeApiKey;
+  }
+
+  // Overlay user-configured env vars (merged global + per-repo, already decrypted).
+  // Applied last so per-repo vars take highest precedence.
+  for (const { name, value } of userEnvVars) {
+    agentEnv[name] = value;
+  }
+
+  return agentEnv;
+}
+
 export interface RunClaudeCommandOptions {
   sessionId: string;
   prompt: string;
@@ -204,6 +336,10 @@ export interface RunClaudeCommandOptions {
   } | null;
   /** Claude model override */
   claudeModel?: string | null;
+  /** Environment variables to pass to the agent (merged global + per-repo, decrypted) */
+  envVars?: ContainerEnvVar[];
+  /** Claude API key override from settings */
+  claudeApiKey?: string | null;
   /** MCP server configurations passed to the SDK */
   mcpServers?: Array<
     | {
@@ -312,9 +448,13 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
   // Emit Claude running event
   sseEvents.emitClaudeRunning(sessionId, true);
 
+  // Build environment for the agent
+  const agentEnv = await buildAgentEnv(options.envVars ?? [], options.claudeApiKey);
+
   // Build SDK query options
   const denyAllTools = options.denyAllTools ?? false;
   const sdkOptions: Parameters<typeof query>[0]['options'] = {
+    env: agentEnv,
     permissionMode: 'bypassPermissions' as const,
     allowDangerouslySkipPermissions: true,
     includePartialMessages: true,

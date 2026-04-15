@@ -88,6 +88,8 @@ async function setupSessionBackground(
         customSystemPrompt: settings.customSystemPrompt,
         globalSettings: settings.globalSettings,
         claudeModel: settings.claudeModel,
+        envVars: settings.envVars,
+        claudeApiKey: settings.claudeApiKey,
         mcpServers: settings.mcpServers,
       }).catch((err) => {
         log.error('Initial prompt failed', toError(err), { sessionId });
