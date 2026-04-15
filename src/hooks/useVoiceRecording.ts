@@ -69,6 +69,9 @@ export function useVoiceRecording() {
   }, []);
 
   const startRecording = useCallback(() => {
+    // Guard against double-invocation (e.g. fast double-tap before React re-renders)
+    if (recognitionRef.current) return;
+
     setError(null);
     setInterimTranscript('');
     accumulatedFinalsRef.current = '';
