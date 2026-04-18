@@ -435,8 +435,13 @@ function ClaudeModelSection({
               <ChevronsUpDown className="absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 opacity-50" />
             </div>
           </PopoverTrigger>
-          <PopoverContent className="p-0 w-[var(--radix-popover-trigger-width)]" align="start">
-            <Command>
+          <PopoverContent
+            className="p-0 w-[var(--radix-popover-trigger-width)]"
+            align="start"
+            onOpenAutoFocus={(e) => e.preventDefault()}
+            onCloseAutoFocus={(e) => e.preventDefault()}
+          >
+            <Command shouldFilter={false}>
               <CommandList>
                 <CommandEmpty className="py-3 text-center text-sm text-muted-foreground">
                   No matching models
