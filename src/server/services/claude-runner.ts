@@ -480,7 +480,7 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
     allowDangerouslySkipPermissions: true,
     includePartialMessages: true,
     cwd: workingDir,
-    settingSources: ['project'],
+    settingSources: ['user', 'project'],
     systemPrompt: {
       type: 'preset' as const,
       preset: 'claude_code' as const,
