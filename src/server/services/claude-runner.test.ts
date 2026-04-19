@@ -118,6 +118,11 @@ describe('claude-runner', () => {
       expect(env.DATABASE_URL).toBeUndefined();
     });
 
+    it('should disable Claude.ai proxy MCP servers', async () => {
+      const env = await buildAgentEnv([]);
+      expect(env.ENABLE_CLAUDEAI_MCP_SERVERS).toBe('false');
+    });
+
     it('should overlay user-configured env vars', async () => {
       const env = await buildAgentEnv([
         { name: 'MY_API_KEY', value: 'key-123' },

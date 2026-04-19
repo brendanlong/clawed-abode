@@ -324,6 +324,10 @@ export async function buildAgentEnv(
   const baseEnv = await getBaseEnv();
   const agentEnv: Record<string, string | undefined> = { ...baseEnv };
 
+  // Disable Claude.ai proxy MCP servers (Todoist, Notion, etc.) — agents should
+  // only have access to explicitly configured MCP servers, not account-level integrations.
+  agentEnv['ENABLE_CLAUDEAI_MCP_SERVERS'] = 'false';
+
   // Apply global Claude API key before user env vars, so per-repo
   // CLAUDE_CODE_OAUTH_TOKEN env vars can override the global key.
   if (claudeApiKey) {
