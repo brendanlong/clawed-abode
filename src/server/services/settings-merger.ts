@@ -42,11 +42,27 @@ export async function loadMergedSessionSettings(
     systemPrompt,
     envVars,
     mcpServers,
-    claudeModel: globalSettings.claudeModel ?? env.CLAUDE_MODEL,
+    claudeModel: resolveClaudeModel(
+      repoSettings?.claudeModel,
+      globalSettings.claudeModel,
+      env.CLAUDE_MODEL
+    ),
     claudeApiKey: globalSettings.claudeApiKey ?? undefined,
     customSystemPrompt: repoSettings?.customSystemPrompt,
     globalSettings,
   };
+}
+
+/**
+ * Resolve the effective Claude model, in precedence order:
+ * per-repo override → global override → CLAUDE_MODEL env var.
+ */
+export function resolveClaudeModel(
+  repoModel: string | null | undefined,
+  globalModel: string | null | undefined,
+  envModel: string | undefined
+): string | undefined {
+  return repoModel ?? globalModel ?? envModel;
 }
 
 /**

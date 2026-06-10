@@ -1,6 +1,25 @@
 import { describe, it, expect } from 'vitest';
-import { mergeEnvVars, mergeMcpServers } from './settings-merger';
+import { mergeEnvVars, mergeMcpServers, resolveClaudeModel } from './settings-merger';
 import type { ContainerEnvVar, ContainerMcpServer } from './repo-settings';
+
+describe('resolveClaudeModel', () => {
+  it('prefers the per-repo model over global and env', () => {
+    expect(resolveClaudeModel('repo-model', 'global-model', 'env-model')).toBe('repo-model');
+  });
+
+  it('falls back to the global model when no repo override', () => {
+    expect(resolveClaudeModel(null, 'global-model', 'env-model')).toBe('global-model');
+    expect(resolveClaudeModel(undefined, 'global-model', 'env-model')).toBe('global-model');
+  });
+
+  it('falls back to the env model when neither repo nor global is set', () => {
+    expect(resolveClaudeModel(null, null, 'env-model')).toBe('env-model');
+  });
+
+  it('returns undefined when nothing is set', () => {
+    expect(resolveClaudeModel(null, null, undefined)).toBeUndefined();
+  });
+});
 
 describe('mergeEnvVars', () => {
   it('should return empty array when both inputs are empty', () => {
