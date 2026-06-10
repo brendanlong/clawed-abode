@@ -272,9 +272,9 @@ function ClaudeModelSection({
       <ModelOverrideField
         currentModel={claudeModel}
         defaultModel={fallbackModel}
-        onSave={(model) => {
+        onSave={(model, onSuccess) => {
           setError(null);
-          mutation.mutate({ repoFullName, claudeModel: model });
+          mutation.mutate({ repoFullName, claudeModel: model }, { onSuccess });
         }}
         isPending={mutation.isPending}
         error={error}

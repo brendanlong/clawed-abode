@@ -21,8 +21,8 @@ interface ModelOverrideFieldProps {
   currentModel: string | null;
   /** The value that applies when no override is set (shown as placeholder). */
   defaultModel: string;
-  /** Persists the new value. Pass null to clear the override. */
-  onSave: (model: string | null) => void;
+  /** Persists the new value. Pass null to clear the override. Call onSuccess once the save succeeds. */
+  onSave: (model: string | null, onSuccess: () => void) => void;
   isPending: boolean;
   error: string | null;
   /** Button label shown when no override exists. */
@@ -61,8 +61,8 @@ export function ModelOverrideField({
   }, [isEditing]);
 
   const handleSave = () => {
-    onSave(editValue.trim() || null);
-    setIsEditing(false);
+    if (isPending) return;
+    onSave(editValue.trim() || null, () => setIsEditing(false));
   };
 
   const handleSelectSuggestion = (model: string) => {
@@ -104,6 +104,7 @@ export function ModelOverrideField({
                   }
                 }}
                 placeholder={defaultModel}
+                disabled={isPending}
                 className="font-mono text-sm pr-8"
               />
               <ChevronsUpDown className="absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 opacity-50" />
@@ -168,7 +169,12 @@ export function ModelOverrideField({
           {currentModel ? 'Edit' : setButtonLabel}
         </Button>
         {currentModel && (
-          <Button variant="outline" size="sm" onClick={() => onSave(null)} disabled={isPending}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => onSave(null, () => {})}
+            disabled={isPending}
+          >
             {isPending ? <Spinner size="sm" /> : 'Reset to Default'}
           </Button>
         )}
