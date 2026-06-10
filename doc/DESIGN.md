@@ -46,7 +46,7 @@ The database schema is defined in [`prisma/schema.prisma`](../prisma/schema.pris
 - **Message**: Chat messages with sequence numbers for cursor-based pagination
 - **AuthSession**: Login sessions with tokens and audit info
 - **GlobalSettings**: Global application settings (system prompt override and append, Claude model, Claude API key, TTS speed, voice auto-send)
-- **RepoSettings**: Per-repository settings (favorites, custom system prompt)
+- **RepoSettings**: Per-repository settings (favorites, custom system prompt, Claude model override)
 - **EnvVar**: Environment variables for a repository or global (encrypted if secret). When `repoSettingsId` is null, the variable is global and applies to all sessions.
 - **McpServer**: MCP server configurations for a repository or global. When `repoSettingsId` is null, the server is global and applies to all sessions.
 
@@ -337,6 +337,7 @@ Users can configure per-repository settings that are automatically applied when 
 
 - **Favorites**: Mark repositories (or "No Repository") as favorites so they appear at the top of the repo selector
 - **Custom System Prompt**: Additional instructions appended to the default system prompt for all sessions using this repository
+- **Claude Model**: Override the model for all sessions using this repository. Takes precedence over the global model and the `CLAUDE_MODEL` env var. Falls back to those when not set.
 - **Environment Variables**: Custom env vars set for Claude sessions (e.g., API keys, config values)
 - **MCP Servers**: Configure [MCP servers](https://modelcontextprotocol.io/) for Claude to use, supporting three transport types:
   - **Stdio**: Traditional command-based servers (e.g., `npx @anthropic/mcp-server-memory`)
@@ -361,7 +362,7 @@ Users can configure per-repository settings that are automatically applied when 
 
 Users can configure global settings that apply to all sessions:
 
-- **Claude Model**: Override the `CLAUDE_MODEL` environment variable. Free-text field accepting model names like `opus`, `sonnet`, or full IDs like `claude-opus-4-6`. Falls back to the env var default when not set.
+- **Claude Model**: Override the `CLAUDE_MODEL` environment variable. Free-text field accepting model names like `opus`, `sonnet`, or full IDs like `claude-opus-4-6`. A per-repo model override (if set) takes precedence over this; otherwise this is used, falling back to the env var default when neither is set. Resolution order is `repo model → global model → CLAUDE_MODEL env var` (see `resolveClaudeModel` in `settings-merger.ts`).
 - **Claude API Key**: Override the `CLAUDE_CODE_OAUTH_TOKEN` environment variable. Stored encrypted at rest. The actual value is never exposed to the UI — only a "configured" status is shown. Falls back to the env var when not set.
 - **System Prompt Override**: Replace the default system prompt with a custom one. When editing, the field is pre-populated with the current default prompt. The override can be toggled on/off without losing the custom content.
 - **Global System Prompt Append**: Additional content appended to the base prompt (default or override) for all sessions. This is applied before any per-repo custom prompts.
@@ -380,6 +381,7 @@ Users can configure global settings that apply to all sessions:
 
 - **Environment Variables**: Global env vars are included in all sessions. If a per-repo env var has the same name as a global one, the per-repo value takes precedence.
 - **MCP Servers**: Global MCP servers are included in all sessions. If a per-repo MCP server has the same name as a global one, the per-repo configuration takes precedence.
+- **Claude Model**: Resolved in precedence order `per-repo model → global model → CLAUDE_MODEL env var`.
 
 **Configuration**: Go to Settings → System Prompt to manage prompt and model settings. Go to Settings → Audio to manage voice/audio settings (TTS speed, voice auto-send).
 
