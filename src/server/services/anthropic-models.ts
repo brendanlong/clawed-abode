@@ -7,7 +7,15 @@ import { createLogger, toError } from '@/lib/logger';
 const log = createLogger('anthropic-models');
 
 /** Well-known short aliases that always appear as suggestions */
-const WELL_KNOWN_ALIASES = ['opus[1m]', 'sonnet[1m]', 'opus', 'sonnet', 'haiku'];
+const WELL_KNOWN_ALIASES = [
+  'opus[1m]',
+  'sonnet[1m]',
+  'fable[1m]',
+  'opus',
+  'sonnet',
+  'haiku',
+  'fable',
+];
 
 /** Cache for model suggestions */
 let cachedModels: string[] | null = null;
