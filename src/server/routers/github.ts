@@ -4,65 +4,45 @@ import { TRPCError } from '@trpc/server';
 import { env } from '@/lib/env';
 import { prisma } from '@/lib/prisma';
 import { extractRepoFullName } from '@/lib/utils';
-import { fetchPullRequestForBranch } from '../services/github';
+import {
+  fetchPullRequestForBranch,
+  listRepos,
+  listBranches,
+  listIssues,
+  getIssue,
+  GitHubApiError,
+} from '../services/github';
 
-const GITHUB_API = 'https://api.github.com';
-
-interface GitHubRepo {
-  id: number;
-  full_name: string;
-  name: string;
-  owner: { login: string };
-  description: string | null;
-  private: boolean;
-  default_branch: string;
-  updated_at: string;
-}
-
-interface GitHubBranch {
-  name: string;
-  protected: boolean;
-}
-
-interface GitHubIssue {
-  id: number;
-  number: number;
-  title: string;
-  body: string | null;
-  state: 'open' | 'closed';
-  user: { login: string } | null;
-  labels: Array<{ name: string; color: string }>;
-  comments: number;
-  created_at: string;
-  updated_at: string;
-}
-
-async function githubFetchResponse(path: string, token?: string): Promise<Response> {
-  const headers: Record<string, string> = {
-    Accept: 'application/vnd.github+json',
-    'X-GitHub-Api-Version': '2022-11-28',
-  };
-
-  if (token) {
-    headers.Authorization = `Bearer ${token}`;
+function requireGitHubToken(): string {
+  const token = env.GITHUB_TOKEN;
+  if (!token) {
+    throw new TRPCError({
+      code: 'PRECONDITION_FAILED',
+      message: 'GitHub token is not configured',
+    });
   }
+  return token;
+}
 
-  const response = await fetch(`${GITHUB_API}${path}`, { headers });
-
-  if (!response.ok) {
-    if (response.status === 401) {
+/**
+ * Convert GitHubApiError from the service layer into the TRPCError the
+ * frontend expects.
+ */
+function toTRPCError(error: unknown): never {
+  if (error instanceof GitHubApiError) {
+    if (error.status === 401) {
       throw new TRPCError({
         code: 'PRECONDITION_FAILED',
         message: 'GitHub token is invalid or expired',
       });
     }
-    if (response.status === 403) {
+    if (error.status === 403) {
       throw new TRPCError({
         code: 'FORBIDDEN',
         message: 'GitHub rate limit exceeded or access denied',
       });
     }
-    if (response.status === 404) {
+    if (error.status === 404) {
       throw new TRPCError({
         code: 'NOT_FOUND',
         message: 'GitHub resource not found',
@@ -70,39 +50,10 @@ async function githubFetchResponse(path: string, token?: string): Promise<Respon
     }
     throw new TRPCError({
       code: 'INTERNAL_SERVER_ERROR',
-      message: `GitHub API error: ${response.status}`,
+      message: `GitHub API error: ${error.status}`,
     });
   }
-
-  return response;
-}
-
-async function githubFetch<T>(path: string, token?: string): Promise<T> {
-  const response = await githubFetchResponse(path, token);
-  return response.json();
-}
-
-function parseLinkHeader(header: string | null): { next?: string } {
-  if (!header) return {};
-
-  const links: { next?: string } = {};
-  const parts = header.split(',');
-
-  for (const part of parts) {
-    const match = part.match(/<([^>]+)>;\s*rel="([^"]+)"/);
-    if (match) {
-      const [, url, rel] = match;
-      if (rel === 'next') {
-        // Extract page number from URL
-        const pageMatch = url.match(/[?&]page=(\d+)/);
-        if (pageMatch) {
-          links.next = pageMatch[1];
-        }
-      }
-    }
-  }
-
-  return links;
+  throw error;
 }
 
 export const githubRouter = router({
@@ -115,51 +66,24 @@ export const githubRouter = router({
       })
     )
     .query(async ({ input }) => {
-      const token = env.GITHUB_TOKEN;
+      const token = requireGitHubToken();
 
-      if (!token) {
-        throw new TRPCError({
-          code: 'PRECONDITION_FAILED',
-          message: 'GitHub token is not configured',
-        });
+      try {
+        const result = await listRepos(
+          {
+            search: input.search,
+            page: input.cursor ? parseInt(input.cursor, 10) : 1,
+            perPage: input.perPage,
+          },
+          token
+        );
+        return {
+          repos: result.repos,
+          nextCursor: result.nextPage?.toString(),
+        };
+      } catch (error) {
+        toTRPCError(error);
       }
-
-      const page = input.cursor ? parseInt(input.cursor, 10) : 1;
-
-      let repos: GitHubRepo[];
-      let response: Response;
-
-      if (input.search) {
-        // Search repositories
-        const query = encodeURIComponent(`${input.search} in:name user:@me`);
-        const url = `/search/repositories?q=${query}&per_page=${input.perPage}&page=${page}`;
-
-        response = await githubFetchResponse(url, token);
-        const data = await response.json();
-        repos = data.items;
-      } else {
-        // List user's repositories
-        const url = `/user/repos?sort=updated&per_page=${input.perPage}&page=${page}`;
-
-        response = await githubFetchResponse(url, token);
-        repos = await response.json();
-      }
-
-      const links = parseLinkHeader(response.headers.get('link'));
-
-      return {
-        repos: repos.map((r) => ({
-          id: r.id,
-          fullName: r.full_name,
-          name: r.name,
-          owner: r.owner.login,
-          description: r.description,
-          private: r.private,
-          defaultBranch: r.default_branch,
-          updatedAt: r.updated_at,
-        })),
-        nextCursor: links.next,
-      };
     }),
 
   listBranches: protectedProcedure
@@ -169,31 +93,13 @@ export const githubRouter = router({
       })
     )
     .query(async ({ input }) => {
-      const token = env.GITHUB_TOKEN;
+      const token = requireGitHubToken();
 
-      if (!token) {
-        throw new TRPCError({
-          code: 'PRECONDITION_FAILED',
-          message: 'GitHub token is not configured',
-        });
+      try {
+        return await listBranches(input.repoFullName, token);
+      } catch (error) {
+        toTRPCError(error);
       }
-
-      // Get repo info for default branch
-      const repo = await githubFetch<GitHubRepo>(`/repos/${input.repoFullName}`, token);
-
-      // Get branches
-      const branches = await githubFetch<GitHubBranch[]>(
-        `/repos/${input.repoFullName}/branches?per_page=100`,
-        token
-      );
-
-      return {
-        branches: branches.map((b) => ({
-          name: b.name,
-          protected: b.protected,
-        })),
-        defaultBranch: repo.default_branch,
-      };
     }),
 
   listIssues: protectedProcedure
@@ -207,58 +113,26 @@ export const githubRouter = router({
       })
     )
     .query(async ({ input }) => {
-      const token = env.GITHUB_TOKEN;
+      const token = requireGitHubToken();
 
-      if (!token) {
-        throw new TRPCError({
-          code: 'PRECONDITION_FAILED',
-          message: 'GitHub token is not configured',
-        });
-      }
-
-      const page = input.cursor ? parseInt(input.cursor, 10) : 1;
-
-      let issues: GitHubIssue[];
-      let response: Response;
-
-      if (input.search) {
-        // Search issues in the specific repository
-        const query = encodeURIComponent(
-          `${input.search} repo:${input.repoFullName} is:issue state:${input.state}`
+      try {
+        const result = await listIssues(
+          {
+            repoFullName: input.repoFullName,
+            search: input.search,
+            state: input.state,
+            page: input.cursor ? parseInt(input.cursor, 10) : 1,
+            perPage: input.perPage,
+          },
+          token
         );
-        const url = `/search/issues?q=${query}&per_page=${input.perPage}&page=${page}`;
-
-        response = await githubFetchResponse(url, token);
-        const data = await response.json();
-        issues = data.items;
-      } else {
-        // List issues for the repository
-        const url = `/repos/${input.repoFullName}/issues?state=${input.state}&per_page=${input.perPage}&page=${page}&sort=updated&direction=desc`;
-
-        response = await githubFetchResponse(url, token);
-        issues = await response.json();
+        return {
+          issues: result.issues,
+          nextCursor: result.nextPage?.toString(),
+        };
+      } catch (error) {
+        toTRPCError(error);
       }
-
-      // Filter out pull requests (GitHub returns them in issues endpoint)
-      issues = issues.filter((issue) => !('pull_request' in issue));
-
-      const links = parseLinkHeader(response.headers.get('link'));
-
-      return {
-        issues: issues.map((i) => ({
-          id: i.id,
-          number: i.number,
-          title: i.title,
-          body: i.body,
-          state: i.state,
-          author: i.user?.login || 'unknown',
-          labels: i.labels.map((l) => ({ name: l.name, color: l.color })),
-          comments: i.comments,
-          createdAt: i.created_at,
-          updatedAt: i.updated_at,
-        })),
-        nextCursor: links.next,
-      };
     }),
 
   getIssue: protectedProcedure
@@ -269,34 +143,13 @@ export const githubRouter = router({
       })
     )
     .query(async ({ input }) => {
-      const token = env.GITHUB_TOKEN;
+      const token = requireGitHubToken();
 
-      if (!token) {
-        throw new TRPCError({
-          code: 'PRECONDITION_FAILED',
-          message: 'GitHub token is not configured',
-        });
+      try {
+        return { issue: await getIssue(input.repoFullName, input.issueNumber, token) };
+      } catch (error) {
+        toTRPCError(error);
       }
-
-      const issue = await githubFetch<GitHubIssue>(
-        `/repos/${input.repoFullName}/issues/${input.issueNumber}`,
-        token
-      );
-
-      return {
-        issue: {
-          id: issue.id,
-          number: issue.number,
-          title: issue.title,
-          body: issue.body,
-          state: issue.state,
-          author: issue.user?.login || 'unknown',
-          labels: issue.labels.map((l) => ({ name: l.name, color: l.color })),
-          comments: issue.comments,
-          createdAt: issue.created_at,
-          updatedAt: issue.updated_at,
-        },
-      };
     }),
 
   getSessionPrStatus: protectedProcedure

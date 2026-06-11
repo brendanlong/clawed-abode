@@ -143,3 +143,209 @@ export async function fetchPullRequestForBranch(
     return undefined;
   }
 }
+
+// =============================================================================
+// Repo / branch / issue listing (shared by the tRPC router and the abode CLI)
+// =============================================================================
+
+interface GitHubRepo {
+  id: number;
+  full_name: string;
+  name: string;
+  owner: { login: string };
+  description: string | null;
+  private: boolean;
+  default_branch: string;
+  updated_at: string;
+}
+
+interface GitHubBranch {
+  name: string;
+  protected: boolean;
+}
+
+interface GitHubIssue {
+  id: number;
+  number: number;
+  title: string;
+  body: string | null;
+  state: 'open' | 'closed';
+  user: { login: string } | null;
+  labels: Array<{ name: string; color: string }>;
+  comments: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RepoSummary {
+  id: number;
+  fullName: string;
+  name: string;
+  owner: string;
+  description: string | null;
+  private: boolean;
+  defaultBranch: string;
+  updatedAt: string;
+}
+
+export interface BranchSummary {
+  name: string;
+  protected: boolean;
+}
+
+export interface IssueSummary {
+  id: number;
+  number: number;
+  title: string;
+  body: string | null;
+  state: 'open' | 'closed';
+  author: string;
+  labels: Array<{ name: string; color: string }>;
+  comments: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+function mapIssue(issue: GitHubIssue): IssueSummary {
+  return {
+    id: issue.id,
+    number: issue.number,
+    title: issue.title,
+    body: issue.body,
+    state: issue.state,
+    author: issue.user?.login || 'unknown',
+    labels: issue.labels.map((l) => ({ name: l.name, color: l.color })),
+    comments: issue.comments,
+    createdAt: issue.created_at,
+    updatedAt: issue.updated_at,
+  };
+}
+
+/**
+ * List the authenticated user's repositories, optionally filtered by search.
+ */
+export async function listRepos(
+  options: { search?: string; page?: number; perPage?: number },
+  token: string
+): Promise<{ repos: RepoSummary[]; nextPage?: number }> {
+  const page = options.page ?? 1;
+  const perPage = options.perPage ?? 30;
+
+  let repos: GitHubRepo[];
+  let response: Response;
+
+  if (options.search) {
+    const query = encodeURIComponent(`${options.search} in:name user:@me`);
+    response = await githubFetchResponse(
+      `/search/repositories?q=${query}&per_page=${perPage}&page=${page}`,
+      token
+    );
+    const data = await response.json();
+    repos = data.items;
+  } else {
+    response = await githubFetchResponse(
+      `/user/repos?sort=updated&per_page=${perPage}&page=${page}`,
+      token
+    );
+    repos = await response.json();
+  }
+
+  const links = parseLinkHeader(response.headers.get('link'));
+
+  return {
+    repos: repos.map((r) => ({
+      id: r.id,
+      fullName: r.full_name,
+      name: r.name,
+      owner: r.owner.login,
+      description: r.description,
+      private: r.private,
+      defaultBranch: r.default_branch,
+      updatedAt: r.updated_at,
+    })),
+    nextPage: links.next ? parseInt(links.next, 10) : undefined,
+  };
+}
+
+/**
+ * List branches for a repository along with its default branch.
+ */
+export async function listBranches(
+  repoFullName: string,
+  token: string
+): Promise<{ branches: BranchSummary[]; defaultBranch: string }> {
+  const repo = await githubFetch<GitHubRepo>(`/repos/${repoFullName}`, token);
+  const branches = await githubFetch<GitHubBranch[]>(
+    `/repos/${repoFullName}/branches?per_page=100`,
+    token
+  );
+
+  return {
+    branches: branches.map((b) => ({ name: b.name, protected: b.protected })),
+    defaultBranch: repo.default_branch,
+  };
+}
+
+/**
+ * List issues for a repository (pull requests filtered out).
+ */
+export async function listIssues(
+  options: {
+    repoFullName: string;
+    search?: string;
+    state?: 'open' | 'closed' | 'all';
+    page?: number;
+    perPage?: number;
+  },
+  token: string
+): Promise<{ issues: IssueSummary[]; nextPage?: number }> {
+  const page = options.page ?? 1;
+  const perPage = options.perPage ?? 30;
+  const state = options.state ?? 'open';
+
+  let issues: GitHubIssue[];
+  let response: Response;
+
+  if (options.search) {
+    const query = encodeURIComponent(
+      `${options.search} repo:${options.repoFullName} is:issue state:${state}`
+    );
+    response = await githubFetchResponse(
+      `/search/issues?q=${query}&per_page=${perPage}&page=${page}`,
+      token
+    );
+    const data = await response.json();
+    issues = data.items;
+  } else {
+    response = await githubFetchResponse(
+      `/repos/${options.repoFullName}/issues?state=${state}&per_page=${perPage}&page=${page}&sort=updated&direction=desc`,
+      token
+    );
+    issues = await response.json();
+  }
+
+  // GitHub returns pull requests from the issues endpoint — filter them out
+  issues = issues.filter((issue) => !('pull_request' in issue));
+
+  const links = parseLinkHeader(response.headers.get('link'));
+
+  return {
+    issues: issues.map(mapIssue),
+    nextPage: links.next ? parseInt(links.next, 10) : undefined,
+  };
+}
+
+/**
+ * Get a single issue.
+ */
+export async function getIssue(
+  repoFullName: string,
+  issueNumber: number,
+  token: string
+): Promise<IssueSummary> {
+  const issue = await githubFetch<GitHubIssue>(
+    `/repos/${repoFullName}/issues/${issueNumber}`,
+    token
+  );
+  return mapIssue(issue);
+}
