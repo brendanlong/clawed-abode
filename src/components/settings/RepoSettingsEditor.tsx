@@ -15,10 +15,11 @@ import { Spinner } from '@/components/ui/spinner';
 import { Separator } from '@/components/ui/separator';
 import { Textarea } from '@/components/ui/textarea';
 import { trpc } from '@/lib/trpc';
-import { Plus, Star, FileText, FolderOpen } from 'lucide-react';
+import { Plus, Star, FileText, FolderOpen, Cpu } from 'lucide-react';
 import { NO_REPO_SENTINEL } from '@/components/RepoSelector';
 import { EnvVarSection } from './shared/EnvVarSection';
 import { McpServerSection } from './shared/McpServerSection';
+import { ModelOverrideField } from './shared/ModelOverrideField';
 import type { EnvVarMutations } from './shared/EnvVarSection';
 import type { McpServerMutations } from './shared/McpServerSection';
 
@@ -116,6 +117,15 @@ export function RepoSettingsEditor({ repoFullName, onClose }: RepoSettingsEditor
             <CustomSystemPromptSection
               repoFullName={repoFullName}
               customSystemPrompt={data?.customSystemPrompt ?? null}
+              onUpdate={refetch}
+            />
+
+            <Separator />
+
+            {/* Claude Model */}
+            <ClaudeModelSection
+              repoFullName={repoFullName}
+              claudeModel={data?.claudeModel ?? null}
               onUpdate={refetch}
             />
 
@@ -224,6 +234,52 @@ function CustomSystemPromptSection({
           Add Custom Prompt
         </Button>
       )}
+    </div>
+  );
+}
+
+function ClaudeModelSection({
+  repoFullName,
+  claudeModel,
+  onUpdate,
+}: {
+  repoFullName: string;
+  claudeModel: string | null;
+  onUpdate: () => void;
+}) {
+  const [error, setError] = useState<string | null>(null);
+  const { data: globalSettings } = trpc.globalSettings.get.useQuery();
+
+  const mutation = trpc.repoSettings.setClaudeModel.useMutation({
+    onSuccess: () => onUpdate(),
+    onError: (err) => setError(err.message),
+  });
+
+  const fallbackModel =
+    globalSettings?.claudeModel ?? globalSettings?.defaultClaudeModel ?? 'opus[1m]';
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2">
+        <Cpu className="h-4 w-4 text-muted-foreground" />
+        <h3 className="font-medium">Claude Model</h3>
+      </div>
+
+      <p className="text-sm text-muted-foreground">
+        Overrides the global Claude model for all sessions using this repository.
+      </p>
+
+      <ModelOverrideField
+        currentModel={claudeModel}
+        defaultModel={fallbackModel}
+        onSave={(model, onSuccess) => {
+          setError(null);
+          mutation.mutate({ repoFullName, claudeModel: model }, { onSuccess });
+        }}
+        isPending={mutation.isPending}
+        error={error}
+        setButtonLabel="Set Model"
+      />
     </div>
   );
 }

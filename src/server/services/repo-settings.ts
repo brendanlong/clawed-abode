@@ -58,6 +58,7 @@ export type ContainerMcpServer =
  */
 export interface ContainerRepoSettings {
   customSystemPrompt: string | null;
+  claudeModel: string | null;
   envVars: ContainerEnvVar[];
   mcpServers: ContainerMcpServer[];
 }
@@ -80,6 +81,7 @@ export async function getRepoSettingsForContainer(
 
   return {
     customSystemPrompt: settings.customSystemPrompt,
+    claudeModel: settings.claudeModel,
     envVars: decryptEnvVarsForContainer(settings.envVars),
     mcpServers: decryptMcpServersForContainer(settings.mcpServers),
   };
