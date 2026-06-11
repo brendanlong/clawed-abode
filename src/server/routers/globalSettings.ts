@@ -5,7 +5,7 @@ import { encrypt, decrypt } from '@/lib/crypto';
 import { TRPCError } from '@trpc/server';
 import { createLogger } from '@/lib/logger';
 import { env } from '@/lib/env';
-import { DEFAULT_SYSTEM_PROMPT } from '../services/claude-runner';
+import { DEFAULT_SYSTEM_PROMPT } from '../services/system-prompt';
 import {
   envVarNameSchema,
   envVarSchema,
