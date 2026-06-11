@@ -27,8 +27,8 @@
     "test:component": "vitest run --config vitest.component.config.ts"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.2.141",
-    "@anthropic-ai/sdk": "^0.74.0",
+    "@anthropic-ai/claude-agent-sdk": "^0.3.173",
+    "@anthropic-ai/sdk": "^0.104.1",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@prisma/client": "^5.22.0",
     "@radix-ui/react-alert-dialog": "^1.1.15",
@@ -54,7 +54,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
-    "dompurify": "^3.4.7",
+    "dompurify": "^3.4.8",
     "event-source-polyfill": "^1.0.31",
     "get-port": "^7.2.0",
     "lucide-react": "^0.562.0",
