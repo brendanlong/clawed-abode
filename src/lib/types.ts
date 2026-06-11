@@ -22,6 +22,9 @@ export type MessageType = (typeof MessageType)[keyof typeof MessageType];
 // Session constants
 export const SESSION_NAME_MAX_LENGTH = 100;
 
+// Sentinel repoFullName used for settings that apply to no-repo (workspace-only) sessions
+export const NO_REPO_SENTINEL = '__no_repo__';
+
 // Session interface
 export interface Session {
   id: string;

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { NO_REPO_SENTINEL } from '@/lib/types';
 import { router, protectedProcedure } from '../trpc';
 import { prisma } from '@/lib/prisma';
 import { TRPCError } from '@trpc/server';
@@ -56,7 +57,7 @@ export const claudeRouter = router({
 
       // Load and merge global + per-repo settings
       const repoFullName = session.repoUrl ? extractRepoFullName(session.repoUrl) : null;
-      const settingsKey = repoFullName ?? '__no_repo__';
+      const settingsKey = repoFullName ?? NO_REPO_SENTINEL;
       const settings = await loadMergedSessionSettings(settingsKey);
 
       // Build working directory

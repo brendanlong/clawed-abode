@@ -8,7 +8,7 @@ import { trpc } from '@/lib/trpc';
 import { RepoSettingsEditor } from './RepoSettingsEditor';
 import { Star, Settings, Trash2, FolderOpen } from 'lucide-react';
 import { DeleteConfirmDialog } from './shared/DeleteConfirmDialog';
-import { NO_REPO_SENTINEL } from '@/components/RepoSelector';
+import { NO_REPO_SENTINEL } from '@/lib/types';
 
 export function RepositoriesTab() {
   const [selectedRepo, setSelectedRepo] = useState<string | null>(null);

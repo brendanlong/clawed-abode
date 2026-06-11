@@ -273,6 +273,58 @@ The SDK emits `stream_event` messages which are accumulated by `StreamAccumulato
 
 **Implementation:** [`src/server/services/claude-runner.ts`](../src/server/services/claude-runner.ts)
 
+## Terminal CLI (abode)
+
+`pnpm abode` (or `bin/abode`) starts a terminal hub for managing sessions over SSH —
+designed for phone use via Termux. It exists because, as of June 15 2026, Agent SDK
+and `claude -p` usage bills against a separate API-rate credit pool, while the
+**interactive Claude Code TUI** stays on subscription limits. The CLI therefore runs
+each session as the interactive `claude` TUI inside a dedicated tmux server (socket
+`abode`, one tmux session per session named `abode-{sessionId}`), sharing the web
+app's database, settings, and workspace layout.
+
+### How sessions run
+
+- `createCliSession` creates the same `Session` row and git clone as the web flow,
+  then launches `claude` in a detached tmux session with everything injected from
+  the DB at launch time (nothing is written into the repo clone):
+  - `--session-id {sessionId}` first launch, `--resume {sessionId}` on relaunch
+  - `--model` from the repo → global → `CLAUDE_MODEL` resolution
+  - `--append-system-prompt` with the same layered prompt as the web app
+  - `--mcp-config {workspace}/abode-mcp.json` generated from merged MCP settings
+  - env vars (decrypted, merged global + per-repo) via `tmux new-session -e`
+  - `--dangerously-skip-permissions` (parity with the web app's bypassPermissions)
+  - the initial prompt as a positional argument
+- Attaching hands the full screen to the Claude TUI (tmux status bar off, mouse on).
+  **F12 or Ctrl-b d detaches** back to the hub, which then offers: keep running in
+  the background, reattach, stop (keep workspace), or stop & archive.
+- If Claude exited or the host rebooted, attaching relaunches with `--resume` so the
+  conversation continues. `ABODE_CLAUDE_BIN` overrides the `claude` binary path.
+
+### Hub features
+
+- Session list (tmux liveness shown as ●/○), attach, archive (with confirm),
+  new-session flow with repo picker (favorites first, `__no_repo__` supported),
+  branch picker, and optional GitHub issue picker that prefills name + prompt.
+- Settings editing for global and per-repo scopes via `$EDITOR` on a zod-validated
+  JSON document (secrets decrypted for editing, re-encrypted on save). Saving
+  replaces the scope's env var / MCP server rows wholesale.
+
+### Files
+
+- `src/cli/index.ts` — hub menu loop (`@inquirer/prompts`)
+- `src/cli/sessions.ts` — create/attach/stop/archive orchestration
+- `src/cli/claude-command.ts` — pure argv/MCP-config/env builders
+- `src/cli/tmux.ts` — dedicated-socket tmux wrapper
+- `src/cli/pickers.ts` — repo/branch/issue pickers
+- `src/cli/settings.ts`, `src/cli/settings-doc.ts`, `src/cli/editor.ts` — settings editing
+- `src/cli/load-env.ts` — loads `.env` (the CLI runs outside Next.js)
+
+Messages typed in the TUI are not persisted to the `Message` table; history lives in
+Claude Code's own transcript (used by `--resume`) and tmux scrollback. Web sessions
+and CLI sessions coexist in the same DB; a session created in one is visible in the
+other's list, but only CLI sessions have a tmux backing.
+
 ## Message Storage & Pagination
 
 Messages are stored with a monotonically increasing sequence number per session (see `Message` model in [`prisma/schema.prisma`](../prisma/schema.prisma)). This enables efficient cursor-based pagination.
@@ -467,6 +519,7 @@ clawed-abode/
 │   ├── hash-password.ts        # Password hashing utility
 │   └── update.sh               # Production update: pull, install, migrate, build, restart
 ├── src/
+│   ├── cli/                       # Terminal hub (see "Terminal CLI (abode)")
 │   ├── server/
 │   │   ├── routers/
 │   │   │   ├── index.ts           # Router exports

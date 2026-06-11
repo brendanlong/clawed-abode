@@ -13,6 +13,7 @@ import type { Session } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { env } from '@/lib/env';
 import { extractRepoFullName } from '@/lib/utils';
+import { NO_REPO_SENTINEL } from '@/lib/types';
 import {
   cloneRepo,
   createEmptyWorkspace,
@@ -64,7 +65,7 @@ export async function launchClaudeInTmux(
   options: { resume: boolean; initialPrompt?: string }
 ): Promise<void> {
   const repoFullName = session.repoUrl ? extractRepoFullName(session.repoUrl) : null;
-  const settings = await loadMergedSessionSettings(repoFullName);
+  const settings = await loadMergedSessionSettings(repoFullName ?? NO_REPO_SENTINEL);
 
   // The MCP config lives in the workspace dir (sibling of the repo clone),
   // never inside the repo itself.
@@ -84,11 +85,14 @@ export async function launchClaudeInTmux(
     initialPrompt: options.initialPrompt,
   });
 
+  // Override when claude isn't on the tmux login shell's PATH (or in tests)
+  const claudeBin = process.env.ABODE_CLAUDE_BIN ?? 'claude';
+
   await createTmuxSession({
     name: tmuxSessionName(session.id),
     cwd: getSessionWorkingDir(session.id, session.repoPath),
     env: buildSessionEnvVars(settings.envVars, settings.claudeApiKey),
-    command: ['claude', ...args],
+    command: [claudeBin, ...args],
   });
 }
 

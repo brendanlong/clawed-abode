@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Clawed Abode terminal hub. Symlink this somewhere on your PATH
+# (e.g. ln -s /path/to/clawed-abode/bin/abode ~/.local/bin/abode).
+set -euo pipefail
+REPO_DIR="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+exec pnpm --dir "$REPO_DIR" --silent exec tsx "$REPO_DIR/src/cli/index.ts" "$@"

@@ -13,14 +13,13 @@ import { runClaudeCommand, stopSession, cleanupSession } from '../services/claud
 import { sseEvents } from '../services/events';
 import { createLogger, toError } from '@/lib/logger';
 import { env } from '@/lib/env';
-import { SESSION_NAME_MAX_LENGTH } from '@/lib/types';
+import { SESSION_NAME_MAX_LENGTH, NO_REPO_SENTINEL } from '@/lib/types';
 
 const log = createLogger('sessions');
 
 const sessionStatusSchema = z.enum(['creating', 'running', 'stopped', 'error', 'archived']);
 
 /** Sentinel value for no-repo sessions in RepoSettings */
-const NO_REPO_SENTINEL = '__no_repo__';
 
 // Background session setup - runs after create mutation returns
 async function setupSessionBackground(

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { NO_REPO_SENTINEL } from '@/lib/types';
 import { trpc } from '@/lib/trpc';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
@@ -9,8 +10,6 @@ import { cn } from '@/lib/utils';
 import { Star, FolderOpen } from 'lucide-react';
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
 import { useDebounce } from '@/hooks/useDebounce';
-
-export const NO_REPO_SENTINEL = '__no_repo__';
 
 export interface Repo {
   id: number;

@@ -25,8 +25,10 @@ vi.mock('@/lib/logger', () => ({
   toError: (e: unknown) => (e instanceof Error ? e : new Error(String(e))),
 }));
 
-// Mock the github service (used by getSessionPrStatus endpoint)
-vi.mock('../services/github', () => ({
+// Mock only PR lookup (used by getSessionPrStatus); the listing functions run
+// for real against the mocked global fetch
+vi.mock('../services/github', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../services/github')>()),
   fetchPullRequestForBranch: (...args: unknown[]) => mockFetchPullRequestForBranch(...args),
 }));
 
