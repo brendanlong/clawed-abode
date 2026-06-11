@@ -215,6 +215,14 @@ systemctl --user enable --now clawed-abode.service
 journalctl --user -u clawed-abode.service -f
 ```
 
+### Updating
+
+```bash
+./scripts/update.sh
+```
+
+This pulls the latest code, installs dependencies, applies database migrations, rebuilds, and restarts the service. A plain `git pull` + restart is **not** enough — `next start` serves the prebuilt `.next` bundle, so without a rebuild you keep running the old code. If your service isn't named `clawed-abode.service`, set `CLAWED_ABODE_SERVICE`.
+
 ## Remote Access with Tailscale
 
 ### Tailscale Serve (within your Tailnet)

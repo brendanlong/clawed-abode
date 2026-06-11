@@ -464,7 +464,8 @@ clawed-abode/
 ├── shared/
 │   └── agent-types.ts          # Shared types (PartialAssistantMessage)
 ├── scripts/
-│   └── hash-password.ts        # Password hashing utility
+│   ├── hash-password.ts        # Password hashing utility
+│   └── update.sh               # Production update: pull, install, migrate, build, restart
 ├── src/
 │   ├── server/
 │   │   ├── routers/
