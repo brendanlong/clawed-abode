@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -9,18 +9,10 @@ import { Textarea } from '@/components/ui/textarea';
 import { Spinner } from '@/components/ui/spinner';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandItem,
-  CommandList,
-} from '@/components/ui/command';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { trpc } from '@/lib/trpc';
-import { ChevronDown, ChevronRight, RotateCcw, Check, X, ChevronsUpDown } from 'lucide-react';
+import { ChevronDown, ChevronRight, RotateCcw, Check, X } from 'lucide-react';
 import { GlobalEnvVarsCard, GlobalMcpServersCard } from './GlobalSettingsTab';
-import { cn } from '@/lib/utils';
+import { ModelOverrideField } from './shared/ModelOverrideField';
 
 export function SystemPromptTab() {
   const { data: settings, isLoading, refetch } = trpc.globalSettings.get.useQuery();
@@ -339,167 +331,24 @@ function ClaudeModelSection({
   defaultModel: string;
   onUpdate: () => void;
 }) {
-  const [isEditing, setIsEditing] = useState(false);
-  const [editValue, setEditValue] = useState('');
-  const [popoverOpen, setPopoverOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  const { data: suggestionsData } = trpc.globalSettings.getModelSuggestions.useQuery(undefined, {
-    enabled: isEditing,
-    staleTime: 60 * 60 * 1000, // 1 hour
-  });
-  const suggestions = suggestionsData?.models ?? [];
 
   const mutation = trpc.globalSettings.setClaudeModel.useMutation({
-    onSuccess: () => {
-      setIsEditing(false);
-      onUpdate();
-    },
+    onSuccess: () => onUpdate(),
     onError: (err) => setError(err.message),
   });
 
-  const handleSave = () => {
-    setError(null);
-    mutation.mutate({ claudeModel: editValue.trim() || null });
-  };
-
-  const handleClear = () => {
-    setError(null);
-    mutation.mutate({ claudeModel: null });
-  };
-
-  const handleCancel = () => {
-    setIsEditing(false);
-    setPopoverOpen(false);
-    setError(null);
-  };
-
-  const startEditing = () => {
-    setEditValue(currentModel ?? '');
-    setIsEditing(true);
-  };
-
-  // Focus input when editing starts
-  useEffect(() => {
-    if (isEditing) {
-      // Small delay to let the DOM render
-      const timer = setTimeout(() => inputRef.current?.focus(), 50);
-      return () => clearTimeout(timer);
-    }
-  }, [isEditing]);
-
-  const handleSelectSuggestion = (model: string) => {
-    setEditValue(model);
-    setPopoverOpen(false);
-    // Focus back on input after selection
-    setTimeout(() => inputRef.current?.focus(), 50);
-  };
-
-  // Filter suggestions based on current input
-  const filteredSuggestions = editValue.trim()
-    ? suggestions.filter((s) => s.toLowerCase().includes(editValue.trim().toLowerCase()))
-    : suggestions;
-
-  if (isEditing) {
-    return (
-      <div className="space-y-3">
-        <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
-          <PopoverTrigger asChild>
-            <div className="relative">
-              <Input
-                ref={inputRef}
-                value={editValue}
-                onChange={(e) => {
-                  setEditValue(e.target.value);
-                  if (e.target.value && !popoverOpen) {
-                    setPopoverOpen(true);
-                  }
-                }}
-                onFocus={() => setPopoverOpen(true)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    handleSave();
-                  } else if (e.key === 'Escape') {
-                    if (popoverOpen) {
-                      setPopoverOpen(false);
-                    } else {
-                      handleCancel();
-                    }
-                  }
-                }}
-                placeholder={defaultModel}
-                className="font-mono text-sm pr-8"
-              />
-              <ChevronsUpDown className="absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 opacity-50" />
-            </div>
-          </PopoverTrigger>
-          <PopoverContent
-            className="p-0 w-[var(--radix-popover-trigger-width)]"
-            align="start"
-            onOpenAutoFocus={(e) => e.preventDefault()}
-            onCloseAutoFocus={(e) => e.preventDefault()}
-          >
-            <Command shouldFilter={false}>
-              <CommandList>
-                <CommandEmpty className="py-3 text-center text-sm text-muted-foreground">
-                  No matching models
-                </CommandEmpty>
-                <CommandGroup>
-                  {filteredSuggestions.map((model) => (
-                    <CommandItem
-                      key={model}
-                      value={model}
-                      onSelect={() => handleSelectSuggestion(model)}
-                      className="font-mono text-sm cursor-pointer"
-                    >
-                      <Check
-                        className={cn(
-                          'mr-2 h-4 w-4',
-                          editValue === model ? 'opacity-100' : 'opacity-0'
-                        )}
-                      />
-                      {model}
-                    </CommandItem>
-                  ))}
-                </CommandGroup>
-              </CommandList>
-            </Command>
-          </PopoverContent>
-        </Popover>
-        {error && <p className="text-sm text-destructive">{error}</p>}
-        <div className="flex justify-end gap-2">
-          <Button variant="outline" size="sm" onClick={handleCancel}>
-            Cancel
-          </Button>
-          <Button size="sm" onClick={handleSave} disabled={mutation.isPending}>
-            {mutation.isPending ? <Spinner size="sm" /> : 'Save'}
-          </Button>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="space-y-3">
-      <div className="flex items-center gap-2">
-        <code className="text-sm font-mono bg-muted px-2 py-1 rounded">
-          {currentModel ?? defaultModel}
-        </code>
-        {!currentModel && <span className="text-xs text-muted-foreground">(from environment)</span>}
-      </div>
-      <div className="flex gap-2">
-        <Button variant="outline" size="sm" onClick={startEditing}>
-          {currentModel ? 'Edit' : 'Override'}
-        </Button>
-        {currentModel && (
-          <Button variant="outline" size="sm" onClick={handleClear} disabled={mutation.isPending}>
-            {mutation.isPending ? <Spinner size="sm" /> : 'Reset to Default'}
-          </Button>
-        )}
-      </div>
-    </div>
+    <ModelOverrideField
+      currentModel={currentModel}
+      defaultModel={defaultModel}
+      onSave={(claudeModel, onSuccess) => {
+        setError(null);
+        mutation.mutate({ claudeModel }, { onSuccess });
+      }}
+      isPending={mutation.isPending}
+      error={error}
+    />
   );
 }
 

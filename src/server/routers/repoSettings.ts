@@ -48,6 +48,7 @@ export const repoSettingsRouter = router({
         isFavorite: settings.isFavorite,
         displayOrder: settings.displayOrder,
         customSystemPrompt: settings.customSystemPrompt,
+        claudeModel: settings.claudeModel,
         createdAt: settings.createdAt,
         updatedAt: settings.updatedAt,
         envVars: formatEnvVarsForDisplay(settings.envVars),
@@ -115,6 +116,37 @@ export const repoSettingsRouter = router({
     }),
 
   /**
+   * Set the Claude model override for a repository.
+   * Pass null or empty string to clear (reverts to global/env model).
+   */
+  setClaudeModel: protectedProcedure
+    .input(
+      z.object({
+        repoFullName: repoFullNameSchema,
+        claudeModel: z.string().max(200).nullable(),
+      })
+    )
+    .mutation(async ({ input }) => {
+      const model = input.claudeModel?.trim() || null;
+
+      await prisma.repoSettings.upsert({
+        where: { repoFullName: input.repoFullName },
+        create: {
+          repoFullName: input.repoFullName,
+          claudeModel: model,
+        },
+        update: { claudeModel: model },
+      });
+
+      log.info('Set repo Claude model', {
+        repoFullName: input.repoFullName,
+        hasModel: model !== null,
+      });
+
+      return { success: true };
+    }),
+
+  /**
    * List all favorite repository names
    */
   listFavorites: protectedProcedure.query(async () => {
@@ -145,6 +177,7 @@ export const repoSettingsRouter = router({
         repoFullName: s.repoFullName,
         isFavorite: s.isFavorite,
         customSystemPrompt: s.customSystemPrompt,
+        claudeModel: s.claudeModel,
         envVarCount: s.envVars.length,
         mcpServerCount: s.mcpServers.length,
         envVars: s.envVars,
@@ -439,6 +472,7 @@ export const repoSettingsRouter = router({
 
       return {
         customSystemPrompt: settings.customSystemPrompt,
+        claudeModel: settings.claudeModel,
         envVars: decryptEnvVarsForContainer(settings.envVars),
         mcpServers: decryptMcpServersForContainer(settings.mcpServers),
       };

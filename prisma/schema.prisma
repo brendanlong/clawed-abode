@@ -61,6 +61,7 @@ model RepoSettings {
   isFavorite         Boolean  @default(false)
   displayOrder       Int      @default(0) // For custom ordering within favorites
   customSystemPrompt String?  // Optional prompt appended to the default system prompt
+  claudeModel        String?  // If set, overrides the global/env Claude model for this repo's sessions
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
