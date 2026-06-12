@@ -80,7 +80,11 @@ async function attachAndSettle(session: Session): Promise<void> {
   });
 
   if (action === 'archive') {
-    await archiveAfterConfirm(session);
+    const archived = await archiveAfterConfirm(session);
+    if (!archived) {
+      // Declined the confirm — still record that Claude is no longer running
+      await stopCliSession(session);
+    }
   } else {
     await stopCliSession(session);
   }

@@ -1,9 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { execFile } from 'child_process';
-import { promisify } from 'util';
-import { buildMcpConfig, buildClaudeArgs, buildSessionEnvVars, shellQuote } from './claude-command';
-
-const execFileAsync = promisify(execFile);
+import { buildMcpConfig, buildClaudeArgs, buildSessionEnvVars } from './claude-command';
 
 describe('buildMcpConfig', () => {
   it('returns null when no servers configured', () => {
@@ -110,23 +106,5 @@ describe('buildSessionEnvVars', () => {
 
   it('returns only env vars when no API key configured', () => {
     expect(buildSessionEnvVars([{ name: 'FOO', value: 'bar' }], null)).toEqual({ FOO: 'bar' });
-  });
-});
-
-describe('shellQuote', () => {
-  it('quotes arguments with spaces and special characters', () => {
-    expect(shellQuote(['echo', 'hello world', '$HOME', 'a;b'])).toBe(
-      `'echo' 'hello world' '$HOME' 'a;b'`
-    );
-  });
-
-  it('escapes embedded single quotes', () => {
-    expect(shellQuote([`it's`])).toBe(`'it'\\''s'`);
-  });
-
-  it('round-trips through a real shell preserving argument boundaries', async () => {
-    const tricky = [`it's "quoted"`, '$HOME `cmd` \\back', 'new\nline', '--flag=va lue'];
-    const { stdout } = await execFileAsync('sh', ['-c', `printf '%s\\0' ${shellQuote(tricky)}`]);
-    expect(stdout.split('\0').slice(0, -1)).toEqual(tricky);
   });
 });

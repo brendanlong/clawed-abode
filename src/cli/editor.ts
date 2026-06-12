@@ -51,7 +51,10 @@ export async function editDocument<T>(options: {
   initial: unknown;
   helpLines: string[];
 }): Promise<T | null> {
-  const editor = process.env.VISUAL || process.env.EDITOR || 'vi';
+  // $VISUAL/$EDITOR may include arguments (e.g. "code --wait")
+  const [editorBin, ...editorArgs] = (process.env.VISUAL || process.env.EDITOR || 'vi').split(
+    /\s+/
+  );
   const dir = await mkdtemp(join(tmpdir(), 'abode-settings-'));
   const filePath = join(dir, 'settings.json');
 
@@ -61,7 +64,7 @@ export async function editDocument<T>(options: {
 
   try {
     while (true) {
-      const result = spawnSync(editor, [filePath], { stdio: 'inherit' });
+      const result = spawnSync(editorBin, [...editorArgs, filePath], { stdio: 'inherit' });
       if (result.status !== 0) {
         console.error(`Editor exited with status ${result.status}; discarding changes.`);
         return null;

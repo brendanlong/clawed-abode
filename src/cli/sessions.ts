@@ -176,7 +176,8 @@ export async function attachCliSession(session: Session): Promise<{ stillRunning
   if (!(await hasTmuxSession(name))) {
     // Resume the existing Claude conversation unless the session never got
     // past creation (no conversation to resume yet).
-    await launchClaudeInTmux(session, { resume: session.status !== 'creating' });
+    const neverStarted = session.status === 'creating' || session.status === 'error';
+    await launchClaudeInTmux(session, { resume: !neverStarted });
   }
 
   await prisma.session.update({

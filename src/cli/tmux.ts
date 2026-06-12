@@ -8,7 +8,6 @@
 
 import { execFile, spawnSync } from 'child_process';
 import { promisify } from 'util';
-import { shellQuote } from './claude-command';
 
 const execFileAsync = promisify(execFile);
 
@@ -48,7 +47,7 @@ export interface CreateTmuxSessionOptions {
   cwd: string;
   /** Extra environment variables for the session (on top of the login env) */
   env?: Record<string, string>;
-  /** Command argv to run in the session (quoted into a single shell command) */
+  /** Command argv to run in the session (passed to execvp directly, no shell) */
   command: string[];
   socket?: string;
 }
@@ -64,10 +63,18 @@ export async function createTmuxSession(options: CreateTmuxSessionOptions): Prom
     args.push('-e', `${key}=${value}`);
   }
 
-  args.push(shellQuote(options.command));
+  // Multiple arguments are exec'd directly by tmux — no shell, no quoting issues
+  args.push('--', ...options.command);
 
   await tmux(socket, args);
-  await applyServerOptions(socket);
+
+  // Best-effort: if the command exited immediately the server may already be
+  // gone (exit-empty), and there is nothing left to configure.
+  try {
+    await applyServerOptions(socket);
+  } catch {
+    // Server no longer running
+  }
 }
 
 /**

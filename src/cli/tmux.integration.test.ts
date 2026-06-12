@@ -73,6 +73,34 @@ describe('tmux wrapper', () => {
     }
   });
 
+  it('preserves argument boundaries without shell interpretation', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'abode-tmux-argv-'));
+    const tricky = [`it's "quoted"`, '$HOME `cmd` \\back', '--flag=va lue'];
+    try {
+      await createTmuxSession({
+        name: 'abode-test-argv',
+        cwd: dir,
+        command: ['sh', '-c', 'printf "%s\\0" "$@" > result.bin', 'sh', ...tricky],
+        socket: SOCKET,
+      });
+
+      let content = '';
+      await waitFor(async () => {
+        try {
+          content = await readFile(join(dir, 'result.bin'), 'utf-8');
+          return content.split('\0').length > tricky.length;
+        } catch {
+          return false;
+        }
+      });
+
+      expect(content.split('\0').slice(0, -1)).toEqual(tricky);
+    } finally {
+      await killTmuxSession('abode-test-argv', SOCKET);
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('exact-matches session names instead of prefix matching', async () => {
     await createTmuxSession({
       name: 'abode-test-prefix-long',

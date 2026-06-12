@@ -98,21 +98,20 @@ export async function saveRepoSettingsDoc(
     customSystemPrompt: doc.customSystemPrompt,
   };
 
-  const settings = await prisma.repoSettings.upsert({
-    where: { repoFullName },
-    create: { repoFullName, ...settingsData },
-    update: settingsData,
+  await prisma.$transaction(async (tx) => {
+    const settings = await tx.repoSettings.upsert({
+      where: { repoFullName },
+      create: { repoFullName, ...settingsData },
+      update: settingsData,
+    });
+
+    await tx.envVar.deleteMany({ where: { repoSettingsId: settings.id } });
+    await tx.envVar.createMany({ data: doc.envVars.map((ev) => envVarDocToDb(ev, settings.id)) });
+    await tx.mcpServer.deleteMany({ where: { repoSettingsId: settings.id } });
+    await tx.mcpServer.createMany({
+      data: doc.mcpServers.map((server) => mcpServerDocToDb(server, settings.id)),
+    });
   });
-
-  const envVarRows = doc.envVars.map((ev) => envVarDocToDb(ev, settings.id));
-  const mcpServerRows = doc.mcpServers.map((server) => mcpServerDocToDb(server, settings.id));
-
-  await prisma.$transaction([
-    prisma.envVar.deleteMany({ where: { repoSettingsId: settings.id } }),
-    prisma.envVar.createMany({ data: envVarRows }),
-    prisma.mcpServer.deleteMany({ where: { repoSettingsId: settings.id } }),
-    prisma.mcpServer.createMany({ data: mcpServerRows }),
-  ]);
 }
 
 /** Repos that have settings rows, favorites first (for pickers and menus). */

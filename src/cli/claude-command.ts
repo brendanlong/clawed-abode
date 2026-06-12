@@ -116,11 +116,3 @@ export function buildSessionEnvVars(
 
   return result;
 }
-
-/**
- * Quote argv elements into a single string safe to pass as a tmux
- * shell-command (tmux runs it via `sh -c`).
- */
-export function shellQuote(args: string[]): string {
-  return args.map((arg) => `'${arg.replaceAll("'", `'\\''`)}'`).join(' ');
-}
