@@ -21,6 +21,27 @@ export const TextBlockSchema = z.object({
 export type TextBlock = z.infer<typeof TextBlockSchema>;
 
 /**
+ * Thinking content block - represents Claude's extended-thinking reasoning.
+ * `signature` is present on summarized thinking and absent while streaming.
+ */
+export const ThinkingBlockSchema = z.object({
+  type: z.literal('thinking'),
+  thinking: z.string(),
+  signature: z.string().optional(),
+});
+export type ThinkingBlock = z.infer<typeof ThinkingBlockSchema>;
+
+/**
+ * Redacted thinking block - thinking that the API encrypted rather than returning.
+ * Carries no human-readable text, only opaque `data`.
+ */
+export const RedactedThinkingBlockSchema = z.object({
+  type: z.literal('redacted_thinking'),
+  data: z.string(),
+});
+export type RedactedThinkingBlock = z.infer<typeof RedactedThinkingBlockSchema>;
+
+/**
  * Tool use content block - represents a tool call by the assistant
  */
 export const ToolUseBlockSchema = z.object({
@@ -47,6 +68,8 @@ export type ToolResultBlock = z.infer<typeof ToolResultBlockSchema>;
  */
 export const ContentBlockSchema = z.discriminatedUnion('type', [
   TextBlockSchema,
+  ThinkingBlockSchema,
+  RedactedThinkingBlockSchema,
   ToolUseBlockSchema,
   ToolResultBlockSchema,
 ]);
@@ -794,6 +817,22 @@ export function parseClaudeStreamLine(json: unknown): StreamLineParseResult {
  * - 'system': system messages (init, error, compact_boundary, status, hooks, etc.),
  *             plus other SDK types (tool_progress, tool_use_summary, auth_status, etc.)
  */
+/**
+ * Whether a message is a transient progress event that should not be persisted
+ * or shown in the chat. These arrive frequently during a turn and carry no
+ * durable content.
+ *
+ * - `thinking_tokens`: live token-count estimates emitted (often many times) while
+ *   Claude is thinking. The actual thinking text arrives in the assistant message's
+ *   thinking content blocks, so these estimates would otherwise render as a stream
+ *   of empty "System" bubbles.
+ */
+export function isTransientProgressMessage(content: unknown): boolean {
+  if (!content || typeof content !== 'object') return false;
+  const obj = content as Record<string, unknown>;
+  return obj.type === 'system' && obj.subtype === 'thinking_tokens';
+}
+
 export function getMessageType(content: unknown): 'system' | 'user' | 'assistant' | 'result' {
   if (!content || typeof content !== 'object') return 'system';
   const obj = content as Record<string, unknown>;

@@ -14,7 +14,11 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { query, type McpServerConfig, type SlashCommand } from '@anthropic-ai/claude-agent-sdk';
 import { prisma } from '@/lib/prisma';
-import { getMessageType, SystemInitContentSchema } from '@/lib/claude-messages';
+import {
+  getMessageType,
+  isTransientProgressMessage,
+  SystemInitContentSchema,
+} from '@/lib/claude-messages';
 import { extractRepoFullName } from '@/lib/utils';
 import { v4 as uuid, v5 as uuidv5 } from 'uuid';
 import { sseEvents } from './events';
@@ -609,6 +613,13 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
       // Reset accumulator when full assistant message arrives
       if (message.type === 'assistant') {
         accumulator.reset();
+      }
+
+      // Skip transient progress events (e.g. thinking_tokens) — they arrive many
+      // times per turn and carry no durable content. The thinking text itself is
+      // rendered from the assistant message's thinking content blocks.
+      if (isTransientProgressMessage(message)) {
+        continue;
       }
 
       // Persist complete messages

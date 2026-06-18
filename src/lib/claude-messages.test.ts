@@ -14,6 +14,7 @@ import {
   parseStoredMessage,
   parseClaudeStreamLine,
   getMessageType,
+  isTransientProgressMessage,
   buildToolResultMap,
   AssistantMessage,
   UserMessage,
@@ -92,6 +93,25 @@ describe('claude-messages', () => {
           name: 'Bash',
           input: {},
         });
+        expect(result.success).toBe(true);
+      });
+
+      it('should parse thinking block', () => {
+        const result = ContentBlockSchema.safeParse({
+          type: 'thinking',
+          thinking: 'let me reason',
+          signature: 'sig',
+        });
+        expect(result.success).toBe(true);
+      });
+
+      it('should parse thinking block without signature (mid-stream)', () => {
+        const result = ContentBlockSchema.safeParse({ type: 'thinking', thinking: 'partial' });
+        expect(result.success).toBe(true);
+      });
+
+      it('should parse redacted_thinking block', () => {
+        const result = ContentBlockSchema.safeParse({ type: 'redacted_thinking', data: 'abc' });
         expect(result.success).toBe(true);
       });
 
@@ -642,6 +662,33 @@ describe('claude-messages', () => {
       expect(getMessageType(null)).toBe('system');
       expect(getMessageType(undefined)).toBe('system');
       expect(getMessageType('string')).toBe('system');
+    });
+  });
+
+  describe('isTransientProgressMessage', () => {
+    it('returns true for thinking_tokens system messages', () => {
+      expect(
+        isTransientProgressMessage({
+          type: 'system',
+          subtype: 'thinking_tokens',
+          estimated_tokens: 100,
+          estimated_tokens_delta: 10,
+        })
+      ).toBe(true);
+    });
+
+    it('returns false for other system messages', () => {
+      expect(isTransientProgressMessage({ type: 'system', subtype: 'init' })).toBe(false);
+      expect(isTransientProgressMessage({ type: 'system', subtype: 'error' })).toBe(false);
+      expect(isTransientProgressMessage({ type: 'system' })).toBe(false);
+    });
+
+    it('returns false for non-system messages and non-objects', () => {
+      expect(isTransientProgressMessage({ type: 'assistant' })).toBe(false);
+      expect(isTransientProgressMessage({ subtype: 'thinking_tokens' })).toBe(false);
+      expect(isTransientProgressMessage(null)).toBe(false);
+      expect(isTransientProgressMessage(undefined)).toBe(false);
+      expect(isTransientProgressMessage('thinking_tokens')).toBe(false);
     });
   });
 
