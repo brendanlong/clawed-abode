@@ -23,6 +23,7 @@ export interface PartialAssistantMessage {
     role: 'assistant';
     content: Array<
       | { type: 'text'; text: string }
+      | { type: 'thinking'; thinking: string }
       | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
     >;
     model?: string;
@@ -35,10 +36,13 @@ export interface PartialAssistantMessage {
 
 /**
  * Represents a content block being accumulated from stream deltas.
+ *
+ * Every content_block_start pushes one entry (including blocks we don't render,
+ * as `other`) so that `event.index` stays aligned with this array.
  */
 interface AccumulatingContentBlock {
-  type: 'text' | 'tool_use';
-  /** For text blocks */
+  type: 'text' | 'thinking' | 'tool_use' | 'other';
+  /** For text and thinking blocks */
   text?: string;
   /** For tool_use blocks */
   id?: string;
@@ -63,11 +67,13 @@ interface StreamEvent {
     id?: string;
     name?: string;
     text?: string;
+    thinking?: string;
     [key: string]: unknown;
   };
   delta?: {
     type: string;
     text?: string;
+    thinking?: string;
     partial_json?: string;
     stop_reason?: string;
     [key: string]: unknown;
@@ -129,8 +135,12 @@ export class StreamAccumulator {
         const block = event.content_block;
         if (!block) return null;
 
+        // Push one entry per block (even unrendered ones) so event.index stays
+        // aligned with this.contentBlocks for subsequent deltas.
         if (block.type === 'text') {
           this.contentBlocks.push({ type: 'text', text: block.text ?? '' });
+        } else if (block.type === 'thinking') {
+          this.contentBlocks.push({ type: 'thinking', text: block.thinking ?? '' });
         } else if (block.type === 'tool_use') {
           this.contentBlocks.push({
             type: 'tool_use',
@@ -138,8 +148,12 @@ export class StreamAccumulator {
             name: block.name ?? '',
             input: '',
           });
+        } else {
+          // Unknown/unrendered block (e.g. redacted_thinking) — keep a placeholder
+          // so indices line up, but it is dropped at emission time.
+          this.contentBlocks.push({ type: 'other' });
         }
-        // Emit after adding a new block (shows tool_use starting)
+        // Emit after adding a new block (shows tool_use / thinking starting)
         return this.buildPartial();
       }
 
@@ -154,6 +168,11 @@ export class StreamAccumulator {
 
         if (delta.type === 'text_delta' && currentBlock.type === 'text') {
           currentBlock.text = (currentBlock.text ?? '') + (delta.text ?? '');
+          return this.buildPartial();
+        }
+
+        if (delta.type === 'thinking_delta' && currentBlock.type === 'thinking') {
+          currentBlock.text = (currentBlock.text ?? '') + (delta.thinking ?? '');
           return this.buildPartial();
         }
 
@@ -198,12 +217,13 @@ export class StreamAccumulator {
   private buildPartial(): PartialAssistantMessage | null {
     if (!this.active || this.contentBlocks.length === 0) return null;
 
-    const content: PartialAssistantMessage['message']['content'] = this.contentBlocks.map(
-      (block) => {
-        if (block.type === 'text') {
-          return { type: 'text' as const, text: block.text ?? '' };
-        }
-        // tool_use block
+    const content: PartialAssistantMessage['message']['content'] = [];
+    for (const block of this.contentBlocks) {
+      if (block.type === 'text') {
+        content.push({ type: 'text', text: block.text ?? '' });
+      } else if (block.type === 'thinking') {
+        content.push({ type: 'thinking', thinking: block.text ?? '' });
+      } else if (block.type === 'tool_use') {
         let parsedInput: Record<string, unknown> = {};
         if (block.input) {
           try {
@@ -214,14 +234,18 @@ export class StreamAccumulator {
             parsedInput = { _partial_json: block.input };
           }
         }
-        return {
-          type: 'tool_use' as const,
+        content.push({
+          type: 'tool_use',
           id: block.id ?? '',
           name: block.name ?? '',
           input: parsedInput,
-        };
+        });
       }
-    );
+      // 'other' placeholder blocks are intentionally dropped
+    }
+
+    // Nothing renderable yet (e.g. only placeholder blocks) — don't emit.
+    if (content.length === 0) return null;
 
     return {
       type: 'assistant',

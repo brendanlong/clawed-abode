@@ -12,8 +12,10 @@ export interface ToolCall {
 }
 
 export interface ContentBlock {
-  type: 'text' | 'tool_use' | 'tool_result';
+  type: 'text' | 'thinking' | 'redacted_thinking' | 'tool_use' | 'tool_result';
   text?: string;
+  /** For thinking blocks */
+  thinking?: string;
   id?: string;
   name?: string;
   input?: unknown;
