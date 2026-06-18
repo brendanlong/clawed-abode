@@ -6,6 +6,7 @@
  */
 
 import { z } from 'zod';
+import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 
 // =============================================================================
 // Content Block Schemas
@@ -808,43 +809,92 @@ export function parseClaudeStreamLine(json: unknown): StreamLineParseResult {
 }
 
 /**
- * Extract the database-compatible message type from raw content.
- *
- * Maps SDK message types to one of the four DB column types:
- * - 'user': user messages and user message replays
- * - 'assistant': assistant messages
- * - 'result': result/completion messages
- * - 'system': system messages (init, error, compact_boundary, status, hooks, etc.),
- *             plus other SDK types (tool_progress, tool_use_summary, auth_status, etc.)
+ * The four message types stored in the `Message.type` DB column.
  */
+export type DbMessageType = 'system' | 'user' | 'assistant' | 'result';
+
 /**
- * Whether a message is a transient progress event that should not be persisted
- * or shown in the chat. These arrive frequently during a turn and carry no
- * durable content.
+ * How a streamed SDK message should be handled by the runner.
+ * - `stream_event`: a partial-message delta, accumulated separately (not persisted)
+ * - `skip`: a transient progress event with no durable content (dropped)
+ * - `persist`: a complete message stored under `dbType`
+ */
+export type MessageHandling =
+  | { kind: 'stream_event' }
+  | { kind: 'skip' }
+  | { kind: 'persist'; dbType: DbMessageType };
+
+/**
+ * System message subtypes that are transient progress events: they arrive
+ * frequently during a turn and carry no durable content, so they are never
+ * persisted or shown.
  *
  * - `thinking_tokens`: live token-count estimates emitted (often many times) while
  *   Claude is thinking. The actual thinking text arrives in the assistant message's
  *   thinking content blocks, so these estimates would otherwise render as a stream
  *   of empty "System" bubbles.
  */
+export const TRANSIENT_SYSTEM_SUBTYPES = ['thinking_tokens'] as const;
+
+/**
+ * Whether a message is a transient progress event that should not be persisted
+ * or shown. Operates on loosely-typed content so it can also filter already-stored
+ * rows on the client (see {@link classifyMessage} for the typed SDK path).
+ */
 export function isTransientProgressMessage(content: unknown): boolean {
   if (!content || typeof content !== 'object') return false;
   const obj = content as Record<string, unknown>;
-  return obj.type === 'system' && obj.subtype === 'thinking_tokens';
+  return (
+    obj.type === 'system' &&
+    typeof obj.subtype === 'string' &&
+    (TRANSIENT_SYSTEM_SUBTYPES as readonly string[]).includes(obj.subtype)
+  );
 }
 
-export function getMessageType(content: unknown): 'system' | 'user' | 'assistant' | 'result' {
-  if (!content || typeof content !== 'object') return 'system';
-  const obj = content as Record<string, unknown>;
-  const type = obj.type;
-  if (type === 'user') return 'user';
-  if (type === 'assistant') return 'assistant';
-  if (type === 'result') return 'result';
-  // All other SDK types map to 'system' for DB storage:
-  // 'system' (init, error, compact_boundary, status, hook_started, hook_response,
-  //           hook_progress, files_persisted, task_notification)
-  // 'tool_progress', 'tool_use_summary', 'auth_status', 'stream_event'
-  return 'system';
+/**
+ * Compile-time exhaustiveness guard that stays safe at runtime.
+ *
+ * Passing a non-`never` value is a type error, so this fails to compile if a
+ * `switch` misses a case (e.g. a newer SDK adds a `SDKMessage` variant). At
+ * runtime it returns `fallback` rather than throwing, so an unexpected message
+ * degrades gracefully instead of crashing the query loop.
+ */
+export function assertNeverFallback<T>(_unhandled: never, fallback: T): T {
+  return fallback;
+}
+
+/**
+ * Decide how to handle a message yielded by the Claude Agent SDK.
+ *
+ * Driven by the SDK's `SDKMessage` discriminated union: the `switch` is
+ * exhaustive over the top-level `type`, so a message type added by a future SDK
+ * release fails to compile here (via {@link assertNeverFallback}) until it is
+ * explicitly handled. New `system` *subtypes* are intentionally not exhaustive —
+ * unknown ones default to being persisted as a generic system message.
+ */
+export function classifyMessage(message: SDKMessage): MessageHandling {
+  switch (message.type) {
+    case 'assistant':
+      return { kind: 'persist', dbType: 'assistant' };
+    case 'user':
+      return { kind: 'persist', dbType: 'user' };
+    case 'result':
+      return { kind: 'persist', dbType: 'result' };
+    case 'stream_event':
+      return { kind: 'stream_event' };
+    case 'system':
+      return isTransientProgressMessage(message)
+        ? { kind: 'skip' }
+        : { kind: 'persist', dbType: 'system' };
+    case 'tool_progress':
+    case 'tool_use_summary':
+    case 'auth_status':
+    case 'rate_limit_event':
+    case 'prompt_suggestion':
+      return { kind: 'persist', dbType: 'system' };
+    default:
+      return assertNeverFallback(message, { kind: 'persist', dbType: 'system' });
+  }
 }
 
 // =============================================================================

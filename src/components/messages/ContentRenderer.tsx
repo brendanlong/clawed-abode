@@ -61,14 +61,15 @@ function renderContentBlocks(blocks: ContentBlock[], toolResults?: ToolResultMap
     }
   }
 
-  // Coalesce all thinking in this message into a single block.
+  // Coalesce all visible thinking in this message into a single block. Redacted
+  // thinking carries no text, so it is shown as its own separate indicator (a
+  // message can contain both visible and redacted thinking blocks).
   const thinking = thinkingParts.join('\n\n');
 
   return (
     <>
-      {(thinking.length > 0 || hasRedactedThinking) && (
-        <ThinkingDisplay thinking={thinking} redacted={thinking.length === 0} />
-      )}
+      {thinking.length > 0 && <ThinkingDisplay thinking={thinking} />}
+      {hasRedactedThinking && <ThinkingDisplay thinking="" redacted />}
       {textBlocks.length > 0 && <MarkdownContent content={textBlocks.join('\n')} />}
       {toolUseBlocks.length > 0 && (
         <div className="mt-2 space-y-2">
