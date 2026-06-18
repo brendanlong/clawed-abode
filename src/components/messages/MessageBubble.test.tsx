@@ -177,6 +177,43 @@ describe('MessageBubble', () => {
 
       expect(screen.getByText('Thinking (redacted)')).toBeInTheDocument();
     });
+
+    it('shows both visible and redacted thinking when both are present', () => {
+      const message = {
+        type: 'assistant',
+        content: {
+          message: {
+            content: [
+              { type: 'thinking', thinking: 'Visible reasoning.' },
+              { type: 'redacted_thinking', data: 'opaque' },
+              { type: 'text', text: 'Answer.' },
+            ],
+          },
+        } as MessageContent,
+      };
+
+      render(<MessageBubble message={message} />);
+
+      expect(screen.getByText('Thinking')).toBeInTheDocument();
+      expect(screen.getByText('Thinking (redacted)')).toBeInTheDocument();
+    });
+  });
+
+  describe('transient progress messages', () => {
+    it('renders nothing for thinking_tokens system messages', () => {
+      const message = {
+        type: 'system',
+        content: {
+          type: 'system',
+          subtype: 'thinking_tokens',
+          estimated_tokens: 100,
+        } as MessageContent,
+      };
+
+      const { container } = render(<MessageBubble message={message} />);
+
+      expect(container).toBeEmptyDOMElement();
+    });
   });
 
   describe('user messages', () => {

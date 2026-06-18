@@ -14,11 +14,7 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { query, type McpServerConfig, type SlashCommand } from '@anthropic-ai/claude-agent-sdk';
 import { prisma } from '@/lib/prisma';
-import {
-  getMessageType,
-  isTransientProgressMessage,
-  SystemInitContentSchema,
-} from '@/lib/claude-messages';
+import { classifyMessage, SystemInitContentSchema } from '@/lib/claude-messages';
 import { extractRepoFullName } from '@/lib/utils';
 import { v4 as uuid, v5 as uuidv5 } from 'uuid';
 import { sseEvents } from './events';
@@ -615,16 +611,17 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
         accumulator.reset();
       }
 
-      // Skip transient progress events (e.g. thinking_tokens) — they arrive many
-      // times per turn and carry no durable content. The thinking text itself is
-      // rendered from the assistant message's thinking content blocks.
-      if (isTransientProgressMessage(message)) {
+      // Decide how to handle this message based on the SDK's typed union. Only
+      // 'persist' messages are stored; 'skip' covers transient progress events
+      // (e.g. thinking_tokens), and 'stream_event' was already handled above.
+      const handling = classifyMessage(message);
+      if (handling.kind !== 'persist') {
         continue;
       }
 
       // Persist complete messages
       const messageContent = JSON.stringify(message);
-      const messageType = getMessageType(message);
+      const messageType = handling.dbType;
       const msgId = (message as { uuid?: string }).uuid || uuid();
 
       try {

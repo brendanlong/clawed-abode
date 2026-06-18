@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import {
   TextBlockSchema,
   ToolUseBlockSchema,
@@ -13,7 +14,7 @@ import {
   StoredMessageSchema,
   parseStoredMessage,
   parseClaudeStreamLine,
-  getMessageType,
+  classifyMessage,
   isTransientProgressMessage,
   buildToolResultMap,
   AssistantMessage,
@@ -641,27 +642,42 @@ describe('claude-messages', () => {
     });
   });
 
-  describe('getMessageType', () => {
-    it('should return correct type for known types', () => {
-      expect(getMessageType({ type: 'assistant' })).toBe('assistant');
-      expect(getMessageType({ type: 'user' })).toBe('user');
-      expect(getMessageType({ type: 'result' })).toBe('result');
-      expect(getMessageType({ type: 'system' })).toBe('system');
+  describe('classifyMessage', () => {
+    // Synthetic messages; classifyMessage only inspects type/subtype.
+    const msg = (m: Record<string, unknown>) => classifyMessage(m as unknown as SDKMessage);
+
+    it('persists user/assistant/result under their own db type', () => {
+      expect(msg({ type: 'assistant' })).toEqual({ kind: 'persist', dbType: 'assistant' });
+      expect(msg({ type: 'user' })).toEqual({ kind: 'persist', dbType: 'user' });
+      expect(msg({ type: 'result' })).toEqual({ kind: 'persist', dbType: 'result' });
     });
 
-    it('should return system for SDK types that map to system', () => {
-      // These SDK message types all map to 'system' in the DB
-      expect(getMessageType({ type: 'tool_progress' })).toBe('system');
-      expect(getMessageType({ type: 'tool_use_summary' })).toBe('system');
-      expect(getMessageType({ type: 'auth_status' })).toBe('system');
-      expect(getMessageType({ type: 'stream_event' })).toBe('system');
+    it('persists non-system progress-ish types as system', () => {
+      expect(msg({ type: 'tool_progress' })).toEqual({ kind: 'persist', dbType: 'system' });
+      expect(msg({ type: 'tool_use_summary' })).toEqual({ kind: 'persist', dbType: 'system' });
+      expect(msg({ type: 'auth_status' })).toEqual({ kind: 'persist', dbType: 'system' });
+      expect(msg({ type: 'rate_limit_event' })).toEqual({ kind: 'persist', dbType: 'system' });
+      expect(msg({ type: 'prompt_suggestion' })).toEqual({ kind: 'persist', dbType: 'system' });
     });
 
-    it('should return system for unknown types', () => {
-      expect(getMessageType({ type: 'unknown' })).toBe('system');
-      expect(getMessageType(null)).toBe('system');
-      expect(getMessageType(undefined)).toBe('system');
-      expect(getMessageType('string')).toBe('system');
+    it('persists ordinary system messages as system', () => {
+      expect(msg({ type: 'system', subtype: 'init' })).toEqual({
+        kind: 'persist',
+        dbType: 'system',
+      });
+      expect(msg({ type: 'system' })).toEqual({ kind: 'persist', dbType: 'system' });
+    });
+
+    it('skips transient system progress events', () => {
+      expect(msg({ type: 'system', subtype: 'thinking_tokens' })).toEqual({ kind: 'skip' });
+    });
+
+    it('marks stream events for separate accumulation', () => {
+      expect(msg({ type: 'stream_event' })).toEqual({ kind: 'stream_event' });
+    });
+
+    it('degrades unknown future types to system persistence at runtime', () => {
+      expect(msg({ type: 'some_future_type' })).toEqual({ kind: 'persist', dbType: 'system' });
     });
   });
 
