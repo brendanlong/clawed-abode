@@ -200,7 +200,7 @@ describe('MessageBubble', () => {
   });
 
   describe('ignored system messages', () => {
-    it.each(['thinking_tokens', 'task_progress', 'commands_changed'])(
+    it.each(['thinking_tokens', 'task_progress', 'commands_changed', 'api_retry'])(
       'renders nothing for %s system messages',
       (subtype) => {
         const message = {
@@ -263,24 +263,6 @@ describe('MessageBubble', () => {
 
       expect(screen.getByText('Notification')).toBeInTheDocument();
       expect(screen.getByText('Your token will expire soon')).toBeInTheDocument();
-    });
-
-    it('summarizes an api_retry with attempt count', () => {
-      const message = {
-        type: 'system',
-        content: {
-          type: 'system',
-          subtype: 'api_retry',
-          attempt: 2,
-          max_retries: 5,
-          error: { message: 'overloaded' },
-        } as MessageContent,
-      };
-
-      render(<MessageBubble message={message} />);
-
-      expect(screen.getByText('Retrying request')).toBeInTheDocument();
-      expect(screen.getByText('Attempt 2/5 — overloaded')).toBeInTheDocument();
     });
 
     it('falls back to a humanized label for unknown subtypes', () => {

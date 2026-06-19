@@ -477,15 +477,6 @@ describe('summarizeSystemMessage', () => {
     });
   });
 
-  it('summarizes api_retry with attempt count and error code', () => {
-    // SDKAssistantMessageError is a string union (e.g. 'overloaded').
-    expect(sys({ subtype: 'api_retry', attempt: 3, max_retries: 5, error: 'overloaded' })).toEqual({
-      label: 'Retrying request',
-      body: 'Attempt 3/5 — overloaded',
-      level: 'warn',
-    });
-  });
-
   it('summarizes permission_denied with tool and message', () => {
     expect(
       sys({ subtype: 'permission_denied', tool_name: 'Bash', message: 'not allowed' })

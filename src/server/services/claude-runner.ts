@@ -19,7 +19,12 @@ import {
   type PermissionResult,
 } from '@anthropic-ai/claude-agent-sdk';
 import { prisma } from '@/lib/prisma';
-import { classifyMessage, SystemInitContentSchema } from '@/lib/claude-messages';
+import {
+  classifyMessage,
+  parseRetryState,
+  SystemInitContentSchema,
+  type RetryState,
+} from '@/lib/claude-messages';
 import { type ToolResponse, buildSyntheticToolResultContent } from '@/lib/tool-response';
 import { extractRepoFullName } from '@/lib/utils';
 import { v4 as uuid, v5 as uuidv5 } from 'uuid';
@@ -118,6 +123,8 @@ interface SessionState {
   workingDir: string;
   /** Discovered slash commands (cached for getCommands endpoint) */
   commands: SlashCommand[];
+  /** Current API-retry status (rate limit / overload), or null if not retrying */
+  retry: RetryState | null;
 }
 
 /** Active sessions tracked in memory */
@@ -229,6 +236,7 @@ function getSessionState(sessionId: string, workingDir: string): SessionState {
       pendingInput: null,
       workingDir,
       commands: persistedCommands.get(sessionId) ?? [],
+      retry: null,
     };
     sessions.set(sessionId, state);
   }
@@ -601,6 +609,19 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
       });
 
     for await (const message of q) {
+      // Surface API-retry status ephemerally: an `api_retry` message sets the
+      // live retry state; any other message means the request recovered (or the
+      // run moved on), so clear it. These messages are never persisted (see
+      // IGNORED_SYSTEM_SUBTYPES) — only the latest attempt count is streamed.
+      const retryState = parseRetryState(message);
+      if (retryState) {
+        state.retry = retryState;
+        sseEvents.emitClaudeRetry(sessionId, retryState);
+      } else if (state.retry) {
+        state.retry = null;
+        sseEvents.emitClaudeRetry(sessionId, null);
+      }
+
       // Extract slash_commands from system init messages and merge with
       // rich commands from supportedCommands(). The SDK's supportedCommands()
       // only returns "skills", but the system init message contains all
@@ -712,6 +733,12 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
     sessions.delete(sessionId);
 
     sseEvents.emitClaudeRunning(sessionId, false);
+    // The retry status is tied to an in-flight request; if it was still set when
+    // the turn ended (e.g. the SDK gave up), clear it so no stale "retrying"
+    // indicator lingers. Skip the emit for the common turn that never retried.
+    if (state.retry) {
+      sseEvents.emitClaudeRetry(sessionId, null);
+    }
 
     // Detect branch changes and check for PR updates (fire-and-forget)
     void (async () => {
@@ -870,6 +897,15 @@ export async function persistSyntheticToolResult(
  */
 export function getSessionCommands(sessionId: string): SlashCommand[] {
   return persistedCommands.get(sessionId) ?? sessions.get(sessionId)?.commands ?? [];
+}
+
+/**
+ * Current API-retry status for a session, or null if not retrying. Lives only in
+ * memory for the duration of a query — there is no persisted state to read once
+ * the run ends.
+ */
+export function getSessionRetry(sessionId: string): RetryState | null {
+  return sessions.get(sessionId)?.retry ?? null;
 }
 
 /**
