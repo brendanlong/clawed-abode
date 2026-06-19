@@ -33,7 +33,7 @@ function renderWithContext(
         latestTodoWriteId: null,
         manuallyToggledTodoIds: new Set(),
         onTodoManualToggle: vi.fn(),
-        latestPlanContent: null,
+        planContentByToolUseId: new Map(),
         ...ctx,
       }}
     >
