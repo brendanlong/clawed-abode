@@ -19,6 +19,7 @@ import { EnterPlanModeDisplay } from './EnterPlanModeDisplay';
 import { ExitPlanModeDisplay } from './ExitPlanModeDisplay';
 import { TodoWriteDisplay } from './TodoWriteDisplay';
 import { AskUserQuestionDisplay } from './AskUserQuestionDisplay';
+import { ThinkingDisplay } from './ThinkingDisplay';
 
 /**
  * Map of tool names to their specialized display components.
@@ -43,19 +44,32 @@ const TOOL_DISPLAY_MAP: Record<string, React.ComponentType<{ tool: ToolCall }>> 
 };
 
 function renderContentBlocks(blocks: ContentBlock[], toolResults?: ToolResultMap): React.ReactNode {
+  const thinkingParts: string[] = [];
   const textBlocks: string[] = [];
   const toolUseBlocks: ContentBlock[] = [];
+  let hasRedactedThinking = false;
 
   for (const block of blocks) {
     if (block.type === 'text' && block.text) {
       textBlocks.push(block.text);
+    } else if (block.type === 'thinking' && block.thinking) {
+      thinkingParts.push(block.thinking);
+    } else if (block.type === 'redacted_thinking') {
+      hasRedactedThinking = true;
     } else if (block.type === 'tool_use') {
       toolUseBlocks.push(block);
     }
   }
 
+  // Coalesce all visible thinking in this message into a single block. Redacted
+  // thinking carries no text, so it is shown as its own separate indicator (a
+  // message can contain both visible and redacted thinking blocks).
+  const thinking = thinkingParts.join('\n\n');
+
   return (
     <>
+      {thinking.length > 0 && <ThinkingDisplay thinking={thinking} />}
+      {hasRedactedThinking && <ThinkingDisplay thinking="" redacted />}
       {textBlocks.length > 0 && <MarkdownContent content={textBlocks.join('\n')} />}
       {toolUseBlocks.length > 0 && (
         <div className="mt-2 space-y-2">

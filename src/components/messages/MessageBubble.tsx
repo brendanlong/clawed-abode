@@ -12,6 +12,7 @@ import { HookStartedDisplay } from './HookStartedDisplay';
 import { CompactBoundaryDisplay } from './CompactBoundaryDisplay';
 import { MainMessageBubble } from './MainMessageBubble';
 import { isRecognizedMessage, getToolResults } from './messageHelpers';
+import { isTransientProgressMessage } from '@/lib/claude-messages';
 import type { ToolResultMap, MessageContent } from './types';
 
 export function MessageBubble({
@@ -30,6 +31,12 @@ export function MessageBubble({
 
   const recognition = useMemo(() => isRecognizedMessage(type, content), [type, content]);
   const category = recognition.recognized ? recognition.category : null;
+
+  // Transient progress events (e.g. thinking_tokens) carry no durable content.
+  // New ones are never persisted; this also hides any stored before that change.
+  if (isTransientProgressMessage(content)) {
+    return null;
+  }
 
   if (!recognition.recognized) {
     return (
