@@ -2,6 +2,7 @@ import { EventEmitter } from 'events';
 import type { Message, Session } from '@prisma/client';
 import type { SlashCommand } from '@anthropic-ai/claude-agent-sdk';
 import type { PullRequestInfo } from './github';
+import type { RetryState } from '@/lib/claude-messages';
 
 // Message with parsed content (for SSE events)
 export type ParsedMessage = Omit<Message, 'content'> & { content: unknown };
@@ -37,12 +38,19 @@ export interface PrUpdateEvent {
   pullRequest: PullRequestInfo | null;
 }
 
+export interface ClaudeRetryEvent {
+  type: 'claude_retry';
+  sessionId: string;
+  retry: RetryState | null;
+}
+
 export type SSEEvent =
   | SessionUpdateEvent
   | MessageEvent
   | ClaudeRunningEvent
   | CommandsEvent
-  | PrUpdateEvent;
+  | PrUpdateEvent
+  | ClaudeRetryEvent;
 
 /**
  * Normalized union delivered over the single multiplexed per-session SSE stream.
@@ -55,7 +63,8 @@ export type SessionStreamEvent =
   | { kind: 'running'; running: boolean }
   | { kind: 'commands'; commands: SlashCommand[] }
   | { kind: 'pr'; pullRequest: PullRequestInfo | null }
-  | { kind: 'session'; session: Session };
+  | { kind: 'session'; session: Session }
+  | { kind: 'retry'; retry: RetryState | null };
 
 // Global channel name for cross-session list updates (not session-scoped).
 const SESSION_LIST_EVENT = 'session-list';
@@ -143,6 +152,20 @@ class SSEEventEmitter extends EventEmitter {
     return () => this.off(eventName, callback);
   }
 
+  emitClaudeRetry(sessionId: string, retry: RetryState | null): void {
+    this.emit(`retry:${sessionId}`, {
+      type: 'claude_retry',
+      sessionId,
+      retry,
+    } satisfies ClaudeRetryEvent);
+  }
+
+  onClaudeRetry(sessionId: string, callback: (event: ClaudeRetryEvent) => void): () => void {
+    const eventName = `retry:${sessionId}`;
+    this.on(eventName, callback);
+    return () => this.off(eventName, callback);
+  }
+
   /**
    * Subscribe to all event kinds for a session as a single normalized stream.
    * Returns one unsubscribe that detaches every underlying channel listener.
@@ -154,6 +177,7 @@ class SSEEventEmitter extends EventEmitter {
       this.onCommands(sessionId, (e) => callback({ kind: 'commands', commands: e.commands })),
       this.onPrUpdate(sessionId, (e) => callback({ kind: 'pr', pullRequest: e.pullRequest })),
       this.onSessionUpdate(sessionId, (e) => callback({ kind: 'session', session: e.session })),
+      this.onClaudeRetry(sessionId, (e) => callback({ kind: 'retry', retry: e.retry })),
     ];
     return () => unsubscribes.forEach((unsubscribe) => unsubscribe());
   }

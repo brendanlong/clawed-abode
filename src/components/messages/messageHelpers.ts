@@ -242,15 +242,6 @@ export function summarizeSystemMessage(content: MessageContent): SystemMessageSu
         level: priority === 'high' || priority === 'immediate' ? 'warn' : 'info',
       };
     }
-    case 'api_retry': {
-      const attempt = typeof content.attempt === 'number' ? content.attempt : undefined;
-      const max = typeof content.max_retries === 'number' ? content.max_retries : undefined;
-      const parts: string[] = [];
-      if (attempt !== undefined && max !== undefined) parts.push(`Attempt ${attempt}/${max}`);
-      const errMsg = extractErrorMessage(content.error);
-      if (errMsg) parts.push(errMsg);
-      return { label: 'Retrying request', body: parts.join(' — ') || undefined, level: 'warn' };
-    }
     case 'permission_denied': {
       const tool = asString(content.tool_name) ?? 'tool';
       const message = asString(content.message);
