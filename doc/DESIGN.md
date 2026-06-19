@@ -166,9 +166,25 @@ claude.send({ sessionId: string, prompt: string })
   // Starts a query() call in-process using the Claude Agent SDK
   // Messages stream to the client via SSE
 
-claude.answerQuestion({ sessionId: string, answers: Record<string, string> })
-  → { success: true }
-  // Resolves a pending AskUserQuestion canUseTool callback
+claude.answerQuestion({
+  sessionId: string,
+  toolUseId: string,                    // the AskUserQuestion tool_use block id
+  answers: Record<string, string>
+})
+  → { success: true, routed: 'live' | 'fallback' | 'already' }
+  // Delivers answers to an AskUserQuestion tool call. The server decides how
+  // (see "Answering Interactive Tools" below): resolve the live canUseTool
+  // promise, or — if the query has ended — resume with a new turn.
+
+claude.respondToPlan({
+  sessionId: string,
+  toolUseId: string,                    // the ExitPlanMode tool_use block id
+  approve: boolean,
+  feedback?: string                     // revision notes (used when approve=false)
+})
+  → { success: true, routed: 'live' | 'fallback' | 'already' }
+  // Approve or request changes to an ExitPlanMode plan, routed the same way
+  // as answerQuestion.
 
 claude.interrupt({ sessionId: string })
   → { success: true }
@@ -201,8 +217,7 @@ claude.getHistory({
 1. User sends prompt via `claude.send()`
 2. Next.js server calls `query()` from the Claude Agent SDK directly in-process, with `resume: sessionId` for follow-up messages
 3. The `canUseTool` callback handles:
-   - **AskUserQuestion**: Parks a promise, sends the question to the browser via SSE (as a normal assistant message with tool_use). User answers via `claude.answerQuestion()` mutation, which resolves the promise.
-   - **ExitPlanMode**: Similar flow — user approves/rejects the plan.
+   - **AskUserQuestion** / **ExitPlanMode**: Parks a promise keyed by the SDK's `toolUseID`, sends the question/plan to the browser via SSE (as a normal assistant message with a `tool_use` block). The user responds via `claude.answerQuestion()` / `claude.respondToPlan()` (see [Answering Interactive Tools](#answering-interactive-tools)).
    - **All other tools**: Auto-approved (bypass permissions mode).
 4. Messages stream from the SDK:
    - **Partial messages**: `stream_event` messages are accumulated by `StreamAccumulator` and emitted via SSE for real-time UI updates (not persisted).
@@ -263,9 +278,19 @@ Each user prompt is a separate `query()` call with `resume: sessionId` for multi
 
 The SDK's `canUseTool` callback handles interactive tools:
 
-- **AskUserQuestion**: The callback parks a `Promise` that resolves when the user answers via the `claude.answerQuestion` tRPC mutation. The question appears as a normal assistant message (tool_use block) in the UI.
-- **ExitPlanMode**: Similar flow — user approves/rejects the plan.
+- **AskUserQuestion** / **ExitPlanMode**: The callback parks a `Promise` (keyed by the SDK's `toolUseID`) in the in-memory session state. It is resolved when the user responds — see [Answering Interactive Tools](#answering-interactive-tools). The request appears as a normal assistant message (`tool_use` block) in the UI.
 - **All other tools**: Auto-approved (`bypassPermissions` mode).
+
+### Answering Interactive Tools
+
+The hard part is that the parked `Promise` lives only in the in-memory session map. It is destroyed when the query ends — completion, stop, interrupt, or a **server restart** — but the `tool_use` block survives in the database forever. If the UI decided interactivity from its own state, the two could disagree (controls shown for a question that can no longer be answered), or a transient running-state signal could wrongly disable the controls. To avoid this, **the server is authoritative** and the UI stays dumb:
+
+- **UI rule**: answer controls are shown whenever a `tool_use` block has no matching `tool_result` (purely DB-derived in `MessageList`/`AskUserQuestionDisplay`/`ExitPlanModeDisplay`). The UI never consults running-state to decide interactivity. On submit it calls `claude.answerQuestion` / `claude.respondToPlan` with the block's `toolUseId`.
+- **Server routing** (`submitToolResponse` in [`src/server/routers/claude.ts`](../src/server/routers/claude.ts)):
+  1. **Live** — if a query is still parked on that `toolUseId`, resolve the in-memory promise so the current turn continues (cheap, no new query). A short wait covers the rare race where the answer beats the SDK's `canUseTool` call.
+  2. **Fallback** — if no live promise exists (the query ended), the original tool call can never be resolved, so the answer is delivered as a **new turn**: the server persists a synthetic `tool_result` for the block (pairing it in the UI so the controls disappear) and resumes the session with a prompt built from the answer. This is the automatic "fall back to the normal chat interface" path.
+- **Idempotency**: the synthetic `tool_result`'s message id is derived from the `toolUseId`, so a duplicate submit hits the unique constraint and is a no-op (`routed: 'already'`) — a double answer never starts two turns.
+- **Mapping responses**: an `AskUserQuestion` answer resolves `allow` with the selected answers; an `ExitPlanMode` approval resolves `allow`, while "request changes" resolves `deny` with the feedback message so Claude revises in place. On the fallback path these become natural-language prompts (see `formatToolResponsePrompt` in [`src/lib/tool-response.ts`](../src/lib/tool-response.ts)).
 
 ### Streaming
 
