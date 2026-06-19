@@ -11,6 +11,7 @@ import { useNotification } from '@/hooks/useNotification';
 import { useVoicePlaybackContext } from '@/hooks/useVoicePlayback';
 import { isPlanFile } from './messages/plan-utils';
 import { isIgnoredSystemMessage } from '@/lib/claude-messages';
+import { hasRenderableAssistantContent } from './messages/messageHelpers';
 
 interface Message {
   id: string;
@@ -373,7 +374,13 @@ export function MessageList({
           !isCompletedHookStarted(msg, completedHookIds) &&
           // Ignored system events carry no content; filter them here so they
           // don't leave an empty spacer row in the list.
-          !isIgnoredSystemMessage(msg.content)
+          !isIgnoredSystemMessage(msg.content) &&
+          // Empty assistant fragments (e.g. an empty thinking block) would
+          // otherwise leave an empty spacer row too.
+          !(
+            msg.type === 'assistant' &&
+            !hasRenderableAssistantContent(msg.content as MessageContent)
+          )
       ),
     [messages, pairedMessageIds, completedHookIds]
   );

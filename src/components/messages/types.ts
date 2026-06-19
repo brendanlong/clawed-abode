@@ -16,6 +16,8 @@ export interface ContentBlock {
   text?: string;
   /** For thinking blocks */
   thinking?: string;
+  /** Continuity signature on thinking blocks */
+  signature?: string;
   id?: string;
   name?: string;
   input?: unknown;

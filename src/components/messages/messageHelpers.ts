@@ -77,6 +77,33 @@ export function getToolResults(content: MessageContent): ContentBlock[] {
 }
 
 /**
+ * Whether an assistant message has any content worth rendering. Filters out
+ * fragments whose blocks would all render to nothing — e.g. a `thinking` block
+ * with empty `thinking` text (just a continuity signature) and nothing else,
+ * which would otherwise show as an empty assistant bubble.
+ *
+ * Keep the renderable cases in sync with `ContentRenderer.renderContentBlocks`.
+ */
+export function hasRenderableAssistantContent(content: MessageContent): boolean {
+  const blocks = content.message?.content;
+  // Non-array content (e.g. a string) is handled by other display paths.
+  if (!Array.isArray(blocks)) return true;
+  return blocks.some((block) => {
+    switch (block.type) {
+      case 'text':
+        return typeof block.text === 'string' && block.text.trim().length > 0;
+      case 'thinking':
+        return typeof block.thinking === 'string' && block.thinking.trim().length > 0;
+      case 'tool_use':
+      case 'redacted_thinking':
+        return true;
+      default:
+        return false;
+    }
+  });
+}
+
+/**
  * Check if a message can be recognized and displayed with our typed components.
  * Returns the message category if recognized, or { recognized: false } for unknown types.
  */
