@@ -1,11 +1,9 @@
 'use client';
 
-import { useMemo } from 'react';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
 import { InlineDiff } from './InlineDiff';
-import { isPlanFile } from './plan-utils';
 import type { ToolCall } from './types';
 
 interface EditInput {
@@ -18,7 +16,10 @@ interface EditInput {
 /**
  * Specialized display for Edit tool calls.
  * Shows file path and a diff-like view of old vs new content.
- * For plan files, shows a simplified "Plan updated" view.
+ *
+ * Plan files render the same as any other file — the full plan is shown in the
+ * ExitPlanMode approval panel, so seeing the diff here is useful for tracking
+ * how the plan changed.
  */
 export function EditDisplay({ tool }: { tool: ToolCall }) {
   const hasOutput = tool.output !== undefined;
@@ -31,34 +32,6 @@ export function EditDisplay({ tool }: { tool: ToolCall }) {
 
   // Extract just the filename for the header
   const fileName = filePath.split('/').pop() ?? filePath;
-
-  // Check if this is a plan file
-  const isPlan = useMemo(() => isPlanFile(filePath), [filePath]);
-
-  // For plan files, show a simplified compact view
-  if (isPlan) {
-    return (
-      <ToolDisplayWrapper
-        tool={tool}
-        title="Plan Updated"
-        subtitle={
-          <div className="text-muted-foreground text-xs mt-1">Plan was updated with changes</div>
-        }
-        doneBadge={
-          <Badge
-            variant="outline"
-            className="text-xs border-purple-500 text-purple-700 dark:text-purple-400"
-          >
-            Updated
-          </Badge>
-        }
-        cardClassName="border-purple-300 dark:border-purple-700"
-      >
-        {/* Show the changes as an inline diff */}
-        <InlineDiff oldString={oldString} newString={newString} className="max-h-64" />
-      </ToolDisplayWrapper>
-    );
-  }
 
   return (
     <ToolDisplayWrapper
