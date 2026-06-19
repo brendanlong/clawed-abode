@@ -733,9 +733,12 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
     sessions.delete(sessionId);
 
     sseEvents.emitClaudeRunning(sessionId, false);
-    // The retry status is tied to an in-flight request; clear it when the turn
-    // ends so a stale "retrying" indicator never lingers.
-    sseEvents.emitClaudeRetry(sessionId, null);
+    // The retry status is tied to an in-flight request; if it was still set when
+    // the turn ended (e.g. the SDK gave up), clear it so no stale "retrying"
+    // indicator lingers. Skip the emit for the common turn that never retried.
+    if (state.retry) {
+      sseEvents.emitClaudeRetry(sessionId, null);
+    }
 
     // Detect branch changes and check for PR updates (fire-and-forget)
     void (async () => {

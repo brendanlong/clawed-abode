@@ -868,7 +868,11 @@ export const ApiRetryContentSchema = z.object({
   subtype: z.literal('api_retry'),
   attempt: z.number(),
   max_retries: z.number(),
-  error_status: z.number().optional(),
+  // The SDK sends `null` (not absent) for connection errors like timeouts that
+  // had no HTTP response, so this must accept null — not just undefined — or the
+  // whole parse fails and the retry indicator never shows for those.
+  error_status: z.number().nullable().optional(),
+  // A `SDKAssistantMessageError` code, e.g. "rate_limit" | "overloaded" | "server_error".
   error: z.string().optional(),
 });
 
@@ -892,14 +896,48 @@ export interface RetryState {
  * `api_retry` message.
  */
 export function parseRetryState(message: unknown): RetryState | null {
+  // Cheap subtype guard before the full Zod parse: this runs on every message in
+  // the streaming loop (including high-frequency token deltas), and only
+  // `api_retry` frames can ever match.
+  if (
+    typeof message !== 'object' ||
+    message === null ||
+    (message as { subtype?: unknown }).subtype !== 'api_retry'
+  ) {
+    return null;
+  }
   const parsed = ApiRetryContentSchema.safeParse(message);
   if (!parsed.success) return null;
   return {
     attempt: parsed.data.attempt,
     maxRetries: parsed.data.max_retries,
-    errorStatus: parsed.data.error_status,
+    // Collapse the SDK's null (connection error, no HTTP response) to undefined.
+    errorStatus: parsed.data.error_status ?? undefined,
     error: parsed.data.error,
   };
+}
+
+/** Friendly labels for the API error codes that actually trigger retries. */
+const RETRY_REASON_LABELS: Record<string, string> = {
+  overloaded: 'overloaded',
+  rate_limit: 'rate limited',
+  server_error: 'server error',
+};
+
+/**
+ * Human-readable reason for an in-flight retry (e.g. "overloaded", "rate
+ * limited"), or `null` if none can be determined. Prefers the SDK's canonical
+ * `error` code, falling back to the HTTP status, then a humanized code.
+ */
+export function formatRetryReason(retry: RetryState): string | null {
+  if (retry.error && RETRY_REASON_LABELS[retry.error]) {
+    return RETRY_REASON_LABELS[retry.error];
+  }
+  if (retry.errorStatus === 529) return 'overloaded';
+  if (retry.errorStatus === 429) return 'rate limited';
+  // Humanize any other known code (e.g. "model_not_found" → "model not found").
+  if (retry.error && retry.error !== 'unknown') return retry.error.replace(/_/g, ' ');
+  return null;
 }
 
 /**
