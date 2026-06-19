@@ -25,9 +25,6 @@ import { getNewAutoReadMessages } from '@/lib/auto-read-helpers';
 import { VoiceControlPanel } from '@/components/voice/VoiceControlPanel';
 
 function SessionView({ sessionId }: { sessionId: string }) {
-  // Single multiplexed SSE stream: fans live events into the relevant caches.
-  const { status: streamStatus } = useSessionStream(sessionId);
-
   // Session state: data, start/stop/archive
   const {
     session,
@@ -48,7 +45,13 @@ function SessionView({ sessionId }: { sessionId: string }) {
     hasMore,
     fetchMore,
     tokenUsage,
+    historyLoaded,
+    newestSequence,
   } = useSessionMessages(sessionId);
+
+  // Single multiplexed SSE stream: fans live events into the relevant caches.
+  // Anchored to the loaded history so no messages are missed between snapshots.
+  const { status: streamStatus } = useSessionStream(sessionId, { historyLoaded, newestSequence });
 
   // Claude state: running, send, interrupt, commands
   const {

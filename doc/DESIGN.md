@@ -329,16 +329,20 @@ subscription, so the app is deliberately structured around just **two** streams:
    ([`src/hooks/useSessionListStream.ts`](../src/hooks/useSessionListStream.ts)) refetches
    the home-page list so it updates live for any session, without one subscription per row.
 
-**Resume tokens & catch-up.** The subscription input is **stable** (`{ sessionId }`); a
-reactive cursor would tear the `EventSource` down on every turn. Instead each yielded event
-is wrapped in tRPC's `tracked(id, ...)` where the id is a
+**Resume tokens & catch-up.** The subscription input is **stable** — `{ sessionId,
+afterSequence }`, where `afterSequence` is the client's newest cached sequence captured
+**once** when history first loads and then frozen (`useSessionStream` gates the subscription
+until then). Feeding the live newest sequence reactively would tear the `EventSource` down
+every turn. Each yielded event is wrapped in tRPC's `tracked(id, ...)` where the id is a
 `` `${watermark}:${counter}` `` token ([`src/lib/sse-resume.ts`](../src/lib/sse-resume.ts)):
 
-- `watermark` = the highest persisted message `sequence` yielded so far. On reconnect tRPC
-  resends it as `lastEventId`; the server replays `message.sequence > watermark`. Only
-  complete (persisted) messages advance the watermark — partials and latest-value events do
-  not, so they are streamed live but never replayed (the client refetches their state on
-  reconnect instead).
+- `watermark` = the highest persisted message `sequence` yielded so far. The server replays
+  `message.sequence > floor`, where the floor is the `lastEventId` watermark on reconnect,
+  or the initial `afterSequence` on first connect (which closes the window between the
+  `getHistory` snapshot and the stream attaching), or none (anchor at current max) otherwise.
+  Only complete (persisted) messages advance the watermark — partials and latest-value
+  events do not, so they are streamed live but never replayed (the client refetches their
+  state on reconnect instead).
 - `counter` = strictly increasing per connection, seeded from the previous `lastEventId`, so
   ids never repeat across reconnects (tRPC drops events with a repeated tracked id).
 

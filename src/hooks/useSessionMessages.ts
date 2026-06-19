@@ -65,6 +65,21 @@ export function useSessionMessages(sessionId: string) {
     }
   );
 
+  // Newest sequence currently in the cache. Used once by useSessionStream as the
+  // initial SSE catch-up anchor (it is NOT fed reactively into the subscription).
+  const newestSequence = useMemo(() => {
+    if (!historyData?.pages) return undefined;
+    let newest: number | undefined;
+    for (const page of historyData.pages) {
+      for (const msg of page.messages) {
+        if (newest === undefined || msg.sequence > newest) {
+          newest = msg.sequence;
+        }
+      }
+    }
+    return newest;
+  }, [historyData]);
+
   // Flatten bidirectional pages into chronological order
   // Pages array structure:
   // - pages[0] = newest (from fetchPreviousPage, or initial if no previous fetched)
@@ -95,5 +110,8 @@ export function useSessionMessages(sessionId: string) {
     hasMore: hasNextPage ?? false,
     fetchMore: fetchNextPage,
     tokenUsage: tokenUsageData,
+    // Whether the initial history load has completed (used to anchor the SSE stream).
+    historyLoaded: !isLoading,
+    newestSequence,
   };
 }
