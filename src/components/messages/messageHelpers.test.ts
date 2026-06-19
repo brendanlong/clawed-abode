@@ -8,6 +8,7 @@ import {
   buildToolCalls,
   getCopyText,
   getDisplayContent,
+  summarizeSystemMessage,
 } from './messageHelpers';
 
 describe('extractTextContent', () => {
@@ -401,5 +402,64 @@ describe('getDisplayContent', () => {
   it('returns content.content for system messages', () => {
     const content: MessageContent = { content: 'system text' };
     expect(getDisplayContent(content, 'system')).toBe('system text');
+  });
+});
+
+describe('summarizeSystemMessage', () => {
+  // SDK system messages use loose fields (some, like `message`, collide with the
+  // typed MessageContent wrapper), so build them as plain objects.
+  const sys = (c: Record<string, unknown>) =>
+    summarizeSystemMessage(c as unknown as MessageContent);
+
+  it('summarizes a notification, escalating priority to warn', () => {
+    expect(sys({ subtype: 'notification', text: 'Heads up', priority: 'high' })).toEqual({
+      label: 'Notification',
+      body: 'Heads up',
+      level: 'warn',
+    });
+    expect(sys({ subtype: 'notification', text: 'fyi', priority: 'low' })).toEqual({
+      label: 'Notification',
+      body: 'fyi',
+      level: 'info',
+    });
+  });
+
+  it('summarizes api_retry with attempt count and error message', () => {
+    expect(
+      sys({ subtype: 'api_retry', attempt: 3, max_retries: 5, error: { message: 'overloaded' } })
+    ).toEqual({ label: 'Retrying request', body: 'Attempt 3/5 — overloaded', level: 'warn' });
+  });
+
+  it('summarizes permission_denied with tool and message', () => {
+    expect(
+      sys({ subtype: 'permission_denied', tool_name: 'Bash', message: 'not allowed' })
+    ).toEqual({ label: 'Permission denied', body: 'Bash: not allowed', level: 'warn' });
+  });
+
+  it('summarizes subagent start and completion', () => {
+    expect(
+      sys({ subtype: 'task_started', subagent_type: 'Explore', description: 'find usages' })
+    ).toEqual({ label: 'Subagent started', body: 'Explore: find usages', level: 'info' });
+    expect(sys({ subtype: 'task_notification', status: 'failed', summary: 'boom' })).toEqual({
+      label: 'Subagent failed',
+      body: 'boom',
+      level: 'warn',
+    });
+  });
+
+  it('falls back to a humanized label for unknown subtypes', () => {
+    expect(sys({ subtype: 'some_future_thing' })).toEqual({
+      label: 'Some Future Thing',
+      body: undefined,
+      level: 'info',
+    });
+  });
+
+  it('uses string content as the body for unknown subtypes', () => {
+    expect(sys({ subtype: 'mystery', content: 'raw text' })).toEqual({
+      label: 'Mystery',
+      body: 'raw text',
+      level: 'info',
+    });
   });
 });

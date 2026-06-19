@@ -165,6 +165,134 @@ export function isRecognizedMessage(type: string, content: MessageContent): Reco
 }
 
 /**
+ * A concise, human-readable summary of a generic system message, used so these
+ * messages render meaningful content instead of an empty "System" bubble.
+ */
+export interface SystemMessageSummary {
+  /** Short label shown as a badge (e.g. "Retrying request"). */
+  label: string;
+  /** Optional detail line. Absent when the subtype carries no extra text. */
+  body?: string;
+  /** Drives styling — `warn` for retries/denials/errors. */
+  level: 'info' | 'warn';
+}
+
+/** Turn a snake_case subtype into a Title Case label (fallback for unknowns). */
+function humanizeSubtype(subtype: string | undefined): string {
+  if (!subtype) return 'System';
+  return subtype
+    .split('_')
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+}
+
+/** Pull a readable message out of an SDK error value (string or {message}). */
+function extractErrorMessage(error: unknown): string | undefined {
+  if (typeof error === 'string') return error;
+  if (error && typeof error === 'object') {
+    const message = (error as Record<string, unknown>).message;
+    if (typeof message === 'string') return message;
+  }
+  return undefined;
+}
+
+const asString = (value: unknown): string | undefined =>
+  typeof value === 'string' ? value : undefined;
+
+/**
+ * Summarize a generic `system` message (any subtype not handled by a dedicated
+ * display). Known subtypes get a tailored summary; unknown/future ones fall back
+ * to a humanized label plus any string `content`, so a system message is never
+ * rendered blank.
+ */
+export function summarizeSystemMessage(content: MessageContent): SystemMessageSummary {
+  switch (content.subtype) {
+    case 'notification': {
+      const priority = content.priority;
+      return {
+        label: 'Notification',
+        body: asString(content.text),
+        level: priority === 'high' || priority === 'immediate' ? 'warn' : 'info',
+      };
+    }
+    case 'api_retry': {
+      const attempt = typeof content.attempt === 'number' ? content.attempt : undefined;
+      const max = typeof content.max_retries === 'number' ? content.max_retries : undefined;
+      const parts: string[] = [];
+      if (attempt !== undefined && max !== undefined) parts.push(`Attempt ${attempt}/${max}`);
+      const errMsg = extractErrorMessage(content.error);
+      if (errMsg) parts.push(errMsg);
+      return { label: 'Retrying request', body: parts.join(' — ') || undefined, level: 'warn' };
+    }
+    case 'permission_denied': {
+      const tool = asString(content.tool_name) ?? 'tool';
+      const message = asString(content.message);
+      return {
+        label: 'Permission denied',
+        body: message ? `${tool}: ${message}` : tool,
+        level: 'warn',
+      };
+    }
+    case 'model_refusal_fallback': {
+      const from = asString(content.original_model) ?? '?';
+      const to = asString(content.fallback_model) ?? '?';
+      const why = asString(content.api_refusal_explanation);
+      return {
+        label: 'Model switched after refusal',
+        body: `${from} → ${to}${why ? ` — ${why}` : ''}`,
+        level: 'warn',
+      };
+    }
+    case 'plugin_install': {
+      const name = asString(content.name);
+      const status = asString(content.status) ?? 'unknown';
+      const error = asString(content.error);
+      return {
+        label: name ? `Plugin: ${name}` : 'Plugin install',
+        body: error ? `${status} — ${error}` : status,
+        level: status === 'failed' ? 'warn' : 'info',
+      };
+    }
+    case 'memory_recall': {
+      const count = Array.isArray(content.memories) ? content.memories.length : 0;
+      const mode = asString(content.mode) ?? 'select';
+      return { label: 'Recalled memories', body: `${count} (${mode})`, level: 'info' };
+    }
+    case 'mirror_error':
+      return { label: 'Mirror error', body: asString(content.error), level: 'warn' };
+    case 'task_started': {
+      const description = asString(content.description);
+      const agent = asString(content.subagent_type);
+      return {
+        label: 'Subagent started',
+        body: [agent, description].filter(Boolean).join(': ') || undefined,
+        level: 'info',
+      };
+    }
+    case 'task_notification': {
+      const status = asString(content.status) ?? 'completed';
+      return {
+        label: `Subagent ${status}`,
+        body: asString(content.summary),
+        level: status === 'failed' ? 'warn' : 'info',
+      };
+    }
+    case 'local_command_output':
+      return {
+        label: 'Command output',
+        body: typeof content.content === 'string' ? stripXmlTags(content.content) : undefined,
+        level: 'info',
+      };
+    default:
+      return {
+        label: humanizeSubtype(content.subtype),
+        body: asString(content.content),
+        level: 'info',
+      };
+  }
+}
+
+/**
  * Build tool call objects with results for assistant messages.
  */
 export function buildToolCalls(content: MessageContent, toolResults?: ToolResultMap): ToolCall[] {

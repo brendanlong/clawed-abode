@@ -39,7 +39,6 @@ export function MainMessageBubble({
 }: MainMessageBubbleProps) {
   const isUser = category === 'user';
   const isAssistant = category === 'assistant';
-  const isSystem = category === 'system';
   const isError = category === 'systemError';
   const isInterrupted = content.interrupted === true;
 
@@ -71,7 +70,6 @@ export function MainMessageBubble({
           'bg-card border border-blue-300 dark:border-blue-700': isAssistant && isPartial,
           'bg-card border border-amber-300 dark:border-amber-700':
             isAssistant && isInterrupted && !isPartial,
-          'bg-muted text-muted-foreground text-sm': isSystem && !isError,
           'bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 text-red-800 dark:text-red-200 text-sm':
             isError,
         })}
@@ -81,11 +79,6 @@ export function MainMessageBubble({
             <Loader2 className="h-3 w-3 animate-spin" />
             <span>Streaming...</span>
           </div>
-        )}
-        {isSystem && !isError && (
-          <Badge variant="secondary" className="mb-2">
-            System
-          </Badge>
         )}
         {isError && (
           <Badge variant="destructive" className="mb-2">

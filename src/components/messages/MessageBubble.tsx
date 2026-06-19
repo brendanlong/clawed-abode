@@ -11,8 +11,9 @@ import { HookResponseDisplay } from './HookResponseDisplay';
 import { HookStartedDisplay } from './HookStartedDisplay';
 import { CompactBoundaryDisplay } from './CompactBoundaryDisplay';
 import { MainMessageBubble } from './MainMessageBubble';
+import { SystemMessageDisplay } from './SystemMessageDisplay';
 import { isRecognizedMessage, getToolResults } from './messageHelpers';
-import { isTransientProgressMessage } from '@/lib/claude-messages';
+import { isIgnoredSystemMessage } from '@/lib/claude-messages';
 import type { ToolResultMap, MessageContent } from './types';
 
 export function MessageBubble({
@@ -32,9 +33,9 @@ export function MessageBubble({
   const recognition = useMemo(() => isRecognizedMessage(type, content), [type, content]);
   const category = recognition.recognized ? recognition.category : null;
 
-  // Transient progress events (e.g. thinking_tokens) carry no durable content.
-  // New ones are never persisted; this also hides any stored before that change.
-  if (isTransientProgressMessage(content)) {
+  // Ignored system events (transient progress / internal state) carry no durable
+  // content. New ones are never persisted; this also hides any stored earlier.
+  if (isIgnoredSystemMessage(content)) {
     return null;
   }
 
@@ -102,6 +103,14 @@ export function MessageBubble({
           <OctagonX className="h-4 w-4" />
           <span>Interrupted</span>
         </div>
+      </div>
+    );
+  }
+
+  if (category === 'system') {
+    return (
+      <div className="w-full max-w-[85%]">
+        <SystemMessageDisplay content={content} />
       </div>
     );
   }
