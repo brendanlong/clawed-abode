@@ -11,14 +11,16 @@ interface Message {
 const MESSAGE_PAGE_SIZE = 20;
 
 /**
- * Hook for managing message state: history pagination, SSE updates for new messages, and token usage.
+ * Hook for reading message history with infinite-scroll pagination and token usage.
+ *
+ * Live messages are delivered by the single SSE stream in `useSessionStream`, which
+ * writes them directly into this query's cache. This hook is read-only over that
+ * cache plus backward pagination.
  */
 export function useSessionMessages(sessionId: string) {
-  const utils = trpc.useUtils();
-
   // Bidirectional infinite query for message history
   // - fetchNextPage: loads older messages (backward) when user scrolls up
-  // - New messages arrive via SSE and are added directly to the cache
+  // - New messages arrive via SSE (useSessionStream) and are added to the cache
   const {
     data: historyData,
     isLoading,
@@ -54,16 +56,17 @@ export function useSessionMessages(sessionId: string) {
     }
   );
 
-  // Fetch token usage stats (computed server-side from all messages)
-  const { data: tokenUsageData, refetch: refetchTokenUsage } = trpc.claude.getTokenUsage.useQuery(
+  // Fetch token usage stats (computed server-side from all messages).
+  // Refetched by useSessionStream when complete messages arrive.
+  const { data: tokenUsageData } = trpc.claude.getTokenUsage.useQuery(
     { sessionId },
     {
-      // Refetch less frequently since it's just for display
       refetchOnWindowFocus: false,
     }
   );
 
-  // Compute newest sequence from cache for SSE catch-up cursor
+  // Newest sequence currently in the cache. Used once by useSessionStream as the
+  // initial SSE catch-up anchor (it is NOT fed reactively into the subscription).
   const newestSequence = useMemo(() => {
     if (!historyData?.pages) return undefined;
     let newest: number | undefined;
@@ -76,77 +79,6 @@ export function useSessionMessages(sessionId: string) {
     }
     return newest;
   }, [historyData]);
-
-  // Subscribe to new messages via SSE - update cache directly
-  // Pass cursor to catch up on missed messages when connecting/reconnecting
-  // Handles both complete messages (persisted) and partial messages (transient streaming updates)
-  trpc.sse.onNewMessage.useSubscription(
-    { sessionId, afterSequence: newestSequence },
-    {
-      onData: (trackedData) => {
-        const newMessage = trackedData.data.message;
-        const isPartial = newMessage.id.startsWith('partial-');
-
-        // Add message directly to the infinite query cache
-        utils.claude.getHistory.setInfiniteData({ sessionId, limit: MESSAGE_PAGE_SIZE }, (old) => {
-          if (!old) {
-            // No existing data - create initial page
-            return {
-              pages: [{ messages: [newMessage], hasMore: false }],
-              pageParams: [{ direction: 'backward' as const, sequence: undefined }],
-            };
-          }
-
-          if (isPartial) {
-            // Partial message: replace existing partial or add new one
-            const newPages = old.pages.map((page, pageIndex) => {
-              if (pageIndex !== 0) return page;
-              // Replace existing partial, or append if none exists
-              const hasExistingPartial = page.messages.some((m) => m.id.startsWith('partial-'));
-              if (hasExistingPartial) {
-                return {
-                  ...page,
-                  messages: page.messages.map((m) =>
-                    m.id.startsWith('partial-') ? newMessage : m
-                  ),
-                };
-              }
-              return { ...page, messages: [...page.messages, newMessage] };
-            });
-            return { ...old, pages: newPages };
-          }
-
-          // Complete message: remove any partial messages and add the new one
-          // Check for deduplication first
-          for (const page of old.pages) {
-            if (page.messages.some((m) => m.id === newMessage.id)) {
-              return old; // Already have this message
-            }
-          }
-
-          const newPages = [...old.pages];
-          // Remove partial messages from the first page (they're replaced by complete messages)
-          const firstPageMessages = newPages[0].messages.filter(
-            (m) => !m.id.startsWith('partial-')
-          );
-          newPages[0] = {
-            ...newPages[0],
-            messages: [...firstPageMessages, newMessage],
-          };
-
-          return { ...old, pages: newPages };
-        });
-
-        // Refetch token usage only for complete messages (partials don't affect totals)
-        if (!isPartial) {
-          refetchTokenUsage();
-        }
-      },
-      onError: (err) => {
-        console.error('Message SSE error:', err);
-      },
-    }
-  );
 
   // Flatten bidirectional pages into chronological order
   // Pages array structure:
@@ -178,5 +110,8 @@ export function useSessionMessages(sessionId: string) {
     hasMore: hasNextPage ?? false,
     fetchMore: fetchNextPage,
     tokenUsage: tokenUsageData,
+    // Whether the initial history load has completed (used to anchor the SSE stream).
+    historyLoaded: !isLoading,
+    newestSequence,
   };
 }

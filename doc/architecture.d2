@@ -21,7 +21,7 @@ server: Home Server {
     auth: Auth
     session_mgmt: Session Management
     sdk: Claude Agent SDK (in-process)
-    sse: SSE to Browser
+    sse: SSE to Browser (multiplexed per-session + global list streams)
   }
 
   workspaces: ~/worktrees/ {
@@ -52,7 +52,7 @@ tailscale -> server.app: HTTP
 server.app.sdk -> server.workspaces: "cwd"
 server.app.session_mgmt -> server.db: "read/write"
 server.app.sdk -> server.db.messages: "persist"
-server.app.sse -> mobile: "stream messages"
+server.app.sse -> mobile: "stream events (resume via lastEventId)"
 
 # Data Model
 data: Data Model {

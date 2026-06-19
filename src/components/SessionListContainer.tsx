@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { SessionList } from '@/components/SessionList';
 import { useSessionList } from '@/hooks/useSessionList';
+import { useSessionListStream } from '@/hooks/useSessionListStream';
 
 /**
  * Container component that wires up data fetching hooks with the SessionList presentation component.
@@ -11,6 +12,9 @@ import { useSessionList } from '@/hooks/useSessionList';
 export function SessionListContainer() {
   const [showArchived, setShowArchived] = useState(false);
   const { sessions, isLoading, refetch } = useSessionList({ includeArchived: showArchived });
+
+  // Keep the list live via the global session-list SSE stream.
+  useSessionListStream(refetch);
 
   return (
     <SessionList

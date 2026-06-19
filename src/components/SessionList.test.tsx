@@ -23,16 +23,6 @@ vi.mock('@/lib/trpc', () => ({
         useQuery: () => ({ data: null, isLoading: false }),
       },
     },
-    sse: {
-      onPrUpdate: {
-        useSubscription: vi.fn(),
-      },
-    },
-    useUtils: () => ({
-      github: {
-        getSessionPrStatus: { setData: vi.fn() },
-      },
-    }),
   },
 }));
 
