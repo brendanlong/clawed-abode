@@ -85,11 +85,11 @@ export function getToolResults(content: MessageContent): ContentBlock[] {
  * Keep the renderable cases in sync with `ContentRenderer.renderContentBlocks`.
  */
 export function hasRenderableAssistantContent(content: MessageContent): boolean {
-  const blocks = content.message?.content;
+  const blocks = content?.message?.content;
   // Non-array content (e.g. a string) is handled by other display paths.
   if (!Array.isArray(blocks)) return true;
   return blocks.some((block) => {
-    switch (block.type) {
+    switch (block?.type) {
       case 'text':
         return typeof block.text === 'string' && block.text.trim().length > 0;
       case 'thinking':
