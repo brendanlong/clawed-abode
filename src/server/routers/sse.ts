@@ -21,6 +21,12 @@ function createEventQueue<T>(subscribe: (push: (event: T) => void) => () => void
   });
   const waitForEvent = (signal: AbortSignal | undefined): Promise<void> =>
     new Promise<void>((resolve) => {
+      // If already aborted, the 'abort' event has fired and won't fire again,
+      // so resolve synchronously to avoid hanging the generator.
+      if (signal?.aborted) {
+        resolve();
+        return;
+      }
       const onAbort = () => resolve();
       resolveWait = () => {
         signal?.removeEventListener('abort', onAbort);
@@ -34,22 +40,34 @@ function createEventQueue<T>(subscribe: (push: (event: T) => void) => () => void
 export const sseRouter = router({
   // Single multiplexed stream of all event kinds for one session.
   //
-  // `lastEventId` is supplied by tRPC automatically on reconnect (from the SSE
-  // `Last-Event-ID` header). Its token encodes the message high-water mark, so we
-  // replay persisted messages missed while disconnected. Non-message events are
-  // "latest value" and are resynced by the client's React Query refetch — they are
-  // streamed live but never replayed.
+  // Catch-up uses a replay floor: messages with `sequence > floor` are replayed
+  // before live streaming begins. The floor comes from one of two places:
+  //   - `lastEventId` — supplied by tRPC automatically on reconnect (from the SSE
+  //     `Last-Event-ID` header); its token encodes the high-water mark.
+  //   - `afterSequence` — the client's newest cached message sequence, captured
+  //     once at mount and sent on the *initial* connect (no lastEventId yet). This
+  //     closes the window between the client's `getHistory` snapshot and the stream
+  //     attaching, during which messages could otherwise be missed by both paths.
+  // With neither, we anchor at the current max (nothing to replay).
+  //
+  // Non-message events are "latest value" and are resynced by the client's React
+  // Query refetch — they are streamed live but never replayed.
   onSessionEvents: protectedProcedure
     .input(
       z.object({
         sessionId: z.string().uuid(),
+        afterSequence: z.number().int().optional(),
         lastEventId: z.string().nullish(),
       })
     )
     .subscription(async function* ({ input, signal }) {
       const resume = parseResumeToken(input.lastEventId);
       let counter = resume?.counter ?? 0;
-      let watermark = resume?.watermark ?? EMPTY_WATERMARK;
+
+      // Replay floor: lastEventId (reconnect) takes precedence over the initial
+      // afterSequence anchor; with neither we don't replay.
+      const replayFloor = resume ? resume.watermark : input.afterSequence;
+      let watermark = replayFloor ?? EMPTY_WATERMARK;
 
       // Subscribe before any awaits so we don't miss live events during replay.
       const { queue, waitForEvent, unsubscribe } = createEventQueue<SessionStreamEvent>((push) =>
@@ -57,10 +75,10 @@ export const sseRouter = router({
       );
 
       try {
-        if (resume) {
+        if (replayFloor !== undefined) {
           // Replay messages persisted since the client's last known sequence.
           const missed = await prisma.message.findMany({
-            where: { sessionId: input.sessionId, sequence: { gt: resume.watermark } },
+            where: { sessionId: input.sessionId, sequence: { gt: replayFloor } },
             orderBy: { sequence: 'asc' },
           });
           for (const msg of missed) {
@@ -78,8 +96,8 @@ export const sseRouter = router({
             });
           }
         } else {
-          // Fresh connect: anchor the watermark at the current max so a later
-          // reconnect replays only messages created from here on.
+          // No catch-up requested: anchor the watermark at the current max so a
+          // later reconnect replays only messages created from here on.
           const last = await prisma.message.findFirst({
             where: { sessionId: input.sessionId },
             orderBy: { sequence: 'desc' },
@@ -111,7 +129,8 @@ export const sseRouter = router({
   onSessionListEvents: protectedProcedure
     .input(z.object({ lastEventId: z.string().nullish() }).optional())
     .subscription(async function* ({ input, signal }) {
-      const seeded = Number(input?.lastEventId);
+      // Guard against Number(null) === 0: only seed from a non-empty id.
+      const seeded = input?.lastEventId ? Number(input.lastEventId) : NaN;
       let counter = Number.isInteger(seeded) ? seeded + 1 : 0;
 
       const { queue, waitForEvent, unsubscribe } = createEventQueue<SessionUpdateEvent>((push) =>
