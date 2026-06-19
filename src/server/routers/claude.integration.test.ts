@@ -207,6 +207,181 @@ describe('claudeRouter integration', () => {
     });
   });
 
+  describe('answerQuestion (fallback path)', () => {
+    // With no in-memory query parked, submitLiveToolResponse returns false, so
+    // these exercise the resume fallback that runs when the runner is gone
+    // (e.g. after a server restart).
+    const createRunningSession = () =>
+      testPrisma.session.create({
+        data: {
+          name: 'Q Session',
+          repoUrl: 'https://github.com/owner/repo.git',
+          branch: 'main',
+          workspacePath: '/workspace/test',
+          status: 'running',
+        },
+      });
+
+    it('marks the question answered and resumes with a new turn', async () => {
+      const session = await createRunningSession();
+      mockIsClaudeRunningAsync.mockResolvedValue(false);
+      mockRunClaudeCommand.mockResolvedValue(undefined);
+
+      const caller = createCaller('auth-session-id');
+      const result = await caller.claude.answerQuestion({
+        sessionId: session.id,
+        toolUseId: 'toolu_q1',
+        answers: { 'Which approach?': 'Option A' },
+      });
+
+      expect(result).toEqual({ success: true, routed: 'fallback' });
+
+      // A synthetic tool_result was persisted so the UI pairs the dangling block.
+      const messages = await testPrisma.message.findMany({ where: { sessionId: session.id } });
+      const toolResult = messages.find((m) => {
+        const content = JSON.parse(m.content);
+        return content.message?.content?.[0]?.tool_use_id === 'toolu_q1';
+      });
+      expect(toolResult).toBeDefined();
+
+      // And the answer was resumed as a new prompt.
+      expect(mockRunClaudeCommand).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sessionId: session.id,
+          prompt: expect.stringContaining('Option A'),
+        })
+      );
+    });
+
+    it('is idempotent: a duplicate answer does not start a second turn', async () => {
+      const session = await createRunningSession();
+      mockIsClaudeRunningAsync.mockResolvedValue(false);
+      mockRunClaudeCommand.mockResolvedValue(undefined);
+
+      const caller = createCaller('auth-session-id');
+      const args = {
+        sessionId: session.id,
+        toolUseId: 'toolu_dup',
+        answers: { q: 'A' },
+      };
+
+      const first = await caller.claude.answerQuestion(args);
+      const second = await caller.claude.answerQuestion(args);
+
+      expect(first.routed).toBe('fallback');
+      expect(second.routed).toBe('already');
+      expect(mockRunClaudeCommand).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not drop a second answer when two tool calls are answered concurrently', async () => {
+      // Two different tool_use ids answered at once race on the read-then-insert
+      // sequence assignment. Both must be written (with retry) — neither should
+      // be silently reported as already-answered.
+      const session = await createRunningSession();
+      mockIsClaudeRunningAsync.mockResolvedValue(false);
+      mockRunClaudeCommand.mockResolvedValue(undefined);
+
+      const caller = createCaller('auth-session-id');
+      const [a, b] = await Promise.all([
+        caller.claude.answerQuestion({
+          sessionId: session.id,
+          toolUseId: 'toolu_a',
+          answers: { q: 'A' },
+        }),
+        caller.claude.answerQuestion({
+          sessionId: session.id,
+          toolUseId: 'toolu_b',
+          answers: { q: 'B' },
+        }),
+      ]);
+
+      expect(a.routed).toBe('fallback');
+      expect(b.routed).toBe('fallback');
+
+      const messages = await testPrisma.message.findMany({ where: { sessionId: session.id } });
+      const toolUseIds = messages
+        .map((m) => JSON.parse(m.content).message?.content?.[0]?.tool_use_id)
+        .filter(Boolean);
+      expect(toolUseIds).toContain('toolu_a');
+      expect(toolUseIds).toContain('toolu_b');
+
+      // Sequences must be unique (no collision survived).
+      const sequences = messages.map((m) => m.sequence);
+      expect(new Set(sequences).size).toBe(sequences.length);
+      expect(mockRunClaudeCommand).toHaveBeenCalledTimes(2);
+    });
+
+    it('throws CONFLICT when a query is still processing', async () => {
+      const session = await createRunningSession();
+      mockIsClaudeRunningAsync.mockResolvedValue(true);
+
+      const caller = createCaller('auth-session-id');
+
+      await expect(
+        caller.claude.answerQuestion({
+          sessionId: session.id,
+          toolUseId: 'toolu_busy',
+          answers: { q: 'A' },
+        })
+      ).rejects.toMatchObject({ code: 'CONFLICT' });
+      expect(mockRunClaudeCommand).not.toHaveBeenCalled();
+    });
+
+    it('throws PRECONDITION_FAILED when the session is not running', async () => {
+      const session = await testPrisma.session.create({
+        data: {
+          name: 'Stopped Q Session',
+          repoUrl: 'https://github.com/owner/repo.git',
+          branch: 'main',
+          workspacePath: '/workspace/test',
+          status: 'stopped',
+        },
+      });
+
+      const caller = createCaller('auth-session-id');
+
+      await expect(
+        caller.claude.answerQuestion({
+          sessionId: session.id,
+          toolUseId: 'toolu_stopped',
+          answers: { q: 'A' },
+        })
+      ).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+    });
+  });
+
+  describe('respondToPlan (fallback path)', () => {
+    it('resumes with a revise prompt when changes are requested', async () => {
+      const session = await testPrisma.session.create({
+        data: {
+          name: 'Plan Session',
+          repoUrl: 'https://github.com/owner/repo.git',
+          branch: 'main',
+          workspacePath: '/workspace/test',
+          status: 'running',
+        },
+      });
+      mockIsClaudeRunningAsync.mockResolvedValue(false);
+      mockRunClaudeCommand.mockResolvedValue(undefined);
+
+      const caller = createCaller('auth-session-id');
+      const result = await caller.claude.respondToPlan({
+        sessionId: session.id,
+        toolUseId: 'toolu_plan',
+        approve: false,
+        feedback: 'use a queue',
+      });
+
+      expect(result).toEqual({ success: true, routed: 'fallback' });
+      expect(mockRunClaudeCommand).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sessionId: session.id,
+          prompt: expect.stringContaining('use a queue'),
+        })
+      );
+    });
+  });
+
   describe('interrupt', () => {
     it('should interrupt Claude successfully', async () => {
       const session = await testPrisma.session.create({
@@ -421,7 +596,7 @@ describe('claudeRouter integration', () => {
         sessionId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',
       });
 
-      expect(result).toEqual({ running: true, hasPendingInput: false });
+      expect(result).toEqual({ running: true });
     });
 
     it('should return not running status', async () => {
@@ -432,7 +607,7 @@ describe('claudeRouter integration', () => {
         sessionId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',
       });
 
-      expect(result).toEqual({ running: false, hasPendingInput: false });
+      expect(result).toEqual({ running: false });
     });
 
     it('should require authentication', async () => {
