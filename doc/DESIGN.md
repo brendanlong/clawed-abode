@@ -222,7 +222,7 @@ claude.getHistory({
 4. Messages stream from the SDK:
    - **Partial messages**: `stream_event` messages are accumulated by `StreamAccumulator` and emitted via SSE for real-time UI updates (not persisted).
    - **Complete messages**: Saved to database with incrementing sequence numbers, emitted via SSE.
-5. Browser client receives SSE events and updates the message cache.
+5. Browser client receives SSE events (over the single multiplexed per-session stream — see [Real-Time Updates](#real-time-updates-sse)) and updates the message cache.
 6. On completion, `result` message marks end of turn.
 
 ### System Prompt
@@ -249,11 +249,18 @@ This ensures users can see all changes through GitHub, which is their only way t
 
 ### Reconnection Flow
 
-1. Client reconnects after disconnect
-2. Client calls `claude.getHistory({ sessionId, cursor: lastSeenSequence, direction: 'after' })`
-3. Server returns all messages after that sequence
-4. Client merges into local state
-5. If a `claude` process is still running, client re-subscribes to stream
+Reconnection is handled by the SSE layer's native resume rather than an explicit
+catch-up query (see [Real-Time Updates](#real-time-updates-sse)):
+
+1. `EventSource` auto-reconnects after a transient drop, sending the `Last-Event-ID`
+   header tRPC delivers as the subscription's `lastEventId` input.
+2. The server parses the resume token, replays persisted messages with `sequence`
+   greater than the token's watermark, then resumes live streaming.
+3. The client merges replayed messages into the React Query cache (deduped by id).
+4. Latest-value state (running, commands, PR, session) is not replayed; the client
+   refetches those queries on reconnect (`useRefetchOnReconnect`) as a resync.
+5. A `ConnectionStatusIndicator` shows a "reconnecting" banner while the stream is
+   not connected.
 
 ### Deletion Flow
 
@@ -297,6 +304,48 @@ The hard part is that the parked `Promise` lives only in the in-memory session m
 The SDK emits `stream_event` messages which are accumulated by `StreamAccumulator` into partial assistant messages for real-time UI updates. These are emitted to the browser via SSE but not persisted.
 
 **Implementation:** [`src/server/services/claude-runner.ts`](../src/server/services/claude-runner.ts)
+
+### Real-Time Updates (SSE)
+
+All live server→client updates flow over **SSE** via tRPC's `httpSubscriptionLink`
+(client→server actions are ordinary HTTP mutations, so a bidirectional transport like
+WebSockets is unnecessary). `httpSubscriptionLink` opens one `EventSource` per
+subscription, so the app is deliberately structured around just **two** streams:
+
+1. **Per-session multiplexed stream** — `sse.onSessionEvents({ sessionId })`. A single
+   subscription yields a discriminated union of every event kind for the session
+   (`message`, `running`, `commands`, `pr`, `session`). The server folds the five
+   in-process emitter channels into this union via `sseEvents.onSessionEvents`
+   ([`events.ts`](../src/server/services/events.ts)). On the client, `useSessionStream`
+   ([`src/hooks/useSessionStream.ts`](../src/hooks/useSessionStream.ts)) is mounted once
+   per session page and fans each event to the relevant React Query cache (the message
+   merge uses the pure `mergeMessageIntoCache` in
+   [`src/lib/message-cache.ts`](../src/lib/message-cache.ts)). The query hooks
+   (`useSessionMessages`, `useSessionState`, `useClaudeState`, `usePullRequestStatus`)
+   are read/mutate-only and never open their own subscriptions.
+
+2. **Global session-list stream** — `sse.onSessionListEvents()`. `emitSessionUpdate`
+   fans every session change out to a global channel; `useSessionListStream`
+   ([`src/hooks/useSessionListStream.ts`](../src/hooks/useSessionListStream.ts)) refetches
+   the home-page list so it updates live for any session, without one subscription per row.
+
+**Resume tokens & catch-up.** The subscription input is **stable** (`{ sessionId }`); a
+reactive cursor would tear the `EventSource` down on every turn. Instead each yielded event
+is wrapped in tRPC's `tracked(id, ...)` where the id is a
+`` `${watermark}:${counter}` `` token ([`src/lib/sse-resume.ts`](../src/lib/sse-resume.ts)):
+
+- `watermark` = the highest persisted message `sequence` yielded so far. On reconnect tRPC
+  resends it as `lastEventId`; the server replays `message.sequence > watermark`. Only
+  complete (persisted) messages advance the watermark — partials and latest-value events do
+  not, so they are streamed live but never replayed (the client refetches their state on
+  reconnect instead).
+- `counter` = strictly increasing per connection, seeded from the previous `lastEventId`, so
+  ids never repeat across reconnects (tRPC drops events with a repeated tracked id).
+
+**Failure handling.** `EventSource` auto-reconnects with `Last-Event-ID`; on a connection
+error the client also refetches the affected queries (`useSessionStream` / `useRefetchOnReconnect`)
+and surfaces a `ConnectionStatusIndicator` banner. tRPC SSE ping/reconnect is configured in
+[`src/server/trpc.ts`](../src/server/trpc.ts) (`ping.intervalMs`, `client.reconnectAfterInactivityMs`).
 
 ### Thinking Blocks
 
@@ -542,8 +591,11 @@ clawed-abode/
 │   │   ├── logger.ts             # Centralized logging (createLogger)
 │   │   ├── prisma.ts             # Prisma client initialization
 │   │   ├── trpc.ts               # tRPC client setup
+│   │   ├── message-cache.ts      # Pure merge of live messages into the infinite-query cache
+│   │   ├── sse-resume.ts         # Resume-token (watermark:counter) format/parse for SSE
 │   │   └── types.ts              # Global TypeScript types
-│   ├── hooks/                    # React hooks (session state, messages, etc.)
+│   ├── hooks/                    # React hooks (useSessionStream + useSessionListStream for SSE,
+│   │                             #   useSessionMessages/State, useClaudeState, etc.)
 │   ├── app/
 │   │   ├── page.tsx              # Session list
 │   │   ├── new/page.tsx          # New session
@@ -554,6 +606,7 @@ clawed-abode/
 │       ├── MessageList.tsx
 │       ├── PromptInput.tsx
 │       ├── SessionList.tsx
+│       ├── ConnectionStatusIndicator.tsx # "Reconnecting" banner when the SSE stream is down
 │       ├── Header.tsx
 │       ├── messages/             # Tool-specific display components (Bash, Edit, Read, etc.)
 │       ├── settings/             # Settings UI (global settings, repo settings, audio, env vars, MCP)
