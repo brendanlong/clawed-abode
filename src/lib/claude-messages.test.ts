@@ -762,6 +762,19 @@ describe('claude-messages', () => {
       ).toEqual({ attempt: 1, maxRetries: 5, error: undefined, errorStatus: undefined });
     });
 
+    it('accepts error_status: null (connection errors / timeouts with no HTTP response)', () => {
+      expect(
+        parseApiRetryMessage({
+          type: 'system',
+          subtype: 'api_retry',
+          attempt: 3,
+          max_retries: 10,
+          error_status: null,
+          error: 'server_error',
+        })
+      ).toEqual({ attempt: 3, maxRetries: 10, error: 'server_error', errorStatus: undefined });
+    });
+
     it('returns null for non-retry messages', () => {
       expect(parseApiRetryMessage({ type: 'system', subtype: 'init' })).toBeNull();
       expect(parseApiRetryMessage({ type: 'assistant' })).toBeNull();

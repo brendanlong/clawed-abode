@@ -262,7 +262,9 @@ export const ApiRetrySystemContentSchema = z.object({
   attempt: z.number(),
   max_retries: z.number(),
   retry_delay_ms: z.number().optional(),
-  error_status: z.number().optional(),
+  // The SDK sends error_status: null for connection errors (e.g. timeouts) that
+  // had no HTTP response, so this must accept null — not just undefined.
+  error_status: z.number().nullish(),
   error: z.string().optional(),
 });
 export type ApiRetrySystemContent = z.infer<typeof ApiRetrySystemContentSchema>;
@@ -290,7 +292,8 @@ export function parseApiRetryMessage(message: unknown): ApiRetryStatus | null {
     attempt: parsed.data.attempt,
     maxRetries: parsed.data.max_retries,
     error: parsed.data.error,
-    errorStatus: parsed.data.error_status,
+    // Normalize the SDK's null (no HTTP response) to undefined for the UI snapshot.
+    errorStatus: parsed.data.error_status ?? undefined,
   };
 }
 
