@@ -79,11 +79,11 @@ function CheckIcon() {
  */
 export function ExitPlanModeDisplay({ tool }: { tool: ToolCall }) {
   const ctx = useMessageListContext();
-  const planContent = ctx?.latestPlanContent;
   const onRespondToPlan = ctx?.onRespondToPlan;
   const hasOutput = tool.output !== undefined;
   const isPending = !hasOutput;
   const toolUseId = tool.id;
+  const planContent = toolUseId ? ctx?.planContentByToolUseId?.get(toolUseId) : undefined;
   const [copied, setCopied] = useState(false);
   const [showFeedback, setShowFeedback] = useState(false);
   const [feedback, setFeedback] = useState('');
