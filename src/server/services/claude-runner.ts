@@ -19,7 +19,12 @@ import {
   type PermissionResult,
 } from '@anthropic-ai/claude-agent-sdk';
 import { prisma } from '@/lib/prisma';
-import { classifyMessage, SystemInitContentSchema } from '@/lib/claude-messages';
+import {
+  classifyMessage,
+  parseApiRetryMessage,
+  SystemInitContentSchema,
+  type ApiRetryStatus,
+} from '@/lib/claude-messages';
 import { type ToolResponse, buildSyntheticToolResultContent } from '@/lib/tool-response';
 import { extractRepoFullName } from '@/lib/utils';
 import { v4 as uuid, v5 as uuidv5 } from 'uuid';
@@ -117,6 +122,8 @@ interface SessionState {
   workingDir: string;
   /** Discovered slash commands (cached for getCommands endpoint) */
   commands: SlashCommand[];
+  /** Current ephemeral rate-limit retry status, or null when not retrying */
+  retryStatus: ApiRetryStatus | null;
 }
 
 /** Active sessions tracked in memory */
@@ -228,6 +235,7 @@ function getSessionState(sessionId: string, workingDir: string): SessionState {
       pendingInput: null,
       workingDir,
       commands: persistedCommands.get(sessionId) ?? [],
+      retryStatus: null,
     };
     sessions.set(sessionId, state);
   }
@@ -600,7 +608,26 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
         log.debug('Failed to fetch supportedCommands', { sessionId, error: toError(err).message });
       });
 
+    // Emit ephemeral retry status without persisting; clear a stale banner once
+    // the API call succeeds (any non-retry message flows again) or the turn ends.
+    const clearRetryStatus = (): void => {
+      if (state.retryStatus) {
+        state.retryStatus = null;
+        sseEvents.emitRetryStatus(sessionId, null);
+      }
+    };
+
     for await (const message of q) {
+      // Rate-limit / overloaded retries are surfaced as transient status, never
+      // persisted, so they don't pollute the conversation history.
+      const retry = parseApiRetryMessage(message);
+      if (retry) {
+        state.retryStatus = retry;
+        sseEvents.emitRetryStatus(sessionId, retry);
+        continue;
+      }
+      clearRetryStatus();
+
       // Extract slash_commands from system init messages and merge with
       // rich commands from supportedCommands(). The SDK's supportedCommands()
       // only returns "skills", but the system init message contains all
@@ -702,6 +729,12 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
   } finally {
     state.isRunning = false;
     state.currentQuery = null;
+
+    // Clear any lingering retry banner now that the turn has ended.
+    if (state.retryStatus) {
+      state.retryStatus = null;
+      sseEvents.emitRetryStatus(sessionId, null);
+    }
 
     // Reject any pending user input promise so the SDK doesn't hang
     if (state.pendingInput) {

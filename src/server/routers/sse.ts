@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { router, protectedProcedure } from '../trpc';
 import { sseEvents } from '../services/events';
-import type { PrUpdateEvent } from '../services/events';
+import type { PrUpdateEvent, RetryStatusEvent } from '../services/events';
 import { tracked } from '@trpc/server';
 import { prisma } from '@/lib/prisma';
 
@@ -229,6 +229,40 @@ export const sseRouter = router({
           if (events.length > 0) {
             const event = events.shift()!;
             yield tracked(`${event.sessionId}-pr-${counter++}`, event);
+          } else {
+            await new Promise<void>((resolve) => {
+              const onAbort = () => resolve();
+              resolveWait = () => {
+                signal?.removeEventListener('abort', onAbort);
+                resolve();
+              };
+              signal?.addEventListener('abort', onAbort, { once: true });
+            });
+          }
+        }
+      } finally {
+        unsubscribe();
+      }
+    }),
+
+  // Subscribe to ephemeral rate-limit retry status for a session
+  onRetryStatus: protectedProcedure
+    .input(z.object({ sessionId: z.string().uuid() }))
+    .subscription(async function* ({ input, signal }) {
+      const events: RetryStatusEvent[] = [];
+      let resolveWait: (() => void) | null = null;
+      let counter = 0;
+
+      const unsubscribe = sseEvents.onRetryStatus(input.sessionId, (event) => {
+        events.push(event);
+        resolveWait?.();
+      });
+
+      try {
+        while (!signal?.aborted) {
+          if (events.length > 0) {
+            const event = events.shift()!;
+            yield tracked(`${event.sessionId}-retry-${counter++}`, event);
           } else {
             await new Promise<void>((resolve) => {
               const onAbort = () => resolve();

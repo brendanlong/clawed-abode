@@ -2,6 +2,7 @@ import { EventEmitter } from 'events';
 import type { Message, Session } from '@prisma/client';
 import type { SlashCommand } from '@anthropic-ai/claude-agent-sdk';
 import type { PullRequestInfo } from './github';
+import type { ApiRetryStatus } from '@/lib/claude-messages';
 
 // Message with parsed content (for SSE events)
 export type ParsedMessage = Omit<Message, 'content'> & { content: unknown };
@@ -37,12 +38,24 @@ export interface PrUpdateEvent {
   pullRequest: PullRequestInfo | null;
 }
 
+/**
+ * Ephemeral rate-limit retry status. `retry` is the current attempt while the
+ * SDK is retrying a transient API failure, or null once it succeeds / the turn
+ * ends. Never persisted — purely a transient UI indicator.
+ */
+export interface RetryStatusEvent {
+  type: 'retry_status';
+  sessionId: string;
+  retry: ApiRetryStatus | null;
+}
+
 export type SSEEvent =
   | SessionUpdateEvent
   | MessageEvent
   | ClaudeRunningEvent
   | CommandsEvent
-  | PrUpdateEvent;
+  | PrUpdateEvent
+  | RetryStatusEvent;
 
 // Create a typed event emitter
 class SSEEventEmitter extends EventEmitter {
@@ -116,6 +129,20 @@ class SSEEventEmitter extends EventEmitter {
 
   onPrUpdate(sessionId: string, callback: (event: PrUpdateEvent) => void): () => void {
     const eventName = `pr:${sessionId}`;
+    this.on(eventName, callback);
+    return () => this.off(eventName, callback);
+  }
+
+  emitRetryStatus(sessionId: string, retry: ApiRetryStatus | null): void {
+    this.emit(`retry:${sessionId}`, {
+      type: 'retry_status',
+      sessionId,
+      retry,
+    } satisfies RetryStatusEvent);
+  }
+
+  onRetryStatus(sessionId: string, callback: (event: RetryStatusEvent) => void): () => void {
+    const eventName = `retry:${sessionId}`;
     this.on(eventName, callback);
     return () => this.off(eventName, callback);
   }

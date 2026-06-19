@@ -16,6 +16,7 @@ import {
   parseClaudeStreamLine,
   classifyMessage,
   isIgnoredSystemMessage,
+  parseApiRetryMessage,
   buildToolResultMap,
   AssistantMessage,
   UserMessage,
@@ -679,6 +680,7 @@ describe('claude-messages', () => {
         'files_persisted',
         'elicitation_complete',
         'commands_changed',
+        'api_retry',
       ]) {
         expect(msg({ type: 'system', subtype })).toEqual({ kind: 'skip' });
       }
@@ -691,12 +693,7 @@ describe('claude-messages', () => {
     });
 
     it('persists summarized system subtypes', () => {
-      for (const subtype of [
-        'notification',
-        'api_retry',
-        'permission_denied',
-        'task_notification',
-      ]) {
+      for (const subtype of ['notification', 'permission_denied', 'task_notification']) {
         expect(msg({ type: 'system', subtype })).toEqual({ kind: 'persist', dbType: 'system' });
       }
     });
@@ -717,6 +714,10 @@ describe('claude-messages', () => {
       expect(isIgnoredSystemMessage({ type: 'system', subtype: 'commands_changed' })).toBe(true);
     });
 
+    it('returns true for api_retry so it is never persisted', () => {
+      expect(isIgnoredSystemMessage({ type: 'system', subtype: 'api_retry' })).toBe(true);
+    });
+
     it('returns true for any system message flagged skip_transcript', () => {
       expect(
         isIgnoredSystemMessage({ type: 'system', subtype: 'task_started', skip_transcript: true })
@@ -735,6 +736,37 @@ describe('claude-messages', () => {
       expect(isIgnoredSystemMessage(null)).toBe(false);
       expect(isIgnoredSystemMessage(undefined)).toBe(false);
       expect(isIgnoredSystemMessage('thinking_tokens')).toBe(false);
+    });
+  });
+
+  describe('parseApiRetryMessage', () => {
+    it('extracts retry status from an api_retry system message', () => {
+      expect(
+        parseApiRetryMessage({
+          type: 'system',
+          subtype: 'api_retry',
+          attempt: 2,
+          max_retries: 10,
+          retry_delay_ms: 1184.18,
+          error_status: 529,
+          error: 'overloaded',
+          session_id: 's1',
+          uuid: 'u1',
+        })
+      ).toEqual({ attempt: 2, maxRetries: 10, error: 'overloaded', errorStatus: 529 });
+    });
+
+    it('works with only the required fields', () => {
+      expect(
+        parseApiRetryMessage({ type: 'system', subtype: 'api_retry', attempt: 1, max_retries: 5 })
+      ).toEqual({ attempt: 1, maxRetries: 5, error: undefined, errorStatus: undefined });
+    });
+
+    it('returns null for non-retry messages', () => {
+      expect(parseApiRetryMessage({ type: 'system', subtype: 'init' })).toBeNull();
+      expect(parseApiRetryMessage({ type: 'assistant' })).toBeNull();
+      expect(parseApiRetryMessage({ type: 'system', subtype: 'api_retry' })).toBeNull();
+      expect(parseApiRetryMessage(null)).toBeNull();
     });
   });
 

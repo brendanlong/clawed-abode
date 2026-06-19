@@ -251,6 +251,50 @@ export const SystemCompactBoundaryContentSchema = z.object({
 export type SystemCompactBoundaryContent = z.infer<typeof SystemCompactBoundaryContentSchema>;
 
 /**
+ * API retry message content - emitted while the SDK retries a transient API
+ * failure (e.g. a 429 rate limit or 529 overloaded). These are surfaced as
+ * ephemeral "currently retrying" status (see {@link parseApiRetryMessage}) and
+ * never persisted, so they don't clutter the conversation history.
+ */
+export const ApiRetrySystemContentSchema = z.object({
+  type: z.literal('system'),
+  subtype: z.literal('api_retry'),
+  attempt: z.number(),
+  max_retries: z.number(),
+  retry_delay_ms: z.number().optional(),
+  error_status: z.number().optional(),
+  error: z.string().optional(),
+});
+export type ApiRetrySystemContent = z.infer<typeof ApiRetrySystemContentSchema>;
+
+/**
+ * Ephemeral, UI-facing snapshot of an in-progress API retry. Carried over SSE to
+ * show a transient "retrying due to rate limits (n/max)" indicator.
+ */
+export interface ApiRetryStatus {
+  attempt: number;
+  maxRetries: number;
+  error?: string;
+  errorStatus?: number;
+}
+
+/**
+ * Extract retry status from a streamed message if it is an `api_retry` system
+ * message, else null. Used by the runner to emit ephemeral retry status instead
+ * of persisting the message.
+ */
+export function parseApiRetryMessage(message: unknown): ApiRetryStatus | null {
+  const parsed = ApiRetrySystemContentSchema.safeParse(message);
+  if (!parsed.success) return null;
+  return {
+    attempt: parsed.data.attempt,
+    maxRetries: parsed.data.max_retries,
+    error: parsed.data.error,
+    errorStatus: parsed.data.error_status,
+  };
+}
+
+/**
  * Generic system content (for other subtypes like status, hook_started, hook_response, etc.)
  * Uses passthrough() to preserve all properties from the original message, since different
  * system subtypes have varying fields (e.g., hook_id, status, task_id, etc.).
@@ -837,6 +881,9 @@ export type MessageHandling =
  * - `status`, `session_state_changed`: transient session/run state.
  * - `files_persisted`, `elicitation_complete`: internal bookkeeping events.
  * - `commands_changed`: slash-command list updates (not chat content).
+ * - `api_retry`: transient API retry ticks (rate limit / overloaded). The current
+ *   attempt is surfaced as ephemeral status over SSE (see {@link parseApiRetryMessage})
+ *   rather than persisted, so retries don't pollute the conversation history.
  *
  * Without this filter each would render as an empty "System" bubble.
  */
@@ -850,6 +897,7 @@ export const IGNORED_SYSTEM_SUBTYPES = [
   'files_persisted',
   'elicitation_complete',
   'commands_changed',
+  'api_retry',
 ] as const;
 
 /**

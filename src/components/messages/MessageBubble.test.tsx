@@ -265,7 +265,7 @@ describe('MessageBubble', () => {
       expect(screen.getByText('Your token will expire soon')).toBeInTheDocument();
     });
 
-    it('summarizes an api_retry with attempt count', () => {
+    it('renders nothing for api_retry (surfaced as ephemeral status instead)', () => {
       const message = {
         type: 'system',
         content: {
@@ -273,14 +273,13 @@ describe('MessageBubble', () => {
           subtype: 'api_retry',
           attempt: 2,
           max_retries: 5,
-          error: { message: 'overloaded' },
+          error: 'overloaded',
         } as MessageContent,
       };
 
-      render(<MessageBubble message={message} />);
+      const { container } = render(<MessageBubble message={message} />);
 
-      expect(screen.getByText('Retrying request')).toBeInTheDocument();
-      expect(screen.getByText('Attempt 2/5 — overloaded')).toBeInTheDocument();
+      expect(container).toBeEmptyDOMElement();
     });
 
     it('falls back to a humanized label for unknown subtypes', () => {

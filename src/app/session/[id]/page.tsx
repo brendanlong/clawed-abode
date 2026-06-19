@@ -48,6 +48,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
   // Claude state: running, send, interrupt, commands
   const {
     isRunning: isClaudeRunning,
+    retryStatus,
     send: sendPrompt,
     interrupt,
     isInterrupting,
@@ -273,7 +274,11 @@ function SessionView({ sessionId }: { sessionId: string }) {
           />
         ) : (
           <>
-            <ClaudeStatusIndicator isRunning={isClaudeRunning} containerStatus={session.status} />
+            <ClaudeStatusIndicator
+              isRunning={isClaudeRunning}
+              containerStatus={session.status}
+              retryStatus={retryStatus}
+            />
             <PromptInput
               onSubmit={handleSendPromptWithVoice}
               onInterrupt={interrupt}

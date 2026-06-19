@@ -1,5 +1,6 @@
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import { trpc } from '@/lib/trpc';
+import type { ApiRetryStatus } from '@/lib/claude-messages';
 import { useRefetchOnReconnect } from './useRefetchOnReconnect';
 
 /**
@@ -7,6 +8,9 @@ import { useRefetchOnReconnect } from './useRefetchOnReconnect';
  */
 export function useClaudeState(sessionId: string) {
   const utils = trpc.useUtils();
+
+  // Ephemeral rate-limit retry status (not persisted; lives only while retrying)
+  const [retryStatus, setRetryStatus] = useState<ApiRetryStatus | null>(null);
 
   // Fetch Claude running state
   const { data: runningData, refetch } = trpc.claude.isRunning.useQuery({ sessionId });
@@ -33,10 +37,25 @@ export function useClaudeState(sessionId: string) {
         // When Claude finishes running, refetch commands in case new ones were discovered
         if (!trackedData.data.running) {
           refetchCommands();
+          // The retry banner is meaningless once the turn ends.
+          setRetryStatus(null);
         }
       },
       onError: (err) => {
         console.error('Claude running SSE error:', err);
+      },
+    }
+  );
+
+  // Subscribe to ephemeral rate-limit retry status via SSE
+  trpc.sse.onRetryStatus.useSubscription(
+    { sessionId },
+    {
+      onData: (trackedData) => {
+        setRetryStatus(trackedData.data.retry);
+      },
+      onError: (err) => {
+        console.error('Retry status SSE error:', err);
       },
     }
   );
@@ -89,6 +108,7 @@ export function useClaudeState(sessionId: string) {
 
   return {
     isRunning,
+    retryStatus,
     send,
     interrupt,
     isInterrupting: interruptMutation.isPending,

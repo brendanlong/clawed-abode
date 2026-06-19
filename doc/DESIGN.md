@@ -312,11 +312,19 @@ Every message yielded by the SDK is routed through `classifyMessage(message)` in
 
 The SDK emits many `type: 'system'` subtypes. A single `type`-level switch can't distinguish them, so subtype handling is split into three buckets (none of which is compile-time exhaustive — unknown subtypes fall through to a safe default):
 
-1. **Ignored** (`IGNORED_SYSTEM_SUBTYPES` + any message flagged `skip_transcript`): pure progress ticks and internal state — `thinking_tokens`, `task_progress`, `task_updated`, `hook_progress`, `status`, `session_state_changed`, `files_persisted`, `elicitation_complete`, `commands_changed`. `classifyMessage` returns `skip`, so they are never persisted; `isIgnoredSystemMessage` also filters any persisted before a subtype was added (both at the list level in `MessageList` so they leave no empty spacer row, and as a guard in `MessageBubble`).
+1. **Ignored** (`IGNORED_SYSTEM_SUBTYPES` + any message flagged `skip_transcript`): pure progress ticks and internal state — `thinking_tokens`, `task_progress`, `task_updated`, `hook_progress`, `status`, `session_state_changed`, `files_persisted`, `elicitation_complete`, `commands_changed`, `api_retry`. `classifyMessage` returns `skip`, so they are never persisted; `isIgnoredSystemMessage` also filters any persisted before a subtype was added (both at the list level in `MessageList` so they leave no empty spacer row, and as a guard in `MessageBubble`).
 2. **Dedicated displays**: `init`, `compact_boundary`, `hook_started`, `hook_response`, and the app's synthetic `error` each have their own component.
-3. **Generic summary**: everything else (e.g. `notification`, `api_retry`, `permission_denied`, `model_refusal_fallback`, `plugin_install`, `memory_recall`, `mirror_error`, `task_started`, `task_notification`) renders through `SystemMessageDisplay`, which calls `summarizeSystemMessage` to produce a never-blank `{ label, body, level }`. Unknown/future subtypes degrade to a humanized label plus any string `content`, so a system message is never an empty bubble. `level: 'warn'` (retries, denials, errors) gets an amber treatment.
+3. **Generic summary**: everything else (e.g. `notification`, `permission_denied`, `model_refusal_fallback`, `plugin_install`, `memory_recall`, `mirror_error`, `task_started`, `task_notification`) renders through `SystemMessageDisplay`, which calls `summarizeSystemMessage` to produce a never-blank `{ label, body, level }`. Unknown/future subtypes degrade to a humanized label plus any string `content`, so a system message is never an empty bubble. `level: 'warn'` (retries, denials, errors) gets an amber treatment.
 
 Subagent (`Task` tool) lifecycle: `task_started` and `task_notification` are the meaningful bookends and are summarized; the high-frequency `task_progress` ticks and intermediate `task_updated` patches are ignored (their terminal outcome arrives via `task_notification`).
+
+#### Ephemeral Rate-Limit Retry Status
+
+`api_retry` messages (emitted while the SDK retries a transient API failure such as a 429 rate limit or 529 overloaded) are ignored for persistence but are _not_ simply dropped: their current attempt is surfaced as **ephemeral status** so the user can see "Rate limited — retrying (n/max)" without the retries polluting the conversation history.
+
+- `parseApiRetryMessage` ([`src/lib/claude-messages.ts`](../src/lib/claude-messages.ts)) extracts `{ attempt, maxRetries, error, errorStatus }` from the message.
+- The runner ([`claude-runner.ts`](../src/server/services/claude-runner.ts)) emits this over a dedicated SSE channel (`sseEvents.emitRetryStatus` → `sse.onRetryStatus`) and clears it (`retry: null`) as soon as a non-retry message flows again (the call succeeded) or the turn ends. The current status is held in the in-memory `SessionState.retryStatus`.
+- The client (`useClaudeState`) tracks the latest status in local state (also cleared when Claude stops running) and `ClaudeStatusIndicator` renders it in place of the normal "working" line. Like partial messages, this state is purely transient — it is never persisted and not restored on reconnect.
 
 ## Message Storage & Pagination
 
