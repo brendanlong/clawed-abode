@@ -23,6 +23,7 @@ import {
   ResultMessage,
   RawMessage,
   parseRetryState,
+  formatRetryReason,
 } from './claude-messages';
 
 describe('claude-messages', () => {
@@ -758,12 +759,61 @@ describe('claude-messages', () => {
       ).toEqual({ attempt: 1, maxRetries: 5, errorStatus: undefined, error: undefined });
     });
 
+    it('accepts a null error_status (connection error / timeout) as undefined', () => {
+      // The SDK sends error_status: null for connection errors with no HTTP
+      // response; this must parse rather than failing the whole object.
+      expect(
+        parseRetryState({
+          type: 'system',
+          subtype: 'api_retry',
+          attempt: 4,
+          max_retries: 10,
+          error_status: null,
+          error: 'unknown',
+        })
+      ).toEqual({ attempt: 4, maxRetries: 10, errorStatus: undefined, error: 'unknown' });
+    });
+
     it('returns null for non-retry messages', () => {
       expect(parseRetryState({ type: 'system', subtype: 'notification' })).toBeNull();
       expect(parseRetryState({ type: 'assistant' })).toBeNull();
       expect(parseRetryState(null)).toBeNull();
       // Missing required attempt/max_retries fields.
       expect(parseRetryState({ type: 'system', subtype: 'api_retry' })).toBeNull();
+    });
+  });
+
+  describe('formatRetryReason', () => {
+    it('maps canonical SDK error codes to friendly labels', () => {
+      expect(formatRetryReason({ attempt: 1, maxRetries: 10, error: 'overloaded' })).toBe(
+        'overloaded'
+      );
+      expect(formatRetryReason({ attempt: 1, maxRetries: 10, error: 'rate_limit' })).toBe(
+        'rate limited'
+      );
+      expect(formatRetryReason({ attempt: 1, maxRetries: 10, error: 'server_error' })).toBe(
+        'server error'
+      );
+    });
+
+    it('falls back to HTTP status when no error code matches', () => {
+      expect(formatRetryReason({ attempt: 1, maxRetries: 10, errorStatus: 529 })).toBe(
+        'overloaded'
+      );
+      expect(formatRetryReason({ attempt: 1, maxRetries: 10, errorStatus: 429 })).toBe(
+        'rate limited'
+      );
+    });
+
+    it('humanizes other known error codes', () => {
+      expect(formatRetryReason({ attempt: 1, maxRetries: 10, error: 'model_not_found' })).toBe(
+        'model not found'
+      );
+    });
+
+    it('returns null when nothing is known', () => {
+      expect(formatRetryReason({ attempt: 1, maxRetries: 10 })).toBeNull();
+      expect(formatRetryReason({ attempt: 1, maxRetries: 10, error: 'unknown' })).toBeNull();
     });
   });
 

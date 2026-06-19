@@ -15,10 +15,13 @@ export function useClaudeState(sessionId: string) {
     { staleTime: Infinity }
   );
 
-  // Fetch ephemeral API-retry status (rate limit / overload)
-  const { data: retryData, refetch: refetchRetry } = trpc.claude.getRetryState.useQuery({
-    sessionId,
-  });
+  // Fetch ephemeral API-retry status (rate limit / overload). Seeded once and
+  // then kept current by the SSE `retry` channel, so staleTime is Infinity to
+  // stop a window-focus refetch from clobbering the live value with a stale read.
+  const { data: retryData, refetch: refetchRetry } = trpc.claude.getRetryState.useQuery(
+    { sessionId },
+    { staleTime: Infinity }
+  );
 
   // Refetch when app regains visibility or network reconnects
   const refetchAll = useCallback(() => {
