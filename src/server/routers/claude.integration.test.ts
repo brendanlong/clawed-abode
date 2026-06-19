@@ -273,6 +273,44 @@ describe('claudeRouter integration', () => {
       expect(mockRunClaudeCommand).toHaveBeenCalledTimes(1);
     });
 
+    it('does not drop a second answer when two tool calls are answered concurrently', async () => {
+      // Two different tool_use ids answered at once race on the read-then-insert
+      // sequence assignment. Both must be written (with retry) — neither should
+      // be silently reported as already-answered.
+      const session = await createRunningSession();
+      mockIsClaudeRunningAsync.mockResolvedValue(false);
+      mockRunClaudeCommand.mockResolvedValue(undefined);
+
+      const caller = createCaller('auth-session-id');
+      const [a, b] = await Promise.all([
+        caller.claude.answerQuestion({
+          sessionId: session.id,
+          toolUseId: 'toolu_a',
+          answers: { q: 'A' },
+        }),
+        caller.claude.answerQuestion({
+          sessionId: session.id,
+          toolUseId: 'toolu_b',
+          answers: { q: 'B' },
+        }),
+      ]);
+
+      expect(a.routed).toBe('fallback');
+      expect(b.routed).toBe('fallback');
+
+      const messages = await testPrisma.message.findMany({ where: { sessionId: session.id } });
+      const toolUseIds = messages
+        .map((m) => JSON.parse(m.content).message?.content?.[0]?.tool_use_id)
+        .filter(Boolean);
+      expect(toolUseIds).toContain('toolu_a');
+      expect(toolUseIds).toContain('toolu_b');
+
+      // Sequences must be unique (no collision survived).
+      const sequences = messages.map((m) => m.sequence);
+      expect(new Set(sequences).size).toBe(sequences.length);
+      expect(mockRunClaudeCommand).toHaveBeenCalledTimes(2);
+    });
+
     it('throws CONFLICT when a query is still processing', async () => {
       const session = await createRunningSession();
       mockIsClaudeRunningAsync.mockResolvedValue(true);

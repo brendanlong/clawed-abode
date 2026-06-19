@@ -533,9 +533,16 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
         // so the frontend enables the answer UI
         sseEvents.emitClaudeRunning(sessionId, false);
 
-        // Park a promise that will be resolved when the user answers
+        // Park a promise that will be resolved when the user answers. Only one
+        // request can be parked at a time; if the SDK asks for a second
+        // interactive tool before the first is answered (e.g. parallel tool
+        // calls), reject the earlier one rather than orphaning its promise and
+        // wedging the turn.
         try {
           return await new Promise<PermissionResult>((resolve, reject) => {
+            if (state.pendingInput) {
+              state.pendingInput.reject(new Error('Superseded by another tool request'));
+            }
             state.pendingInput = { toolName, toolUseId: toolUseID, input, resolve, reject };
           });
         } finally {
@@ -783,15 +790,24 @@ export async function submitLiveToolResponse(
   }
 }
 
+/** Number of times to retry sequence assignment when a concurrent insert wins the race. */
+const SEQUENCE_RETRY_LIMIT = 5;
+
 /**
  * Persist a synthetic `tool_result` for a tool_use whose query has ended, so the
  * UI pairs the dangling block and stops showing answer controls.
  *
- * The message id is derived from the tool_use id, so a duplicate submit is a
- * no-op (insert hits the unique constraint) — this both makes the fallback
- * idempotent and prevents a double answer from starting two turns.
+ * The message id is derived from the tool_use id, so a duplicate answer for the
+ * same tool call is a no-op (it collides on the primary key) — this makes the
+ * fallback idempotent and prevents a double answer from starting two turns.
  *
- * @returns true if a result was written, false if one already existed.
+ * Sequence is assigned read-then-insert (see the broader race in #356); a
+ * concurrent insert can therefore collide on the `(sessionId, sequence)` unique.
+ * We disambiguate that from a duplicate-answer collision by re-checking the id,
+ * and retry the sequence so a different concurrent answer is never silently
+ * dropped.
+ *
+ * @returns true if a result was written, false if this tool call was already answered.
  */
 export async function persistSyntheticToolResult(
   sessionId: string,
@@ -799,37 +815,52 @@ export async function persistSyntheticToolResult(
   text: string
 ): Promise<boolean> {
   const id = uuidv5(`${sessionId}:tool_result:${toolUseId}`, ERROR_LINE_NAMESPACE);
-
-  const lastMessage = await prisma.message.findFirst({
-    where: { sessionId },
-    orderBy: { sequence: 'desc' },
-    select: { sequence: true },
-  });
-  const sequence = (lastMessage?.sequence ?? -1) + 1;
-
   const content = buildSyntheticToolResultContent({ sessionId, toolUseId, uuid: id, text });
 
-  try {
-    const message = await prisma.message.create({
-      data: { id, sessionId, sequence, type: 'user', content: JSON.stringify(content) },
+  for (let attempt = 0; attempt < SEQUENCE_RETRY_LIMIT; attempt++) {
+    const lastMessage = await prisma.message.findFirst({
+      where: { sessionId },
+      orderBy: { sequence: 'desc' },
+      select: { sequence: true },
     });
+    const sequence = (lastMessage?.sequence ?? -1) + 1;
 
-    sseEvents.emitNewMessage(sessionId, {
-      id: message.id,
-      sessionId,
-      sequence,
-      type: 'user',
-      content,
-      createdAt: message.createdAt,
-    });
-    return true;
-  } catch (err) {
-    if (err && typeof err === 'object' && 'code' in err && err.code === 'P2002') {
-      log.debug('persistSyntheticToolResult: tool call already answered', { sessionId, toolUseId });
-      return false;
+    try {
+      const message = await prisma.message.create({
+        data: { id, sessionId, sequence, type: 'user', content: JSON.stringify(content) },
+      });
+
+      sseEvents.emitNewMessage(sessionId, {
+        id: message.id,
+        sessionId,
+        sequence,
+        type: 'user',
+        content,
+        createdAt: message.createdAt,
+      });
+      return true;
+    } catch (err) {
+      if (!(err && typeof err === 'object' && 'code' in err && err.code === 'P2002')) {
+        throw err;
+      }
+      // A row with our deterministic id already exists → this tool call was
+      // already answered (true idempotency). Otherwise the clash was on the
+      // sequence; recompute and retry so a different answer isn't dropped.
+      const existing = await prisma.message.findUnique({ where: { id }, select: { id: true } });
+      if (existing) {
+        log.debug('persistSyntheticToolResult: tool call already answered', {
+          sessionId,
+          toolUseId,
+        });
+        return false;
+      }
+      log.debug('persistSyntheticToolResult: sequence collision, retrying', { sessionId, attempt });
     }
-    throw err;
   }
+
+  throw new Error(
+    `Failed to persist tool result for ${toolUseId} after ${SEQUENCE_RETRY_LIMIT} attempts`
+  );
 }
 
 /**

@@ -96,14 +96,14 @@ export function ExitPlanModeDisplay({ tool }: { tool: ToolCall }) {
   const inputObj = tool.input as ExitPlanModeInput | undefined;
   const allowedPrompts = inputObj?.allowedPrompts ?? [];
 
-  const handleApprove = useCallback(() => {
+  const handleApprove = () => {
     if (onRespondToPlan && toolUseId) onRespondToPlan(toolUseId, true);
-  }, [onRespondToPlan, toolUseId]);
+  };
 
-  const handleRequestChanges = useCallback(() => {
+  const handleRequestChanges = () => {
     if (onRespondToPlan && toolUseId)
       onRespondToPlan(toolUseId, false, feedback.trim() || undefined);
-  }, [onRespondToPlan, toolUseId, feedback]);
+  };
 
   const handleCopyPlan = useCallback(async () => {
     if (!planContent) return;
