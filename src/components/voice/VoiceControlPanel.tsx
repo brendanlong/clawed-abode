@@ -204,7 +204,7 @@ export function VoiceControlPanel({
   const liveText = interimTranscript.trim();
 
   return (
-    <div className="border-t bg-background flex-shrink-0">
+    <div className="border-t bg-background shrink-0">
       {/* Status line */}
       <div className="px-4 py-2 text-center text-sm text-muted-foreground">
         {isRecording

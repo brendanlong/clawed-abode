@@ -15,7 +15,7 @@ interface TodoWriteInput {
 function CheckIcon() {
   return (
     <svg
-      className="w-4 h-4 text-green-600 dark:text-green-400 flex-shrink-0"
+      className="w-4 h-4 text-green-600 dark:text-green-400 shrink-0"
       fill="none"
       viewBox="0 0 24 24"
       stroke="currentColor"
@@ -30,7 +30,7 @@ function CheckIcon() {
 function SpinnerIcon() {
   return (
     <svg
-      className="w-4 h-4 text-blue-600 dark:text-blue-400 flex-shrink-0 animate-spin"
+      className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0 animate-spin"
       fill="none"
       viewBox="0 0 24 24"
       stroke="currentColor"
@@ -49,7 +49,7 @@ function SpinnerIcon() {
 function CircleIcon() {
   return (
     <svg
-      className="w-4 h-4 text-muted-foreground flex-shrink-0"
+      className="w-4 h-4 text-muted-foreground shrink-0"
       fill="none"
       viewBox="0 0 24 24"
       stroke="currentColor"
@@ -64,7 +64,7 @@ function CircleIcon() {
 function ChecklistIcon() {
   return (
     <svg
-      className="w-4 h-4 text-blue-600 dark:text-blue-400 flex-shrink-0"
+      className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0"
       fill="none"
       viewBox="0 0 24 24"
       stroke="currentColor"

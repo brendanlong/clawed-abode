@@ -26,7 +26,7 @@ export function ThinkingDisplay({
   return (
     <Collapsible open={expanded} onOpenChange={setExpanded} className="mt-2">
       <CollapsibleTrigger className="flex w-full items-center gap-1.5 text-left text-xs text-muted-foreground hover:text-foreground transition-colors">
-        <Brain className="h-3.5 w-3.5 flex-shrink-0" />
+        <Brain className="h-3.5 w-3.5 shrink-0" />
         <span className="italic">Thinking{redacted ? ' (redacted)' : ''}</span>
         <span className="ml-auto">{expanded ? '−' : '+'}</span>
       </CollapsibleTrigger>
