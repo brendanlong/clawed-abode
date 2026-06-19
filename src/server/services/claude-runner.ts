@@ -12,9 +12,15 @@
 
 import { execFile } from 'child_process';
 import { promisify } from 'util';
-import { query, type McpServerConfig, type SlashCommand } from '@anthropic-ai/claude-agent-sdk';
+import {
+  query,
+  type McpServerConfig,
+  type SlashCommand,
+  type PermissionResult,
+} from '@anthropic-ai/claude-agent-sdk';
 import { prisma } from '@/lib/prisma';
 import { classifyMessage, SystemInitContentSchema } from '@/lib/claude-messages';
+import { type ToolResponse, buildSyntheticToolResultContent } from '@/lib/tool-response';
 import { extractRepoFullName } from '@/lib/utils';
 import { v4 as uuid, v5 as uuidv5 } from 'uuid';
 import { sseEvents } from './events';
@@ -66,10 +72,36 @@ const ERROR_LINE_NAMESPACE = '6ba7b810-9dad-11d1-80b4-00c04fd430c8';
  */
 interface PendingUserInput {
   toolName: string;
+  /** The tool_use block id, used to match an incoming answer to this request. */
+  toolUseId: string;
   input: Record<string, unknown>;
-  resolve: (response: { behavior: 'allow'; updatedInput: Record<string, unknown> }) => void;
+  resolve: (result: PermissionResult) => void;
   reject: (error: Error) => void;
 }
+
+/** Translate a user's response into the SDK PermissionResult for the live path. */
+function buildPermissionResult(
+  response: ToolResponse,
+  input: Record<string, unknown>
+): PermissionResult {
+  if (response.kind === 'questions') {
+    return {
+      behavior: 'allow',
+      updatedInput: { questions: input.questions, answers: response.answers },
+    };
+  }
+
+  if (response.approve) {
+    return { behavior: 'allow', updatedInput: input };
+  }
+  return {
+    behavior: 'deny',
+    message:
+      response.feedback?.trim() || 'User rejected the plan. Please revise it before proceeding.',
+  };
+}
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
  * In-memory state for each active session.
@@ -483,7 +515,11 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
       append: systemPrompt,
     },
     tools: { type: 'preset' as const, preset: 'claude_code' as const },
-    canUseTool: async (toolName: string, input: Record<string, unknown>) => {
+    canUseTool: async (
+      toolName: string,
+      input: Record<string, unknown>,
+      { toolUseID }: { toolUseID: string }
+    ): Promise<PermissionResult> => {
       // In safe mode, deny all tools
       if (denyAllTools) {
         return { behavior: 'deny' as const, message: 'Tool use is disabled in safe mode' };
@@ -491,7 +527,7 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
 
       // Handle tools that require user input
       if (toolName === 'AskUserQuestion' || toolName === 'ExitPlanMode') {
-        log.info('canUseTool: Waiting for user input', { sessionId, toolName });
+        log.info('canUseTool: Waiting for user input', { sessionId, toolName, toolUseID });
 
         // Signal that Claude is waiting for input (not actively running)
         // so the frontend enables the answer UI
@@ -499,11 +535,9 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
 
         // Park a promise that will be resolved when the user answers
         try {
-          return await new Promise<{ behavior: 'allow'; updatedInput: Record<string, unknown> }>(
-            (resolve, reject) => {
-              state.pendingInput = { toolName, input, resolve, reject };
-            }
-          );
+          return await new Promise<PermissionResult>((resolve, reject) => {
+            state.pendingInput = { toolName, toolUseId: toolUseID, input, resolve, reject };
+          });
         } finally {
           // Resume "running" state after user answers
           sseEvents.emitClaudeRunning(sessionId, true);
@@ -704,41 +738,98 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
 }
 
 /**
- * Submit an answer to a pending AskUserQuestion or ExitPlanMode tool call.
- * Resolves the parked canUseTool promise so the SDK continues.
+ * Resolve a still-parked AskUserQuestion / ExitPlanMode tool call so the SDK
+ * continues the current turn.
  *
- * @returns true if there was a pending input to answer, false otherwise
+ * Only the in-memory parked promise can do this; once the query has ended the
+ * caller must fall back to resuming with a new turn (see `submitToolResponse`
+ * in the claude router).
+ *
+ * Because the answer round-trips from the browser, the parked promise is
+ * essentially always registered by the time this is called. The short wait only
+ * covers the rare race where the answer beats the SDK's `canUseTool` call: we
+ * wait briefly while a query is actively running, but return immediately when
+ * nothing is running (so the caller can fall back without delay).
+ *
+ * @returns true if the live promise was resolved, false if there was none.
  */
-export function answerUserInput(sessionId: string, answers: Record<string, string>): boolean {
-  const state = sessions.get(sessionId);
-  if (!state?.pendingInput) {
-    log.warn('answerUserInput: No pending input', { sessionId });
-    return false;
+export async function submitLiveToolResponse(
+  sessionId: string,
+  toolUseId: string,
+  response: ToolResponse,
+  waitMs = 3000
+): Promise<boolean> {
+  const deadline = Date.now() + waitMs;
+  for (;;) {
+    const state = sessions.get(sessionId);
+    const pending = state?.pendingInput;
+
+    if (pending && pending.toolUseId === toolUseId) {
+      state!.pendingInput = null;
+      log.info('submitLiveToolResponse: resolving live tool call', {
+        sessionId,
+        toolName: pending.toolName,
+      });
+      pending.resolve(buildPermissionResult(response, pending.input));
+      return true;
+    }
+
+    // A live promise only exists while a query is running. If nothing is
+    // running (completed / stopped / server restarted), nothing will appear.
+    if (!state?.isRunning || Date.now() >= deadline) {
+      return false;
+    }
+    await sleep(150);
   }
+}
 
-  const { toolName, input, resolve } = state.pendingInput;
-  state.pendingInput = null;
+/**
+ * Persist a synthetic `tool_result` for a tool_use whose query has ended, so the
+ * UI pairs the dangling block and stops showing answer controls.
+ *
+ * The message id is derived from the tool_use id, so a duplicate submit is a
+ * no-op (insert hits the unique constraint) — this both makes the fallback
+ * idempotent and prevents a double answer from starting two turns.
+ *
+ * @returns true if a result was written, false if one already existed.
+ */
+export async function persistSyntheticToolResult(
+  sessionId: string,
+  toolUseId: string,
+  text: string
+): Promise<boolean> {
+  const id = uuidv5(`${sessionId}:tool_result:${toolUseId}`, ERROR_LINE_NAMESPACE);
 
-  log.info('answerUserInput: Resolving', { sessionId, toolName });
+  const lastMessage = await prisma.message.findFirst({
+    where: { sessionId },
+    orderBy: { sequence: 'desc' },
+    select: { sequence: true },
+  });
+  const sequence = (lastMessage?.sequence ?? -1) + 1;
 
-  if (toolName === 'AskUserQuestion') {
-    // Return answers in the format the SDK expects
-    resolve({
-      behavior: 'allow',
-      updatedInput: {
-        questions: (input as { questions?: unknown }).questions,
-        answers,
-      },
+  const content = buildSyntheticToolResultContent({ sessionId, toolUseId, uuid: id, text });
+
+  try {
+    const message = await prisma.message.create({
+      data: { id, sessionId, sequence, type: 'user', content: JSON.stringify(content) },
     });
-  } else if (toolName === 'ExitPlanMode') {
-    // For ExitPlanMode, just allow it to proceed
-    resolve({
-      behavior: 'allow',
-      updatedInput: input,
+
+    sseEvents.emitNewMessage(sessionId, {
+      id: message.id,
+      sessionId,
+      sequence,
+      type: 'user',
+      content,
+      createdAt: message.createdAt,
     });
+    return true;
+  } catch (err) {
+    if (err && typeof err === 'object' && 'code' in err && err.code === 'P2002') {
+      log.debug('persistSyntheticToolResult: tool call already answered', { sessionId, toolUseId });
+      return false;
+    }
+    throw err;
   }
-
-  return true;
 }
 
 /**
@@ -748,27 +839,6 @@ export function answerUserInput(sessionId: string, answers: Record<string, strin
  */
 export function getSessionCommands(sessionId: string): SlashCommand[] {
   return persistedCommands.get(sessionId) ?? sessions.get(sessionId)?.commands ?? [];
-}
-
-/**
- * Check if a session has a pending user input request.
- */
-export function hasPendingInput(sessionId: string): boolean {
-  return sessions.get(sessionId)?.pendingInput != null;
-}
-
-/**
- * Get the pending input details for a session (for rendering in the UI on reconnect).
- */
-export function getPendingInput(
-  sessionId: string
-): { toolName: string; input: Record<string, unknown> } | null {
-  const state = sessions.get(sessionId);
-  if (!state?.pendingInput) return null;
-  return {
-    toolName: state.pendingInput.toolName,
-    input: state.pendingInput.input,
-  };
 }
 
 /**

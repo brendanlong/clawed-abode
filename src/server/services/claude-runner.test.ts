@@ -48,8 +48,7 @@ import {
   resetBaseEnvCache,
   mergeSlashCommands,
   getSessionCommands,
-  answerUserInput,
-  hasPendingInput,
+  submitLiveToolResponse,
   isClaudeRunning,
   isClaudeRunningAsync,
   markAllSessionsStopped,
@@ -317,16 +316,13 @@ describe('claude-runner', () => {
     });
   });
 
-  describe('answerUserInput', () => {
-    it('should return false when no pending input exists', () => {
-      const result = answerUserInput('nonexistent-session', { q: 'answer' });
+  describe('submitLiveToolResponse', () => {
+    it('returns false immediately when no query is running for the session', async () => {
+      const result = await submitLiveToolResponse('nonexistent-session', 'toolu_1', {
+        kind: 'questions',
+        answers: { q: 'answer' },
+      });
       expect(result).toBe(false);
-    });
-  });
-
-  describe('hasPendingInput', () => {
-    it('should return false for nonexistent sessions', () => {
-      expect(hasPendingInput('nonexistent-session')).toBe(false);
     });
   });
 
