@@ -825,29 +825,49 @@ export type MessageHandling =
   | { kind: 'persist'; dbType: DbMessageType };
 
 /**
- * System message subtypes that are transient progress events: they arrive
- * frequently during a turn and carry no durable content, so they are never
- * persisted or shown.
+ * System message subtypes that carry no durable value — pure progress ticks or
+ * internal state transitions. They are never persisted or shown.
  *
- * - `thinking_tokens`: live token-count estimates emitted (often many times) while
- *   Claude is thinking. The actual thinking text arrives in the assistant message's
- *   thinking content blocks, so these estimates would otherwise render as a stream
- *   of empty "System" bubbles.
+ * - `thinking_tokens`: live token-count estimates while Claude is thinking; the
+ *   actual reasoning arrives in the assistant message's thinking content blocks.
+ * - `task_progress`: cumulative progress ticks for a running subagent.
+ * - `task_updated`: subagent state-merge patches; the meaningful terminal outcome
+ *   arrives via `task_notification` instead.
+ * - `hook_progress`: streaming hook output between `hook_started`/`hook_response`.
+ * - `status`, `session_state_changed`: transient session/run state.
+ * - `files_persisted`, `elicitation_complete`: internal bookkeeping events.
+ * - `commands_changed`: slash-command list updates (not chat content).
+ *
+ * Without this filter each would render as an empty "System" bubble.
  */
-export const TRANSIENT_SYSTEM_SUBTYPES = ['thinking_tokens'] as const;
+export const IGNORED_SYSTEM_SUBTYPES = [
+  'thinking_tokens',
+  'task_progress',
+  'task_updated',
+  'hook_progress',
+  'status',
+  'session_state_changed',
+  'files_persisted',
+  'elicitation_complete',
+  'commands_changed',
+] as const;
 
 /**
- * Whether a message is a transient progress event that should not be persisted
- * or shown. Operates on loosely-typed content so it can also filter already-stored
- * rows on the client (see {@link classifyMessage} for the typed SDK path).
+ * Whether a system message should be dropped entirely (never persisted or shown).
+ * Operates on loosely-typed content so it can also filter rows stored before a
+ * subtype was added to the ignore list (see {@link classifyMessage} for the typed
+ * SDK path).
  */
-export function isTransientProgressMessage(content: unknown): boolean {
+export function isIgnoredSystemMessage(content: unknown): boolean {
   if (!content || typeof content !== 'object') return false;
   const obj = content as Record<string, unknown>;
+  if (obj.type !== 'system') return false;
+  // The SDK flags ambient/housekeeping tasks with skip_transcript so consumers
+  // hide them from the inline transcript.
+  if (obj.skip_transcript === true) return true;
   return (
-    obj.type === 'system' &&
     typeof obj.subtype === 'string' &&
-    (TRANSIENT_SYSTEM_SUBTYPES as readonly string[]).includes(obj.subtype)
+    (IGNORED_SYSTEM_SUBTYPES as readonly string[]).includes(obj.subtype)
   );
 }
 
@@ -883,7 +903,7 @@ export function classifyMessage(message: SDKMessage): MessageHandling {
     case 'stream_event':
       return { kind: 'stream_event' };
     case 'system':
-      return isTransientProgressMessage(message)
+      return isIgnoredSystemMessage(message)
         ? { kind: 'skip' }
         : { kind: 'persist', dbType: 'system' };
     case 'tool_progress':
