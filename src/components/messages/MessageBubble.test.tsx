@@ -199,20 +199,82 @@ describe('MessageBubble', () => {
     });
   });
 
-  describe('transient progress messages', () => {
-    it('renders nothing for thinking_tokens system messages', () => {
+  describe('ignored system messages', () => {
+    it.each(['thinking_tokens', 'task_progress', 'commands_changed'])(
+      'renders nothing for %s system messages',
+      (subtype) => {
+        const message = {
+          type: 'system',
+          content: { type: 'system', subtype } as MessageContent,
+        };
+
+        const { container } = render(<MessageBubble message={message} />);
+
+        expect(container).toBeEmptyDOMElement();
+      }
+    );
+
+    it('renders nothing for skip_transcript system messages', () => {
       const message = {
         type: 'system',
         content: {
           type: 'system',
-          subtype: 'thinking_tokens',
-          estimated_tokens: 100,
+          subtype: 'task_started',
+          skip_transcript: true,
         } as MessageContent,
       };
 
       const { container } = render(<MessageBubble message={message} />);
 
       expect(container).toBeEmptyDOMElement();
+    });
+  });
+
+  describe('generic system messages', () => {
+    it('summarizes a notification instead of an empty bubble', () => {
+      const message = {
+        type: 'system',
+        content: {
+          type: 'system',
+          subtype: 'notification',
+          text: 'Your token will expire soon',
+          priority: 'high',
+        } as MessageContent,
+      };
+
+      render(<MessageBubble message={message} />);
+
+      expect(screen.getByText('Notification')).toBeInTheDocument();
+      expect(screen.getByText('Your token will expire soon')).toBeInTheDocument();
+    });
+
+    it('summarizes an api_retry with attempt count', () => {
+      const message = {
+        type: 'system',
+        content: {
+          type: 'system',
+          subtype: 'api_retry',
+          attempt: 2,
+          max_retries: 5,
+          error: { message: 'overloaded' },
+        } as MessageContent,
+      };
+
+      render(<MessageBubble message={message} />);
+
+      expect(screen.getByText('Retrying request')).toBeInTheDocument();
+      expect(screen.getByText('Attempt 2/5 — overloaded')).toBeInTheDocument();
+    });
+
+    it('falls back to a humanized label for unknown subtypes', () => {
+      const message = {
+        type: 'system',
+        content: { type: 'system', subtype: 'some_future_thing' } as MessageContent,
+      };
+
+      render(<MessageBubble message={message} />);
+
+      expect(screen.getByText('Some Future Thing')).toBeInTheDocument();
     });
   });
 

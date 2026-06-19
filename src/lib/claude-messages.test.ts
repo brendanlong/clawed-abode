@@ -15,7 +15,7 @@ import {
   parseStoredMessage,
   parseClaudeStreamLine,
   classifyMessage,
-  isTransientProgressMessage,
+  isIgnoredSystemMessage,
   buildToolResultMap,
   AssistantMessage,
   UserMessage,
@@ -668,8 +668,37 @@ describe('claude-messages', () => {
       expect(msg({ type: 'system' })).toEqual({ kind: 'persist', dbType: 'system' });
     });
 
-    it('skips transient system progress events', () => {
-      expect(msg({ type: 'system', subtype: 'thinking_tokens' })).toEqual({ kind: 'skip' });
+    it('skips ignored system progress/state events', () => {
+      for (const subtype of [
+        'thinking_tokens',
+        'task_progress',
+        'task_updated',
+        'hook_progress',
+        'status',
+        'session_state_changed',
+        'files_persisted',
+        'elicitation_complete',
+        'commands_changed',
+      ]) {
+        expect(msg({ type: 'system', subtype })).toEqual({ kind: 'skip' });
+      }
+    });
+
+    it('skips system messages flagged skip_transcript', () => {
+      expect(msg({ type: 'system', subtype: 'task_started', skip_transcript: true })).toEqual({
+        kind: 'skip',
+      });
+    });
+
+    it('persists summarized system subtypes', () => {
+      for (const subtype of [
+        'notification',
+        'api_retry',
+        'permission_denied',
+        'task_notification',
+      ]) {
+        expect(msg({ type: 'system', subtype })).toEqual({ kind: 'persist', dbType: 'system' });
+      }
     });
 
     it('marks stream events for separate accumulation', () => {
@@ -681,30 +710,31 @@ describe('claude-messages', () => {
     });
   });
 
-  describe('isTransientProgressMessage', () => {
-    it('returns true for thinking_tokens system messages', () => {
+  describe('isIgnoredSystemMessage', () => {
+    it('returns true for every ignored subtype', () => {
+      expect(isIgnoredSystemMessage({ type: 'system', subtype: 'thinking_tokens' })).toBe(true);
+      expect(isIgnoredSystemMessage({ type: 'system', subtype: 'task_progress' })).toBe(true);
+      expect(isIgnoredSystemMessage({ type: 'system', subtype: 'commands_changed' })).toBe(true);
+    });
+
+    it('returns true for any system message flagged skip_transcript', () => {
       expect(
-        isTransientProgressMessage({
-          type: 'system',
-          subtype: 'thinking_tokens',
-          estimated_tokens: 100,
-          estimated_tokens_delta: 10,
-        })
+        isIgnoredSystemMessage({ type: 'system', subtype: 'task_started', skip_transcript: true })
       ).toBe(true);
     });
 
-    it('returns false for other system messages', () => {
-      expect(isTransientProgressMessage({ type: 'system', subtype: 'init' })).toBe(false);
-      expect(isTransientProgressMessage({ type: 'system', subtype: 'error' })).toBe(false);
-      expect(isTransientProgressMessage({ type: 'system' })).toBe(false);
+    it('returns false for system messages we render', () => {
+      expect(isIgnoredSystemMessage({ type: 'system', subtype: 'init' })).toBe(false);
+      expect(isIgnoredSystemMessage({ type: 'system', subtype: 'notification' })).toBe(false);
+      expect(isIgnoredSystemMessage({ type: 'system' })).toBe(false);
     });
 
     it('returns false for non-system messages and non-objects', () => {
-      expect(isTransientProgressMessage({ type: 'assistant' })).toBe(false);
-      expect(isTransientProgressMessage({ subtype: 'thinking_tokens' })).toBe(false);
-      expect(isTransientProgressMessage(null)).toBe(false);
-      expect(isTransientProgressMessage(undefined)).toBe(false);
-      expect(isTransientProgressMessage('thinking_tokens')).toBe(false);
+      expect(isIgnoredSystemMessage({ type: 'assistant' })).toBe(false);
+      expect(isIgnoredSystemMessage({ subtype: 'thinking_tokens' })).toBe(false);
+      expect(isIgnoredSystemMessage(null)).toBe(false);
+      expect(isIgnoredSystemMessage(undefined)).toBe(false);
+      expect(isIgnoredSystemMessage('thinking_tokens')).toBe(false);
     });
   });
 

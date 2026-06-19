@@ -277,11 +277,21 @@ The SDK emits `stream_event` messages which are accumulated by `StreamAccumulato
 
 When extended thinking is active, assistant messages include `thinking` (and, when the API encrypts reasoning, `redacted_thinking`) content blocks alongside `text` and `tool_use`. These are accumulated during streaming (`thinking_delta` events) and rendered as a single collapsed "Thinking" section per message (`ThinkingDisplay`), coalescing multiple thinking blocks into one. Thinking text is excluded from copy/voice output.
 
-During redacted thinking the SDK also emits frequent `{ type: 'system', subtype: 'thinking_tokens' }` progress messages carrying only live token-count estimates. These are transient and are dropped (not persisted or shown) via `isTransientProgressMessage` in [`src/lib/claude-messages.ts`](../src/lib/claude-messages.ts) so they don't render as a stream of empty "System" bubbles.
+During redacted thinking the SDK also emits frequent `{ type: 'system', subtype: 'thinking_tokens' }` progress messages carrying only live token-count estimates. These are dropped (not persisted or shown) via `isIgnoredSystemMessage` in [`src/lib/claude-messages.ts`](../src/lib/claude-messages.ts) — one of several ignored system subtypes (see [System Message Subtypes](#system-message-subtypes)) — so they don't render as a stream of empty "System" bubbles.
 
 ### Message Classification
 
-Every message yielded by the SDK is routed through `classifyMessage(message)` in [`src/lib/claude-messages.ts`](../src/lib/claude-messages.ts), which returns one of `{ kind: 'stream_event' | 'skip' | 'persist' }` (with the DB column type for `persist`). It `switch`es over the SDK's `SDKMessage` discriminated union and ends in `assertNeverFallback`, a compile-time exhaustiveness guard: if a future SDK release adds a top-level message `type`, the build fails until it is handled here. At runtime an unrecognized type degrades to generic system persistence rather than throwing, so an unexpected frame never crashes the query loop. (New `system` _subtypes_ are intentionally not exhaustive — unknown ones persist as a generic system message.)
+Every message yielded by the SDK is routed through `classifyMessage(message)` in [`src/lib/claude-messages.ts`](../src/lib/claude-messages.ts), which returns one of `{ kind: 'stream_event' | 'skip' | 'persist' }` (with the DB column type for `persist`). It `switch`es over the SDK's `SDKMessage` discriminated union and ends in `assertNeverFallback`, a compile-time exhaustiveness guard: if a future SDK release adds a top-level message `type`, the build fails until it is handled here. At runtime an unrecognized type degrades to generic system persistence rather than throwing, so an unexpected frame never crashes the query loop.
+
+### System Message Subtypes
+
+The SDK emits many `type: 'system'` subtypes. A single `type`-level switch can't distinguish them, so subtype handling is split into three buckets (none of which is compile-time exhaustive — unknown subtypes fall through to a safe default):
+
+1. **Ignored** (`IGNORED_SYSTEM_SUBTYPES` + any message flagged `skip_transcript`): pure progress ticks and internal state — `thinking_tokens`, `task_progress`, `task_updated`, `hook_progress`, `status`, `session_state_changed`, `files_persisted`, `elicitation_complete`, `commands_changed`. `classifyMessage` returns `skip`, so they are never persisted; `isIgnoredSystemMessage` also filters any persisted before a subtype was added (both at the list level in `MessageList` so they leave no empty spacer row, and as a guard in `MessageBubble`).
+2. **Dedicated displays**: `init`, `compact_boundary`, `hook_started`, `hook_response`, and the app's synthetic `error` each have their own component.
+3. **Generic summary**: everything else (e.g. `notification`, `api_retry`, `permission_denied`, `model_refusal_fallback`, `plugin_install`, `memory_recall`, `mirror_error`, `task_started`, `task_notification`) renders through `SystemMessageDisplay`, which calls `summarizeSystemMessage` to produce a never-blank `{ label, body, level }`. Unknown/future subtypes degrade to a humanized label plus any string `content`, so a system message is never an empty bubble. `level: 'warn'` (retries, denials, errors) gets an amber treatment.
+
+Subagent (`Task` tool) lifecycle: `task_started` and `task_notification` are the meaningful bookends and are summarized; the high-frequency `task_progress` ticks and intermediate `task_updated` patches are ignored (their terminal outcome arrives via `task_notification`).
 
 ## Message Storage & Pagination
 
