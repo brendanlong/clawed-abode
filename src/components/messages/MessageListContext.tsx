@@ -15,8 +15,8 @@ interface MessageListContextValue {
   onAnswerQuestion?: (toolUseId: string, answers: Record<string, string>) => void;
   /** Respond to an ExitPlanMode tool call (approve or request changes) */
   onRespondToPlan?: (toolUseId: string, approve: boolean, feedback?: string) => void;
-  /** The latest plan content from Write/Edit of plan files, or null */
-  latestPlanContent: string | null;
+  /** Reconstructed plan content per ExitPlanMode call, keyed by its tool_use id */
+  planContentByToolUseId: Map<string, string>;
 }
 
 const MessageListContext = createContext<MessageListContextValue | null>(null);
