@@ -4,6 +4,7 @@ import { useMemo } from 'react';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
+import { InlineDiff } from './InlineDiff';
 import { isPlanFile } from './plan-utils';
 import type { ToolCall } from './types';
 
@@ -53,35 +54,8 @@ export function EditDisplay({ tool }: { tool: ToolCall }) {
         }
         cardClassName="border-purple-300 dark:border-purple-700"
       >
-        {/* Show the changes as a simple diff */}
-        <div>
-          <div className="flex items-center gap-2 mb-1">
-            <span className="text-red-600 dark:text-red-400 font-medium">Removed</span>
-            <span className="text-muted-foreground">
-              ({oldString.split('\n').length}{' '}
-              {oldString.split('\n').length === 1 ? 'line' : 'lines'})
-            </span>
-          </div>
-          <pre className="bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 p-2 rounded overflow-x-auto max-h-32 overflow-y-auto">
-            <code className="text-red-800 dark:text-red-200 whitespace-pre-wrap break-words">
-              {oldString || '(empty)'}
-            </code>
-          </pre>
-        </div>
-        <div>
-          <div className="flex items-center gap-2 mb-1">
-            <span className="text-green-600 dark:text-green-400 font-medium">Added</span>
-            <span className="text-muted-foreground">
-              ({newString.split('\n').length}{' '}
-              {newString.split('\n').length === 1 ? 'line' : 'lines'})
-            </span>
-          </div>
-          <pre className="bg-green-50 dark:bg-green-950/50 border border-green-200 dark:border-green-800 p-2 rounded overflow-x-auto max-h-32 overflow-y-auto">
-            <code className="text-green-800 dark:text-green-200 whitespace-pre-wrap break-words">
-              {newString || '(empty)'}
-            </code>
-          </pre>
-        </div>
+        {/* Show the changes as an inline diff */}
+        <InlineDiff oldString={oldString} newString={newString} className="max-h-64" />
       </ToolDisplayWrapper>
     );
   }
@@ -103,31 +77,8 @@ export function EditDisplay({ tool }: { tool: ToolCall }) {
       subtitle={<div className="text-muted-foreground text-xs mt-1 truncate">{filePath}</div>}
       doneBadge={null}
     >
-      {/* Old string (removed) */}
-      <div>
-        <div className="flex items-center gap-2 mb-1">
-          <span className="text-red-600 dark:text-red-400 font-medium">Removed</span>
-          <span className="text-muted-foreground">({oldString.split('\n').length} lines)</span>
-        </div>
-        <pre className="bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 p-2 rounded overflow-x-auto max-h-48 overflow-y-auto">
-          <code className="text-red-800 dark:text-red-200 whitespace-pre-wrap break-words">
-            {oldString || '(empty)'}
-          </code>
-        </pre>
-      </div>
-
-      {/* New string (added) */}
-      <div>
-        <div className="flex items-center gap-2 mb-1">
-          <span className="text-green-600 dark:text-green-400 font-medium">Added</span>
-          <span className="text-muted-foreground">({newString.split('\n').length} lines)</span>
-        </div>
-        <pre className="bg-green-50 dark:bg-green-950/50 border border-green-200 dark:border-green-800 p-2 rounded overflow-x-auto max-h-48 overflow-y-auto">
-          <code className="text-green-800 dark:text-green-200 whitespace-pre-wrap break-words">
-            {newString || '(empty)'}
-          </code>
-        </pre>
-      </div>
+      {/* Inline diff of old vs new content */}
+      <InlineDiff oldString={oldString} newString={newString} />
 
       {/* Output/Result if available */}
       {hasOutput && (
