@@ -9,6 +9,7 @@ import {
   getCopyText,
   getDisplayContent,
   summarizeSystemMessage,
+  hasRenderableAssistantContent,
 } from './messageHelpers';
 
 describe('extractTextContent', () => {
@@ -402,6 +403,58 @@ describe('getDisplayContent', () => {
   it('returns content.content for system messages', () => {
     const content: MessageContent = { content: 'system text' };
     expect(getDisplayContent(content, 'system')).toBe('system text');
+  });
+});
+
+describe('hasRenderableAssistantContent', () => {
+  it('returns false when the only block is empty thinking', () => {
+    const content: MessageContent = {
+      message: { content: [{ type: 'thinking', thinking: '', signature: 'sig' }] },
+    };
+    expect(hasRenderableAssistantContent(content)).toBe(false);
+  });
+
+  it('returns false for whitespace-only text and an empty block array', () => {
+    expect(
+      hasRenderableAssistantContent({ message: { content: [{ type: 'text', text: '   ' }] } })
+    ).toBe(false);
+    expect(hasRenderableAssistantContent({ message: { content: [] } })).toBe(false);
+  });
+
+  it('returns true when any block has real content', () => {
+    expect(
+      hasRenderableAssistantContent({
+        message: {
+          content: [
+            { type: 'thinking', thinking: '' },
+            { type: 'text', text: 'hi' },
+          ],
+        },
+      })
+    ).toBe(true);
+    expect(
+      hasRenderableAssistantContent({
+        message: { content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: {} }] },
+      })
+    ).toBe(true);
+    expect(
+      hasRenderableAssistantContent({
+        message: { content: [{ type: 'redacted_thinking' }] },
+      })
+    ).toBe(true);
+  });
+
+  it('returns true for non-array content (handled elsewhere)', () => {
+    expect(hasRenderableAssistantContent({ content: 'plain' })).toBe(true);
+  });
+
+  it('does not throw on null content or null blocks', () => {
+    expect(hasRenderableAssistantContent(null as unknown as MessageContent)).toBe(true);
+    expect(
+      hasRenderableAssistantContent({
+        message: { content: [null, { type: 'text', text: 'hi' }] as never },
+      })
+    ).toBe(true);
   });
 });
 
