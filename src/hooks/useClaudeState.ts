@@ -15,11 +15,17 @@ export function useClaudeState(sessionId: string) {
     { staleTime: Infinity }
   );
 
+  // Fetch ephemeral API-retry status (rate limit / overload)
+  const { data: retryData, refetch: refetchRetry } = trpc.claude.getRetryState.useQuery({
+    sessionId,
+  });
+
   // Refetch when app regains visibility or network reconnects
   const refetchAll = useCallback(() => {
     refetch();
     refetchCommands();
-  }, [refetch, refetchCommands]);
+    refetchRetry();
+  }, [refetch, refetchCommands, refetchRetry]);
   useRefetchOnReconnect(refetchAll);
 
   // Live running-state and command updates arrive via the multiplexed SSE stream
@@ -57,9 +63,11 @@ export function useClaudeState(sessionId: string) {
 
   const isRunning = runningData?.running ?? false;
   const commands = commandsData?.commands ?? [];
+  const retry = retryData?.retry ?? null;
 
   return {
     isRunning,
+    retry,
     send,
     interrupt,
     isInterrupting: interruptMutation.isPending,

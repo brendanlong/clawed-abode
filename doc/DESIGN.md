@@ -314,7 +314,7 @@ subscription, so the app is deliberately structured around just **two** streams:
 
 1. **Per-session multiplexed stream** — `sse.onSessionEvents({ sessionId })`. A single
    subscription yields a discriminated union of every event kind for the session
-   (`message`, `running`, `commands`, `pr`, `session`). The server folds the five
+   (`message`, `running`, `commands`, `pr`, `session`, `retry`). The server folds the six
    in-process emitter channels into this union via `sseEvents.onSessionEvents`
    ([`events.ts`](../src/server/services/events.ts)). On the client, `useSessionStream`
    ([`src/hooks/useSessionStream.ts`](../src/hooks/useSessionStream.ts)) is mounted once
@@ -365,11 +365,13 @@ Every message yielded by the SDK is routed through `classifyMessage(message)` in
 
 The SDK emits many `type: 'system'` subtypes. A single `type`-level switch can't distinguish them, so subtype handling is split into three buckets (none of which is compile-time exhaustive — unknown subtypes fall through to a safe default):
 
-1. **Ignored** (`IGNORED_SYSTEM_SUBTYPES` + any message flagged `skip_transcript`): pure progress ticks and internal state — `thinking_tokens`, `task_progress`, `task_updated`, `hook_progress`, `status`, `session_state_changed`, `files_persisted`, `elicitation_complete`, `commands_changed`. `classifyMessage` returns `skip`, so they are never persisted; `isIgnoredSystemMessage` also filters any persisted before a subtype was added (both at the list level in `MessageList` so they leave no empty spacer row, and as a guard in `MessageBubble`).
+1. **Ignored** (`IGNORED_SYSTEM_SUBTYPES` + any message flagged `skip_transcript`): pure progress ticks and internal state — `thinking_tokens`, `task_progress`, `task_updated`, `hook_progress`, `status`, `session_state_changed`, `files_persisted`, `elicitation_complete`, `commands_changed`, `api_retry`. `classifyMessage` returns `skip`, so they are never persisted; `isIgnoredSystemMessage` also filters any persisted before a subtype was added (both at the list level in `MessageList` so they leave no empty spacer row, and as a guard in `MessageBubble`).
 2. **Dedicated displays**: `init`, `compact_boundary`, `hook_started`, `hook_response`, and the app's synthetic `error` each have their own component.
-3. **Generic summary**: everything else (e.g. `notification`, `api_retry`, `permission_denied`, `model_refusal_fallback`, `plugin_install`, `memory_recall`, `mirror_error`, `task_started`, `task_notification`) renders through `SystemMessageDisplay`, which calls `summarizeSystemMessage` to produce a never-blank `{ label, body, level }`. Unknown/future subtypes degrade to a humanized label plus any string `content`, so a system message is never an empty bubble. `level: 'warn'` (retries, denials, errors) gets an amber treatment.
+3. **Generic summary**: everything else (e.g. `notification`, `permission_denied`, `model_refusal_fallback`, `plugin_install`, `memory_recall`, `mirror_error`, `task_started`, `task_notification`) renders through `SystemMessageDisplay`, which calls `summarizeSystemMessage` to produce a never-blank `{ label, body, level }`. Unknown/future subtypes degrade to a humanized label plus any string `content`, so a system message is never an empty bubble. `level: 'warn'` (retries, denials, errors) gets an amber treatment.
 
 Subagent (`Task` tool) lifecycle: `task_started` and `task_notification` are the meaningful bookends and are summarized; the high-frequency `task_progress` ticks and intermediate `task_updated` patches are ignored (their terminal outcome arrives via `task_notification`).
+
+**Ephemeral retry status.** `api_retry` messages (the SDK retrying a rate-limited/overloaded request) are ignored above so they never pollute the transcript, but the _current_ retry state is surfaced live. The runner parses each via `parseRetryState` ([`claude-messages.ts`](../src/lib/claude-messages.ts)), stores it on the in-memory session state, and emits it over the `retry` SSE channel as a latest-value event (`{ attempt, maxRetries, errorStatus?, error? } | null`). Any non-retry message clears it (the request recovered), as does turn end. The client reads it via `claude.getRetryState` (seeded once, updated by the stream, resynced on reconnect) and `ClaudeStatusIndicator` shows "Retrying (overloaded) — attempt n/10…" while it is set. Because it is in-memory only, a server restart loses it — acceptable for a transient indicator.
 
 ## Message Storage & Pagination
 

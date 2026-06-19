@@ -10,6 +10,7 @@ import {
   submitLiveToolResponse,
   persistSyntheticToolResult,
   getSessionCommands,
+  getSessionRetry,
 } from '../services/claude-runner';
 import { loadMergedSessionSettings } from '../services/settings-merger';
 import { getSessionWorkingDir } from '../services/worktree-manager';
@@ -339,5 +340,14 @@ export const claudeRouter = router({
     .input(z.object({ sessionId: z.string().uuid() }))
     .query(async ({ input }) => {
       return { commands: getSessionCommands(input.sessionId) };
+    }),
+
+  // Ephemeral API-retry status (rate limit / overload). Updates stream live over
+  // the `retry` SSE channel; this query seeds the initial value and resyncs on
+  // reconnect.
+  getRetryState: protectedProcedure
+    .input(z.object({ sessionId: z.string().uuid() }))
+    .query(async ({ input }) => {
+      return { retry: getSessionRetry(input.sessionId) };
     }),
 });
