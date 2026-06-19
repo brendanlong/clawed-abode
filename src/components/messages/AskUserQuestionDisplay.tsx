@@ -98,7 +98,7 @@ export function AskUserQuestionDisplay({ tool }: { tool: ToolCall }) {
   const ctx = useMessageListContext();
   const onSendResponse = ctx?.onSendResponse;
   const onAnswerQuestion = ctx?.onAnswerQuestion;
-  const isClaudeRunning = ctx?.isClaudeRunning;
+  const toolUseId = tool.id;
 
   // Track selected options per question. For single-select: Set with 0 or 1 item.
   const [selectedOptions, setSelectedOptions] = useState<Map<number, Set<number>>>(new Map());
@@ -137,15 +137,19 @@ export function AskUserQuestionDisplay({ tool }: { tool: ToolCall }) {
       answers[question.question] = selectedLabels.join(', ');
     }
 
-    if (onAnswerQuestion) {
-      onAnswerQuestion(answers);
+    if (onAnswerQuestion && toolUseId) {
+      onAnswerQuestion(toolUseId, answers);
     } else if (onSendResponse) {
-      // Fallback: send as text
+      // Fallback: send as text (e.g. tool id missing)
       onSendResponse(Object.values(answers).join('; '));
     }
-  }, [questions, selectedOptions, onAnswerQuestion, onSendResponse]);
+  }, [questions, selectedOptions, onAnswerQuestion, onSendResponse, toolUseId]);
 
-  const canInteract = isPending && !isClaudeRunning && (!!onAnswerQuestion || !!onSendResponse);
+  // Interactivity is driven purely by whether this tool call still needs an
+  // answer (no paired result yet). The server decides how to deliver it —
+  // resolving the live tool call or resuming as a new turn — so the UI never
+  // needs to track whether Claude is "running".
+  const canInteract = isPending && ((!!onAnswerQuestion && !!toolUseId) || !!onSendResponse);
 
   // Check if all questions have at least one selection
   const allQuestionsAnswered =
@@ -187,8 +191,8 @@ export function AskUserQuestionDisplay({ tool }: { tool: ToolCall }) {
       // Single question, single select: submit immediately
       const option = question.options[optionIndex];
       if (option) {
-        if (onAnswerQuestion) {
-          onAnswerQuestion({ [question.question]: option.label });
+        if (onAnswerQuestion && toolUseId) {
+          onAnswerQuestion(toolUseId, { [question.question]: option.label });
         } else if (onSendResponse) {
           onSendResponse(option.label);
         }

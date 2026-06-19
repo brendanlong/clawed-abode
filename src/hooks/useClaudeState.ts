@@ -29,13 +29,7 @@ export function useClaudeState(sessionId: string) {
     { sessionId },
     {
       onData: (trackedData) => {
-        utils.claude.isRunning.setData(
-          { sessionId },
-          {
-            running: trackedData.data.running,
-            hasPendingInput: false,
-          }
-        );
+        utils.claude.isRunning.setData({ sessionId }, { running: trackedData.data.running });
         // When Claude finishes running, refetch commands in case new ones were discovered
         if (!trackedData.data.running) {
           refetchCommands();
@@ -63,6 +57,7 @@ export function useClaudeState(sessionId: string) {
   const sendMutation = trpc.claude.send.useMutation();
   const interruptMutation = trpc.claude.interrupt.useMutation();
   const answerMutation = trpc.claude.answerQuestion.useMutation();
+  const respondToPlanMutation = trpc.claude.respondToPlan.useMutation();
 
   const send = useCallback(
     (prompt: string) => {
@@ -76,10 +71,17 @@ export function useClaudeState(sessionId: string) {
   }, [sessionId, interruptMutation]);
 
   const answerQuestion = useCallback(
-    (answers: Record<string, string>) => {
-      answerMutation.mutate({ sessionId, answers });
+    (toolUseId: string, answers: Record<string, string>) => {
+      answerMutation.mutate({ sessionId, toolUseId, answers });
     },
     [sessionId, answerMutation]
+  );
+
+  const respondToPlan = useCallback(
+    (toolUseId: string, approve: boolean, feedback?: string) => {
+      respondToPlanMutation.mutate({ sessionId, toolUseId, approve, feedback });
+    },
+    [sessionId, respondToPlanMutation]
   );
 
   const isRunning = runningData?.running ?? false;
@@ -91,6 +93,7 @@ export function useClaudeState(sessionId: string) {
     interrupt,
     isInterrupting: interruptMutation.isPending,
     answerQuestion,
+    respondToPlan,
     commands,
   };
 }

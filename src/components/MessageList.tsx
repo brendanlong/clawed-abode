@@ -250,8 +250,8 @@ interface MessageListProps {
   onLoadMore: () => void;
   tokenUsage?: TokenUsageStats | null;
   onSendResponse?: (response: string) => void;
-  onAnswerQuestion?: (answers: Record<string, string>) => void;
-  isClaudeRunning?: boolean;
+  onAnswerQuestion?: (toolUseId: string, answers: Record<string, string>) => void;
+  onRespondToPlan?: (toolUseId: string, approve: boolean, feedback?: string) => void;
 }
 
 export function MessageList({
@@ -262,7 +262,7 @@ export function MessageList({
   tokenUsage,
   onSendResponse,
   onAnswerQuestion,
-  isClaudeRunning,
+  onRespondToPlan,
 }: MessageListProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const topSentinelRef = useRef<HTMLDivElement>(null);
@@ -553,7 +553,7 @@ export function MessageList({
       onTodoManualToggle: handleTodoManualToggle,
       onSendResponse,
       onAnswerQuestion,
-      isClaudeRunning,
+      onRespondToPlan,
       latestPlanContent,
     }),
     [
@@ -562,7 +562,7 @@ export function MessageList({
       handleTodoManualToggle,
       onSendResponse,
       onAnswerQuestion,
-      isClaudeRunning,
+      onRespondToPlan,
       latestPlanContent,
     ]
   );

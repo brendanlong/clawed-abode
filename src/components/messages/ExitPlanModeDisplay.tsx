@@ -2,6 +2,8 @@
 
 import { useCallback, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
 import { MarkdownContent } from '@/components/MarkdownContent';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
 import { useMessageListContext } from './MessageListContext';
@@ -78,12 +80,30 @@ function CheckIcon() {
 export function ExitPlanModeDisplay({ tool }: { tool: ToolCall }) {
   const ctx = useMessageListContext();
   const planContent = ctx?.latestPlanContent;
+  const onRespondToPlan = ctx?.onRespondToPlan;
   const hasOutput = tool.output !== undefined;
   const isPending = !hasOutput;
+  const toolUseId = tool.id;
   const [copied, setCopied] = useState(false);
+  const [showFeedback, setShowFeedback] = useState(false);
+  const [feedback, setFeedback] = useState('');
+
+  // Interactivity is driven purely by whether this plan still needs a response.
+  // The server decides how to deliver it (resolve the live tool call or resume
+  // as a new turn), so the UI doesn't track whether Claude is "running".
+  const canRespond = isPending && !!onRespondToPlan && !!toolUseId;
 
   const inputObj = tool.input as ExitPlanModeInput | undefined;
   const allowedPrompts = inputObj?.allowedPrompts ?? [];
+
+  const handleApprove = useCallback(() => {
+    if (onRespondToPlan && toolUseId) onRespondToPlan(toolUseId, true);
+  }, [onRespondToPlan, toolUseId]);
+
+  const handleRequestChanges = useCallback(() => {
+    if (onRespondToPlan && toolUseId)
+      onRespondToPlan(toolUseId, false, feedback.trim() || undefined);
+  }, [onRespondToPlan, toolUseId, feedback]);
 
   const handleCopyPlan = useCallback(async () => {
     if (!planContent) return;
@@ -174,6 +194,42 @@ export function ExitPlanModeDisplay({ tool }: { tool: ToolCall }) {
       {/* Show status message if no plan content available */}
       {!planContent && isPending && (
         <div className="text-muted-foreground italic py-2">Waiting for plan approval...</div>
+      )}
+
+      {/* Approve / request-changes controls */}
+      {canRespond && (
+        <div className="pt-3 mt-1 border-t space-y-2">
+          {showFeedback && (
+            <Textarea
+              value={feedback}
+              onChange={(e) => setFeedback(e.target.value)}
+              placeholder="What should change about the plan? (optional)"
+              className="min-h-[72px] text-sm"
+              autoFocus
+            />
+          )}
+          <div className="flex gap-2">
+            {showFeedback ? (
+              <>
+                <Button size="sm" onClick={handleRequestChanges}>
+                  Send changes
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setShowFeedback(false)}>
+                  Cancel
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button size="sm" onClick={handleApprove}>
+                  Approve &amp; proceed
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => setShowFeedback(true)}>
+                  Request changes
+                </Button>
+              </>
+            )}
+          </div>
+        </div>
       )}
     </ToolDisplayWrapper>
   );
