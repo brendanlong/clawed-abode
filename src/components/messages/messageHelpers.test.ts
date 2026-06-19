@@ -447,6 +447,15 @@ describe('hasRenderableAssistantContent', () => {
   it('returns true for non-array content (handled elsewhere)', () => {
     expect(hasRenderableAssistantContent({ content: 'plain' })).toBe(true);
   });
+
+  it('does not throw on null content or null blocks', () => {
+    expect(hasRenderableAssistantContent(null as unknown as MessageContent)).toBe(true);
+    expect(
+      hasRenderableAssistantContent({
+        message: { content: [null, { type: 'text', text: 'hi' }] as never },
+      })
+    ).toBe(true);
+  });
 });
 
 describe('summarizeSystemMessage', () => {
