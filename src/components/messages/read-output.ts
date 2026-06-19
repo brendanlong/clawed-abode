@@ -31,6 +31,12 @@ export function parseReadOutput(output: unknown): ParsedReadOutput {
     lines = lines.slice(0, -1);
   }
 
-  const stripped = lines.map((line) => line.replace(LINE_PREFIX, ''));
+  // Only strip prefixes if this actually looks like numbered Read output —
+  // detected from the first non-empty line. Otherwise raw content that happens
+  // to start a line with "<number><tab>" would be corrupted.
+  const firstNonEmpty = lines.find((line) => line.trim() !== '');
+  const hasPrefix = firstNonEmpty !== undefined && LINE_PREFIX.test(firstNonEmpty);
+  const stripped = hasPrefix ? lines.map((line) => line.replace(LINE_PREFIX, '')) : lines;
+
   return { code: stripped.join('\n'), lineCount: stripped.length };
 }

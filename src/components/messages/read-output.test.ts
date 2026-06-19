@@ -38,6 +38,16 @@ describe('parseReadOutput', () => {
     });
   });
 
+  it('does not strip numeric-tab lines in raw (unnumbered) content', () => {
+    // First line has no prefix, so this is not Read's numbered output; a later
+    // "42\tvalue" line must be preserved verbatim rather than stripped.
+    const output = 'header\n42\tvalue\n';
+    expect(parseReadOutput(output)).toEqual({
+      code: 'header\n42\tvalue',
+      lineCount: 2,
+    });
+  });
+
   it('handles empty and non-string input', () => {
     expect(parseReadOutput('')).toEqual({ code: '', lineCount: 0 });
     expect(parseReadOutput(undefined)).toEqual({ code: '', lineCount: 0 });

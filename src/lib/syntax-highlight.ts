@@ -87,14 +87,21 @@ function escapeHtml(value: string): string {
 }
 
 /**
+ * Above this length, skip highlighting and render escaped plain text. hljs runs
+ * synchronously on the render thread, so a huge file would freeze the tab.
+ */
+const MAX_HIGHLIGHT_CHARS = 100_000;
+
+/**
  * Highlight `code` for the given {@link getFileType} result, returning an HTML
  * string of `<span class="hljs-...">` tokens (themed via CSS). Languages without
- * a grammar — or any highlighting error — fall back to escaped plain text, so
- * the output is always safe to inject. Pure function: same inputs → same output.
+ * a grammar, inputs over {@link MAX_HIGHLIGHT_CHARS}, or any highlighting error
+ * fall back to escaped plain text, so the output is always safe to inject. Pure
+ * function: same inputs → same output.
  */
 export function highlightCode(code: string, fileType: string): string {
   const language = FILE_TYPE_TO_HLJS[fileType];
-  if (!language) return escapeHtml(code);
+  if (!language || code.length > MAX_HIGHLIGHT_CHARS) return escapeHtml(code);
 
   ensureRegistered();
   try {
