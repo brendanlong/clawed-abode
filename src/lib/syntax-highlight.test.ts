@@ -39,4 +39,13 @@ describe('highlightCode', () => {
   it('returns empty string for empty input', () => {
     expect(highlightCode('', 'typescript')).toBe('');
   });
+
+  it('skips highlighting (escaped plain text) for very large input', () => {
+    const huge = `const x = "<b>";\n`.repeat(10000); // > 100k chars
+    expect(huge.length).toBeGreaterThan(100_000);
+    const html = highlightCode(huge, 'typescript');
+    expect(html).not.toContain('hljs-');
+    expect(html).toContain('&lt;b&gt;');
+    expect(html).not.toContain('<b>');
+  });
 });
