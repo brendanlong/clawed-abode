@@ -33,10 +33,10 @@ export function CompactBoundaryDisplay({ content }: { content: CompactBoundaryCo
     <div className="group">
       <div className="flex items-center gap-2 text-sm p-2">
         <div className="flex-1 border-t border-dashed border-border" />
-        <Badge variant="secondary" className="flex-shrink-0">
+        <Badge variant="secondary" className="shrink-0">
           Context Compacted
         </Badge>
-        <span className="text-muted-foreground text-xs flex-shrink-0">
+        <span className="text-muted-foreground text-xs shrink-0">
           {trigger === 'manual' ? 'manual' : 'auto'}
           {preTokens !== undefined && ` · ${formatTokens(preTokens)} tokens before`}
         </span>

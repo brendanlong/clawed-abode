@@ -27,7 +27,7 @@ interface AskUserQuestionInput {
 function QuestionIcon() {
   return (
     <svg
-      className="w-5 h-5 text-purple-600 dark:text-purple-400 flex-shrink-0"
+      className="w-5 h-5 text-purple-600 dark:text-purple-400 shrink-0"
       fill="none"
       viewBox="0 0 24 24"
       stroke="currentColor"
@@ -47,7 +47,7 @@ function CheckboxIcon({ checked }: { checked?: boolean }) {
   return (
     <svg
       className={cn(
-        'w-4 h-4 flex-shrink-0 mt-0.5',
+        'w-4 h-4 shrink-0 mt-0.5',
         checked ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'
       )}
       fill="none"
@@ -73,7 +73,7 @@ function RadioIcon({ selected }: { selected?: boolean }) {
   return (
     <svg
       className={cn(
-        'w-4 h-4 flex-shrink-0 mt-0.5',
+        'w-4 h-4 shrink-0 mt-0.5',
         selected ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'
       )}
       fill="none"

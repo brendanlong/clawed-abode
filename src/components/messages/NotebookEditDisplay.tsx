@@ -16,7 +16,7 @@ interface NotebookEditInput {
 function NotebookIcon() {
   return (
     <svg
-      className="w-4 h-4 text-orange-600 dark:text-orange-400 flex-shrink-0"
+      className="w-4 h-4 text-orange-600 dark:text-orange-400 shrink-0"
       fill="none"
       viewBox="0 0 24 24"
       stroke="currentColor"

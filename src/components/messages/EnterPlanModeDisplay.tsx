@@ -8,7 +8,7 @@ import type { ToolCall } from './types';
 function PlanIcon() {
   return (
     <svg
-      className="w-4 h-4 text-purple-600 dark:text-purple-400 flex-shrink-0"
+      className="w-4 h-4 text-purple-600 dark:text-purple-400 shrink-0"
       fill="none"
       viewBox="0 0 24 24"
       stroke="currentColor"
