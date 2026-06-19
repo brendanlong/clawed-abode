@@ -9,7 +9,7 @@ import { ContextUsageIndicator } from '@/components/ContextUsageIndicator';
 import type { TokenUsageStats } from '@/lib/token-estimation';
 import { useNotification } from '@/hooks/useNotification';
 import { useVoicePlaybackContext } from '@/hooks/useVoicePlayback';
-import { isPlanFile } from './messages/plan-utils';
+import { isPlanFile, reconstructPlansByToolUseId, type PlanEvent } from './messages/plan-utils';
 import { isIgnoredSystemMessage } from '@/lib/claude-messages';
 import { hasRenderableAssistantContent } from './messages/messageHelpers';
 
@@ -179,44 +179,45 @@ function getPendingAskUserQuestions(
   return pending;
 }
 
-interface PlanToolCall {
-  sequence: number;
-  type: 'write' | 'edit';
-  content?: string; // For Write: full content
-  oldString?: string; // For Edit: string to replace
-  newString?: string; // For Edit: replacement string
-}
-
 /**
- * Extract plan file Write/Edit tool calls from messages, ordered by sequence.
- * Then reconstruct the current plan content by replaying writes and edits.
+ * Extract plan Write/Edit tool calls and ExitPlanMode calls from the messages,
+ * then reconstruct the plan content for each ExitPlanMode (keyed by its tool_use
+ * id). Handles multiple plans per session — see {@link reconstructPlansByToolUseId}.
  */
-function getLatestPlanContent(messages: Message[]): string | null {
-  const planCalls: PlanToolCall[] = [];
-  const sortedMessages = [...messages].sort((a, b) => a.sequence - b.sequence);
+function getPlanContentByToolUseId(messages: Message[]): Map<string, string> {
+  const events: PlanEvent[] = [];
 
-  for (const msg of sortedMessages) {
+  for (const msg of messages) {
     if (msg.type !== 'assistant') continue;
     const content = msg.content as MessageContent | undefined;
     const blocks = content?.message?.content;
     if (!Array.isArray(blocks)) continue;
 
     for (const block of blocks) {
-      if (block.type !== 'tool_use' || !block.input) continue;
+      if (block.type !== 'tool_use') continue;
+
+      if (block.name === 'ExitPlanMode' && block.id) {
+        events.push({ kind: 'exit', sequence: msg.sequence, toolUseId: block.id });
+        continue;
+      }
+
+      if (!block.input) continue;
       const input = block.input as Record<string, unknown>;
       const filePath = input.file_path as string | undefined;
       if (!filePath || !isPlanFile(filePath)) continue;
 
       if (block.name === 'Write') {
-        planCalls.push({
+        events.push({
+          kind: 'write',
           sequence: msg.sequence,
-          type: 'write',
+          filePath,
           content: (input.content as string) ?? '',
         });
       } else if (block.name === 'Edit') {
-        planCalls.push({
+        events.push({
+          kind: 'edit',
           sequence: msg.sequence,
-          type: 'edit',
+          filePath,
           oldString: (input.old_string as string) ?? '',
           newString: (input.new_string as string) ?? '',
         });
@@ -224,19 +225,7 @@ function getLatestPlanContent(messages: Message[]): string | null {
     }
   }
 
-  if (planCalls.length === 0) return null;
-
-  // Replay writes and edits to build current plan content
-  let planContent = '';
-  for (const call of planCalls) {
-    if (call.type === 'write') {
-      planContent = call.content ?? '';
-    } else if (call.type === 'edit' && call.oldString) {
-      planContent = planContent.replace(call.oldString, call.newString ?? '');
-    }
-  }
-
-  return planContent || null;
+  return reconstructPlansByToolUseId(events);
 }
 
 // Total cost is now provided by tokenUsage.totalCostUsd from the server-side
@@ -330,8 +319,8 @@ export function MessageList({
 
   // Total cost comes from tokenUsage (server-computed from authoritative result messages)
 
-  // Track the latest plan content from Write/Edit calls to plan files
-  const latestPlanContent = useMemo(() => getLatestPlanContent(messages), [messages]);
+  // Reconstruct plan content per ExitPlanMode call (keyed by tool_use id)
+  const planContentByToolUseId = useMemo(() => getPlanContentByToolUseId(messages), [messages]);
 
   // Find pending AskUserQuestion tool calls
   const pendingQuestions = useMemo(
@@ -554,7 +543,7 @@ export function MessageList({
       onSendResponse,
       onAnswerQuestion,
       onRespondToPlan,
-      latestPlanContent,
+      planContentByToolUseId,
     }),
     [
       latestTodoWriteId,
@@ -563,7 +552,7 @@ export function MessageList({
       onSendResponse,
       onAnswerQuestion,
       onRespondToPlan,
-      latestPlanContent,
+      planContentByToolUseId,
     ]
   );
 
