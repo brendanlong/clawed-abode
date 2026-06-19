@@ -23,6 +23,14 @@ export interface DiffStats {
 }
 
 /**
+ * Above this combined character count for a modified region, skip the
+ * super-linear word-level diff and fall back to plain line-level rendering.
+ * Word diffing a multi-thousand-line block on the render thread can freeze the
+ * UI; line-level output is still useful and cheap.
+ */
+const WORD_DIFF_MAX_CHARS = 20000;
+
+/**
  * Split a flat list of segments into per-line segments, breaking on newline
  * characters embedded in segment values. A trailing newline produces no extra
  * blank line (it terminates the preceding line rather than starting a new one).
@@ -99,7 +107,13 @@ export function computeInlineDiff(oldString: string, newString: string): DiffLin
     const next = changes[i + 1];
 
     if (change.removed && next?.added) {
-      lines.push(...pairedLines(change.value, next.value));
+      // Skip word-level pairing for very large regions to keep rendering cheap.
+      if (change.value.length + next.value.length > WORD_DIFF_MAX_CHARS) {
+        lines.push(...plainLines(change.value, 'remove'));
+        lines.push(...plainLines(next.value, 'add'));
+      } else {
+        lines.push(...pairedLines(change.value, next.value));
+      }
       i += 2;
     } else if (change.removed) {
       lines.push(...plainLines(change.value, 'remove'));

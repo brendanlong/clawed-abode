@@ -80,4 +80,22 @@ describe('computeInlineDiff', () => {
     expect(computeInlineDiff('', '')).toEqual([]);
     expect(diffStats(computeInlineDiff('', ''))).toEqual({ added: 0, removed: 0 });
   });
+
+  it('falls back to plain line diff (no word highlighting) for very large blocks', () => {
+    // Build a modified region whose combined size exceeds the word-diff cap.
+    const big = 'x'.repeat(15000);
+    const oldString = `${big}old\n`;
+    const newString = `${big}new\n`;
+    const lines = computeInlineDiff(oldString, newString);
+
+    // Still produces the removed-then-added line structure...
+    expect(lines.map((l) => l.type)).toEqual(['remove', 'add']);
+    // ...but skips the expensive word-level highlighting.
+    expect(lines.every((l) => l.segments.every((s) => !s.highlight))).toBe(true);
+  });
+
+  it('still does word-level highlighting for normal-sized blocks', () => {
+    const lines = computeInlineDiff('small old line\n', 'small new line\n');
+    expect(lines.some((l) => l.segments.some((s) => s.highlight))).toBe(true);
+  });
 });
