@@ -7,6 +7,7 @@ import { getFileType } from '@/lib/file-types';
 import { MarkdownContent } from '@/components/MarkdownContent';
 import { FileIcon } from './FileIcon';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
+import { CodeBlock } from './CodeBlock';
 import { isPlanFile } from './plan-utils';
 import type { ToolCall } from './types';
 
@@ -106,11 +107,7 @@ export function WriteDisplay({ tool }: { tool: ToolCall }) {
             </span>
           </div>
           {content ? (
-            <pre className="bg-green-50 dark:bg-green-950/50 border border-green-200 dark:border-green-800 p-2 rounded overflow-x-auto max-h-96 overflow-y-auto">
-              <code className="text-green-800 dark:text-green-200 whitespace-pre-wrap break-words">
-                {content}
-              </code>
-            </pre>
+            <CodeBlock code={content} fileType={fileType} />
           ) : (
             <div className="text-muted-foreground italic py-2">(empty file)</div>
           )}

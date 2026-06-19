@@ -265,3 +265,104 @@ body {
   @apply font-mono text-xs whitespace-pre-wrap break-words;
   color: var(--terminal-fg);
 }
+
+/*
+ * highlight.js theme. Token colors are GitHub-flavored and adapt to dark mode.
+ * The base text uses the normal foreground (inherited), so code reads as normal
+ * text with only syntax accents — applied to Read/Write tool displays.
+ */
+.hljs {
+  --hljs-comment: #6a737d;
+  --hljs-keyword: #d73a49;
+  --hljs-string: #032f62;
+  --hljs-number: #005cc5;
+  --hljs-title: #6f42c1;
+  --hljs-built-in: #e36209;
+  --hljs-type: #d73a49;
+  --hljs-tag: #22863a;
+  --hljs-attr: #005cc5;
+  --hljs-meta: #6a737d;
+}
+
+.dark .hljs {
+  --hljs-comment: #8b949e;
+  --hljs-keyword: #ff7b72;
+  --hljs-string: #a5d6ff;
+  --hljs-number: #79c0ff;
+  --hljs-title: #d2a8ff;
+  --hljs-built-in: #ffa657;
+  --hljs-type: #ff7b72;
+  --hljs-tag: #7ee787;
+  --hljs-attr: #79c0ff;
+  --hljs-meta: #8b949e;
+}
+
+.hljs-comment,
+.hljs-quote {
+  color: var(--hljs-comment);
+  font-style: italic;
+}
+
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal,
+.hljs-doctag {
+  color: var(--hljs-keyword);
+}
+
+.hljs-string,
+.hljs-regexp,
+.hljs-template-tag,
+.hljs-template-variable,
+.hljs-addition {
+  color: var(--hljs-string);
+}
+
+.hljs-number,
+.hljs-symbol,
+.hljs-bullet {
+  color: var(--hljs-number);
+}
+
+.hljs-title,
+.hljs-title.function_,
+.hljs-section,
+.hljs-name {
+  color: var(--hljs-title);
+}
+
+.hljs-built_in,
+.hljs-class .hljs-title,
+.hljs-params {
+  color: var(--hljs-built-in);
+}
+
+.hljs-type,
+.hljs-title.class_,
+.hljs-variable.language_ {
+  color: var(--hljs-type);
+}
+
+.hljs-tag,
+.hljs-selector-id,
+.hljs-selector-class {
+  color: var(--hljs-tag);
+}
+
+.hljs-attr,
+.hljs-attribute,
+.hljs-property {
+  color: var(--hljs-attr);
+}
+
+.hljs-meta {
+  color: var(--hljs-meta);
+}
+
+.hljs-emphasis {
+  font-style: italic;
+}
+
+.hljs-strong {
+  font-weight: bold;
+}
