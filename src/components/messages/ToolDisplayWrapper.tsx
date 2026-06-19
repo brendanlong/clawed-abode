@@ -112,7 +112,7 @@ export function ToolDisplayWrapper({
               </div>
               {subtitle}
             </div>
-            <span className="text-muted-foreground ml-2 flex-shrink-0">{expanded ? '−' : '+'}</span>
+            <span className="text-muted-foreground ml-2 shrink-0">{expanded ? '−' : '+'}</span>
           </CollapsibleTrigger>
 
           <CollapsibleContent>

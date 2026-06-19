@@ -609,7 +609,7 @@ export function MessageList({
       <ContextUsageIndicator
         stats={tokenUsage}
         totalCostUsd={tokenUsage?.totalCostUsd}
-        className="absolute bottom-3 right-3 shadow-sm"
+        className="absolute bottom-3 right-3 shadow-xs"
       />
     </div>
   );

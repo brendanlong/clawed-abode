@@ -13,7 +13,7 @@ interface SkillInput {
 function SkillIcon() {
   return (
     <svg
-      className="w-4 h-4 text-indigo-600 dark:text-indigo-400 flex-shrink-0"
+      className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0"
       fill="none"
       viewBox="0 0 24 24"
       stroke="currentColor"

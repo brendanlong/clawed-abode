@@ -92,7 +92,7 @@ function getSubagentLabel(subagentType: string): { label: string; color: string 
 function AgentIcon() {
   return (
     <svg
-      className="w-4 h-4 text-muted-foreground flex-shrink-0"
+      className="w-4 h-4 text-muted-foreground shrink-0"
       fill="none"
       viewBox="0 0 24 24"
       stroke="currentColor"
