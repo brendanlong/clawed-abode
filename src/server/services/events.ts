@@ -57,6 +57,18 @@ export type SSEEvent =
   | PrUpdateEvent
   | RetryStatusEvent;
 
+/**
+ * The set of latest-state events for a single session, multiplexed onto one SSE
+ * subscription (`sse.onSessionEvents`) so the session view opens a single stream
+ * instead of one per signal. All are "current state" with no replay semantics —
+ * unlike `new_message`, which has its own cursor-based catch-up stream.
+ */
+export type SessionStateEvent =
+  | SessionUpdateEvent
+  | ClaudeRunningEvent
+  | CommandsEvent
+  | RetryStatusEvent;
+
 // Create a typed event emitter
 class SSEEventEmitter extends EventEmitter {
   emitSessionUpdate(sessionId: string, session: Session): void {

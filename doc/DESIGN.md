@@ -298,6 +298,17 @@ The SDK emits `stream_event` messages which are accumulated by `StreamAccumulato
 
 **Implementation:** [`src/server/services/claude-runner.ts`](../src/server/services/claude-runner.ts)
 
+### SSE Channels
+
+The server pushes updates to the browser via tRPC subscriptions over SSE (`httpSubscriptionLink`). Each `useSubscription` opens its own connection, and browsers cap concurrent connections per origin (~6 over HTTP/1.1), so the number of streams a page opens matters — too many can starve ordinary tRPC queries/mutations. The session view therefore uses **two** streams, not one-per-signal:
+
+- **`sse.onNewMessage`** — message history deltas. Has its own cursor (`afterSequence`) for catch-up on (re)connect and a reactive input, plus partial-message handling, so it stays separate.
+- **`sse.onSessionEvents`** — all _latest-state_ signals for the session multiplexed onto one stream as a discriminated union (`SessionStateEvent`): `session_update`, `claude_running`, `retry_status`, `commands`. The client (`useClaudeState`) routes on `event.type` and writes the relevant React Query caches / local state. These carry no replay semantics — on reconnect the hooks refetch via `useRefetchOnReconnect`, so a fresh stream with no catch-up is sufficient.
+
+The session **list** opens one `sse.onPrUpdate` per visible row (PR status is per-row, not per-session).
+
+All three subscriptions share a single `eventStream` generator helper in [`src/server/routers/sse.ts`](../src/server/routers/sse.ts) that registers the emitter listener(s) first (so nothing is missed while an optional catch-up `prelude` runs), drains buffered events, tags each with a tracking id, and unsubscribes on abort/return. Server-side fan-out stays per-signal (`sseEvents.emit*`); only the client-facing subscription is consolidated.
+
 ### Thinking Blocks
 
 When extended thinking is active, assistant messages include `thinking` (and, when the API encrypts reasoning, `redacted_thinking`) content blocks alongside `text` and `tool_use`. These are accumulated during streaming (`thinking_delta` events) and rendered as a single collapsed "Thinking" section per message (`ThinkingDisplay`), coalescing multiple thinking blocks into one. Thinking text is excluded from copy/voice output.
@@ -323,7 +334,7 @@ Subagent (`Task` tool) lifecycle: `task_started` and `task_notification` are the
 `api_retry` messages (emitted while the SDK retries a transient API failure such as a 429 rate limit or 529 overloaded) are ignored for persistence but are _not_ simply dropped: their current attempt is surfaced as **ephemeral status** so the user can see "Rate limited — retrying (n/max)" without the retries polluting the conversation history.
 
 - `parseApiRetryMessage` ([`src/lib/claude-messages.ts`](../src/lib/claude-messages.ts)) extracts `{ attempt, maxRetries, error, errorStatus }` from the message.
-- The runner ([`claude-runner.ts`](../src/server/services/claude-runner.ts)) emits this over a dedicated SSE channel (`sseEvents.emitRetryStatus` → `sse.onRetryStatus`) and clears it (`retry: null`) as soon as a non-retry message flows again (the call succeeded) or the turn ends. The current status is held in the in-memory `SessionState.retryStatus`.
+- The runner ([`claude-runner.ts`](../src/server/services/claude-runner.ts)) emits this via `sseEvents.emitRetryStatus`, delivered to the client over the consolidated `sse.onSessionEvents` stream (see [SSE Channels](#sse-channels)), and clears it (`retry: null`) as soon as a non-retry message flows again (the call succeeded) or the turn ends. The current status is held in the in-memory `SessionState.retryStatus`.
 - The client (`useClaudeState`) tracks the latest status in local state (also cleared when Claude stops running) and `ClaudeStatusIndicator` renders it in place of the normal "working" line. Like partial messages, this state is purely transient — it is never persisted and not restored on reconnect.
 
 ## Message Storage & Pagination

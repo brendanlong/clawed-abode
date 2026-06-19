@@ -28,47 +28,38 @@ export function useClaudeState(sessionId: string) {
   }, [refetch, refetchCommands]);
   useRefetchOnReconnect(refetchAll);
 
-  // Subscribe to Claude running state via SSE - update cache directly
-  trpc.sse.onClaudeRunning.useSubscription(
+  // Subscribe to all latest-state events for this session over ONE SSE stream
+  // (session updates, running state, retry status, slash commands) and route by
+  // type. Consolidating these onto a single subscription keeps the session view
+  // from opening a separate connection per signal.
+  trpc.sse.onSessionEvents.useSubscription(
     { sessionId },
     {
       onData: (trackedData) => {
-        utils.claude.isRunning.setData({ sessionId }, { running: trackedData.data.running });
-        // When Claude finishes running, refetch commands in case new ones were discovered
-        if (!trackedData.data.running) {
-          refetchCommands();
-          // The retry banner is meaningless once the turn ends.
-          setRetryStatus(null);
+        const event = trackedData.data;
+        switch (event.type) {
+          case 'session_update':
+            utils.sessions.get.setData({ sessionId }, { session: event.session });
+            break;
+          case 'claude_running':
+            utils.claude.isRunning.setData({ sessionId }, { running: event.running });
+            // When Claude finishes running, refetch commands in case new ones
+            // were discovered, and clear the now-meaningless retry banner.
+            if (!event.running) {
+              refetchCommands();
+              setRetryStatus(null);
+            }
+            break;
+          case 'retry_status':
+            setRetryStatus(event.retry);
+            break;
+          case 'commands':
+            utils.claude.getCommands.setData({ sessionId }, { commands: event.commands });
+            break;
         }
       },
       onError: (err) => {
-        console.error('Claude running SSE error:', err);
-      },
-    }
-  );
-
-  // Subscribe to ephemeral rate-limit retry status via SSE
-  trpc.sse.onRetryStatus.useSubscription(
-    { sessionId },
-    {
-      onData: (trackedData) => {
-        setRetryStatus(trackedData.data.retry);
-      },
-      onError: (err) => {
-        console.error('Retry status SSE error:', err);
-      },
-    }
-  );
-
-  // Subscribe to commands updates via SSE - update cache directly
-  trpc.sse.onCommands.useSubscription(
-    { sessionId },
-    {
-      onData: (trackedData) => {
-        utils.claude.getCommands.setData({ sessionId }, { commands: trackedData.data.commands });
-      },
-      onError: (err) => {
-        console.error('Commands SSE error:', err);
+        console.error('Session events SSE error:', err);
       },
     }
   );
