@@ -35,7 +35,7 @@ export function Logo({ isWorking = false, size = 24, className }: LogoProps) {
       alt={isWorking ? 'Clawed Abode logo (working)' : 'Clawed Abode logo'}
       width={size}
       height={size}
-      className={cn('flex-shrink-0', className)}
+      className={cn('shrink-0', className)}
       priority
     />
   );

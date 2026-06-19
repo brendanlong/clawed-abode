@@ -56,7 +56,7 @@ function groupByDirectory(files: FileEntry[]): Map<string, FileEntry[]> {
 // File icon component
 const FileIcon = () => (
   <svg
-    className="w-4 h-4 text-muted-foreground flex-shrink-0"
+    className="w-4 h-4 text-muted-foreground shrink-0"
     fill="none"
     viewBox="0 0 24 24"
     stroke="currentColor"
@@ -73,7 +73,7 @@ const FileIcon = () => (
 // Folder icon component
 const FolderIcon = () => (
   <svg
-    className="w-4 h-4 text-amber-600 dark:text-amber-400 flex-shrink-0"
+    className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0"
     fill="none"
     viewBox="0 0 24 24"
     stroke="currentColor"

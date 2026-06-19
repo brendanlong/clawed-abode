@@ -85,7 +85,7 @@ function parseWebSearchOutput(output: string): ParsedWebSearchOutput | null {
 // Search/globe icon component
 const SearchIcon = () => (
   <svg
-    className="w-4 h-4 text-blue-600 dark:text-blue-400 flex-shrink-0"
+    className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0"
     fill="none"
     viewBox="0 0 24 24"
     stroke="currentColor"
@@ -102,7 +102,7 @@ const SearchIcon = () => (
 // External link icon component
 const ExternalLinkIcon = () => (
   <svg
-    className="w-3 h-3 text-muted-foreground flex-shrink-0 opacity-0 group-hover/link:opacity-100 transition-opacity"
+    className="w-3 h-3 text-muted-foreground shrink-0 opacity-0 group-hover/link:opacity-100 transition-opacity"
     fill="none"
     viewBox="0 0 24 24"
     stroke="currentColor"
@@ -180,7 +180,7 @@ export function WebSearchDisplay({ tool }: { tool: ToolCall }) {
                 rel="noopener noreferrer"
                 className="group/link flex items-start gap-2 py-1.5 px-2 -mx-2 hover:bg-background/50 rounded text-xs"
               >
-                <span className="text-muted-foreground flex-shrink-0 mt-0.5">{index + 1}.</span>
+                <span className="text-muted-foreground shrink-0 mt-0.5">{index + 1}.</span>
                 <div className="flex-1 min-w-0">
                   <div className="text-blue-600 dark:text-blue-400 hover:underline font-medium truncate">
                     {link.title}
