@@ -10,7 +10,7 @@ import type { TokenUsageStats } from '@/lib/token-estimation';
 import { useNotification } from '@/hooks/useNotification';
 import { useVoicePlaybackContext } from '@/hooks/useVoicePlayback';
 import { isPlanFile } from './messages/plan-utils';
-import { isTransientProgressMessage } from '@/lib/claude-messages';
+import { isIgnoredSystemMessage } from '@/lib/claude-messages';
 
 interface Message {
   id: string;
@@ -371,9 +371,9 @@ export function MessageList({
         (msg) =>
           !pairedMessageIds.has(msg.id) &&
           !isCompletedHookStarted(msg, completedHookIds) &&
-          // Transient progress events (e.g. thinking_tokens) carry no content;
-          // filter them here so they don't leave an empty spacer row in the list.
-          !isTransientProgressMessage(msg.content)
+          // Ignored system events carry no content; filter them here so they
+          // don't leave an empty spacer row in the list.
+          !isIgnoredSystemMessage(msg.content)
       ),
     [messages, pairedMessageIds, completedHookIds]
   );
