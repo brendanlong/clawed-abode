@@ -52,6 +52,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
     interrupt,
     isInterrupting,
     answerQuestion,
+    respondToPlan,
     commands,
   } = useClaudeState(sessionId);
 
@@ -203,8 +204,6 @@ function SessionView({ sessionId }: { sessionId: string }) {
               hasMore={hasMore}
               onLoadMore={fetchMore}
               tokenUsage={tokenUsage}
-              onSendResponse={() => {}}
-              isClaudeRunning={false}
             />
             <div className="border-t bg-muted/50 px-4 py-3 text-center text-sm text-muted-foreground">
               This session has been archived. You can view the message history but cannot send new
@@ -260,7 +259,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
           tokenUsage={tokenUsage}
           onSendResponse={handleSendPromptWithVoice}
           onAnswerQuestion={answerQuestion}
-          isClaudeRunning={isClaudeRunning}
+          onRespondToPlan={respondToPlan}
         />
 
         {voiceOverlayOpen && voiceConfig.enabled ? (
