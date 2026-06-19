@@ -16,19 +16,7 @@ export function useSessionState(sessionId: string) {
   // Refetch session data when app regains visibility or network reconnects
   useRefetchOnReconnect(refetch);
 
-  // Subscribe to session updates via SSE - update cache directly
-  trpc.sse.onSessionUpdate.useSubscription(
-    { sessionId },
-    {
-      onData: (trackedData) => {
-        const session = trackedData.data.session as NonNullable<typeof sessionData>['session'];
-        utils.sessions.get.setData({ sessionId }, { session });
-      },
-      onError: (err) => {
-        console.error('Session SSE error:', err);
-      },
-    }
-  );
+  // Live session updates arrive via the multiplexed SSE stream (useSessionStream).
 
   // Mutations - update cache directly from returned data
   const startMutation = trpc.sessions.start.useMutation({

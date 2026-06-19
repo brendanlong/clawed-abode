@@ -8,6 +8,7 @@ import { SessionHeader } from '@/components/SessionHeader';
 import { MessageList } from '@/components/MessageList';
 import { PromptInput } from '@/components/PromptInput';
 import { ClaudeStatusIndicator } from '@/components/ClaudeStatusIndicator';
+import { ConnectionStatusIndicator } from '@/components/ConnectionStatusIndicator';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
 import { useNotification } from '@/hooks/useNotification';
@@ -16,6 +17,7 @@ import { useWorkingContext } from '@/lib/working-context';
 import { useSessionState } from '@/hooks/useSessionState';
 import { useSessionMessages } from '@/hooks/useSessionMessages';
 import { useClaudeState } from '@/hooks/useClaudeState';
+import { useSessionStream } from '@/hooks/useSessionStream';
 import { useWorkCompleteNotification } from '@/hooks/useWorkCompleteNotification';
 import { useVoiceConfig } from '@/hooks/useVoiceConfig';
 import { useVoicePlayback, VoicePlaybackContext } from '@/hooks/useVoicePlayback';
@@ -23,6 +25,9 @@ import { getNewAutoReadMessages } from '@/lib/auto-read-helpers';
 import { VoiceControlPanel } from '@/components/voice/VoiceControlPanel';
 
 function SessionView({ sessionId }: { sessionId: string }) {
+  // Single multiplexed SSE stream: fans live events into the relevant caches.
+  const { status: streamStatus } = useSessionStream(sessionId);
+
   // Session state: data, start/stop/archive
   const {
     session,
@@ -273,6 +278,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
           />
         ) : (
           <>
+            <ConnectionStatusIndicator status={streamStatus} />
             <ClaudeStatusIndicator isRunning={isClaudeRunning} containerStatus={session.status} />
             <PromptInput
               onSubmit={handleSendPromptWithVoice}

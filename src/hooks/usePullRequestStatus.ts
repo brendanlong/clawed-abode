@@ -36,8 +36,6 @@ export function usePullRequestStatus(
   sessionId: string,
   enabled: boolean = true
 ): UsePullRequestStatusResult {
-  const utils = trpc.useUtils();
-
   const { data, isLoading } = trpc.github.getSessionPrStatus.useQuery(
     { sessionId },
     {
@@ -47,20 +45,8 @@ export function usePullRequestStatus(
     }
   );
 
-  // Subscribe to real-time PR updates via SSE
-  trpc.sse.onPrUpdate.useSubscription(
-    { sessionId },
-    {
-      enabled,
-      onData: (trackedData) => {
-        const event = trackedData.data;
-        utils.github.getSessionPrStatus.setData(
-          { sessionId },
-          { pullRequest: event.pullRequest as PullRequestInfo | null }
-        );
-      },
-    }
-  );
+  // Live PR updates arrive via the multiplexed SSE stream (useSessionStream),
+  // which writes directly into this query's cache.
 
   return {
     pullRequest: data?.pullRequest as PullRequestInfo | null | undefined,

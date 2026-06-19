@@ -44,10 +44,33 @@ export type SSEEvent =
   | CommandsEvent
   | PrUpdateEvent;
 
+/**
+ * Normalized union delivered over the single multiplexed per-session SSE stream.
+ * The five per-channel events above are folded into this discriminated union by
+ * {@link SSEEventEmitter.onSessionEvents}. A `message`'s id distinguishes partial
+ * (transient streaming) from complete (persisted) messages.
+ */
+export type SessionStreamEvent =
+  | { kind: 'message'; message: ParsedMessage }
+  | { kind: 'running'; running: boolean }
+  | { kind: 'commands'; commands: SlashCommand[] }
+  | { kind: 'pr'; pullRequest: PullRequestInfo | null }
+  | { kind: 'session'; session: Session };
+
+// Global channel name for cross-session list updates (not session-scoped).
+const SESSION_LIST_EVENT = 'session-list';
+
 // Create a typed event emitter
 class SSEEventEmitter extends EventEmitter {
   emitSessionUpdate(sessionId: string, session: Session): void {
     this.emit(`session:${sessionId}`, {
+      type: 'session_update',
+      sessionId,
+      session,
+    } satisfies SessionUpdateEvent);
+    // Fan out to the global list channel so the home page updates live for any
+    // session, without each row needing its own subscription.
+    this.emit(SESSION_LIST_EVENT, {
       type: 'session_update',
       sessionId,
       session,
@@ -118,6 +141,27 @@ class SSEEventEmitter extends EventEmitter {
     const eventName = `pr:${sessionId}`;
     this.on(eventName, callback);
     return () => this.off(eventName, callback);
+  }
+
+  /**
+   * Subscribe to all event kinds for a session as a single normalized stream.
+   * Returns one unsubscribe that detaches every underlying channel listener.
+   */
+  onSessionEvents(sessionId: string, callback: (event: SessionStreamEvent) => void): () => void {
+    const unsubscribes = [
+      this.onNewMessage(sessionId, (e) => callback({ kind: 'message', message: e.message })),
+      this.onClaudeRunning(sessionId, (e) => callback({ kind: 'running', running: e.running })),
+      this.onCommands(sessionId, (e) => callback({ kind: 'commands', commands: e.commands })),
+      this.onPrUpdate(sessionId, (e) => callback({ kind: 'pr', pullRequest: e.pullRequest })),
+      this.onSessionUpdate(sessionId, (e) => callback({ kind: 'session', session: e.session })),
+    ];
+    return () => unsubscribes.forEach((unsubscribe) => unsubscribe());
+  }
+
+  // Subscribe to session list changes across all sessions (home page).
+  onSessionListChanged(callback: (event: SessionUpdateEvent) => void): () => void {
+    this.on(SESSION_LIST_EVENT, callback);
+    return () => this.off(SESSION_LIST_EVENT, callback);
   }
 }
 

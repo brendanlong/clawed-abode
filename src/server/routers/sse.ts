@@ -1,105 +1,72 @@
 import { z } from 'zod';
 import { router, protectedProcedure } from '../trpc';
 import { sseEvents } from '../services/events';
-import type { PrUpdateEvent } from '../services/events';
+import type { SessionStreamEvent, SessionUpdateEvent } from '../services/events';
 import { tracked } from '@trpc/server';
 import { prisma } from '@/lib/prisma';
+import { isPartialMessageId } from '@/lib/message-cache';
+import { formatResumeToken, parseResumeToken, EMPTY_WATERMARK } from '@/lib/sse-resume';
+
+/**
+ * Eagerly subscribe to an event source and buffer events into a queue. Subscribing
+ * synchronously (rather than on the first generator `next()`) ensures events that
+ * arrive while we replay history are not missed.
+ */
+function createEventQueue<T>(subscribe: (push: (event: T) => void) => () => void) {
+  const queue: T[] = [];
+  let resolveWait: (() => void) | null = null;
+  const unsubscribe = subscribe((event) => {
+    queue.push(event);
+    resolveWait?.();
+  });
+  const waitForEvent = (signal: AbortSignal | undefined): Promise<void> =>
+    new Promise<void>((resolve) => {
+      const onAbort = () => resolve();
+      resolveWait = () => {
+        signal?.removeEventListener('abort', onAbort);
+        resolve();
+      };
+      signal?.addEventListener('abort', onAbort, { once: true });
+    });
+  return { queue, waitForEvent, unsubscribe };
+}
 
 export const sseRouter = router({
-  // Subscribe to session updates (status changes, etc.)
-  onSessionUpdate: protectedProcedure
-    .input(z.object({ sessionId: z.string().uuid() }))
-    .subscription(async function* ({ input, signal }) {
-      // Create an async iterator from event emitter
-      const events: Array<{ type: 'session_update'; sessionId: string; session: unknown }> = [];
-      let resolveWait: (() => void) | null = null;
-
-      const unsubscribe = sseEvents.onSessionUpdate(input.sessionId, (event) => {
-        events.push(event);
-        resolveWait?.();
-      });
-
-      try {
-        while (!signal?.aborted) {
-          if (events.length > 0) {
-            const event = events.shift()!;
-            yield tracked(event.sessionId, event);
-          } else {
-            // Wait for next event or abort
-            await new Promise<void>((resolve) => {
-              const onAbort = () => resolve();
-              resolveWait = () => {
-                signal?.removeEventListener('abort', onAbort);
-                resolve();
-              };
-              signal?.addEventListener('abort', onAbort, { once: true });
-            });
-          }
-        }
-      } finally {
-        unsubscribe();
-      }
-    }),
-
-  // Subscribe to new messages for a session
-  // Optionally accepts afterSequence to catch up on missed messages
-  onNewMessage: protectedProcedure
+  // Single multiplexed stream of all event kinds for one session.
+  //
+  // `lastEventId` is supplied by tRPC automatically on reconnect (from the SSE
+  // `Last-Event-ID` header). Its token encodes the message high-water mark, so we
+  // replay persisted messages missed while disconnected. Non-message events are
+  // "latest value" and are resynced by the client's React Query refetch — they are
+  // streamed live but never replayed.
+  onSessionEvents: protectedProcedure
     .input(
       z.object({
         sessionId: z.string().uuid(),
-        afterSequence: z.number().int().optional(),
+        lastEventId: z.string().nullish(),
       })
     )
     .subscription(async function* ({ input, signal }) {
-      const events: Array<{
-        type: 'new_message';
-        sessionId: string;
-        message: {
-          id: string;
-          sessionId: string;
-          sequence: number;
-          type: string;
-          content: unknown;
-          createdAt: Date;
-        };
-      }> = [];
-      let resolveWait: (() => void) | null = null;
+      const resume = parseResumeToken(input.lastEventId);
+      let counter = resume?.counter ?? 0;
+      let watermark = resume?.watermark ?? EMPTY_WATERMARK;
 
-      // Start listening to real-time events FIRST (before DB query)
-      // to avoid missing messages during the query
-      const unsubscribe = sseEvents.onNewMessage(input.sessionId, (event) => {
-        // Send full message data so client can update cache directly
-        events.push({
-          type: 'new_message',
-          sessionId: event.sessionId,
-          message: {
-            id: event.message.id,
-            sessionId: event.message.sessionId,
-            sequence: event.message.sequence,
-            type: event.message.type,
-            content: event.message.content,
-            createdAt: event.message.createdAt,
-          },
-        });
-        resolveWait?.();
-      });
+      // Subscribe before any awaits so we don't miss live events during replay.
+      const { queue, waitForEvent, unsubscribe } = createEventQueue<SessionStreamEvent>((push) =>
+        sseEvents.onSessionEvents(input.sessionId, push)
+      );
 
       try {
-        // Query for missed messages if cursor provided
-        if (input.afterSequence !== undefined) {
-          const missedMessages = await prisma.message.findMany({
-            where: {
-              sessionId: input.sessionId,
-              sequence: { gt: input.afterSequence },
-            },
+        if (resume) {
+          // Replay messages persisted since the client's last known sequence.
+          const missed = await prisma.message.findMany({
+            where: { sessionId: input.sessionId, sequence: { gt: resume.watermark } },
             orderBy: { sequence: 'asc' },
           });
-
-          // Yield missed messages first
-          for (const msg of missedMessages) {
-            yield tracked(msg.id, {
-              type: 'new_message' as const,
-              sessionId: msg.sessionId,
+          for (const msg of missed) {
+            watermark = msg.sequence;
+            yield tracked(formatResumeToken(watermark, ++counter), {
+              kind: 'message' as const,
               message: {
                 id: msg.id,
                 sessionId: msg.sessionId,
@@ -110,29 +77,27 @@ export const sseRouter = router({
               },
             });
           }
+        } else {
+          // Fresh connect: anchor the watermark at the current max so a later
+          // reconnect replays only messages created from here on.
+          const last = await prisma.message.findFirst({
+            where: { sessionId: input.sessionId },
+            orderBy: { sequence: 'desc' },
+            select: { sequence: true },
+          });
+          watermark = last?.sequence ?? EMPTY_WATERMARK;
         }
 
-        // Then stream real-time events (client deduplicates any overlap)
-        // Partial messages (id starting with "partial-") need unique tracking IDs
-        // so tRPC doesn't deduplicate subsequent updates to the same partial
-        let partialCounter = 0;
         while (!signal?.aborted) {
-          if (events.length > 0) {
-            const event = events.shift()!;
-            const isPartial = event.message.id.startsWith('partial-');
-            const trackingId = isPartial
-              ? `${event.message.id}-${partialCounter++}`
-              : event.message.id;
-            yield tracked(trackingId, event);
+          if (queue.length > 0) {
+            const event = queue.shift()!;
+            // Only persisted (complete) messages advance the resume watermark.
+            if (event.kind === 'message' && !isPartialMessageId(event.message.id)) {
+              watermark = event.message.sequence;
+            }
+            yield tracked(formatResumeToken(watermark, ++counter), event);
           } else {
-            await new Promise<void>((resolve) => {
-              const onAbort = () => resolve();
-              resolveWait = () => {
-                signal?.removeEventListener('abort', onAbort);
-                resolve();
-              };
-              signal?.addEventListener('abort', onAbort, { once: true });
-            });
+            await waitForEvent(signal);
           }
         }
       } finally {
@@ -140,104 +105,29 @@ export const sseRouter = router({
       }
     }),
 
-  // Subscribe to Claude running state changes
-  onClaudeRunning: protectedProcedure
-    .input(z.object({ sessionId: z.string().uuid() }))
+  // Global stream of session changes for the home page (all sessions). The list is
+  // small and also refetched on reconnect, so we only need monotonic tracked ids
+  // (seeded from lastEventId) to avoid client-side dedup dropping the first event.
+  onSessionListEvents: protectedProcedure
+    .input(z.object({ lastEventId: z.string().nullish() }).optional())
     .subscription(async function* ({ input, signal }) {
-      const events: Array<{ type: 'claude_running'; sessionId: string; running: boolean }> = [];
-      let resolveWait: (() => void) | null = null;
+      const seeded = Number(input?.lastEventId);
+      let counter = Number.isInteger(seeded) ? seeded + 1 : 0;
 
-      const unsubscribe = sseEvents.onClaudeRunning(input.sessionId, (event) => {
-        events.push(event);
-        resolveWait?.();
-      });
+      const { queue, waitForEvent, unsubscribe } = createEventQueue<SessionUpdateEvent>((push) =>
+        sseEvents.onSessionListChanged(push)
+      );
 
       try {
         while (!signal?.aborted) {
-          if (events.length > 0) {
-            const event = events.shift()!;
-            yield tracked(`${event.sessionId}-${event.running}`, event);
-          } else {
-            await new Promise<void>((resolve) => {
-              const onAbort = () => resolve();
-              resolveWait = () => {
-                signal?.removeEventListener('abort', onAbort);
-                resolve();
-              };
-              signal?.addEventListener('abort', onAbort, { once: true });
+          if (queue.length > 0) {
+            const event = queue.shift()!;
+            yield tracked(String(counter++), {
+              kind: 'session' as const,
+              session: event.session,
             });
-          }
-        }
-      } finally {
-        unsubscribe();
-      }
-    }),
-
-  // Subscribe to supported slash commands updates
-  onCommands: protectedProcedure
-    .input(z.object({ sessionId: z.string().uuid() }))
-    .subscription(async function* ({ input, signal }) {
-      const events: Array<{
-        type: 'commands';
-        sessionId: string;
-        commands: Array<{ name: string; description: string; argumentHint: string }>;
-      }> = [];
-      let resolveWait: (() => void) | null = null;
-      let counter = 0;
-
-      const unsubscribe = sseEvents.onCommands(input.sessionId, (event) => {
-        events.push(event);
-        resolveWait?.();
-      });
-
-      try {
-        while (!signal?.aborted) {
-          if (events.length > 0) {
-            const event = events.shift()!;
-            yield tracked(`${event.sessionId}-commands-${counter++}`, event);
           } else {
-            await new Promise<void>((resolve) => {
-              const onAbort = () => resolve();
-              resolveWait = () => {
-                signal?.removeEventListener('abort', onAbort);
-                resolve();
-              };
-              signal?.addEventListener('abort', onAbort, { once: true });
-            });
-          }
-        }
-      } finally {
-        unsubscribe();
-      }
-    }),
-
-  // Subscribe to PR status updates for a session
-  onPrUpdate: protectedProcedure
-    .input(z.object({ sessionId: z.string().uuid() }))
-    .subscription(async function* ({ input, signal }) {
-      const events: PrUpdateEvent[] = [];
-      let resolveWait: (() => void) | null = null;
-      let counter = 0;
-
-      const unsubscribe = sseEvents.onPrUpdate(input.sessionId, (event) => {
-        events.push(event);
-        resolveWait?.();
-      });
-
-      try {
-        while (!signal?.aborted) {
-          if (events.length > 0) {
-            const event = events.shift()!;
-            yield tracked(`${event.sessionId}-pr-${counter++}`, event);
-          } else {
-            await new Promise<void>((resolve) => {
-              const onAbort = () => resolve();
-              resolveWait = () => {
-                signal?.removeEventListener('abort', onAbort);
-                resolve();
-              };
-              signal?.addEventListener('abort', onAbort, { once: true });
-            });
+            await waitForEvent(signal);
           }
         }
       } finally {
