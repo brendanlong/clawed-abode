@@ -246,7 +246,7 @@ export function summarizeSystemMessage(content: MessageContent): SystemMessageSu
     case 'plugin_install': {
       const name = asString(content.name);
       const status = asString(content.status) ?? 'unknown';
-      const error = asString(content.error);
+      const error = extractErrorMessage(content.error);
       return {
         label: name ? `Plugin: ${name}` : 'Plugin install',
         body: error ? `${status} — ${error}` : status,
@@ -259,7 +259,7 @@ export function summarizeSystemMessage(content: MessageContent): SystemMessageSu
       return { label: 'Recalled memories', body: `${count} (${mode})`, level: 'info' };
     }
     case 'mirror_error':
-      return { label: 'Mirror error', body: asString(content.error), level: 'warn' };
+      return { label: 'Mirror error', body: extractErrorMessage(content.error), level: 'warn' };
     case 'task_started': {
       const description = asString(content.description);
       const agent = asString(content.subagent_type);
@@ -285,7 +285,9 @@ export function summarizeSystemMessage(content: MessageContent): SystemMessageSu
       };
     default:
       return {
-        label: humanizeSubtype(content.subtype),
+        // Fall back to the message `type` when there is no subtype, so top-level
+        // types persisted as system (e.g. prompt_suggestion) get a real label.
+        label: humanizeSubtype(content.subtype ?? asString(content.type)),
         body: asString(content.content),
         level: 'info',
       };
