@@ -424,10 +424,13 @@ describe('summarizeSystemMessage', () => {
     });
   });
 
-  it('summarizes api_retry with attempt count and error message', () => {
-    expect(
-      sys({ subtype: 'api_retry', attempt: 3, max_retries: 5, error: { message: 'overloaded' } })
-    ).toEqual({ label: 'Retrying request', body: 'Attempt 3/5 — overloaded', level: 'warn' });
+  it('summarizes api_retry with attempt count and error code', () => {
+    // SDKAssistantMessageError is a string union (e.g. 'overloaded').
+    expect(sys({ subtype: 'api_retry', attempt: 3, max_retries: 5, error: 'overloaded' })).toEqual({
+      label: 'Retrying request',
+      body: 'Attempt 3/5 — overloaded',
+      level: 'warn',
+    });
   });
 
   it('summarizes permission_denied with tool and message', () => {
@@ -447,9 +450,31 @@ describe('summarizeSystemMessage', () => {
     });
   });
 
+  it('summarizes a failed plugin install, extracting an object error', () => {
+    expect(
+      sys({ subtype: 'plugin_install', name: 'foo', status: 'failed', error: { message: 'nope' } })
+    ).toEqual({ label: 'Plugin: foo', body: 'failed — nope', level: 'warn' });
+  });
+
+  it('summarizes a mirror error from a string', () => {
+    expect(sys({ subtype: 'mirror_error', error: 'disk full' })).toEqual({
+      label: 'Mirror error',
+      body: 'disk full',
+      level: 'warn',
+    });
+  });
+
   it('falls back to a humanized label for unknown subtypes', () => {
     expect(sys({ subtype: 'some_future_thing' })).toEqual({
       label: 'Some Future Thing',
+      body: undefined,
+      level: 'info',
+    });
+  });
+
+  it('labels top-level types (no subtype) from the message type', () => {
+    expect(sys({ type: 'prompt_suggestion', suggestion: 'try this' })).toEqual({
+      label: 'Prompt Suggestion',
       body: undefined,
       level: 'info',
     });
