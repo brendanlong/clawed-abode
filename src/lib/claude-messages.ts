@@ -837,6 +837,10 @@ export type MessageHandling =
  * - `status`, `session_state_changed`: transient session/run state.
  * - `files_persisted`, `elicitation_complete`: internal bookkeeping events.
  * - `commands_changed`: slash-command list updates (not chat content).
+ * - `api_retry`: transient "retrying due to rate limit / overload" ticks. The
+ *   live attempt count is surfaced ephemerally via the `retry` SSE channel (see
+ *   {@link parseRetryState}); persisting each one would pollute the transcript
+ *   with notices that carry no value once the request recovers.
  *
  * Without this filter each would render as an empty "System" bubble.
  */
@@ -850,7 +854,53 @@ export const IGNORED_SYSTEM_SUBTYPES = [
   'files_persisted',
   'elicitation_complete',
   'commands_changed',
+  'api_retry',
 ] as const;
+
+/**
+ * An `api_retry` system message: the SDK is retrying a failed API request
+ * (typically a 429 rate limit or 529 overload). These are not persisted — the
+ * latest attempt count is streamed live as ephemeral status (see
+ * {@link parseRetryState}).
+ */
+export const ApiRetryContentSchema = z.object({
+  type: z.literal('system'),
+  subtype: z.literal('api_retry'),
+  attempt: z.number(),
+  max_retries: z.number(),
+  error_status: z.number().optional(),
+  error: z.string().optional(),
+});
+
+/**
+ * Ephemeral "Claude is retrying" status surfaced over the `retry` SSE channel.
+ * `null` means no retry is in progress (the request recovered or the turn ended).
+ */
+export interface RetryState {
+  /** 1-based attempt number for the in-flight retry. */
+  attempt: number;
+  /** Maximum attempts the SDK will make before giving up. */
+  maxRetries: number;
+  /** HTTP status that triggered the retry (e.g. 429, 529), if known. */
+  errorStatus?: number;
+  /** Short error code from the API (e.g. "overloaded"), if known. */
+  error?: string;
+}
+
+/**
+ * Extract {@link RetryState} from an SDK message, or `null` if it is not an
+ * `api_retry` message.
+ */
+export function parseRetryState(message: unknown): RetryState | null {
+  const parsed = ApiRetryContentSchema.safeParse(message);
+  if (!parsed.success) return null;
+  return {
+    attempt: parsed.data.attempt,
+    maxRetries: parsed.data.max_retries,
+    errorStatus: parsed.data.error_status,
+    error: parsed.data.error,
+  };
+}
 
 /**
  * Whether a system message should be dropped entirely (never persisted or shown).
