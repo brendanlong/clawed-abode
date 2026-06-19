@@ -230,6 +230,23 @@ describe('MessageBubble', () => {
     });
   });
 
+  describe('empty assistant fragments', () => {
+    it('renders nothing for an assistant message with only an empty thinking block', () => {
+      const message = {
+        type: 'assistant',
+        content: {
+          message: {
+            content: [{ type: 'thinking', thinking: '', signature: 'sig' }],
+          },
+        } as MessageContent,
+      };
+
+      const { container } = render(<MessageBubble message={message} />);
+
+      expect(container).toBeEmptyDOMElement();
+    });
+  });
+
   describe('generic system messages', () => {
     it('summarizes a notification instead of an empty bubble', () => {
       const message = {
