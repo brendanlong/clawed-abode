@@ -11,10 +11,10 @@ interface MessageListContextValue {
   onTodoManualToggle: (toolId: string) => void;
   /** Callback to send a response to Claude (for AskUserQuestion) */
   onSendResponse?: (response: string) => void;
-  /** Callback to answer an AskUserQuestion via canUseTool (preferred over onSendResponse) */
-  onAnswerQuestion?: (answers: Record<string, string>) => void;
-  /** Whether Claude is currently running (disables AskUserQuestion interactions) */
-  isClaudeRunning?: boolean;
+  /** Answer an AskUserQuestion tool call (preferred over onSendResponse) */
+  onAnswerQuestion?: (toolUseId: string, answers: Record<string, string>) => void;
+  /** Respond to an ExitPlanMode tool call (approve or request changes) */
+  onRespondToPlan?: (toolUseId: string, approve: boolean, feedback?: string) => void;
   /** The latest plan content from Write/Edit of plan files, or null */
   latestPlanContent: string | null;
 }
