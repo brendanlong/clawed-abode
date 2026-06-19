@@ -30,26 +30,26 @@ export interface MessagePage<M extends MessageLike> {
   hasMore: boolean;
 }
 
-export interface MessageInfiniteCache<M extends MessageLike> {
+export interface MessageInfiniteCache<M extends MessageLike, P = unknown> {
   pages: MessagePage<M>[];
-  pageParams: unknown[];
+  pageParams: P[];
 }
 
 /**
  * Merge a single live message into the infinite-query cache. Pure: returns a new
  * cache object (or the same reference when nothing changes, e.g. a duplicate).
  */
-export function mergeMessageIntoCache<M extends MessageLike>(
-  old: MessageInfiniteCache<M> | undefined,
+export function mergeMessageIntoCache<M extends MessageLike, P = unknown>(
+  old: MessageInfiniteCache<M, P> | undefined,
   message: M
-): MessageInfiniteCache<M> {
+): MessageInfiniteCache<M, P> {
   const isPartial = isPartialMessageId(message.id);
 
   if (!old || old.pages.length === 0) {
     // No existing data - bootstrap a single page.
     return {
       pages: [{ messages: [message], hasMore: false }],
-      pageParams: [{ direction: 'backward' as const, sequence: undefined }],
+      pageParams: [{ direction: 'backward' as const, sequence: undefined }] as unknown as P[],
     };
   }
 

@@ -6,8 +6,6 @@ import { useRefetchOnReconnect } from './useRefetchOnReconnect';
  * Hook for managing Claude process state: running status, send prompts, interrupt, and commands.
  */
 export function useClaudeState(sessionId: string) {
-  const utils = trpc.useUtils();
-
   // Fetch Claude running state
   const { data: runningData, refetch } = trpc.claude.isRunning.useQuery({ sessionId });
 
@@ -24,35 +22,8 @@ export function useClaudeState(sessionId: string) {
   }, [refetch, refetchCommands]);
   useRefetchOnReconnect(refetchAll);
 
-  // Subscribe to Claude running state via SSE - update cache directly
-  trpc.sse.onClaudeRunning.useSubscription(
-    { sessionId },
-    {
-      onData: (trackedData) => {
-        utils.claude.isRunning.setData({ sessionId }, { running: trackedData.data.running });
-        // When Claude finishes running, refetch commands in case new ones were discovered
-        if (!trackedData.data.running) {
-          refetchCommands();
-        }
-      },
-      onError: (err) => {
-        console.error('Claude running SSE error:', err);
-      },
-    }
-  );
-
-  // Subscribe to commands updates via SSE - update cache directly
-  trpc.sse.onCommands.useSubscription(
-    { sessionId },
-    {
-      onData: (trackedData) => {
-        utils.claude.getCommands.setData({ sessionId }, { commands: trackedData.data.commands });
-      },
-      onError: (err) => {
-        console.error('Commands SSE error:', err);
-      },
-    }
-  );
+  // Live running-state and command updates arrive via the multiplexed SSE stream
+  // (useSessionStream), which writes directly into these query caches.
 
   const sendMutation = trpc.claude.send.useMutation();
   const interruptMutation = trpc.claude.interrupt.useMutation();
