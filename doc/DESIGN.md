@@ -273,6 +273,16 @@ The SDK emits `stream_event` messages which are accumulated by `StreamAccumulato
 
 **Implementation:** [`src/server/services/claude-runner.ts`](../src/server/services/claude-runner.ts)
 
+### Thinking Blocks
+
+When extended thinking is active, assistant messages include `thinking` (and, when the API encrypts reasoning, `redacted_thinking`) content blocks alongside `text` and `tool_use`. These are accumulated during streaming (`thinking_delta` events) and rendered as a single collapsed "Thinking" section per message (`ThinkingDisplay`), coalescing multiple thinking blocks into one. Thinking text is excluded from copy/voice output.
+
+During redacted thinking the SDK also emits frequent `{ type: 'system', subtype: 'thinking_tokens' }` progress messages carrying only live token-count estimates. These are transient and are dropped (not persisted or shown) via `isTransientProgressMessage` in [`src/lib/claude-messages.ts`](../src/lib/claude-messages.ts) so they don't render as a stream of empty "System" bubbles.
+
+### Message Classification
+
+Every message yielded by the SDK is routed through `classifyMessage(message)` in [`src/lib/claude-messages.ts`](../src/lib/claude-messages.ts), which returns one of `{ kind: 'stream_event' | 'skip' | 'persist' }` (with the DB column type for `persist`). It `switch`es over the SDK's `SDKMessage` discriminated union and ends in `assertNeverFallback`, a compile-time exhaustiveness guard: if a future SDK release adds a top-level message `type`, the build fails until it is handled here. At runtime an unrecognized type degrades to generic system persistence rather than throwing, so an unexpected frame never crashes the query loop. (New `system` _subtypes_ are intentionally not exhaustive — unknown ones persist as a generic system message.)
+
 ## Message Storage & Pagination
 
 Messages are stored with a monotonically increasing sequence number per session (see `Message` model in [`prisma/schema.prisma`](../prisma/schema.prisma)). This enables efficient cursor-based pagination.

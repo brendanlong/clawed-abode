@@ -120,6 +120,100 @@ describe('MessageBubble', () => {
 
       expect(screen.getByText('May be incomplete')).toBeInTheDocument();
     });
+
+    it('renders thinking blocks as a Thinking section, not a System block', () => {
+      const message = {
+        type: 'assistant',
+        content: {
+          message: {
+            content: [
+              { type: 'thinking', thinking: 'Let me reason about this.' },
+              { type: 'text', text: 'Here is my answer.' },
+            ],
+          },
+        } as MessageContent,
+      };
+
+      render(<MessageBubble message={message} />);
+
+      expect(screen.getByText('Thinking')).toBeInTheDocument();
+      expect(screen.getByText('Here is my answer.')).toBeInTheDocument();
+      expect(screen.queryByText('System')).not.toBeInTheDocument();
+    });
+
+    it('coalesces multiple thinking blocks into a single Thinking section', () => {
+      const message = {
+        type: 'assistant',
+        content: {
+          message: {
+            content: [
+              { type: 'thinking', thinking: 'First thought.' },
+              { type: 'thinking', thinking: 'Second thought.' },
+              { type: 'text', text: 'Done.' },
+            ],
+          },
+        } as MessageContent,
+      };
+
+      render(<MessageBubble message={message} />);
+
+      expect(screen.getAllByText('Thinking')).toHaveLength(1);
+    });
+
+    it('labels redacted thinking as redacted', () => {
+      const message = {
+        type: 'assistant',
+        content: {
+          message: {
+            content: [
+              { type: 'redacted_thinking', data: 'opaque' },
+              { type: 'text', text: 'Answer.' },
+            ],
+          },
+        } as MessageContent,
+      };
+
+      render(<MessageBubble message={message} />);
+
+      expect(screen.getByText('Thinking (redacted)')).toBeInTheDocument();
+    });
+
+    it('shows both visible and redacted thinking when both are present', () => {
+      const message = {
+        type: 'assistant',
+        content: {
+          message: {
+            content: [
+              { type: 'thinking', thinking: 'Visible reasoning.' },
+              { type: 'redacted_thinking', data: 'opaque' },
+              { type: 'text', text: 'Answer.' },
+            ],
+          },
+        } as MessageContent,
+      };
+
+      render(<MessageBubble message={message} />);
+
+      expect(screen.getByText('Thinking')).toBeInTheDocument();
+      expect(screen.getByText('Thinking (redacted)')).toBeInTheDocument();
+    });
+  });
+
+  describe('transient progress messages', () => {
+    it('renders nothing for thinking_tokens system messages', () => {
+      const message = {
+        type: 'system',
+        content: {
+          type: 'system',
+          subtype: 'thinking_tokens',
+          estimated_tokens: 100,
+        } as MessageContent,
+      };
+
+      const { container } = render(<MessageBubble message={message} />);
+
+      expect(container).toBeEmptyDOMElement();
+    });
   });
 
   describe('user messages', () => {
