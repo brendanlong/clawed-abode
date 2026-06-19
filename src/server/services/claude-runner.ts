@@ -28,6 +28,7 @@ import { createLogger, toError } from '@/lib/logger';
 import { fetchPullRequestForBranch } from './github';
 import { getCurrentBranch } from './worktree-manager';
 import { StreamAccumulator } from './stream-accumulator';
+import { PARTIAL_MESSAGE_ID_PREFIX } from '@/lib/message-cache';
 import type { ContainerEnvVar } from './repo-settings';
 
 const execFileAsync = promisify(execFile);
@@ -575,7 +576,6 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
 
   try {
     const accumulator = new StreamAccumulator();
-    const PARTIAL_MESSAGE_ID_PREFIX = 'partial-';
 
     // Start the query
     const q = query({ prompt, options: sdkOptions });
