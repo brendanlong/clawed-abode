@@ -8,6 +8,7 @@ import { SessionHeader } from '@/components/SessionHeader';
 import { MessageList } from '@/components/MessageList';
 import { PromptInput } from '@/components/PromptInput';
 import { ClaudeStatusIndicator } from '@/components/ClaudeStatusIndicator';
+import { ConnectionStatusIndicator } from '@/components/ConnectionStatusIndicator';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
 import { useNotification } from '@/hooks/useNotification';
@@ -16,6 +17,7 @@ import { useWorkingContext } from '@/lib/working-context';
 import { useSessionState } from '@/hooks/useSessionState';
 import { useSessionMessages } from '@/hooks/useSessionMessages';
 import { useClaudeState } from '@/hooks/useClaudeState';
+import { useSessionStream } from '@/hooks/useSessionStream';
 import { useWorkCompleteNotification } from '@/hooks/useWorkCompleteNotification';
 import { useVoiceConfig } from '@/hooks/useVoiceConfig';
 import { useVoicePlayback, VoicePlaybackContext } from '@/hooks/useVoicePlayback';
@@ -43,7 +45,13 @@ function SessionView({ sessionId }: { sessionId: string }) {
     hasMore,
     fetchMore,
     tokenUsage,
+    historyLoaded,
+    newestSequence,
   } = useSessionMessages(sessionId);
+
+  // Single multiplexed SSE stream: fans live events into the relevant caches.
+  // Anchored to the loaded history so no messages are missed between snapshots.
+  const { status: streamStatus } = useSessionStream(sessionId, { historyLoaded, newestSequence });
 
   // Claude state: running, send, interrupt, commands
   const {
@@ -273,6 +281,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
           />
         ) : (
           <>
+            <ConnectionStatusIndicator status={streamStatus} />
             <ClaudeStatusIndicator isRunning={isClaudeRunning} containerStatus={session.status} />
             <PromptInput
               onSubmit={handleSendPromptWithVoice}
