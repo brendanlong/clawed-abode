@@ -12,7 +12,11 @@ import { HookStartedDisplay } from './HookStartedDisplay';
 import { CompactBoundaryDisplay } from './CompactBoundaryDisplay';
 import { MainMessageBubble } from './MainMessageBubble';
 import { SystemMessageDisplay } from './SystemMessageDisplay';
-import { isRecognizedMessage, getToolResults } from './messageHelpers';
+import {
+  isRecognizedMessage,
+  getToolResults,
+  hasRenderableAssistantContent,
+} from './messageHelpers';
 import { isIgnoredSystemMessage } from '@/lib/claude-messages';
 import type { ToolResultMap, MessageContent } from './types';
 
@@ -36,6 +40,12 @@ export function MessageBubble({
   // Ignored system events (transient progress / internal state) carry no durable
   // content. New ones are never persisted; this also hides any stored earlier.
   if (isIgnoredSystemMessage(content)) {
+    return null;
+  }
+
+  // Assistant fragments with nothing renderable (e.g. an empty thinking block
+  // with only a continuity signature) would otherwise show as an empty bubble.
+  if (category === 'assistant' && !hasRenderableAssistantContent(content)) {
     return null;
   }
 
