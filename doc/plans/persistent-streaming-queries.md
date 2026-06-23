@@ -26,34 +26,50 @@ Plus:
 - Clean recovery if the server dies: running sessions are revived (resumed) on the
   next interaction.
 
-## Assumed SDK semantics — verify in the spike
+## SDK semantics — VERIFIED by spike
 
-Checked against the installed `@anthropic-ai/claude-agent-sdk@0.3.173` type
-definitions (`node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts`). Items marked
-**UNPROVEN** are hypotheses the spike (commit chunk 1) MUST confirm before anything
-downstream is built — do not merge past the spike until they hold.
+All three load-bearing assumptions were confirmed by
+`scripts/spike-streaming-resume.ts` against `@anthropic-ai/claude-agent-sdk@0.3.173`
+with real auth (run by the user 2026-06-22; all PASS). The spike is kept in-repo as
+a regression check for SDK upgrades.
 
-1. **UNPROVEN — streaming input + `resume`.** `query()` accepts
-   `prompt: string | AsyncIterable<SDKUserMessage>` and `resume?: string`; the types
-   do not forbid combining them, but every doc example pairs `resume` with a _string_
-   prompt and the streaming examples start fresh sessions. The spike must prove
-   resume works mid-stream AND that resumed history is visible to the first streamed
-   turn. This is the single biggest risk.
-2. **PARTIALLY VERIFIED — `interrupt()`.** Streaming-only; the result union includes
-   `subtype: 'error_during_execution'` and `TerminalReason` includes
-   `'aborted_streaming' | 'aborted_tools'`, so the interrupt may surface as a
-   terminal result of _any_ subtype (we key on "any top-level `result`", which is
-   fine). What is NOT guaranteed: that interrupt _always_ emits a result at all.
-   Hence the timeout backstop in the `turnActive` rules below. Docs show the query is
-   reusable after interrupt (supports "stays alive").
-3. **Delivery VERIFIED; auto-continue UNPROVEN.** `SDKTaskStartedMessage` /
-   `SDKTaskNotificationMessage` (`status: completed | failed | stopped`) are real
-   `type:'system'` messages delivered into the same stream while idle (the
-   `backgroundTasks()` doc confirms the task emits a `task_notification` when it
-   settles). What is NOT documented: that the main agent then **autonomously starts a
-   new turn** to act on the notification. The feature's value depends on this — the
-   spike must confirm the agent does follow-up work, not merely that the message
-   arrives. If it does not auto-continue, the win shrinks to "notification surfaced."
+1. **CONFIRMED — streaming input + `resume`.** A streaming-input query with
+   `options.resume = sessionId` recalls prior history (the spike's phase-2 query
+   recited a secret stored in phase 1). **Critical caveat the spike exposed:** the
+   `cwd` MUST be identical across the resume — Claude Code stores sessions per-project
+   keyed by `cwd`, and resuming under a different `cwd` fails to load the session
+   (yields only a bare `result:error_during_execution`, no `init`). The app already
+   reuses each session's `workingDir`, so this holds in production — but
+   `ensureSessionQuery` must always pass the stable session `workingDir` on revive.
+2. **CONFIRMED — `interrupt()`.** Interrupt mid-turn emitted
+   `result:error_during_execution` and the SAME query accepted a follow-up turn
+   afterward (replied "ALIVE"). Streaming-only. We key `turnActive=false` on any
+   top-level `result`; the timeout backstop remains as defense in case a future
+   version skips the result.
+3. **CONFIRMED — background task + auto-continue.** A `run_in_background` Bash task
+   emitted `task_started`, then (while the query sat idle, no new user input)
+   `task_notification`, and the main agent **autonomously started a new turn**
+   (`"AUTO_CONTINUED BG_TASK_FINISHED"`). This is the whole feature premise and it
+   works as designed.
+
+### Spike findings to bake into the implementation
+
+- **A single streaming query emits multiple `system:init` messages** — one per turn,
+  including the autonomous post-`task_notification` turn. `classifyMessage` /
+  command-merge already tolerate this, but the loop must NOT treat a second `init` as
+  a new session or re-anchor sequence; just re-merge commands (idempotent).
+- **`rate_limit_event` (`SDKRateLimitEvent`) arrives early in most turns.** Add it to
+  the reducer's ignored set (alongside the existing ignored subtypes) so it never
+  persists or perturbs `turnActive`.
+- **`task_updated` precedes `task_notification`** and carries interim state — keep
+  ignoring it (already in `IGNORED_SYSTEM_SUBTYPES`); only `task_started` /
+  `task_notification` drive the `backgroundActive` map.
+- Observed turn shape for a backgrounded task:
+  `init, rate_limit_event, assistant…, task_started, user(tool_result), assistant,
+result:success, task_updated, task_notification, init, assistant…` — note the
+  main turn's `result:success` lands BEFORE the task settles, confirming the query
+  must stay alive past `result`.
+
 4. **VERIFIED — live controls.** The `Query` object exposes `setModel(model?)`,
    `setPermissionMode()`, `setMcpServers()`, `applyFlagSettings()`, `stopTask(id)`,
    and `backgroundTasks(toolUseId?)` — all streaming-only. `env` / `systemPrompt`
