@@ -40,7 +40,11 @@ import { sseEvents } from './events';
 import { createLogger, toError } from '@/lib/logger';
 import { fetchPullRequestForBranch } from './github';
 import { getCurrentBranch, getSessionWorkingDir } from './worktree-manager';
-import { loadMergedSessionSettings, type MergedSessionSettings } from './settings-merger';
+import {
+  loadMergedSessionSettings,
+  mcpServersEqual,
+  type MergedSessionSettings,
+} from './settings-merger';
 import { StreamAccumulator } from './stream-accumulator';
 import { PARTIAL_MESSAGE_ID_PREFIX } from '@/lib/message-cache';
 import type { ContainerEnvVar } from './repo-settings';
@@ -150,6 +154,8 @@ interface SessionState {
   commands: SlashCommand[];
   /** Settings the live query was built with (model/MCP can be applied live later). */
   boundSettings: MergedSessionSettings | null;
+  /** Settings key (repoFullName or '__no_repo__') for reloading merged settings. */
+  settingsKey: string;
   /** Inactivity watchdog for the current turn (cleared when no turn is active). */
   turnWatchdog: ReturnType<typeof setTimeout> | null;
   /** Idle reaper that closes the query after a fully-idle period (revivable). */
@@ -266,6 +272,7 @@ function getSessionState(sessionId: string, workingDir: string): SessionState {
       workingDir,
       commands: persistedCommands.get(sessionId) ?? [],
       boundSettings: null,
+      settingsKey: '',
       turnWatchdog: null,
       idleReaper: null,
     };
@@ -721,13 +728,15 @@ async function establishSessionQuery(sessionId: string): Promise<SessionState> {
   }
 
   const repoFullName = session.repoUrl ? extractRepoFullName(session.repoUrl) : null;
-  const settings = await loadMergedSessionSettings(repoFullName ?? '__no_repo__');
+  const settingsKey = repoFullName ?? '__no_repo__';
+  const settings = await loadMergedSessionSettings(settingsKey);
   const workingDir = getSessionWorkingDir(sessionId, session.repoPath);
 
   const shouldResume = (await prisma.message.count({ where: { sessionId } })) > 0;
 
   const state = getSessionState(sessionId, workingDir);
   state.boundSettings = settings;
+  state.settingsKey = settingsKey;
 
   const input = createPushable<SDKUserMessage>();
   const options = await buildSdkOptions({ sessionId, workingDir, settings, shouldResume, state });
@@ -779,14 +788,53 @@ export function ensureSessionQuery(sessionId: string): Promise<SessionState> {
 }
 
 /**
- * Send a user prompt: ensure the query is live, mark the turn active optimistically,
- * persist the user message, and push it into the query's input stream.
+ * Apply settings changes that the SDK supports live (model, MCP servers) to an
+ * already-running query, so editing repo/global settings takes effect on the next
+ * turn without a Stop→Start. `env`/`systemPrompt` are bound at construction and
+ * still require a restart (documented). Best-effort: failures are logged, not fatal.
+ */
+async function applyLiveSettings(sessionId: string, state: SessionState): Promise<void> {
+  if (!state.query || !state.boundSettings) return;
+  let settings: MergedSessionSettings;
+  try {
+    settings = await loadMergedSessionSettings(state.settingsKey);
+  } catch (err) {
+    log.debug('applyLiveSettings: failed to load settings', {
+      sessionId,
+      error: toError(err).message,
+    });
+    return;
+  }
+
+  const bound = state.boundSettings;
+  try {
+    if (settings.claudeModel !== bound.claudeModel) {
+      await state.query.setModel(settings.claudeModel);
+      log.info('Applied live model change', { sessionId, model: settings.claudeModel });
+    }
+    if (!mcpServersEqual(bound.mcpServers, settings.mcpServers)) {
+      await state.query.setMcpServers(buildMcpServersRecord(settings.mcpServers) ?? {});
+      log.info('Applied live MCP server change', { sessionId });
+    }
+    state.boundSettings = settings;
+  } catch (err) {
+    log.warn('applyLiveSettings: failed to apply', { sessionId, error: toError(err).message });
+  }
+}
+
+/**
+ * Send a user prompt: ensure the query is live, apply any live settings changes,
+ * mark the turn active optimistically, persist the user message, and push it into
+ * the query's input stream.
  */
 export async function sendUserMessage(sessionId: string, prompt: string): Promise<void> {
   const state = await ensureSessionQuery(sessionId);
   if (!state.input) {
     throw new Error('Session query is not available');
   }
+
+  // Apply model/MCP changes made since the query was built (no-op on fresh establish).
+  await applyLiveSettings(sessionId, state);
 
   if (!state.status.turnActive) {
     state.status = { ...state.status, turnActive: true };
