@@ -957,7 +957,10 @@ export async function interruptClaude(sessionId: string): Promise<boolean> {
     return false;
   }
 
-  // Backstop: if no terminal result clears turnActive shortly, force it off.
+  // Backstop for the pathological case where interrupt never yields a terminal
+  // result (the spike shows it reliably does, so this is purely defensive). Kept
+  // generous so it does not fire while a long turn is still draining post-interrupt
+  // — a premature force-off could let a late stray result clear the NEXT turn.
   setTimeout(() => {
     const current = sessions.get(sessionId);
     if (current?.status.turnActive) {
@@ -966,7 +969,7 @@ export async function interruptClaude(sessionId: string): Promise<boolean> {
       sseEvents.emitClaudeRunning(sessionId, false);
       clearTurnWatchdog(current);
     }
-  }, 3000);
+  }, 15_000);
 
   return true;
 }
