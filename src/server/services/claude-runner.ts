@@ -85,6 +85,15 @@ const SEQUENCE_RETRY_LIMIT = 5;
 const TURN_WATCHDOG_MS = 5 * 60_000;
 
 /**
+ * How long a session may sit fully idle (no active turn, no background tasks, no
+ * parked question) before its streaming query is closed to free the subprocess.
+ * The session stays `running` in the DB and is revived (with `resume`) on the next
+ * interaction. MUST never reap while a background task is live, or we'd kill a
+ * waiter — the whole point of the persistent query.
+ */
+const IDLE_REAP_MS = 30 * 60_000;
+
+/**
  * State for a pending user input request (AskUserQuestion / ExitPlanMode).
  * The canUseTool callback parks a promise here; the answerQuestion mutation resolves it.
  */
@@ -143,6 +152,8 @@ interface SessionState {
   boundSettings: MergedSessionSettings | null;
   /** Inactivity watchdog for the current turn (cleared when no turn is active). */
   turnWatchdog: ReturnType<typeof setTimeout> | null;
+  /** Idle reaper that closes the query after a fully-idle period (revivable). */
+  idleReaper: ReturnType<typeof setTimeout> | null;
 }
 
 /** Active sessions tracked in memory. */
@@ -256,6 +267,7 @@ function getSessionState(sessionId: string, workingDir: string): SessionState {
       commands: persistedCommands.get(sessionId) ?? [],
       boundSettings: null,
       turnWatchdog: null,
+      idleReaper: null,
     };
     sessions.set(sessionId, state);
   } else if (workingDir) {
@@ -492,6 +504,33 @@ function bumpTurnWatchdog(sessionId: string, state: SessionState): void {
   }, TURN_WATCHDOG_MS);
 }
 
+/** Whether a session is fully idle: no active turn, no background tasks, no parked question. */
+function isFullyIdle(state: SessionState): boolean {
+  return !state.status.turnActive && state.status.backgroundTasks.size === 0 && !state.pendingInput;
+}
+
+/**
+ * (Re)arm the idle reaper when a session is fully idle, or clear it when not.
+ * On fire, the query is closed (subprocess freed); the session stays `running` in
+ * the DB and is revived lazily on the next interaction. Never reaps while a
+ * background task is live (the guard in {@link isFullyIdle}).
+ */
+function bumpIdleReaper(sessionId: string, state: SessionState): void {
+  if (state.idleReaper) {
+    clearTimeout(state.idleReaper);
+    state.idleReaper = null;
+  }
+  if (!state.query || !isFullyIdle(state)) return;
+  state.idleReaper = setTimeout(() => {
+    const current = sessions.get(sessionId);
+    if (current?.query && isFullyIdle(current)) {
+      log.info('Reaping idle session query (revivable on next interaction)', { sessionId });
+      stopSession(sessionId);
+    }
+  }, IDLE_REAP_MS);
+  state.idleReaper.unref?.();
+}
+
 /**
  * Force all live status off and emit only the channels that changed. Used by the
  * loop `finally`, `stopSession`, and shutdown so a torn-down session never leaves
@@ -533,6 +572,9 @@ function applyStatus(sessionId: string, state: SessionState, message: SDKMessage
     // PR/branch can change within a turn; refresh latest-value state at turn end.
     void detectBranchAndPr(sessionId, state.workingDir);
   }
+
+  // Arm/clear the idle reaper based on the new status (idle → arm; busy → clear).
+  bumpIdleReaper(sessionId, state);
 }
 
 /**
@@ -645,6 +687,10 @@ async function runSessionLoop(sessionId: string, state: SessionState, q: Query):
     await createErrorMessage(sessionId, `Claude query failed: ${toError(err).message}`);
   } finally {
     clearTurnWatchdog(state);
+    if (state.idleReaper) {
+      clearTimeout(state.idleReaper);
+      state.idleReaper = null;
+    }
     clearLiveStatus(sessionId, state);
     if (state.pendingInput) {
       state.pendingInput.reject(new Error('Query ended'));
@@ -747,6 +793,7 @@ export async function sendUserMessage(sessionId: string, prompt: string): Promis
     sseEvents.emitClaudeRunning(sessionId, true);
   }
   bumpTurnWatchdog(sessionId, state);
+  bumpIdleReaper(sessionId, state); // turn active now → clears any pending reaper
 
   await insertMessage({
     sessionId,
@@ -969,6 +1016,10 @@ export function stopSession(sessionId: string): void {
   if (!state) return;
 
   clearTurnWatchdog(state);
+  if (state.idleReaper) {
+    clearTimeout(state.idleReaper);
+    state.idleReaper = null;
+  }
   state.input?.close();
   try {
     state.query?.close();
@@ -1005,24 +1056,4 @@ export async function stopAllSessions(): Promise<void> {
   for (const id of sessionIds) {
     stopSession(id);
   }
-}
-
-/**
- * Mark all running sessions as stopped. Called on server startup since all
- * in-memory state is lost.
- *
- * NOTE: superseded by lazy resume-based recovery in a later chunk; kept for now so
- * `session-reconciler` keeps compiling until that change lands.
- */
-export async function markAllSessionsStopped(): Promise<number> {
-  const result = await prisma.session.updateMany({
-    where: { status: 'running' },
-    data: { status: 'stopped' },
-  });
-
-  if (result.count > 0) {
-    log.info('Marked running sessions as stopped on startup', { count: result.count });
-  }
-
-  return result.count;
 }
