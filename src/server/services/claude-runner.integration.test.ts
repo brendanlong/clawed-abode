@@ -289,4 +289,39 @@ describe('claude-runner persistent streaming loop', () => {
     await waitFor(() => !isClaudeRunning(sessionId));
     stopSession(sessionId);
   });
+
+  it('stopSession during establish does not resurrect the session (no orphan query)', async () => {
+    const fake = makeFakeQuery();
+    let factoryCalls = 0;
+    _setQueryFactory((p) => {
+      factoryCalls += 1;
+      return fake.factory(p);
+    });
+    const sessionId = await createRunningSession();
+
+    // Make settings loading hang so we can interleave a stop mid-establish.
+    let releaseSettings!: () => void;
+    mockLoadSettings.mockReturnValueOnce(
+      new Promise((resolve) => {
+        releaseSettings = () => resolve({ ...baseSettings });
+      })
+    );
+
+    const sendResult = sendUserMessage(sessionId, 'hi').then(
+      () => 'resolved',
+      (e: Error) => e
+    );
+    // Let ensureSessionQuery reach the awaited (hanging) settings load.
+    await new Promise((r) => setTimeout(r, 30));
+    // Stop while establishing — deletes the in-memory entry.
+    stopSession(sessionId);
+    // Release settings; establish should detect the teardown and abort.
+    releaseSettings();
+
+    const result = await sendResult;
+    expect(result).toBeInstanceOf(Error);
+    expect(factoryCalls).toBe(0); // no query was ever created
+    expect(isClaudeRunning(sessionId)).toBe(false);
+    expect(getSessionBackgroundTasks(sessionId)).toEqual([]);
+  });
 });
