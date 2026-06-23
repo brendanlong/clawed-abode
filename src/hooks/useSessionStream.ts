@@ -64,6 +64,7 @@ export function useSessionStream(sessionId: string, options: UseSessionStreamOpt
     void utils.sessions.get.refetch({ sessionId });
     void utils.claude.getTokenUsage.refetch({ sessionId });
     void utils.claude.getRetryState.refetch({ sessionId });
+    void utils.claude.getBackgroundTasks.refetch({ sessionId });
   }, [utils, sessionId]);
 
   const subscription = trpc.sse.onSessionEvents.useSubscription(

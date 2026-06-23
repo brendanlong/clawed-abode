@@ -53,27 +53,33 @@ function SessionView({ sessionId }: { sessionId: string }) {
   // Anchored to the loaded history so no messages are missed between snapshots.
   const { status: streamStatus } = useSessionStream(sessionId, { historyLoaded, newestSequence });
 
-  // Claude state: running, send, interrupt, commands
+  // Claude state: running (main turn), background tasks, send, interrupt, commands
   const {
     isRunning: isClaudeRunning,
     retry: claudeRetry,
+    backgroundTasks,
+    backgroundActive,
     send: sendPrompt,
     interrupt,
     isInterrupting,
     answerQuestion,
     respondToPlan,
+    stopBackgroundTask,
     commands,
   } = useClaudeState(sessionId);
 
+  // Something is happening if a turn is active OR background tasks are running.
+  const isWorking = isClaudeRunning || backgroundActive;
+
   // Working indicator: page title and favicon
-  useWorkingIndicator(session?.name, isClaudeRunning);
+  useWorkingIndicator(session?.name, isWorking);
 
   // Update global working state for the header logo
   const { setWorking } = useWorkingContext();
   useEffect(() => {
-    setWorking(isClaudeRunning);
+    setWorking(isWorking);
     return () => setWorking(false);
-  }, [isClaudeRunning, setWorking]);
+  }, [isWorking, setWorking]);
 
   // Request notification permission on mount
   const { requestPermission, permission, showNotification } = useNotification();
@@ -286,6 +292,8 @@ function SessionView({ sessionId }: { sessionId: string }) {
             <ClaudeStatusIndicator
               isRunning={isClaudeRunning}
               retry={claudeRetry}
+              backgroundTasks={backgroundTasks}
+              onStopBackgroundTask={stopBackgroundTask}
               containerStatus={session.status}
             />
             <PromptInput
