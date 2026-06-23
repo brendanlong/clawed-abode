@@ -1,7 +1,7 @@
 import type { ContainerEnvVar, ContainerMcpServer } from './repo-settings';
 import { getRepoSettingsForContainer } from './repo-settings';
 import { getGlobalSettingsForContainer, type GlobalContainerSettings } from './global-settings';
-import { buildSystemPrompt } from './claude-runner';
+import { buildSystemPrompt } from '@/lib/system-prompt';
 import { env } from '@/lib/env';
 
 /**
