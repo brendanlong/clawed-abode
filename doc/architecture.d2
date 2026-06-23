@@ -93,15 +93,16 @@ lifecycle: Session Lifecycle {
   interact: Interact {
     style.fill: "#BEE3F8"
     1: "User sends prompt via tRPC"
-    2: "SDK query() runs in-process"
+    2: "Push to the session's persistent streaming query() (revive w/ resume if needed)"
     3: "canUseTool handles AskUserQuestion"
-    4: "Messages stream via SSE"
+    4: "Messages stream via SSE; query stays alive across turns"
+    5: "Background tasks survive turn end (indicator only; never gate input)"
   }
 
   stop: Stop {
     style.fill: "#FEFCBF"
-    1: "Abort running query"
-    2: "Session status → stopped"
+    1: "Interrupt = current turn only (query stays alive)"
+    2: "Stop = close query; session status → stopped"
     3: "Worktree preserved on disk"
   }
 
