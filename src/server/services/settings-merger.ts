@@ -110,3 +110,18 @@ export function mergeMcpServers(
 
   return Array.from(merged.values());
 }
+
+/**
+ * Whether two merged MCP server lists are equivalent (order-insensitive), used to
+ * decide whether to apply a live `setMcpServers` to a running query when settings
+ * change between turns.
+ */
+export function mcpServersEqual(a: ContainerMcpServer[], b: ContainerMcpServer[]): boolean {
+  if (a.length !== b.length) return false;
+  const key = (servers: ContainerMcpServer[]) =>
+    [...servers]
+      .sort((x, y) => x.name.localeCompare(y.name))
+      .map((s) => JSON.stringify(s))
+      .join('\n');
+  return key(a) === key(b);
+}

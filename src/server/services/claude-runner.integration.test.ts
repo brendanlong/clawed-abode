@@ -34,21 +34,32 @@ vi.mock('./worktree-manager', () => ({
   getSessionWorkingDir: vi.fn(() => '/tmp/spike-runner-test'),
 }));
 
-vi.mock('./settings-merger', () => ({
-  loadMergedSessionSettings: vi.fn().mockResolvedValue({
-    systemPrompt: 'test prompt',
+const baseSettings = {
+  systemPrompt: 'test prompt',
+  envVars: [],
+  mcpServers: [],
+  claudeModel: undefined as string | undefined,
+  claudeApiKey: undefined,
+  customSystemPrompt: null,
+  globalSettings: {
+    systemPromptOverride: null,
+    systemPromptOverrideEnabled: false,
+    systemPromptAppend: null,
+    claudeModel: null,
+    claudeApiKey: null,
     envVars: [],
     mcpServers: [],
-    claudeModel: undefined,
-    claudeApiKey: undefined,
-    customSystemPrompt: null,
-    globalSettings: {
-      systemPromptOverride: null,
-      systemPromptOverrideEnabled: false,
-      systemPromptAppend: null,
-    },
-  }),
-}));
+  },
+};
+
+// Keep the real mcpServersEqual (applyLiveSettings uses it); only stub the loader.
+vi.mock('./settings-merger', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./settings-merger')>();
+  return {
+    ...actual,
+    loadMergedSessionSettings: vi.fn().mockResolvedValue({ ...baseSettings }),
+  };
+});
 
 import { createPushable } from '@/lib/pushable';
 
@@ -59,11 +70,16 @@ let stopSession: typeof import('./claude-runner').stopSession;
 let isClaudeRunning: typeof import('./claude-runner').isClaudeRunning;
 let getSessionBackgroundTasks: typeof import('./claude-runner').getSessionBackgroundTasks;
 let _setQueryFactory: typeof import('./claude-runner')._setQueryFactory;
+let mockLoadSettings: ReturnType<
+  typeof vi.mocked<typeof import('./settings-merger').loadMergedSessionSettings>
+>;
 
 // --- fake SDK query ----------------------------------------------------------
 function makeFakeQuery() {
   const out = createPushable<SDKMessage>();
   const inputs: SDKUserMessage[] = [];
+  const setModel = vi.fn(async () => {});
+  const setMcpServers = vi.fn(async () => {});
 
   const factory = (params: { prompt: AsyncIterable<SDKUserMessage>; options: unknown }): Query => {
     // Record pushed user messages so we can assert sendUserMessage reached the SDK.
@@ -76,12 +92,19 @@ function makeFakeQuery() {
       close: vi.fn(() => out.close()),
       supportedCommands: vi.fn(async () => []),
       stopTask: vi.fn(async () => {}),
-      setModel: vi.fn(async () => {}),
-      setMcpServers: vi.fn(async () => {}),
+      setModel,
+      setMcpServers,
     } as unknown as Query;
   };
 
-  return { factory, emit: (m: SDKMessage) => out.push(m), end: () => out.close(), inputs };
+  return {
+    factory,
+    emit: (m: SDKMessage) => out.push(m),
+    end: () => out.close(),
+    inputs,
+    setModel,
+    setMcpServers,
+  };
 }
 
 // --- message builders --------------------------------------------------------
@@ -152,6 +175,8 @@ describe('claude-runner persistent streaming loop', () => {
     isClaudeRunning = mod.isClaudeRunning;
     getSessionBackgroundTasks = mod.getSessionBackgroundTasks;
     _setQueryFactory = mod._setQueryFactory;
+    const sm = await import('./settings-merger');
+    mockLoadSettings = vi.mocked(sm.loadMergedSessionSettings);
   });
   afterAll(async () => {
     await teardownTestDb();
@@ -161,6 +186,7 @@ describe('claude-runner persistent streaming loop', () => {
     await clearTestDb();
     vi.clearAllMocks();
     uuidCounter = 0;
+    mockLoadSettings.mockResolvedValue({ ...baseSettings });
   });
 
   it('persists a turn and toggles turnActive on/off', async () => {
@@ -241,5 +267,26 @@ describe('claude-runner persistent streaming loop', () => {
     expect(isClaudeRunning(sessionId)).toBe(false);
     // A second sendUserMessage would re-establish a fresh query (lazy revive).
     expect(getSessionBackgroundTasks(sessionId)).toEqual([]);
+  });
+
+  it('applies a model change live on the next send', async () => {
+    const fake = makeFakeQuery();
+    _setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+
+    // Turn 1 with the default (no model override).
+    await sendUserMessage(sessionId, 'first');
+    fake.emit(result());
+    await waitFor(() => !isClaudeRunning(sessionId));
+    expect(fake.setModel).not.toHaveBeenCalled();
+
+    // The user changes the model; the next send applies it live.
+    mockLoadSettings.mockResolvedValue({ ...baseSettings, claudeModel: 'opus' });
+    await sendUserMessage(sessionId, 'second');
+    expect(fake.setModel).toHaveBeenCalledWith('opus');
+
+    fake.emit(result());
+    await waitFor(() => !isClaudeRunning(sessionId));
+    stopSession(sessionId);
   });
 });
