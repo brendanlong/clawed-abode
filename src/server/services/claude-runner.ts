@@ -82,26 +82,17 @@ const ERROR_LINE_NAMESPACE = '6ba7b810-9dad-11d1-80b4-00c04fd430c8';
 const SEQUENCE_RETRY_LIMIT = 5;
 
 /**
- * Inactivity threshold for the per-turn watchdog: the single, event-resetting
- * safety net that unsticks `turnActive` if a turn somehow never yields a terminal
- * `result`. Normal operation never reaches it — the `result` clears the turn
- * deterministically — so this only fires on a genuine hang.
- *
- * It resets on EVERY message, so the relevant gap is the longest silence WITHIN a
- * turn: a single foreground tool call (a `Bash` can run silently up to its ~10-min
- * max; its start/end both emit messages that reset the timer). Set comfortably
- * above that so a legitimately long, quiet tool call is never mistaken for a hang.
+ * `turnActive` is derived ENTIRELY from the message stream — a top-level
+ * `assistant`/`stream_event` sets it true, any top-level `result` (incl. an
+ * interrupt's `error_during_execution`) sets it false, and the loop's `finally`
+ * forces it false when the query ends. There are deliberately NO status timers
+ * (no turn watchdog, no idle reaper): the server cannot distinguish a genuinely
+ * hung turn from a slow one by observation, so any timer would be a guess. The
+ * deterministic recoveries are user-driven — interrupt (stop the turn) and the
+ * header Stop (`sessions.stop`, which closes the query → `finally` clears the
+ * flag). A persistent subprocess therefore lives until stop / delete / shutdown /
+ * fatal error.
  */
-const TURN_WATCHDOG_MS = 15 * 60_000;
-
-/**
- * How long a session may sit fully idle (no active turn, no background tasks, no
- * parked question) before its streaming query is closed to free the subprocess.
- * The session stays `running` in the DB and is revived (with `resume`) on the next
- * interaction. MUST never reap while a background task is live, or we'd kill a
- * waiter — the whole point of the persistent query.
- */
-const IDLE_REAP_MS = 30 * 60_000;
 
 /**
  * State for a pending user input request (AskUserQuestion / ExitPlanMode).
@@ -162,10 +153,6 @@ interface SessionState {
   boundSettings: MergedSessionSettings | null;
   /** Settings key (repoFullName or '__no_repo__') for reloading merged settings. */
   settingsKey: string;
-  /** Inactivity watchdog for the current turn (cleared when no turn is active). */
-  turnWatchdog: ReturnType<typeof setTimeout> | null;
-  /** Idle reaper that closes the query after a fully-idle period (revivable). */
-  idleReaper: ReturnType<typeof setTimeout> | null;
 }
 
 /** Active sessions tracked in memory. */
@@ -279,8 +266,6 @@ function getSessionState(sessionId: string, workingDir: string): SessionState {
       commands: persistedCommands.get(sessionId) ?? [],
       boundSettings: null,
       settingsKey: '',
-      turnWatchdog: null,
-      idleReaper: null,
     };
     sessions.set(sessionId, state);
   } else if (workingDir) {
@@ -488,62 +473,6 @@ async function buildSdkOptions(params: {
   return options;
 }
 
-/** Clear the turn watchdog timer. */
-function clearTurnWatchdog(state: SessionState): void {
-  if (state.turnWatchdog) {
-    clearTimeout(state.turnWatchdog);
-    state.turnWatchdog = null;
-  }
-}
-
-/**
- * (Re)arm the inactivity watchdog while a turn is active. Each processed message
- * resets it; if it fires, the turn is assumed wedged and `turnActive` is forced
- * off so the composer is not stuck disabled forever.
- */
-function bumpTurnWatchdog(sessionId: string, state: SessionState): void {
-  clearTurnWatchdog(state);
-  if (!state.status.turnActive) return;
-  state.turnWatchdog = setTimeout(() => {
-    log.warn('Turn watchdog fired: forcing turnActive off', { sessionId });
-    if (state.status.turnActive) {
-      state.status = { ...state.status, turnActive: false };
-      sseEvents.emitClaudeRunning(sessionId, false);
-    }
-    void createErrorMessage(
-      sessionId,
-      'The current turn stopped responding and was marked complete. You can send another message.'
-    );
-  }, TURN_WATCHDOG_MS);
-}
-
-/** Whether a session is fully idle: no active turn, no background tasks, no parked question. */
-function isFullyIdle(state: SessionState): boolean {
-  return !state.status.turnActive && state.status.backgroundTasks.size === 0 && !state.pendingInput;
-}
-
-/**
- * (Re)arm the idle reaper when a session is fully idle, or clear it when not.
- * On fire, the query is closed (subprocess freed); the session stays `running` in
- * the DB and is revived lazily on the next interaction. Never reaps while a
- * background task is live (the guard in {@link isFullyIdle}).
- */
-function bumpIdleReaper(sessionId: string, state: SessionState): void {
-  if (state.idleReaper) {
-    clearTimeout(state.idleReaper);
-    state.idleReaper = null;
-  }
-  if (!state.query || !isFullyIdle(state)) return;
-  state.idleReaper = setTimeout(() => {
-    const current = sessions.get(sessionId);
-    if (current?.query && isFullyIdle(current)) {
-      log.info('Reaping idle session query (revivable on next interaction)', { sessionId });
-      stopSession(sessionId);
-    }
-  }, IDLE_REAP_MS);
-  state.idleReaper.unref?.();
-}
-
 /**
  * Force all live status off and emit only the channels that changed. Used by the
  * loop `finally`, `stopSession`, and shutdown so a torn-down session never leaves
@@ -585,9 +514,6 @@ function applyStatus(sessionId: string, state: SessionState, message: SDKMessage
     // PR/branch can change within a turn; refresh latest-value state at turn end.
     void detectBranchAndPr(sessionId, state.workingDir);
   }
-
-  // Arm/clear the idle reaper based on the new status (idle → arm; busy → clear).
-  bumpIdleReaper(sessionId, state);
 }
 
 /**
@@ -651,7 +577,6 @@ async function runSessionLoop(sessionId: string, state: SessionState, q: Query):
     for await (const message of q) {
       // Status derives from EVERY message (including skipped api_retry/task_*).
       applyStatus(sessionId, state, message);
-      bumpTurnWatchdog(sessionId, state);
 
       if (message.type === 'stream_event') {
         const partial = accumulator.accumulate(
@@ -699,11 +624,6 @@ async function runSessionLoop(sessionId: string, state: SessionState, q: Query):
     log.error('runSessionLoop: error', toError(err), { sessionId });
     await createErrorMessage(sessionId, `Claude query failed: ${toError(err).message}`);
   } finally {
-    clearTurnWatchdog(state);
-    if (state.idleReaper) {
-      clearTimeout(state.idleReaper);
-      state.idleReaper = null;
-    }
     clearLiveStatus(sessionId, state);
     if (state.pendingInput) {
       state.pendingInput.reject(new Error('Query ended'));
@@ -846,8 +766,6 @@ export async function sendUserMessage(sessionId: string, prompt: string): Promis
     state.status = { ...state.status, turnActive: true };
     sseEvents.emitClaudeRunning(sessionId, true);
   }
-  bumpTurnWatchdog(sessionId, state);
-  bumpIdleReaper(sessionId, state); // turn active now → clears any pending reaper
 
   await insertMessage({
     sessionId,
@@ -949,13 +867,9 @@ export function getSessionBackgroundTasks(sessionId: string): BackgroundTask[] {
  * emits a terminal `result` (confirmed by the spike + e2e) which the loop maps to
  * `turnActive = false` — no timer involved.
  *
- * No dedicated interrupt backstop: a one-shot timer would have to guess how long
- * the interrupted turn takes to drain, and firing early lets a late stray result
- * clear the NEXT turn. The two existing event-driven paths already cover a
- * (hypothetical) interrupt that never yields a result: the per-turn inactivity
- * watchdog (resets on every message, so it can't misfire during a drain) and the
- * header Stop (`sessions.stop` closes the query → loop `finally` forces the flag
- * off). Both clear `turnActive` without depending on a fixed delay.
+ * If a (hypothetical) interrupt never yielded a result, `turnActive` is cleared by
+ * the deterministic, user-driven escape instead of a timer: the header Stop
+ * (`sessions.stop`) closes the query → the loop `finally` forces the flag off.
  */
 export async function interruptClaude(sessionId: string): Promise<boolean> {
   const state = sessions.get(sessionId);
@@ -1066,11 +980,6 @@ export function stopSession(sessionId: string): void {
   const state = sessions.get(sessionId);
   if (!state) return;
 
-  clearTurnWatchdog(state);
-  if (state.idleReaper) {
-    clearTimeout(state.idleReaper);
-    state.idleReaper = null;
-  }
   state.input?.close();
   try {
     state.query?.close();
