@@ -1,5 +1,13 @@
 # Plan: Persistent streaming-input session queries
 
+> **Superseded / historical.** This is the original implementation plan. The
+> shipped design is the source of truth in [`doc/DESIGN.md`](../DESIGN.md) and
+> differs in places — most notably there are **no status timers** (the turn
+> watchdog and idle reaper described below were implemented and then removed in
+> favor of purely event-driven `turnActive` with user-driven recovery), and
+> `runClaudeCommand` / `markAllSessionsStopped` no longer exist. Read this for
+> rationale and history, not current behavior.
+
 ## Problem
 
 Today each user prompt is a **single-message** `query()` call. The turn's `result`

@@ -644,7 +644,10 @@ async function runSessionLoop(sessionId: string, state: SessionState, q: Query):
  * channel + options, start the SDK query and its output loop. Resumes prior
  * history when the session already has messages.
  */
-async function establishSessionQuery(sessionId: string): Promise<SessionState> {
+async function establishSessionQuery(
+  sessionId: string,
+  state: SessionState
+): Promise<SessionState> {
   const session = await prisma.session.findUnique({
     where: { id: sessionId },
     select: { repoUrl: true, repoPath: true },
@@ -659,14 +662,21 @@ async function establishSessionQuery(sessionId: string): Promise<SessionState> {
   const workingDir = getSessionWorkingDir(sessionId, session.repoPath);
 
   const shouldResume = (await prisma.message.count({ where: { sessionId } })) > 0;
+  const options = await buildSdkOptions({ sessionId, workingDir, settings, shouldResume, state });
 
-  const state = getSessionState(sessionId, workingDir);
+  // If `stopSession` ran while we were loading (it deletes the map entry), abort
+  // before creating the query — otherwise we'd resurrect a torn-down session with
+  // an orphan live query. This check and the attach below are await-free, so they
+  // run atomically with respect to a synchronous stopSession.
+  if (sessions.get(sessionId) !== state) {
+    throw new Error('Session establishment cancelled: session was stopped during establish');
+  }
+
+  state.workingDir = workingDir;
   state.boundSettings = settings;
   state.settingsKey = settingsKey;
 
   const input = createPushable<SDKUserMessage>();
-  const options = await buildSdkOptions({ sessionId, workingDir, settings, shouldResume, state });
-
   const q = queryFactory({ prompt: input.iterable, options });
   state.input = input;
   state.query = q;
@@ -705,10 +715,14 @@ export function ensureSessionQuery(sessionId: string): Promise<SessionState> {
   if (existing?.establishing) return existing.establishing;
 
   const state = getSessionState(sessionId, existing?.workingDir ?? '');
-  const establishing = establishSessionQuery(sessionId).finally(() => {
-    const current = sessions.get(sessionId);
-    if (current) current.establishing = null;
-  });
+  // Establish against THIS state object; the promise is identity-checked on clear
+  // so a stop+revive race never nulls a newer establishment's promise.
+  const establishing: Promise<SessionState> = establishSessionQuery(sessionId, state).finally(
+    () => {
+      const current = sessions.get(sessionId);
+      if (current && current.establishing === establishing) current.establishing = null;
+    }
+  );
   state.establishing = establishing;
   return establishing;
 }
@@ -926,13 +940,6 @@ export function hasLiveQuery(sessionId: string): boolean {
  */
 export async function markLastMessageAsInterrupted(sessionId: string): Promise<void> {
   log.info('markLastMessageAsInterrupted', { sessionId });
-
-  const lastMessage = await prisma.message.findFirst({
-    where: { sessionId },
-    orderBy: { sequence: 'desc' },
-    select: { sequence: true },
-  });
-  if (!lastMessage) return;
 
   const lastMainMessage = await prisma.message.findFirst({
     where: { sessionId, type: { in: ['assistant', 'result'] } },

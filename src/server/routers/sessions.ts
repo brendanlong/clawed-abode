@@ -223,8 +223,8 @@ export const sessionsRouter = router({
         });
       }
 
-      // Stop any running Claude query
-      await stopSession(input.sessionId);
+      // Stop any running Claude query (synchronous: closes input + query).
+      stopSession(input.sessionId);
 
       const updatedSession = await prisma.session.update({
         where: { id: session.id },
