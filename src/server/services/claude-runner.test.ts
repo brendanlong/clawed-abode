@@ -50,7 +50,6 @@ import {
   submitLiveToolResponse,
   isClaudeRunning,
   isClaudeRunningAsync,
-  markAllSessionsStopped,
   cleanupSession,
   _setPersistedCommands,
   _clearPersistedCommands,
@@ -270,24 +269,6 @@ describe('claude-runner', () => {
   describe('isClaudeRunningAsync', () => {
     it('should return false for nonexistent sessions', async () => {
       expect(await isClaudeRunningAsync('nonexistent-session')).toBe(false);
-    });
-  });
-
-  describe('markAllSessionsStopped', () => {
-    it('should update all running sessions to stopped', async () => {
-      mockPrisma.session.updateMany.mockResolvedValue({ count: 3 });
-      const result = await markAllSessionsStopped();
-      expect(result).toBe(3);
-      expect(mockPrisma.session.updateMany).toHaveBeenCalledWith({
-        where: { status: 'running' },
-        data: { status: 'stopped' },
-      });
-    });
-
-    it('should return 0 when no running sessions exist', async () => {
-      mockPrisma.session.updateMany.mockResolvedValue({ count: 0 });
-      const result = await markAllSessionsStopped();
-      expect(result).toBe(0);
     });
   });
 });
