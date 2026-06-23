@@ -82,11 +82,17 @@ const ERROR_LINE_NAMESPACE = '6ba7b810-9dad-11d1-80b4-00c04fd430c8';
 const SEQUENCE_RETRY_LIMIT = 5;
 
 /**
- * How long a turn may go with no message at all before the watchdog assumes it is
- * wedged (the SDK should emit exactly one terminal `result` per turn; this is the
- * safety net for a no-op/hung turn that would otherwise leave `turnActive` stuck).
+ * Inactivity threshold for the per-turn watchdog: the single, event-resetting
+ * safety net that unsticks `turnActive` if a turn somehow never yields a terminal
+ * `result`. Normal operation never reaches it — the `result` clears the turn
+ * deterministically — so this only fires on a genuine hang.
+ *
+ * It resets on EVERY message, so the relevant gap is the longest silence WITHIN a
+ * turn: a single foreground tool call (a `Bash` can run silently up to its ~10-min
+ * max; its start/end both emit messages that reset the timer). Set comfortably
+ * above that so a legitimately long, quiet tool call is never mistaken for a hang.
  */
-const TURN_WATCHDOG_MS = 5 * 60_000;
+const TURN_WATCHDOG_MS = 15 * 60_000;
 
 /**
  * How long a session may sit fully idle (no active turn, no background tasks, no
@@ -940,8 +946,16 @@ export function getSessionBackgroundTasks(sessionId: string): BackgroundTask[] {
 
 /**
  * Interrupt the active turn (streaming-only). The query stays alive; the SDK
- * normally emits a terminal `result` which the loop maps to `turnActive = false`.
- * A backstop timer forces it off in case no result arrives.
+ * emits a terminal `result` (confirmed by the spike + e2e) which the loop maps to
+ * `turnActive = false` — no timer involved.
+ *
+ * No dedicated interrupt backstop: a one-shot timer would have to guess how long
+ * the interrupted turn takes to drain, and firing early lets a late stray result
+ * clear the NEXT turn. The two existing event-driven paths already cover a
+ * (hypothetical) interrupt that never yields a result: the per-turn inactivity
+ * watchdog (resets on every message, so it can't misfire during a drain) and the
+ * header Stop (`sessions.stop` closes the query → loop `finally` forces the flag
+ * off). Both clear `turnActive` without depending on a fixed delay.
  */
 export async function interruptClaude(sessionId: string): Promise<boolean> {
   const state = sessions.get(sessionId);
@@ -956,20 +970,6 @@ export async function interruptClaude(sessionId: string): Promise<boolean> {
     log.warn('interruptClaude: failed', { sessionId, error: toError(err).message });
     return false;
   }
-
-  // Backstop for the pathological case where interrupt never yields a terminal
-  // result (the spike shows it reliably does, so this is purely defensive). Kept
-  // generous so it does not fire while a long turn is still draining post-interrupt
-  // — a premature force-off could let a late stray result clear the NEXT turn.
-  setTimeout(() => {
-    const current = sessions.get(sessionId);
-    if (current?.status.turnActive) {
-      log.warn('interruptClaude: no result after interrupt, forcing turnActive off', { sessionId });
-      current.status = { ...current.status, turnActive: false };
-      sseEvents.emitClaudeRunning(sessionId, false);
-      clearTurnWatchdog(current);
-    }
-  }, 15_000);
 
   return true;
 }

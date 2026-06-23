@@ -254,10 +254,11 @@ Interrupt stops the **current turn only** — the streaming query stays alive (i
 
 1. User clicks "Stop" in UI (shown only while a main-agent turn is active)
 2. Server calls `claude.interrupt()`, which calls `interrupt()` on the SDK query
-3. The SDK emits a terminal `result` (`subtype: 'error_during_execution'`); the loop's `reduceSessionMessage` maps any top-level `result` to `turnActive = false`
-4. A backstop timer forces `turnActive` off if no result arrives (the SDK does not strictly guarantee one)
-5. `markLastMessageAsInterrupted` marks the last **main-agent** message (skipping interleaved background/system task messages)
-6. The user can immediately send a new prompt — same query, no re-establish
+3. The SDK emits a terminal `result` (`subtype: 'error_during_execution'`); the loop's `reduceSessionMessage` maps any top-level `result` to `turnActive = false`. This is purely **event-driven** — no interrupt timer
+4. `markLastMessageAsInterrupted` marks the last **main-agent** message (skipping interleaved background/system task messages)
+5. The user can immediately send a new prompt — same query, no re-establish
+
+There is deliberately **no one-shot interrupt backstop** (a fixed timer would have to guess the drain time, and firing early lets a late stray result clear the _next_ turn). The only safety net for a hypothetical interrupt that never yields a result is the event-resetting inactivity watchdog (see [Two-Axis Status](#two-axis-status--background-tasks)); the header **Stop** (`sessions.stop`) is the immediate deterministic escape (closes the query → loop `finally` forces `turnActive` off).
 
 Interrupt does **not** stop background tasks; those are stopped individually via `claude.stopBackgroundTask` (→ `query.stopTask`).
 
