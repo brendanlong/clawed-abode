@@ -114,6 +114,10 @@ export function useSessionStream(sessionId: string, options: UseSessionStreamOpt
             utils.claude.getRetryState.setData({ sessionId }, { retry: event.retry });
             break;
           }
+          case 'background': {
+            utils.claude.getBackgroundTasks.setData({ sessionId }, { tasks: event.tasks });
+            break;
+          }
           default:
             // Compile-time guard: a new SessionStreamEvent kind must be handled here.
             assertNeverFallback(event, undefined);

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vites
 import { setupTestDb, teardownTestDb, testPrisma, clearTestDb } from '@/test/setup-test-db';
 
 // Mock claude-runner service (has real Docker dependencies)
-const mockRunClaudeCommand = vi.hoisted(() => vi.fn());
+const mockSendUserMessage = vi.hoisted(() => vi.fn());
 const mockInterruptClaude = vi.hoisted(() => vi.fn());
 const mockIsClaudeRunningAsync = vi.hoisted(() => vi.fn());
 const mockMarkLastMessageAsInterrupted = vi.hoisted(() => vi.fn());
@@ -11,7 +11,7 @@ vi.mock('../services/claude-runner', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../services/claude-runner')>();
   return {
     ...actual,
-    runClaudeCommand: mockRunClaudeCommand,
+    sendUserMessage: mockSendUserMessage,
     interruptClaude: mockInterruptClaude,
     isClaudeRunningAsync: mockIsClaudeRunningAsync,
     markLastMessageAsInterrupted: mockMarkLastMessageAsInterrupted,
@@ -101,7 +101,7 @@ describe('claudeRouter integration', () => {
       });
 
       mockIsClaudeRunningAsync.mockResolvedValue(false);
-      mockRunClaudeCommand.mockResolvedValue(undefined);
+      mockSendUserMessage.mockResolvedValue(undefined);
 
       const caller = createCaller('auth-session-id');
       const result = await caller.claude.send({
@@ -110,12 +110,7 @@ describe('claudeRouter integration', () => {
       });
 
       expect(result).toEqual({ success: true });
-      expect(mockRunClaudeCommand).toHaveBeenCalledWith(
-        expect.objectContaining({
-          sessionId: session.id,
-          prompt: 'Hello, Claude!',
-        })
-      );
+      expect(mockSendUserMessage).toHaveBeenCalledWith(session.id, 'Hello, Claude!');
     });
 
     it('should throw NOT_FOUND for non-existent session', async () => {
@@ -225,7 +220,7 @@ describe('claudeRouter integration', () => {
     it('marks the question answered and resumes with a new turn', async () => {
       const session = await createRunningSession();
       mockIsClaudeRunningAsync.mockResolvedValue(false);
-      mockRunClaudeCommand.mockResolvedValue(undefined);
+      mockSendUserMessage.mockResolvedValue(undefined);
 
       const caller = createCaller('auth-session-id');
       const result = await caller.claude.answerQuestion({
@@ -245,18 +240,16 @@ describe('claudeRouter integration', () => {
       expect(toolResult).toBeDefined();
 
       // And the answer was resumed as a new prompt.
-      expect(mockRunClaudeCommand).toHaveBeenCalledWith(
-        expect.objectContaining({
-          sessionId: session.id,
-          prompt: expect.stringContaining('Option A'),
-        })
+      expect(mockSendUserMessage).toHaveBeenCalledWith(
+        session.id,
+        expect.stringContaining('Option A')
       );
     });
 
     it('is idempotent: a duplicate answer does not start a second turn', async () => {
       const session = await createRunningSession();
       mockIsClaudeRunningAsync.mockResolvedValue(false);
-      mockRunClaudeCommand.mockResolvedValue(undefined);
+      mockSendUserMessage.mockResolvedValue(undefined);
 
       const caller = createCaller('auth-session-id');
       const args = {
@@ -270,7 +263,7 @@ describe('claudeRouter integration', () => {
 
       expect(first.routed).toBe('fallback');
       expect(second.routed).toBe('already');
-      expect(mockRunClaudeCommand).toHaveBeenCalledTimes(1);
+      expect(mockSendUserMessage).toHaveBeenCalledTimes(1);
     });
 
     it('does not drop a second answer when two tool calls are answered concurrently', async () => {
@@ -279,7 +272,7 @@ describe('claudeRouter integration', () => {
       // be silently reported as already-answered.
       const session = await createRunningSession();
       mockIsClaudeRunningAsync.mockResolvedValue(false);
-      mockRunClaudeCommand.mockResolvedValue(undefined);
+      mockSendUserMessage.mockResolvedValue(undefined);
 
       const caller = createCaller('auth-session-id');
       const [a, b] = await Promise.all([
@@ -308,7 +301,7 @@ describe('claudeRouter integration', () => {
       // Sequences must be unique (no collision survived).
       const sequences = messages.map((m) => m.sequence);
       expect(new Set(sequences).size).toBe(sequences.length);
-      expect(mockRunClaudeCommand).toHaveBeenCalledTimes(2);
+      expect(mockSendUserMessage).toHaveBeenCalledTimes(2);
     });
 
     it('throws CONFLICT when a query is still processing', async () => {
@@ -324,7 +317,7 @@ describe('claudeRouter integration', () => {
           answers: { q: 'A' },
         })
       ).rejects.toMatchObject({ code: 'CONFLICT' });
-      expect(mockRunClaudeCommand).not.toHaveBeenCalled();
+      expect(mockSendUserMessage).not.toHaveBeenCalled();
     });
 
     it('throws PRECONDITION_FAILED when the session is not running', async () => {
@@ -362,7 +355,7 @@ describe('claudeRouter integration', () => {
         },
       });
       mockIsClaudeRunningAsync.mockResolvedValue(false);
-      mockRunClaudeCommand.mockResolvedValue(undefined);
+      mockSendUserMessage.mockResolvedValue(undefined);
 
       const caller = createCaller('auth-session-id');
       const result = await caller.claude.respondToPlan({
@@ -373,11 +366,9 @@ describe('claudeRouter integration', () => {
       });
 
       expect(result).toEqual({ success: true, routed: 'fallback' });
-      expect(mockRunClaudeCommand).toHaveBeenCalledWith(
-        expect.objectContaining({
-          sessionId: session.id,
-          prompt: expect.stringContaining('use a queue'),
-        })
+      expect(mockSendUserMessage).toHaveBeenCalledWith(
+        session.id,
+        expect.stringContaining('use a queue')
       );
     });
   });

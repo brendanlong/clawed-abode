@@ -2,14 +2,8 @@ import { z } from 'zod';
 import { router, protectedProcedure } from '../trpc';
 import { prisma } from '@/lib/prisma';
 import { TRPCError } from '@trpc/server';
-import {
-  cloneRepo,
-  createEmptyWorkspace,
-  removeWorkspace,
-  getSessionWorkingDir,
-} from '../services/worktree-manager';
-import { loadMergedSessionSettings } from '../services/settings-merger';
-import { runClaudeCommand, stopSession, cleanupSession } from '../services/claude-runner';
+import { cloneRepo, createEmptyWorkspace, removeWorkspace } from '../services/worktree-manager';
+import { sendUserMessage, stopSession, cleanupSession } from '../services/claude-runner';
 import { sseEvents } from '../services/events';
 import { createLogger, toError } from '@/lib/logger';
 import { env } from '@/lib/env';
@@ -18,9 +12,6 @@ import { SESSION_NAME_MAX_LENGTH } from '@/lib/types';
 const log = createLogger('sessions');
 
 const sessionStatusSchema = z.enum(['creating', 'running', 'stopped', 'error', 'archived']);
-
-/** Sentinel value for no-repo sessions in RepoSettings */
-const NO_REPO_SENTINEL = '__no_repo__';
 
 // Background session setup - runs after create mutation returns
 async function setupSessionBackground(
@@ -73,25 +64,11 @@ async function setupSessionBackground(
 
     log.info('Session setup complete', { sessionId });
 
-    // Send the initial prompt if provided
+    // Send the initial prompt if provided. sendUserMessage establishes the
+    // streaming query (loading settings internally) and pushes the prompt.
     if (initialPrompt?.trim()) {
       log.info('Sending initial prompt', { sessionId });
-
-      const settingsKey = repoFullName ?? NO_REPO_SENTINEL;
-      const settings = await loadMergedSessionSettings(settingsKey);
-      const workingDir = getSessionWorkingDir(sessionId, repoPath);
-
-      runClaudeCommand({
-        sessionId,
-        prompt: initialPrompt.trim(),
-        workingDir,
-        customSystemPrompt: settings.customSystemPrompt,
-        globalSettings: settings.globalSettings,
-        claudeModel: settings.claudeModel,
-        envVars: settings.envVars,
-        claudeApiKey: settings.claudeApiKey,
-        mcpServers: settings.mcpServers,
-      }).catch((err) => {
+      sendUserMessage(sessionId, initialPrompt.trim()).catch((err) => {
         log.error('Initial prompt failed', toError(err), { sessionId });
       });
     }
