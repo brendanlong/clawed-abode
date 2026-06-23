@@ -1,25 +1,24 @@
 import { Spinner } from '@/components/ui/spinner';
+import { Button } from '@/components/ui/button';
+import { X } from 'lucide-react';
 import { formatRetryReason, type RetryState } from '@/lib/claude-messages';
+import type { BackgroundTask } from '@/lib/session-status';
 
 interface ClaudeStatusIndicatorProps {
+  /** A main-agent turn is active (gates the composer). */
   isRunning: boolean;
   containerStatus: string;
   /** Ephemeral API-retry status (rate limit / overload), or null if not retrying. */
   retry?: RetryState | null;
+  /** Running background tasks (indicator only; never gates input). */
+  backgroundTasks?: BackgroundTask[];
+  /** Stop a single background task. */
+  onStopBackgroundTask?: (taskId: string) => void;
 }
 
-export function ClaudeStatusIndicator({
-  isRunning,
-  containerStatus,
-  retry,
-}: ClaudeStatusIndicatorProps) {
-  // Don't show anything if the container isn't running
-  if (containerStatus !== 'running') {
-    return null;
-  }
-
+/** The turn-status line: retrying / working / waiting. */
+function TurnStatus({ isRunning, retry }: { isRunning: boolean; retry?: RetryState | null }) {
   // A retry only happens mid-request, so it implies Claude is still working.
-  // Surface the live attempt count instead of the generic "working" message.
   if (isRunning && retry) {
     const reason = formatRetryReason(retry);
     return (
@@ -46,5 +45,56 @@ export function ClaudeStatusIndicator({
       <div className="w-2 h-2 rounded-full bg-green-500" />
       <span>Claude is waiting for your message</span>
     </div>
+  );
+}
+
+export function ClaudeStatusIndicator({
+  isRunning,
+  containerStatus,
+  retry,
+  backgroundTasks,
+  onStopBackgroundTask,
+}: ClaudeStatusIndicatorProps) {
+  // Don't show anything if the container isn't running.
+  if (containerStatus !== 'running') {
+    return null;
+  }
+
+  const tasks = backgroundTasks ?? [];
+
+  return (
+    <>
+      {tasks.length > 0 && (
+        <div className="flex flex-col gap-1 py-2 px-4 bg-blue-500/10 border-t text-sm text-blue-700 dark:text-blue-400">
+          <div className="flex items-center gap-2">
+            <Spinner size="sm" />
+            <span>
+              {tasks.length} background task{tasks.length === 1 ? '' : 's'} running — you can keep
+              chatting
+            </span>
+          </div>
+          {tasks.map((task) => (
+            <div key={task.taskId} className="flex items-center gap-2 pl-6 text-xs">
+              <span className="truncate">
+                {task.description || task.subagentType || task.taskId}
+              </span>
+              {onStopBackgroundTask && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-5 px-1"
+                  onClick={() => onStopBackgroundTask(task.taskId)}
+                  aria-label="Stop background task"
+                >
+                  <X className="h-3 w-3" />
+                </Button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      <TurnStatus isRunning={isRunning} retry={retry} />
+    </>
   );
 }
