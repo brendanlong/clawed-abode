@@ -82,6 +82,14 @@ function retryEquals(a: RetryState | null, b: RetryState | null): boolean {
   );
 }
 
+/**
+ * `stop_reason` values on a streaming `message_delta` that mean the turn CONTINUES
+ * (the main agent is not done): it is about to run a tool, or a server tool paused
+ * it. Any other terminal reason (`end_turn`, `stop_sequence`, `max_tokens`,
+ * `refusal`) means the main agent finished generating for this turn.
+ */
+const CONTINUATION_STOP_REASONS = new Set(['tool_use', 'pause_turn']);
+
 type BackgroundEvent =
   | { kind: 'started'; task: BackgroundTask }
   | { kind: 'settled'; taskId: string };
@@ -128,9 +136,16 @@ function parseBackgroundTaskEvent(message: SDKMessage): BackgroundEvent | null {
  * Fold one SDK message into the live status. Pure: returns the next status and
  * which axes changed (so the caller emits only the channels that moved).
  *
- * - `turnActive`: a top-level `assistant`/`stream_event` sets it true; a top-level
- *   `result` (ANY subtype, including `error_during_execution` from an interrupt)
- *   sets it false. Subagent (`parent_tool_use_id != null`) traffic never moves it.
+ * - `turnActive`: whether the MAIN agent is actively generating. Driven by the
+ *   message STREAM, not the SDK turn `result`: a top-level `message_start` sets it
+ *   true; a top-level `message_delta` whose `stop_reason` is terminal
+ *   (`end_turn`/`stop_sequence`/`max_tokens`/`refusal`) sets it false. This matters
+ *   because a `run_in_background` subagent keeps the parent turn open — the SDK
+ *   defers the turn `result` until the child settles — but the main agent finishes
+ *   generating much earlier; keying off `result` alone would wrongly show "running"
+ *   for the whole background-subagent duration. A top-level `result` still clears it
+ *   as a safety net (and covers an interrupt's `error_during_execution`). Subagent
+ *   (`parent_tool_use_id != null`) traffic never moves it.
  * - background tasks: `task_started` adds, `task_notification` removes.
  * - retry: an `api_retry` message sets it; any other TOP-LEVEL message clears it
  *   (the main request recovered). Background traffic leaves retry untouched, so a
@@ -162,8 +177,19 @@ export function reduceSessionMessage(prev: LiveStatus, message: SDKMessage): Red
 
   // --- turnActive (main agent only) ---
   if (topLevel) {
-    if (message.type === 'assistant' || message.type === 'stream_event') {
-      turnActive = true;
+    if (message.type === 'stream_event') {
+      const event = (
+        message as { event?: { type?: string; delta?: { stop_reason?: string | null } } }
+      ).event;
+      if (event?.type === 'message_start') {
+        turnActive = true;
+      } else if (
+        event?.type === 'message_delta' &&
+        event.delta?.stop_reason &&
+        !CONTINUATION_STOP_REASONS.has(event.delta.stop_reason)
+      ) {
+        turnActive = false;
+      }
     } else if (message.type === 'result') {
       turnActive = false;
     }
