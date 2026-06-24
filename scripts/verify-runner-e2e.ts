@@ -120,6 +120,41 @@ async function testBackgroundSurvivesTurn() {
   cleanup();
 }
 
+async function testBackgroundSubagentFreesComposer() {
+  console.log('\n=== E2E 2b: run_in_background SUBAGENT frees the composer while it runs ===');
+  const { id, events, cleanup } = await setup();
+  await runner.sendUserMessage(
+    id,
+    'Use the Agent tool (a.k.a. Task) with run_in_background set to true and subagent_type ' +
+      '"general-purpose" to launch a subagent whose ONLY job is to run `sleep 10` then reply DONE. ' +
+      'As soon as it is launched, reply with exactly STARTED and stop — do NOT wait or poll. ' +
+      'When the subagent finishes on its own, reply AUTO_CONTINUED.'
+  );
+  await waitFor(
+    () => runner.getSessionBackgroundTasks(id).length > 0,
+    60_000,
+    'subagent task_started'
+  );
+  check(true, 'background subagent registered');
+  // THE REGRESSION: the SDK keeps the parent turn open for a background subagent
+  // (defers the result), but the main agent's end_turn must free turnActive while
+  // the subagent is still running.
+  await waitFor(() => !runner.isClaudeRunning(id), 30_000, 'composer freed while subagent runs');
+  check(
+    !runner.isClaudeRunning(id) && runner.getSessionBackgroundTasks(id).length > 0,
+    'turnActive is FALSE while the background subagent is still running (composer free)'
+  );
+  await waitFor(
+    () => runner.getSessionBackgroundTasks(id).length === 0,
+    60_000,
+    'subagent settled'
+  );
+  check(true, 'background subagent cleared after notification');
+  console.log(`  events: ${events.join(', ')}`);
+  runner.stopSession(id);
+  cleanup();
+}
+
 async function testInterrupt() {
   console.log('\n=== E2E 3: interrupt ends the turn, query reusable ===');
   const { id, cleanup } = await setup();
@@ -164,6 +199,7 @@ async function main() {
   try {
     await testBasicTurn();
     await testBackgroundSurvivesTurn();
+    await testBackgroundSubagentFreesComposer();
     await testInterrupt();
   } catch (e) {
     console.error('THREW:', (e as Error).message);
