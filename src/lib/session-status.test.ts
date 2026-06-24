@@ -106,11 +106,13 @@ describe('reduceSessionMessage — turnActive', () => {
     }
   });
 
-  it('a message_delta with tool_use does NOT end the turn (a tool is coming)', () => {
-    const active: LiveStatus = { ...INITIAL_LIVE_STATUS, turnActive: true };
-    const { status, changed } = reduceSessionMessage(active, messageDelta('tool_use'));
-    expect(status.turnActive).toBe(true);
-    expect(changed.turnActive).toBe(false);
+  it('a message_delta with a continuation stop_reason does NOT end the turn', () => {
+    for (const reason of ['tool_use', 'pause_turn']) {
+      const active: LiveStatus = { ...INITIAL_LIVE_STATUS, turnActive: true };
+      const { status, changed } = reduceSessionMessage(active, messageDelta(reason));
+      expect(status.turnActive, `stop_reason=${reason}`).toBe(true);
+      expect(changed.turnActive, `stop_reason=${reason}`).toBe(false);
+    }
   });
 
   it('a subagent message_start does NOT set turnActive', () => {
@@ -234,6 +236,13 @@ describe('reduceSessionMessage — retry (turn-scoped clear)', () => {
     const { status, changed } = reduceSessionMessage(retrying, assistant('tool_abc'));
     expect(status.retry).not.toBeNull();
     expect(changed.retry).toBe(false);
+  });
+
+  it('a top-level message_start clears retry (the request recovered and is streaming)', () => {
+    const retrying = reduceSessionMessage(INITIAL_LIVE_STATUS, apiRetry(2)).status;
+    const { status, changed } = reduceSessionMessage(retrying, messageStart());
+    expect(status.retry).toBeNull();
+    expect(changed.retry).toBe(true);
   });
 
   it('no retry change when none set and a normal message arrives', () => {

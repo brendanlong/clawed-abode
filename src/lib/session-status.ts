@@ -145,7 +145,10 @@ function parseBackgroundTaskEvent(message: SDKMessage): BackgroundEvent | null {
  *   generating much earlier; keying off `result` alone would wrongly show "running"
  *   for the whole background-subagent duration. A top-level `result` still clears it
  *   as a safety net (and covers an interrupt's `error_during_execution`). Subagent
- *   (`parent_tool_use_id != null`) traffic never moves it.
+ *   (`parent_tool_use_id != null`) traffic never moves it. NOTE: the stream-driven
+ *   path relies on `includePartialMessages: true` (the runner hard-enables it) so the
+ *   terminal `message_delta` arrives; without partials only the `result` backstop
+ *   would clear it.
  * - background tasks: `task_started` adds, `task_notification` removes.
  * - retry: an `api_retry` message sets it; any other TOP-LEVEL message clears it
  *   (the main request recovered). Background traffic leaves retry untouched, so a
