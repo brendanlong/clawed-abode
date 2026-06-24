@@ -105,12 +105,14 @@ async function main() {
   for (;;) {
     const remaining = deadline - Date.now();
     if (remaining <= 0) break;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const race = await Promise.race([
       it.next().then((r) => ({ kind: 'next' as const, r })),
-      new Promise<{ kind: 'timeout' }>((res) =>
-        setTimeout(() => res({ kind: 'timeout' }), remaining)
-      ),
+      new Promise<{ kind: 'timeout' }>((res) => {
+        timer = setTimeout(() => res({ kind: 'timeout' }), remaining);
+      }),
     ]);
+    clearTimeout(timer);
     if (race.kind === 'timeout') break;
     if (race.r.done) break;
     const m = race.r.value;
