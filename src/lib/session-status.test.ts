@@ -19,11 +19,24 @@ function assistant(parentToolUseId: string | null = null): SDKMessage {
   } as unknown as SDKMessage;
 }
 
-function streamEvent(parentToolUseId: string | null = null): SDKMessage {
+function messageStart(parentToolUseId: string | null = null): SDKMessage {
   return {
     type: 'stream_event',
     parent_tool_use_id: parentToolUseId,
-    event: { type: 'content_block_delta' },
+    event: { type: 'message_start' },
+    session_id: 's',
+    uuid: 'u',
+  } as unknown as SDKMessage;
+}
+
+function messageDelta(
+  stopReason: string | null,
+  parentToolUseId: string | null = null
+): SDKMessage {
+  return {
+    type: 'stream_event',
+    parent_tool_use_id: parentToolUseId,
+    event: { type: 'message_delta', delta: { stop_reason: stopReason } },
     session_id: 's',
     uuid: 'u',
   } as unknown as SDKMessage;
@@ -79,51 +92,72 @@ function apiRetry(attempt: number): SDKMessage {
 }
 
 describe('reduceSessionMessage — turnActive', () => {
-  it('a top-level assistant message sets turnActive true', () => {
-    const { status, changed } = reduceSessionMessage(INITIAL_LIVE_STATUS, assistant());
+  it('a top-level message_start sets turnActive true', () => {
+    const { status, changed } = reduceSessionMessage(INITIAL_LIVE_STATUS, messageStart());
     expect(status.turnActive).toBe(true);
     expect(changed.turnActive).toBe(true);
   });
 
-  it('a top-level stream_event sets turnActive true', () => {
-    const { status } = reduceSessionMessage(INITIAL_LIVE_STATUS, streamEvent());
-    expect(status.turnActive).toBe(true);
+  it('a top-level message_delta with a terminal stop_reason ends the turn', () => {
+    for (const reason of ['end_turn', 'stop_sequence', 'max_tokens', 'refusal']) {
+      const active: LiveStatus = { ...INITIAL_LIVE_STATUS, turnActive: true };
+      const { status } = reduceSessionMessage(active, messageDelta(reason));
+      expect(status.turnActive, `stop_reason=${reason}`).toBe(false);
+    }
   });
 
-  it('a subagent assistant (parent_tool_use_id set) does NOT set turnActive', () => {
-    const { status, changed } = reduceSessionMessage(INITIAL_LIVE_STATUS, assistant('tool_abc'));
-    expect(status.turnActive).toBe(false);
+  it('a message_delta with tool_use does NOT end the turn (a tool is coming)', () => {
+    const active: LiveStatus = { ...INITIAL_LIVE_STATUS, turnActive: true };
+    const { status, changed } = reduceSessionMessage(active, messageDelta('tool_use'));
+    expect(status.turnActive).toBe(true);
     expect(changed.turnActive).toBe(false);
   });
 
-  it('a subagent stream_event does NOT set turnActive', () => {
-    const { status } = reduceSessionMessage(INITIAL_LIVE_STATUS, streamEvent('tool_abc'));
+  it('a subagent message_start does NOT set turnActive', () => {
+    const { status } = reduceSessionMessage(INITIAL_LIVE_STATUS, messageStart('tool_abc'));
     expect(status.turnActive).toBe(false);
   });
 
-  it('a result sets turnActive false', () => {
+  it('a subagent message_delta(end_turn) does NOT clear the main turnActive', () => {
     const active: LiveStatus = { ...INITIAL_LIVE_STATUS, turnActive: true };
-    const { status, changed } = reduceSessionMessage(active, result());
-    expect(status.turnActive).toBe(false);
-    expect(changed.turnActive).toBe(true);
+    const { status, changed } = reduceSessionMessage(active, messageDelta('end_turn', 'tool_abc'));
+    expect(status.turnActive).toBe(true);
+    expect(changed.turnActive).toBe(false);
   });
 
-  it('an interrupt result (error_during_execution) sets turnActive false', () => {
+  it('a top-level result clears turnActive (safety net / interrupt)', () => {
     const active: LiveStatus = { ...INITIAL_LIVE_STATUS, turnActive: true };
-    const { status } = reduceSessionMessage(active, result('error_during_execution'));
-    expect(status.turnActive).toBe(false);
+    expect(reduceSessionMessage(active, result()).status.turnActive).toBe(false);
+    expect(reduceSessionMessage(active, result('error_during_execution')).status.turnActive).toBe(
+      false
+    );
+  });
+
+  it('the main agent ending its turn frees turnActive while a background subagent still streams', () => {
+    // Regression for the run_in_background subagent case: the SDK keeps the parent
+    // turn open (defers the result) until the child settles, but the main agent's
+    // end_turn must free the composer immediately, and subagent traffic must not
+    // re-activate it.
+    let s = reduceSessionMessage(INITIAL_LIVE_STATUS, messageStart()).status; // main generating
+    s = reduceSessionMessage(s, messageDelta('tool_use')).status; // launches bg agent
+    s = reduceSessionMessage(s, messageStart()).status; // main says "STARTED"
+    s = reduceSessionMessage(s, messageDelta('end_turn')).status; // main DONE
+    expect(s.turnActive).toBe(false);
+
+    // The background subagent keeps streaming — must NOT re-activate the main turn.
+    s = reduceSessionMessage(s, messageStart('tool_xyz')).status;
+    s = reduceSessionMessage(s, messageDelta('end_turn', 'tool_xyz')).status;
+    expect(s.turnActive).toBe(false);
+
+    // Later, the main agent autonomously continues → active again.
+    s = reduceSessionMessage(s, messageStart()).status;
+    expect(s.turnActive).toBe(true);
   });
 
   it('a second init mid-stream does not change turnActive', () => {
     const active: LiveStatus = { ...INITIAL_LIVE_STATUS, turnActive: true };
     const { status, changed } = reduceSessionMessage(active, init());
     expect(status.turnActive).toBe(true);
-    expect(changed.turnActive).toBe(false);
-  });
-
-  it('no change when an already-active turn sees another assistant', () => {
-    const active: LiveStatus = { ...INITIAL_LIVE_STATUS, turnActive: true };
-    const { changed } = reduceSessionMessage(active, assistant());
     expect(changed.turnActive).toBe(false);
   });
 });
