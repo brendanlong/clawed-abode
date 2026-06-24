@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { mergeEnvVars, mergeMcpServers, resolveClaudeModel } from './settings-merger';
+import {
+  mergeEnvVars,
+  mergeMcpServers,
+  mcpServersEqual,
+  resolveClaudeModel,
+} from './settings-merger';
 import type { ContainerEnvVar, ContainerMcpServer } from './repo-settings';
 
 describe('resolveClaudeModel', () => {
@@ -121,5 +126,31 @@ describe('mergeMcpServers', () => {
 
     expect(result.find((s) => s.name === 'global-only')).toBeDefined();
     expect(result.find((s) => s.name === 'repo-only')).toBeDefined();
+  });
+});
+
+describe('mcpServersEqual', () => {
+  const stdio = (name: string, command: string): ContainerMcpServer => ({
+    name,
+    type: 'stdio',
+    command,
+  });
+
+  it('returns true for empty lists', () => {
+    expect(mcpServersEqual([], [])).toBe(true);
+  });
+
+  it('is order-insensitive', () => {
+    const a = [stdio('a', 'x'), stdio('b', 'y')];
+    const b = [stdio('b', 'y'), stdio('a', 'x')];
+    expect(mcpServersEqual(a, b)).toBe(true);
+  });
+
+  it('detects a changed config', () => {
+    expect(mcpServersEqual([stdio('a', 'x')], [stdio('a', 'y')])).toBe(false);
+  });
+
+  it('detects added/removed servers', () => {
+    expect(mcpServersEqual([stdio('a', 'x')], [stdio('a', 'x'), stdio('b', 'y')])).toBe(false);
   });
 });

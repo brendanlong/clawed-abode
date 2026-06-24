@@ -1,192 +1,327 @@
 /**
- * Integration test for claude-runner using the real Claude Agent SDK.
+ * Integration test for the persistent streaming-query runner.
  *
- * Uses denyAllTools mode so Claude cannot execute any tools - it can only
- * respond with text. This makes the test safe to run without sandboxing.
+ * Drives runSessionLoop with an INJECTED fake SDK query (no real SDK/auth) against
+ * a real in-memory SQLite DB, exercising the behaviors that matter for the
+ * refactor: multi-turn over one persistent query, background tasks surviving a
+ * turn, two-axis status emission, sequence integrity, and clean teardown.
  *
- * Requires:
- * - CLAUDE_CODE_OAUTH_TOKEN set in the environment
- * - Claude CLI installed and working
- *
- * Skips automatically if the SDK can't start (e.g., in CI without Claude CLI).
+ * Real-SDK behavior (resume+streaming, interrupt, background auto-continue) is
+ * covered by scripts/spike-streaming-resume.ts.
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
-import { tmpdir } from 'os';
-import { mkdtemp, rm } from 'fs/promises';
-import { join } from 'path';
+import type { Query, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { setupTestDb, teardownTestDb, testPrisma, clearTestDb } from '@/test/setup-test-db';
 
-// Skip entire suite if no Claude token is available
-const hasToken = !!process.env.CLAUDE_CODE_OAUTH_TOKEN;
-
-// Mock SSE events (we don't have a real SSE connection in tests)
 const mockSseEvents = vi.hoisted(() => ({
   emitNewMessage: vi.fn(),
   emitClaudeRunning: vi.fn(),
+  emitClaudeRetry: vi.fn(),
+  emitBackgroundTasks: vi.fn(),
   emitCommands: vi.fn(),
   emitSessionUpdate: vi.fn(),
   emitPrUpdate: vi.fn(),
 }));
+vi.mock('./events', () => ({ sseEvents: mockSseEvents }));
 
-vi.mock('./events', () => ({
-  sseEvents: mockSseEvents,
-}));
-
-// Mock github (no real GitHub API calls)
 vi.mock('./github', () => ({
   fetchPullRequestForBranch: vi.fn().mockResolvedValue(undefined),
 }));
 
-// Mock worktree-manager's getCurrentBranch (no real git repo in temp dir)
 vi.mock('./worktree-manager', () => ({
   getCurrentBranch: vi.fn().mockResolvedValue(null),
+  getSessionWorkingDir: vi.fn(() => '/tmp/spike-runner-test'),
 }));
 
-// Import after mocks are set up
-let runClaudeCommand: typeof import('./claude-runner').runClaudeCommand;
-let isClaudeRunning: typeof import('./claude-runner').isClaudeRunning;
+const baseSettings = {
+  systemPrompt: 'test prompt',
+  envVars: [],
+  mcpServers: [],
+  claudeModel: undefined as string | undefined,
+  claudeApiKey: undefined,
+  customSystemPrompt: null,
+  globalSettings: {
+    systemPromptOverride: null,
+    systemPromptOverrideEnabled: false,
+    systemPromptAppend: null,
+    claudeModel: null,
+    claudeApiKey: null,
+    envVars: [],
+    mcpServers: [],
+  },
+};
 
-/**
- * Quick check that the Claude Agent SDK can actually start.
- * Returns false if the SDK process crashes (e.g., Claude CLI not installed).
- */
-async function canStartSdk(): Promise<boolean> {
-  try {
-    const { query } = await import('@anthropic-ai/claude-agent-sdk');
-    const q = query({
-      prompt: 'hi',
-      options: {
-        permissionMode: 'bypassPermissions' as const,
-        allowDangerouslySkipPermissions: true,
-        cwd: '/tmp',
-        maxTurns: 1,
-      },
-    });
-    for await (const msg of q) {
-      if (msg.type === 'assistant' || msg.type === 'result') {
-        return true;
-      }
-    }
-    return true;
-  } catch {
-    return false;
+// Keep the real mcpServersEqual (applyLiveSettings uses it); only stub the loader.
+vi.mock('./settings-merger', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./settings-merger')>();
+  return {
+    ...actual,
+    loadMergedSessionSettings: vi.fn().mockResolvedValue({ ...baseSettings }),
+  };
+});
+
+import { createPushable } from '@/lib/pushable';
+
+// Imported dynamically in beforeAll (after setupTestDb sets DATABASE_URL), since
+// claude-runner pulls in @/lib/prisma at module load.
+let sendUserMessage: typeof import('./claude-runner').sendUserMessage;
+let stopSession: typeof import('./claude-runner').stopSession;
+let isClaudeRunning: typeof import('./claude-runner').isClaudeRunning;
+let getSessionBackgroundTasks: typeof import('./claude-runner').getSessionBackgroundTasks;
+let _setQueryFactory: typeof import('./claude-runner')._setQueryFactory;
+let mockLoadSettings: ReturnType<
+  typeof vi.mocked<typeof import('./settings-merger').loadMergedSessionSettings>
+>;
+
+// --- fake SDK query ----------------------------------------------------------
+function makeFakeQuery() {
+  const out = createPushable<SDKMessage>();
+  const inputs: SDKUserMessage[] = [];
+  const setModel = vi.fn(async () => {});
+  const setMcpServers = vi.fn(async () => {});
+
+  const factory = (params: { prompt: AsyncIterable<SDKUserMessage>; options: unknown }): Query => {
+    // Record pushed user messages so we can assert sendUserMessage reached the SDK.
+    void (async () => {
+      for await (const m of params.prompt) inputs.push(m);
+    })();
+    return {
+      [Symbol.asyncIterator]: () => out.iterable[Symbol.asyncIterator](),
+      interrupt: vi.fn(async () => {}),
+      close: vi.fn(() => out.close()),
+      supportedCommands: vi.fn(async () => []),
+      stopTask: vi.fn(async () => {}),
+      setModel,
+      setMcpServers,
+    } as unknown as Query;
+  };
+
+  return {
+    factory,
+    emit: (m: SDKMessage) => out.push(m),
+    end: () => out.close(),
+    inputs,
+    setModel,
+    setMcpServers,
+  };
+}
+
+// --- message builders --------------------------------------------------------
+let uuidCounter = 0;
+const nextUuid = () => `uuid-${uuidCounter++}`;
+
+function assistant(text: string, parent: string | null = null): SDKMessage {
+  return {
+    type: 'assistant',
+    parent_tool_use_id: parent,
+    message: { role: 'assistant', content: [{ type: 'text', text }] },
+    session_id: 's',
+    uuid: nextUuid(),
+  } as unknown as SDKMessage;
+}
+function result(subtype = 'success'): SDKMessage {
+  return { type: 'result', subtype, session_id: 's', uuid: nextUuid() } as unknown as SDKMessage;
+}
+function taskStarted(taskId: string): SDKMessage {
+  return {
+    type: 'system',
+    subtype: 'task_started',
+    task_id: taskId,
+    description: 'background work',
+    session_id: 's',
+    uuid: nextUuid(),
+  } as unknown as SDKMessage;
+}
+function taskNotification(taskId: string): SDKMessage {
+  return {
+    type: 'system',
+    subtype: 'task_notification',
+    task_id: taskId,
+    status: 'completed',
+    output_file: '/tmp/o',
+    summary: 'done',
+    session_id: 's',
+    uuid: nextUuid(),
+  } as unknown as SDKMessage;
+}
+
+async function waitFor(fn: () => boolean | Promise<boolean>, timeout = 2000): Promise<void> {
+  const end = Date.now() + timeout;
+  for (;;) {
+    if (await fn()) return;
+    if (Date.now() >= end) throw new Error('waitFor timed out');
+    await new Promise((r) => setTimeout(r, 10));
   }
 }
 
-describe.skipIf(!hasToken)('claude-runner integration (safe mode)', () => {
-  let tempDir: string;
-  let sdkAvailable = false;
+async function createRunningSession(): Promise<string> {
+  const session = await testPrisma.session.create({
+    data: { name: 'Test', workspacePath: '/tmp/ws', repoPath: '', status: 'running' },
+  });
+  return session.id;
+}
 
+function messagesFor(sessionId: string) {
+  return testPrisma.message.findMany({ where: { sessionId }, orderBy: { sequence: 'asc' } });
+}
+
+describe('claude-runner persistent streaming loop', () => {
   beforeAll(async () => {
     await setupTestDb();
-    tempDir = await mkdtemp(join(tmpdir(), 'claude-runner-test-'));
-
-    // Dynamic import after mocks
     const mod = await import('./claude-runner');
-    runClaudeCommand = mod.runClaudeCommand;
+    sendUserMessage = mod.sendUserMessage;
+    stopSession = mod.stopSession;
     isClaudeRunning = mod.isClaudeRunning;
-
-    // Check if SDK actually works in this environment
-    sdkAvailable = await canStartSdk();
-    if (!sdkAvailable) {
-      console.log('Claude Agent SDK not available in this environment, skipping SDK tests');
-    }
-  }, 120000);
-
+    getSessionBackgroundTasks = mod.getSessionBackgroundTasks;
+    _setQueryFactory = mod._setQueryFactory;
+    const sm = await import('./settings-merger');
+    mockLoadSettings = vi.mocked(sm.loadMergedSessionSettings);
+  });
   afterAll(async () => {
     await teardownTestDb();
-    await rm(tempDir, { recursive: true, force: true });
+    _setQueryFactory(null);
   });
-
   beforeEach(async () => {
     await clearTestDb();
     vi.clearAllMocks();
+    uuidCounter = 0;
+    mockLoadSettings.mockResolvedValue({ ...baseSettings });
   });
 
-  it('should run a query and persist messages', async () => {
-    if (!sdkAvailable) return;
+  it('persists a turn and toggles turnActive on/off', async () => {
+    const fake = makeFakeQuery();
+    _setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
 
-    // Create a session in the DB
-    const session = await testPrisma.session.create({
-      data: {
-        name: 'Test Session',
-        workspacePath: tempDir,
-        status: 'running',
-      },
+    await sendUserMessage(sessionId, 'hello');
+    expect(isClaudeRunning(sessionId)).toBe(true); // optimistic
+
+    fake.emit(assistant('hi there'));
+    fake.emit(result());
+
+    await waitFor(async () => (await messagesFor(sessionId)).length >= 3);
+    const msgs = await messagesFor(sessionId);
+    expect(msgs.map((m) => m.type)).toEqual(['user', 'assistant', 'result']);
+    expect(msgs.map((m) => m.sequence)).toEqual([0, 1, 2]);
+
+    // The user prompt reached the SDK input stream.
+    expect(fake.inputs).toHaveLength(1);
+    expect(fake.inputs[0].message.content).toBe('hello');
+
+    await waitFor(() => !isClaudeRunning(sessionId));
+    expect(mockSseEvents.emitClaudeRunning).toHaveBeenCalledWith(sessionId, true);
+    expect(mockSseEvents.emitClaudeRunning).toHaveBeenCalledWith(sessionId, false);
+
+    stopSession(sessionId);
+  });
+
+  it('keeps the query alive across turns and survives a background task past turn end', async () => {
+    const fake = makeFakeQuery();
+    _setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+
+    // Turn 1
+    await sendUserMessage(sessionId, 'start a background job');
+    fake.emit(assistant('starting'));
+    fake.emit(taskStarted('task-1'));
+    fake.emit(result()); // main turn ends, but the query stays alive
+
+    await waitFor(() => !isClaudeRunning(sessionId));
+    // turnActive is false, but the background task is still tracked.
+    expect(getSessionBackgroundTasks(sessionId).map((t) => t.taskId)).toEqual(['task-1']);
+    expect(mockSseEvents.emitBackgroundTasks).toHaveBeenCalledWith(sessionId, [
+      expect.objectContaining({ taskId: 'task-1', description: 'background work' }),
+    ]);
+
+    // The background task settles later, and the agent autonomously continues.
+    fake.emit(taskNotification('task-1'));
+    fake.emit(assistant('background job done'));
+    fake.emit(result());
+
+    await waitFor(() => getSessionBackgroundTasks(sessionId).length === 0);
+    await waitFor(async () => {
+      const types = (await messagesFor(sessionId)).map((m) => m.type);
+      // user, assistant, task_started(system), result, task_notification(system), assistant, result
+      return types.filter((t) => t === 'assistant').length === 2;
     });
 
-    // Run a simple prompt with all tools denied
-    await runClaudeCommand({
-      sessionId: session.id,
-      prompt: 'Say "hello integration test" and nothing else.',
-      workingDir: tempDir,
-      denyAllTools: true,
+    const msgs = await messagesFor(sessionId);
+    // sequences are contiguous and ordered across both turns + background messages.
+    expect(msgs.map((m) => m.sequence)).toEqual([...Array(msgs.length).keys()]);
+
+    stopSession(sessionId);
+  });
+
+  it('stopSession closes the query and removes the session', async () => {
+    const fake = makeFakeQuery();
+    _setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+
+    await sendUserMessage(sessionId, 'hi');
+    fake.emit(assistant('ok'));
+    fake.emit(result());
+    await waitFor(() => !isClaudeRunning(sessionId));
+
+    stopSession(sessionId);
+    expect(isClaudeRunning(sessionId)).toBe(false);
+    // A second sendUserMessage would re-establish a fresh query (lazy revive).
+    expect(getSessionBackgroundTasks(sessionId)).toEqual([]);
+  });
+
+  it('applies a model change live on the next send', async () => {
+    const fake = makeFakeQuery();
+    _setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+
+    // Turn 1 with the default (no model override).
+    await sendUserMessage(sessionId, 'first');
+    fake.emit(result());
+    await waitFor(() => !isClaudeRunning(sessionId));
+    expect(fake.setModel).not.toHaveBeenCalled();
+
+    // The user changes the model; the next send applies it live.
+    mockLoadSettings.mockResolvedValue({ ...baseSettings, claudeModel: 'opus' });
+    await sendUserMessage(sessionId, 'second');
+    expect(fake.setModel).toHaveBeenCalledWith('opus');
+
+    fake.emit(result());
+    await waitFor(() => !isClaudeRunning(sessionId));
+    stopSession(sessionId);
+  });
+
+  it('stopSession during establish does not resurrect the session (no orphan query)', async () => {
+    const fake = makeFakeQuery();
+    let factoryCalls = 0;
+    _setQueryFactory((p) => {
+      factoryCalls += 1;
+      return fake.factory(p);
     });
+    const sessionId = await createRunningSession();
 
-    // Verify messages were persisted
-    const messages = await testPrisma.message.findMany({
-      where: { sessionId: session.id },
-      orderBy: { sequence: 'asc' },
-    });
+    // Make settings loading hang so we can interleave a stop mid-establish.
+    let releaseSettings!: () => void;
+    mockLoadSettings.mockReturnValueOnce(
+      new Promise((resolve) => {
+        releaseSettings = () => resolve({ ...baseSettings });
+      })
+    );
 
-    // Should have at least: user message + some SDK response
-    expect(messages.length).toBeGreaterThanOrEqual(2);
+    const sendResult = sendUserMessage(sessionId, 'hi').then(
+      () => 'resolved',
+      (e: Error) => e
+    );
+    // Let ensureSessionQuery reach the awaited (hanging) settings load.
+    await new Promise((r) => setTimeout(r, 30));
+    // Stop while establishing — deletes the in-memory entry.
+    stopSession(sessionId);
+    // Release settings; establish should detect the teardown and abort.
+    releaseSettings();
 
-    // First message should be the user prompt
-    const userMsg = messages[0];
-    expect(userMsg.type).toBe('user');
-    const userContent = JSON.parse(userMsg.content);
-    expect(userContent.content).toContain('hello integration test');
-
-    // Should have at least one SDK response message
-    const sdkMessages = messages.slice(1);
-    expect(sdkMessages.length).toBeGreaterThanOrEqual(1);
-
-    // SSE events should have been emitted
-    expect(mockSseEvents.emitClaudeRunning).toHaveBeenCalledWith(session.id, true);
-    expect(mockSseEvents.emitClaudeRunning).toHaveBeenCalledWith(session.id, false);
-    expect(mockSseEvents.emitNewMessage).toHaveBeenCalled();
-
-    // Should not be running anymore
-    expect(isClaudeRunning(session.id)).toBe(false);
-  }, 60000);
-
-  it('should not allow concurrent queries', async () => {
-    if (!sdkAvailable) return;
-
-    const session = await testPrisma.session.create({
-      data: {
-        name: 'Concurrent Test',
-        workspacePath: tempDir,
-        status: 'running',
-      },
-    });
-
-    // Start a query
-    const firstQuery = runClaudeCommand({
-      sessionId: session.id,
-      prompt: 'Say "first" and nothing else.',
-      workingDir: tempDir,
-      denyAllTools: true,
-    });
-
-    // Brief delay to ensure the first query has started
-    await new Promise((r) => setTimeout(r, 100));
-
-    // Second query should fail if first is still running
-    if (isClaudeRunning(session.id)) {
-      await expect(
-        runClaudeCommand({
-          sessionId: session.id,
-          prompt: 'Say "second"',
-          workingDir: tempDir,
-          denyAllTools: true,
-        })
-      ).rejects.toThrow('already running');
-    }
-
-    // Wait for first to complete
-    await firstQuery;
-  }, 60000);
+    const result = await sendResult;
+    expect(result).toBeInstanceOf(Error);
+    expect(factoryCalls).toBe(0); // no query was ever created
+    expect(isClaudeRunning(sessionId)).toBe(false);
+    expect(getSessionBackgroundTasks(sessionId)).toEqual([]);
+  });
 });

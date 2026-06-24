@@ -3,6 +3,7 @@ import type { Message, Session } from '@prisma/client';
 import type { SlashCommand } from '@anthropic-ai/claude-agent-sdk';
 import type { PullRequestInfo } from './github';
 import type { RetryState } from '@/lib/claude-messages';
+import type { BackgroundTask } from '@/lib/session-status';
 
 // Message with parsed content (for SSE events)
 export type ParsedMessage = Omit<Message, 'content'> & { content: unknown };
@@ -44,13 +45,20 @@ export interface ClaudeRetryEvent {
   retry: RetryState | null;
 }
 
+export interface BackgroundTasksEvent {
+  type: 'background_tasks';
+  sessionId: string;
+  tasks: BackgroundTask[];
+}
+
 export type SSEEvent =
   | SessionUpdateEvent
   | MessageEvent
   | ClaudeRunningEvent
   | CommandsEvent
   | PrUpdateEvent
-  | ClaudeRetryEvent;
+  | ClaudeRetryEvent
+  | BackgroundTasksEvent;
 
 /**
  * Normalized union delivered over the single multiplexed per-session SSE stream.
@@ -64,7 +72,8 @@ export type SessionStreamEvent =
   | { kind: 'commands'; commands: SlashCommand[] }
   | { kind: 'pr'; pullRequest: PullRequestInfo | null }
   | { kind: 'session'; session: Session }
-  | { kind: 'retry'; retry: RetryState | null };
+  | { kind: 'retry'; retry: RetryState | null }
+  | { kind: 'background'; tasks: BackgroundTask[] };
 
 // Global channel name for cross-session list updates (not session-scoped).
 const SESSION_LIST_EVENT = 'session-list';
@@ -166,6 +175,23 @@ class SSEEventEmitter extends EventEmitter {
     return () => this.off(eventName, callback);
   }
 
+  emitBackgroundTasks(sessionId: string, tasks: BackgroundTask[]): void {
+    this.emit(`background:${sessionId}`, {
+      type: 'background_tasks',
+      sessionId,
+      tasks,
+    } satisfies BackgroundTasksEvent);
+  }
+
+  onBackgroundTasks(
+    sessionId: string,
+    callback: (event: BackgroundTasksEvent) => void
+  ): () => void {
+    const eventName = `background:${sessionId}`;
+    this.on(eventName, callback);
+    return () => this.off(eventName, callback);
+  }
+
   /**
    * Subscribe to all event kinds for a session as a single normalized stream.
    * Returns one unsubscribe that detaches every underlying channel listener.
@@ -178,6 +204,7 @@ class SSEEventEmitter extends EventEmitter {
       this.onPrUpdate(sessionId, (e) => callback({ kind: 'pr', pullRequest: e.pullRequest })),
       this.onSessionUpdate(sessionId, (e) => callback({ kind: 'session', session: e.session })),
       this.onClaudeRetry(sessionId, (e) => callback({ kind: 'retry', retry: e.retry })),
+      this.onBackgroundTasks(sessionId, (e) => callback({ kind: 'background', tasks: e.tasks })),
     ];
     return () => unsubscribes.forEach((unsubscribe) => unsubscribe());
   }

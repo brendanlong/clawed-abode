@@ -3,7 +3,7 @@ import { router, protectedProcedure } from '../trpc';
 import { prisma } from '@/lib/prisma';
 import { TRPCError } from '@trpc/server';
 import {
-  runClaudeCommand,
+  sendUserMessage,
   interruptClaude,
   isClaudeRunningAsync,
   markLastMessageAsInterrupted,
@@ -11,54 +11,15 @@ import {
   persistSyntheticToolResult,
   getSessionCommands,
   getSessionRetry,
+  getSessionBackgroundTasks,
+  stopBackgroundTask,
 } from '../services/claude-runner';
-import { loadMergedSessionSettings } from '../services/settings-merger';
-import { getSessionWorkingDir } from '../services/worktree-manager';
 import { estimateTokenUsage } from '@/lib/token-estimation';
-import { createLogger, toError } from '@/lib/logger';
-import { extractRepoFullName } from '@/lib/utils';
 import {
   type ToolResponse,
   summarizeToolResponse,
   formatToolResponsePrompt,
 } from '@/lib/tool-response';
-
-const log = createLogger('claude');
-
-/** Minimal session fields needed to launch a Claude query. */
-type LaunchableSession = { repoUrl: string | null; repoPath: string };
-
-/**
- * Load merged settings and start a Claude query in the background.
- * Shared by `send` and the tool-response fallback path.
- */
-async function launchClaude(
-  session: LaunchableSession,
-  sessionId: string,
-  prompt: string
-): Promise<void> {
-  const repoFullName = session.repoUrl ? extractRepoFullName(session.repoUrl) : null;
-  const settingsKey = repoFullName ?? '__no_repo__';
-  const settings = await loadMergedSessionSettings(settingsKey);
-  const workingDir = getSessionWorkingDir(sessionId, session.repoPath);
-
-  log.info('Launching Claude command', { sessionId, workingDir });
-
-  // Start Claude in the background - don't await
-  runClaudeCommand({
-    sessionId,
-    prompt,
-    workingDir,
-    customSystemPrompt: settings.customSystemPrompt,
-    globalSettings: settings.globalSettings,
-    claudeModel: settings.claudeModel,
-    envVars: settings.envVars,
-    claudeApiKey: settings.claudeApiKey,
-    mcpServers: settings.mcpServers,
-  }).catch((err) => {
-    log.error('Claude command failed', toError(err), { sessionId });
-  });
-}
 
 /**
  * Deliver a response to an interactive tool call (AskUserQuestion / ExitPlanMode),
@@ -83,7 +44,7 @@ async function submitToolResponse(
 
   const session = await prisma.session.findUnique({
     where: { id: sessionId },
-    select: { status: true, repoUrl: true, repoPath: true },
+    select: { status: true },
   });
   if (!session) {
     throw new TRPCError({ code: 'NOT_FOUND', message: 'Session not found' });
@@ -94,7 +55,7 @@ async function submitToolResponse(
       message: 'Session is not running. Start it to respond.',
     });
   }
-  // A live promise should have been found above; if a query is still running it
+  // A live promise should have been found above; if a turn is still active it
   // hasn't parked yet (or is busy with something else). Don't start a second
   // turn — let the client retry.
   if (await isClaudeRunningAsync(sessionId)) {
@@ -113,7 +74,7 @@ async function submitToolResponse(
     return { routed: 'already' };
   }
 
-  await launchClaude(session, sessionId, formatToolResponsePrompt(response));
+  await sendUserMessage(sessionId, formatToolResponsePrompt(response));
   return { routed: 'fallback' };
 }
 
@@ -128,7 +89,7 @@ export const claudeRouter = router({
     .mutation(async ({ input }) => {
       const session = await prisma.session.findUnique({
         where: { id: input.sessionId },
-        select: { status: true, repoUrl: true, repoPath: true },
+        select: { status: true },
       });
 
       if (!session) {
@@ -145,6 +106,8 @@ export const claudeRouter = router({
         });
       }
 
+      // Reject only while a main-agent turn is active. A send is allowed while
+      // only background tasks are running (they never gate input).
       if (await isClaudeRunningAsync(input.sessionId)) {
         throw new TRPCError({
           code: 'CONFLICT',
@@ -152,7 +115,7 @@ export const claudeRouter = router({
         });
       }
 
-      await launchClaude(session, input.sessionId, input.prompt);
+      await sendUserMessage(input.sessionId, input.prompt);
 
       return { success: true };
     }),
@@ -349,5 +312,22 @@ export const claudeRouter = router({
     .input(z.object({ sessionId: z.string().uuid() }))
     .query(async ({ input }) => {
       return { retry: getSessionRetry(input.sessionId) };
+    }),
+
+  // Running background tasks (run_in_background subagents / Monitor / backgrounded
+  // Bash). Updates stream live over the `background` SSE channel; this seeds the
+  // initial value and resyncs on reconnect. In-memory only (lost on restart).
+  getBackgroundTasks: protectedProcedure
+    .input(z.object({ sessionId: z.string().uuid() }))
+    .query(async ({ input }) => {
+      return { tasks: getSessionBackgroundTasks(input.sessionId) };
+    }),
+
+  // Stop a single running background task.
+  stopBackgroundTask: protectedProcedure
+    .input(z.object({ sessionId: z.string().uuid(), taskId: z.string().min(1) }))
+    .mutation(async ({ input }) => {
+      const stopped = await stopBackgroundTask(input.sessionId, input.taskId);
+      return { success: stopped };
     }),
 });
