@@ -187,8 +187,18 @@ claude.respondToPlan({
   // as answerQuestion.
 
 claude.interrupt({ sessionId: string })
-  → { success: true }
-  // Sends SIGINT to running claude process
+  → { success: boolean }
+  // Interrupts the current turn (no-op if no main-agent turn is active). The
+  // streaming query stays alive and is reusable for the next turn.
+
+claude.getBackgroundTasks({ sessionId: string })
+  → { tasks: BackgroundTask[] }
+  // Running background tasks (run_in_background subagents / Monitor / backgrounded
+  // Bash). Seeds the indicator; kept live by the `background` SSE channel.
+
+claude.stopBackgroundTask({ sessionId: string, taskId: string })
+  → { success: boolean }
+  // Stops a single background task via query.stopTask.
 
 claude.getHistory({
   sessionId: string,
@@ -210,12 +220,12 @@ claude.getHistory({
 5. **For repo sessions**: Background: Server clones the repository to `/worktrees/{sessionId}/{repoName}`
    **For no-repo sessions**: Background: Server creates an empty directory at `/worktrees/{sessionId}/`
 6. Session status → `running`, statusMessage → null
-7. Background: If an initial prompt was provided, server sends it via `runClaudeCommand()` (no client interaction needed)
+7. Background: If an initial prompt was provided, server sends it via `sendUserMessage()` (no client interaction needed)
 
 ### Interaction Flow
 
 1. User sends prompt via `claude.send()`
-2. Next.js server calls `query()` from the Claude Agent SDK directly in-process, with `resume: sessionId` for follow-up messages
+2. The server ensures the session's long-lived streaming `query()` exists (establishing it with `resume` if needed) and pushes the prompt into its input channel — see [Query Model](#query-model)
 3. The `canUseTool` callback handles:
    - **AskUserQuestion** / **ExitPlanMode**: Parks a promise keyed by the SDK's `toolUseID`, sends the question/plan to the browser via SSE (as a normal assistant message with a `tool_use` block). The user responds via `claude.answerQuestion()` / `claude.respondToPlan()` (see [Answering Interactive Tools](#answering-interactive-tools)).
    - **All other tools**: Auto-approved (bypass permissions mode).
@@ -240,12 +250,17 @@ This ensures users can see all changes through GitHub, which is their only way t
 
 ### Interruption Flow
 
-1. User clicks "Stop" in UI
-2. Server calls `claude.interrupt()`
-3. Server calls `interrupt()` on the in-process SDK query
-4. Any pending `canUseTool` promise is rejected
-5. Claude Code cleans up
-6. User can send new prompt to continue (with resume)
+Interrupt stops the **current turn only** — the streaming query stays alive (it is reusable for the next turn, confirmed by the spike).
+
+1. User clicks "Stop" in UI (shown only while a main-agent turn is active)
+2. Server calls `claude.interrupt()`, which calls `interrupt()` on the SDK query
+3. The SDK emits a terminal `result` (`subtype: 'error_during_execution'`); the loop's `reduceSessionMessage` maps any top-level `result` to `turnActive = false`. This is purely **event-driven** — no interrupt timer
+4. `markLastMessageAsInterrupted` marks the last **main-agent** message (skipping interleaved background/system task messages)
+5. The user can immediately send a new prompt — same query, no re-establish
+
+There are deliberately **no status timers** (no interrupt backstop, no turn watchdog). The server cannot distinguish a genuinely hung turn from a slow one by observation, so any timer would be a guess. Recovery for a hung turn is user-driven and deterministic: the header **Stop** (`sessions.stop`) closes the query → the loop `finally` forces `turnActive` off.
+
+Interrupt does **not** stop background tasks; those are stopped individually via `claude.stopBackgroundTask` (→ `query.stopTask`).
 
 ### Reconnection Flow
 
@@ -257,10 +272,18 @@ catch-up query (see [Real-Time Updates](#real-time-updates-sse)):
 2. The server parses the resume token, replays persisted messages with `sequence`
    greater than the token's watermark, then resumes live streaming.
 3. The client merges replayed messages into the React Query cache (deduped by id).
-4. Latest-value state (running, commands, PR, session) is not replayed; the client
-   refetches those queries on reconnect (`useRefetchOnReconnect`) as a resync.
+4. Latest-value state (running, commands, PR, session, retry, background tasks) is not
+   replayed; the client refetches those queries on reconnect (`useRefetchOnReconnect`)
+   as a resync.
 5. A `ConnectionStatusIndicator` shows a "reconnecting" banner while the stream is
    not connected.
+
+**Server restart recovery.** A restart loses the in-memory query but not the session's
+intent: a session stays in DB status `running` and is revived lazily (with `resume`) on
+the next interaction via `ensureSessionQuery`. Startup reconciliation (`reconcileSessions`)
+no longer force-stops anything — it only counts running sessions for an informative log.
+A background task that was mid-flight when the server died cannot be resurrected (its
+subprocess is gone); recovery restores the conversation, not in-flight background work.
 
 ### Deletion Flow
 
@@ -275,11 +298,15 @@ The Next.js server uses the `@anthropic-ai/claude-agent-sdk` directly in-process
 
 ### Query Model
 
-Each user prompt is a separate `query()` call with `resume: sessionId` for multi-turn conversations. This approach:
+Each session has **one long-lived `query()` running in streaming-input mode** (the `prompt` is an `AsyncIterable<SDKUserMessage>` — a pushable input channel; see `createPushable` in [`src/lib/pushable.ts`](../src/lib/pushable.ts)). The query is established lazily (`ensureSessionQuery`), stays alive across turns and idle periods, and is torn down only on stop / delete / shutdown / fatal error.
 
-- Requires no persistent processes between prompts
-- Handles server restarts gracefully (just resume with the session ID)
-- Simplifies the architecture significantly
+This is required for **background tasks** (the `Agent` tool with `run_in_background`, `Monitor` watches, backgrounded `Bash`): the SDK delivers their `task_started` / `task_notification` messages later in the same stream — and, when a task settles, the main agent **autonomously continues** in a new turn — but only while the stream stays open. The previous one-`query()`-per-prompt model closed the stream at each turn's `result`, killing any waiter. (Confirmed by `scripts/spike-streaming-resume.ts`.)
+
+Key properties:
+
+- `ensureSessionQuery(sessionId)` is idempotent and coalesced (concurrent callers share one establishment; the in-flight promise is cleared in `finally` so a failed establish can retry).
+- It resumes prior history with `options.resume` when the session already has messages. **The `cwd` must be stable across a resume** — Claude Code keys sessions by project dir — so revival always uses the session's persistent `workingDir`.
+- `sendUserMessage` pushes a user message into the input channel; the persistent `runSessionLoop` consumes output, folds every message through the pure `reduceSessionMessage` ([`src/lib/session-status.ts`](../src/lib/session-status.ts)), persists complete messages, and emits SSE.
 
 ### User Input (canUseTool)
 
@@ -290,14 +317,16 @@ The SDK's `canUseTool` callback handles interactive tools:
 
 ### Answering Interactive Tools
 
-The hard part is that the parked `Promise` lives only in the in-memory session map. It is destroyed when the query ends — completion, stop, interrupt, or a **server restart** — but the `tool_use` block survives in the database forever. If the UI decided interactivity from its own state, the two could disagree (controls shown for a question that can no longer be answered), or a transient running-state signal could wrongly disable the controls. To avoid this, **the server is authoritative** and the UI stays dumb:
+The hard part is that the parked `Promise` lives only in the in-memory session map. It is destroyed when the query ends — **stop, delete, or a server restart** (the persistent query now survives turn completion and interrupt) — but the `tool_use` block survives in the database forever. If the UI decided interactivity from its own state, the two could disagree (controls shown for a question that can no longer be answered), or a transient running-state signal could wrongly disable the controls. To avoid this, **the server is authoritative** and the UI stays dumb:
 
 - **UI rule**: answer controls are shown whenever a `tool_use` block has no matching `tool_result` (purely DB-derived in `MessageList`/`AskUserQuestionDisplay`/`ExitPlanModeDisplay`). The UI never consults running-state to decide interactivity. On submit it calls `claude.answerQuestion` / `claude.respondToPlan` with the block's `toolUseId`.
 - **Server routing** (`submitToolResponse` in [`src/server/routers/claude.ts`](../src/server/routers/claude.ts)):
-  1. **Live** — if a query is still parked on that `toolUseId`, resolve the in-memory promise so the current turn continues (cheap, no new query). A short wait covers the rare race where the answer beats the SDK's `canUseTool` call.
-  2. **Fallback** — if no live promise exists (the query ended), the original tool call can never be resolved, so the answer is delivered as a **new turn**: the server persists a synthetic `tool_result` for the block (pairing it in the UI so the controls disappear) and resumes the session with a prompt built from the answer. This is the automatic "fall back to the normal chat interface" path.
+  1. **Live** — if a query is still parked on that `toolUseId`, resolve the in-memory promise so the current turn continues (cheap, no new turn). With the persistent streaming query this is the **common** path. `submitLiveToolResponse` polls while a **live query** exists (not while `turnActive`), since a parked question keeps the turn active anyway. A short wait covers the rare race where the answer beats the SDK's `canUseTool` call.
+  2. **Fallback** — if no live promise exists (the query was stopped or lost to a server restart), the original tool call can never be resolved, so the answer is delivered as a **new turn**: the server persists a synthetic `tool_result` for the block (pairing it in the UI so the controls disappear) and resumes the session with a prompt built from the answer.
 - **Idempotency**: the synthetic `tool_result`'s message id is derived from the `toolUseId`, so a duplicate submit hits the unique constraint and is a no-op (`routed: 'already'`) — a double answer never starts two turns.
 - **Mapping responses**: an `AskUserQuestion` answer resolves `allow` with the selected answers; an `ExitPlanMode` approval resolves `allow`, while "request changes" resolves `deny` with the feedback message so Claude revises in place. On the fallback path these become natural-language prompts (see `formatToolResponsePrompt` in [`src/lib/tool-response.ts`](../src/lib/tool-response.ts)).
+
+**Known limitation**: only a single `pendingInput` is parked at a time; if a second interactive tool call arrives before the first is answered (more likely now that long-lived background subagents exist), the earlier one is superseded (rejected). A keyed map of pending inputs + multi-question UI would be needed to answer several at once.
 
 ### Streaming
 
@@ -314,8 +343,8 @@ subscription, so the app is deliberately structured around just **two** streams:
 
 1. **Per-session multiplexed stream** — `sse.onSessionEvents({ sessionId })`. A single
    subscription yields a discriminated union of every event kind for the session
-   (`message`, `running`, `commands`, `pr`, `session`, `retry`). The server folds the six
-   in-process emitter channels into this union via `sseEvents.onSessionEvents`
+   (`message`, `running`, `commands`, `pr`, `session`, `retry`, `background`). The server
+   folds the seven in-process emitter channels into this union via `sseEvents.onSessionEvents`
    ([`events.ts`](../src/server/services/events.ts)). On the client, `useSessionStream`
    ([`src/hooks/useSessionStream.ts`](../src/hooks/useSessionStream.ts)) is mounted once
    per session page and fans each event to the relevant React Query cache (the message
@@ -369,7 +398,16 @@ The SDK emits many `type: 'system'` subtypes. A single `type`-level switch can't
 2. **Dedicated displays**: `init`, `compact_boundary`, `hook_started`, `hook_response`, and the app's synthetic `error` each have their own component.
 3. **Generic summary**: everything else (e.g. `notification`, `permission_denied`, `model_refusal_fallback`, `plugin_install`, `memory_recall`, `mirror_error`, `task_started`, `task_notification`) renders through `SystemMessageDisplay`, which calls `summarizeSystemMessage` to produce a never-blank `{ label, body, level }`. Unknown/future subtypes degrade to a humanized label plus any string `content`, so a system message is never an empty bubble. `level: 'warn'` (retries, denials, errors) gets an amber treatment.
 
-Subagent (`Task` tool) lifecycle: `task_started` and `task_notification` are the meaningful bookends and are summarized; the high-frequency `task_progress` ticks and intermediate `task_updated` patches are ignored (their terminal outcome arrives via `task_notification`).
+Subagent (`Task` tool) lifecycle: `task_started` and `task_notification` are the meaningful bookends and are summarized; the high-frequency `task_progress` ticks and intermediate `task_updated` patches are ignored (their terminal outcome arrives via `task_notification`). In addition to being shown in the transcript, `task_started` / `task_notification` drive the live **background-task** status (see [Two-Axis Status & Background Tasks](#two-axis-status--background-tasks)).
+
+### Two-Axis Status & Background Tasks
+
+With one persistent query per session, "is Claude busy?" splits into two **independent** facts, both derived purely from the message stream by `reduceSessionMessage` ([`src/lib/session-status.ts`](../src/lib/session-status.ts)) and held in memory:
+
+- **`turnActive`** — the **main agent** is mid-turn generating. A top-level (`parent_tool_use_id == null`) `assistant`/`stream_event` sets it true; any top-level `result` (including an interrupt's `error_during_execution`) sets it false. Subagent traffic never moves it. This is the **only** input gate: it is emitted over the existing `running` SSE channel and read via `claude.isRunning`; the composer and Stop button key off it.
+- **background tasks** — a `Map<task_id, BackgroundTask>` driven by `task_started` (add) / `task_notification` (remove). Emitted as a latest-value `background` SSE event and read via `claude.getBackgroundTasks` (seeded once, updated by the stream, resynced on reconnect). This is an **indicator only** — it never gates input, so a user can keep chatting while a background task runs. `ClaudeStatusIndicator` shows a separate "N background tasks running — you can keep chatting" line with per-task stop controls (`claude.stopBackgroundTask` → `query.stopTask`). _Known limitation_: a task whose terminal `task_notification` never arrives (e.g. the SDK drops it) lingers in the map until the query is torn down; since it is indicator-only, the impact is a stale count, never a stuck composer.
+
+`turnActive` is **purely event-driven** — set/cleared only by messages and forced false on every loop-exit path (SDK error, query close, stop/delete/shutdown). There are no status timers: the server can't tell a hung turn from a slow one, so a genuinely hung turn is recovered deterministically by the user (interrupt, or the header Stop which closes the query → `finally` clears the flag). A consequence: a persistent subprocess lives until stop / delete / shutdown / fatal error (no idle reaper) — fine for a single-user host with a handful of sessions. Both facts are in-memory only (lost on restart, re-derived as the revived query streams).
 
 **Ephemeral retry status.** `api_retry` messages (the SDK retrying a rate-limited/overloaded request) are ignored above so they never pollute the transcript, but the _current_ retry state is surfaced live. The runner parses each via `parseRetryState` ([`claude-messages.ts`](../src/lib/claude-messages.ts)), stores it on the in-memory session state, and emits it over the `retry` SSE channel as a latest-value event (`{ attempt, maxRetries, errorStatus?, error? } | null`). Any non-retry message clears it (the request recovered), as does turn end. The client reads it via `claude.getRetryState` (seeded once, updated by the stream, resynced on reconnect) and `ClaudeStatusIndicator` shows "Retrying (overloaded) — attempt n/10…" while it is set. Because it is in-memory only, a server restart loses it — acceptable for a transient indicator.
 
@@ -483,6 +521,8 @@ Users can configure global settings that apply to all sessions:
 - **MCP Servers**: Global MCP servers are included in all sessions. If a per-repo MCP server has the same name as a global one, the per-repo configuration takes precedence.
 - **Claude Model**: Resolved in precedence order `per-repo model → global model → CLAUDE_MODEL env var`.
 
+**Live vs. restart-bound settings.** Because a session's query is long-lived, settings are bound when the query is established. **Model and MCP servers** are re-applied live on the next `send` when they differ from what the query was built with (`query.setModel` / `query.setMcpServers`, gated by `mcpServersEqual`). **Environment variables and the system prompt** are bound at construction and only take effect after a Stop→Start (which rebuilds the query with fresh settings).
+
 **Configuration**: Go to Settings → System Prompt to manage prompt and model settings. Go to Settings → Audio to manage voice/audio settings (TTS speed, voice auto-send).
 
 **Data Model**: Global env vars and MCP servers are stored in the same `EnvVar` and `McpServer` tables as per-repo ones, with `repoSettingsId = null` indicating a global setting. A partial unique index (`WHERE repoSettingsId IS NULL`) enforces name uniqueness for global entries at the database level.
@@ -579,7 +619,7 @@ clawed-abode/
 │   │   │   └── globalSettings.ts
 │   │   ├── services/
 │   │   │   ├── worktree-manager.ts # Git clone lifecycle
-│   │   │   ├── claude-runner.ts   # In-process Claude Agent SDK queries
+│   │   │   ├── claude-runner.ts   # Persistent per-session streaming query + loop
 │   │   │   ├── stream-accumulator.ts # Accumulates stream_events into partials
 │   │   │   ├── global-settings.ts # Global settings service
 │   │   │   ├── repo-settings.ts   # Per-repo settings service
@@ -589,7 +629,7 @@ clawed-abode/
 │   │   │   ├── anthropic-models.ts # Claude model configuration
 │   │   │   ├── github.ts         # GitHub API service
 │   │   │   ├── mcp-validator.ts  # MCP server config validation
-│   │   │   └── session-reconciler.ts # Marks sessions stopped on restart
+│   │   │   └── session-reconciler.ts # Counts running sessions for lazy revive on restart
 │   │   └── trpc.ts
 │   ├── lib/
 │   │   ├── auth.ts               # Authentication utilities
@@ -597,6 +637,9 @@ clawed-abode/
 │   │   ├── logger.ts             # Centralized logging (createLogger)
 │   │   ├── prisma.ts             # Prisma client initialization
 │   │   ├── trpc.ts               # tRPC client setup
+│   │   ├── pushable.ts           # Pushable async iterable (streaming-query input channel)
+│   │   ├── session-status.ts     # Pure reducer: turnActive + background tasks + retry
+│   │   ├── system-prompt.ts      # Pure system-prompt builder (DEFAULT_SYSTEM_PROMPT)
 │   │   ├── message-cache.ts      # Pure merge of live messages into the infinite-query cache
 │   │   ├── sse-resume.ts         # Resume-token (watermark:counter) format/parse for SSE
 │   │   └── types.ts              # Global TypeScript types

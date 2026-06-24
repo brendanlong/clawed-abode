@@ -64,6 +64,7 @@ export function useSessionStream(sessionId: string, options: UseSessionStreamOpt
     void utils.sessions.get.refetch({ sessionId });
     void utils.claude.getTokenUsage.refetch({ sessionId });
     void utils.claude.getRetryState.refetch({ sessionId });
+    void utils.claude.getBackgroundTasks.refetch({ sessionId });
   }, [utils, sessionId]);
 
   const subscription = trpc.sse.onSessionEvents.useSubscription(
@@ -112,6 +113,10 @@ export function useSessionStream(sessionId: string, options: UseSessionStreamOpt
           }
           case 'retry': {
             utils.claude.getRetryState.setData({ sessionId }, { retry: event.retry });
+            break;
+          }
+          case 'background': {
+            utils.claude.getBackgroundTasks.setData({ sessionId }, { tasks: event.tasks });
             break;
           }
           default:

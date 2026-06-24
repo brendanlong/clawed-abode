@@ -12,12 +12,12 @@ export async function register() {
 
     try {
       const result = await reconcileSessions();
-      if (result.sessionsMarkedStopped > 0) {
+      if (result.runningSessionsToRevive > 0) {
         console.log(
-          `Reconciled sessions: ${result.sessionsMarkedStopped} marked stopped (server restart)`
+          `Session reconciliation complete: ${result.runningSessionsToRevive} running session(s) will be revived on next interaction`
         );
       } else {
-        console.log('Session reconciliation complete: no running sessions to stop');
+        console.log('Session reconciliation complete: no running sessions');
       }
     } catch (err) {
       console.error('Error reconciling sessions:', err);

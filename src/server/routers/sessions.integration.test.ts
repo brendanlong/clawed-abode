@@ -17,8 +17,7 @@ vi.mock('../services/worktree-manager', () => ({
 
 // Mock claude-runner
 vi.mock('../services/claude-runner', () => ({
-  buildSystemPrompt: vi.fn().mockReturnValue('test system prompt'),
-  runClaudeCommand: vi.fn().mockResolvedValue(undefined),
+  sendUserMessage: vi.fn().mockResolvedValue(undefined),
   stopSession: vi.fn(),
   cleanupSession: vi.fn(),
 }));

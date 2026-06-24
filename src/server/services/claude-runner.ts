@@ -1,37 +1,50 @@
 /**
  * Orchestrates Claude SDK queries directly in-process.
  *
- * Replaces the previous architecture where each session ran an agent-service
- * process inside a container, communicated via Unix sockets. Now the SDK's
- * query() function runs directly in the Next.js server process.
+ * Each session has ONE long-lived `query()` running in streaming-input mode. It is
+ * established lazily (`ensureSessionQuery`), stays alive across turns and idle
+ * periods — so background tasks (`run_in_background` subagents, Monitor watches,
+ * backgrounded Bash) survive and their `task_notification` flows back to the main
+ * agent — and is torn down only on stop / delete / shutdown / fatal error.
  *
- * Each session uses separate query() calls with resume for multi-turn
- * conversations. The canUseTool callback handles AskUserQuestion by
- * parking a promise that resolves when the user answers via tRPC.
+ * "Busy" splits into two independent axes (see {@link reduceSessionMessage}):
+ *   - `turnActive`: the main agent is mid-turn (gates the composer).
+ *   - background tasks: an indicator only; never gates input.
  */
 
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import {
-  query,
+  query as sdkQuery,
+  type Query,
+  type Options,
   type McpServerConfig,
   type SlashCommand,
   type PermissionResult,
+  type SDKUserMessage,
+  type SDKMessage,
 } from '@anthropic-ai/claude-agent-sdk';
 import { prisma } from '@/lib/prisma';
+import { classifyMessage, SystemInitContentSchema, type RetryState } from '@/lib/claude-messages';
 import {
-  classifyMessage,
-  parseRetryState,
-  SystemInitContentSchema,
-  type RetryState,
-} from '@/lib/claude-messages';
+  reduceSessionMessage,
+  INITIAL_LIVE_STATUS,
+  type LiveStatus,
+  type BackgroundTask,
+} from '@/lib/session-status';
+import { createPushable, type Pushable } from '@/lib/pushable';
 import { type ToolResponse, buildSyntheticToolResultContent } from '@/lib/tool-response';
 import { extractRepoFullName } from '@/lib/utils';
 import { v4 as uuid, v5 as uuidv5 } from 'uuid';
 import { sseEvents } from './events';
 import { createLogger, toError } from '@/lib/logger';
 import { fetchPullRequestForBranch } from './github';
-import { getCurrentBranch } from './worktree-manager';
+import { getCurrentBranch, getSessionWorkingDir } from './worktree-manager';
+import {
+  loadMergedSessionSettings,
+  mcpServersEqual,
+  type MergedSessionSettings,
+} from './settings-merger';
 import { StreamAccumulator } from './stream-accumulator';
 import { PARTIAL_MESSAGE_ID_PREFIX } from '@/lib/message-cache';
 import type { ContainerEnvVar } from './repo-settings';
@@ -42,15 +55,8 @@ const log = createLogger('claude-runner');
 
 /**
  * Merges slash command names from the system init message with rich SlashCommand
- * objects from `supportedCommands()`.
- *
- * The SDK's `supportedCommands()` only returns "skills" — a subset with rich
- * metadata (name, description, argumentHint). The system init message's
- * `slash_commands` array contains ALL available commands as bare strings.
- *
- * This function merges both: keeping the rich metadata for known skills and
- * synthesizing minimal SlashCommand objects for commands that only appear in
- * the slash_commands list.
+ * objects from `supportedCommands()`. See the original note: `supportedCommands()`
+ * returns only skills (rich metadata); the init message lists all command names.
  */
 export function mergeSlashCommands(
   existingCommands: SlashCommand[],
@@ -69,8 +75,24 @@ export function mergeSlashCommands(
   return merged;
 }
 
-// Namespace UUID for generating deterministic IDs from error content
+// Namespace UUID for generating deterministic IDs from content.
 const ERROR_LINE_NAMESPACE = '6ba7b810-9dad-11d1-80b4-00c04fd430c8';
+
+/** Number of times to retry sequence assignment when a concurrent insert wins the race. */
+const SEQUENCE_RETRY_LIMIT = 5;
+
+/**
+ * `turnActive` is derived ENTIRELY from the message stream — a top-level
+ * `assistant`/`stream_event` sets it true, any top-level `result` (incl. an
+ * interrupt's `error_during_execution`) sets it false, and the loop's `finally`
+ * forces it false when the query ends. There are deliberately NO status timers
+ * (no turn watchdog, no idle reaper): the server cannot distinguish a genuinely
+ * hung turn from a slow one by observation, so any timer would be a guess. The
+ * deterministic recoveries are user-driven — interrupt (stop the turn) and the
+ * header Stop (`sessions.stop`, which closes the query → `finally` clears the
+ * flag). A persistent subprocess therefore lives until stop / delete / shutdown /
+ * fatal error.
+ */
 
 /**
  * State for a pending user input request (AskUserQuestion / ExitPlanMode).
@@ -113,140 +135,147 @@ const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
  * In-memory state for each active session.
  */
 interface SessionState {
-  /** Whether a query is currently running */
-  isRunning: boolean;
-  /** The current Query object (if running), for interruption */
-  currentQuery: ReturnType<typeof query> | null;
-  /** Pending user input request, if any */
+  /** The live streaming query, or null when not established (e.g. after restart). */
+  query: Query | null;
+  /** Input channel feeding the query; push user messages, close to end the query. */
+  input: Pushable<SDKUserMessage> | null;
+  /** In-flight establishment promise, for coalescing concurrent ensureSessionQuery. */
+  establishing: Promise<SessionState> | null;
+  /** Two-axis live status + ephemeral retry (derived from the message stream). */
+  status: LiveStatus;
+  /** Pending user input request, if any. */
   pendingInput: PendingUserInput | null;
-  /** Working directory for this session */
+  /** Working directory for this session. */
   workingDir: string;
-  /** Discovered slash commands (cached for getCommands endpoint) */
+  /** Discovered slash commands (cached for getCommands endpoint). */
   commands: SlashCommand[];
-  /** Current API-retry status (rate limit / overload), or null if not retrying */
-  retry: RetryState | null;
+  /** Settings the live query was built with (model/MCP can be applied live later). */
+  boundSettings: MergedSessionSettings | null;
+  /** Settings key (repoFullName or '__no_repo__') for reloading merged settings. */
+  settingsKey: string;
 }
 
-/** Active sessions tracked in memory */
+/** Active sessions tracked in memory. */
 const sessions = new Map<string, SessionState>();
 
 /**
- * Persisted commands per session — survives query completion.
- * The `sessions` map is cleared after each query, but commands should remain
- * available so the frontend can fetch them between queries and after page reloads.
+ * Persisted commands per session — survives query teardown so the frontend can
+ * fetch them between queries and after page reloads.
  */
 const persistedCommands = new Map<string, SlashCommand[]>();
 
-// Default system prompt appended to all Claude sessions
-export const DEFAULT_SYSTEM_PROMPT = `IMPORTANT: The user is accessing this session remotely through a web interface and has no local access to the files. They can only see your changes through GitHub. Therefore, you MUST follow this workflow for ANY code changes:
-
-1. Always commit your changes with clear, descriptive commit messages
-2. Always push your commits to the remote repository
-3. If you're working on a new branch or the changes would benefit from review, open a Pull Request using the GitHub CLI (gh pr create)
-4. If a PR already exists for the current branch, just push to update it
-
-Never leave uncommitted or unpushed changes - the user cannot see them otherwise.`;
-
 /**
- * Build the full system prompt from global settings and per-repo custom prompt.
+ * Injectable query factory (the SDK `query` by default). Tests replace this to
+ * drive `runSessionLoop` with a scripted message stream and no real SDK/auth.
  */
-export function buildSystemPrompt(options: {
-  customSystemPrompt?: string | null;
-  globalSettings?: {
-    systemPromptOverride: string | null;
-    systemPromptOverrideEnabled: boolean;
-    systemPromptAppend: string | null;
-  } | null;
-}): string {
-  const { customSystemPrompt, globalSettings } = options;
+type QueryFactory = (params: { prompt: AsyncIterable<SDKUserMessage>; options: Options }) => Query;
+let queryFactory: QueryFactory = sdkQuery;
 
-  let basePrompt = DEFAULT_SYSTEM_PROMPT;
-  if (globalSettings?.systemPromptOverrideEnabled && globalSettings.systemPromptOverride) {
-    basePrompt = globalSettings.systemPromptOverride;
-  }
-
-  let fullSystemPrompt = basePrompt;
-
-  if (globalSettings?.systemPromptAppend) {
-    fullSystemPrompt += '\n\n' + globalSettings.systemPromptAppend;
-  }
-
-  if (customSystemPrompt) {
-    fullSystemPrompt += '\n\n' + customSystemPrompt;
-  }
-
-  return fullSystemPrompt;
+/** Override the query factory (for tests). Pass null to restore the SDK default. */
+export function _setQueryFactory(factory: QueryFactory | null): void {
+  queryFactory = factory ?? sdkQuery;
 }
 
 /**
- * Create and save a system error message for display to the user.
+ * Insert a message with the next per-session sequence, retrying on sequence
+ * collision. Distinguishes a true duplicate (same `id` already present → returns
+ * `inserted: false`) from a `(sessionId, sequence)` race against a concurrent
+ * insert (recompute and retry, so a real message is never silently dropped).
+ * Emits the `new_message` SSE event on success.
+ */
+async function insertMessage(params: {
+  sessionId: string;
+  id: string;
+  type: 'system' | 'user' | 'assistant' | 'result';
+  content: unknown;
+}): Promise<{ inserted: boolean; sequence?: number }> {
+  const { sessionId, id, type, content } = params;
+  const contentJson = JSON.stringify(content);
+
+  for (let attempt = 0; attempt < SEQUENCE_RETRY_LIMIT; attempt++) {
+    const last = await prisma.message.findFirst({
+      where: { sessionId },
+      orderBy: { sequence: 'desc' },
+      select: { sequence: true },
+    });
+    const sequence = (last?.sequence ?? -1) + 1;
+
+    try {
+      const message = await prisma.message.create({
+        data: { id, sessionId, sequence, type, content: contentJson },
+      });
+      sseEvents.emitNewMessage(sessionId, {
+        id,
+        sessionId,
+        sequence,
+        type,
+        content,
+        createdAt: message.createdAt,
+      });
+      return { inserted: true, sequence };
+    } catch (err) {
+      if (!(err && typeof err === 'object' && 'code' in err && err.code === 'P2002')) {
+        throw err;
+      }
+      // Unique violation: distinguish a duplicate id (idempotent no-op) from a
+      // sequence race (different id collided) — only the latter should retry.
+      const existing = await prisma.message.findUnique({ where: { id }, select: { id: true } });
+      if (existing) {
+        log.debug('insertMessage: duplicate id, skipping', { sessionId, id });
+        return { inserted: false };
+      }
+      log.debug('insertMessage: sequence collision, retrying', { sessionId, attempt });
+    }
+  }
+
+  throw new Error(
+    `Failed to insert message ${id} for ${sessionId} after ${SEQUENCE_RETRY_LIMIT} attempts`
+  );
+}
+
+/**
+ * Create and persist a system error message for display to the user.
  */
 async function createErrorMessage(sessionId: string, errorText: string): Promise<void> {
-  const lastMessage = await prisma.message.findFirst({
-    where: { sessionId },
-    orderBy: { sequence: 'desc' },
-    select: { sequence: true },
-  });
-
-  const sequence = (lastMessage?.sequence ?? -1) + 1;
   const errorId = uuidv5(`${sessionId}:error:${Date.now()}:${errorText}`, ERROR_LINE_NAMESPACE);
-
   const errorContent = {
     type: 'system',
     subtype: 'error',
     content: [{ type: 'text', text: errorText }],
   };
-
   try {
-    const message = await prisma.message.create({
-      data: {
-        id: errorId,
-        sessionId,
-        sequence,
-        type: 'system',
-        content: JSON.stringify(errorContent),
-      },
-    });
-
-    sseEvents.emitNewMessage(sessionId, {
-      id: message.id,
-      sessionId,
-      sequence,
-      type: 'system',
-      content: errorContent,
-      createdAt: message.createdAt,
-    });
+    await insertMessage({ sessionId, id: errorId, type: 'system', content: errorContent });
   } catch (err) {
-    if (err && typeof err === 'object' && 'code' in err && err.code === 'P2002') {
-      return;
-    }
     log.error('Failed to create error message', toError(err), { sessionId });
   }
 }
 
 /**
- * Get or create session state.
+ * Get or create the in-memory state for a session.
  */
 function getSessionState(sessionId: string, workingDir: string): SessionState {
   let state = sessions.get(sessionId);
   if (!state) {
     state = {
-      isRunning: false,
-      currentQuery: null,
+      query: null,
+      input: null,
+      establishing: null,
+      status: INITIAL_LIVE_STATUS,
       pendingInput: null,
       workingDir,
       commands: persistedCommands.get(sessionId) ?? [],
-      retry: null,
+      boundSettings: null,
+      settingsKey: '',
     };
     sessions.set(sessionId, state);
+  } else if (workingDir) {
+    state.workingDir = workingDir;
   }
   return state;
 }
 
 /**
  * Env vars to seed the login shell with (and to use as fallback).
- * These are the minimal vars that the OS login process normally provides
- * so profile scripts can source properly.
  */
 const SEED_ENV_VARS = [
   'HOME',
@@ -260,22 +289,12 @@ const SEED_ENV_VARS = [
   'XDG_RUNTIME_DIR',
 ];
 
-/**
- * Cached base environment from a fresh login shell.
- * Populated lazily on first call to getBaseEnv().
- * This gives us the user's default shell environment (PATH, HOME, etc.)
- * without any of the server's runtime env vars (PASSWORD_HASH, ENCRYPTION_KEY, etc.).
- */
 let cachedBaseEnv: Record<string, string> | null = null;
-
-/** In-flight promise for getBaseEnv() to coalesce concurrent calls. */
 let pendingBaseEnv: Promise<Record<string, string>> | null = null;
 
 /**
- * Get the base environment by spawning a fresh login shell.
- * Uses `env -0` for null-separated output to safely handle values with newlines.
- * Successfully captured env is cached for the lifetime of the process.
- * Concurrent calls are coalesced into a single shell spawn.
+ * Get the base environment by spawning a fresh login shell (PATH, HOME, etc.)
+ * without the server's runtime env vars. Cached for the process lifetime.
  */
 export async function getBaseEnv(): Promise<Record<string, string>> {
   if (cachedBaseEnv) return cachedBaseEnv;
@@ -291,13 +310,6 @@ export async function getBaseEnv(): Promise<Record<string, string>> {
 
 async function fetchBaseEnv(): Promise<Record<string, string>> {
   try {
-    // Spawn a fresh login shell and capture its environment.
-    // -l: login shell (sources .profile, .bash_profile, etc.)
-    // env -0: null-separated output for safe parsing
-    //
-    // We seed with the minimal vars that the OS login process normally provides
-    // so profile scripts can source properly.
-    // This avoids inheriting any server-specific vars from process.env.
     const seedEnv: Record<string, string> = {};
     for (const key of SEED_ENV_VARS) {
       if (process.env[key]) seedEnv[key] = process.env[key]!;
@@ -326,8 +338,6 @@ async function fetchBaseEnv(): Promise<Record<string, string>> {
       'Failed to capture base environment from login shell, falling back to minimal env',
       toError(err)
     );
-    // Fallback: use a minimal set of essential vars from process.env.
-    // NOT cached so a retry can succeed if the failure was transient.
     const fallback: Record<string, string> = {};
     for (const key of SEED_ENV_VARS) {
       if (process.env[key]) fallback[key] = process.env[key]!;
@@ -355,8 +365,8 @@ export function _clearPersistedCommands(sessionId: string): void {
 /**
  * Build the environment variables to pass to the Claude SDK.
  *
- * Starts with a fresh login shell's environment (so agents get PATH, HOME, etc.
- * but NOT server secrets like PASSWORD_HASH), then overlays user-configured env vars.
+ * Starts with a fresh login shell's environment, then overlays the global Claude
+ * API key and finally the user-configured env vars (highest precedence).
  */
 export async function buildAgentEnv(
   userEnvVars: ContainerEnvVar[],
@@ -365,14 +375,10 @@ export async function buildAgentEnv(
   const baseEnv = await getBaseEnv();
   const agentEnv: Record<string, string | undefined> = { ...baseEnv };
 
-  // Apply global Claude API key before user env vars, so per-repo
-  // CLAUDE_CODE_OAUTH_TOKEN env vars can override the global key.
   if (claudeApiKey) {
     agentEnv['CLAUDE_CODE_OAUTH_TOKEN'] = claudeApiKey;
   }
 
-  // Overlay user-configured env vars (merged global + per-repo, already decrypted).
-  // Applied last so per-repo vars take highest precedence.
   for (const { name, value } of userEnvVars) {
     agentEnv[name] = value;
   }
@@ -380,270 +386,198 @@ export async function buildAgentEnv(
   return agentEnv;
 }
 
-export interface RunClaudeCommandOptions {
-  sessionId: string;
-  prompt: string;
-  workingDir: string;
-  /** Optional per-repo custom system prompt appended after the base system prompt */
-  customSystemPrompt?: string | null;
-  /** Global settings for system prompt override/append */
-  globalSettings?: {
-    systemPromptOverride: string | null;
-    systemPromptOverrideEnabled: boolean;
-    systemPromptAppend: string | null;
-  } | null;
-  /** Claude model override */
-  claudeModel?: string | null;
-  /** Environment variables to pass to the agent (merged global + per-repo, decrypted) */
-  envVars?: ContainerEnvVar[];
-  /** Claude API key override from settings */
-  claudeApiKey?: string | null;
-  /** MCP server configurations passed to the SDK */
-  mcpServers?: Array<
-    | {
-        name: string;
-        type: 'stdio';
-        command: string;
-        args?: string[];
-        env?: Record<string, string>;
+/** Convert merged MCP server settings into the SDK's record shape. */
+function buildMcpServersRecord(
+  mcpServers: MergedSessionSettings['mcpServers']
+): Record<string, McpServerConfig> | undefined {
+  if (!mcpServers.length) return undefined;
+  return Object.fromEntries(
+    mcpServers.map((server) => {
+      if (server.type === 'http' || server.type === 'sse') {
+        const config: McpServerConfig = { type: server.type, url: server.url };
+        if (server.headers && Object.keys(server.headers).length > 0) {
+          (config as { headers?: Record<string, string> }).headers = server.headers;
+        }
+        return [server.name, config];
       }
-    | { name: string; type: 'http'; url: string; headers?: Record<string, string> }
-    | { name: string; type: 'sse'; url: string; headers?: Record<string, string> }
-  >;
-  /** If true, deny all tool use (safe mode for testing) */
-  denyAllTools?: boolean;
+      const config: McpServerConfig = { command: server.command };
+      if (server.args?.length) (config as { args?: string[] }).args = server.args;
+      if (server.env && Object.keys(server.env).length > 0)
+        (config as { env?: Record<string, string> }).env = server.env;
+      return [server.name, config];
+    })
+  );
 }
 
 /**
- * Run a Claude query directly using the Agent SDK.
- * Streams messages, saves them to DB, and emits SSE events.
+ * Build the SDK query options for a session, including the `canUseTool` callback
+ * that parks interactive tool requests (AskUserQuestion / ExitPlanMode).
  */
-export async function runClaudeCommand(options: RunClaudeCommandOptions): Promise<void> {
-  const { sessionId, prompt, workingDir } = options;
-  log.info('runClaudeCommand: Starting', { sessionId, promptLength: prompt.length });
+async function buildSdkOptions(params: {
+  sessionId: string;
+  workingDir: string;
+  settings: MergedSessionSettings;
+  shouldResume: boolean;
+  state: SessionState;
+}): Promise<Options> {
+  const { sessionId, workingDir, settings, shouldResume, state } = params;
+  const agentEnv = await buildAgentEnv(settings.envVars, settings.claudeApiKey);
+  const mcpServersRecord = buildMcpServersRecord(settings.mcpServers);
 
-  const state = getSessionState(sessionId, workingDir);
-
-  if (state.isRunning) {
-    throw new Error('A Claude process is already running for this session');
-  }
-
-  // Look up the session
-  const session = await prisma.session.findUnique({
-    where: { id: sessionId },
-    select: { repoPath: true, repoUrl: true, branch: true, currentBranch: true },
-  });
-
-  if (!session) {
-    throw new Error('Session not found');
-  }
-
-  state.isRunning = true;
-
-  // Build system prompt
-  const systemPrompt = buildSystemPrompt({
-    customSystemPrompt: options.customSystemPrompt,
-    globalSettings: options.globalSettings,
-  });
-
-  // Build MCP servers config
-  const mcpServersRecord: Record<string, McpServerConfig> | undefined = options.mcpServers?.length
-    ? Object.fromEntries(
-        options.mcpServers.map((server) => {
-          if (server.type === 'http' || server.type === 'sse') {
-            const config: McpServerConfig = { type: server.type, url: server.url };
-            if (server.headers && Object.keys(server.headers).length > 0) {
-              (config as { headers?: Record<string, string> }).headers = server.headers;
-            }
-            return [server.name, config];
-          }
-          const config: McpServerConfig = { command: server.command };
-          if (server.args?.length) (config as { args?: string[] }).args = server.args;
-          if (server.env && Object.keys(server.env).length > 0)
-            (config as { env?: Record<string, string> }).env = server.env;
-          return [server.name, config];
-        })
-      )
-    : undefined;
-
-  // Determine if we should resume (has existing messages)
-  const existingMessages = await prisma.message.count({
-    where: { sessionId },
-  });
-  const shouldResume = existingMessages > 0;
-
-  // Get the next sequence number
-  const lastMessage = await prisma.message.findFirst({
-    where: { sessionId },
-    orderBy: { sequence: 'desc' },
-    select: { sequence: true },
-  });
-  let sequence = (lastMessage?.sequence ?? -1) + 1;
-
-  // Store the user prompt first
-  const userMessageId = uuid();
-  const userMessageSequence = sequence++;
-  const userMessageContent = { type: 'user', content: prompt };
-  await prisma.message.create({
-    data: {
-      id: userMessageId,
-      sessionId,
-      sequence: userMessageSequence,
-      type: 'user',
-      content: JSON.stringify(userMessageContent),
-    },
-  });
-
-  sseEvents.emitNewMessage(sessionId, {
-    id: userMessageId,
-    sessionId,
-    sequence: userMessageSequence,
-    type: 'user',
-    content: userMessageContent,
-    createdAt: new Date(),
-  });
-
-  // Emit Claude running event
-  sseEvents.emitClaudeRunning(sessionId, true);
-
-  // Build environment for the agent
-  const agentEnv = await buildAgentEnv(options.envVars ?? [], options.claudeApiKey);
-
-  // Build SDK query options
-  const denyAllTools = options.denyAllTools ?? false;
-  const sdkOptions: Parameters<typeof query>[0]['options'] = {
+  const options: Options = {
     env: agentEnv,
-    permissionMode: 'bypassPermissions' as const,
+    permissionMode: 'bypassPermissions',
     allowDangerouslySkipPermissions: true,
     includePartialMessages: true,
     cwd: workingDir,
     settingSources: ['project'],
     systemPrompt: {
-      type: 'preset' as const,
-      preset: 'claude_code' as const,
-      append: systemPrompt,
+      type: 'preset',
+      preset: 'claude_code',
+      append: settings.systemPrompt,
     },
-    tools: { type: 'preset' as const, preset: 'claude_code' as const },
+    tools: { type: 'preset', preset: 'claude_code' },
     canUseTool: async (
       toolName: string,
       input: Record<string, unknown>,
       { toolUseID }: { toolUseID: string }
     ): Promise<PermissionResult> => {
-      // In safe mode, deny all tools
-      if (denyAllTools) {
-        return { behavior: 'deny' as const, message: 'Tool use is disabled in safe mode' };
-      }
-
-      // Handle tools that require user input
       if (toolName === 'AskUserQuestion' || toolName === 'ExitPlanMode') {
         log.info('canUseTool: Waiting for user input', { sessionId, toolName, toolUseID });
-
-        // Signal that Claude is waiting for input (not actively running)
-        // so the frontend enables the answer UI
-        sseEvents.emitClaudeRunning(sessionId, false);
-
-        // Park a promise that will be resolved when the user answers. Only one
-        // request can be parked at a time; if the SDK asks for a second
-        // interactive tool before the first is answered (e.g. parallel tool
-        // calls), reject the earlier one rather than orphaning its promise and
-        // wedging the turn.
-        try {
-          return await new Promise<PermissionResult>((resolve, reject) => {
-            if (state.pendingInput) {
-              state.pendingInput.reject(new Error('Superseded by another tool request'));
-            }
-            state.pendingInput = { toolName, toolUseId: toolUseID, input, resolve, reject };
-          });
-        } finally {
-          // Resume "running" state after user answers
-          sseEvents.emitClaudeRunning(sessionId, true);
-        }
+        // No running-state toggle here: the answer UI is DB-derived (a tool_use
+        // with no tool_result), and the turn genuinely remains active while parked.
+        return await new Promise<PermissionResult>((resolve, reject) => {
+          if (state.pendingInput) {
+            state.pendingInput.reject(new Error('Superseded by another tool request'));
+          }
+          state.pendingInput = { toolName, toolUseId: toolUseID, input, resolve, reject };
+        });
       }
-
-      // Auto-approve all other tools (bypass permissions mode)
-      return { behavior: 'allow' as const, updatedInput: input };
+      return { behavior: 'allow', updatedInput: input };
     },
   };
 
-  // Resume or start fresh
+  // cwd MUST be stable across a resume — Claude Code keys sessions by project dir.
   if (shouldResume) {
-    sdkOptions.resume = sessionId;
+    options.resume = sessionId;
   } else {
-    sdkOptions.sessionId = sessionId;
+    options.sessionId = sessionId;
   }
-
-  // Model configuration
-  if (options.claudeModel) {
-    sdkOptions.model = options.claudeModel;
+  if (settings.claudeModel) {
+    options.model = settings.claudeModel;
   }
-
-  // MCP server configurations
   if (mcpServersRecord && Object.keys(mcpServersRecord).length > 0) {
-    sdkOptions.mcpServers = mcpServersRecord;
+    options.mcpServers = mcpServersRecord;
   }
+
+  return options;
+}
+
+/**
+ * Force all live status off and emit only the channels that changed. Used by the
+ * loop `finally`, `stopSession`, and shutdown so a torn-down session never leaves
+ * a stale "running"/"background"/"retrying" indicator.
+ */
+function clearLiveStatus(sessionId: string, state: SessionState): void {
+  if (state.status.turnActive) {
+    state.status = { ...state.status, turnActive: false };
+    sseEvents.emitClaudeRunning(sessionId, false);
+  }
+  if (state.status.backgroundTasks.size > 0) {
+    state.status = { ...state.status, backgroundTasks: new Map() };
+    sseEvents.emitBackgroundTasks(sessionId, []);
+  }
+  if (state.status.retry) {
+    state.status = { ...state.status, retry: null };
+    sseEvents.emitClaudeRetry(sessionId, null);
+  }
+}
+
+/**
+ * Fold one message into the session's live status and emit changed channels.
+ * Runs for EVERY message (including ones that are skipped for persistence, since
+ * `api_retry`/`task_*` drive status). Fires per-turn branch/PR detection when a
+ * main turn ends.
+ */
+function applyStatus(sessionId: string, state: SessionState, message: SDKMessage): void {
+  const { status, changed } = reduceSessionMessage(state.status, message);
+  const turnEnded = changed.turnActive && !status.turnActive;
+  state.status = status;
+
+  if (changed.turnActive) sseEvents.emitClaudeRunning(sessionId, status.turnActive);
+  if (changed.background) {
+    sseEvents.emitBackgroundTasks(sessionId, [...status.backgroundTasks.values()]);
+  }
+  if (changed.retry) sseEvents.emitClaudeRetry(sessionId, status.retry);
+
+  if (turnEnded) {
+    // PR/branch can change within a turn; refresh latest-value state at turn end.
+    void detectBranchAndPr(sessionId, state.workingDir);
+  }
+}
+
+/**
+ * Detect a branch change and refresh PR status for the session (fire-and-forget).
+ */
+async function detectBranchAndPr(sessionId: string, workingDir: string): Promise<void> {
+  try {
+    const session = await prisma.session.findUnique({
+      where: { id: sessionId },
+      select: { repoUrl: true, currentBranch: true },
+    });
+    if (!session) return;
+
+    const detectedBranch = await getCurrentBranch(workingDir);
+    if (detectedBranch && detectedBranch !== session.currentBranch) {
+      const updated = await prisma.session.update({
+        where: { id: sessionId },
+        data: { currentBranch: detectedBranch },
+      });
+      sseEvents.emitSessionUpdate(sessionId, updated);
+    }
+
+    const branchForPr = detectedBranch ?? session.currentBranch;
+    if (session.repoUrl && branchForPr) {
+      const repoFullName = extractRepoFullName(session.repoUrl);
+      const pr = await fetchPullRequestForBranch(repoFullName, branchForPr);
+      if (pr !== undefined) {
+        sseEvents.emitPrUpdate(sessionId, pr);
+      }
+    }
+  } catch (err) {
+    log.debug('Failed to detect branch or check PR', { sessionId, error: toError(err).message });
+  }
+}
+
+/** Merge slash commands discovered in a system init message. */
+function mergeInitCommands(sessionId: string, state: SessionState, message: SDKMessage): void {
+  const initParsed = SystemInitContentSchema.safeParse(message);
+  if (!initParsed.success || !initParsed.data.slash_commands) return;
+
+  const merged = mergeSlashCommands(state.commands, initParsed.data.slash_commands);
+  const oldNames = new Set(state.commands.map((c) => c.name));
+  const hasNew = merged.some((c) => !oldNames.has(c.name));
+  if (hasNew) {
+    state.commands = merged;
+    persistedCommands.set(sessionId, merged);
+    sseEvents.emitCommands(sessionId, merged);
+  }
+}
+
+/**
+ * The long-lived output loop for a session's query. Persists complete messages,
+ * emits partials, and folds every message into live status. Exits only when the
+ * input channel closes, the query is closed, or the SDK throws.
+ */
+async function runSessionLoop(sessionId: string, state: SessionState, q: Query): Promise<void> {
+  const accumulator = new StreamAccumulator();
+  let nextPartialSequence = 0;
 
   try {
-    const accumulator = new StreamAccumulator();
-
-    // Start the query
-    const q = query({ prompt, options: sdkOptions });
-    state.currentQuery = q;
-
-    // Fetch rich command metadata from the SDK asynchronously.
-    // The init message may arrive before this resolves, so we merge
-    // with any names already discovered to avoid losing commands.
-    void q
-      .supportedCommands()
-      .then((commands) => {
-        const alreadyDiscovered = state.commands.map((c) => c.name);
-        state.commands = mergeSlashCommands(commands, alreadyDiscovered);
-        persistedCommands.set(sessionId, state.commands);
-        sseEvents.emitCommands(sessionId, state.commands);
-        log.info('Emitted supported commands from SDK', {
-          sessionId,
-          count: state.commands.length,
-        });
-      })
-      .catch((err) => {
-        log.debug('Failed to fetch supportedCommands', { sessionId, error: toError(err).message });
-      });
-
     for await (const message of q) {
-      // Surface API-retry status ephemerally: an `api_retry` message sets the
-      // live retry state; any other message means the request recovered (or the
-      // run moved on), so clear it. These messages are never persisted (see
-      // IGNORED_SYSTEM_SUBTYPES) — only the latest attempt count is streamed.
-      const retryState = parseRetryState(message);
-      if (retryState) {
-        state.retry = retryState;
-        sseEvents.emitClaudeRetry(sessionId, retryState);
-      } else if (state.retry) {
-        state.retry = null;
-        sseEvents.emitClaudeRetry(sessionId, null);
-      }
+      // Status derives from EVERY message (including skipped api_retry/task_*).
+      applyStatus(sessionId, state, message);
 
-      // Extract slash_commands from system init messages and merge with
-      // rich commands from supportedCommands(). The SDK's supportedCommands()
-      // only returns "skills", but the system init message contains all
-      // slash commands (e.g. /compact, /cost, /review, etc.)
-      const initParsed = SystemInitContentSchema.safeParse(message);
-      if (initParsed.success && initParsed.data.slash_commands) {
-        const merged = mergeSlashCommands(state.commands, initParsed.data.slash_commands);
-        const newNames = new Set(merged.map((c) => c.name));
-        const oldNames = new Set(state.commands.map((c) => c.name));
-        const hasNewCommands = [...newNames].some((n) => !oldNames.has(n));
-        if (hasNewCommands) {
-          state.commands = merged;
-          persistedCommands.set(sessionId, merged);
-          sseEvents.emitCommands(sessionId, merged);
-          log.info('Merged slash_commands from system init', {
-            sessionId,
-            total: merged.length,
-          });
-        }
-      }
-
-      // Handle stream_events for partial messages
       if (message.type === 'stream_event') {
         const partial = accumulator.accumulate(
           message as {
@@ -655,11 +589,10 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
           }
         );
         if (partial) {
-          const partialId = PARTIAL_MESSAGE_ID_PREFIX + partial.uuid;
           sseEvents.emitNewMessage(sessionId, {
-            id: partialId,
+            id: PARTIAL_MESSAGE_ID_PREFIX + partial.uuid,
             sessionId,
-            sequence,
+            sequence: nextPartialSequence,
             type: 'assistant',
             content: partial,
             createdAt: new Date(),
@@ -668,122 +601,205 @@ export async function runClaudeCommand(options: RunClaudeCommandOptions): Promis
         continue;
       }
 
-      // Reset accumulator when full assistant message arrives
       if (message.type === 'assistant') {
         accumulator.reset();
       }
 
-      // Decide how to handle this message based on the SDK's typed union. Only
-      // 'persist' messages are stored; 'skip' covers transient progress events
-      // (e.g. thinking_tokens), and 'stream_event' was already handled above.
+      mergeInitCommands(sessionId, state, message);
+
       const handling = classifyMessage(message);
-      if (handling.kind !== 'persist') {
-        continue;
-      }
+      if (handling.kind !== 'persist') continue;
 
-      // Persist complete messages
-      const messageContent = JSON.stringify(message);
-      const messageType = handling.dbType;
-      const msgId = (message as { uuid?: string }).uuid || uuid();
-
-      try {
-        const dbMessage = await prisma.message.create({
-          data: {
-            id: msgId,
-            sessionId,
-            sequence,
-            type: messageType,
-            content: messageContent,
-          },
-        });
-
-        sseEvents.emitNewMessage(sessionId, {
-          id: dbMessage.id,
-          sessionId,
-          sequence,
-          type: messageType,
-          content: message,
-          createdAt: dbMessage.createdAt,
-        });
-
-        sequence++;
-      } catch (err) {
-        if (err && typeof err === 'object' && 'code' in err && err.code === 'P2002') {
-          log.debug('Skipping duplicate message', { sessionId, msgId });
-          continue;
-        }
-        throw err;
-      }
+      const id = (message as { uuid?: string }).uuid || uuid();
+      const { sequence } = await insertMessage({
+        sessionId,
+        id,
+        type: handling.dbType,
+        content: message,
+      });
+      if (sequence !== undefined) nextPartialSequence = sequence + 1;
     }
-
-    log.info('runClaudeCommand: Completed', { sessionId, totalMessages: sequence });
+    log.info('runSessionLoop: stream ended', { sessionId });
   } catch (err) {
-    log.error('runClaudeCommand: Error', toError(err), { sessionId });
+    log.error('runSessionLoop: error', toError(err), { sessionId });
     await createErrorMessage(sessionId, `Claude query failed: ${toError(err).message}`);
   } finally {
-    state.isRunning = false;
-    state.currentQuery = null;
-
-    // Reject any pending user input promise so the SDK doesn't hang
+    clearLiveStatus(sessionId, state);
     if (state.pendingInput) {
       state.pendingInput.reject(new Error('Query ended'));
       state.pendingInput = null;
     }
-
-    sessions.delete(sessionId);
-
-    sseEvents.emitClaudeRunning(sessionId, false);
-    // The retry status is tied to an in-flight request; if it was still set when
-    // the turn ended (e.g. the SDK gave up), clear it so no stale "retrying"
-    // indicator lingers. Skip the emit for the common turn that never retried.
-    if (state.retry) {
-      sseEvents.emitClaudeRetry(sessionId, null);
+    // Drop the live query handle so the next interaction re-establishes (resume).
+    // Keep the state record in the map (commands etc. persist); only stop/delete
+    // remove it entirely.
+    if (state.query === q) {
+      state.query = null;
+      state.input = null;
     }
-
-    // Detect branch changes and check for PR updates (fire-and-forget)
-    void (async () => {
-      try {
-        const detectedBranch = await getCurrentBranch(workingDir);
-
-        if (detectedBranch && detectedBranch !== session.currentBranch) {
-          const updatedSession = await prisma.session.update({
-            where: { id: sessionId },
-            data: { currentBranch: detectedBranch },
-          });
-          sseEvents.emitSessionUpdate(sessionId, updatedSession);
-        }
-
-        const branchForPr = detectedBranch ?? session.currentBranch;
-        if (session.repoUrl && branchForPr) {
-          const repoFullName = extractRepoFullName(session.repoUrl);
-          const pr = await fetchPullRequestForBranch(repoFullName, branchForPr);
-          if (pr !== undefined) {
-            sseEvents.emitPrUpdate(sessionId, pr);
-          }
-        }
-      } catch (err) {
-        log.debug('Failed to detect branch or check PR', {
-          sessionId,
-          error: toError(err).message,
-        });
-      }
-    })();
   }
 }
 
 /**
+ * Establish a fresh streaming query for a session: load settings, build the input
+ * channel + options, start the SDK query and its output loop. Resumes prior
+ * history when the session already has messages.
+ */
+async function establishSessionQuery(
+  sessionId: string,
+  state: SessionState
+): Promise<SessionState> {
+  const session = await prisma.session.findUnique({
+    where: { id: sessionId },
+    select: { repoUrl: true, repoPath: true },
+  });
+  if (!session) {
+    throw new Error('Session not found');
+  }
+
+  const repoFullName = session.repoUrl ? extractRepoFullName(session.repoUrl) : null;
+  const settingsKey = repoFullName ?? '__no_repo__';
+  const settings = await loadMergedSessionSettings(settingsKey);
+  const workingDir = getSessionWorkingDir(sessionId, session.repoPath);
+
+  const shouldResume = (await prisma.message.count({ where: { sessionId } })) > 0;
+  const options = await buildSdkOptions({ sessionId, workingDir, settings, shouldResume, state });
+
+  // If `stopSession` ran while we were loading (it deletes the map entry), abort
+  // before creating the query — otherwise we'd resurrect a torn-down session with
+  // an orphan live query. This check and the attach below are await-free, so they
+  // run atomically with respect to a synchronous stopSession.
+  if (sessions.get(sessionId) !== state) {
+    throw new Error('Session establishment cancelled: session was stopped during establish');
+  }
+
+  state.workingDir = workingDir;
+  state.boundSettings = settings;
+  state.settingsKey = settingsKey;
+
+  const input = createPushable<SDKUserMessage>();
+  const q = queryFactory({ prompt: input.iterable, options });
+  state.input = input;
+  state.query = q;
+
+  log.info('Established session query', { sessionId, workingDir, shouldResume });
+
+  // Fetch rich command metadata once (init message may arrive first; merge both).
+  void q
+    .supportedCommands()
+    .then((commands) => {
+      state.commands = mergeSlashCommands(
+        commands,
+        state.commands.map((c) => c.name)
+      );
+      persistedCommands.set(sessionId, state.commands);
+      sseEvents.emitCommands(sessionId, state.commands);
+    })
+    .catch((err) => {
+      log.debug('Failed to fetch supportedCommands', { sessionId, error: toError(err).message });
+    });
+
+  void runSessionLoop(sessionId, state, q);
+
+  return state;
+}
+
+/**
+ * Ensure a live streaming query exists for a session, establishing one lazily
+ * (with `resume`) if needed. Idempotent and coalesced: concurrent callers share a
+ * single establishment. This is the "resume as needed" recovery path after a
+ * server restart or a fatal query error.
+ */
+export function ensureSessionQuery(sessionId: string): Promise<SessionState> {
+  const existing = sessions.get(sessionId);
+  if (existing?.query) return Promise.resolve(existing);
+  if (existing?.establishing) return existing.establishing;
+
+  const state = getSessionState(sessionId, existing?.workingDir ?? '');
+  // Establish against THIS state object; the promise is identity-checked on clear
+  // so a stop+revive race never nulls a newer establishment's promise.
+  const establishing: Promise<SessionState> = establishSessionQuery(sessionId, state).finally(
+    () => {
+      const current = sessions.get(sessionId);
+      if (current && current.establishing === establishing) current.establishing = null;
+    }
+  );
+  state.establishing = establishing;
+  return establishing;
+}
+
+/**
+ * Apply settings changes that the SDK supports live (model, MCP servers) to an
+ * already-running query, so editing repo/global settings takes effect on the next
+ * turn without a Stop→Start. `env`/`systemPrompt` are bound at construction and
+ * still require a restart (documented). Best-effort: failures are logged, not fatal.
+ */
+async function applyLiveSettings(sessionId: string, state: SessionState): Promise<void> {
+  if (!state.query || !state.boundSettings) return;
+  let settings: MergedSessionSettings;
+  try {
+    settings = await loadMergedSessionSettings(state.settingsKey);
+  } catch (err) {
+    log.debug('applyLiveSettings: failed to load settings', {
+      sessionId,
+      error: toError(err).message,
+    });
+    return;
+  }
+
+  const bound = state.boundSettings;
+  try {
+    if (settings.claudeModel !== bound.claudeModel) {
+      await state.query.setModel(settings.claudeModel);
+      log.info('Applied live model change', { sessionId, model: settings.claudeModel });
+    }
+    if (!mcpServersEqual(bound.mcpServers, settings.mcpServers)) {
+      await state.query.setMcpServers(buildMcpServersRecord(settings.mcpServers) ?? {});
+      log.info('Applied live MCP server change', { sessionId });
+    }
+    state.boundSettings = settings;
+  } catch (err) {
+    log.warn('applyLiveSettings: failed to apply', { sessionId, error: toError(err).message });
+  }
+}
+
+/**
+ * Send a user prompt: ensure the query is live, apply any live settings changes,
+ * mark the turn active optimistically, persist the user message, and push it into
+ * the query's input stream.
+ */
+export async function sendUserMessage(sessionId: string, prompt: string): Promise<void> {
+  const state = await ensureSessionQuery(sessionId);
+  if (!state.input) {
+    throw new Error('Session query is not available');
+  }
+
+  // Apply model/MCP changes made since the query was built (no-op on fresh establish).
+  await applyLiveSettings(sessionId, state);
+
+  if (!state.status.turnActive) {
+    state.status = { ...state.status, turnActive: true };
+    sseEvents.emitClaudeRunning(sessionId, true);
+  }
+
+  await insertMessage({
+    sessionId,
+    id: uuid(),
+    type: 'user',
+    content: { type: 'user', content: prompt },
+  });
+
+  state.input.push({
+    type: 'user',
+    message: { role: 'user', content: prompt },
+    parent_tool_use_id: null,
+  });
+}
+
+/**
  * Resolve a still-parked AskUserQuestion / ExitPlanMode tool call so the SDK
- * continues the current turn.
- *
- * Only the in-memory parked promise can do this; once the query has ended the
- * caller must fall back to resuming with a new turn (see `submitToolResponse`
- * in the claude router).
- *
- * Because the answer round-trips from the browser, the parked promise is
- * essentially always registered by the time this is called. The short wait only
- * covers the rare race where the answer beats the SDK's `canUseTool` call: we
- * wait briefly while a query is actively running, but return immediately when
- * nothing is running (so the caller can fall back without delay).
+ * continues the current turn. Only the in-memory parked promise can do this; once
+ * the query has ended the caller must fall back to a new turn (see
+ * `submitToolResponse` in the claude router).
  *
  * @returns true if the live promise was resolved, false if there was none.
  */
@@ -808,31 +824,19 @@ export async function submitLiveToolResponse(
       return true;
     }
 
-    // A live promise only exists while a query is running. If nothing is
-    // running (completed / stopped / server restarted), nothing will appear.
-    if (!state?.isRunning || Date.now() >= deadline) {
+    // A live promise can only appear while the query is alive. If there is no live
+    // query (ended / stopped / server restarted), nothing will ever park.
+    if (!state?.query || Date.now() >= deadline) {
       return false;
     }
     await sleep(150);
   }
 }
 
-/** Number of times to retry sequence assignment when a concurrent insert wins the race. */
-const SEQUENCE_RETRY_LIMIT = 5;
-
 /**
  * Persist a synthetic `tool_result` for a tool_use whose query has ended, so the
- * UI pairs the dangling block and stops showing answer controls.
- *
- * The message id is derived from the tool_use id, so a duplicate answer for the
- * same tool call is a no-op (it collides on the primary key) — this makes the
- * fallback idempotent and prevents a double answer from starting two turns.
- *
- * Sequence is assigned read-then-insert (see the broader race in #356); a
- * concurrent insert can therefore collide on the `(sessionId, sequence)` unique.
- * We disambiguate that from a duplicate-answer collision by re-checking the id,
- * and retry the sequence so a different concurrent answer is never silently
- * dropped.
+ * UI pairs the dangling block and stops showing answer controls. Idempotent via a
+ * deterministic id derived from the tool_use id.
  *
  * @returns true if a result was written, false if this tool call was already answered.
  */
@@ -843,138 +847,119 @@ export async function persistSyntheticToolResult(
 ): Promise<boolean> {
   const id = uuidv5(`${sessionId}:tool_result:${toolUseId}`, ERROR_LINE_NAMESPACE);
   const content = buildSyntheticToolResultContent({ sessionId, toolUseId, uuid: id, text });
-
-  for (let attempt = 0; attempt < SEQUENCE_RETRY_LIMIT; attempt++) {
-    const lastMessage = await prisma.message.findFirst({
-      where: { sessionId },
-      orderBy: { sequence: 'desc' },
-      select: { sequence: true },
-    });
-    const sequence = (lastMessage?.sequence ?? -1) + 1;
-
-    try {
-      const message = await prisma.message.create({
-        data: { id, sessionId, sequence, type: 'user', content: JSON.stringify(content) },
-      });
-
-      sseEvents.emitNewMessage(sessionId, {
-        id: message.id,
-        sessionId,
-        sequence,
-        type: 'user',
-        content,
-        createdAt: message.createdAt,
-      });
-      return true;
-    } catch (err) {
-      if (!(err && typeof err === 'object' && 'code' in err && err.code === 'P2002')) {
-        throw err;
-      }
-      // A row with our deterministic id already exists → this tool call was
-      // already answered (true idempotency). Otherwise the clash was on the
-      // sequence; recompute and retry so a different answer isn't dropped.
-      const existing = await prisma.message.findUnique({ where: { id }, select: { id: true } });
-      if (existing) {
-        log.debug('persistSyntheticToolResult: tool call already answered', {
-          sessionId,
-          toolUseId,
-        });
-        return false;
-      }
-      log.debug('persistSyntheticToolResult: sequence collision, retrying', { sessionId, attempt });
-    }
+  const { inserted } = await insertMessage({ sessionId, id, type: 'user', content });
+  if (!inserted) {
+    log.debug('persistSyntheticToolResult: tool call already answered', { sessionId, toolUseId });
   }
-
-  throw new Error(
-    `Failed to persist tool result for ${toolUseId} after ${SEQUENCE_RETRY_LIMIT} attempts`
-  );
+  return inserted;
 }
 
 /**
  * Get cached slash commands for a session.
- * Reads from the persisted map which survives query completion,
- * falling back to the active session state during a query.
  */
 export function getSessionCommands(sessionId: string): SlashCommand[] {
   return persistedCommands.get(sessionId) ?? sessions.get(sessionId)?.commands ?? [];
 }
 
 /**
- * Current API-retry status for a session, or null if not retrying. Lives only in
- * memory for the duration of a query — there is no persisted state to read once
- * the run ends.
+ * Current API-retry status for a session, or null. In-memory only.
  */
 export function getSessionRetry(sessionId: string): RetryState | null {
-  return sessions.get(sessionId)?.retry ?? null;
+  return sessions.get(sessionId)?.status.retry ?? null;
 }
 
 /**
- * Interrupt a running Claude query.
+ * Current running background tasks for a session. In-memory only.
+ */
+export function getSessionBackgroundTasks(sessionId: string): BackgroundTask[] {
+  const state = sessions.get(sessionId);
+  return state ? [...state.status.backgroundTasks.values()] : [];
+}
+
+/**
+ * Interrupt the active turn (streaming-only). The query stays alive; the SDK
+ * emits a terminal `result` (confirmed by the spike + e2e) which the loop maps to
+ * `turnActive = false` — no timer involved.
+ *
+ * If a (hypothetical) interrupt never yielded a result, `turnActive` is cleared by
+ * the deterministic, user-driven escape instead of a timer: the header Stop
+ * (`sessions.stop`) closes the query → the loop `finally` forces the flag off.
  */
 export async function interruptClaude(sessionId: string): Promise<boolean> {
   const state = sessions.get(sessionId);
-  if (!state?.currentQuery) {
-    log.info('interruptClaude: No active query', { sessionId });
+  if (!state?.query || !state.status.turnActive) {
+    log.info('interruptClaude: no active turn', { sessionId });
     return false;
   }
 
   try {
-    await state.currentQuery.interrupt();
+    await state.query.interrupt();
+  } catch (err) {
+    log.warn('interruptClaude: failed', { sessionId, error: toError(err).message });
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * Stop a single running background task via the SDK. The terminal
+ * `task_notification` that follows removes it from the live set.
+ */
+export async function stopBackgroundTask(sessionId: string, taskId: string): Promise<boolean> {
+  const state = sessions.get(sessionId);
+  if (!state?.query) return false;
+  try {
+    await state.query.stopTask(taskId);
     return true;
   } catch (err) {
-    log.warn('interruptClaude: Failed', { sessionId, error: toError(err).message });
+    log.warn('stopBackgroundTask: failed', { sessionId, taskId, error: toError(err).message });
     return false;
   }
 }
 
-/**
- * Check if Claude is running for a session (in-memory check).
- */
+/** Whether a main-agent turn is active for a session (in-memory check). */
 export function isClaudeRunning(sessionId: string): boolean {
-  return sessions.get(sessionId)?.isRunning ?? false;
+  return sessions.get(sessionId)?.status.turnActive ?? false;
 }
 
-/**
- * Check if Claude is running (same as isClaudeRunning since everything is in-process now).
- */
+/** Async variant (everything is in-process now). */
 export async function isClaudeRunningAsync(sessionId: string): Promise<boolean> {
   return isClaudeRunning(sessionId);
 }
 
+/** Whether a live streaming query exists for a session (in-memory check). */
+export function hasLiveQuery(sessionId: string): boolean {
+  return sessions.get(sessionId)?.query != null;
+}
+
 /**
- * Mark the last non-user message as interrupted and add an interrupt indicator.
+ * Mark the last main-agent message as interrupted and append an interrupt marker.
+ * Targets the last assistant/result message (skipping interleaved background and
+ * system task messages, which can otherwise be the highest-sequence row).
  */
 export async function markLastMessageAsInterrupted(sessionId: string): Promise<void> {
   log.info('markLastMessageAsInterrupted', { sessionId });
 
-  const lastMessage = await prisma.message.findFirst({
-    where: { sessionId },
+  const lastMainMessage = await prisma.message.findFirst({
+    where: { sessionId, type: { in: ['assistant', 'result'] } },
     orderBy: { sequence: 'desc' },
     select: { id: true, sequence: true, type: true, content: true },
   });
 
-  if (!lastMessage) return;
-
-  const lastNonUserMessage = await prisma.message.findFirst({
-    where: { sessionId, type: { not: 'user' } },
-    orderBy: { sequence: 'desc' },
-    select: { id: true, sequence: true, type: true, content: true },
-  });
-
-  if (lastNonUserMessage) {
+  if (lastMainMessage) {
     try {
-      const content = JSON.parse(lastNonUserMessage.content);
+      const content = JSON.parse(lastMainMessage.content);
       content.interrupted = true;
       await prisma.message.update({
-        where: { id: lastNonUserMessage.id },
+        where: { id: lastMainMessage.id },
         data: { content: JSON.stringify(content) },
       });
-
       sseEvents.emitNewMessage(sessionId, {
-        id: lastNonUserMessage.id,
+        id: lastMainMessage.id,
         sessionId,
-        sequence: lastNonUserMessage.sequence,
-        type: lastNonUserMessage.type,
+        sequence: lastMainMessage.sequence,
+        type: lastMainMessage.type,
         content,
         createdAt: new Date(),
       });
@@ -986,58 +971,35 @@ export async function markLastMessageAsInterrupted(sessionId: string): Promise<v
     }
   }
 
-  const interruptMessageId = uuid();
-  const interruptSequence = lastMessage.sequence + 1;
-  const interruptContent = {
-    type: 'user',
-    subtype: 'interrupt',
-    content: 'Interrupted',
-  };
-
-  await prisma.message.create({
-    data: {
-      id: interruptMessageId,
-      sessionId,
-      sequence: interruptSequence,
-      type: 'user',
-      content: JSON.stringify(interruptContent),
-    },
-  });
-
-  sseEvents.emitNewMessage(sessionId, {
-    id: interruptMessageId,
+  await insertMessage({
     sessionId,
-    sequence: interruptSequence,
+    id: uuid(),
     type: 'user',
-    content: interruptContent,
-    createdAt: new Date(),
+    content: { type: 'user', subtype: 'interrupt', content: 'Interrupted' },
   });
 }
 
 /**
- * Stop a session's Claude query and clean up state.
- * Called when a session is stopped.
+ * Stop a session's query and clear in-memory state. Removes the session from the
+ * active map (no lazy revive until the next explicit interaction).
  */
 export function stopSession(sessionId: string): void {
   const state = sessions.get(sessionId);
   if (!state) return;
 
-  if (state.currentQuery) {
-    try {
-      state.currentQuery.close();
-    } catch {
-      // Ignore close errors
-    }
+  state.input?.close();
+  try {
+    state.query?.close();
+  } catch {
+    // ignore close errors
   }
-
-  // Reject any pending user input
   if (state.pendingInput) {
     state.pendingInput.reject(new Error('Session stopped'));
     state.pendingInput = null;
   }
-
-  state.isRunning = false;
-  state.currentQuery = null;
+  clearLiveStatus(sessionId, state);
+  state.query = null;
+  state.input = null;
   sessions.delete(sessionId);
 }
 
@@ -1058,26 +1020,7 @@ export async function stopAllSessions(): Promise<void> {
   if (sessionIds.length === 0) return;
 
   log.info('Stopping all active sessions for shutdown', { count: sessionIds.length });
-  await Promise.allSettled(sessionIds.map((id) => stopSession(id)));
-}
-
-/**
- * Mark all running sessions as stopped.
- * Called on server startup since all in-memory state is lost.
- */
-export async function markAllSessionsStopped(): Promise<number> {
-  const result = await prisma.session.updateMany({
-    where: {
-      status: 'running',
-    },
-    data: {
-      status: 'stopped',
-    },
-  });
-
-  if (result.count > 0) {
-    log.info('Marked running sessions as stopped on startup', { count: result.count });
+  for (const id of sessionIds) {
+    stopSession(id);
   }
-
-  return result.count;
 }

@@ -23,12 +23,19 @@ export function useClaudeState(sessionId: string) {
     { staleTime: Infinity }
   );
 
+  // Fetch running background tasks. Like retry: seeded once and kept current by
+  // the SSE `background` channel (staleTime Infinity so a focus refetch can't
+  // clobber the live value). These never gate input — indicator only.
+  const { data: backgroundData, refetch: refetchBackground } =
+    trpc.claude.getBackgroundTasks.useQuery({ sessionId }, { staleTime: Infinity });
+
   // Refetch when app regains visibility or network reconnects
   const refetchAll = useCallback(() => {
     refetch();
     refetchCommands();
     refetchRetry();
-  }, [refetch, refetchCommands, refetchRetry]);
+    refetchBackground();
+  }, [refetch, refetchCommands, refetchRetry, refetchBackground]);
   useRefetchOnReconnect(refetchAll);
 
   // Live running-state and command updates arrive via the multiplexed SSE stream
@@ -38,6 +45,7 @@ export function useClaudeState(sessionId: string) {
   const interruptMutation = trpc.claude.interrupt.useMutation();
   const answerMutation = trpc.claude.answerQuestion.useMutation();
   const respondToPlanMutation = trpc.claude.respondToPlan.useMutation();
+  const stopBackgroundTaskMutation = trpc.claude.stopBackgroundTask.useMutation();
 
   const send = useCallback(
     (prompt: string) => {
@@ -64,18 +72,31 @@ export function useClaudeState(sessionId: string) {
     [sessionId, respondToPlanMutation]
   );
 
+  const stopBackgroundTask = useCallback(
+    (taskId: string) => {
+      stopBackgroundTaskMutation.mutate({ sessionId, taskId });
+    },
+    [sessionId, stopBackgroundTaskMutation]
+  );
+
+  // `isRunning` means a main-agent turn is active (gates the composer). Background
+  // tasks are tracked separately and never gate input.
   const isRunning = runningData?.running ?? false;
   const commands = commandsData?.commands ?? [];
   const retry = retryData?.retry ?? null;
+  const backgroundTasks = backgroundData?.tasks ?? [];
 
   return {
     isRunning,
     retry,
+    backgroundTasks,
+    backgroundActive: backgroundTasks.length > 0,
     send,
     interrupt,
     isInterrupting: interruptMutation.isPending,
     answerQuestion,
     respondToPlan,
+    stopBackgroundTask,
     commands,
   };
 }
