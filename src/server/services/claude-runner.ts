@@ -82,16 +82,17 @@ const ERROR_LINE_NAMESPACE = '6ba7b810-9dad-11d1-80b4-00c04fd430c8';
 const SEQUENCE_RETRY_LIMIT = 5;
 
 /**
- * `turnActive` is derived ENTIRELY from the message stream — a top-level
- * `assistant`/`stream_event` sets it true, any top-level `result` (incl. an
- * interrupt's `error_during_execution`) sets it false, and the loop's `finally`
- * forces it false when the query ends. There are deliberately NO status timers
- * (no turn watchdog, no idle reaper): the server cannot distinguish a genuinely
- * hung turn from a slow one by observation, so any timer would be a guess. The
- * deterministic recoveries are user-driven — interrupt (stop the turn) and the
- * header Stop (`sessions.stop`, which closes the query → `finally` clears the
- * flag). A persistent subprocess therefore lives until stop / delete / shutdown /
- * fatal error.
+ * `turnActive` is derived ENTIRELY from the message stream by `reduceSessionMessage`
+ * ([`session-status.ts`](../../lib/session-status.ts)) — a top-level
+ * `message_start` sets it true, a top-level `message_delta` with a terminal
+ * `stop_reason` sets it false (a top-level `result` is a backstop, and the loop's
+ * `finally` forces it false when the query ends). There are deliberately NO status
+ * timers (no turn watchdog, no idle reaper): the server cannot distinguish a
+ * genuinely hung turn from a slow one by observation, so any timer would be a
+ * guess. The deterministic recoveries are user-driven — interrupt (stop the turn)
+ * and the header Stop (`sessions.stop`, which closes the query → `finally` clears
+ * the flag). A persistent subprocess therefore lives until stop / delete /
+ * shutdown / fatal error.
  */
 
 /**
