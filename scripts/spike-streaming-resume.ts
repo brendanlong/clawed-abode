@@ -102,12 +102,14 @@ async function drainUntil(
   for (;;) {
     const remaining = end - Date.now();
     if (remaining <= 0) return 'timeout';
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const race = await Promise.race([
       it.next().then((r) => ({ kind: 'next' as const, r })),
-      new Promise<{ kind: 'timeout' }>((res) =>
-        setTimeout(() => res({ kind: 'timeout' }), remaining)
-      ),
+      new Promise<{ kind: 'timeout' }>((res) => {
+        timer = setTimeout(() => res({ kind: 'timeout' }), remaining);
+      }),
     ]);
+    clearTimeout(timer);
     if (race.kind === 'timeout') return 'timeout';
     if (race.r.done) return 'ended';
     if (onMessage(race.r.value) === true) return 'stopped';
