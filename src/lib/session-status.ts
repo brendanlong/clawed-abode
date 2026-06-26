@@ -62,6 +62,24 @@ export function backgroundActive(status: LiveStatus): boolean {
 }
 
 /**
+ * Remove a task from the background-task set (pure). Returns the SAME map
+ * reference when the task is absent, so callers can detect "no change" by
+ * reference identity. Shared by two paths: a terminal `task_notification`
+ * settling a task, and the user stopping one via the ✕ button (optimistic
+ * removal — see `dropBackgroundTask` in the runner — so the indicator clears
+ * even when the SDK never emits the terminal notification).
+ */
+export function removeBackgroundTask(
+  tasks: ReadonlyMap<string, BackgroundTask>,
+  taskId: string
+): ReadonlyMap<string, BackgroundTask> {
+  if (!tasks.has(taskId)) return tasks;
+  const next = new Map(tasks);
+  next.delete(taskId);
+  return next;
+}
+
+/**
  * A message is "top-level" (main agent, not a subagent) when it has no
  * `parent_tool_use_id`. `result` messages have no such field and are always
  * top-level turn boundaries.
@@ -172,10 +190,8 @@ export function reduceSessionMessage(prev: LiveStatus, message: SDKMessage): Red
     const next = new Map(backgroundTasks);
     next.set(bg.task.taskId, bg.task);
     backgroundTasks = next;
-  } else if (bg?.kind === 'settled' && backgroundTasks.has(bg.taskId)) {
-    const next = new Map(backgroundTasks);
-    next.delete(bg.taskId);
-    backgroundTasks = next;
+  } else if (bg?.kind === 'settled') {
+    backgroundTasks = removeBackgroundTask(backgroundTasks, bg.taskId);
   }
 
   // --- turnActive (main agent only) ---
