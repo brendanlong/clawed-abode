@@ -2,9 +2,11 @@ import { describe, it, expect } from 'vitest';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import {
   reduceSessionMessage,
+  removeBackgroundTask,
   backgroundActive,
   INITIAL_LIVE_STATUS,
   type LiveStatus,
+  type BackgroundTask,
 } from './session-status';
 
 // --- minimal message builders (cast through unknown; tests only set the fields
@@ -76,6 +78,17 @@ function taskNotification(taskId: string, status = 'completed'): SDKMessage {
     status,
     output_file: '/tmp/out',
     summary: 'done',
+    session_id: 's',
+    uuid: 'u',
+  } as unknown as SDKMessage;
+}
+
+function taskUpdated(taskId: string, status: string | undefined): SDKMessage {
+  return {
+    type: 'system',
+    subtype: 'task_updated',
+    task_id: taskId,
+    patch: { status },
     session_id: 's',
     uuid: 'u',
   } as unknown as SDKMessage;
@@ -209,6 +222,64 @@ describe('reduceSessionMessage — background tasks', () => {
   it('background activity does not affect turnActive', () => {
     const { status } = reduceSessionMessage(INITIAL_LIVE_STATUS, taskStarted('t1'));
     expect(status.turnActive).toBe(false);
+  });
+
+  it.each(['completed', 'failed', 'killed'])(
+    'task_updated with terminal status %s settles the task',
+    (status) => {
+      const started = reduceSessionMessage(INITIAL_LIVE_STATUS, taskStarted('t1')).status;
+      const { status: next, changed } = reduceSessionMessage(started, taskUpdated('t1', status));
+      expect(backgroundActive(next)).toBe(false);
+      expect(changed.background).toBe(true);
+    }
+  );
+
+  it.each(['pending', 'running', 'paused'])(
+    'task_updated with non-terminal status %s leaves the task running',
+    (status) => {
+      const started = reduceSessionMessage(INITIAL_LIVE_STATUS, taskStarted('t1')).status;
+      const { status: next, changed } = reduceSessionMessage(started, taskUpdated('t1', status));
+      expect(next.backgroundTasks.has('t1')).toBe(true);
+      expect(changed.background).toBe(false);
+    }
+  );
+
+  it('task_updated with no status patch is a no-op', () => {
+    const started = reduceSessionMessage(INITIAL_LIVE_STATUS, taskStarted('t1')).status;
+    const { changed } = reduceSessionMessage(started, taskUpdated('t1', undefined));
+    expect(changed.background).toBe(false);
+  });
+
+  it('a terminal task_updated then a late task_notification is a no-op (already settled)', () => {
+    let s = reduceSessionMessage(INITIAL_LIVE_STATUS, taskStarted('t1')).status;
+    s = reduceSessionMessage(s, taskUpdated('t1', 'completed')).status;
+    expect(backgroundActive(s)).toBe(false);
+    const { changed } = reduceSessionMessage(s, taskNotification('t1'));
+    expect(changed.background).toBe(false);
+  });
+});
+
+describe('removeBackgroundTask (optimistic ✕ removal)', () => {
+  function withTasks(...taskIds: string[]): ReadonlyMap<string, BackgroundTask> {
+    return new Map(taskIds.map((id) => [id, { taskId: id, ambient: false }]));
+  }
+
+  it('removes a present task and returns a new map without it', () => {
+    const tasks = withTasks('t1', 't2');
+    const next = removeBackgroundTask(tasks, 't1');
+    expect(next).not.toBe(tasks);
+    expect(next.has('t1')).toBe(false);
+    expect(next.has('t2')).toBe(true);
+  });
+
+  it('returns the SAME map reference when the task is absent (no change)', () => {
+    const tasks = withTasks('t1');
+    expect(removeBackgroundTask(tasks, 'ghost')).toBe(tasks);
+  });
+
+  it('removing the last task yields an empty set', () => {
+    const next = removeBackgroundTask(withTasks('t1'), 't1');
+    expect(next.size).toBe(0);
   });
 });
 
