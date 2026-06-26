@@ -148,6 +148,16 @@ function taskNotification(taskId: string): SDKMessage {
     uuid: nextUuid(),
   } as unknown as SDKMessage;
 }
+function taskUpdated(taskId: string, status: string): SDKMessage {
+  return {
+    type: 'system',
+    subtype: 'task_updated',
+    task_id: taskId,
+    patch: { status },
+    session_id: 's',
+    uuid: nextUuid(),
+  } as unknown as SDKMessage;
+}
 
 async function waitFor(fn: () => boolean | Promise<boolean>, timeout = 2000): Promise<void> {
   const end = Date.now() + timeout;
@@ -253,6 +263,26 @@ describe('claude-runner persistent streaming loop', () => {
     const msgs = await messagesFor(sessionId);
     // sequences are contiguous and ordered across both turns + background messages.
     expect(msgs.map((m) => m.sequence)).toEqual([...Array(msgs.length).keys()]);
+
+    stopSession(sessionId);
+  });
+
+  it('settles a background task via a terminal task_updated (no task_notification)', async () => {
+    const fake = makeFakeQuery();
+    _setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+
+    await sendUserMessage(sessionId, 'start a background job');
+    fake.emit(taskStarted('task-1'));
+    fake.emit(result());
+    await waitFor(() => getSessionBackgroundTasks(sessionId).length === 1);
+    mockSseEvents.emitBackgroundTasks.mockClear();
+
+    // The task ends via task_updated(killed) with NO terminal task_notification.
+    fake.emit(taskUpdated('task-1', 'killed'));
+
+    await waitFor(() => getSessionBackgroundTasks(sessionId).length === 0);
+    expect(mockSseEvents.emitBackgroundTasks).toHaveBeenCalledWith(sessionId, []);
 
     stopSession(sessionId);
   });
