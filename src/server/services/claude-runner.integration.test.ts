@@ -69,6 +69,7 @@ let sendUserMessage: typeof import('./claude-runner').sendUserMessage;
 let stopSession: typeof import('./claude-runner').stopSession;
 let isClaudeRunning: typeof import('./claude-runner').isClaudeRunning;
 let getSessionBackgroundTasks: typeof import('./claude-runner').getSessionBackgroundTasks;
+let stopBackgroundTask: typeof import('./claude-runner').stopBackgroundTask;
 let _setQueryFactory: typeof import('./claude-runner')._setQueryFactory;
 let mockLoadSettings: ReturnType<
   typeof vi.mocked<typeof import('./settings-merger').loadMergedSessionSettings>
@@ -80,6 +81,7 @@ function makeFakeQuery() {
   const inputs: SDKUserMessage[] = [];
   const setModel = vi.fn(async () => {});
   const setMcpServers = vi.fn(async () => {});
+  const stopTask = vi.fn(async (_taskId: string) => {});
 
   const factory = (params: { prompt: AsyncIterable<SDKUserMessage>; options: unknown }): Query => {
     // Record pushed user messages so we can assert sendUserMessage reached the SDK.
@@ -91,7 +93,7 @@ function makeFakeQuery() {
       interrupt: vi.fn(async () => {}),
       close: vi.fn(() => out.close()),
       supportedCommands: vi.fn(async () => []),
-      stopTask: vi.fn(async () => {}),
+      stopTask,
       setModel,
       setMcpServers,
     } as unknown as Query;
@@ -104,6 +106,7 @@ function makeFakeQuery() {
     inputs,
     setModel,
     setMcpServers,
+    stopTask,
   };
 }
 
@@ -174,6 +177,7 @@ describe('claude-runner persistent streaming loop', () => {
     stopSession = mod.stopSession;
     isClaudeRunning = mod.isClaudeRunning;
     getSessionBackgroundTasks = mod.getSessionBackgroundTasks;
+    stopBackgroundTask = mod.stopBackgroundTask;
     _setQueryFactory = mod._setQueryFactory;
     const sm = await import('./settings-merger');
     mockLoadSettings = vi.mocked(sm.loadMergedSessionSettings);
@@ -249,6 +253,95 @@ describe('claude-runner persistent streaming loop', () => {
     const msgs = await messagesFor(sessionId);
     // sequences are contiguous and ordered across both turns + background messages.
     expect(msgs.map((m) => m.sequence)).toEqual([...Array(msgs.length).keys()]);
+
+    stopSession(sessionId);
+  });
+
+  it('stopBackgroundTask clears a tracked task, emits [], and calls the SDK', async () => {
+    const fake = makeFakeQuery();
+    _setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+
+    await sendUserMessage(sessionId, 'start a background job');
+    fake.emit(taskStarted('task-1'));
+    fake.emit(result());
+    await waitFor(() => getSessionBackgroundTasks(sessionId).length === 1);
+    mockSseEvents.emitBackgroundTasks.mockClear();
+
+    const removed = await stopBackgroundTask(sessionId, 'task-1');
+
+    expect(removed).toBe(true);
+    expect(fake.stopTask).toHaveBeenCalledWith('task-1');
+    expect(getSessionBackgroundTasks(sessionId)).toEqual([]);
+    expect(mockSseEvents.emitBackgroundTasks).toHaveBeenCalledWith(sessionId, []);
+
+    stopSession(sessionId);
+  });
+
+  it('stopBackgroundTask clears the indicator even when stopTask rejects (phantom)', async () => {
+    const fake = makeFakeQuery();
+    _setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+
+    await sendUserMessage(sessionId, 'start a background job');
+    fake.emit(taskStarted('task-1'));
+    fake.emit(result());
+    await waitFor(() => getSessionBackgroundTasks(sessionId).length === 1);
+
+    // Simulate a phantom: the SDK no longer knows the task, so stopTask throws.
+    fake.stopTask.mockRejectedValueOnce(new Error('no such task'));
+
+    const removed = await stopBackgroundTask(sessionId, 'task-1');
+
+    expect(removed).toBe(true);
+    expect(getSessionBackgroundTasks(sessionId)).toEqual([]);
+    expect(mockSseEvents.emitBackgroundTasks).toHaveBeenCalledWith(sessionId, []);
+
+    stopSession(sessionId);
+  });
+
+  it('a late terminal notification after optimistic removal is a no-op (no extra emit)', async () => {
+    const fake = makeFakeQuery();
+    _setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+
+    await sendUserMessage(sessionId, 'start a background job');
+    fake.emit(taskStarted('task-1'));
+    fake.emit(result());
+    await waitFor(() => getSessionBackgroundTasks(sessionId).length === 1);
+
+    await stopBackgroundTask(sessionId, 'task-1');
+    await waitFor(() => !isClaudeRunning(sessionId));
+    mockSseEvents.emitBackgroundTasks.mockClear();
+
+    // The real terminal notification arrives late; the reducer sees the task is
+    // already gone and must not re-emit the background channel.
+    fake.emit(taskNotification('task-1'));
+    // Drive a turn so we can deterministically wait for the message to be processed.
+    fake.emit(assistant('done'));
+    fake.emit(result());
+    await waitFor(async () =>
+      (await messagesFor(sessionId)).some(
+        (m) => m.type === 'assistant' && m.content.includes('done')
+      )
+    );
+
+    expect(getSessionBackgroundTasks(sessionId)).toEqual([]);
+    expect(mockSseEvents.emitBackgroundTasks).not.toHaveBeenCalled();
+
+    stopSession(sessionId);
+  });
+
+  it('returns false when the task is not tracked', async () => {
+    const fake = makeFakeQuery();
+    _setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+
+    await sendUserMessage(sessionId, 'hi');
+    fake.emit(result());
+    await waitFor(() => !isClaudeRunning(sessionId));
+
+    expect(await stopBackgroundTask(sessionId, 'ghost')).toBe(false);
 
     stopSession(sessionId);
   });
