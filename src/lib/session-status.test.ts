@@ -83,6 +83,17 @@ function taskNotification(taskId: string, status = 'completed'): SDKMessage {
   } as unknown as SDKMessage;
 }
 
+function taskUpdated(taskId: string, status: string | undefined): SDKMessage {
+  return {
+    type: 'system',
+    subtype: 'task_updated',
+    task_id: taskId,
+    patch: { status },
+    session_id: 's',
+    uuid: 'u',
+  } as unknown as SDKMessage;
+}
+
 function apiRetry(attempt: number): SDKMessage {
   return {
     type: 'system',
@@ -211,6 +222,40 @@ describe('reduceSessionMessage — background tasks', () => {
   it('background activity does not affect turnActive', () => {
     const { status } = reduceSessionMessage(INITIAL_LIVE_STATUS, taskStarted('t1'));
     expect(status.turnActive).toBe(false);
+  });
+
+  it.each(['completed', 'failed', 'killed'])(
+    'task_updated with terminal status %s settles the task',
+    (status) => {
+      const started = reduceSessionMessage(INITIAL_LIVE_STATUS, taskStarted('t1')).status;
+      const { status: next, changed } = reduceSessionMessage(started, taskUpdated('t1', status));
+      expect(backgroundActive(next)).toBe(false);
+      expect(changed.background).toBe(true);
+    }
+  );
+
+  it.each(['pending', 'running', 'paused'])(
+    'task_updated with non-terminal status %s leaves the task running',
+    (status) => {
+      const started = reduceSessionMessage(INITIAL_LIVE_STATUS, taskStarted('t1')).status;
+      const { status: next, changed } = reduceSessionMessage(started, taskUpdated('t1', status));
+      expect(next.backgroundTasks.has('t1')).toBe(true);
+      expect(changed.background).toBe(false);
+    }
+  );
+
+  it('task_updated with no status patch is a no-op', () => {
+    const started = reduceSessionMessage(INITIAL_LIVE_STATUS, taskStarted('t1')).status;
+    const { changed } = reduceSessionMessage(started, taskUpdated('t1', undefined));
+    expect(changed.background).toBe(false);
+  });
+
+  it('a terminal task_updated then a late task_notification is a no-op (already settled)', () => {
+    let s = reduceSessionMessage(INITIAL_LIVE_STATUS, taskStarted('t1')).status;
+    s = reduceSessionMessage(s, taskUpdated('t1', 'completed')).status;
+    expect(backgroundActive(s)).toBe(false);
+    const { changed } = reduceSessionMessage(s, taskNotification('t1'));
+    expect(changed.background).toBe(false);
   });
 });
 

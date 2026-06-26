@@ -831,8 +831,11 @@ export type MessageHandling =
  * - `thinking_tokens`: live token-count estimates while Claude is thinking; the
  *   actual reasoning arrives in the assistant message's thinking content blocks.
  * - `task_progress`: cumulative progress ticks for a running subagent.
- * - `task_updated`: subagent state-merge patches; the meaningful terminal outcome
- *   arrives via `task_notification` instead.
+ * - `task_updated`: subagent state-merge patches. Not persisted/shown, but note
+ *   the live-status reducer still inspects it off the raw stream (it runs on every
+ *   message, before classification): a terminal `patch.status` settles a background
+ *   task, backstopping a missing/dropped `task_notification` (see
+ *   `reduceSessionMessage` in `session-status.ts`).
  * - `hook_progress`: streaming hook output between `hook_started`/`hook_response`.
  * - `status`, `session_state_changed`: transient session/run state.
  * - `files_persisted`, `elicitation_complete`: internal bookkeeping events.
