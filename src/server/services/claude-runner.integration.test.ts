@@ -332,7 +332,29 @@ describe('claude-runner persistent streaming loop', () => {
     stopSession(sessionId);
   });
 
-  it('returns false when the task is not tracked', async () => {
+  it('is idempotent: a second stop of the same task returns true with no extra emit', async () => {
+    const fake = makeFakeQuery();
+    _setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+
+    await sendUserMessage(sessionId, 'start a background job');
+    fake.emit(taskStarted('task-1'));
+    fake.emit(result());
+    await waitFor(() => getSessionBackgroundTasks(sessionId).length === 1);
+
+    // First stop removes the entry and emits [].
+    expect(await stopBackgroundTask(sessionId, 'task-1')).toBe(true);
+    expect(getSessionBackgroundTasks(sessionId)).toEqual([]);
+    mockSseEvents.emitBackgroundTasks.mockClear();
+
+    // Second stop (task already gone) still reports success, but emits nothing.
+    expect(await stopBackgroundTask(sessionId, 'task-1')).toBe(true);
+    expect(mockSseEvents.emitBackgroundTasks).not.toHaveBeenCalled();
+
+    stopSession(sessionId);
+  });
+
+  it('returns true for an untracked id on a live session, false when no session exists', async () => {
     const fake = makeFakeQuery();
     _setQueryFactory(fake.factory);
     const sessionId = await createRunningSession();
@@ -341,7 +363,10 @@ describe('claude-runner persistent streaming loop', () => {
     fake.emit(result());
     await waitFor(() => !isClaudeRunning(sessionId));
 
-    expect(await stopBackgroundTask(sessionId, 'ghost')).toBe(false);
+    // Live session, task never tracked → post-condition already holds → true.
+    expect(await stopBackgroundTask(sessionId, 'ghost')).toBe(true);
+    // No live session state to act on → false.
+    expect(await stopBackgroundTask('00000000-0000-0000-0000-000000000000', 'task-1')).toBe(false);
 
     stopSession(sessionId);
   });

@@ -932,7 +932,12 @@ export async function interruptClaude(sessionId: string): Promise<boolean> {
  * real and the notification does arrive later, the reducer's removal is a harmless
  * no-op (it guards on the task still being present).
  *
- * Returns whether the task was present in the live set and removed.
+ * Idempotent: `success` means the post-condition holds — the task is not (or no
+ * longer) in the live set for a session we could act on — so repeat calls (e.g. a
+ * double-clicked ✕, or stopping an already-settled task) all return `true`. The
+ * SSE emit, by contrast, only fires when an entry was actually removed
+ * (`dropBackgroundTask`), so a no-op call stays silent. `false` is returned only
+ * when there is no live session state to act on at all.
  */
 export async function stopBackgroundTask(sessionId: string, taskId: string): Promise<boolean> {
   const state = sessions.get(sessionId);
@@ -950,7 +955,10 @@ export async function stopBackgroundTask(sessionId: string, taskId: string): Pro
     });
   }
 
-  return dropBackgroundTask(sessionId, state, taskId);
+  // Drop the entry (emits only if it was present); report success regardless so
+  // the operation is idempotent.
+  dropBackgroundTask(sessionId, state, taskId);
+  return true;
 }
 
 /** Whether a main-agent turn is active for a session (in-memory check). */
