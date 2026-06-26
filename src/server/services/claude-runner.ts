@@ -28,6 +28,7 @@ import { prisma } from '@/lib/prisma';
 import { classifyMessage, SystemInitContentSchema, type RetryState } from '@/lib/claude-messages';
 import {
   reduceSessionMessage,
+  removeBackgroundTask,
   INITIAL_LIVE_STATUS,
   type LiveStatus,
   type BackgroundTask,
@@ -495,6 +496,20 @@ function clearLiveStatus(sessionId: string, state: SessionState): void {
 }
 
 /**
+ * Drop a single background task from a session's live set and emit the
+ * `background` channel if it was present. Returns whether an entry was removed.
+ * Used by the optimistic-stop path so the indicator clears immediately rather
+ * than waiting for the SDK's terminal `task_notification` (which it can drop).
+ */
+function dropBackgroundTask(sessionId: string, state: SessionState, taskId: string): boolean {
+  const next = removeBackgroundTask(state.status.backgroundTasks, taskId);
+  if (next === state.status.backgroundTasks) return false;
+  state.status = { ...state.status, backgroundTasks: next };
+  sseEvents.emitBackgroundTasks(sessionId, [...next.values()]);
+  return true;
+}
+
+/**
  * Fold one message into the session's live status and emit changed channels.
  * Runs for EVERY message (including ones that are skipped for persistence, since
  * `api_retry`/`task_*` drive status). Fires per-turn branch/PR detection when a
@@ -904,19 +919,38 @@ export async function interruptClaude(sessionId: string): Promise<boolean> {
 }
 
 /**
- * Stop a single running background task via the SDK. The terminal
- * `task_notification` that follows removes it from the live set.
+ * Stop a single running background task via the SDK, then optimistically remove
+ * it from the live set so the ✕ button is reliable whether or not the task is
+ * still alive.
+ *
+ * A live task settles via `query.stopTask`, which makes the SDK emit a terminal
+ * `task_notification` — but that notification can be dropped (the SDK occasionally
+ * does), and a *phantom* (a task whose terminal notification was already dropped)
+ * has no live counterpart for `stopTask` to settle at all. In both cases waiting
+ * on the notification would leave the indicator stuck. So we drop the entry from
+ * the in-memory set ourselves regardless of `stopTask`'s outcome. If the task was
+ * real and the notification does arrive later, the reducer's removal is a harmless
+ * no-op (it guards on the task still being present).
+ *
+ * Returns whether the task was present in the live set and removed.
  */
 export async function stopBackgroundTask(sessionId: string, taskId: string): Promise<boolean> {
   const state = sessions.get(sessionId);
-  if (!state?.query) return false;
+  if (!state) return false;
+
   try {
-    await state.query.stopTask(taskId);
-    return true;
+    await state.query?.stopTask(taskId);
   } catch (err) {
-    log.warn('stopBackgroundTask: failed', { sessionId, taskId, error: toError(err).message });
-    return false;
+    // A throw typically means the SDK no longer knows this task (already settled,
+    // or a phantom). Fall through and clear the indicator anyway.
+    log.warn('stopBackgroundTask: stopTask failed; clearing indicator anyway', {
+      sessionId,
+      taskId,
+      error: toError(err).message,
+    });
   }
+
+  return dropBackgroundTask(sessionId, state, taskId);
 }
 
 /** Whether a main-agent turn is active for a session (in-memory check). */
