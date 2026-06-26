@@ -200,8 +200,11 @@ claude.stopBackgroundTask({ sessionId: string, taskId: string })
   → { success: boolean }
   // Stops a single background task via query.stopTask, then optimistically
   // removes it from the live set (so the ✕ works even on a phantom whose
-  // terminal task_notification was dropped). success = the task was present
-  // and removed.
+  // terminal task_notification was dropped). Idempotent: success means the
+  // post-condition holds (task not in the live set for a session we could act
+  // on), so a double-click / already-settled stop also returns true; false
+  // only when there is no live session state. The background SSE event fires
+  // only when an entry was actually removed.
 
 claude.getHistory({
   sessionId: string,
