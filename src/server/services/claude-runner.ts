@@ -23,7 +23,6 @@ import {
   type PermissionResult,
   type SDKUserMessage,
   type SDKMessage,
-  type HookJSONOutput,
 } from '@anthropic-ai/claude-agent-sdk';
 import { prisma } from '@/lib/prisma';
 import { classifyMessage, SystemInitContentSchema, type RetryState } from '@/lib/claude-messages';
@@ -48,7 +47,7 @@ import {
   type MergedSessionSettings,
 } from './settings-merger';
 import { StreamAccumulator } from './stream-accumulator';
-import { sanitizeUntrustedInput, sanitizeToolOutput } from './input-sanitizer';
+import { sanitizeUntrustedInput, sanitizeToolOutputHook } from './input-sanitizer';
 import { PARTIAL_MESSAGE_ID_PREFIX } from '@/lib/message-cache';
 import type { ContainerEnvVar } from './repo-settings';
 
@@ -462,36 +461,9 @@ async function buildSdkOptions(params: {
     hooks: {
       // Sanitize tool output before the model sees it — the primary
       // hidden-content injection surface (web/MCP responses, fetched issue/PR
-      // bodies, file/command output). The SDK honors `updatedToolOutput` only
-      // when it preserves the tool's shape, so we rewrite string leaves in place
-      // and skip the replacement entirely when nothing changed. Failures pass the
-      // original output through — sanitization must never break tool execution.
-      PostToolUse: [
-        {
-          hooks: [
-            async (input): Promise<HookJSONOutput> => {
-              if (input.hook_event_name !== 'PostToolUse') return {};
-              try {
-                const { output, changed } = await sanitizeToolOutput(input.tool_response, {
-                  sessionId,
-                  source: `tool:${input.tool_name}`,
-                });
-                if (!changed) return {};
-                return {
-                  hookSpecificOutput: { hookEventName: 'PostToolUse', updatedToolOutput: output },
-                };
-              } catch (err) {
-                log.warn(
-                  'Tool-output sanitization failed; passing original output through',
-                  { sessionId, tool: input.tool_name },
-                  toError(err)
-                );
-                return {};
-              }
-            },
-          ],
-        },
-      ],
+      // bodies, file/command output). See sanitizeToolOutputHook for the
+      // shape-preserving rewrite, change-gating, and fail-open behavior.
+      PostToolUse: [{ hooks: [(input) => sanitizeToolOutputHook(input, sessionId)] }],
     },
   };
 

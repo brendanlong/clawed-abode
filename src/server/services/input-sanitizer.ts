@@ -1,5 +1,6 @@
 import { sanitize } from 'agent-input-sanitizer';
-import { createLogger } from '@/lib/logger';
+import type { HookInput, HookJSONOutput } from '@anthropic-ai/claude-agent-sdk';
+import { createLogger, toError } from '@/lib/logger';
 
 const log = createLogger('input-sanitizer');
 
@@ -102,4 +103,34 @@ export async function sanitizeToolOutput(
     });
   }
   return { output, changed: mutated };
+}
+
+/**
+ * `PostToolUse` hook handler wired into the session query (see `buildSdkOptions`
+ * in claude-runner). Neutralizes hidden content in a tool result and returns the
+ * SDK's `updatedToolOutput` substitution — but only when a string actually
+ * changed, so a normal tool result passes through untouched (returns `{}`,
+ * leaving the SDK to use the original output). Fails open: any error is logged
+ * and `{}` returned, so sanitization can never break tool execution.
+ */
+export async function sanitizeToolOutputHook(
+  input: HookInput,
+  sessionId: string
+): Promise<HookJSONOutput> {
+  if (input.hook_event_name !== 'PostToolUse') return {};
+  try {
+    const { output, changed } = await sanitizeToolOutput(input.tool_response, {
+      sessionId,
+      source: `tool:${input.tool_name}`,
+    });
+    if (!changed) return {};
+    return { hookSpecificOutput: { hookEventName: 'PostToolUse', updatedToolOutput: output } };
+  } catch (err) {
+    log.warn(
+      'Tool-output sanitization failed; passing original output through',
+      { sessionId, tool: input.tool_name },
+      toError(err)
+    );
+    return {};
+  }
 }
