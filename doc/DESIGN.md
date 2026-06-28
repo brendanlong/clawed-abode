@@ -467,6 +467,16 @@ ORDER BY sequence ASC;
 - `bypassPermissions` mode is used since the machine is dedicated to running this app
 - The machine should be dedicated to this application — not shared with other users
 
+### Input Sanitization
+
+Untrusted text is scrubbed before it reaches the model, defending against hidden-content prompt injection (invisible Unicode, ANSI escapes, human-invisible HTML comments/elements) and surfacing data-exfil-shaped URLs. This uses the [`agent-input-sanitizer`](https://github.com/alexander-turner/agent-input-sanitizer) package (the standalone, importable piece of [claude-guard](https://github.com/alexander-turner/claude-guard) — the sandbox/VM and egress-firewall layers are intentionally **not** adopted because this host deliberately grants broad capability, e.g. RunPod/GPU access).
+
+- Implemented as a thin wrapper, `sanitizeUntrustedInput` in [`src/server/services/input-sanitizer.ts`](../src/server/services/input-sanitizer.ts), which returns the cleaned string and logs any findings via the centralized logger. It never throws — the library always returns a string and only reports changes, so on internal failure the original text passes through.
+- Applied at the single `sendUserMessage` chokepoint in [`claude-runner.ts`](../src/server/services/claude-runner.ts), before the prompt is persisted or pushed into the SDK input channel. This one seam covers both typed prompts (`claude.send`) and the initial prompt (which may embed an untrusted GitHub issue body). The sanitized text is what is both stored and shown, so the transcript reflects exactly what the model saw.
+- **Exfil-URL detection is advisory**: the library reports such URLs (logged as a warning) but does not rewrite the text, so the URL survives.
+- This is **defense-in-depth, not a hard boundary**. Without a sandbox/egress firewall it catches mistakes and obvious injection, not a determined adversary. The complementary AI-monitor layer (a per-tool-call gate) is intentionally deferred — see the [monitor-server sidecar issue](https://github.com/brendanlong/clawed-abode/issues/366). Sanitizing tool results / MCP responses (content that flows back _inside_ the SDK) would require a `PostToolUse` hook and is also future work.
+- Pinned to an exact version and added to `minimumReleaseAgeExclude` in `pnpm-workspace.yaml`, since the package ships releases faster than the repo's 7-day supply-chain quarantine; the exact pin prevents an excluded auto-bump from slipping in unreviewed.
+
 ### GitHub Token Security
 
 - Use a **fine-grained Personal Access Token** for minimum required permissions
