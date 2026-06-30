@@ -41,32 +41,38 @@ export async function sanitizeUntrustedInput(
   return cleaned;
 }
 
+/** Accumulates findings across a deep walk of one tool response. */
+interface SanitizeAccumulator {
+  found: Set<string>;
+  warnings: Set<string>;
+  mutated: boolean;
+}
+
 /**
  * Recursively sanitize every string value inside an arbitrary JSON-ish value,
  * preserving structure. Tool results are tool-specific (a bare string, a Bash
  * `{ stdout, stderr, ... }` object, an array of `{ type: 'text', text }` blocks,
  * etc.), and the SDK only honors `updatedToolOutput` when it keeps the original
  * shape — so we replace string leaves in place rather than flattening. Object
- * keys are structural and left untouched.
+ * keys are structural and left untouched. `warnings` (deduped) carry the
+ * library's operator/agent-facing notes, including the recovery pointer to a hex
+ * dump for stripped bytes.
  */
-async function sanitizeStringsDeep(
-  value: unknown,
-  found: Set<string>,
-  onMutate: () => void
-): Promise<unknown> {
+async function sanitizeStringsDeep(value: unknown, acc: SanitizeAccumulator): Promise<unknown> {
   if (typeof value === 'string') {
-    const { cleaned, found: categories } = await sanitize(value, { html: true });
-    for (const category of categories) found.add(category);
-    if (cleaned !== value) onMutate();
+    const { cleaned, found, warnings } = await sanitize(value, { html: true });
+    for (const category of found) acc.found.add(category);
+    for (const warning of warnings) acc.warnings.add(warning);
+    if (cleaned !== value) acc.mutated = true;
     return cleaned;
   }
   if (Array.isArray(value)) {
-    return Promise.all(value.map((item) => sanitizeStringsDeep(item, found, onMutate)));
+    return Promise.all(value.map((item) => sanitizeStringsDeep(item, acc)));
   }
   if (value !== null && typeof value === 'object') {
     const entries = await Promise.all(
       Object.entries(value).map(
-        async ([key, item]) => [key, await sanitizeStringsDeep(item, found, onMutate)] as const
+        async ([key, item]) => [key, await sanitizeStringsDeep(item, acc)] as const
       )
     );
     return Object.fromEntries(entries);
@@ -84,25 +90,40 @@ async function sanitizeStringsDeep(
  * `changed` is true only when a string was actually rewritten; the caller uses
  * it to skip `updatedToolOutput` when nothing changed (exfil-URL detection is
  * advisory — it is logged via `found` but does not rewrite text, so it does not
- * set `changed`).
+ * set `changed`). `warnings` are surfaced to the agent so it can tell filtering
+ * occurred and recover raw bytes if a task needs them.
  */
 export async function sanitizeToolOutput(
   toolResponse: unknown,
   context: SanitizeContext
-): Promise<{ output: unknown; changed: boolean }> {
-  const found = new Set<string>();
-  let mutated = false;
-  const output = await sanitizeStringsDeep(toolResponse, found, () => {
-    mutated = true;
-  });
-  if (found.size > 0) {
+): Promise<{ output: unknown; changed: boolean; warnings: string[] }> {
+  const acc: SanitizeAccumulator = {
+    found: new Set<string>(),
+    warnings: new Set<string>(),
+    mutated: false,
+  };
+  const output = await sanitizeStringsDeep(toolResponse, acc);
+  if (acc.found.size > 0) {
     log.warn('Detected hidden content in tool output', {
       ...context,
-      found: [...found],
-      neutralized: mutated,
+      found: [...acc.found],
+      neutralized: acc.mutated,
     });
   }
-  return { output, changed: mutated };
+  return { output, changed: acc.mutated, warnings: [...acc.warnings] };
+}
+
+/**
+ * Build the agent-facing note delivered alongside a sanitized tool result. The
+ * library's `warnings` already include the recovery pointer (inspect raw bytes
+ * with a hex dump — `xxd` / `od -c` — which survives sanitization), so the agent
+ * can both tell that filtering occurred and work around it when a coding /
+ * tokenization task genuinely needs the exact bytes.
+ */
+function buildSanitizationNote(warnings: string[]): string {
+  const intro =
+    'Hidden or invisible content was automatically removed from this tool output before you saw it; the visible text is intact.';
+  return warnings.length > 0 ? `${intro} ${warnings.join(' ')}` : intro;
 }
 
 /**
@@ -119,12 +140,21 @@ export async function sanitizeToolOutputHook(
 ): Promise<HookJSONOutput> {
   if (input.hook_event_name !== 'PostToolUse') return {};
   try {
-    const { output, changed } = await sanitizeToolOutput(input.tool_response, {
+    const { output, changed, warnings } = await sanitizeToolOutput(input.tool_response, {
       sessionId,
       source: `tool:${input.tool_name}`,
     });
     if (!changed) return {};
-    return { hookSpecificOutput: { hookEventName: 'PostToolUse', updatedToolOutput: output } };
+    return {
+      hookSpecificOutput: {
+        hookEventName: 'PostToolUse',
+        updatedToolOutput: output,
+        // Tell the agent filtering happened (and how to recover raw bytes), so a
+        // legitimate task over invisible/tokenization-sensitive text isn't blind
+        // to it. Only emitted when output actually changed.
+        additionalContext: buildSanitizationNote(warnings),
+      },
+    };
   } catch (err) {
     log.warn(
       'Tool-output sanitization failed; passing original output through',

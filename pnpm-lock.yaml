@@ -81,8 +81,8 @@ importers:
         specifier: ^11.17.0
         version: 11.17.0(typescript@5.9.3)
       agent-input-sanitizer:
-        specifier: 1.2.2
-        version: 1.2.2
+        specifier: 1.4.10
+        version: 1.4.10
       ansi-to-html:
         specifier: ^0.7.2
         version: 0.7.2
@@ -2174,9 +2174,9 @@ packages:
     resolution: {integrity: sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ==}
     engines: {node: '>= 14'}
 
-  agent-input-sanitizer@1.2.2:
-    resolution: {integrity: sha512-r2+ZB/YtOIolktDd8fGpze18ymqfQ4d3gHD68V1Yg7h3lsz6r4hJj6IWFmMRwhrRhVB5oJO0xGsCjASaPVae/w==}
-    engines: {node: '>=20'}
+  agent-input-sanitizer@1.4.10:
+    resolution: {integrity: sha512-Z4DeMxsHQD7VsqjEGwD+D59jWqLthvZJkNjojo6rHmSCar2TVH6nEKlf1YBHo3ZqPyT6L1blxVO2McgEBPqlWQ==}
+    engines: {node: '>=22'}
     hasBin: true
 
   ajv-formats@3.0.1:
@@ -6152,7 +6152,7 @@ snapshots:
 
   agent-base@7.1.4: {}
 
-  agent-input-sanitizer@1.2.2:
+  agent-input-sanitizer@1.4.10:
     dependencies:
       rehype-parse: 9.0.1
       remark-gfm: 4.0.1

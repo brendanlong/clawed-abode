@@ -141,12 +141,20 @@ function postToolUse(toolName: string, toolResponse: unknown): PostToolUseHookIn
 }
 
 /** Narrow the union return to read the substitution the SDK would apply. */
-function updatedOutput(res: Awaited<ReturnType<typeof sanitizeToolOutputHook>>): unknown {
+function hookOutput(res: Awaited<ReturnType<typeof sanitizeToolOutputHook>>): {
+  hookEventName?: string;
+  updatedToolOutput?: unknown;
+  additionalContext?: string;
+} {
   const sync = res as {
-    hookSpecificOutput?: { hookEventName?: string; updatedToolOutput?: unknown };
+    hookSpecificOutput?: {
+      hookEventName?: string;
+      updatedToolOutput?: unknown;
+      additionalContext?: string;
+    };
   };
   expect(sync.hookSpecificOutput?.hookEventName).toBe('PostToolUse');
-  return sync.hookSpecificOutput?.updatedToolOutput;
+  return sync.hookSpecificOutput!;
 }
 
 describe('sanitizeToolOutputHook (PostToolUse wiring)', () => {
@@ -174,7 +182,7 @@ describe('sanitizeToolOutputHook (PostToolUse wiring)', () => {
       }),
       'test-session'
     );
-    const out = updatedOutput(res) as {
+    const out = hookOutput(res).updatedToolOutput as {
       stdout: string;
       stderr: string;
       interrupted: boolean;
@@ -192,6 +200,23 @@ describe('sanitizeToolOutputHook (PostToolUse wiring)', () => {
     expect(out.isImage).toBe(false);
   });
 
+  it('tells the agent that filtering occurred and how to recover raw bytes', async () => {
+    const res = await sanitizeToolOutputHook(
+      postToolUse('Bash', {
+        stdout: `value${ZWSP}with hidden char`,
+        stderr: '',
+        interrupted: false,
+        isImage: false,
+      }),
+      'test-session'
+    );
+    const note = hookOutput(res).additionalContext ?? '';
+    // The agent is told content was removed...
+    expect(note.toLowerCase()).toContain('removed');
+    // ...and pointed at a hex dump to inspect exact bytes (the library's note).
+    expect(note).toMatch(/xxd|od -c|hex dump/);
+  });
+
   it('sanitizes MCP-style content blocks, preserving block structure', async () => {
     const res = await sanitizeToolOutputHook(
       postToolUse('mcp__docs__fetch', {
@@ -199,7 +224,9 @@ describe('sanitizeToolOutputHook (PostToolUse wiring)', () => {
       }),
       'test-session'
     );
-    const out = updatedOutput(res) as { content: Array<{ type: string; text: string }> };
+    const out = hookOutput(res).updatedToolOutput as {
+      content: Array<{ type: string; text: string }>;
+    };
     expect(out.content[0].text).toBe('fetched page');
     expect(out.content[0].type).toBe('text');
   });
