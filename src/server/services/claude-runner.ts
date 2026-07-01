@@ -472,6 +472,16 @@ async function buildSdkOptions(params: {
     options.mcpServers = mcpServersRecord;
   }
 
+  // The advisor model is a settings-schema field (no dedicated SDK option), so
+  // inject it as an ad-hoc `--settings` source. This enables the server-side
+  // advisor tool for the session using the resolved model. Like env vars and the
+  // system prompt, it is bound at query construction — a change takes effect on
+  // the next Stop→Start, not live mid-session.
+  options.extraArgs = {
+    ...options.extraArgs,
+    settings: JSON.stringify({ advisorModel: settings.advisorModel }),
+  };
+
   return options;
 }
 

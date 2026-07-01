@@ -4,6 +4,8 @@ import {
   mergeMcpServers,
   mcpServersEqual,
   resolveClaudeModel,
+  resolveAdvisorModel,
+  DEFAULT_ADVISOR_MODEL,
 } from './settings-merger';
 import type { ContainerEnvVar, ContainerMcpServer } from './repo-settings';
 
@@ -23,6 +25,18 @@ describe('resolveClaudeModel', () => {
 
   it('returns undefined when nothing is set', () => {
     expect(resolveClaudeModel(null, null, undefined)).toBeUndefined();
+  });
+});
+
+describe('resolveAdvisorModel', () => {
+  it('uses the global override when set', () => {
+    expect(resolveAdvisorModel('claude-opus-4-8')).toBe('claude-opus-4-8');
+  });
+
+  it('falls back to the default advisor model when unset', () => {
+    expect(resolveAdvisorModel(null)).toBe(DEFAULT_ADVISOR_MODEL);
+    expect(resolveAdvisorModel(undefined)).toBe(DEFAULT_ADVISOR_MODEL);
+    expect(DEFAULT_ADVISOR_MODEL).toBe('claude-fable-5');
   });
 });
 

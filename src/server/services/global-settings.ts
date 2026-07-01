@@ -14,6 +14,7 @@ export interface GlobalDisplaySettings {
   systemPromptOverrideEnabled: boolean;
   systemPromptAppend: string | null;
   claudeModel: string | null;
+  advisorModel: string | null;
   hasClaudeApiKey: boolean;
   ttsSpeed: number | null;
   voiceAutoSend: boolean;
@@ -33,6 +34,7 @@ export interface GlobalSystemPromptSettings {
  */
 export interface GlobalContainerSettings extends GlobalSystemPromptSettings {
   claudeModel: string | null;
+  advisorModel: string | null;
   claudeApiKey: string | null;
   envVars: ContainerEnvVar[];
   mcpServers: ContainerMcpServer[];
@@ -53,6 +55,7 @@ export async function getGlobalSettings(): Promise<GlobalDisplaySettings> {
       systemPromptOverrideEnabled: false,
       systemPromptAppend: null,
       claudeModel: null,
+      advisorModel: null,
       hasClaudeApiKey: false,
       ttsSpeed: null,
       voiceAutoSend: true,
@@ -64,6 +67,7 @@ export async function getGlobalSettings(): Promise<GlobalDisplaySettings> {
     systemPromptOverrideEnabled: settings.systemPromptOverrideEnabled,
     systemPromptAppend: settings.systemPromptAppend,
     claudeModel: settings.claudeModel,
+    advisorModel: settings.advisorModel,
     hasClaudeApiKey: settings.claudeApiKey !== null,
     ttsSpeed: settings.ttsSpeed,
     voiceAutoSend: settings.voiceAutoSend,
@@ -94,6 +98,7 @@ export async function getGlobalSettingsForContainer(): Promise<GlobalContainerSe
     systemPromptOverrideEnabled: settings?.systemPromptOverrideEnabled ?? false,
     systemPromptAppend: settings?.systemPromptAppend ?? null,
     claudeModel: settings?.claudeModel ?? null,
+    advisorModel: settings?.advisorModel ?? null,
     claudeApiKey,
     envVars: decryptEnvVarsForContainer(envVarRows),
     mcpServers: decryptMcpServersForContainer(mcpServerRows),
