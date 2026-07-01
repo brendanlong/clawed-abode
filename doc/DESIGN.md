@@ -140,7 +140,11 @@ sessions.create({
   // If initialPrompt is provided, it is sent automatically server-side when session becomes running
 
 sessions.list({ status?: SessionStatus })
-  → { sessions: Session[] }
+  → { sessions: (Session & { turnActive: boolean })[] }
+  // turnActive is the live in-memory main-agent turn state (see "Two-Axis
+  // Status"), attached per session so the list can show "running" (generating)
+  // vs "waiting" (live but idle). Always false for sessions without a live query
+  // (stopped, archived, or after a server restart until revived).
 
 sessions.get({ sessionId: string })
   → { session: Session }
@@ -360,9 +364,13 @@ subscription, so the app is deliberately structured around just **two** streams:
    are read/mutate-only and never open their own subscriptions.
 
 2. **Global session-list stream** — `sse.onSessionListEvents()`. `emitSessionUpdate`
-   fans every session change out to a global channel; `useSessionListStream`
+   and `emitClaudeRunning` fan every session change and main-agent turn-state flip out
+   to a global channel; `useSessionListStream`
    ([`src/hooks/useSessionListStream.ts`](../src/hooks/useSessionListStream.ts)) refetches
-   the home-page list so it updates live for any session, without one subscription per row.
+   the home-page list so it updates live for any session (including its
+   running/waiting badge), without one subscription per row. The refetched
+   `sessions.list` carries `turnActive`, so reload, tab-switch, and reconnect all
+   resync to the server's in-memory truth rather than trusting streamed state.
 
 **Resume tokens & catch-up.** The subscription input is **stable** — `{ sessionId,
 afterSequence }`, where `afterSequence` is the client's newest cached sequence captured
@@ -410,7 +418,7 @@ Subagent (`Task` tool) lifecycle: `task_started` and `task_notification` are the
 
 With one persistent query per session, "is Claude busy?" splits into two **independent** facts, both derived purely from the message stream by `reduceSessionMessage` ([`src/lib/session-status.ts`](../src/lib/session-status.ts)) and held in memory:
 
-- **`turnActive`** — whether the **main agent** is actively generating. Driven by the message **stream**, not the SDK turn `result`: a top-level (`parent_tool_use_id == null`) `stream_event` of `message_start` sets it true; a top-level `message_delta` whose `stop_reason` is terminal (`end_turn`/`stop_sequence`/`max_tokens`/`refusal`; `tool_use`/`pause_turn` mean the turn continues) sets it false. A top-level `result` also clears it as a safety net (and covers an interrupt's `error_during_execution`). **Why the stream and not the `result`:** a `run_in_background` subagent keeps the parent turn open — the SDK defers the turn `result` until the child settles — but the main agent finishes generating much earlier, so keying off `result` alone would wrongly show "running" for the entire background-subagent duration (confirmed by `scripts/spike-background-agent.ts`). Subagent traffic never moves it. This is the **only** input gate: emitted over the `running` SSE channel and read via `claude.isRunning`; the composer and Stop button key off it.
+- **`turnActive`** — whether the **main agent** is actively generating. Driven by the message **stream**, not the SDK turn `result`: a top-level (`parent_tool_use_id == null`) `stream_event` of `message_start` sets it true; a top-level `message_delta` whose `stop_reason` is terminal (`end_turn`/`stop_sequence`/`max_tokens`/`refusal`; `tool_use`/`pause_turn` mean the turn continues) sets it false. A top-level `result` also clears it as a safety net (and covers an interrupt's `error_during_execution`). **Why the stream and not the `result`:** a `run_in_background` subagent keeps the parent turn open — the SDK defers the turn `result` until the child settles — but the main agent finishes generating much earlier, so keying off `result` alone would wrongly show "running" for the entire background-subagent duration (confirmed by `scripts/spike-background-agent.ts`). Subagent traffic never moves it. This is the **only** input gate: emitted over the `running` SSE channel (and fanned out to the global session-list channel, so the home page can show running vs waiting per session) and read via `claude.isRunning` plus the `turnActive` field on `sessions.list`; the composer and Stop button key off it.
 - **background tasks** — a `Map<task_id, BackgroundTask>` driven by `task_started` (add) / `task_notification` **or** a terminal `task_updated.patch.status` (remove — two signals because the SDK only explicitly promises `task_notification` for `stopTask` and foreground-backgrounding; the authoritative `task_updated` state channel backstops every other ending and dropped notifications). Emitted as a latest-value `background` SSE event and read via `claude.getBackgroundTasks` (seeded once, updated by the stream, resynced on reconnect). This is an **indicator only** — it never gates input, so a user can keep chatting while a background task runs. This is genuinely interactive, not just cosmetic: a prompt sent while a background subagent runs is answered in a new turn that **interleaves** with the still-running subagent (confirmed by `scripts/spike-concurrent-send.ts` — the reply arrived ~19s before the subagent's `sleep 20` settled), not queued until it finishes. `ClaudeStatusIndicator` shows a separate "N background tasks running — you can keep chatting" line with per-task stop controls (`claude.stopBackgroundTask` → `query.stopTask`, then **optimistic removal**: the runner drops the entry from the live set itself rather than waiting for the SDK's terminal `task_notification`, so the ✕ reliably clears the indicator whether the task is still alive or a phantom whose notification was dropped — if it was real and the notification arrives later, the reducer's removal is a `has`-guarded no-op). The pure map-removal (`removeBackgroundTask` in [`session-status.ts`](../src/lib/session-status.ts)) is shared by the settle paths and the stop path. _Known limitation_: a task lingers in the map only if **all three** of `task_notification`, a terminal `task_updated`, and a user ✕ never happen — at which point it clears when the query is torn down. Since it is indicator-only, the impact is a stale count, never a stuck composer.
 
 `turnActive` is **purely event-driven** — set/cleared only by messages and forced false on every loop-exit path (SDK error, query close, stop/delete/shutdown). There are no status timers: the server can't tell a hung turn from a slow one, so a genuinely hung turn is recovered deterministically by the user (interrupt, or the header Stop which closes the query → `finally` clears the flag). A consequence: a persistent subprocess lives until stop / delete / shutdown / fatal error (no idle reaper) — fine for a single-user host with a handful of sessions. Both facts are in-memory only (lost on restart, re-derived as the revived query streams).
@@ -576,6 +584,11 @@ Voice mode provides speech-to-text input and text-to-speech output for hands-fre
 ### Session List (Home)
 
 - List of sessions with name, repo, status, last activity
+- The status badge splits a live session into **running** (Claude is mid-turn) vs
+  **waiting** (idle, waiting for input), derived from `turnActive` on
+  `sessions.list` (`deriveSessionDisplayStatus` in
+  [`src/lib/session-display-status.ts`](../src/lib/session-display-status.ts));
+  other statuses (stopped, creating, error, archived) show as-is
 - "New Session" button
 - Quick actions: resume, stop, delete
 
