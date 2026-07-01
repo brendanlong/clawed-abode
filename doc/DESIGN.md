@@ -42,7 +42,7 @@ The system runs **directly on the host** without containers:
 
 The database schema is defined in [`prisma/schema.prisma`](../prisma/schema.prisma). Key models:
 
-- **Session**: Claude Code sessions tied to git clones or standalone workspaces. `repoUrl` and `branch` are nullable — when null, the session has no repository (workspace-only).
+- **Session**: Claude Code sessions tied to git clones or standalone workspaces. `repoUrl` and `branch` are nullable — when null, the session has no repository (workspace-only). `lastActivityAt` is bumped whenever a message is persisted for the session and drives session-list ordering, so recently interacted sessions sort first rather than sessions whose row was last touched by a lifecycle change like stop/start.
 - **Message**: Chat messages with sequence numbers for cursor-based pagination
 - **AuthSession**: Login sessions with tokens and audit info
 - **GlobalSettings**: Global application settings (system prompt override and append, Claude model, advisor model, Claude API key, TTS speed, voice auto-send)
@@ -583,7 +583,9 @@ Voice mode provides speech-to-text input and text-to-speech output for hands-fre
 
 ### Session List (Home)
 
-- List of sessions with name, repo, status, last activity
+- List of sessions with name, repo, status, last activity, ordered by
+  `lastActivityAt` (time of the last persisted message) so the most recently
+  interacted sessions are at the top
 - The status badge splits a live session into **running** (Claude is mid-turn) vs
   **waiting** (idle, waiting for input), derived from `turnActive` on
   `sessions.list` (`deriveSessionDisplayStatus` in

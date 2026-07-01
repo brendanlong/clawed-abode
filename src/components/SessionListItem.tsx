@@ -93,7 +93,7 @@ export function SessionListItem({ session, onMutationSuccess }: SessionListItemP
       </div>
 
       <div className="mt-2 text-xs text-muted-foreground">
-        Last updated: {new Date(session.updatedAt).toLocaleString()}
+        Last activity: {new Date(session.lastActivityAt).toLocaleString()}
       </div>
     </li>
   );
