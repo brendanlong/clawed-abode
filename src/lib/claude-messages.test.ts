@@ -118,6 +118,25 @@ describe('claude-messages', () => {
         expect(result.success).toBe(true);
       });
 
+      it('should parse server_tool_use block (advisor)', () => {
+        const result = ContentBlockSchema.safeParse({
+          type: 'server_tool_use',
+          id: 'srvtoolu_014mCNVrW6NLM6TiYm3bX4Ue',
+          name: 'advisor',
+          input: {},
+        });
+        expect(result.success).toBe(true);
+      });
+
+      it('should parse advisor_tool_result block with encrypted content', () => {
+        const result = ContentBlockSchema.safeParse({
+          type: 'advisor_tool_result',
+          tool_use_id: 'srvtoolu_014mCNVrW6NLM6TiYm3bX4Ue',
+          content: { type: 'advisor_redacted_result', encrypted_content: 'Eu8NCioI...' },
+        });
+        expect(result.success).toBe(true);
+      });
+
       it('should reject unknown block type', () => {
         const result = ContentBlockSchema.safeParse({ type: 'unknown', data: 'test' });
         expect(result.success).toBe(false);
