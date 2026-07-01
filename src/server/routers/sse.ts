@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { router, protectedProcedure } from '../trpc';
 import { sseEvents } from '../services/events';
-import type { SessionStreamEvent, SessionUpdateEvent } from '../services/events';
+import type { SessionStreamEvent, SessionListEvent } from '../services/events';
 import { tracked } from '@trpc/server';
 import { prisma } from '@/lib/prisma';
 import { isPartialMessageId } from '@/lib/message-cache';
@@ -123,9 +123,11 @@ export const sseRouter = router({
       }
     }),
 
-  // Global stream of session changes for the home page (all sessions). The list is
-  // small and also refetched on reconnect, so we only need monotonic tracked ids
-  // (seeded from lastEventId) to avoid client-side dedup dropping the first event.
+  // Global stream of session changes for the home page (all sessions): session
+  // record updates plus main-agent running-state changes (running/waiting). The
+  // list is small and also refetched on reconnect, so we only need monotonic
+  // tracked ids (seeded from lastEventId) to avoid client-side dedup dropping the
+  // first event.
   onSessionListEvents: protectedProcedure
     .input(z.object({ lastEventId: z.string().nullish() }).optional())
     .subscription(async function* ({ input, signal }) {
@@ -133,7 +135,7 @@ export const sseRouter = router({
       const seeded = input?.lastEventId ? Number(input.lastEventId) : NaN;
       let counter = Number.isInteger(seeded) ? seeded + 1 : 0;
 
-      const { queue, waitForEvent, unsubscribe } = createEventQueue<SessionUpdateEvent>((push) =>
+      const { queue, waitForEvent, unsubscribe } = createEventQueue<SessionListEvent>((push) =>
         sseEvents.onSessionListChanged(push)
       );
 
@@ -141,10 +143,12 @@ export const sseRouter = router({
         while (!signal?.aborted) {
           if (queue.length > 0) {
             const event = queue.shift()!;
-            yield tracked(String(counter++), {
-              kind: 'session' as const,
-              session: event.session,
-            });
+            yield tracked(
+              String(counter++),
+              event.type === 'session_update'
+                ? { kind: 'session' as const, session: event.session }
+                : { kind: 'running' as const, sessionId: event.sessionId, running: event.running }
+            );
           } else {
             await waitForEvent(signal);
           }

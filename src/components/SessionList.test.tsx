@@ -82,6 +82,7 @@ describe('SessionList', () => {
         repoUrl: 'https://github.com/user/repo1.git',
         branch: 'main',
         status: 'running',
+        turnActive: true,
         updatedAt: new Date('2024-01-15T10:00:00Z'),
       },
       {
@@ -90,7 +91,17 @@ describe('SessionList', () => {
         repoUrl: 'https://github.com/user/repo2.git',
         branch: 'feature-branch',
         status: 'stopped',
+        turnActive: false,
         updatedAt: new Date('2024-01-14T09:00:00Z'),
+      },
+      {
+        id: 'session-3',
+        name: 'Test Session 3',
+        repoUrl: 'https://github.com/user/repo3.git',
+        branch: 'main',
+        status: 'running',
+        turnActive: false,
+        updatedAt: new Date('2024-01-13T08:00:00Z'),
       },
     ];
 
@@ -136,7 +147,26 @@ describe('SessionList', () => {
       );
 
       const sessionNames = screen.getAllByRole('listitem');
-      expect(sessionNames).toHaveLength(2);
+      expect(sessionNames).toHaveLength(3);
+    });
+
+    it('shows running/waiting/stopped based on status and turn state', () => {
+      render(
+        <SessionList
+          sessions={mockSessions}
+          isLoading={false}
+          showArchived={false}
+          onToggleArchived={vi.fn()}
+        />
+      );
+
+      const items = screen.getAllByRole('listitem');
+      // Session 1: status running with an active turn → "running"
+      expect(items[0]).toHaveTextContent('running');
+      // Session 2: status stopped → "stopped"
+      expect(items[1]).toHaveTextContent('stopped');
+      // Session 3: status running but idle → "waiting"
+      expect(items[2]).toHaveTextContent('waiting');
     });
   });
 });
