@@ -47,6 +47,24 @@ export function SystemPromptTab() {
 
       <Card>
         <CardHeader>
+          <CardTitle>Advisor Model</CardTitle>
+          <CardDescription>
+            The model used by the server-side advisor tool, which Claude can consult for a second
+            opinion during a session. Enabled for all sessions; takes effect after a session is
+            stopped and restarted.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <AdvisorModelSection
+            currentModel={settings?.advisorModel ?? null}
+            defaultModel={settings?.defaultAdvisorModel ?? 'claude-fable-5'}
+            onUpdate={refetch}
+          />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
           <CardTitle>Claude API Key</CardTitle>
           <CardDescription>
             OAuth token for Claude Code authentication. Overrides the CLAUDE_CODE_OAUTH_TOKEN
@@ -345,6 +363,36 @@ function ClaudeModelSection({
       onSave={(claudeModel, onSuccess) => {
         setError(null);
         mutation.mutate({ claudeModel }, { onSuccess });
+      }}
+      isPending={mutation.isPending}
+      error={error}
+    />
+  );
+}
+
+function AdvisorModelSection({
+  currentModel,
+  defaultModel,
+  onUpdate,
+}: {
+  currentModel: string | null;
+  defaultModel: string;
+  onUpdate: () => void;
+}) {
+  const [error, setError] = useState<string | null>(null);
+
+  const mutation = trpc.globalSettings.setAdvisorModel.useMutation({
+    onSuccess: () => onUpdate(),
+    onError: (err) => setError(err.message),
+  });
+
+  return (
+    <ModelOverrideField
+      currentModel={currentModel}
+      defaultModel={defaultModel}
+      onSave={(advisorModel, onSuccess) => {
+        setError(null);
+        mutation.mutate({ advisorModel }, { onSuccess });
       }}
       isPending={mutation.isPending}
       error={error}
