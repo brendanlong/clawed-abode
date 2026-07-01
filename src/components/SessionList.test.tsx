@@ -83,7 +83,7 @@ describe('SessionList', () => {
         branch: 'main',
         status: 'running',
         turnActive: true,
-        updatedAt: new Date('2024-01-15T10:00:00Z'),
+        lastActivityAt: new Date('2024-01-15T10:00:00Z'),
       },
       {
         id: 'session-2',
@@ -92,7 +92,7 @@ describe('SessionList', () => {
         branch: 'feature-branch',
         status: 'stopped',
         turnActive: false,
-        updatedAt: new Date('2024-01-14T09:00:00Z'),
+        lastActivityAt: new Date('2024-01-14T09:00:00Z'),
       },
       {
         id: 'session-3',
@@ -101,7 +101,7 @@ describe('SessionList', () => {
         branch: 'main',
         status: 'running',
         turnActive: false,
-        updatedAt: new Date('2024-01-13T08:00:00Z'),
+        lastActivityAt: new Date('2024-01-13T08:00:00Z'),
       },
     ];
 

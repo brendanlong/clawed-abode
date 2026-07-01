@@ -10,7 +10,8 @@ export interface Session {
   status: string;
   /** Whether the main agent is mid-turn (live, in-memory; false when stopped). */
   turnActive: boolean;
-  updatedAt: Date;
+  /** Time of the user's last interaction with the session (drives list ordering). */
+  lastActivityAt: Date;
 }
 
 export interface UseSessionListOptions {

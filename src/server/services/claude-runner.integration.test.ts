@@ -232,6 +232,38 @@ describe('claude-runner persistent streaming loop', () => {
     stopSession(sessionId);
   });
 
+  it('bumps lastActivityAt on user sends but not on assistant traffic', async () => {
+    const fake = makeFakeQuery();
+    _setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+    const past = new Date('2020-01-01T00:00:00Z');
+    await testPrisma.session.update({
+      where: { id: sessionId },
+      data: { lastActivityAt: past },
+    });
+
+    // Sending a prompt is a user interaction — it bumps (awaited before return).
+    await sendUserMessage(sessionId, 'hello');
+    const afterSend = await testPrisma.session.findUniqueOrThrow({ where: { id: sessionId } });
+    expect(afterSend.lastActivityAt.getTime()).toBeGreaterThan(past.getTime());
+
+    // Assistant/result persistence must NOT bump, so sessions working in the
+    // background don't reorder the list. Pin a sentinel and let the turn finish.
+    const sentinel = new Date('2021-01-01T00:00:00Z');
+    await testPrisma.session.update({
+      where: { id: sessionId },
+      data: { lastActivityAt: sentinel },
+    });
+    fake.emit(assistant('hi there'));
+    fake.emit(result());
+    await waitFor(async () => (await messagesFor(sessionId)).length >= 3);
+
+    const afterTurn = await testPrisma.session.findUniqueOrThrow({ where: { id: sessionId } });
+    expect(afterTurn.lastActivityAt.getTime()).toBe(sentinel.getTime());
+
+    stopSession(sessionId);
+  });
+
   it('keeps the query alive across turns and survives a background task past turn end', async () => {
     const fake = makeFakeQuery();
     _setQueryFactory(fake.factory);
