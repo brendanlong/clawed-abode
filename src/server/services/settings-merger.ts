@@ -82,7 +82,10 @@ export function resolveClaudeModel(
  * changes which model the advisor uses).
  */
 export function resolveAdvisorModel(globalModel: string | null | undefined): string {
-  return globalModel ?? DEFAULT_ADVISOR_MODEL;
+  // Guard against an empty/whitespace value: returning "" would hand the SDK an
+  // invalid model. The write path already stores blank input as null, so this is
+  // defensive — it keeps the resolver correct regardless of how the value got there.
+  return globalModel?.trim() || DEFAULT_ADVISOR_MODEL;
 }
 
 /**
