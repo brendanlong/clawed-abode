@@ -20,6 +20,7 @@ vi.mock('../services/claude-runner', () => ({
   sendUserMessage: vi.fn().mockResolvedValue(undefined),
   stopSession: vi.fn(),
   cleanupSession: vi.fn(),
+  isClaudeRunning: vi.fn().mockReturnValue(false),
 }));
 
 // Mock settings-merger
