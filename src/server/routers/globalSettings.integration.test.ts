@@ -53,10 +53,12 @@ describe('globalSettings router', () => {
         systemPromptOverrideEnabled: false,
         systemPromptAppend: null,
         claudeModel: null,
+        advisorModel: null,
         hasClaudeApiKey: false,
         ttsSpeed: null,
         voiceAutoSend: true,
         defaultClaudeModel: 'opus[1m]',
+        defaultAdvisorModel: 'claude-fable-5',
         hasEnvApiKey: true,
       });
     });
@@ -271,6 +273,45 @@ describe('globalSettings router', () => {
 
       const result = await caller.globalSettings.get();
       expect(result.claudeModel).toBe('opus');
+    });
+  });
+
+  describe('setAdvisorModel', () => {
+    it('should set the advisor model', async () => {
+      const caller = createCaller();
+
+      await caller.globalSettings.setAdvisorModel({ advisorModel: 'claude-opus-4-8' });
+
+      const result = await caller.globalSettings.get();
+      expect(result.advisorModel).toBe('claude-opus-4-8');
+    });
+
+    it('should default to null (resolved to claude-fable-5) when unset', async () => {
+      const caller = createCaller();
+
+      const result = await caller.globalSettings.get();
+      expect(result.advisorModel).toBeNull();
+      expect(result.defaultAdvisorModel).toBe('claude-fable-5');
+    });
+
+    it('should clear the model when set to null', async () => {
+      const caller = createCaller();
+
+      await caller.globalSettings.setAdvisorModel({ advisorModel: 'claude-opus-4-8' });
+      await caller.globalSettings.setAdvisorModel({ advisorModel: null });
+
+      const result = await caller.globalSettings.get();
+      expect(result.advisorModel).toBeNull();
+    });
+
+    it('should trim whitespace and treat blank as cleared', async () => {
+      const caller = createCaller();
+
+      await caller.globalSettings.setAdvisorModel({ advisorModel: '  claude-sonnet-4-6  ' });
+      expect((await caller.globalSettings.get()).advisorModel).toBe('claude-sonnet-4-6');
+
+      await caller.globalSettings.setAdvisorModel({ advisorModel: '  ' });
+      expect((await caller.globalSettings.get()).advisorModel).toBeNull();
     });
   });
 
