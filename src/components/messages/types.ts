@@ -12,7 +12,14 @@ export interface ToolCall {
 }
 
 export interface ContentBlock {
-  type: 'text' | 'thinking' | 'redacted_thinking' | 'tool_use' | 'tool_result';
+  type:
+    | 'text'
+    | 'thinking'
+    | 'redacted_thinking'
+    | 'tool_use'
+    | 'tool_result'
+    | 'server_tool_use'
+    | 'advisor_tool_result';
   text?: string;
   /** For thinking blocks */
   thinking?: string;
@@ -22,7 +29,8 @@ export interface ContentBlock {
   name?: string;
   input?: unknown;
   tool_use_id?: string;
-  content?: string;
+  /** String for tool_result; advisor_tool_result carries an encrypted object */
+  content?: string | { type?: string; encrypted_content?: string };
   is_error?: boolean;
 }
 

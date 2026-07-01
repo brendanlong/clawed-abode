@@ -65,6 +65,32 @@ export const ToolResultBlockSchema = z.object({
 export type ToolResultBlock = z.infer<typeof ToolResultBlockSchema>;
 
 /**
+ * Server tool use content block - a tool executed server-side by the Anthropic
+ * API (e.g. the advisor tool). Unlike `tool_use` it never goes through
+ * canUseTool, and its result arrives as a dedicated block type rather than a
+ * `tool_result` in a user message.
+ */
+export const ServerToolUseBlockSchema = z.object({
+  type: z.literal('server_tool_use'),
+  id: z.string(),
+  name: z.string(),
+  input: z.record(z.string(), z.unknown()),
+});
+export type ServerToolUseBlock = z.infer<typeof ServerToolUseBlockSchema>;
+
+/**
+ * Advisor tool result block - the advisor's response to a `server_tool_use`
+ * advisor call. The content is encrypted (`advisor_redacted_result`) and only
+ * readable by the model, so it carries nothing renderable.
+ */
+export const AdvisorToolResultBlockSchema = z.object({
+  type: z.literal('advisor_tool_result'),
+  tool_use_id: z.string(),
+  content: z.unknown().optional(),
+});
+export type AdvisorToolResultBlock = z.infer<typeof AdvisorToolResultBlockSchema>;
+
+/**
  * Union of all content block types
  */
 export const ContentBlockSchema = z.discriminatedUnion('type', [
@@ -73,6 +99,8 @@ export const ContentBlockSchema = z.discriminatedUnion('type', [
   RedactedThinkingBlockSchema,
   ToolUseBlockSchema,
   ToolResultBlockSchema,
+  ServerToolUseBlockSchema,
+  AdvisorToolResultBlockSchema,
 ]);
 export type ContentBlock = z.infer<typeof ContentBlockSchema>;
 
