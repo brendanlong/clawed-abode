@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { trpc } from '@/lib/trpc';
 import { extractRepoFullName } from '@/lib/utils';
+import { deriveSessionDisplayStatus } from '@/lib/session-display-status';
 import { SessionStatusBadge } from '@/components/SessionStatusBadge';
 import { SessionActionButton } from '@/components/SessionActionButton';
 import { PrStatusIndicator } from '@/components/PrStatusIndicator';
@@ -54,7 +55,9 @@ export function SessionListItem({ session, onMutationSuccess }: SessionListItemP
 
         <div className="flex items-center gap-4">
           {pullRequest && <PrStatusIndicator pullRequest={pullRequest} />}
-          <SessionStatusBadge status={session.status} />
+          <SessionStatusBadge
+            status={deriveSessionDisplayStatus(session.status, session.turnActive)}
+          />
 
           <div className="flex items-center gap-2">
             {/* No controls for archived sessions - they're read-only */}

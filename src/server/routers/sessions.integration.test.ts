@@ -20,6 +20,7 @@ vi.mock('../services/claude-runner', () => ({
   sendUserMessage: vi.fn().mockResolvedValue(undefined),
   stopSession: vi.fn(),
   cleanupSession: vi.fn(),
+  isClaudeRunning: vi.fn().mockReturnValue(false),
 }));
 
 // Mock settings-merger
@@ -208,6 +209,8 @@ describe('sessionsRouter integration', () => {
 
       expect(result.sessions).toHaveLength(2);
       expect(result.sessions.map((s) => s.name).sort()).toEqual(['Session 1', 'Session 2']);
+      // No in-memory query exists for either session, so no turn is active.
+      expect(result.sessions.every((s) => s.turnActive === false)).toBe(true);
     });
 
     it('should filter by status', async () => {

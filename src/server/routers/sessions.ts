@@ -3,7 +3,12 @@ import { router, protectedProcedure } from '../trpc';
 import { prisma } from '@/lib/prisma';
 import { TRPCError } from '@trpc/server';
 import { cloneRepo, createEmptyWorkspace, removeWorkspace } from '../services/worktree-manager';
-import { sendUserMessage, stopSession, cleanupSession } from '../services/claude-runner';
+import {
+  sendUserMessage,
+  stopSession,
+  cleanupSession,
+  isClaudeRunning,
+} from '../services/claude-runner';
 import { sseEvents } from '../services/events';
 import { createLogger, toError } from '@/lib/logger';
 import { env } from '@/lib/env';
@@ -150,7 +155,14 @@ export const sessionsRouter = router({
         orderBy: { updatedAt: 'desc' },
       });
 
-      return { sessions };
+      // Attach the live main-agent turn state (in-memory lookup, no extra query)
+      // so the list can distinguish "running" (generating) from "waiting" (idle).
+      return {
+        sessions: sessions.map((session) => ({
+          ...session,
+          turnActive: isClaudeRunning(session.id),
+        })),
+      };
     }),
 
   get: protectedProcedure

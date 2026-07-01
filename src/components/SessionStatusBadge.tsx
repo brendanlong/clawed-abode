@@ -1,15 +1,20 @@
 import { Badge } from '@/components/ui/badge';
+import type { SessionDisplayStatus } from '@/lib/session-display-status';
 
-type SessionStatus = 'running' | 'stopped' | 'creating' | 'error' | 'archived';
-
-const statusVariants: Record<SessionStatus, 'default' | 'secondary' | 'destructive' | 'outline'> = {
+const statusVariants: Record<
+  SessionDisplayStatus,
+  'default' | 'secondary' | 'destructive' | 'outline'
+> = {
   running: 'default',
-  stopped: 'secondary',
+  waiting: 'secondary',
+  stopped: 'outline',
   creating: 'outline',
   error: 'destructive',
   archived: 'outline',
 };
 
 export function SessionStatusBadge({ status }: { status: string }) {
-  return <Badge variant={statusVariants[status as SessionStatus] || 'secondary'}>{status}</Badge>;
+  return (
+    <Badge variant={statusVariants[status as SessionDisplayStatus] || 'secondary'}>{status}</Badge>
+  );
 }
