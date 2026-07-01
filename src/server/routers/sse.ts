@@ -5,7 +5,25 @@ import type { SessionStreamEvent, SessionListEvent } from '../services/events';
 import { tracked } from '@trpc/server';
 import { prisma } from '@/lib/prisma';
 import { isPartialMessageId } from '@/lib/message-cache';
+import { assertNeverFallback } from '@/lib/claude-messages';
 import { formatResumeToken, parseResumeToken, EMPTY_WATERMARK } from '@/lib/sse-resume';
+
+/**
+ * Map a session-list channel event to the shape yielded over the SSE stream.
+ * Exhaustive over {@link SessionListEvent}: adding a new member fails to compile
+ * here until it is handled (at runtime an unknown event is skipped — `null` —
+ * which is safe because the client refetches on reconnect anyway).
+ */
+function toSessionListStreamEvent(event: SessionListEvent) {
+  switch (event.type) {
+    case 'session_update':
+      return { kind: 'session' as const, session: event.session };
+    case 'claude_running':
+      return { kind: 'running' as const, sessionId: event.sessionId, running: event.running };
+    default:
+      return assertNeverFallback(event, null);
+  }
+}
 
 /**
  * Eagerly subscribe to an event source and buffer events into a queue. Subscribing
@@ -142,13 +160,10 @@ export const sseRouter = router({
       try {
         while (!signal?.aborted) {
           if (queue.length > 0) {
-            const event = queue.shift()!;
-            yield tracked(
-              String(counter++),
-              event.type === 'session_update'
-                ? { kind: 'session' as const, session: event.session }
-                : { kind: 'running' as const, sessionId: event.sessionId, running: event.running }
-            );
+            const streamEvent = toSessionListStreamEvent(queue.shift()!);
+            if (streamEvent) {
+              yield tracked(String(counter++), streamEvent);
+            }
           } else {
             await waitForEvent(signal);
           }
