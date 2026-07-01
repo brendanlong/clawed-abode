@@ -232,7 +232,7 @@ describe('claude-runner persistent streaming loop', () => {
     stopSession(sessionId);
   });
 
-  it('bumps session.lastActivityAt when a message is persisted', async () => {
+  it('bumps lastActivityAt on user sends but not on assistant traffic', async () => {
     const fake = makeFakeQuery();
     _setQueryFactory(fake.factory);
     const sessionId = await createRunningSession();
@@ -242,19 +242,24 @@ describe('claude-runner persistent streaming loop', () => {
       data: { lastActivityAt: past },
     });
 
+    // Sending a prompt is a user interaction — it bumps (awaited before return).
     await sendUserMessage(sessionId, 'hello');
+    const afterSend = await testPrisma.session.findUniqueOrThrow({ where: { id: sessionId } });
+    expect(afterSend.lastActivityAt.getTime()).toBeGreaterThan(past.getTime());
+
+    // Assistant/result persistence must NOT bump, so sessions working in the
+    // background don't reorder the list. Pin a sentinel and let the turn finish.
+    const sentinel = new Date('2021-01-01T00:00:00Z');
+    await testPrisma.session.update({
+      where: { id: sessionId },
+      data: { lastActivityAt: sentinel },
+    });
     fake.emit(assistant('hi there'));
     fake.emit(result());
     await waitFor(async () => (await messagesFor(sessionId)).length >= 3);
 
-    // The bump commits right after each message insert, so poll for it.
-    const lastMessage = (await messagesFor(sessionId)).at(-1)!;
-    await waitFor(async () => {
-      const session = await testPrisma.session.findUniqueOrThrow({ where: { id: sessionId } });
-      return session.lastActivityAt.getTime() === lastMessage.createdAt.getTime();
-    });
-    const session = await testPrisma.session.findUniqueOrThrow({ where: { id: sessionId } });
-    expect(session.lastActivityAt.getTime()).toBeGreaterThan(past.getTime());
+    const afterTurn = await testPrisma.session.findUniqueOrThrow({ where: { id: sessionId } });
+    expect(afterTurn.lastActivityAt.getTime()).toBe(sentinel.getTime());
 
     stopSession(sessionId);
   });

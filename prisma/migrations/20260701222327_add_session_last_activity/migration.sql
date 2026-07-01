@@ -24,9 +24,9 @@ CREATE INDEX "Session_status_idx" ON "Session"("status");
 PRAGMA foreign_keys=ON;
 PRAGMA defer_foreign_keys=OFF;
 
--- Backfill: preserve ordering for existing sessions using their real last
--- activity (latest message time, falling back to updatedAt).
+-- Backfill: preserve ordering for existing sessions using their last user
+-- interaction (latest user-typed message, falling back to updatedAt).
 UPDATE "Session" SET "lastActivityAt" = COALESCE(
-    (SELECT MAX(m."createdAt") FROM "Message" m WHERE m."sessionId" = "Session"."id"),
+    (SELECT MAX(m."createdAt") FROM "Message" m WHERE m."sessionId" = "Session"."id" AND m."type" = 'user'),
     "updatedAt"
 );
