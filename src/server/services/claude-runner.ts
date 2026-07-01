@@ -479,9 +479,9 @@ async function buildSdkOptions(params: {
   // the next Stop→Start, not live mid-session.
   //
   // NOTE: this only wires up the `advisor_20260301` tool on CLI/SDK versions that
-  // implement it. Verified with @anthropic-ai/claude-agent-sdk 0.3.196 (see
-  // scripts/spike-advisor-proxy.ts): the setting alone injects the tool into the
-  // request; the `advisor-tool-2026-03-01` beta header is already sent by the CLI
+  // implement it. Verified with @anthropic-ai/claude-agent-sdk 0.3.196 by capturing
+  // the CLI's outgoing /v1/messages request: the setting alone injects the tool;
+  // the `advisor-tool-2026-03-01` beta header is already sent by the CLI
   // unconditionally. On 0.3.173 the setting is inert (the tool is absent from the
   // bundle entirely). 0.3.198 wires the tool but ships a dangling
   // `SDKConversationResetMessage` type that poisons `SDKMessage` to `any` and
