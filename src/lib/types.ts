@@ -34,6 +34,7 @@ export interface Session {
   initialPrompt: string | null;
   createdAt: Date;
   updatedAt: Date;
+  lastActivityAt: Date;
   archivedAt: Date | null;
 }
 

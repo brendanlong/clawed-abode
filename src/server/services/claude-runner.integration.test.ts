@@ -232,6 +232,33 @@ describe('claude-runner persistent streaming loop', () => {
     stopSession(sessionId);
   });
 
+  it('bumps session.lastActivityAt when a message is persisted', async () => {
+    const fake = makeFakeQuery();
+    _setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+    const past = new Date('2020-01-01T00:00:00Z');
+    await testPrisma.session.update({
+      where: { id: sessionId },
+      data: { lastActivityAt: past },
+    });
+
+    await sendUserMessage(sessionId, 'hello');
+    fake.emit(assistant('hi there'));
+    fake.emit(result());
+    await waitFor(async () => (await messagesFor(sessionId)).length >= 3);
+
+    // The bump commits right after each message insert, so poll for it.
+    const lastMessage = (await messagesFor(sessionId)).at(-1)!;
+    await waitFor(async () => {
+      const session = await testPrisma.session.findUniqueOrThrow({ where: { id: sessionId } });
+      return session.lastActivityAt.getTime() === lastMessage.createdAt.getTime();
+    });
+    const session = await testPrisma.session.findUniqueOrThrow({ where: { id: sessionId } });
+    expect(session.lastActivityAt.getTime()).toBeGreaterThan(past.getTime());
+
+    stopSession(sessionId);
+  });
+
   it('keeps the query alive across turns and survives a background task past turn end', async () => {
     const fake = makeFakeQuery();
     _setQueryFactory(fake.factory);

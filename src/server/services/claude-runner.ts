@@ -206,6 +206,19 @@ async function insertMessage(params: {
       const message = await prisma.message.create({
         data: { id, sessionId, sequence, type, content: contentJson },
       });
+      // Bump the session's activity timestamp (drives session-list ordering).
+      // Best-effort: an ordering hiccup must never fail message persistence.
+      await prisma.session
+        .update({
+          where: { id: sessionId },
+          data: { lastActivityAt: message.createdAt },
+        })
+        .catch((err: unknown) => {
+          log.warn('Failed to bump session lastActivityAt', {
+            sessionId,
+            error: toError(err).message,
+          });
+        });
       sseEvents.emitNewMessage(sessionId, {
         id,
         sessionId,
