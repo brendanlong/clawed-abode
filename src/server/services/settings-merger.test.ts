@@ -33,10 +33,16 @@ describe('resolveAdvisorModel', () => {
     expect(resolveAdvisorModel('claude-opus-4-8')).toBe('claude-opus-4-8');
   });
 
-  it('falls back to the default advisor model when unset', () => {
+  it('falls back to the default advisor model when unset or blank', () => {
     expect(resolveAdvisorModel(null)).toBe(DEFAULT_ADVISOR_MODEL);
     expect(resolveAdvisorModel(undefined)).toBe(DEFAULT_ADVISOR_MODEL);
+    expect(resolveAdvisorModel('')).toBe(DEFAULT_ADVISOR_MODEL);
+    expect(resolveAdvisorModel('   ')).toBe(DEFAULT_ADVISOR_MODEL);
     expect(DEFAULT_ADVISOR_MODEL).toBe('claude-fable-5');
+  });
+
+  it('trims a surrounding-whitespace override', () => {
+    expect(resolveAdvisorModel('  claude-opus-4-8  ')).toBe('claude-opus-4-8');
   });
 });
 
