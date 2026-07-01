@@ -152,7 +152,7 @@ export const sessionsRouter = router({
           ...(input?.status ? { status: input.status } : {}),
           ...(!includeArchived && !input?.status ? { status: { not: 'archived' } } : {}),
         },
-        orderBy: { updatedAt: 'desc' },
+        orderBy: { lastActivityAt: 'desc' },
       });
 
       // Attach the live main-agent turn state (in-memory lookup, no extra query)

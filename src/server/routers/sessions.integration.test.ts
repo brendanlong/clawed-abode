@@ -213,6 +213,40 @@ describe('sessionsRouter integration', () => {
       expect(result.sessions.every((s) => s.turnActive === false)).toBe(true);
     });
 
+    it('orders sessions by lastActivityAt, most recent first', async () => {
+      await testPrisma.session.createMany({
+        data: [
+          {
+            name: 'Oldest activity',
+            workspacePath: '/w/1',
+            status: 'stopped',
+            lastActivityAt: new Date('2024-01-01T00:00:00Z'),
+          },
+          {
+            name: 'Newest activity',
+            workspacePath: '/w/2',
+            status: 'stopped',
+            lastActivityAt: new Date('2024-03-01T00:00:00Z'),
+          },
+          {
+            name: 'Middle activity',
+            workspacePath: '/w/3',
+            status: 'running',
+            lastActivityAt: new Date('2024-02-01T00:00:00Z'),
+          },
+        ],
+      });
+
+      const caller = createCaller('auth-session-id');
+      const result = await caller.sessions.list();
+
+      expect(result.sessions.map((s) => s.name)).toEqual([
+        'Newest activity',
+        'Middle activity',
+        'Oldest activity',
+      ]);
+    });
+
     it('should filter by status', async () => {
       await testPrisma.session.createMany({
         data: [
