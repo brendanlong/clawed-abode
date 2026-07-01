@@ -78,6 +78,13 @@ export type SessionStreamEvent =
 // Global channel name for cross-session list updates (not session-scoped).
 const SESSION_LIST_EVENT = 'session-list';
 
+/**
+ * Events fanned out to the global session-list channel: session record changes
+ * plus main-agent running-state changes, so the home page can show
+ * running/waiting per session without a subscription per row.
+ */
+export type SessionListEvent = SessionUpdateEvent | ClaudeRunningEvent;
+
 // Create a typed event emitter
 class SSEEventEmitter extends EventEmitter {
   emitSessionUpdate(sessionId: string, session: Session): void {
@@ -104,11 +111,15 @@ class SSEEventEmitter extends EventEmitter {
   }
 
   emitClaudeRunning(sessionId: string, running: boolean): void {
-    this.emit(`claude:${sessionId}`, {
+    const event: ClaudeRunningEvent = {
       type: 'claude_running',
       sessionId,
       running,
-    } satisfies ClaudeRunningEvent);
+    };
+    this.emit(`claude:${sessionId}`, event);
+    // Fan out to the global list channel so the home page can flip a session
+    // between "running" and "waiting" live.
+    this.emit(SESSION_LIST_EVENT, event);
   }
 
   emitCommands(sessionId: string, commands: SlashCommand[]): void {
@@ -210,7 +221,7 @@ class SSEEventEmitter extends EventEmitter {
   }
 
   // Subscribe to session list changes across all sessions (home page).
-  onSessionListChanged(callback: (event: SessionUpdateEvent) => void): () => void {
+  onSessionListChanged(callback: (event: SessionListEvent) => void): () => void {
     this.on(SESSION_LIST_EVENT, callback);
     return () => this.off(SESSION_LIST_EVENT, callback);
   }

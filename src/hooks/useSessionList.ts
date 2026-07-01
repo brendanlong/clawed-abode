@@ -8,6 +8,8 @@ export interface Session {
   repoUrl: string | null;
   branch: string | null;
   status: string;
+  /** Whether the main agent is mid-turn (live, in-memory; false when stopped). */
+  turnActive: boolean;
   updatedAt: Date;
 }
 
