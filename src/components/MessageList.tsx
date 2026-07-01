@@ -94,7 +94,7 @@ function buildToolResultMap(messages: Message[]): {
       for (const block of resultBlocks) {
         if (block.tool_use_id && toolUseIds.has(block.tool_use_id)) {
           resultMap.set(block.tool_use_id, {
-            content: block.content,
+            content: typeof block.content === 'string' ? block.content : undefined,
             is_error: block.is_error,
           });
         } else {

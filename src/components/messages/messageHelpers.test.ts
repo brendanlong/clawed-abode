@@ -444,6 +444,32 @@ describe('hasRenderableAssistantContent', () => {
     ).toBe(true);
   });
 
+  it('returns true for a server_tool_use block (e.g. the advisor tool)', () => {
+    expect(
+      hasRenderableAssistantContent({
+        message: {
+          content: [{ type: 'server_tool_use', id: 'srvtoolu_1', name: 'advisor', input: {} }],
+        },
+      })
+    ).toBe(true);
+  });
+
+  it('returns false when the only block is an advisor_tool_result (encrypted, nothing to show)', () => {
+    expect(
+      hasRenderableAssistantContent({
+        message: {
+          content: [
+            {
+              type: 'advisor_tool_result',
+              tool_use_id: 'srvtoolu_1',
+              content: { type: 'advisor_redacted_result', encrypted_content: 'abc' },
+            },
+          ],
+        },
+      })
+    ).toBe(false);
+  });
+
   it('returns true for non-array content (handled elsewhere)', () => {
     expect(hasRenderableAssistantContent({ content: 'plain' })).toBe(true);
   });
