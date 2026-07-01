@@ -206,19 +206,6 @@ async function insertMessage(params: {
       const message = await prisma.message.create({
         data: { id, sessionId, sequence, type, content: contentJson },
       });
-      // Bump the session's activity timestamp (drives session-list ordering).
-      // Best-effort: an ordering hiccup must never fail message persistence.
-      await prisma.session
-        .update({
-          where: { id: sessionId },
-          data: { lastActivityAt: message.createdAt },
-        })
-        .catch((err: unknown) => {
-          log.warn('Failed to bump session lastActivityAt', {
-            sessionId,
-            error: toError(err).message,
-          });
-        });
       sseEvents.emitNewMessage(sessionId, {
         id,
         sessionId,
@@ -246,6 +233,27 @@ async function insertMessage(params: {
   throw new Error(
     `Failed to insert message ${id} for ${sessionId} after ${SEQUENCE_RETRY_LIMIT} attempts`
   );
+}
+
+/**
+ * Bump the session's activity timestamp (drives session-list ordering). Called
+ * only for genuine user interactions — sending a prompt or answering an
+ * interactive tool call — not for assistant/background traffic, so sessions
+ * working in the background don't shuffle the list while the user is reading
+ * it. Best-effort: an ordering hiccup must never fail the interaction.
+ */
+async function bumpSessionActivity(sessionId: string): Promise<void> {
+  try {
+    await prisma.session.update({
+      where: { id: sessionId },
+      data: { lastActivityAt: new Date() },
+    });
+  } catch (err) {
+    log.warn('Failed to bump session lastActivityAt', {
+      sessionId,
+      error: toError(err).message,
+    });
+  }
 }
 
 /**
@@ -836,6 +844,7 @@ export async function sendUserMessage(sessionId: string, prompt: string): Promis
     type: 'user',
     content: { type: 'user', content: prompt },
   });
+  await bumpSessionActivity(sessionId);
 
   state.input.push({
     type: 'user',
@@ -870,6 +879,7 @@ export async function submitLiveToolResponse(
         toolName: pending.toolName,
       });
       pending.resolve(buildPermissionResult(response, pending.input));
+      await bumpSessionActivity(sessionId);
       return true;
     }
 
