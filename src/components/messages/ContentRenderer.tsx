@@ -20,6 +20,7 @@ import { ExitPlanModeDisplay } from './ExitPlanModeDisplay';
 import { TodoWriteDisplay } from './TodoWriteDisplay';
 import { AskUserQuestionDisplay } from './AskUserQuestionDisplay';
 import { ThinkingDisplay } from './ThinkingDisplay';
+import { ServerToolUseDisplay } from './ServerToolUseDisplay';
 
 /**
  * Map of tool names to their specialized display components.
@@ -47,6 +48,7 @@ function renderContentBlocks(blocks: ContentBlock[], toolResults?: ToolResultMap
   const thinkingParts: string[] = [];
   const textBlocks: string[] = [];
   const toolUseBlocks: ContentBlock[] = [];
+  const serverToolUseBlocks: ContentBlock[] = [];
   let hasRedactedThinking = false;
 
   for (const block of blocks) {
@@ -58,6 +60,8 @@ function renderContentBlocks(blocks: ContentBlock[], toolResults?: ToolResultMap
       hasRedactedThinking = true;
     } else if (block.type === 'tool_use') {
       toolUseBlocks.push(block);
+    } else if (block.type === 'server_tool_use') {
+      serverToolUseBlocks.push(block);
     }
   }
 
@@ -71,6 +75,13 @@ function renderContentBlocks(blocks: ContentBlock[], toolResults?: ToolResultMap
       {thinking.length > 0 && <ThinkingDisplay thinking={thinking} />}
       {hasRedactedThinking && <ThinkingDisplay thinking="" redacted />}
       {textBlocks.length > 0 && <MarkdownContent content={textBlocks.join('\n')} />}
+      {serverToolUseBlocks.length > 0 && (
+        <div className="mt-2 space-y-1">
+          {serverToolUseBlocks.map((block) => (
+            <ServerToolUseDisplay key={block.id} name={block.name ?? 'unknown'} />
+          ))}
+        </div>
+      )}
       {toolUseBlocks.length > 0 && (
         <div className="mt-2 space-y-2">
           {toolUseBlocks.map((block) => {

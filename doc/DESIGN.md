@@ -400,6 +400,12 @@ When extended thinking is active, assistant messages include `thinking` (and, wh
 
 During redacted thinking the SDK also emits frequent `{ type: 'system', subtype: 'thinking_tokens' }` progress messages carrying only live token-count estimates. These are dropped (not persisted or shown) via `isIgnoredSystemMessage` in [`src/lib/claude-messages.ts`](../src/lib/claude-messages.ts) — one of several ignored system subtypes (see [System Message Subtypes](#system-message-subtypes)) — so they don't render as a stream of empty "System" bubbles.
 
+### Server Tool Blocks (Advisor)
+
+Some tools (notably the **advisor** tool) execute inside the Anthropic API rather than in the SDK. They never pass through `canUseTool`, and they appear in assistant messages as distinct content-block types: `server_tool_use` (the call) and `advisor_tool_result` (the response). The advisor's response content is encrypted (`advisor_redacted_result`) — only the model can read it, so the transcript has nothing human-readable to show for it.
+
+Persistence needs no special handling (classification keys off the top-level message type). Rendering does: `server_tool_use` counts as renderable content and displays as a one-line indicator ("Consulted the advisor…", `ServerToolUseDisplay`), while a message whose only block is an `advisor_tool_result` is deliberately hidden (`hasRenderableAssistantContent` returns false) since the indicator on the call block already marks the event and the result is unreadable.
+
 ### Message Classification
 
 Every message yielded by the SDK is routed through `classifyMessage(message)` in [`src/lib/claude-messages.ts`](../src/lib/claude-messages.ts), which returns one of `{ kind: 'stream_event' | 'skip' | 'persist' }` (with the DB column type for `persist`). It `switch`es over the SDK's `SDKMessage` discriminated union and ends in `assertNeverFallback`, a compile-time exhaustiveness guard: if a future SDK release adds a top-level message `type`, the build fails until it is handled here. At runtime an unrecognized type degrades to generic system persistence rather than throwing, so an unexpected frame never crashes the query loop.

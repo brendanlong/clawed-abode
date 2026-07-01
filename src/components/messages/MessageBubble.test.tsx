@@ -495,6 +495,59 @@ describe('MessageBubble', () => {
     });
   });
 
+  describe('server tool use (advisor)', () => {
+    it('renders an indicator for an advisor server_tool_use block', () => {
+      const message = {
+        type: 'assistant',
+        content: {
+          message: {
+            content: [{ type: 'server_tool_use', id: 'srvtoolu_1', name: 'advisor', input: {} }],
+          },
+        } as MessageContent,
+      };
+
+      render(<MessageBubble message={message} />);
+
+      expect(screen.getByText(/Consulted the advisor/)).toBeInTheDocument();
+    });
+
+    it('renders a generic indicator for other server tools', () => {
+      const message = {
+        type: 'assistant',
+        content: {
+          message: {
+            content: [{ type: 'server_tool_use', id: 'srvtoolu_2', name: 'web_search', input: {} }],
+          },
+        } as MessageContent,
+      };
+
+      render(<MessageBubble message={message} />);
+
+      expect(screen.getByText(/Used server tool: web_search/)).toBeInTheDocument();
+    });
+
+    it('renders nothing for a message containing only an advisor_tool_result', () => {
+      const message = {
+        type: 'assistant',
+        content: {
+          message: {
+            content: [
+              {
+                type: 'advisor_tool_result',
+                tool_use_id: 'srvtoolu_1',
+                content: { type: 'advisor_redacted_result', encrypted_content: 'abc' },
+              },
+            ],
+          },
+        } as MessageContent,
+      };
+
+      const { container } = render(<MessageBubble message={message} />);
+
+      expect(container).toBeEmptyDOMElement();
+    });
+  });
+
   describe('styling', () => {
     it('applies user message styling', () => {
       const message = {

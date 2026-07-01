@@ -96,7 +96,10 @@ export function hasRenderableAssistantContent(content: MessageContent): boolean 
         return typeof block.thinking === 'string' && block.thinking.trim().length > 0;
       case 'tool_use':
       case 'redacted_thinking':
+      case 'server_tool_use':
         return true;
+      // advisor_tool_result is deliberately not renderable: its content is
+      // encrypted, so the server_tool_use block is the visible indicator.
       default:
         return false;
     }
