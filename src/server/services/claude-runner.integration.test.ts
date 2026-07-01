@@ -39,6 +39,7 @@ const baseSettings = {
   envVars: [],
   mcpServers: [],
   claudeModel: undefined as string | undefined,
+  advisorModel: 'claude-fable-5',
   claudeApiKey: undefined,
   customSystemPrompt: null,
   globalSettings: {
@@ -46,6 +47,7 @@ const baseSettings = {
     systemPromptOverrideEnabled: false,
     systemPromptAppend: null,
     claudeModel: null,
+    advisorModel: null,
     claudeApiKey: null,
     envVars: [],
     mcpServers: [],

@@ -5,6 +5,13 @@ import { buildSystemPrompt } from '@/lib/system-prompt';
 import { env } from '@/lib/env';
 
 /**
+ * Model used for the server-side advisor tool when no global override is set.
+ * Setting an advisor model is also what enables the advisor tool for a session,
+ * so this default means the advisor tool is available (on Fable 5) out of the box.
+ */
+export const DEFAULT_ADVISOR_MODEL = 'claude-fable-5';
+
+/**
  * Fully merged session settings ready for container creation and Claude queries.
  */
 export interface MergedSessionSettings {
@@ -12,6 +19,8 @@ export interface MergedSessionSettings {
   envVars: ContainerEnvVar[];
   mcpServers: ContainerMcpServer[];
   claudeModel: string | undefined;
+  /** Always resolved (never undefined) — see {@link resolveAdvisorModel}. */
+  advisorModel: string;
   claudeApiKey: string | undefined;
   customSystemPrompt: string | null | undefined;
   globalSettings: GlobalContainerSettings;
@@ -47,6 +56,7 @@ export async function loadMergedSessionSettings(
       globalSettings.claudeModel,
       env.CLAUDE_MODEL
     ),
+    advisorModel: resolveAdvisorModel(globalSettings.advisorModel),
     claudeApiKey: globalSettings.claudeApiKey ?? undefined,
     customSystemPrompt: repoSettings?.customSystemPrompt,
     globalSettings,
@@ -63,6 +73,16 @@ export function resolveClaudeModel(
   envModel: string | undefined
 ): string | undefined {
   return repoModel ?? globalModel ?? envModel;
+}
+
+/**
+ * Resolve the effective advisor model: the global override, falling back to
+ * {@link DEFAULT_ADVISOR_MODEL}. Always returns a value, so the advisor tool is
+ * always enabled for a session (there is no "off" state — a global override only
+ * changes which model the advisor uses).
+ */
+export function resolveAdvisorModel(globalModel: string | null | undefined): string {
+  return globalModel ?? DEFAULT_ADVISOR_MODEL;
 }
 
 /**

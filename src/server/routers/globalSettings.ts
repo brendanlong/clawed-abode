@@ -20,6 +20,7 @@ import {
 } from '../services/settings-helpers';
 import { validateMcpServer } from '../services/mcp-validator';
 import { getModelSuggestions } from '../services/anthropic-models';
+import { DEFAULT_ADVISOR_MODEL } from '../services/settings-merger';
 
 const log = createLogger('globalSettings');
 
@@ -60,10 +61,12 @@ export const globalSettingsRouter = router({
       systemPromptOverrideEnabled: settings?.systemPromptOverrideEnabled ?? false,
       systemPromptAppend: settings?.systemPromptAppend ?? null,
       claudeModel: settings?.claudeModel ?? null,
+      advisorModel: settings?.advisorModel ?? null,
       hasClaudeApiKey: settings?.claudeApiKey !== null && settings?.claudeApiKey !== undefined,
       ttsSpeed: settings?.ttsSpeed ?? null,
       voiceAutoSend: settings?.voiceAutoSend ?? true,
       defaultClaudeModel: env.CLAUDE_MODEL,
+      defaultAdvisorModel: DEFAULT_ADVISOR_MODEL,
       hasEnvApiKey: !!env.CLAUDE_CODE_OAUTH_TOKEN,
     };
   }),
@@ -367,6 +370,30 @@ export const globalSettingsRouter = router({
       });
 
       log.info('Set Claude model', { claudeModel: model });
+
+      return { success: true };
+    }),
+
+  /**
+   * Set the advisor model (server-side advisor tool).
+   * Pass null or empty string to clear (reverts to DEFAULT_ADVISOR_MODEL).
+   */
+  setAdvisorModel: protectedProcedure
+    .input(
+      z.object({
+        advisorModel: z.string().max(200).nullable(),
+      })
+    )
+    .mutation(async ({ input }) => {
+      const model = input.advisorModel?.trim() || null;
+
+      await prisma.globalSettings.upsert({
+        where: { id: GLOBAL_SETTINGS_ID },
+        create: { id: GLOBAL_SETTINGS_ID, advisorModel: model },
+        update: { advisorModel: model },
+      });
+
+      log.info('Set advisor model', { advisorModel: model });
 
       return { success: true };
     }),
