@@ -386,16 +386,17 @@ export function _clearPersistedCommands(sessionId: string): void {
 }
 
 /**
- * Build the environment variables to pass to the Claude SDK.
- *
- * Starts with a fresh login shell's environment, then overlays the global Claude
- * API key and finally the user-configured env vars (highest precedence).
+ * Merge the agent environment from its three sources, lowest to highest
+ * precedence: the base (login shell) env, the global Claude API key, and the
+ * user-configured env vars. Never removes vars from the base env — a
+ * CLAUDE_CODE_OAUTH_TOKEN exported by the login shell passes through when no
+ * claudeApiKey is configured.
  */
-export async function buildAgentEnv(
+export function mergeAgentEnv(
+  baseEnv: Record<string, string>,
   userEnvVars: ContainerEnvVar[],
   claudeApiKey?: string | null
-): Promise<Record<string, string | undefined>> {
-  const baseEnv = await getBaseEnv();
+): Record<string, string | undefined> {
   const agentEnv: Record<string, string | undefined> = { ...baseEnv };
 
   if (claudeApiKey) {
@@ -407,6 +408,17 @@ export async function buildAgentEnv(
   }
 
   return agentEnv;
+}
+
+/**
+ * Build the environment variables to pass to the Claude SDK: a fresh login
+ * shell's environment merged with the configured overrides (see mergeAgentEnv).
+ */
+async function buildAgentEnv(
+  userEnvVars: ContainerEnvVar[],
+  claudeApiKey?: string | null
+): Promise<Record<string, string | undefined>> {
+  return mergeAgentEnv(await getBaseEnv(), userEnvVars, claudeApiKey);
 }
 
 /** Convert merged MCP server settings into the SDK's record shape. */
