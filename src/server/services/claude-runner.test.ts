@@ -42,7 +42,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 }));
 
 import {
-  buildAgentEnv,
+  mergeAgentEnv,
   getBaseEnv,
   resetBaseEnvCache,
   mergeSlashCommands,
@@ -96,27 +96,17 @@ describe('claude-runner', () => {
     });
   });
 
-  describe('buildAgentEnv', () => {
-    beforeEach(() => {
-      resetBaseEnvCache();
+  describe('mergeAgentEnv', () => {
+    const baseEnv = { PATH: '/usr/bin:/bin', HOME: '/home/user' };
+
+    it('should include base env vars', () => {
+      const env = mergeAgentEnv(baseEnv, []);
+      expect(env.PATH).toBe('/usr/bin:/bin');
+      expect(env.HOME).toBe('/home/user');
     });
 
-    it('should include base env vars from login shell', async () => {
-      const env = await buildAgentEnv([]);
-      // Should have standard shell vars
-      expect(env.PATH).toBeDefined();
-      expect(env.HOME).toBeDefined();
-    });
-
-    it('should not include server-only env vars', async () => {
-      const env = await buildAgentEnv([]);
-      expect(env.PASSWORD_HASH).toBeUndefined();
-      expect(env.ENCRYPTION_KEY).toBeUndefined();
-      expect(env.DATABASE_URL).toBeUndefined();
-    });
-
-    it('should overlay user-configured env vars', async () => {
-      const env = await buildAgentEnv([
+    it('should overlay user-configured env vars', () => {
+      const env = mergeAgentEnv(baseEnv, [
         { name: 'MY_API_KEY', value: 'key-123' },
         { name: 'MY_SECRET', value: 'decrypted-secret' },
       ]);
@@ -124,30 +114,42 @@ describe('claude-runner', () => {
       expect(env.MY_SECRET).toBe('decrypted-secret');
     });
 
-    it('should allow user env vars to override base env vars', async () => {
-      const env = await buildAgentEnv([{ name: 'HOME', value: '/custom/home' }]);
+    it('should allow user env vars to override base env vars', () => {
+      const env = mergeAgentEnv(baseEnv, [{ name: 'HOME', value: '/custom/home' }]);
       expect(env.HOME).toBe('/custom/home');
     });
 
-    it('should set CLAUDE_CODE_OAUTH_TOKEN when claudeApiKey is provided', async () => {
-      const env = await buildAgentEnv([], 'custom-api-key');
+    it('should set CLAUDE_CODE_OAUTH_TOKEN when claudeApiKey is provided', () => {
+      const env = mergeAgentEnv(baseEnv, [], 'custom-api-key');
       expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe('custom-api-key');
     });
 
-    it('should not set CLAUDE_CODE_OAUTH_TOKEN when claudeApiKey is null', async () => {
-      const env = await buildAgentEnv([], null);
-      // Should not have CLAUDE_CODE_OAUTH_TOKEN from the server process
-      // (it wouldn't be in a clean login shell either)
+    it('should not add CLAUDE_CODE_OAUTH_TOKEN when claudeApiKey is null', () => {
+      const env = mergeAgentEnv(baseEnv, [], null);
       expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
     });
 
-    it('should allow per-repo env var to override claudeApiKey', async () => {
-      const env = await buildAgentEnv(
+    it('should pass through a shell-provided CLAUDE_CODE_OAUTH_TOKEN when claudeApiKey is null', () => {
+      // Configuring the token via the login shell (~/.bashrc) is supported;
+      // the merge must not strip it just because no claudeApiKey is set.
+      const env = mergeAgentEnv({ ...baseEnv, CLAUDE_CODE_OAUTH_TOKEN: 'shell-token' }, [], null);
+      expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe('shell-token');
+    });
+
+    it('should allow per-repo env var to override claudeApiKey', () => {
+      const env = mergeAgentEnv(
+        baseEnv,
         [{ name: 'CLAUDE_CODE_OAUTH_TOKEN', value: 'per-repo-key' }],
         'global-api-key'
       );
       // Per-repo env var should take precedence over global API key
       expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe('per-repo-key');
+    });
+
+    it('should not mutate the base env', () => {
+      const input = { ...baseEnv };
+      mergeAgentEnv(input, [{ name: 'HOME', value: '/custom/home' }], 'key');
+      expect(input).toEqual(baseEnv);
     });
   });
 
