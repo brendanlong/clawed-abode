@@ -30,7 +30,7 @@ function toSessionListStreamEvent(event: SessionListEvent) {
  * synchronously (rather than on the first generator `next()`) ensures events that
  * arrive while we replay history are not missed.
  */
-function createEventQueue<T>(subscribe: (push: (event: T) => void) => () => void) {
+export function createEventQueue<T>(subscribe: (push: (event: T) => void) => () => void) {
   const queue: T[] = [];
   let resolveWait: (() => void) | null = null;
   const unsubscribe = subscribe((event) => {
