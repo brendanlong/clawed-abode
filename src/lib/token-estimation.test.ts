@@ -237,14 +237,17 @@ describe('token-estimation', () => {
       expect(result.percentUsed).toBeCloseTo(50.25, 1);
     });
 
-    it('should extract usage from modelUsage in result messages', () => {
+    it('should not sum cumulative modelUsage token counts into totals', () => {
+      // modelUsage token counts are cumulative per query process — summing them
+      // across results would double count. Only per-turn `usage` is summed.
       const messages = [
         {
-          type: 'assistant',
+          type: 'result',
           content: {
-            type: 'assistant',
-            message: {
-              usage: { input_tokens: 3000, output_tokens: 500 },
+            type: 'result',
+            usage: { input_tokens: 100, output_tokens: 50 },
+            modelUsage: {
+              'claude-sonnet-4-20250514': { inputTokens: 100, outputTokens: 50 },
             },
           },
         },
@@ -252,14 +255,10 @@ describe('token-estimation', () => {
           type: 'result',
           content: {
             type: 'result',
+            usage: { input_tokens: 200, output_tokens: 100 },
             modelUsage: {
-              'claude-sonnet-4-20250514': {
-                inputTokens: 3000,
-                outputTokens: 1500,
-                cacheReadInputTokens: 200,
-                cacheCreationInputTokens: 100,
-                contextWindow: 200000,
-              },
+              // Cumulative: includes the first turn's tokens
+              'claude-sonnet-4-20250514': { inputTokens: 300, outputTokens: 150 },
             },
           },
         },
@@ -267,10 +266,8 @@ describe('token-estimation', () => {
 
       const result = estimateTokenUsage(messages);
 
-      expect(result.inputTokens).toBe(3000);
-      expect(result.outputTokens).toBe(1500);
-      expect(result.cacheReadTokens).toBe(200);
-      expect(result.cacheCreationTokens).toBe(100);
+      expect(result.inputTokens).toBe(300);
+      expect(result.outputTokens).toBe(150);
     });
 
     it('should detect model from system init message', () => {
@@ -409,6 +406,134 @@ describe('token-estimation', () => {
       expect(result.contextWindow).toBe(150000);
     });
 
+    it('should use context window from modelUsage even when top-level usage is present', () => {
+      // Real result messages always carry both; the context window (e.g. 1M for
+      // [1m] models) must not be ignored just because usage was parsed.
+      const messages = [
+        {
+          type: 'assistant',
+          content: {
+            type: 'assistant',
+            message: {
+              usage: {
+                input_tokens: 250_000,
+                output_tokens: 1_000,
+                cache_read_input_tokens: 50_000,
+              },
+            },
+          },
+        },
+        {
+          type: 'result',
+          content: {
+            type: 'result',
+            usage: { input_tokens: 250_000, output_tokens: 1_000 },
+            modelUsage: {
+              'claude-opus-4-8[1m]': {
+                inputTokens: 250_000,
+                outputTokens: 1_000,
+                contextWindow: 1_000_000,
+              },
+            },
+          },
+        },
+      ];
+
+      const result = estimateTokenUsage(messages);
+
+      expect(result.contextWindow).toBe(1_000_000);
+      // (250k + 1k + 50k) / 1M ≈ 30.1%, not capped at 100%
+      expect(result.percentUsed).toBeCloseTo(30.1, 1);
+    });
+
+    it('should resolve the context window by the main model when modelUsage has several models', () => {
+      const messages = [
+        {
+          type: 'system',
+          content: { type: 'system', subtype: 'init', model: 'claude-sonnet-4-6' },
+        },
+        {
+          type: 'result',
+          content: {
+            type: 'result',
+            usage: { input_tokens: 1000, output_tokens: 500 },
+            modelUsage: {
+              // The main model's window must win even when another entry
+              // (e.g. an advisor or subagent model) reports a larger one.
+              'claude-opus-4-8[1m]': { contextWindow: 1_000_000 },
+              'claude-sonnet-4-6': { contextWindow: 200_000 },
+            },
+          },
+        },
+      ];
+
+      const result = estimateTokenUsage(messages);
+
+      expect(result.contextWindow).toBe(200_000);
+    });
+
+    it('should include cache_creation_input_tokens in context percentage', () => {
+      const messages = [
+        {
+          type: 'assistant',
+          content: {
+            type: 'assistant',
+            message: {
+              usage: {
+                input_tokens: 1000,
+                output_tokens: 500,
+                cache_read_input_tokens: 40_000,
+                cache_creation_input_tokens: 8_500,
+              },
+            },
+          },
+        },
+      ];
+
+      const result = estimateTokenUsage(messages);
+
+      // (1000 + 40000 + 8500 + 500) / 200000 = 25%
+      expect(result.percentUsed).toBeCloseTo(25, 1);
+    });
+
+    it('should skip subagent assistant messages for context percentage', () => {
+      const messages = [
+        {
+          type: 'assistant',
+          content: {
+            type: 'assistant',
+            parent_tool_use_id: null,
+            message: {
+              usage: { input_tokens: 100_000, output_tokens: 1_000 },
+            },
+          },
+        },
+        {
+          type: 'assistant',
+          content: {
+            type: 'assistant',
+            // A subagent message runs in its own, smaller context
+            parent_tool_use_id: 'toolu_abc123',
+            message: {
+              usage: { input_tokens: 5_000, output_tokens: 200 },
+            },
+          },
+        },
+        {
+          type: 'result',
+          content: {
+            type: 'result',
+            usage: { input_tokens: 105_000, output_tokens: 1_200 },
+          },
+        },
+      ];
+
+      const result = estimateTokenUsage(messages);
+
+      // Context % from the last TOP-LEVEL assistant message: (100k + 1k) / 200k
+      expect(result.percentUsed).toBeCloseTo(50.5, 1);
+    });
+
     it('should fall back to total tokens for % when no assistant messages', () => {
       // This shouldn't happen in practice but tests the fallback
       const messages = [
@@ -459,7 +584,9 @@ describe('token-estimation', () => {
       expect(result.totalCostUsd).toBeCloseTo(0.0523, 4);
     });
 
-    it('should sum total_cost_usd from multiple result messages', () => {
+    it('should treat total_cost_usd as cumulative within one query process', () => {
+      // total_cost_usd is cumulative since the query process started, so the
+      // session total is the LAST value, not the sum of all results.
       const messages = [
         {
           type: 'result',
@@ -473,17 +600,70 @@ describe('token-estimation', () => {
           type: 'result',
           content: {
             type: 'result',
-            total_cost_usd: 0.1,
+            total_cost_usd: 0.15,
             usage: { input_tokens: 2000, output_tokens: 1000 },
+          },
+        },
+        {
+          type: 'result',
+          content: {
+            type: 'result',
+            total_cost_usd: 0.35,
+            usage: { input_tokens: 1500, output_tokens: 800 },
           },
         },
       ];
 
       const result = estimateTokenUsage(messages);
 
-      expect(result.totalCostUsd).toBeCloseTo(0.15, 4);
-      expect(result.inputTokens).toBe(3000);
-      expect(result.outputTokens).toBe(1500);
+      expect(result.totalCostUsd).toBeCloseTo(0.35, 4);
+      // Per-turn usage IS summed
+      expect(result.inputTokens).toBe(4500);
+      expect(result.outputTokens).toBe(2300);
+    });
+
+    it('should detect a query-process reset (cost drop) and sum segment totals', () => {
+      // A stop/start or server restart re-establishes the query and resets the
+      // SDK's cumulative counter to zero. The session total is the sum of each
+      // process segment's final cumulative value: 0.5 + 0.2 = 0.7.
+      const messages = [
+        { type: 'result', content: { type: 'result', total_cost_usd: 0.3, usage: {} } },
+        { type: 'result', content: { type: 'result', total_cost_usd: 0.5, usage: {} } },
+        // Query re-established: counter reset
+        { type: 'result', content: { type: 'result', total_cost_usd: 0.1, usage: {} } },
+        { type: 'result', content: { type: 'result', total_cost_usd: 0.2, usage: {} } },
+      ];
+
+      const result = estimateTokenUsage(messages);
+
+      expect(result.totalCostUsd).toBeCloseTo(0.7, 4);
+    });
+
+    it('should handle multiple query-process resets', () => {
+      const messages = [
+        { type: 'result', content: { type: 'result', total_cost_usd: 1.0, usage: {} } },
+        // Reset 1
+        { type: 'result', content: { type: 'result', total_cost_usd: 0.4, usage: {} } },
+        { type: 'result', content: { type: 'result', total_cost_usd: 0.9, usage: {} } },
+        // Reset 2
+        { type: 'result', content: { type: 'result', total_cost_usd: 0.25, usage: {} } },
+      ];
+
+      const result = estimateTokenUsage(messages);
+
+      // 1.0 + 0.9 + 0.25
+      expect(result.totalCostUsd).toBeCloseTo(2.15, 4);
+    });
+
+    it('should not treat an equal cumulative cost as a reset', () => {
+      const messages = [
+        { type: 'result', content: { type: 'result', total_cost_usd: 0.5, usage: {} } },
+        { type: 'result', content: { type: 'result', total_cost_usd: 0.5, usage: {} } },
+      ];
+
+      const result = estimateTokenUsage(messages);
+
+      expect(result.totalCostUsd).toBeCloseTo(0.5, 4);
     });
 
     it('should deduplicate assistant messages with the same id (parallel tool uses)', () => {

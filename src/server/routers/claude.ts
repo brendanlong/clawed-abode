@@ -266,30 +266,29 @@ export const claudeRouter = router({
         });
       }
 
-      const [resultAndSystemMessages, lastAssistantMessage] = await Promise.all([
+      // The context-% calculation needs the latest top-level (main-agent)
+      // assistant message; subagent messages (parent_tool_use_id set) run in
+      // their own context and would misreport the main conversation's size.
+      const [resultAndSystemMessages, lastTopLevelAssistant] = await Promise.all([
         prisma.message.findMany({
           where: {
             sessionId: input.sessionId,
             type: { in: ['result', 'system'] },
           },
-          select: { type: true, content: true, sequence: true },
+          select: { type: true, content: true },
           orderBy: { sequence: 'asc' },
         }),
-        prisma.message.findFirst({
-          where: {
-            sessionId: input.sessionId,
-            type: 'assistant',
-          },
-          select: { type: true, content: true, sequence: true },
-          orderBy: { sequence: 'desc' },
-        }),
+        prisma.$queryRaw<{ type: string; content: string }[]>`
+          SELECT type, content FROM Message
+          WHERE sessionId = ${input.sessionId}
+            AND type = 'assistant'
+            AND json_extract(content, '$.parent_tool_use_id') IS NULL
+          ORDER BY sequence DESC
+          LIMIT 1
+        `,
       ]);
 
-      const allMessages = [...resultAndSystemMessages];
-      if (lastAssistantMessage) {
-        allMessages.push(lastAssistantMessage);
-      }
-      allMessages.sort((a, b) => a.sequence - b.sequence);
+      const allMessages = [...resultAndSystemMessages, ...lastTopLevelAssistant];
 
       const parsedMessages = allMessages.map((m) => ({
         type: m.type,

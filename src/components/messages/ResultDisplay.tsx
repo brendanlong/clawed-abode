@@ -119,7 +119,7 @@ export function ResultDisplay({ content }: { content: ResultContent }) {
             {label}
           </Badge>
           <span className="text-muted-foreground text-xs">
-            {formatCost(content.total_cost_usd)} · {content.num_turns} turn
+            {formatCost(content.total_cost_usd)} total · {content.num_turns} turn
             {content.num_turns !== 1 ? 's' : ''} · {formatDuration(content.duration_ms)}
           </span>
           <span className="text-muted-foreground ml-auto">{expanded ? '−' : '+'}</span>
@@ -159,8 +159,10 @@ export function ResultDisplay({ content }: { content: ResultContent }) {
                 <span className="text-muted-foreground">API Duration:</span>
                 <span className="ml-2">{formatDuration(content.duration_api_ms)}</span>
               </div>
+              {/* total_cost_usd is cumulative since the query process started,
+                  not the cost of this turn alone */}
               <div>
-                <span className="text-muted-foreground">Cost:</span>
+                <span className="text-muted-foreground">Session cost:</span>
                 <span className="ml-2">{formatCost(content.total_cost_usd)}</span>
               </div>
               <div>
@@ -227,7 +229,7 @@ export function ResultDisplay({ content }: { content: ResultContent }) {
                         )}
                         {usage.costUSD !== undefined && (
                           <div>
-                            <span className="text-muted-foreground">Cost:</span>
+                            <span className="text-muted-foreground">Session cost:</span>
                             <span className="ml-1">{formatCost(usage.costUSD)}</span>
                           </div>
                         )}
