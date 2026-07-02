@@ -431,6 +431,17 @@ With one persistent query per session, "is Claude busy?" splits into two **indep
 
 **Ephemeral retry status.** `api_retry` messages (the SDK retrying a rate-limited/overloaded request) are ignored above so they never pollute the transcript, but the _current_ retry state is surfaced live. The runner parses each via `parseRetryState` ([`claude-messages.ts`](../src/lib/claude-messages.ts)), stores it on the in-memory session state, and emits it over the `retry` SSE channel as a latest-value event (`{ attempt, maxRetries, errorStatus?, error? } | null`). Any non-retry message clears it (the request recovered), as does turn end. The client reads it via `claude.getRetryState` (seeded once, updated by the stream, resynced on reconnect) and `ClaudeStatusIndicator` shows "Retrying (overloaded) — attempt n/10…" while it is set. Because it is in-memory only, a server restart loses it — acceptable for a transient indicator.
 
+### Cost & Context Usage Estimation
+
+The `ContextUsageIndicator` (context % + session cost) is computed server-side by the pure `estimateTokenUsage` ([`src/lib/token-estimation.ts`](../src/lib/token-estimation.ts)), served by `claude.getTokenUsage` from the persisted result/system messages plus the latest top-level assistant message. It relies on result-message semantics that were verified empirically against real sessions, because the two families of fields on a `result` have **different scopes**:
+
+- **Top-level `usage`** is **per-turn** — the tokens consumed by the turn that just completed. Summing it across result messages gives correct session token totals.
+- **`total_cost_usd` and `modelUsage`** are **cumulative since the query process started**. With the persistent per-session query one process spans many turns, so every result repeats and extends the totals of the results before it — summing these double-counts (roughly quadratically in turns). The counters reset to zero when the query is re-established (stop→start, server restart); `resume` does **not** carry cost forward.
+
+Session cost is therefore aggregated by segmenting the results into query processes and summing each segment's final cumulative value. Segment boundaries are detected purely from the data: cumulative cost is monotonically non-decreasing within a process, so a **drop marks a reset**. (A reset is masked only if a new process's first turn costs more than the entire previous process — the total is then slightly undercounted by that previous segment; acceptable for an indicator.) `modelUsage` token counts and `costUSD` are never summed; only its `contextWindow` is read.
+
+Context % reflects how full the window currently is, **not** total consumption: it uses the most recent **top-level** assistant message's `input + cache_read + cache_creation + output` tokens (the prompt of the latest API call plus its output, which becomes input next call). Subagent messages (`parent_tool_use_id` set) are skipped — they run in their own, smaller context. The window capacity comes from `modelUsage[mainModel].contextWindow` (a result can report several models — e.g. a haiku utility model alongside a 1M-context main model — so the entry matching the detected main model wins, falling back to the largest, then to 200k).
+
 ## Message Storage & Pagination
 
 Messages are stored with a monotonically increasing sequence number per session (see `Message` model in [`prisma/schema.prisma`](../prisma/schema.prisma)). This enables efficient cursor-based pagination.

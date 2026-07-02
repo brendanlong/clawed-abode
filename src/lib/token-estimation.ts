@@ -1,33 +1,35 @@
 /**
  * Token usage estimation utilities
  *
- * Estimates context window usage from Claude Code messages.
+ * Estimates context window usage and total session cost from Claude Code messages.
  *
- * Key insight: The "context usage %" should reflect how full the context window
- * currently is, NOT the total tokens consumed across all API calls. We use the
- * most recent assistant message's input_tokens + cache_read_input_tokens (the full
- * prompt size) plus output_tokens (which will become input in the next call).
+ * SDK result-message semantics (verified empirically against real sessions):
  *
- * Total consumed tokens (summed from result messages) are tracked separately
- * for cost display purposes.
+ * - The top-level `usage` on a result message is PER-TURN — the tokens consumed
+ *   by the turn that just completed. Summing it across result messages is correct.
+ * - `total_cost_usd` and `modelUsage` are CUMULATIVE since the query process
+ *   started. With the persistent per-session query, one process spans many turns,
+ *   so every result repeats (and extends) the totals of the results before it.
+ *   The counters reset to zero when the query is re-established (stop/start,
+ *   server restart) — `resume` does not carry cost forward.
+ *
+ * Cost is therefore aggregated by segmenting the result messages into query
+ * processes and summing the final cumulative value of each segment. Segment
+ * boundaries are detected by the cumulative cost decreasing: it is monotonically
+ * non-decreasing within a process, so a drop means the counter reset.
+ *
+ * The "context usage %" reflects how full the context window currently is, NOT
+ * the total tokens consumed: it uses the most recent top-level (main-agent)
+ * assistant message's prompt size (input + cache read + cache creation) plus its
+ * output tokens (which become input in the next call). Subagent messages are
+ * skipped — they run in their own, smaller context.
  */
 
 import { z } from 'zod';
 
-// Default context window size (200k tokens for Claude models)
-// Claude Code uses context management, so the effective limit may vary
+// Default context window size, used until a result message reports the real one
+// via modelUsage.contextWindow (e.g. 1M for [1m] models).
 const DEFAULT_CONTEXT_WINDOW = 200_000;
-
-// Model-specific context windows (used when we can detect the model from system init)
-const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
-  'claude-opus-4-5-20251101': 200_000,
-  'claude-sonnet-4-20250514': 200_000,
-  'claude-3-5-sonnet-20241022': 200_000,
-  'claude-3-5-sonnet-20240620': 200_000,
-  'claude-3-opus-20240229': 200_000,
-  'claude-3-sonnet-20240229': 200_000,
-  'claude-3-haiku-20240307': 200_000,
-};
 
 /**
  * Structure representing token usage and context window occupancy
@@ -50,27 +52,16 @@ export interface TokenUsageStats {
   /** Detected model name */
   model?: string;
   /**
-   * Authoritative total cost in USD from result messages.
-   * Per the Anthropic Agent SDK docs, total_cost_usd in the result message
-   * is the authoritative cost figure for billing purposes.
+   * Total session cost in USD, aggregated from the authoritative (cumulative
+   * per query process) total_cost_usd on result messages.
    */
   totalCostUsd: number;
 }
 
 /**
- * Zod schema for message usage in assistant messages
+ * Zod schema for the `usage` object on assistant and result messages
  */
 const MessageUsageSchema = z.object({
-  input_tokens: z.number().optional(),
-  output_tokens: z.number().optional(),
-  cache_read_input_tokens: z.number().optional(),
-  cache_creation_input_tokens: z.number().optional(),
-});
-
-/**
- * Zod schema for result usage in result messages
- */
-const ResultUsageSchema = z.object({
   input_tokens: z.number().optional(),
   output_tokens: z.number().optional(),
   cache_read_input_tokens: z.number().optional(),
@@ -91,6 +82,7 @@ const SystemInitSchema = z.object({
  */
 const AssistantContentSchema = z.object({
   type: z.literal('assistant'),
+  parent_tool_use_id: z.string().nullable().optional(),
   message: z.object({
     id: z.string().optional(),
     usage: MessageUsageSchema.optional(),
@@ -99,24 +91,15 @@ const AssistantContentSchema = z.object({
 });
 
 /**
- * Schema for result message content
+ * Schema for result message content. Only contextWindow is read from
+ * modelUsage — its token counts and costUSD are cumulative per query process,
+ * so they must not be summed across results.
  */
 const ResultContentSchema = z.object({
   type: z.literal('result'),
   total_cost_usd: z.number().optional(),
-  usage: ResultUsageSchema.optional(),
-  modelUsage: z
-    .record(
-      z.string(),
-      z.object({
-        inputTokens: z.number().optional(),
-        outputTokens: z.number().optional(),
-        cacheReadInputTokens: z.number().optional(),
-        cacheCreationInputTokens: z.number().optional(),
-        contextWindow: z.number().optional(),
-      })
-    )
-    .optional(),
+  usage: MessageUsageSchema.optional(),
+  modelUsage: z.record(z.string(), z.object({ contextWindow: z.number().optional() })).optional(),
 });
 
 /**
@@ -128,6 +111,22 @@ interface Message {
   content: unknown;
 }
 
+interface ExtractedUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+}
+
+function extractUsageTokens(usage: z.infer<typeof MessageUsageSchema>): ExtractedUsage {
+  return {
+    inputTokens: usage.input_tokens ?? 0,
+    outputTokens: usage.output_tokens ?? 0,
+    cacheReadTokens: usage.cache_read_input_tokens ?? 0,
+    cacheCreationTokens: usage.cache_creation_input_tokens ?? 0,
+  };
+}
+
 /**
  * Extract usage from an assistant message.
  * Returns the message id for deduplication — per the Anthropic docs, multiple
@@ -136,39 +135,30 @@ interface Message {
  */
 function extractAssistantUsage(content: unknown): {
   messageId?: string;
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number;
-  cacheCreationTokens: number;
+  usage: ExtractedUsage;
   model?: string;
+  isTopLevel: boolean;
 } | null {
   const parsed = AssistantContentSchema.safeParse(content);
   if (!parsed.success || !parsed.data.message.usage) {
     return null;
   }
 
-  const usage = parsed.data.message.usage;
   return {
     messageId: parsed.data.message.id,
-    inputTokens: usage.input_tokens ?? 0,
-    outputTokens: usage.output_tokens ?? 0,
-    cacheReadTokens: usage.cache_read_input_tokens ?? 0,
-    cacheCreationTokens: usage.cache_creation_input_tokens ?? 0,
+    usage: extractUsageTokens(parsed.data.message.usage),
     model: parsed.data.message.model,
+    isTopLevel: parsed.data.parent_tool_use_id == null,
   };
 }
 
 /**
- * Extract usage from a result message.
- * Per the Anthropic Agent SDK docs, the result message contains authoritative
- * cumulative usage and total_cost_usd for billing purposes.
+ * Extract per-turn usage, the cumulative cost, and the context window from a
+ * result message.
  */
 function extractResultUsage(content: unknown): {
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number;
-  cacheCreationTokens: number;
-  contextWindow?: number;
+  usage: ExtractedUsage | null;
+  contextWindowByModel: Record<string, number>;
   totalCostUsd?: number;
 } | null {
   const parsed = ResultContentSchema.safeParse(content);
@@ -176,61 +166,18 @@ function extractResultUsage(content: unknown): {
     return null;
   }
 
-  const totalCostUsd = parsed.data.total_cost_usd;
-
-  // Try to get usage from top-level usage field
-  const usage = parsed.data.usage;
-  if (usage) {
-    return {
-      inputTokens: usage.input_tokens ?? 0,
-      outputTokens: usage.output_tokens ?? 0,
-      cacheReadTokens: usage.cache_read_input_tokens ?? 0,
-      cacheCreationTokens: usage.cache_creation_input_tokens ?? 0,
-      totalCostUsd,
-    };
-  }
-
-  // Try to get usage from modelUsage (aggregated per-model stats)
-  const modelUsage = parsed.data.modelUsage;
-  if (modelUsage) {
-    let inputTokens = 0;
-    let outputTokens = 0;
-    let cacheReadTokens = 0;
-    let cacheCreationTokens = 0;
-    let contextWindow: number | undefined;
-
-    for (const modelStats of Object.values(modelUsage)) {
-      inputTokens += modelStats.inputTokens ?? 0;
-      outputTokens += modelStats.outputTokens ?? 0;
-      cacheReadTokens += modelStats.cacheReadInputTokens ?? 0;
-      cacheCreationTokens += modelStats.cacheCreationInputTokens ?? 0;
-      if (modelStats.contextWindow) {
-        contextWindow = modelStats.contextWindow;
-      }
+  const contextWindowByModel: Record<string, number> = {};
+  for (const [model, modelStats] of Object.entries(parsed.data.modelUsage ?? {})) {
+    if (modelStats.contextWindow) {
+      contextWindowByModel[model] = modelStats.contextWindow;
     }
-
-    return {
-      inputTokens,
-      outputTokens,
-      cacheReadTokens,
-      cacheCreationTokens,
-      contextWindow,
-      totalCostUsd,
-    };
   }
 
-  // If we have a total_cost_usd but no usage breakdown, still return it
-  if (totalCostUsd !== undefined) {
-    return {
-      inputTokens: 0,
-      outputTokens: 0,
-      cacheReadTokens: 0,
-      cacheCreationTokens: 0,
-      totalCostUsd,
-    };
-  }
-
-  return null;
+  return {
+    usage: parsed.data.usage ? extractUsageTokens(parsed.data.usage) : null,
+    contextWindowByModel,
+    totalCostUsd: parsed.data.total_cost_usd,
+  };
 }
 
 /**
@@ -245,51 +192,21 @@ function extractModelFromInit(content: unknown): string | undefined {
 }
 
 /**
- * Get context window size for a model
- */
-function getContextWindow(model?: string): number {
-  if (!model) return DEFAULT_CONTEXT_WINDOW;
-
-  // Try exact match first
-  if (MODEL_CONTEXT_WINDOWS[model]) {
-    return MODEL_CONTEXT_WINDOWS[model];
-  }
-
-  // Try partial match (for versioned model names)
-  for (const [pattern, window] of Object.entries(MODEL_CONTEXT_WINDOWS)) {
-    if (model.includes(pattern.split('-').slice(0, 3).join('-'))) {
-      return window;
-    }
-  }
-
-  return DEFAULT_CONTEXT_WINDOW;
-}
-
-/**
- * Estimate token usage and context window occupancy from a list of messages.
+ * Estimate token usage, session cost, and context window occupancy from a list
+ * of messages. Messages must be in chronological order (oldest first).
  *
- * Messages should be in chronological order (oldest first).
- *
- * Context percentage is based on the most recent assistant message's input_tokens,
- * which represents the actual size of the prompt/context sent in the latest API call.
- * This is the best proxy for how full the context window currently is.
- *
- * Total consumed tokens (inputTokens, outputTokens in the result) are summed from
- * result messages for cost tracking purposes.
+ * See the module docstring for the SDK semantics this relies on.
  */
 export function estimateTokenUsage(messages: Message[]): TokenUsageStats {
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
   let totalCacheReadTokens = 0;
   let totalCacheCreationTokens = 0;
-  let totalCostUsd = 0;
   let detectedModel: string | undefined;
-  let detectedContextWindow: number | undefined;
-
-  // Track the most recent assistant message's input tokens for context % calculation.
-  // input_tokens represents the full prompt size for that API call, which is our
-  // best proxy for current context window occupancy.
-  let lastAssistantInputTokens = 0;
+  // Latest known context window per model, from result modelUsage. A result can
+  // report several models (the main agent plus utility/subagent models), so the
+  // window is resolved against the main model after model detection.
+  const contextWindowByModel: Record<string, number> = {};
 
   // First pass: look for model info in system init
   for (const msg of messages) {
@@ -302,72 +219,84 @@ export function estimateTokenUsage(messages: Message[]): TokenUsageStats {
     }
   }
 
-  // Sum up total consumed tokens and cost from result messages.
-  // Per the Anthropic Agent SDK docs, result messages contain authoritative
-  // cumulative usage and total_cost_usd for billing purposes.
+  // Sum per-turn usage across result messages, and aggregate the cumulative
+  // total_cost_usd by process segment: within one query process the value is
+  // monotonically non-decreasing, so a drop marks a re-established query whose
+  // counter reset. The session total is the sum of each segment's final value.
   const resultMessages = messages.filter((m) => m.type === 'result');
+  let closedSegmentsCost = 0;
+  let currentSegmentCost = 0;
   for (const resultMsg of resultMessages) {
-    const usage = extractResultUsage(resultMsg.content);
-    if (usage) {
-      totalInputTokens += usage.inputTokens;
-      totalOutputTokens += usage.outputTokens;
-      totalCacheReadTokens += usage.cacheReadTokens;
-      totalCacheCreationTokens += usage.cacheCreationTokens;
-      if (usage.contextWindow) {
-        detectedContextWindow = usage.contextWindow;
+    const extracted = extractResultUsage(resultMsg.content);
+    if (!extracted) {
+      continue;
+    }
+    if (extracted.usage) {
+      totalInputTokens += extracted.usage.inputTokens;
+      totalOutputTokens += extracted.usage.outputTokens;
+      totalCacheReadTokens += extracted.usage.cacheReadTokens;
+      totalCacheCreationTokens += extracted.usage.cacheCreationTokens;
+    }
+    Object.assign(contextWindowByModel, extracted.contextWindowByModel);
+    if (extracted.totalCostUsd !== undefined) {
+      if (extracted.totalCostUsd < currentSegmentCost) {
+        closedSegmentsCost += currentSegmentCost;
       }
-      if (usage.totalCostUsd !== undefined) {
-        totalCostUsd += usage.totalCostUsd;
-      }
+      currentSegmentCost = extracted.totalCostUsd;
     }
   }
+  const totalCostUsd = closedSegmentsCost + currentSegmentCost;
 
-  // Find the most recent assistant message to determine current context occupancy.
-  // We iterate in reverse to find it efficiently.
+  // Find the most recent top-level (main-agent) assistant message to determine
+  // current context occupancy. Subagent messages (parent_tool_use_id set) run
+  // in their own context and would misreport the main conversation's size.
+  let lastAssistantContextTokens = 0;
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i];
-    if (msg.type === 'assistant') {
-      const usage = extractAssistantUsage(msg.content);
-      if (usage) {
-        // input_tokens from the Anthropic API represents non-cached input tokens.
-        // cache_read_input_tokens are tokens read from cache.
-        // output_tokens will become part of the input in the next API call.
-        // Together they represent the current context window occupancy.
-        lastAssistantInputTokens = usage.inputTokens + usage.cacheReadTokens + usage.outputTokens;
-        if (usage.model && !detectedModel) {
-          detectedModel = usage.model;
-        }
-        break;
-      }
+    if (msg.type !== 'assistant') {
+      continue;
     }
+    const extracted = extractAssistantUsage(msg.content);
+    if (!extracted || !extracted.isTopLevel) {
+      continue;
+    }
+    // The prompt of the latest API call is input + cache read + cache creation
+    // (newly cached tokens are part of the prompt too); output tokens become
+    // input in the next call. Together they are the current occupancy.
+    const { usage } = extracted;
+    lastAssistantContextTokens =
+      usage.inputTokens + usage.cacheReadTokens + usage.cacheCreationTokens + usage.outputTokens;
+    if (extracted.model && !detectedModel) {
+      detectedModel = extracted.model;
+    }
+    break;
   }
 
-  // If we have no result messages yet, sum assistant messages for total consumed tokens.
-  // Per the Anthropic Agent SDK docs, multiple assistant messages in the same step
-  // share the same message id and identical usage. We deduplicate by message id
-  // to avoid double-counting.
+  // If we have no result messages yet (mid-first-turn), sum assistant messages
+  // for total consumed tokens. Multiple assistant messages in the same step
+  // share the same message id and identical usage, so deduplicate by id.
   if (resultMessages.length === 0) {
     const processedMessageIds = new Set<string>();
     for (const msg of messages) {
-      if (msg.type === 'assistant') {
-        const usage = extractAssistantUsage(msg.content);
-        if (usage) {
-          // Skip if we've already processed this message ID (parallel tool uses
-          // share the same id and usage per Anthropic docs)
-          if (usage.messageId) {
-            if (processedMessageIds.has(usage.messageId)) {
-              continue;
-            }
-            processedMessageIds.add(usage.messageId);
-          }
-          totalInputTokens += usage.inputTokens;
-          totalOutputTokens += usage.outputTokens;
-          totalCacheReadTokens += usage.cacheReadTokens;
-          totalCacheCreationTokens += usage.cacheCreationTokens;
-          if (usage.model && !detectedModel) {
-            detectedModel = usage.model;
-          }
+      if (msg.type !== 'assistant') {
+        continue;
+      }
+      const extracted = extractAssistantUsage(msg.content);
+      if (!extracted) {
+        continue;
+      }
+      if (extracted.messageId) {
+        if (processedMessageIds.has(extracted.messageId)) {
+          continue;
         }
+        processedMessageIds.add(extracted.messageId);
+      }
+      totalInputTokens += extracted.usage.inputTokens;
+      totalOutputTokens += extracted.usage.outputTokens;
+      totalCacheReadTokens += extracted.usage.cacheReadTokens;
+      totalCacheCreationTokens += extracted.usage.cacheCreationTokens;
+      if (extracted.model && !detectedModel) {
+        detectedModel = extracted.model;
       }
     }
   }
@@ -375,14 +304,18 @@ export function estimateTokenUsage(messages: Message[]): TokenUsageStats {
   // Calculate total tokens consumed (for cost/display)
   const totalTokens = totalInputTokens + totalOutputTokens;
 
-  // Determine context window capacity
-  const contextWindow = detectedContextWindow ?? getContextWindow(detectedModel);
+  // Resolve the context window: the main model's reported window, falling back
+  // to the largest reported one (the main model dwarfs the utility models), then
+  // the default.
+  const knownWindows = Object.values(contextWindowByModel);
+  const contextWindow =
+    (detectedModel ? contextWindowByModel[detectedModel] : undefined) ??
+    (knownWindows.length > 0 ? Math.max(...knownWindows) : DEFAULT_CONTEXT_WINDOW);
 
   // Calculate percentage of context window currently used.
-  // Use the most recent assistant message's prompt size as the indicator.
   // Fall back to total tokens if no assistant messages found (shouldn't happen in practice).
   const currentContextTokens =
-    lastAssistantInputTokens > 0 ? lastAssistantInputTokens : totalTokens;
+    lastAssistantContextTokens > 0 ? lastAssistantContextTokens : totalTokens;
   const percentUsed = contextWindow > 0 ? (currentContextTokens / contextWindow) * 100 : 0;
 
   return {
