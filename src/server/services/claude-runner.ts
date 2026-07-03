@@ -47,6 +47,7 @@ import {
   type MergedSessionSettings,
 } from './settings-merger';
 import { StreamAccumulator } from './stream-accumulator';
+import { sanitizeUntrustedInput, sanitizeToolOutputHook } from './input-sanitizer';
 import { PARTIAL_MESSAGE_ID_PREFIX } from '@/lib/message-cache';
 import type { ContainerEnvVar } from './repo-settings';
 
@@ -490,6 +491,13 @@ async function buildSdkOptions(params: {
       }
       return { behavior: 'allow', updatedInput: input };
     },
+    hooks: {
+      // Sanitize tool output before the model sees it — the primary
+      // hidden-content injection surface (web/MCP responses, fetched issue/PR
+      // bodies, file/command output). See sanitizeToolOutputHook for the
+      // shape-preserving rewrite, change-gating, and fail-open behavior.
+      PostToolUse: [{ hooks: [(input) => sanitizeToolOutputHook(input, sessionId)] }],
+    },
   };
 
   // cwd MUST be stable across a resume — Claude Code keys sessions by project dir.
@@ -845,6 +853,14 @@ export async function sendUserMessage(sessionId: string, prompt: string): Promis
   // Apply model/MCP changes made since the query was built (no-op on fresh establish).
   await applyLiveSettings(sessionId, state);
 
+  // Strip hidden-content injection vectors before the prompt is persisted or
+  // seen by the model. The same chokepoint covers typed prompts and the initial
+  // prompt (which may embed an untrusted GitHub issue body).
+  const sanitizedPrompt = await sanitizeUntrustedInput(prompt, {
+    sessionId,
+    source: 'user-message',
+  });
+
   if (!state.status.turnActive) {
     state.status = { ...state.status, turnActive: true };
     sseEvents.emitClaudeRunning(sessionId, true);
@@ -854,13 +870,13 @@ export async function sendUserMessage(sessionId: string, prompt: string): Promis
     sessionId,
     id: uuid(),
     type: 'user',
-    content: { type: 'user', content: prompt },
+    content: { type: 'user', content: sanitizedPrompt },
   });
   await bumpSessionActivity(sessionId);
 
   state.input.push({
     type: 'user',
-    message: { role: 'user', content: prompt },
+    message: { role: 'user', content: sanitizedPrompt },
     parent_tool_use_id: null,
   });
 }
