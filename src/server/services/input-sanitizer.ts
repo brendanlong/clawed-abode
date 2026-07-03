@@ -21,24 +21,33 @@ export interface SanitizeContext {
  * *detected and reported* but deliberately left in place by the library, so
  * they surface only as a logged warning.
  *
- * Defense-in-depth, not a hard boundary (this host intentionally runs without a
- * sandbox/egress firewall — see DESIGN.md "claude-guard" integration notes).
- * Never throws: `agent-input-sanitizer` always returns a string and only
- * reports changes, so on any internal failure the original text passes through.
+ * Defense-in-depth, not a hard boundary. The library documents that it never
+ * throws, but this sits on the critical path of every message send, so we fail
+ * open anyway: on any unexpected error the original text passes through rather
+ * than blocking the user. `sanitizeFn` is injectable so the fail-open path is
+ * testable without mocking the module.
  */
 export async function sanitizeUntrustedInput(
   text: string,
-  context: SanitizeContext
+  context: SanitizeContext,
+  sanitizeFn: typeof sanitize = sanitize
 ): Promise<string> {
-  const { cleaned, found, warnings } = await sanitize(text, { html: true });
-  if (found.length > 0) {
-    log.warn('Neutralized hidden content in untrusted input', {
+  try {
+    const { cleaned, found, warnings } = await sanitizeFn(text, { html: true });
+    if (found.length > 0) {
+      log.warn('Neutralized hidden content in untrusted input', {
+        ...context,
+        found,
+        warnings,
+      });
+    }
+    return cleaned;
+  } catch (err) {
+    log.error('Sanitizing untrusted input failed; passing original text through', toError(err), {
       ...context,
-      found,
-      warnings,
     });
+    return text;
   }
-  return cleaned;
 }
 
 /** Accumulates findings across a deep walk of one tool response. */

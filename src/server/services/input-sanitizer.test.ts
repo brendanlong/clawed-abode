@@ -48,6 +48,20 @@ describe('sanitizeUntrustedInput', () => {
   it('returns a string for empty input', async () => {
     expect(await sanitizeUntrustedInput('', ctx)).toBe('');
   });
+
+  it('fails open when the underlying sanitizer throws', async () => {
+    // The library documents never-throws, but a send must not be blocked if that
+    // contract is ever violated — the original text passes through instead.
+    const throwingSanitizer = async (): Promise<{
+      cleaned: string;
+      found: string[];
+      warnings: string[];
+    }> => {
+      throw new Error('parser exploded');
+    };
+    const text = 'some prompt text';
+    expect(await sanitizeUntrustedInput(text, ctx, throwingSanitizer)).toBe(text);
+  });
 });
 
 const toolCtx = { sessionId: 'test-session', source: 'tool:Bash' };
@@ -124,8 +138,9 @@ describe('sanitizeToolOutput', () => {
  * The model never runs here — these assert the handler's contract with the SDK:
  * returning `{}` means "use the tool's original output unchanged", and returning
  * `updatedToolOutput` is what the SDK substitutes before the model sees it. The
- * live-model end-to-end proof that the SDK honors that substitution is
- * `scripts/spike-tool-output-hook.ts`.
+ * live-model end-to-end behavior (the SDK honors the substitution only when it
+ * preserves the tool's original response shape) was verified with a live spike
+ * during PR #367.
  */
 function postToolUse(toolName: string, toolResponse: unknown): PostToolUseHookInput {
   return {
