@@ -5,13 +5,6 @@ import { buildSystemPrompt } from '@/lib/system-prompt';
 import { env } from '@/lib/env';
 
 /**
- * Model used for the server-side advisor tool when no global override is set.
- * Setting an advisor model is also what enables the advisor tool for a session,
- * so this default means the advisor tool is available (on Fable 5) out of the box.
- */
-export const DEFAULT_ADVISOR_MODEL = 'claude-fable-5';
-
-/**
  * Fully merged session settings ready for container creation and Claude queries.
  */
 export interface MergedSessionSettings {
@@ -19,8 +12,8 @@ export interface MergedSessionSettings {
   envVars: ContainerEnvVar[];
   mcpServers: ContainerMcpServer[];
   claudeModel: string | undefined;
-  /** Always resolved (never undefined) — see {@link resolveAdvisorModel}. */
-  advisorModel: string;
+  /** Effective advisor model, or null when the advisor tool is disabled — see {@link resolveAdvisorModel}. */
+  advisorModel: string | null;
   claudeApiKey: string | undefined;
   customSystemPrompt: string | null | undefined;
   globalSettings: GlobalContainerSettings;
@@ -76,16 +69,14 @@ export function resolveClaudeModel(
 }
 
 /**
- * Resolve the effective advisor model: the global override, falling back to
- * {@link DEFAULT_ADVISOR_MODEL}. Always returns a value, so the advisor tool is
- * always enabled for a session (there is no "off" state — a global override only
- * changes which model the advisor uses).
+ * Resolve the effective advisor model from the global setting. Returns the
+ * trimmed model when one is set, or null when unset/blank — null disables the
+ * advisor tool for the session (there is no default; the tool is opt-in).
  */
-export function resolveAdvisorModel(globalModel: string | null | undefined): string {
-  // Guard against an empty/whitespace value: returning "" would hand the SDK an
-  // invalid model. The write path already stores blank input as null, so this is
-  // defensive — it keeps the resolver correct regardless of how the value got there.
-  return globalModel?.trim() || DEFAULT_ADVISOR_MODEL;
+export function resolveAdvisorModel(globalModel: string | null | undefined): string | null {
+  // Normalize an empty/whitespace value to null so the caller has a single
+  // "disabled" signal regardless of how the value got there.
+  return globalModel?.trim() || null;
 }
 
 /**
