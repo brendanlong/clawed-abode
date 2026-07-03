@@ -492,6 +492,23 @@ ORDER BY sequence ASC;
 - `bypassPermissions` mode is used since the machine is dedicated to running this app
 - The machine should be dedicated to this application — not shared with other users
 
+### Input Sanitization
+
+Untrusted text is scrubbed before it reaches the model, using [`agent-input-sanitizer`](https://github.com/alexander-turner/agent-input-sanitizer), defending against hidden-content prompt injection (invisible Unicode, ANSI escapes, human-invisible HTML comments/elements) and surfacing data-exfil-shaped URLs.
+
+Both seams live in [`src/server/services/input-sanitizer.ts`](../src/server/services/input-sanitizer.ts) and log findings via the centralized logger. The library documents that it never throws (it always returns a string and only reports changes), and both paths additionally **fail open**, so on any unexpected internal error the original content passes through unmodified rather than blocking the send or the tool result.
+
+**Tool output (primary surface).** The real hidden-content injection vector is the text the agent _pulls in_ — web fetches, issue/PR bodies, MCP responses, file and command output — not the operator's own typed prompt. `sanitizeToolOutput` runs in a **`PostToolUse` hook** wired into `buildSdkOptions` in [`claude-runner.ts`](../src/server/services/claude-runner.ts) and returns `hookSpecificOutput.updatedToolOutput`, which the SDK substitutes for the tool result **before the model sees it** (verified with a live spike during [PR #367](https://github.com/brendanlong/clawed-abode/pull/367)). Because `tool_response` is tool-specific (a bare string, a Bash `{ stdout, stderr, … }` object, an array of `{ type: 'text', text }` blocks, …) and the SDK only honors `updatedToolOutput` when it **preserves the original shape**, the sanitizer deep-walks the response and rewrites string leaves in place. It replaces the output only when a string actually changed (so advisory-only exfil-URL detection does not trigger a needless substitution).
+
+**User prompt (secondary surface).** `sanitizeUntrustedInput` runs at the single `sendUserMessage` chokepoint, before the prompt is persisted or pushed into the SDK input channel. The operator's typed prompt is largely trusted, but this one seam still covers the genuinely untrusted case: the initial prompt embedding a GitHub issue body (which enters as a user message, not via a tool, so the `PostToolUse` hook would not see it). The sanitized text is what is both stored and shown, so the transcript reflects exactly what the model saw.
+
+**Filtering is visible to the agent.** When the tool-output hook rewrites a result, it also returns `additionalContext` (which the SDK delivers to the model alongside `updatedToolOutput`) telling the agent that hidden/invisible content was removed and — forwarding the library's own `warnings` — how to recover the exact bytes if a coding/tokenization task needs them (re-read with a hex dump such as `xxd` / `od -c`, whose ASCII output survives sanitization). This resolves the "scrubbed blind" failure mode: the agent can tell filtering occurred and work around it. The note is emitted only when output actually changed, so the benign path stays silent.
+
+- **Exfil-URL detection is advisory**: such URLs are reported (logged) but not rewritten, so the URL survives.
+- This is **defense-in-depth, not a hard boundary**. Without a sandbox/egress firewall it catches mistakes and obvious injection, not a determined adversary. The complementary AI-monitor layer (a per-tool-call gate) is intentionally deferred — see the [monitor-server sidecar issue](https://github.com/brendanlong/clawed-abode/issues/366).
+- The sanitizer is **precision-favoring** (deletion-only over a narrow payload-shaped set; preserves ZWNJ/ZWJ joiners; never strips silently), so the scrub-everything default rarely touches legitimate text — and the agent-facing recovery note above covers the residual cases. A per-session opt-out could still be added if a workflow needs raw bytes throughout.
+- Pinned to an exact version and added to `minimumReleaseAgeExclude` in `pnpm-workspace.yaml`, since the package ships releases faster than the repo's 7-day supply-chain quarantine; the exact pin prevents an excluded auto-bump from slipping in unreviewed.
+
 ### GitHub Token Security
 
 - Use a **fine-grained Personal Access Token** for minimum required permissions
