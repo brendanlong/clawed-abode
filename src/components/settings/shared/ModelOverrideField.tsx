@@ -19,14 +19,20 @@ import { cn } from '@/lib/utils';
 interface ModelOverrideFieldProps {
   /** The currently saved override, or null when none is set. */
   currentModel: string | null;
-  /** The value that applies when no override is set (shown as placeholder). */
+  /** The value shown as the edit-input placeholder (a suggested model). */
   defaultModel: string;
   /** Persists the new value. Pass null to clear the override. Call onSuccess once the save succeeds. */
   onSave: (model: string | null, onSuccess: () => void) => void;
   isPending: boolean;
   error: string | null;
+  /** Text shown in the value box when no model is set. Defaults to {@link defaultModel}. */
+  emptyLabel?: string;
+  /** Muted hint next to the empty label (e.g. "(default)"). Pass null to hide. */
+  emptyHint?: string | null;
   /** Button label shown when no override exists. */
   setButtonLabel?: string;
+  /** Button label for clearing the current model. */
+  clearButtonLabel?: string;
 }
 
 export function ModelOverrideField({
@@ -35,7 +41,10 @@ export function ModelOverrideField({
   onSave,
   isPending,
   error,
+  emptyLabel,
+  emptyHint = '(default)',
   setButtonLabel = 'Override',
+  clearButtonLabel = 'Reset to Default',
 }: ModelOverrideFieldProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState('');
@@ -160,9 +169,11 @@ export function ModelOverrideField({
     <div className="space-y-3">
       <div className="flex items-center gap-2">
         <code className="text-sm font-mono bg-muted px-2 py-1 rounded">
-          {currentModel ?? defaultModel}
+          {currentModel ?? emptyLabel ?? defaultModel}
         </code>
-        {!currentModel && <span className="text-xs text-muted-foreground">(default)</span>}
+        {!currentModel && emptyHint && (
+          <span className="text-xs text-muted-foreground">{emptyHint}</span>
+        )}
       </div>
       <div className="flex gap-2">
         <Button variant="outline" size="sm" onClick={startEditing}>
@@ -175,7 +186,7 @@ export function ModelOverrideField({
             onClick={() => onSave(null, () => {})}
             disabled={isPending}
           >
-            {isPending ? <Spinner size="sm" /> : 'Reset to Default'}
+            {isPending ? <Spinner size="sm" /> : clearButtonLabel}
           </Button>
         )}
       </div>

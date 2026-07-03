@@ -515,7 +515,9 @@ async function buildSdkOptions(params: {
 
   // The advisor model is a settings-schema field (no dedicated SDK option), so
   // inject it as an ad-hoc `--settings` source. This enables the server-side
-  // advisor tool for the session using the resolved model. Like env vars and the
+  // advisor tool for the session using the resolved model. It is opt-in: when no
+  // advisor model is set (null) the setting is omitted entirely, so the tool is
+  // not wired into requests and the advisor is disabled. Like env vars and the
   // system prompt, it is bound at query construction — a change takes effect on
   // the next Stop→Start, not live mid-session.
   //
@@ -528,10 +530,12 @@ async function buildSdkOptions(params: {
   // `SDKConversationResetMessage` type that poisons `SDKMessage` to `any` and
   // breaks the classifyMessage exhaustiveness guard — hence the exact pin to
   // 0.3.196 in package.json.
-  options.extraArgs = {
-    ...options.extraArgs,
-    settings: JSON.stringify({ advisorModel: settings.advisorModel }),
-  };
+  if (settings.advisorModel) {
+    options.extraArgs = {
+      ...options.extraArgs,
+      settings: JSON.stringify({ advisorModel: settings.advisorModel }),
+    };
+  }
 
   return options;
 }

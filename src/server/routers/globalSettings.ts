@@ -20,7 +20,7 @@ import {
 } from '../services/settings-helpers';
 import { validateMcpServer } from '../services/mcp-validator';
 import { getModelSuggestions } from '../services/anthropic-models';
-import { DEFAULT_ADVISOR_MODEL } from '../services/settings-merger';
+import { SUGGESTED_ADVISOR_MODEL } from '../services/settings-merger';
 
 const log = createLogger('globalSettings');
 
@@ -66,7 +66,7 @@ export const globalSettingsRouter = router({
       ttsSpeed: settings?.ttsSpeed ?? null,
       voiceAutoSend: settings?.voiceAutoSend ?? true,
       defaultClaudeModel: env.CLAUDE_MODEL,
-      defaultAdvisorModel: DEFAULT_ADVISOR_MODEL,
+      suggestedAdvisorModel: SUGGESTED_ADVISOR_MODEL,
       hasEnvApiKey: !!env.CLAUDE_CODE_OAUTH_TOKEN,
     };
   }),
@@ -376,7 +376,7 @@ export const globalSettingsRouter = router({
 
   /**
    * Set the advisor model (server-side advisor tool).
-   * Pass null or empty string to clear (reverts to DEFAULT_ADVISOR_MODEL).
+   * Pass null or empty string to disable the advisor tool (the default).
    */
   setAdvisorModel: protectedProcedure
     .input(

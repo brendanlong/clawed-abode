@@ -5,7 +5,6 @@ import {
   mcpServersEqual,
   resolveClaudeModel,
   resolveAdvisorModel,
-  DEFAULT_ADVISOR_MODEL,
 } from './settings-merger';
 import type { ContainerEnvVar, ContainerMcpServer } from './repo-settings';
 
@@ -29,19 +28,18 @@ describe('resolveClaudeModel', () => {
 });
 
 describe('resolveAdvisorModel', () => {
-  it('uses the global override when set', () => {
+  it('uses the global model when set', () => {
     expect(resolveAdvisorModel('claude-opus-4-8')).toBe('claude-opus-4-8');
   });
 
-  it('falls back to the default advisor model when unset or blank', () => {
-    expect(resolveAdvisorModel(null)).toBe(DEFAULT_ADVISOR_MODEL);
-    expect(resolveAdvisorModel(undefined)).toBe(DEFAULT_ADVISOR_MODEL);
-    expect(resolveAdvisorModel('')).toBe(DEFAULT_ADVISOR_MODEL);
-    expect(resolveAdvisorModel('   ')).toBe(DEFAULT_ADVISOR_MODEL);
-    expect(DEFAULT_ADVISOR_MODEL).toBe('claude-fable-5');
+  it('returns null (advisor disabled) when unset or blank', () => {
+    expect(resolveAdvisorModel(null)).toBeNull();
+    expect(resolveAdvisorModel(undefined)).toBeNull();
+    expect(resolveAdvisorModel('')).toBeNull();
+    expect(resolveAdvisorModel('   ')).toBeNull();
   });
 
-  it('trims a surrounding-whitespace override', () => {
+  it('trims a surrounding-whitespace model', () => {
     expect(resolveAdvisorModel('  claude-opus-4-8  ')).toBe('claude-opus-4-8');
   });
 });

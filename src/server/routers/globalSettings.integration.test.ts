@@ -58,7 +58,7 @@ describe('globalSettings router', () => {
         ttsSpeed: null,
         voiceAutoSend: true,
         defaultClaudeModel: 'opus[1m]',
-        defaultAdvisorModel: 'claude-fable-5',
+        suggestedAdvisorModel: 'claude-fable-5',
         hasEnvApiKey: true,
       });
     });
@@ -286,12 +286,12 @@ describe('globalSettings router', () => {
       expect(result.advisorModel).toBe('claude-opus-4-8');
     });
 
-    it('should default to null (resolved to claude-fable-5) when unset', async () => {
+    it('should default to null (advisor disabled) when unset', async () => {
       const caller = createCaller();
 
       const result = await caller.globalSettings.get();
       expect(result.advisorModel).toBeNull();
-      expect(result.defaultAdvisorModel).toBe('claude-fable-5');
+      expect(result.suggestedAdvisorModel).toBe('claude-fable-5');
     });
 
     it('should clear the model when set to null', async () => {
