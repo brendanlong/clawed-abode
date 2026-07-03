@@ -20,7 +20,7 @@ import {
 } from '../services/settings-helpers';
 import { validateMcpServer } from '../services/mcp-validator';
 import { getModelSuggestions } from '../services/anthropic-models';
-import { SUGGESTED_ADVISOR_MODEL } from '../services/settings-merger';
+import { SUGGESTED_ADVISOR_MODEL } from '@/lib/advisor';
 
 const log = createLogger('globalSettings');
 

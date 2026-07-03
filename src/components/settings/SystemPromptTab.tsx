@@ -10,6 +10,7 @@ import { Spinner } from '@/components/ui/spinner';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { trpc } from '@/lib/trpc';
+import { SUGGESTED_ADVISOR_MODEL } from '@/lib/advisor';
 import { ChevronDown, ChevronRight, RotateCcw, Check, X } from 'lucide-react';
 import { GlobalEnvVarsCard, GlobalMcpServersCard } from './GlobalSettingsTab';
 import { ModelOverrideField } from './shared/ModelOverrideField';
@@ -57,7 +58,7 @@ export function SystemPromptTab() {
         <CardContent>
           <AdvisorModelSection
             currentModel={settings?.advisorModel ?? null}
-            suggestedModel={settings?.suggestedAdvisorModel ?? 'claude-fable-5'}
+            suggestedModel={settings?.suggestedAdvisorModel ?? SUGGESTED_ADVISOR_MODEL}
             onUpdate={refetch}
           />
         </CardContent>
@@ -394,6 +395,7 @@ function AdvisorModelSection({
       emptyHint={null}
       setButtonLabel="Enable"
       clearButtonLabel="Disable"
+      emptySavesDefault
       onSave={(advisorModel, onSuccess) => {
         setError(null);
         mutation.mutate({ advisorModel }, { onSuccess });
