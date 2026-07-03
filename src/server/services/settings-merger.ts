@@ -5,14 +5,6 @@ import { buildSystemPrompt } from '@/lib/system-prompt';
 import { env } from '@/lib/env';
 
 /**
- * Suggested advisor model, offered as the input placeholder when enabling the
- * advisor tool in settings. It is **not** a fallback: with no advisor model set
- * the advisor tool is disabled (see {@link resolveAdvisorModel}). Setting a model
- * is what enables the tool for a session.
- */
-export const SUGGESTED_ADVISOR_MODEL = 'claude-fable-5';
-
-/**
  * Fully merged session settings ready for container creation and Claude queries.
  */
 export interface MergedSessionSettings {

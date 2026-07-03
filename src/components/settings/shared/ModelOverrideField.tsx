@@ -33,6 +33,12 @@ interface ModelOverrideFieldProps {
   setButtonLabel?: string;
   /** Button label for clearing the current model. */
   clearButtonLabel?: string;
+  /**
+   * When true, saving with an empty input adopts {@link defaultModel} instead of
+   * clearing to null. Used where "no model" is a distinct disabled state reached
+   * via the clear button, so an empty save should mean "the suggested model".
+   */
+  emptySavesDefault?: boolean;
 }
 
 export function ModelOverrideField({
@@ -45,6 +51,7 @@ export function ModelOverrideField({
   emptyHint = '(default)',
   setButtonLabel = 'Override',
   clearButtonLabel = 'Reset to Default',
+  emptySavesDefault = false,
 }: ModelOverrideFieldProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState('');
@@ -71,7 +78,9 @@ export function ModelOverrideField({
 
   const handleSave = () => {
     if (isPending) return;
-    onSave(editValue.trim() || null, () => setIsEditing(false));
+    const trimmed = editValue.trim();
+    const value = trimmed || (emptySavesDefault ? defaultModel : null);
+    onSave(value, () => setIsEditing(false));
   };
 
   const handleSelectSuggestion = (model: string) => {
