@@ -39,7 +39,7 @@ const baseSettings = {
   envVars: [],
   mcpServers: [],
   claudeModel: undefined as string | undefined,
-  advisorModel: 'claude-fable-5',
+  advisorModel: null as string | null,
   claudeApiKey: undefined,
   customSystemPrompt: null,
   globalSettings: {
@@ -449,6 +449,42 @@ describe('claude-runner persistent streaming loop', () => {
     expect(isClaudeRunning(sessionId)).toBe(false);
     // A second sendUserMessage would re-establish a fresh query (lazy revive).
     expect(getSessionBackgroundTasks(sessionId)).toEqual([]);
+  });
+
+  it('injects the advisor model into extraArgs.settings when one is set', async () => {
+    const fake = makeFakeQuery();
+    let options: { extraArgs?: Record<string, string> } | undefined;
+    _setQueryFactory((p) => {
+      options = p.options as { extraArgs?: Record<string, string> };
+      return fake.factory(p);
+    });
+    mockLoadSettings.mockResolvedValue({ ...baseSettings, advisorModel: 'claude-opus-4-8' });
+    const sessionId = await createRunningSession();
+
+    await sendUserMessage(sessionId, 'hello');
+    expect(options?.extraArgs?.settings).toBe(JSON.stringify({ advisorModel: 'claude-opus-4-8' }));
+
+    fake.emit(result());
+    await waitFor(() => !isClaudeRunning(sessionId));
+    stopSession(sessionId);
+  });
+
+  it('omits the settings arg entirely when the advisor is disabled', async () => {
+    const fake = makeFakeQuery();
+    let options: { extraArgs?: Record<string, string> } | undefined;
+    _setQueryFactory((p) => {
+      options = p.options as { extraArgs?: Record<string, string> };
+      return fake.factory(p);
+    });
+    // baseSettings has advisorModel: null (the disabled default).
+    const sessionId = await createRunningSession();
+
+    await sendUserMessage(sessionId, 'hello');
+    expect(options?.extraArgs?.settings).toBeUndefined();
+
+    fake.emit(result());
+    await waitFor(() => !isClaudeRunning(sessionId));
+    stopSession(sessionId);
   });
 
   it('applies a model change live on the next send', async () => {
