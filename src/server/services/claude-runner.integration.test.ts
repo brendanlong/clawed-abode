@@ -41,6 +41,7 @@ const baseSettings = {
   claudeModel: undefined as string | undefined,
   advisorModel: null as string | null,
   claudeApiKey: undefined,
+  settingSources: ['project'] as ('user' | 'project' | 'local')[],
   customSystemPrompt: null,
   globalSettings: {
     systemPromptOverride: null,
@@ -49,6 +50,7 @@ const baseSettings = {
     claudeModel: null,
     advisorModel: null,
     claudeApiKey: null,
+    settingSources: { user: false, project: true, local: false },
     envVars: [],
     mcpServers: [],
   },
@@ -463,6 +465,27 @@ describe('claude-runner persistent streaming loop', () => {
 
     await sendUserMessage(sessionId, 'hello');
     expect(options?.extraArgs?.settings).toBe(JSON.stringify({ advisorModel: 'claude-opus-4-8' }));
+
+    fake.emit(result());
+    await waitFor(() => !isClaudeRunning(sessionId));
+    stopSession(sessionId);
+  });
+
+  it('passes the resolved settingSources through to the SDK query', async () => {
+    const fake = makeFakeQuery();
+    let options: { settingSources?: string[] } | undefined;
+    _setQueryFactory((p) => {
+      options = p.options as { settingSources?: string[] };
+      return fake.factory(p);
+    });
+    mockLoadSettings.mockResolvedValue({
+      ...baseSettings,
+      settingSources: ['user', 'project'],
+    });
+    const sessionId = await createRunningSession();
+
+    await sendUserMessage(sessionId, 'hello');
+    expect(options?.settingSources).toEqual(['user', 'project']);
 
     fake.emit(result());
     await waitFor(() => !isClaudeRunning(sessionId));
