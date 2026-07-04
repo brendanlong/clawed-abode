@@ -57,6 +57,7 @@ describe('globalSettings router', () => {
         hasClaudeApiKey: false,
         ttsSpeed: null,
         voiceAutoSend: true,
+        settingSources: { user: false, project: true, local: false },
         defaultClaudeModel: 'opus[1m]',
         suggestedAdvisorModel: 'claude-fable-5',
         hasEnvApiKey: true,
@@ -80,6 +81,26 @@ describe('globalSettings router', () => {
       expect(result.systemPromptOverride).toBe('Custom override');
       expect(result.systemPromptOverrideEnabled).toBe(true);
       expect(result.systemPromptAppend).toBe('Custom append');
+    });
+  });
+
+  describe('setSettingSources', () => {
+    it('should persist the setting-source flags and reflect them in get', async () => {
+      const caller = createCaller();
+
+      await caller.globalSettings.setSettingSources({
+        user: true,
+        project: true,
+        local: false,
+      });
+
+      const result = await caller.globalSettings.get();
+      expect(result.settingSources).toEqual({ user: true, project: true, local: false });
+
+      const row = await testPrisma.globalSettings.findUnique({ where: { id: 'global' } });
+      expect(row?.settingSourceUser).toBe(true);
+      expect(row?.settingSourceProject).toBe(true);
+      expect(row?.settingSourceLocal).toBe(false);
     });
   });
 

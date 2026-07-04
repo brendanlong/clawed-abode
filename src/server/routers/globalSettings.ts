@@ -21,6 +21,7 @@ import {
 import { validateMcpServer } from '../services/mcp-validator';
 import { getModelSuggestions } from '../services/anthropic-models';
 import { SUGGESTED_ADVISOR_MODEL } from '@/lib/advisor';
+import { settingSourceFlagsFromRow, settingSourceFlagsSchema } from '@/lib/setting-sources';
 
 const log = createLogger('globalSettings');
 
@@ -65,6 +66,7 @@ export const globalSettingsRouter = router({
       hasClaudeApiKey: settings?.claudeApiKey !== null && settings?.claudeApiKey !== undefined,
       ttsSpeed: settings?.ttsSpeed ?? null,
       voiceAutoSend: settings?.voiceAutoSend ?? true,
+      settingSources: settingSourceFlagsFromRow(settings),
       defaultClaudeModel: env.CLAUDE_MODEL,
       suggestedAdvisorModel: SUGGESTED_ADVISOR_MODEL,
       hasEnvApiKey: !!env.CLAUDE_CODE_OAUTH_TOKEN,
@@ -394,6 +396,34 @@ export const globalSettingsRouter = router({
       });
 
       log.info('Set advisor model', { advisorModel: model });
+
+      return { success: true };
+    }),
+
+  /**
+   * Set which Claude Code scopes the SDK loads filesystem config from
+   * (CLAUDE.md, skills, hooks, permissions). Global-only; takes effect on the
+   * next Stop→Start of each session. See @/lib/setting-sources.
+   */
+  setSettingSources: protectedProcedure
+    .input(settingSourceFlagsSchema)
+    .mutation(async ({ input }) => {
+      await prisma.globalSettings.upsert({
+        where: { id: GLOBAL_SETTINGS_ID },
+        create: {
+          id: GLOBAL_SETTINGS_ID,
+          settingSourceUser: input.user,
+          settingSourceProject: input.project,
+          settingSourceLocal: input.local,
+        },
+        update: {
+          settingSourceUser: input.user,
+          settingSourceProject: input.project,
+          settingSourceLocal: input.local,
+        },
+      });
+
+      log.info('Set setting sources', input);
 
       return { success: true };
     }),

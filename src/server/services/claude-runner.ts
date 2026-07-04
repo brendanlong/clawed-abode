@@ -466,7 +466,11 @@ async function buildSdkOptions(params: {
     allowDangerouslySkipPermissions: true,
     includePartialMessages: true,
     cwd: workingDir,
-    settingSources: ['project'],
+    // Which Claude Code scopes the SDK loads filesystem config (CLAUDE.md,
+    // skills, hooks, permissions) from. Global-only, defaulting to project.
+    // Bound at construction like env/systemPrompt — a change takes effect on the
+    // next Stop→Start (the SDK exposes no live setter). See resolveSettingSources.
+    settingSources: settings.settingSources,
     systemPrompt: {
       type: 'preset',
       preset: 'claude_code',

@@ -119,6 +119,9 @@ model GlobalSettings {
   claudeApiKey              String?  // If set (encrypted), overrides CLAUDE_CODE_OAUTH_TOKEN env var
   ttsSpeed                  Float?   // TTS playback speed (0.25-4.0, default 1.0)
   voiceAutoSend             Boolean  @default(true) // Auto-send after speech-to-text transcription
+  settingSourceUser         Boolean  @default(false) // Load Claude settings from the user scope (~/.claude): skills, CLAUDE.md, hooks
+  settingSourceProject      Boolean  @default(true)  // Load Claude settings from the project scope (<cwd>/.claude)
+  settingSourceLocal        Boolean  @default(false) // Load Claude settings from the local scope (<cwd>/.claude/settings.local.json)
   createdAt                 DateTime @default(now())
   updatedAt                 DateTime @updatedAt
 }
