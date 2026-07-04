@@ -11,6 +11,12 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { trpc } from '@/lib/trpc';
 import { SUGGESTED_ADVISOR_MODEL } from '@/lib/advisor';
+import {
+  SETTING_SOURCES,
+  DEFAULT_SETTING_SOURCE_FLAGS,
+  type SettingSource,
+  type SettingSourceFlags,
+} from '@/lib/setting-sources';
 import { ChevronDown, ChevronRight, RotateCcw, Check, X } from 'lucide-react';
 import { GlobalEnvVarsCard, GlobalMcpServersCard } from './GlobalSettingsTab';
 import { ModelOverrideField } from './shared/ModelOverrideField';
@@ -111,6 +117,31 @@ export function SystemPromptTab() {
         <CardContent>
           <SystemPromptAppendSection
             currentAppend={settings?.systemPromptAppend ?? null}
+            onUpdate={refetch}
+          />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Load Claude Settings From</CardTitle>
+          <CardDescription>
+            Which scopes Claude Code loads settings, skills, hooks, and CLAUDE.md from for every
+            session. Takes effect after a session is stopped and restarted. See the{' '}
+            <a
+              href="https://code.claude.com/docs/en/settings#available-scopes"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline underline-offset-2"
+            >
+              settings scopes docs
+            </a>
+            .
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <SettingSourcesSection
+            current={settings?.settingSources ?? DEFAULT_SETTING_SOURCE_FLAGS}
             onUpdate={refetch}
           />
         </CardContent>
@@ -337,6 +368,65 @@ function SystemPromptAppendSection({
           Add Global Append
         </Button>
       )}
+    </div>
+  );
+}
+
+const SETTING_SOURCE_LABELS: Record<SettingSource, { title: string; description: string }> = {
+  user: {
+    title: 'User',
+    description: '~/.claude — the home directory of the account running the app.',
+  },
+  project: {
+    title: 'Project',
+    description: '<workspace>/.claude — config committed to the checked-out repository.',
+  },
+  local: {
+    title: 'Local',
+    description: '<workspace>/.claude/settings.local.json — uncommitted local overrides.',
+  },
+};
+
+function SettingSourcesSection({
+  current,
+  onUpdate,
+}: {
+  current: SettingSourceFlags;
+  onUpdate: () => void;
+}) {
+  const [error, setError] = useState<string | null>(null);
+
+  const mutation = trpc.globalSettings.setSettingSources.useMutation({
+    onSuccess: () => onUpdate(),
+    onError: (err) => setError(err.message),
+  });
+
+  const handleToggle = (source: SettingSource, checked: boolean) => {
+    setError(null);
+    mutation.mutate({ ...current, [source]: checked });
+  };
+
+  return (
+    <div className="space-y-4">
+      {SETTING_SOURCES.map((source) => (
+        <div key={source} className="flex items-start justify-between gap-4">
+          <div className="space-y-0.5">
+            <Label htmlFor={`setting-source-${source}`}>
+              {SETTING_SOURCE_LABELS[source].title}
+            </Label>
+            <p className="text-sm text-muted-foreground">
+              {SETTING_SOURCE_LABELS[source].description}
+            </p>
+          </div>
+          <Switch
+            id={`setting-source-${source}`}
+            checked={current[source]}
+            onCheckedChange={(checked) => handleToggle(source, checked)}
+            disabled={mutation.isPending}
+          />
+        </div>
+      ))}
+      {error && <p className="text-sm text-destructive">{error}</p>}
     </div>
   );
 }
