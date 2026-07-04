@@ -49,3 +49,29 @@ export const settingSourceFlagsSchema = z.object({
 export function resolveSettingSources(flags: SettingSourceFlags): SettingSource[] {
   return SETTING_SOURCES.filter((source) => flags[source]);
 }
+
+/**
+ * Map a `GlobalSettings` row's per-scope columns to {@link SettingSourceFlags},
+ * falling back to {@link DEFAULT_SETTING_SOURCE_FLAGS} when no row exists yet.
+ * Typed structurally (not against the Prisma model) to keep this module
+ * dependency-free. Shared by the settings router and the container-settings
+ * service so both derive the flags identically.
+ */
+export function settingSourceFlagsFromRow(
+  row:
+    | {
+        settingSourceUser: boolean;
+        settingSourceProject: boolean;
+        settingSourceLocal: boolean;
+      }
+    | null
+    | undefined
+): SettingSourceFlags {
+  return row
+    ? {
+        user: row.settingSourceUser,
+        project: row.settingSourceProject,
+        local: row.settingSourceLocal,
+      }
+    : DEFAULT_SETTING_SOURCE_FLAGS;
+}

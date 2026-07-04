@@ -21,7 +21,7 @@ import {
 import { validateMcpServer } from '../services/mcp-validator';
 import { getModelSuggestions } from '../services/anthropic-models';
 import { SUGGESTED_ADVISOR_MODEL } from '@/lib/advisor';
-import { DEFAULT_SETTING_SOURCE_FLAGS, settingSourceFlagsSchema } from '@/lib/setting-sources';
+import { settingSourceFlagsFromRow, settingSourceFlagsSchema } from '@/lib/setting-sources';
 
 const log = createLogger('globalSettings');
 
@@ -66,13 +66,7 @@ export const globalSettingsRouter = router({
       hasClaudeApiKey: settings?.claudeApiKey !== null && settings?.claudeApiKey !== undefined,
       ttsSpeed: settings?.ttsSpeed ?? null,
       voiceAutoSend: settings?.voiceAutoSend ?? true,
-      settingSources: settings
-        ? {
-            user: settings.settingSourceUser,
-            project: settings.settingSourceProject,
-            local: settings.settingSourceLocal,
-          }
-        : DEFAULT_SETTING_SOURCE_FLAGS,
+      settingSources: settingSourceFlagsFromRow(settings),
       defaultClaudeModel: env.CLAUDE_MODEL,
       suggestedAdvisorModel: SUGGESTED_ADVISOR_MODEL,
       hasEnvApiKey: !!env.CLAUDE_CODE_OAUTH_TOKEN,

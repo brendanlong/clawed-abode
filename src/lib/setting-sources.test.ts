@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   resolveSettingSources,
+  settingSourceFlagsFromRow,
   DEFAULT_SETTING_SOURCE_FLAGS,
   SETTING_SOURCES,
 } from './setting-sources';
@@ -34,5 +35,31 @@ describe('resolveSettingSources', () => {
       const flags = { user: false, project: false, local: false, [source]: true };
       expect(resolveSettingSources(flags)).toEqual([source]);
     }
+  });
+});
+
+describe('settingSourceFlagsFromRow', () => {
+  it('falls back to the defaults when no row exists', () => {
+    expect(settingSourceFlagsFromRow(null)).toEqual(DEFAULT_SETTING_SOURCE_FLAGS);
+    expect(settingSourceFlagsFromRow(undefined)).toEqual(DEFAULT_SETTING_SOURCE_FLAGS);
+  });
+
+  it('maps the per-scope columns to flags', () => {
+    expect(
+      settingSourceFlagsFromRow({
+        settingSourceUser: true,
+        settingSourceProject: false,
+        settingSourceLocal: true,
+      })
+    ).toEqual({ user: true, project: false, local: true });
+  });
+
+  it('resolves via resolveSettingSources to the SDK array', () => {
+    const flags = settingSourceFlagsFromRow({
+      settingSourceUser: true,
+      settingSourceProject: true,
+      settingSourceLocal: false,
+    });
+    expect(resolveSettingSources(flags)).toEqual(['user', 'project']);
   });
 });
