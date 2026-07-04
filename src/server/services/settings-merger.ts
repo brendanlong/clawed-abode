@@ -2,6 +2,7 @@ import type { ContainerEnvVar, ContainerMcpServer } from './repo-settings';
 import { getRepoSettingsForContainer } from './repo-settings';
 import { getGlobalSettingsForContainer, type GlobalContainerSettings } from './global-settings';
 import { buildSystemPrompt } from '@/lib/system-prompt';
+import { resolveSettingSources, type SettingSource } from '@/lib/setting-sources';
 import { env } from '@/lib/env';
 
 /**
@@ -15,6 +16,8 @@ export interface MergedSessionSettings {
   /** Effective advisor model, or null when the advisor tool is disabled — see {@link resolveAdvisorModel}. */
   advisorModel: string | null;
   claudeApiKey: string | undefined;
+  /** Claude Code scopes the SDK loads filesystem config from — see {@link resolveSettingSources}. */
+  settingSources: SettingSource[];
   customSystemPrompt: string | null | undefined;
   globalSettings: GlobalContainerSettings;
 }
@@ -51,6 +54,7 @@ export async function loadMergedSessionSettings(
     ),
     advisorModel: resolveAdvisorModel(globalSettings.advisorModel),
     claudeApiKey: globalSettings.claudeApiKey ?? undefined,
+    settingSources: resolveSettingSources(globalSettings.settingSources),
     customSystemPrompt: repoSettings?.customSystemPrompt,
     globalSettings,
   };
