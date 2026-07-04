@@ -2,7 +2,7 @@ import { prisma } from '@/lib/prisma';
 import { decrypt } from '@/lib/crypto';
 import { decryptEnvVarsForContainer, decryptMcpServersForContainer } from './settings-helpers';
 import type { ContainerEnvVar, ContainerMcpServer } from './repo-settings';
-import { DEFAULT_SETTING_SOURCE_FLAGS, type SettingSourceFlags } from '@/lib/setting-sources';
+import { settingSourceFlagsFromRow, type SettingSourceFlags } from '@/lib/setting-sources';
 
 // The singleton ID for global settings
 const GLOBAL_SETTINGS_ID = 'global';
@@ -102,13 +102,7 @@ export async function getGlobalSettingsForContainer(): Promise<GlobalContainerSe
     claudeModel: settings?.claudeModel ?? null,
     advisorModel: settings?.advisorModel ?? null,
     claudeApiKey,
-    settingSources: settings
-      ? {
-          user: settings.settingSourceUser,
-          project: settings.settingSourceProject,
-          local: settings.settingSourceLocal,
-        }
-      : DEFAULT_SETTING_SOURCE_FLAGS,
+    settingSources: settingSourceFlagsFromRow(settings),
     envVars: decryptEnvVarsForContainer(envVarRows),
     mcpServers: decryptMcpServersForContainer(mcpServerRows),
   };
