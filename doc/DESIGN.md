@@ -165,6 +165,12 @@ sessions.stop({ sessionId: string })
 sessions.delete({ sessionId: string })
   → { success: true }
   // Stops query, removes workspace, archives session
+
+sessions.getEditorUrl({ sessionId: string })
+  → { url: string | null }
+  // Deep link into a self-hosted code-server (browser VS Code) opened on this
+  // session's worktree folder. null when CODE_SERVER_URL is unset or the
+  // session is archived (workspace removed). See "Remote File Editing".
 ```
 
 ### Claude Interaction
@@ -644,6 +650,22 @@ Voice mode provides speech-to-text input and text-to-speech output for hands-fre
 
 **Implementation**: See [`src/hooks/useVoiceRecording.ts`](../src/hooks/useVoiceRecording.ts), [`src/hooks/useVoicePlayback.ts`](../src/hooks/useVoicePlayback.ts), [`src/hooks/useVoiceConfig.ts`](../src/hooks/useVoiceConfig.ts), and [`src/components/voice/`](../src/components/voice/) for UI components.
 
+### Remote File Editing
+
+To view and edit the files an agent is working on — without building a bespoke file browser/editor — the app integrates with a **self-hosted [code-server](https://github.com/coder/code-server)** (browser VS Code) running alongside it on the host. This is deliberately a thin integration: code-server owns the entire editor (file tree, multi-file edit, integrated terminal, search, extensions); the app only contributes a deep link.
+
+**How it works.** Each session's worktree lives at a stable absolute path (`~/worktrees/{sessionId}/{repoName}`, or `~/worktrees/{sessionId}` for no-repo sessions — see [Workspace Structure](#workspace-structure)). code-server opens any folder via a `?folder=<absolute-path>` query param, so the "Open in VS Code" button in the session header is just a link to `${CODE_SERVER_URL}/?folder=<workingDir>`.
+
+- The link is built server-side by the pure `buildEditorUrl` ([`src/lib/editor-url.ts`](../src/lib/editor-url.ts)) and served by `sessions.getEditorUrl`, which resolves the session's absolute working dir with `getSessionWorkingDir` (the same path logic the runner uses) — the client never needs to know the host's home directory or worktrees root.
+- The feature is **opt-in**: `getEditorUrl` returns `{ url: null }` when `CODE_SERVER_URL` is unset (or the session is `archived`, since its workspace is removed from disk), and `OpenInEditorButton` ([`src/components/OpenInEditorButton.tsx`](../src/components/OpenInEditorButton.tsx)) renders nothing for a null url. As with [Answering Interactive Tools](#answering-interactive-tools), the server is authoritative and the UI stays dumb.
+
+**Deployment.** Setup is split into two scripts so the Tailscale step (which usually needs privileges the app's account lacks) is separable from the app-side install:
+
+1. [`scripts/setup-code-server.sh`](../scripts/setup-code-server.sh) — installs code-server, gives it its own generated password (config written mode `600`), points it at `~/worktrees`, and runs it as a service on loopback. **No Tailscale involvement**, so it can be run by the account that runs the app.
+2. [`scripts/expose-code-server-tailscale.sh`](../scripts/expose-code-server-tailscale.sh) — exposes the loopback code-server over **Tailscale Serve** on a dedicated HTTPS port (keeping it on the tailnet — the same trust boundary as the app, never `funnel`) and prints the `CODE_SERVER_URL` to set. Run by someone with Tailscale access.
+
+Both source [`scripts/lib-code-server.sh`](../scripts/lib-code-server.sh) so the loopback/HTTPS ports stay in sync. Because code-server runs as a normal host process with filesystem access to the worktrees, edits made in it land directly in the session's clone, ready for the agent (or the user) to commit and push.
+
 ## UI Screens
 
 ### Session List (Home)
@@ -686,6 +708,7 @@ Voice mode provides speech-to-text input and text-to-speech output for hands-fre
 - Status indicator (running, waiting, stopped)
 - Session info in header (repo, branch)
 - Editable session title in header: click the name to rename inline (Enter saves, Escape cancels) via `sessions.rename` — see `EditableSessionName`
+- "Open in VS Code" button in the header (only when `CODE_SERVER_URL` is configured) that deep-links into the session's worktree in code-server — see [Remote File Editing](#remote-file-editing)
 
 ## File Structure
 
@@ -695,6 +718,9 @@ clawed-abode/
 │   └── agent-types.ts          # Shared types (PartialAssistantMessage)
 ├── scripts/
 │   ├── hash-password.ts        # Password hashing utility
+│   ├── lib-code-server.sh      # Shared config sourced by the code-server scripts
+│   ├── setup-code-server.sh    # Install + run code-server (app-side, no Tailscale)
+│   ├── expose-code-server-tailscale.sh # Expose code-server over Tailscale Serve
 │   └── update.sh               # Production update: pull, install, migrate, build, restart
 ├── src/
 │   ├── server/
