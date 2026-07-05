@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
 # Shared configuration and helpers for the code-server setup scripts. This file
 # is *sourced* by setup-code-server.sh and expose-code-server-tailscale.sh, not
-# executed directly, so the loopback/HTTPS ports stay in sync between the two
-# steps (Tailscale Serve maps the HTTPS port to the loopback port code-server
-# binds).
+# executed directly, so the loopback port and service name stay in sync between
+# the two steps (the Tailscale service proxies its HTTPS to the loopback port
+# code-server binds).
 #
-# Override the ports/dir by exporting them before running either script.
+# Override the values below by exporting them before running either script.
 
-# HTTPS port Tailscale Serve exposes on the tailnet, proxied to the loopback port.
-CODE_SERVER_HTTPS_PORT="${CODE_SERVER_HTTPS_PORT:-8443}"
+# Tailscale Service name that exposes code-server on the tailnet as its own
+# hostname (https://<name>.<tailnet>.ts.net) on standard HTTPS (443), proxied to
+# the loopback port. This mirrors the host's other services (clawed, wiki, ...),
+# which each get a distinct name rather than sharing one host + a nonstandard
+# port. The advertised service is svc:${CODE_SERVER_SERVICE}.
+CODE_SERVER_SERVICE="${CODE_SERVER_SERVICE:-code}"
 # Root directory that holds all session worktrees.
 WORKTREES_DIR="${WORKTREES_DIR:-$HOME/worktrees}"
 # code-server config file (holds the generated password and chosen port).
