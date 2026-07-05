@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { MarkdownContent } from '@/components/MarkdownContent';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
+import { useMessageListContext } from './MessageListContext';
 import type { ToolCall } from './types';
 
 interface TaskInput {
@@ -124,6 +125,11 @@ export function TaskDisplay({ tool }: { tool: ToolCall }) {
     [subagentType]
   );
 
+  // Subagent messages (grouped by this Task's tool_use id) render nested and
+  // collapsed here rather than cluttering the top-level transcript (issue #312).
+  const context = useMessageListContext();
+  const subagentTranscript = tool.id ? context?.renderSubagentTranscript(tool.id) : null;
+
   const { text: outputText, agentId } = useMemo(() => {
     if (!hasOutput) return { text: '' };
     return parseTaskOutput(tool.output);
@@ -160,6 +166,10 @@ export function TaskDisplay({ tool }: { tool: ToolCall }) {
           <code className="bg-muted px-2 py-1 rounded text-xs">{agentId}</code>
         </div>
       )}
+
+      {/* Subagent activity: the subagent's own nested transcript (renders its own
+          "Subagent activity:" heading, or nothing when there's nothing to show). */}
+      {subagentTranscript}
 
       {/* Output section */}
       {hasOutput && (

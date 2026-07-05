@@ -248,33 +248,21 @@ describe('MessageBubble', () => {
   });
 
   describe('generic system messages', () => {
-    it('summarizes a notification instead of an empty bubble', () => {
-      const message = {
-        type: 'system',
-        content: {
+    // System messages are hidden from the transcript to reduce noise (issue #312),
+    // except errors and compact boundaries.
+    it.each(['notification', 'task_started', 'task_notification', 'some_future_thing'])(
+      'renders nothing for %s system messages',
+      (subtype) => {
+        const message = {
           type: 'system',
-          subtype: 'notification',
-          text: 'Your token will expire soon',
-          priority: 'high',
-        } as MessageContent,
-      };
+          content: { type: 'system', subtype, text: 'irrelevant' } as MessageContent,
+        };
 
-      render(<MessageBubble message={message} />);
+        const { container } = render(<MessageBubble message={message} />);
 
-      expect(screen.getByText('Notification')).toBeInTheDocument();
-      expect(screen.getByText('Your token will expire soon')).toBeInTheDocument();
-    });
-
-    it('falls back to a humanized label for unknown subtypes', () => {
-      const message = {
-        type: 'system',
-        content: { type: 'system', subtype: 'some_future_thing' } as MessageContent,
-      };
-
-      render(<MessageBubble message={message} />);
-
-      expect(screen.getByText('Some Future Thing')).toBeInTheDocument();
-    });
+        expect(container).toBeEmptyDOMElement();
+      }
+    );
   });
 
   describe('user messages', () => {
@@ -383,7 +371,7 @@ describe('MessageBubble', () => {
   });
 
   describe('system messages', () => {
-    it('renders system message with badge', () => {
+    it('renders nothing for a generic system message (hidden to reduce noise)', () => {
       const message = {
         type: 'system',
         content: {
@@ -391,15 +379,14 @@ describe('MessageBubble', () => {
         } as MessageContent,
       };
 
-      render(<MessageBubble message={message} />);
+      const { container } = render(<MessageBubble message={message} />);
 
-      expect(screen.getByText('System')).toBeInTheDocument();
-      expect(screen.getByText('System notification text')).toBeInTheDocument();
+      expect(container).toBeEmptyDOMElement();
     });
   });
 
   describe('system init messages', () => {
-    it('renders session started display', () => {
+    it('renders nothing for a session init message (hidden to reduce noise)', () => {
       const message = {
         type: 'system',
         content: {
@@ -411,10 +398,9 @@ describe('MessageBubble', () => {
         } as MessageContent,
       };
 
-      render(<MessageBubble message={message} />);
+      const { container } = render(<MessageBubble message={message} />);
 
-      expect(screen.getByText('Session Started')).toBeInTheDocument();
-      expect(screen.getByText(/claude-3-opus/)).toBeInTheDocument();
+      expect(container).toBeEmptyDOMElement();
     });
   });
 
@@ -541,6 +527,7 @@ describe('MessageBubble', () => {
             manuallyToggledTodoIds,
             onTodoManualToggle,
             planContentByToolUseId: new Map(),
+            renderSubagentTranscript: () => null,
           }}
         >
           <MessageBubble message={message} />

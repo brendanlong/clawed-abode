@@ -80,7 +80,21 @@ export interface MessageContent {
   interrupted?: boolean;
   // Sanitizer findings attached to a user prompt whose text was filtered.
   sanitization?: SanitizationInfo;
+  // Set on subagent (Task) messages: the tool_use id of the Task that spawned them.
+  parent_tool_use_id?: string | null;
   [key: string]: unknown;
+}
+
+/**
+ * A stored message as handled by the message-list rendering layer. `content` is
+ * the parsed JSON (shape varies by `type`); components narrow it to
+ * {@link MessageContent} as needed.
+ */
+export interface DisplayMessage {
+  id: string;
+  type: string;
+  content: unknown;
+  sequence: number;
 }
 
 export interface TodoItem {
