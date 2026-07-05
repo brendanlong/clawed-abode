@@ -29,6 +29,8 @@ const envSchema = z.object({
   // Base URL of a self-hosted code-server (browser VS Code) instance used to
   // view/edit session worktrees remotely (e.g. https://host.tailnet.ts.net:8443).
   // When unset, the "Open in VS Code" button is hidden. See scripts/setup-code-server.sh.
+  // Intentionally free-form (not z.string().url()): it is operator-controlled and
+  // may legitimately be a relative reverse-proxy path like "/editor".
   CODE_SERVER_URL: z.string().optional(),
 });
 

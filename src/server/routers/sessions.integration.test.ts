@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { setupTestDb, teardownTestDb, testPrisma, clearTestDb } from '@/test/setup-test-db';
 
 // Mock external services that have real dependencies (git clone)
@@ -409,6 +409,80 @@ describe('sessionsRouter integration', () => {
       const caller = createCaller(null);
       await expect(
         caller.sessions.get({ sessionId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' })
+      ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    });
+  });
+
+  describe('getEditorUrl', () => {
+    afterEach(() => {
+      delete process.env.CODE_SERVER_URL;
+    });
+
+    it('returns a deep link into the session worktree when configured', async () => {
+      process.env.CODE_SERVER_URL = 'https://host.ts.net:8443';
+      const session = await testPrisma.session.create({
+        data: {
+          name: 'Test Session',
+          repoUrl: 'https://github.com/owner/repo.git',
+          branch: 'main',
+          workspacePath: '/workspace/test',
+          repoPath: 'repo',
+          status: 'running',
+        },
+      });
+
+      const caller = createCaller('auth-session-id');
+      const result = await caller.sessions.getEditorUrl({ sessionId: session.id });
+
+      expect(result.url).toBe(
+        `https://host.ts.net:8443/?folder=${encodeURIComponent(`/worktrees/${session.id}/repo`)}`
+      );
+    });
+
+    it('returns null when CODE_SERVER_URL is not configured', async () => {
+      const session = await testPrisma.session.create({
+        data: {
+          name: 'Test Session',
+          workspacePath: '/workspace/test',
+          repoPath: 'repo',
+          status: 'running',
+        },
+      });
+
+      const caller = createCaller('auth-session-id');
+      const result = await caller.sessions.getEditorUrl({ sessionId: session.id });
+
+      expect(result.url).toBeNull();
+    });
+
+    it('returns null for an archived session even when configured', async () => {
+      process.env.CODE_SERVER_URL = 'https://host.ts.net:8443';
+      const session = await testPrisma.session.create({
+        data: {
+          name: 'Archived Session',
+          workspacePath: '/workspace/test',
+          repoPath: 'repo',
+          status: 'archived',
+        },
+      });
+
+      const caller = createCaller('auth-session-id');
+      const result = await caller.sessions.getEditorUrl({ sessionId: session.id });
+
+      expect(result.url).toBeNull();
+    });
+
+    it('throws NOT_FOUND for a non-existent session', async () => {
+      const caller = createCaller('auth-session-id');
+      await expect(
+        caller.sessions.getEditorUrl({ sessionId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' })
+      ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    });
+
+    it('requires authentication', async () => {
+      const caller = createCaller(null);
+      await expect(
+        caller.sessions.getEditorUrl({ sessionId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' })
       ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
     });
   });
