@@ -21,6 +21,14 @@ if ! command -v tailscale >/dev/null 2>&1; then
   exit 1
 fi
 
+# The loopback port is read from the code-server config (written by setup). If it
+# is missing, setup has not run yet — bail rather than proxying to a blank port.
+if [ -z "$CODE_SERVER_PORT" ]; then
+  echo "Error: no code-server port found in ${CODE_SERVER_CONFIG_FILE}." >&2
+  echo "Run setup-code-server.sh first." >&2
+  exit 1
+fi
+
 echo "==> Exposing code-server over Tailscale Serve on port ${CODE_SERVER_HTTPS_PORT}"
 tailscale serve --bg --https "${CODE_SERVER_HTTPS_PORT}" "http://127.0.0.1:${CODE_SERVER_PORT}"
 
