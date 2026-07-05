@@ -3,6 +3,7 @@ import { setupTestDb, teardownTestDb, testPrisma, clearTestDb } from '@/test/set
 
 // Mock claude-runner service (has real Docker dependencies)
 const mockSendUserMessage = vi.hoisted(() => vi.fn());
+const mockSendUserMessages = vi.hoisted(() => vi.fn());
 const mockInterruptClaude = vi.hoisted(() => vi.fn());
 const mockIsClaudeRunningAsync = vi.hoisted(() => vi.fn());
 const mockMarkLastMessageAsInterrupted = vi.hoisted(() => vi.fn());
@@ -12,6 +13,7 @@ vi.mock('../services/claude-runner', async (importOriginal) => {
   return {
     ...actual,
     sendUserMessage: mockSendUserMessage,
+    sendUserMessages: mockSendUserMessages,
     interruptClaude: mockInterruptClaude,
     isClaudeRunningAsync: mockIsClaudeRunningAsync,
     markLastMessageAsInterrupted: mockMarkLastMessageAsInterrupted,
@@ -278,6 +280,52 @@ describe('claudeRouter integration', () => {
           prompt: '',
         })
       ).rejects.toThrow();
+    });
+  });
+
+  describe('sendBatch', () => {
+    it('resolves each message and forwards them to sendUserMessages', async () => {
+      const session = await testPrisma.session.create({
+        data: { name: 'Batch', workspacePath: '/workspace/test', status: 'running' },
+      });
+
+      mockSendUserMessages.mockResolvedValue(undefined);
+      // First message has attachments, second has none.
+      mockResolveUploadPaths.mockResolvedValue(['/worktrees/x/uploads/a.md']);
+
+      const caller = createCaller('auth-session-id');
+      const result = await caller.claude.sendBatch({
+        sessionId: session.id,
+        messages: [{ prompt: 'first', attachments: ['aaaa1111-a.md'] }, { prompt: 'second' }],
+      });
+
+      expect(result).toEqual({ success: true });
+      expect(mockResolveUploadPaths).toHaveBeenCalledTimes(1);
+      expect(mockSendUserMessages).toHaveBeenCalledWith(session.id, [
+        { prompt: 'first', attachmentPaths: ['/worktrees/x/uploads/a.md'] },
+        { prompt: 'second', attachmentPaths: [] },
+      ]);
+    });
+
+    it('rejects an empty message list', async () => {
+      const session = await testPrisma.session.create({
+        data: { name: 'Empty Batch', workspacePath: '/workspace/test', status: 'running' },
+      });
+      const caller = createCaller('auth-session-id');
+      await expect(
+        caller.claude.sendBatch({ sessionId: session.id, messages: [] })
+      ).rejects.toThrow();
+    });
+
+    it('throws PRECONDITION_FAILED if the session is not running', async () => {
+      const session = await testPrisma.session.create({
+        data: { name: 'Stopped Batch', workspacePath: '/workspace/test', status: 'stopped' },
+      });
+      const caller = createCaller('auth-session-id');
+      await expect(
+        caller.claude.sendBatch({ sessionId: session.id, messages: [{ prompt: 'hi' }] })
+      ).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+      expect(mockSendUserMessages).not.toHaveBeenCalled();
     });
   });
 

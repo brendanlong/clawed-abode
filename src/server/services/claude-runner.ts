@@ -975,15 +975,67 @@ async function applyLiveSettings(sessionId: string, state: SessionState): Promis
 }
 
 /**
- * Send a user prompt: ensure the query is live, apply any live settings changes,
- * persist the user message, and either start a turn now or — if a main-agent turn
- * is already active — queue it to be sent as soon as that turn ends (async "btw
- * mode"). The user is never blocked from sending while Claude is working; queued
- * prompts are combined and flushed together by {@link flushQueuedPrompts}.
+ * Build, sanitize, and persist a single user prompt, returning the sanitized text
+ * that should be sent to the model. Shared by {@link sendUserMessage} and
+ * {@link sendUserMessages} so a one-off send and a batch flush persist identically.
  *
  * `attachmentPaths` are absolute host paths of files the user uploaded (see
  * `uploads.ts`); when present they are prefixed onto the message so Claude knows
  * where to read them.
+ */
+async function persistUserPrompt(
+  sessionId: string,
+  prompt: string,
+  attachmentPaths: string[]
+): Promise<string> {
+  const promptWithAttachments = buildPromptWithAttachments(prompt, attachmentPaths);
+
+  // Strip hidden-content injection vectors before the prompt is persisted or
+  // seen by the model. The same chokepoint covers typed prompts and the initial
+  // prompt (which may embed an untrusted GitHub issue body). `info` records any
+  // findings so the persisted message can show a "content filtered" badge.
+  const { cleaned: sanitizedPrompt, info: sanitization } = await sanitizeUntrustedInput(
+    promptWithAttachments,
+    { sessionId, source: 'user-message' }
+  );
+
+  await insertMessage({
+    sessionId,
+    id: uuid(),
+    type: 'user',
+    content: { type: 'user', content: sanitizedPrompt, ...(sanitization ? { sanitization } : {}) },
+  });
+
+  return sanitizedPrompt;
+}
+
+/**
+ * Push a prepared (already-persisted) prompt into the query, or queue it if a
+ * main-agent turn is active. Queued prompts are combined and flushed together as
+ * one turn when the turn ends (async "btw mode" — see {@link flushQueuedPrompts}).
+ * The user is never blocked from sending while Claude is working.
+ */
+function pushOrQueuePrompt(sessionId: string, state: SessionState, text: string): void {
+  if (!state.input) throw new Error('Session query is not available');
+
+  // A turn is active → queue (the SDK can't cleanly take a new turn mid-generation).
+  if (state.status.turnActive) {
+    state.queuedPrompts.push(text);
+    return;
+  }
+
+  state.status = { ...state.status, turnActive: true };
+  sseEvents.emitClaudeRunning(sessionId, true);
+  state.input.push({
+    type: 'user',
+    message: { role: 'user', content: text },
+    parent_tool_use_id: null,
+  });
+}
+
+/**
+ * Send a single user prompt: ensure the query is live, apply any live settings
+ * changes, persist the message, and push it now (or queue it if a turn is active).
  */
 export async function sendUserMessage(
   sessionId: string,
@@ -998,46 +1050,39 @@ export async function sendUserMessage(
   // Apply model/MCP changes made since the query was built (no-op on fresh establish).
   await applyLiveSettings(sessionId, state);
 
-  const promptWithAttachments = buildPromptWithAttachments(prompt, attachmentPaths);
-
-  // Strip hidden-content injection vectors before the prompt is persisted or
-  // seen by the model. The same chokepoint covers typed prompts and the initial
-  // prompt (which may embed an untrusted GitHub issue body). `info` records any
-  // findings so the persisted message can show a "content filtered" badge.
-  const { cleaned: sanitizedPrompt, info: sanitization } = await sanitizeUntrustedInput(
-    promptWithAttachments,
-    {
-      sessionId,
-      source: 'user-message',
-    }
-  );
-
-  // Persist the user message so it appears in the transcript immediately, whether
-  // it is sent now or queued for the end of the current turn.
-  await insertMessage({
-    sessionId,
-    id: uuid(),
-    type: 'user',
-    content: { type: 'user', content: sanitizedPrompt, ...(sanitization ? { sanitization } : {}) },
-  });
+  const sanitizedPrompt = await persistUserPrompt(sessionId, prompt, attachmentPaths);
   await bumpSessionActivity(sessionId);
 
-  // If a turn is already active, queue the prompt instead of pushing it now (the
-  // SDK can't cleanly take a new turn mid-generation). flushQueuedPrompts sends
-  // all queued prompts together as soon as the turn ends.
-  if (state.status.turnActive) {
-    state.queuedPrompts.push(sanitizedPrompt);
-    return;
+  pushOrQueuePrompt(sessionId, state, sanitizedPrompt);
+}
+
+/**
+ * Send several user prompts as a **single** turn: persist each as its own
+ * transcript message (so they render as separate bubbles, in order) but combine
+ * their text into one push so the model answers them together. Used by
+ * `claude.sendBatch` to flush the client-held pending queue when a turn ends —
+ * multiple messages the user typed while Claude was working are delivered at once.
+ */
+export async function sendUserMessages(
+  sessionId: string,
+  items: { prompt: string; attachmentPaths: string[] }[]
+): Promise<void> {
+  if (items.length === 0) return;
+
+  const state = await ensureSessionQuery(sessionId);
+  if (!state.input) {
+    throw new Error('Session query is not available');
   }
 
-  state.status = { ...state.status, turnActive: true };
-  sseEvents.emitClaudeRunning(sessionId, true);
+  await applyLiveSettings(sessionId, state);
 
-  state.input.push({
-    type: 'user',
-    message: { role: 'user', content: sanitizedPrompt },
-    parent_tool_use_id: null,
-  });
+  const texts: string[] = [];
+  for (const item of items) {
+    texts.push(await persistUserPrompt(sessionId, item.prompt, item.attachmentPaths));
+  }
+  await bumpSessionActivity(sessionId);
+
+  pushOrQueuePrompt(sessionId, state, texts.join('\n\n'));
 }
 
 /**

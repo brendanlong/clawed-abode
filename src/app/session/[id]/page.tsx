@@ -6,7 +6,7 @@ import { AuthGuard } from '@/components/AuthGuard';
 import { Header } from '@/components/Header';
 import { SessionHeader } from '@/components/SessionHeader';
 import { MessageList } from '@/components/MessageList';
-import { PromptInput } from '@/components/PromptInput';
+import { PromptInput, type ComposerDraft } from '@/components/PromptInput';
 import { ClaudeStatusIndicator } from '@/components/ClaudeStatusIndicator';
 import { ConnectionStatusIndicator } from '@/components/ConnectionStatusIndicator';
 import { Button } from '@/components/ui/button';
@@ -23,6 +23,8 @@ import { useVoiceConfig } from '@/hooks/useVoiceConfig';
 import { useVoicePlayback, VoicePlaybackContext } from '@/hooks/useVoicePlayback';
 import { getNewAutoReadMessages } from '@/lib/auto-read-helpers';
 import { VoiceControlPanel } from '@/components/voice/VoiceControlPanel';
+import type { UploadedAttachment } from '@/lib/attachments';
+import type { PendingMessage } from '@/lib/pending-message';
 
 function SessionView({ sessionId }: { sessionId: string }) {
   // Session state: data, start/stop/archive
@@ -61,6 +63,8 @@ function SessionView({ sessionId }: { sessionId: string }) {
     backgroundTasks,
     backgroundActive,
     send: sendPrompt,
+    sendBatch,
+    isBatchSending,
     interrupt,
     isInterrupting,
     answerQuestion,
@@ -69,8 +73,23 @@ function SessionView({ sessionId }: { sessionId: string }) {
     commands,
   } = useClaudeState(sessionId);
 
-  // Something is happening if a turn is active OR background tasks are running.
-  const isWorking = isClaudeRunning || backgroundActive;
+  // Client-held pending queue: messages the user typed while a turn was active
+  // (async "btw mode"). Shown pinned at the bottom of the transcript, individually
+  // removable, and flushed together via sendBatch when the turn ends. Not persisted
+  // until they flush — cancelling or reclaiming one never touches the DB.
+  const [pendingMessages, setPendingMessages] = useState<PendingMessage[]>([]);
+  const pendingIdRef = useRef(0);
+  // A draft to reclaim into the composer (the pending messages, on interrupt).
+  const [restoreDraft, setRestoreDraft] = useState<ComposerDraft | null>(null);
+  const draftNonceRef = useRef(0);
+  // Bridges the gap between a turn ending and the flushed turn starting, so the
+  // "working" signal stays continuously true (no premature work-complete
+  // notification / no flicker) across the client-driven flush.
+  const [flushing, setFlushing] = useState(false);
+
+  // Something is happening if a turn is active, background tasks run, or messages
+  // are queued/flushing.
+  const isWorking = isClaudeRunning || backgroundActive || pendingMessages.length > 0 || flushing;
 
   // Working indicator: page title and favicon
   useWorkingIndicator(session?.name, isWorking);
@@ -91,23 +110,18 @@ function SessionView({ sessionId }: { sessionId: string }) {
     }
   }, [permission, requestPermission]);
 
-  // Show notification when Claude finishes processing (if tab was hidden)
-  useWorkCompleteNotification(session?.name, isClaudeRunning, showNotification);
+  // Show notification when Claude finishes processing (if tab was hidden). Include
+  // pending/flushing so a queued-message handoff doesn't fire a premature "finished".
+  useWorkCompleteNotification(
+    session?.name,
+    isClaudeRunning || pendingMessages.length > 0 || flushing,
+    showNotification
+  );
 
   // Voice features
   const voiceConfig = useVoiceConfig(sessionId);
   const voicePlayback = useVoicePlayback(voiceConfig.ttsSpeed, voiceConfig.voiceURI);
   const [voiceOverlayOpen, setVoiceOverlayOpen] = useState(false);
-
-  const handleSendPrompt = useCallback(
-    (prompt: string, attachments?: string[]) => {
-      if (!session || session.status !== 'running') {
-        return;
-      }
-      sendPrompt(prompt, attachments);
-    },
-    [session, sendPrompt]
-  );
 
   // Auto-read: stream TTS as assistant messages arrive during a turn
   const prevRunningRef = useRef(false);
@@ -122,14 +136,88 @@ function SessionView({ sessionId }: { sessionId: string }) {
     voicePlayback.stop();
   }, [voicePlayback]);
 
-  // Stop playback when user sends a new prompt
-  const handleSendPromptWithVoice = useCallback(
-    (prompt: string, attachments?: string[]) => {
+  // Send a prompt (also stops any playback). While a turn is active, the message
+  // is held in the client-side pending queue and flushed when the turn ends;
+  // otherwise it starts a turn immediately. Accepts full attachments so pending
+  // messages keep enough to display chips and be reclaimed on interrupt.
+  const handleSendPrompt = useCallback(
+    (prompt: string, attachments: UploadedAttachment[] = []) => {
+      if (!session || session.status !== 'running') {
+        return;
+      }
       stopWithAutoReadFlag();
-      handleSendPrompt(prompt, attachments);
+      if (isClaudeRunning) {
+        setPendingMessages((prev) => [
+          ...prev,
+          { id: `pending-${pendingIdRef.current++}`, text: prompt, attachments },
+        ]);
+      } else {
+        sendPrompt(prompt, attachments.length ? attachments.map((a) => a.storedName) : undefined);
+      }
     },
-    [handleSendPrompt, stopWithAutoReadFlag]
+    [session, isClaudeRunning, sendPrompt, stopWithAutoReadFlag]
   );
+
+  // Adapter for callers that only produce text (plan responses, voice transcripts).
+  const handleSendText = useCallback(
+    (prompt: string) => handleSendPrompt(prompt),
+    [handleSendPrompt]
+  );
+
+  const handleCancelPending = useCallback((id: string) => {
+    setPendingMessages((prev) => prev.filter((m) => m.id !== id));
+  }, []);
+
+  const handleDraftConsumed = useCallback(() => setRestoreDraft(null), []);
+
+  // Interrupt the current turn and reclaim any pending messages into the composer
+  // (their text joined by newlines, attachments restored) so nothing is lost.
+  const handleInterrupt = useCallback(() => {
+    if (pendingMessages.length > 0) {
+      const text = pendingMessages
+        .map((m) => m.text)
+        .filter((t) => t.trim().length > 0)
+        .join('\n');
+      const attachments = pendingMessages.flatMap((m) => m.attachments);
+      draftNonceRef.current += 1;
+      setRestoreDraft({ text, attachments, nonce: draftNonceRef.current });
+      setPendingMessages([]);
+    }
+    interrupt();
+  }, [pendingMessages, interrupt]);
+
+  // Flush the pending queue as one turn when the current turn ends. Keyed on the
+  // running true->false transition; `flushing` bridges until the flushed turn starts.
+  // Only flush while the session is still running — if `isClaudeRunning` fell
+  // because the session was stopped (header Stop), keep the pending drafts visible
+  // rather than firing a doomed sendBatch and dropping them.
+  const isSessionRunning = session?.status === 'running';
+  const prevRunningForFlushRef = useRef(false);
+  useEffect(() => {
+    const wasRunning = prevRunningForFlushRef.current;
+    prevRunningForFlushRef.current = isClaudeRunning;
+    if (wasRunning && !isClaudeRunning && isSessionRunning && pendingMessages.length > 0) {
+      setFlushing(true);
+      sendBatch(
+        pendingMessages.map((m) => ({
+          prompt: m.text,
+          attachments: m.attachments.length ? m.attachments.map((a) => a.storedName) : undefined,
+        }))
+      );
+      setPendingMessages([]);
+    }
+  }, [isClaudeRunning, isSessionRunning, pendingMessages, sendBatch]);
+
+  // Clear the flushing bridge once the flushed turn starts, or if the batch send
+  // settled without starting one (e.g. an error) so `isWorking` can't stick true.
+  const prevBatchSendingRef = useRef(false);
+  useEffect(() => {
+    const wasSending = prevBatchSendingRef.current;
+    prevBatchSendingRef.current = isBatchSending;
+    if (isClaudeRunning || (wasSending && !isBatchSending)) {
+      setFlushing(false);
+    }
+  }, [isClaudeRunning, isBatchSending]);
 
   // During a turn: enqueue new assistant text messages as they arrive
   useEffect(() => {
@@ -274,9 +362,11 @@ function SessionView({ sessionId }: { sessionId: string }) {
           hasMore={hasMore}
           onLoadMore={fetchMore}
           tokenUsage={tokenUsage}
-          onSendResponse={handleSendPromptWithVoice}
+          onSendResponse={handleSendText}
           onAnswerQuestion={answerQuestion}
           onRespondToPlan={respondToPlan}
+          pendingMessages={pendingMessages}
+          onCancelPending={handleCancelPending}
         />
 
         {voiceOverlayOpen && voiceConfig.enabled ? (
@@ -284,9 +374,9 @@ function SessionView({ sessionId }: { sessionId: string }) {
             sessionId={sessionId}
             messages={messages}
             isRunning={isClaudeRunning}
-            onSendPrompt={handleSendPromptWithVoice}
+            onSendPrompt={handleSendText}
             onClose={() => setVoiceOverlayOpen(false)}
-            onInterrupt={interrupt}
+            onInterrupt={handleInterrupt}
           />
         ) : (
           <>
@@ -300,14 +390,16 @@ function SessionView({ sessionId }: { sessionId: string }) {
             />
             <PromptInput
               sessionId={sessionId}
-              onSubmit={handleSendPromptWithVoice}
-              onInterrupt={interrupt}
+              onSubmit={handleSendPrompt}
+              onInterrupt={handleInterrupt}
               isRunning={isClaudeRunning}
               isInterrupting={isInterrupting}
               disabled={session.status !== 'running'}
               commands={commands}
               voiceEnabled={voiceConfig.enabled}
               voiceAutoSend={voiceConfig.autoSend}
+              restoreDraft={restoreDraft}
+              onDraftConsumed={handleDraftConsumed}
             />
           </>
         )}
