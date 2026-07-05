@@ -9,16 +9,20 @@ interface UploadResponse {
 }
 
 /**
- * Uploads files to the session's upload directory via the `/api/upload` route.
+ * Uploads files to a session's upload directory via the `/api/upload` route.
  * Returns the saved attachments (name + stored name + absolute path) so the
  * caller can hold them as pending attachments until the next message is sent.
+ *
+ * `sessionId` is passed per call rather than bound to the hook so the same hook
+ * serves both the composer (known session) and the new-session flow (session id
+ * only known after create).
  */
-export function useFileUpload(sessionId: string) {
+export function useFileUpload() {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const upload = useCallback(
-    async (files: File[]): Promise<UploadedAttachment[]> => {
+    async (sessionId: string, files: File[]): Promise<UploadedAttachment[]> => {
       if (files.length === 0) return [];
 
       setUploading(true);
@@ -52,7 +56,7 @@ export function useFileUpload(sessionId: string) {
         setUploading(false);
       }
     },
-    [sessionId]
+    []
   );
 
   return { upload, uploading, error, clearError: useCallback(() => setError(null), []) };

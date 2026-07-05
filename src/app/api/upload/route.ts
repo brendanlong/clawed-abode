@@ -59,9 +59,12 @@ export async function POST(request: Request): Promise<Response> {
   if (!session) {
     return Response.json({ error: 'Session not found' }, { status: 404 });
   }
-  // Uploads target the session workspace, which only exists while running.
-  if (session.status !== 'running') {
-    return Response.json({ error: 'Session is not running' }, { status: 409 });
+  // Uploads target the session workspace. It exists once the session is running,
+  // and also during `creating` for the new-session flow's initial-prompt
+  // attachments — the upload dir is a sibling of the repo clone (created on
+  // demand) that the concurrent clone does not overwrite.
+  if (session.status !== 'running' && session.status !== 'creating') {
+    return Response.json({ error: 'Session is not accepting uploads' }, { status: 409 });
   }
 
   const files = formData.getAll('files').filter((f): f is File => f instanceof File);

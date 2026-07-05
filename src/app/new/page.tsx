@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useCallback, useReducer } from 'react';
+import { useState, useCallback, useReducer, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { Paperclip } from 'lucide-react';
 import { AuthGuard } from '@/components/AuthGuard';
 import { Header } from '@/components/Header';
 import { trpc } from '@/lib/trpc';
@@ -16,9 +17,12 @@ import { Spinner } from '@/components/ui/spinner';
 import { RepoSelector, NO_REPO_SENTINEL } from '@/components/RepoSelector';
 import { BranchSelector } from '@/components/BranchSelector';
 import { IssueSelector } from '@/components/IssueSelector';
+import { AttachmentChip } from '@/components/AttachmentChip';
+import { useFileUpload } from '@/hooks/useFileUpload';
 import type { Repo } from '@/components/RepoSelector';
 import type { Issue } from '@/lib/types';
 import { SESSION_NAME_MAX_LENGTH } from '@/lib/types';
+import { MAX_ATTACHMENTS } from '@/lib/attachments';
 import { formReducer, initialFormState } from './form-reducer';
 
 function generateIssuePrompt(issue: Issue, repoFullName: string): string {
@@ -50,18 +54,37 @@ function NewSessionForm() {
   const router = useRouter();
   const [form, dispatch] = useReducer(formReducer, initialFormState);
   const [error, setError] = useState('');
+  // Files chosen for the initial prompt. Held raw (not uploaded) until submit,
+  // since there is no session workspace to upload to until the session exists.
+  const [files, setFiles] = useState<File[]>([]);
+  // Covers the whole create → upload → register sequence (createMutation.isPending
+  // only spans the create call).
+  const [submitting, setSubmitting] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const isNoRepo = form.selectedRepo?.fullName === NO_REPO_SENTINEL;
   const hasRepo = form.selectedRepo && !isNoRepo;
 
-  const createMutation = trpc.sessions.create.useMutation({
-    onSuccess: (data) => {
-      router.replace(`/session/${data.session.id}`);
-    },
-    onError: (err) => {
-      setError(err.message);
-    },
-  });
+  const { upload } = useFileUpload();
+  const createMutation = trpc.sessions.create.useMutation();
+  const setInitialAttachmentsMutation = trpc.sessions.setInitialAttachments.useMutation();
+
+  const handleFilesSelected = useCallback((fileList: FileList | null) => {
+    if (!fileList || fileList.length === 0) return;
+    setError('');
+    setFiles((prev) => {
+      const combined = [...prev, ...Array.from(fileList)];
+      if (combined.length > MAX_ATTACHMENTS) {
+        setError(`You can attach at most ${MAX_ATTACHMENTS} files`);
+        return combined.slice(0, MAX_ATTACHMENTS);
+      }
+      return combined;
+    });
+  }, []);
+
+  const removeFile = useCallback((index: number) => {
+    setFiles((prev) => prev.filter((_, i) => i !== index));
+  }, []);
 
   const handleIssueSelect = useCallback(
     (issue: Issue | null) => {
@@ -102,7 +125,7 @@ function NewSessionForm() {
     [dispatch]
   );
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
@@ -120,18 +143,38 @@ function NewSessionForm() {
       isNoRepo ? 'Workspace' : `${form.selectedRepo.name} - ${form.selectedBranch}`
     ).slice(0, SESSION_NAME_MAX_LENGTH);
 
-    createMutation.mutate({
-      name: form.sessionName || defaultName,
-      repoFullName: isNoRepo ? undefined : form.selectedRepo.fullName,
-      branch: isNoRepo ? undefined : form.selectedBranch,
-      initialPrompt: form.initialPrompt.trim() || undefined,
-    });
+    setSubmitting(true);
+    try {
+      const { session } = await createMutation.mutateAsync({
+        name: form.sessionName || defaultName,
+        repoFullName: isNoRepo ? undefined : form.selectedRepo.fullName,
+        branch: isNoRepo ? undefined : form.selectedBranch,
+        initialPrompt: form.initialPrompt.trim() || undefined,
+        hasInitialAttachments: files.length > 0,
+      });
+
+      // Upload the initial prompt's files to the now-created session, then
+      // register their stored names so the background setup can prefix them
+      // onto the initial prompt once the workspace is ready.
+      if (files.length > 0) {
+        const uploaded = await upload(session.id, files);
+        await setInitialAttachmentsMutation.mutateAsync({
+          sessionId: session.id,
+          attachments: uploaded.map((a) => a.storedName),
+        });
+      }
+
+      router.replace(`/session/${session.id}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create session');
+      setSubmitting(false);
+    }
   };
 
   const canSubmit = isNoRepo || (hasRepo && !!form.selectedBranch);
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-6">
+    <form onSubmit={(e) => void handleSubmit(e)} className="space-y-6">
       {error && (
         <Alert variant="destructive">
           <AlertDescription>{error}</AlertDescription>
@@ -187,6 +230,43 @@ function NewSessionForm() {
               If provided, this prompt will be sent to Claude automatically when the session starts.
             </p>
           </div>
+
+          <div className="space-y-2">
+            <Label>Attachments (optional)</Label>
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                handleFilesSelected(e.currentTarget.files);
+                // Reset so selecting the same file again re-triggers onChange.
+                e.currentTarget.value = '';
+              }}
+            />
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={submitting || files.length >= MAX_ATTACHMENTS}
+              >
+                <Paperclip className="mr-1.5 h-4 w-4" />
+                Attach files
+              </Button>
+              {files.map((file, index) => (
+                <AttachmentChip
+                  key={`${file.name}-${index}`}
+                  name={file.name}
+                  onRemove={submitting ? undefined : () => removeFile(index)}
+                />
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Files are uploaded when the session is created and referenced in the initial prompt.
+            </p>
+          </div>
         </>
       )}
 
@@ -194,8 +274,8 @@ function NewSessionForm() {
         <Button variant="outline" asChild>
           <Link href="/">Cancel</Link>
         </Button>
-        <Button type="submit" disabled={!canSubmit || createMutation.isPending}>
-          {createMutation.isPending ? (
+        <Button type="submit" disabled={!canSubmit || submitting}>
+          {submitting ? (
             <span className="flex items-center gap-2">
               <Spinner size="sm" className="text-primary-foreground" />
               Creating...

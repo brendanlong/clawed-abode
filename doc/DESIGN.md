@@ -129,15 +129,26 @@ github.getIssue({ repoFullName: string, issueNumber: number })
 ```typescript
 sessions.create({
   name: string,
-  repoFullName?: string,   // e.g., "brendanlong/math-llm" — omit for no-repo sessions
-  branch?: string,         // omit for no-repo sessions
-  initialPrompt?: string   // Optional prompt to auto-send when session starts
+  repoFullName?: string,          // e.g., "brendanlong/math-llm" — omit for no-repo sessions
+  branch?: string,                // omit for no-repo sessions
+  initialPrompt?: string,         // Optional prompt to auto-send when session starts
+  hasInitialAttachments?: boolean // Set when the client will upload attachments for the
+                                  // initial prompt after create (see setInitialAttachments)
 })
   → { session: Session }
   // Returns immediately with session in "creating" status
   // Cloning continues in background (skipped for no-repo sessions)
   // UI polls session.get() to track progress via statusMessage
-  // If initialPrompt is provided, it is sent automatically server-side when session becomes running
+  // If initialPrompt is provided, it is sent automatically server-side when session becomes running.
+  // If hasInitialAttachments is set, the background setup waits (with a timeout) for the
+  // client's setInitialAttachments call before sending, so the prompt carries the files.
+
+sessions.setInitialAttachments({ sessionId: string, attachments: string[] })
+  → { success: true }
+  // Registers the storedNames of files uploaded (via POST /api/upload) for a session's
+  // initial prompt. Called by the new-session flow right after create + upload; unblocks
+  // the background setup so the initial prompt is prefixed with the attachment paths.
+  // See "Initial Prompt Attachments".
 
 sessions.list({ status?: SessionStatus })
   → { sessions: (Session & { turnActive: boolean })[] }
@@ -240,11 +251,12 @@ claude.getHistory({
 1. User selects repo and branch from UI (or "No Repository" for workspace-only sessions)
 2. Server calls `sessions.create()`
 3. Server creates session record with status `creating` and returns immediately
-4. UI navigates to session page, polls for status updates
-5. **For repo sessions**: Background: Server clones the repository to `/worktrees/{sessionId}/{repoName}`
+4. If files were attached to the initial prompt, the client uploads them to the (still `creating`) session and registers them via `sessions.setInitialAttachments()` (see [Initial Prompt Attachments](#initial-prompt-attachments)), then navigates. Otherwise it navigates immediately.
+5. UI navigates to session page, polls for status updates
+6. **For repo sessions**: Background: Server clones the repository to `/worktrees/{sessionId}/{repoName}`
    **For no-repo sessions**: Background: Server creates an empty directory at `/worktrees/{sessionId}/`
-6. Session status → `running`, statusMessage → null
-7. Background: If an initial prompt was provided, server sends it via `sendUserMessage()` (no client interaction needed)
+7. Session status → `running`, statusMessage → null
+8. Background: If an initial prompt was provided (or files were attached), server sends it via `sendUserMessage()` (no client interaction needed — for attachments it first waits for the client's registration, then prefixes the file paths)
 
 ### Interaction Flow
 
@@ -263,10 +275,21 @@ claude.getHistory({
 
 Users can attach files to a message. Files are stored in an `uploads/` folder inside the session's workspace (`/worktrees/{sessionId}/uploads/`), a **sibling of the repo clone** (`/worktrees/{sessionId}/{repoName}`) rather than inside it — so uploads are readable by Claude (running with the host's tools) but don't pollute the checkout's git status. Living in the workspace makes them durable for the life of the session and cleaned up automatically when the session is archived (the whole workspace is removed by `removeWorkspace`), so no separate reaper is needed.
 
-- **Upload transport**: a dedicated `POST /api/upload` route ([`src/app/api/upload/route.ts`](../src/app/api/upload/route.ts)) accepts `multipart/form-data` (fields `sessionId` + one or more `files`). A route (rather than a tRPC mutation) is used so binary bodies stream through `FormData` instead of being base64-inflated through superjson. It authenticates by reusing the tRPC `createContext` (same Bearer token), validates `sessionId` as a UUID, and only accepts uploads for a **running** session (the workspace exists only then). It returns the saved attachments (`{ name, storedName, path }`). Stored names are prefixed with a short random token so re-uploading the same filename never overwrites an earlier upload (no check-then-set), and file names are sanitized to a safe basename (`sanitizeFileName`), neutralizing path traversal. Implementation: [`src/server/services/uploads.ts`](../src/server/services/uploads.ts) (upload dir via `getSessionUploadDir` → `getSessionWorkspacePath`).
+- **Upload transport**: a dedicated `POST /api/upload` route ([`src/app/api/upload/route.ts`](../src/app/api/upload/route.ts)) accepts `multipart/form-data` (fields `sessionId` + one or more `files`). A route (rather than a tRPC mutation) is used so binary bodies stream through `FormData` instead of being base64-inflated through superjson. It authenticates by reusing the tRPC `createContext` (same Bearer token), validates `sessionId` as a UUID, and accepts uploads for a session that is **running** or **creating** (the latter for the new-session flow's initial-prompt attachments — see [Initial Prompt Attachments](#initial-prompt-attachments); the upload dir is `mkdir`ed on demand and a concurrent clone does not overwrite it since it is a sibling of the repo checkout). It returns the saved attachments (`{ name, storedName, path }`). Stored names are prefixed with a short random token so re-uploading the same filename never overwrites an earlier upload (no check-then-set), and file names are sanitized to a safe basename (`sanitizeFileName`), neutralizing path traversal. Implementation: [`src/server/services/uploads.ts`](../src/server/services/uploads.ts) (upload dir via `getSessionUploadDir` → `getSessionWorkspacePath`).
 - **Size / count limits**: because App Router route handlers have no built-in body-size limit, the route rejects on `Content-Length` before buffering, then enforces a per-file cap (`MAX_UPLOAD_BYTES`, 25 MB), an aggregate cap (`MAX_TOTAL_UPLOAD_BYTES`, 100 MB), and a file-count cap (`MAX_ATTACHMENTS`, 20 — shared with the `claude.send` schema so the two ceilings can't drift). Sizes are checked up front so a batch never writes partially.
 - **Uploads while Claude is working**: the attach control is not gated by `turnActive` — a user can upload files mid-turn. Uploaded files are held **client-side** as pending attachments (chips on the composer, via `useFileUpload`); they are **not** shown in the transcript until the message is sent, matching the requested UX.
 - **Prefixing the next message**: on submit the client passes the pending attachments' `storedName`s to `claude.send`. The server resolves them back to absolute paths (`resolveUploadPaths`, which `basename`s each name to re-neutralize traversal and drops any file no longer on disk), and the pure `buildPromptWithAttachments` ([`src/lib/attachments.ts`](../src/lib/attachments.ts)) prefixes the message with `[User uploaded file(s): /path/a.md, /path/b.png]`. The prefix is part of the persisted/sanitized user message, so the transcript reflects exactly what the model saw. A message may be sent with attachments and no typed text (the prefix is then the whole message). _Known limitation_: a file that has vanished from disk by send time (e.g. the session was archived between upload and send) is silently dropped from the prefix (logged) rather than erroring — durability makes this rare.
+
+### Initial Prompt Attachments
+
+The new-session form can attach files to the **initial prompt** — the same prefixing (`buildPromptWithAttachments`) as a normal message, but with a twist: the initial prompt is sent **server-side** after the background clone finishes (so it survives a client disconnect), while attachments can only be uploaded **after** the session (and its workspace) exists. A small in-memory **rendezvous** ([`src/server/services/initial-attachments.ts`](../src/server/services/initial-attachments.ts)) bridges the gap:
+
+1. The form holds the chosen files **raw** (`File[]`, not uploaded) — there is no workspace to upload to during form-fill. It reuses the shared `useFileUpload` hook (now taking `sessionId` per call, since the id is only known after create) and the shared `AttachmentChip`.
+2. On submit the client calls `sessions.create({ ..., hasInitialAttachments: true })`. Create **reserves** a rendezvous slot (`reserveInitialAttachments`) and passes a `waitForAttachments` flag into the background setup. Create returns immediately (unchanged), so the client navigates without waiting on the clone.
+3. The client uploads the files to the now-`creating` session (`POST /api/upload`, which accepts `creating`), then calls `sessions.setInitialAttachments({ sessionId, attachments: storedNames })` → `resolveInitialAttachments`.
+4. The background setup, after the clone completes and the session is marked `running`, **awaits** the registered stored names (`awaitInitialAttachments`, with a `INITIAL_ATTACHMENTS_TIMEOUT_MS` = 60 s cap), resolves them to absolute paths, and sends the initial prompt with the attachment prefix. It sends when there is prompt text **or** at least one attachment (so an attachments-only initial prompt works).
+
+The common ordering is register-before-await (upload is fast; the clone that gates the await is slow), so the await usually returns immediately. Because the send is server-owned once registered, it still fires even if the client disconnects after step 3. Graceful degradation: if the client abandons the flow after create (never registers), the await times out and the prompt is sent without attachments (or, if there was no prompt text, not at all); the reservation is also dropped if the clone fails (`clearInitialAttachments`). The rendezvous is in-memory only, so a server restart between create and register loses it — but a restart already loses the whole in-flight background setup, so this adds no new failure mode.
 
 ### System Prompt
 
@@ -706,6 +729,7 @@ Both source [`scripts/lib-code-server.sh`](../scripts/lib-code-server.sh) so the
 - Initial prompt (optional) — editable textarea, pre-filled when issue is selected
   - If provided, sent server-side after session setup completes (works even if client disconnects)
   - When omitted, session starts without a prompt (useful for voice mode)
+- Attachments (optional) — attach files to the initial prompt; held client-side until the session is created, then uploaded and prefixed onto the initial prompt (see [Initial Prompt Attachments](#initial-prompt-attachments))
 - Create button
 
 ### Session View (Chat)
@@ -756,6 +780,7 @@ clawed-abode/
 │   │   │   ├── github.ts         # GitHub API service
 │   │   │   ├── mcp-validator.ts  # MCP server config validation
 │   │   │   ├── uploads.ts        # Uploaded-file storage (workspace uploads/ dir) + path resolution
+│   │   │   ├── initial-attachments.ts # In-memory rendezvous for initial-prompt attachments
 │   │   │   └── session-reconciler.ts # Counts running sessions for lazy revive on restart
 │   │   └── trpc.ts
 │   ├── lib/
@@ -786,6 +811,7 @@ clawed-abode/
 │   └── components/
 │       ├── MessageList.tsx
 │       ├── PromptInput.tsx
+│       ├── AttachmentChip.tsx     # Shared pending-attachment chip (composer + new session)
 │       ├── SessionList.tsx
 │       ├── ConnectionStatusIndicator.tsx # "Reconnecting" banner when the SSE stream is down
 │       ├── Header.tsx

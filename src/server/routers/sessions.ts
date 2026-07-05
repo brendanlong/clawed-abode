@@ -15,12 +15,28 @@ import {
   cleanupSession,
   isClaudeRunning,
 } from '../services/claude-runner';
+import { resolveUploadPaths } from '../services/uploads';
+import {
+  reserveInitialAttachments,
+  resolveInitialAttachments,
+  awaitInitialAttachments,
+  clearInitialAttachments,
+} from '../services/initial-attachments';
 import { sseEvents } from '../services/events';
 import { createLogger, toError } from '@/lib/logger';
 import { env } from '@/lib/env';
 import { SESSION_NAME_MAX_LENGTH } from '@/lib/types';
+import { MAX_ATTACHMENTS } from '@/lib/attachments';
 
 const log = createLogger('sessions');
+
+/**
+ * How long the background setup waits for the client to register the initial
+ * prompt's uploaded attachments before sending the prompt without them. The
+ * client registers right after uploading (typically while the clone is still
+ * running), so this only bites when the client abandons the flow after create.
+ */
+const INITIAL_ATTACHMENTS_TIMEOUT_MS = 60_000;
 
 const sessionStatusSchema = z.enum(['creating', 'running', 'stopped', 'error', 'archived']);
 
@@ -30,9 +46,10 @@ async function setupSessionBackground(
   repoFullName: string | null,
   branch: string | null,
   initialPrompt: string | undefined,
+  waitForAttachments: boolean,
   githubToken?: string
 ): Promise<void> {
-  log.info('Starting session setup', { sessionId, repoFullName, branch });
+  log.info('Starting session setup', { sessionId, repoFullName, branch, waitForAttachments });
 
   const updateStatus = async (message: string) => {
     const session = await prisma.session.update({
@@ -75,15 +92,30 @@ async function setupSessionBackground(
 
     log.info('Session setup complete', { sessionId });
 
-    // Send the initial prompt if provided. sendUserMessage establishes the
-    // streaming query (loading settings internally) and pushes the prompt.
-    if (initialPrompt?.trim()) {
-      log.info('Sending initial prompt', { sessionId });
-      sendUserMessage(sessionId, initialPrompt.trim()).catch((err) => {
+    // If the initial prompt carries attachments, wait for the client to register
+    // the uploaded files (it does so right after create, usually while cloning
+    // was still running) before building the prompt. The workspace now exists, so
+    // resolve the stored names to absolute paths for the attachment prefix.
+    let attachmentPaths: string[] = [];
+    if (waitForAttachments) {
+      const storedNames = await awaitInitialAttachments(sessionId, INITIAL_ATTACHMENTS_TIMEOUT_MS);
+      attachmentPaths = await resolveUploadPaths(sessionId, storedNames);
+      log.info('Resolved initial attachments', { sessionId, count: attachmentPaths.length });
+    }
+
+    // Send the initial prompt if there is text or at least one attachment.
+    // sendUserMessage establishes the streaming query (loading settings
+    // internally), prefixes the attachment paths, and pushes the prompt.
+    const trimmedPrompt = initialPrompt?.trim() ?? '';
+    if (trimmedPrompt || attachmentPaths.length > 0) {
+      log.info('Sending initial prompt', { sessionId, attachments: attachmentPaths.length });
+      sendUserMessage(sessionId, trimmedPrompt, attachmentPaths).catch((err) => {
         log.error('Initial prompt failed', toError(err), { sessionId });
       });
     }
   } catch (error) {
+    // Drop any reserved rendezvous slot so a late register call doesn't leak.
+    clearInitialAttachments(sessionId);
     log.error('Session setup failed', toError(error), { sessionId, repoFullName, branch });
 
     const errorMessage = error instanceof Error ? error.message : 'Failed to create session';
@@ -109,11 +141,16 @@ export const sessionsRouter = router({
           .optional(),
         branch: z.string().min(1).optional(),
         initialPrompt: z.string().max(100000).optional(),
+        // Set when the client will upload attachments for the initial prompt
+        // after this call (see `setInitialAttachments`). The background setup
+        // then waits for those files before sending the initial prompt.
+        hasInitialAttachments: z.boolean().optional(),
       })
     )
     .mutation(async ({ input }) => {
       const githubToken = env.GITHUB_TOKEN;
       const hasRepo = !!input.repoFullName && !!input.branch;
+      const waitForAttachments = input.hasInitialAttachments ?? false;
 
       const session = await prisma.session.create({
         data: {
@@ -127,18 +164,50 @@ export const sessionsRouter = router({
         },
       });
 
+      // Reserve the rendezvous slot before starting setup so the background
+      // await and the client's register call meet on the same reservation
+      // regardless of which lands first.
+      if (waitForAttachments) {
+        reserveInitialAttachments(session.id);
+      }
+
       // Start setup in background
       setupSessionBackground(
         session.id,
         input.repoFullName ?? null,
         input.branch ?? null,
         input.initialPrompt,
+        waitForAttachments,
         githubToken
       ).catch((error) => {
         log.error('Unhandled error in session setup', toError(error), { sessionId: session.id });
       });
 
       return { session };
+    }),
+
+  // Register the uploaded attachments for a session's initial prompt. Called by
+  // the new-session flow right after uploading files (via /api/upload) to the
+  // freshly created session, so the background setup can prefix them onto the
+  // initial prompt once the workspace is ready.
+  setInitialAttachments: protectedProcedure
+    .input(
+      z.object({
+        sessionId: z.string().uuid(),
+        attachments: z.array(z.string().min(1).max(255)).min(1).max(MAX_ATTACHMENTS),
+      })
+    )
+    .mutation(async ({ input }) => {
+      const session = await prisma.session.findUnique({
+        where: { id: input.sessionId },
+        select: { id: true },
+      });
+      if (!session) {
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'Session not found' });
+      }
+
+      resolveInitialAttachments(input.sessionId, input.attachments);
+      return { success: true };
     }),
 
   list: protectedProcedure

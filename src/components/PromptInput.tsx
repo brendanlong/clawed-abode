@@ -7,6 +7,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { VoiceMicButton } from '@/components/voice/VoiceMicButton';
 import { useVoiceRecording } from '@/hooks/useVoiceRecording';
 import { useFileUpload } from '@/hooks/useFileUpload';
+import { AttachmentChip } from '@/components/AttachmentChip';
 import type { UploadedAttachment } from '@/lib/attachments';
 
 export interface SlashCommand {
@@ -48,7 +49,7 @@ export function PromptInput({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const commandsRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const { upload, uploading, error: uploadError, clearError } = useFileUpload(sessionId);
+  const { upload, uploading, error: uploadError, clearError } = useFileUpload();
 
   const {
     isRecording,
@@ -118,13 +119,13 @@ export function PromptInput({
       if (!fileList || fileList.length === 0) return;
       const files = Array.from(fileList);
       try {
-        const uploaded = await upload(files);
+        const uploaded = await upload(sessionId, files);
         setAttachments((prev) => [...prev, ...uploaded]);
       } catch {
         // Error is surfaced via uploadError; nothing else to do here.
       }
     },
-    [upload]
+    [upload, sessionId]
   );
 
   const removeAttachment = useCallback((storedName: string) => {
@@ -249,23 +250,11 @@ export function PromptInput({
         {(attachments.length > 0 || uploadError) && (
           <div className="mb-2 flex flex-wrap items-center gap-2">
             {attachments.map((att) => (
-              <span
+              <AttachmentChip
                 key={att.storedName}
-                className="inline-flex items-center gap-1.5 rounded-md border bg-muted px-2 py-1 text-xs"
-              >
-                <Paperclip className="h-3 w-3 shrink-0 text-muted-foreground" />
-                <span className="max-w-[12rem] truncate" title={att.name}>
-                  {att.name}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => removeAttachment(att.storedName)}
-                  className="text-muted-foreground hover:text-foreground"
-                  aria-label={`Remove ${att.name}`}
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              </span>
+                name={att.name}
+                onRemove={() => removeAttachment(att.storedName)}
+              />
             ))}
             {uploadError && (
               <span className="inline-flex items-center gap-1.5 text-xs text-destructive">
