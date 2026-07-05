@@ -15,6 +15,7 @@ import {
   stopBackgroundTask,
 } from '../services/claude-runner';
 import { resolveUploadPaths } from '../services/uploads';
+import { MAX_ATTACHMENTS } from '@/lib/attachments';
 import { estimateTokenUsage } from '@/lib/token-estimation';
 import {
   type ToolResponse,
@@ -87,7 +88,7 @@ export const claudeRouter = router({
           sessionId: z.string().uuid(),
           prompt: z.string().max(100000),
           // Stored names of previously uploaded attachments (see /api/upload).
-          attachments: z.array(z.string().min(1).max(255)).max(20).optional(),
+          attachments: z.array(z.string().min(1).max(255)).max(MAX_ATTACHMENTS).optional(),
         })
         // Either typed text or at least one attachment must be present.
         .refine((v) => v.prompt.trim().length > 0 || (v.attachments?.length ?? 0) > 0, {

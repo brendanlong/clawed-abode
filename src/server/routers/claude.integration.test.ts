@@ -26,6 +26,15 @@ vi.mock('../services/worktree-manager', () => ({
   getSessionWorkingDir: vi.fn((sessionId: string, repoPath: string) =>
     repoPath ? `/worktrees/${sessionId}/${repoPath}` : `/worktrees/${sessionId}`
   ),
+  getSessionWorkspacePath: vi.fn((sessionId: string) => `/worktrees/${sessionId}`),
+}));
+
+// Mock uploads service (filesystem-backed). Its real behavior — storing files,
+// sanitizing names, resolving/dropping stored names — is covered by
+// uploads.integration.test.ts and the /api/upload route test.
+const mockResolveUploadPaths = vi.hoisted(() => vi.fn());
+vi.mock('../services/uploads', () => ({
+  resolveUploadPaths: mockResolveUploadPaths,
 }));
 
 // Mock settings-merger
@@ -110,7 +119,76 @@ describe('claudeRouter integration', () => {
       });
 
       expect(result).toEqual({ success: true });
-      expect(mockSendUserMessage).toHaveBeenCalledWith(session.id, 'Hello, Claude!');
+      expect(mockSendUserMessage).toHaveBeenCalledWith(session.id, 'Hello, Claude!', []);
+    });
+
+    it('resolves attachments to paths and passes them to sendUserMessage', async () => {
+      const session = await testPrisma.session.create({
+        data: { name: 'Attach Session', workspacePath: '/workspace/test', status: 'running' },
+      });
+
+      mockIsClaudeRunningAsync.mockResolvedValue(false);
+      mockSendUserMessage.mockResolvedValue(undefined);
+      const resolvedPaths = ['/worktrees/x/uploads/a.md', '/worktrees/x/uploads/b.png'];
+      mockResolveUploadPaths.mockResolvedValue(resolvedPaths);
+
+      const caller = createCaller('auth-session-id');
+      const result = await caller.claude.send({
+        sessionId: session.id,
+        prompt: 'look',
+        attachments: ['aaaa1111-a.md', 'bbbb2222-b.png'],
+      });
+
+      expect(result).toEqual({ success: true });
+      expect(mockResolveUploadPaths).toHaveBeenCalledWith(session.id, [
+        'aaaa1111-a.md',
+        'bbbb2222-b.png',
+      ]);
+      expect(mockSendUserMessage).toHaveBeenCalledWith(session.id, 'look', resolvedPaths);
+    });
+
+    it('does not resolve attachments when none are provided', async () => {
+      const session = await testPrisma.session.create({
+        data: { name: 'No Attach', workspacePath: '/workspace/test', status: 'running' },
+      });
+
+      mockIsClaudeRunningAsync.mockResolvedValue(false);
+      mockSendUserMessage.mockResolvedValue(undefined);
+
+      const caller = createCaller('auth-session-id');
+      await caller.claude.send({ sessionId: session.id, prompt: 'hi' });
+
+      expect(mockResolveUploadPaths).not.toHaveBeenCalled();
+      expect(mockSendUserMessage).toHaveBeenCalledWith(session.id, 'hi', []);
+    });
+
+    it('allows a send with attachments and no prompt text', async () => {
+      const session = await testPrisma.session.create({
+        data: { name: 'Attach Only', workspacePath: '/workspace/test', status: 'running' },
+      });
+
+      mockIsClaudeRunningAsync.mockResolvedValue(false);
+      mockSendUserMessage.mockResolvedValue(undefined);
+      mockResolveUploadPaths.mockResolvedValue(['/worktrees/x/uploads/a.md']);
+
+      const caller = createCaller('auth-session-id');
+      const result = await caller.claude.send({
+        sessionId: session.id,
+        prompt: '',
+        attachments: ['aaaa1111-a.md'],
+      });
+      expect(result).toEqual({ success: true });
+      expect(mockSendUserMessage).toHaveBeenCalledWith(session.id, '', [
+        '/worktrees/x/uploads/a.md',
+      ]);
+    });
+
+    it('rejects an empty prompt with no attachments', async () => {
+      const session = await testPrisma.session.create({
+        data: { name: 'Empty', workspacePath: '/workspace/test', status: 'running' },
+      });
+      const caller = createCaller('auth-session-id');
+      await expect(caller.claude.send({ sessionId: session.id, prompt: '   ' })).rejects.toThrow();
     });
 
     it('should throw NOT_FOUND for non-existent session', async () => {
