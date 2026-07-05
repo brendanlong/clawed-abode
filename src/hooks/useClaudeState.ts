@@ -42,6 +42,7 @@ export function useClaudeState(sessionId: string) {
   // (useSessionStream), which writes directly into these query caches.
 
   const sendMutation = trpc.claude.send.useMutation();
+  const sendBatchMutation = trpc.claude.sendBatch.useMutation();
   const interruptMutation = trpc.claude.interrupt.useMutation();
   const answerMutation = trpc.claude.answerQuestion.useMutation();
   const respondToPlanMutation = trpc.claude.respondToPlan.useMutation();
@@ -52,6 +53,15 @@ export function useClaudeState(sessionId: string) {
       sendMutation.mutate({ sessionId, prompt, attachments });
     },
     [sessionId, sendMutation]
+  );
+
+  // Flush the client-held pending queue as one turn (see PendingMessage). Each
+  // message becomes its own transcript bubble; the model answers them together.
+  const sendBatch = useCallback(
+    (messages: { prompt: string; attachments?: string[] }[]) => {
+      sendBatchMutation.mutate({ sessionId, messages });
+    },
+    [sessionId, sendBatchMutation]
   );
 
   const interrupt = useCallback(() => {
@@ -92,6 +102,8 @@ export function useClaudeState(sessionId: string) {
     backgroundTasks,
     backgroundActive: backgroundTasks.length > 0,
     send,
+    sendBatch,
+    isBatchSending: sendBatchMutation.isPending,
     interrupt,
     isInterrupting: interruptMutation.isPending,
     answerQuestion,

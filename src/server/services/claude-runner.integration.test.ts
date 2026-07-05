@@ -70,6 +70,7 @@ import { createPushable } from '@/lib/pushable';
 // Imported dynamically in beforeAll (after setupTestDb sets DATABASE_URL), since
 // claude-runner pulls in @/lib/prisma at module load.
 let sendUserMessage: typeof import('./claude-runner').sendUserMessage;
+let sendUserMessages: typeof import('./claude-runner').sendUserMessages;
 let interruptClaude: typeof import('./claude-runner').interruptClaude;
 let stopSession: typeof import('./claude-runner').stopSession;
 let isClaudeRunning: typeof import('./claude-runner').isClaudeRunning;
@@ -235,6 +236,7 @@ describe('claude-runner persistent streaming loop', () => {
     await setupTestDb();
     const mod = await import('./claude-runner');
     sendUserMessage = mod.sendUserMessage;
+    sendUserMessages = mod.sendUserMessages;
     interruptClaude = mod.interruptClaude;
     stopSession = mod.stopSession;
     isClaudeRunning = mod.isClaudeRunning;
@@ -631,6 +633,55 @@ describe('claude-runner persistent streaming loop', () => {
     fake.emit(messageDelta('end_turn'));
     await waitFor(() => !isClaudeRunning(sessionId));
     expect(mockSseEvents.emitClaudeRunning).toHaveBeenCalledWith(sessionId, false);
+
+    stopSession(sessionId);
+  });
+
+  it('sendUserMessages persists each message but pushes them as one combined turn', async () => {
+    const fake = makeFakeQuery();
+    _setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+
+    await sendUserMessages(sessionId, [
+      { prompt: 'one', attachmentPaths: [] },
+      { prompt: 'two', attachmentPaths: [] },
+    ]);
+
+    // Each message is persisted as its own transcript bubble, in order.
+    await waitFor(async () => (await messagesFor(sessionId)).length >= 2);
+    const msgs = await messagesFor(sessionId);
+    expect(msgs.map((m) => m.type)).toEqual(['user', 'user']);
+
+    // But the model receives a single combined turn.
+    await waitFor(() => fake.inputs.length >= 1);
+    expect(fake.inputs).toHaveLength(1);
+    expect(fake.inputs[0].message.content).toBe('one\n\ntwo');
+    expect(isClaudeRunning(sessionId)).toBe(true);
+
+    stopSession(sessionId);
+  });
+
+  it('sendUserMessages queues the combined turn when one is already active', async () => {
+    const fake = makeFakeQuery();
+    _setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+
+    // A turn is running.
+    await sendUserMessage(sessionId, 'first');
+    await waitFor(() => fake.inputs.length >= 1);
+
+    // A batch arriving mid-turn is persisted now but queued as one combined push.
+    await sendUserMessages(sessionId, [
+      { prompt: 'a', attachmentPaths: [] },
+      { prompt: 'b', attachmentPaths: [] },
+    ]);
+    await waitFor(async () => (await messagesFor(sessionId)).length >= 3);
+    expect(fake.inputs).toHaveLength(1);
+
+    // Turn ends → the combined batch flushes.
+    fake.emit(result());
+    await waitFor(() => fake.inputs.length >= 2);
+    expect(fake.inputs[1].message.content).toBe('a\n\nb');
 
     stopSession(sessionId);
   });

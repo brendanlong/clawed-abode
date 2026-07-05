@@ -15,9 +15,21 @@ export interface SlashCommand {
   argumentHint: string;
 }
 
+/**
+ * A draft to load into the composer (text + attachments). The `nonce` makes each
+ * request distinct so the same text can be restored twice; the composer applies a
+ * draft once per new nonce. Used to reclaim pending messages into the input box
+ * when the user interrupts (see the session page).
+ */
+export interface ComposerDraft {
+  text: string;
+  attachments: UploadedAttachment[];
+  nonce: number;
+}
+
 interface PromptInputProps {
   sessionId: string;
-  onSubmit: (prompt: string, attachments?: string[]) => void;
+  onSubmit: (prompt: string, attachments?: UploadedAttachment[]) => void;
   onInterrupt: () => void;
   isRunning: boolean;
   isInterrupting: boolean;
@@ -25,6 +37,10 @@ interface PromptInputProps {
   commands?: SlashCommand[];
   voiceEnabled?: boolean;
   voiceAutoSend?: boolean;
+  /** When set (new nonce), load this text + attachments into the composer. */
+  restoreDraft?: ComposerDraft | null;
+  /** Called once a `restoreDraft` has been applied, so the parent can clear it. */
+  onDraftConsumed?: () => void;
 }
 
 export function PromptInput({
@@ -37,6 +53,8 @@ export function PromptInput({
   commands = [],
   voiceEnabled = false,
   voiceAutoSend = true,
+  restoreDraft = null,
+  onDraftConsumed,
 }: PromptInputProps) {
   const [prompt, setPrompt] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -64,6 +82,24 @@ export function PromptInput({
       textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 200)}px`;
     }
   }, [prompt, interimTranscript]);
+
+  // Load a restored draft (e.g. pending messages reclaimed on interrupt) into the
+  // composer, once per new nonce. Appends to any text the user has already typed
+  // so an in-progress draft isn't clobbered, and merges attachments (deduped by
+  // storedName).
+  const appliedDraftNonceRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!restoreDraft || restoreDraft.nonce === appliedDraftNonceRef.current) return;
+    appliedDraftNonceRef.current = restoreDraft.nonce;
+
+    setPrompt((prev) => (prev.trim() ? `${restoreDraft.text}\n${prev}` : restoreDraft.text));
+    setAttachments((prev) => {
+      const seen = new Set(prev.map((a) => a.storedName));
+      return [...prev, ...restoreDraft.attachments.filter((a) => !seen.has(a.storedName))];
+    });
+    textareaRef.current?.focus();
+    onDraftConsumed?.();
+  }, [restoreDraft, onDraftConsumed]);
 
   // Determine which commands to show based on input
   const filteredCommands = useMemo(() => {
@@ -107,10 +143,7 @@ export function PromptInput({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (canSubmit) {
-      onSubmit(
-        prompt.trim(),
-        attachments.length > 0 ? attachments.map((a) => a.storedName) : undefined
-      );
+      onSubmit(prompt.trim(), attachments.length > 0 ? attachments : undefined);
       setPrompt('');
       setAttachments([]);
     }
@@ -179,10 +212,7 @@ export function PromptInput({
       setPrompt(fullPrompt);
 
       if (voiceAutoSend && fullPrompt && !disabled) {
-        onSubmit(
-          fullPrompt,
-          attachments.length > 0 ? attachments.map((a) => a.storedName) : undefined
-        );
+        onSubmit(fullPrompt, attachments.length > 0 ? attachments : undefined);
         setPrompt('');
         setAttachments([]);
       } else {
