@@ -23,26 +23,28 @@ function toolResultMessage(toolUseId: string) {
 }
 
 describe('attachToolResultSanitizations', () => {
-  it('attaches findings to the matching tool_result block and consumes the entry', () => {
+  it('attaches findings to the matching block and returns its id without consuming the map', () => {
     const message = toolResultMessage('toolu_1');
     const map = new Map([['toolu_1', info(true)]]);
 
-    attachToolResultSanitizations(message, map);
+    const attached = attachToolResultSanitizations(message, map);
 
     const block = message.message.content[0] as { sanitization?: SanitizationInfo };
     expect(block.sanitization).toEqual(info(true));
-    // Consumed so it is only attached once.
-    expect(map.has('toolu_1')).toBe(false);
+    expect(attached).toEqual(['toolu_1']);
+    // The caller consumes the entry only after a durable insert — not here.
+    expect(map.has('toolu_1')).toBe(true);
   });
 
   it('leaves blocks without a matching finding untouched', () => {
     const message = toolResultMessage('toolu_other');
     const map = new Map([['toolu_1', info(true)]]);
 
-    attachToolResultSanitizations(message, map);
+    const attached = attachToolResultSanitizations(message, map);
 
     const block = message.message.content[0] as { sanitization?: SanitizationInfo };
     expect(block.sanitization).toBeUndefined();
+    expect(attached).toEqual([]);
     // Nothing matched → the entry stays for a later message.
     expect(map.has('toolu_1')).toBe(true);
   });
@@ -63,27 +65,30 @@ describe('attachToolResultSanitizations', () => {
       ['b', info(false)],
     ]);
 
-    attachToolResultSanitizations(message, map);
+    const attached = attachToolResultSanitizations(message, map);
 
     const [ba, bb] = message.message.content as Array<{ sanitization?: SanitizationInfo }>;
     expect(ba.sanitization?.removed).toBe(true);
     expect(bb.sanitization?.removed).toBe(false);
-    expect(map.size).toBe(0);
+    expect(attached).toEqual(['a', 'b']);
+    expect(map.size).toBe(2);
   });
 
   it('is a no-op for an empty map or non-tool_result content', () => {
     const empty = new Map<string, SanitizationInfo>();
     const message = toolResultMessage('toolu_1');
-    attachToolResultSanitizations(message, empty);
+    expect(attachToolResultSanitizations(message, empty)).toEqual([]);
     expect(
       (message.message.content[0] as { sanitization?: SanitizationInfo }).sanitization
     ).toBeUndefined();
 
     // A plain prompt echo (no message.content array) matches nothing and does not throw.
     const map = new Map([['toolu_1', info(true)]]);
-    expect(() =>
-      attachToolResultSanitizations({ type: 'user', content: 'hello' }, map)
-    ).not.toThrow();
+    let attached: string[] = [];
+    expect(() => {
+      attached = attachToolResultSanitizations({ type: 'user', content: 'hello' }, map);
+    }).not.toThrow();
+    expect(attached).toEqual([]);
     expect(map.has('toolu_1')).toBe(true);
   });
 });

@@ -717,18 +717,24 @@ async function runSessionLoop(sessionId: string, state: SessionState, q: Query):
 
       // Attach any sanitizer findings for this message's tool results (recorded
       // by the PostToolUse hook, keyed by tool_use_id) so the UI can badge the
-      // exact tool result whose hidden content was filtered. Consumes the map.
-      if (handling.dbType === 'user' && state.toolSanitizations.size > 0) {
-        attachToolResultSanitizations(message, state.toolSanitizations);
-      }
+      // exact tool result whose hidden content was filtered. The findings are
+      // only removed from the map once the message is durably persisted (below),
+      // so a duplicate/no-op insert can't consume a badge it never wrote.
+      const attachedSanitizations =
+        handling.dbType === 'user' && state.toolSanitizations.size > 0
+          ? attachToolResultSanitizations(message, state.toolSanitizations)
+          : [];
 
       const id = (message as { uuid?: string }).uuid || uuid();
-      const { sequence } = await insertMessage({
+      const { inserted, sequence } = await insertMessage({
         sessionId,
         id,
         type: handling.dbType,
         content: message,
       });
+      if (inserted) {
+        for (const toolUseId of attachedSanitizations) state.toolSanitizations.delete(toolUseId);
+      }
       if (sequence !== undefined) nextPartialSequence = sequence + 1;
     }
     log.info('runSessionLoop: stream ended', { sessionId });
