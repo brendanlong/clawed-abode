@@ -2,24 +2,23 @@ import { mkdir, writeFile, access } from 'fs/promises';
 import path from 'path';
 import { v4 as uuid } from 'uuid';
 import { sanitizeFileName, type UploadedAttachment } from '@/lib/attachments';
+import { getSessionWorkspacePath } from './worktree-manager';
 import { createLogger } from '@/lib/logger';
 
 const log = createLogger('uploads');
 
-/**
- * Base directory for user-uploaded files. Deliberately outside any repo clone so
- * uploads survive session workspace teardown and don't pollute git status, but
- * still on the host filesystem where Claude (running with the host's tools) can
- * read them. Override with the UPLOADS_DIR env var.
- */
-export const UPLOADS_BASE_DIR = process.env.UPLOADS_DIR ?? '/tmp/clawed-abode-uploads';
-
 /** Per-file size cap. Large enough for images/docs, small enough to bound disk use. */
 export const MAX_UPLOAD_BYTES = 100 * 1024 * 1024; // 100 MB
 
-/** Files are stored under a per-session subdirectory to avoid cross-session name clashes. */
+/**
+ * Directory for a session's uploaded files: an `uploads/` folder inside the
+ * session's workspace (a sibling of the repo clone, not inside it — so uploads
+ * don't pollute git status). Living in the workspace makes them durable for the
+ * life of the session and cleaned up automatically when the session is archived
+ * (the whole workspace is removed).
+ */
 export function getSessionUploadDir(sessionId: string): string {
-  return path.join(UPLOADS_BASE_DIR, sessionId);
+  return path.join(getSessionWorkspacePath(sessionId), 'uploads');
 }
 
 /**
