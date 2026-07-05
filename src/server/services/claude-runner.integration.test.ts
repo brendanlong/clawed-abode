@@ -119,6 +119,33 @@ function makeFakeQuery() {
 let uuidCounter = 0;
 const nextUuid = () => `uuid-${uuidCounter++}`;
 
+// A zero-width space (invisible), built from a code point so no hidden byte lives
+// in this source file. Used to exercise the tool-output sanitizer end to end.
+const ZWSP = String.fromCharCode(0x200b);
+
+function toolResultMsg(toolUseId: string, text: string): SDKMessage {
+  return {
+    type: 'user',
+    parent_tool_use_id: null,
+    message: {
+      role: 'user',
+      content: [{ type: 'tool_result', tool_use_id: toolUseId, content: text }],
+    },
+    session_id: 's',
+    uuid: nextUuid(),
+  } as unknown as SDKMessage;
+}
+
+/** The PostToolUse hook the runner wired into the SDK options (real fn). */
+type PostToolUseHook = (input: unknown) => Promise<unknown>;
+function extractPostToolUseHook(options: unknown): PostToolUseHook {
+  const hooks = (options as { hooks?: { PostToolUse?: Array<{ hooks: PostToolUseHook[] }> } }).hooks
+    ?.PostToolUse;
+  const hook = hooks?.[0]?.hooks?.[0];
+  if (!hook) throw new Error('PostToolUse hook not wired into options');
+  return hook;
+}
+
 function assistant(text: string, parent: string | null = null): SDKMessage {
   return {
     type: 'assistant',
@@ -529,6 +556,111 @@ describe('claude-runner persistent streaming loop', () => {
     expect(fake.setModel).toHaveBeenCalledWith('opus');
 
     fake.emit(result());
+    await waitFor(() => !isClaudeRunning(sessionId));
+    stopSession(sessionId);
+  });
+
+  it('stitches a PostToolUse sanitizer finding onto the persisted tool_result message', async () => {
+    // End-to-end seam: the real PostToolUse hook records a finding into the
+    // per-session map (keyed by tool_use_id), and runSessionLoop attaches it to
+    // the matching tool_result block before persisting. Exercises the wiring the
+    // pure unit tests can't (hook callback → map → persist).
+    const fake = makeFakeQuery();
+    let options: unknown;
+    _setQueryFactory((p) => {
+      options = p.options;
+      return fake.factory(p);
+    });
+    const sessionId = await createRunningSession();
+
+    await sendUserMessage(sessionId, 'run a command');
+
+    // Fire the real hook with tool output containing an invisible zero-width char,
+    // exactly as the SDK would post-tool. This records the finding in the map.
+    const hook = extractPostToolUseHook(options);
+    await hook({
+      hook_event_name: 'PostToolUse',
+      session_id: 's',
+      transcript_path: '/tmp/t.jsonl',
+      cwd: '/tmp/spike-runner-test',
+      tool_name: 'Bash',
+      tool_input: {},
+      tool_response: {
+        stdout: `value${ZWSP}hidden`,
+        stderr: '',
+        interrupted: false,
+        isImage: false,
+      },
+      tool_use_id: 'toolu_x',
+    });
+
+    // The matching tool_result streams back and is persisted with the badge.
+    fake.emit(toolResultMsg('toolu_x', 'value hidden'));
+    fake.emit(result());
+
+    await waitFor(async () =>
+      (await messagesFor(sessionId)).some((m) => m.type === 'user' && m.content.includes('toolu_x'))
+    );
+
+    const rows = await messagesFor(sessionId);
+    const toolResultRow = rows.find((m) => m.type === 'user' && m.content.includes('toolu_x'));
+    const content = JSON.parse(toolResultRow!.content) as {
+      message: {
+        content: Array<{
+          tool_use_id?: string;
+          sanitization?: { removed: boolean; found: string[] };
+        }>;
+      };
+    };
+    const block = content.message.content.find((b) => b.tool_use_id === 'toolu_x');
+    expect(block?.sanitization).toBeDefined();
+    expect(block?.sanitization?.removed).toBe(true);
+    expect(block?.sanitization?.found.length).toBeGreaterThan(0);
+
+    await waitFor(() => !isClaudeRunning(sessionId));
+    stopSession(sessionId);
+  });
+
+  it('does not attach a sanitization field to a clean tool_result', async () => {
+    const fake = makeFakeQuery();
+    let options: unknown;
+    _setQueryFactory((p) => {
+      options = p.options;
+      return fake.factory(p);
+    });
+    const sessionId = await createRunningSession();
+
+    await sendUserMessage(sessionId, 'run a command');
+
+    // Clean output → hook records nothing → no badge on the tool_result.
+    const hook = extractPostToolUseHook(options);
+    await hook({
+      hook_event_name: 'PostToolUse',
+      session_id: 's',
+      transcript_path: '/tmp/t.jsonl',
+      cwd: '/tmp/spike-runner-test',
+      tool_name: 'Bash',
+      tool_input: {},
+      tool_response: { stdout: 'all good', stderr: '', interrupted: false, isImage: false },
+      tool_use_id: 'toolu_clean',
+    });
+
+    fake.emit(toolResultMsg('toolu_clean', 'all good'));
+    fake.emit(result());
+
+    await waitFor(async () =>
+      (await messagesFor(sessionId)).some(
+        (m) => m.type === 'user' && m.content.includes('toolu_clean')
+      )
+    );
+
+    const rows = await messagesFor(sessionId);
+    const toolResultRow = rows.find((m) => m.type === 'user' && m.content.includes('toolu_clean'));
+    const content = JSON.parse(toolResultRow!.content) as {
+      message: { content: Array<{ sanitization?: unknown }> };
+    };
+    expect(content.message.content[0].sanitization).toBeUndefined();
+
     await waitFor(() => !isClaudeRunning(sessionId));
     stopSession(sessionId);
   });

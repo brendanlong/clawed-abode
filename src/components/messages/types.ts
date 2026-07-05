@@ -1,5 +1,7 @@
 // Shared types for message display components
 
+import type { SanitizationInfo } from '@/lib/sanitization';
+
 // Map of tool_use_id -> result content
 export type ToolResultMap = Map<string, { content?: string; is_error?: boolean }>;
 
@@ -32,6 +34,8 @@ export interface ContentBlock {
   /** String for tool_result; advisor_tool_result carries an encrypted object */
   content?: string | { type?: string; encrypted_content?: string };
   is_error?: boolean;
+  /** Sanitizer findings attached to a tool_result block whose output was filtered. */
+  sanitization?: SanitizationInfo;
 }
 
 export interface AssistantMessage {
@@ -74,6 +78,8 @@ export interface MessageContent {
   hook_id?: string;
   // Interrupt flag - set when this message was interrupted by the user
   interrupted?: boolean;
+  // Sanitizer findings attached to a user prompt whose text was filtered.
+  sanitization?: SanitizationInfo;
   [key: string]: unknown;
 }
 
