@@ -193,6 +193,9 @@ export function _setQueryFactory(factory: QueryFactory | null): void {
  * `sequence` is skipped — a harmless gap, since pagination orders by `sequence`
  * and never assumes contiguity. Emits the `new_message` SSE event on a real
  * insert.
+ *
+ * @internal Exported only for the integration test; the sole intended callers are
+ * the persist sites in this module. Throws if the session does not exist.
  */
 export async function insertMessage(params: {
   sessionId: string;

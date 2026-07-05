@@ -1,6 +1,8 @@
 -- AlterTable: per-session monotonic counter for atomic message sequence assignment.
--- Holds the NEXT sequence number to assign; incremented in the same transaction as
--- each message insert so concurrent inserts can never collide on (sessionId, sequence).
+-- Holds the NEXT sequence number to assign. insertMessage reserves a value with a
+-- single autocommit `UPDATE ... SET messageSequence = messageSequence + 1 RETURNING`
+-- statement, which SQLite serializes on the write lock, so concurrent inserts can
+-- never collide on (sessionId, sequence).
 ALTER TABLE "Session" ADD COLUMN "messageSequence" INTEGER NOT NULL DEFAULT 0;
 
 -- Backfill existing sessions so the next assigned sequence is MAX(sequence)+1.
