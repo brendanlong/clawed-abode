@@ -12,11 +12,10 @@ import type { TokenUsageStats } from '@/lib/token-estimation';
 import { useNotification } from '@/hooks/useNotification';
 import { useVoicePlaybackContext } from '@/hooks/useVoicePlayback';
 import { isPlanFile, reconstructPlansByToolUseId, type PlanEvent } from './messages/plan-utils';
-import { isIgnoredSystemMessage } from '@/lib/claude-messages';
 import {
-  hasRenderableAssistantContent,
-  isHiddenSystemMessage,
   isToolCallOnlyMessage,
+  isToolResultMessage,
+  isVisibleTranscriptMessage,
   getParentToolUseId,
   groupSubagentMessages,
 } from './messages/messageHelpers';
@@ -39,16 +38,6 @@ function getToolResultBlocks(message: Message): ContentBlock[] {
   return blocks.filter((b) => b.type === 'tool_result');
 }
 
-// Check if a message is a tool result (comes as type "user" but contains tool_result content)
-function isToolResultMessage(message: Message): boolean {
-  const content = message.content as MessageContent | undefined;
-  const innerContent = content?.message?.content;
-  if (Array.isArray(innerContent)) {
-    return innerContent.some((block) => block.type === 'tool_result');
-  }
-  return false;
-}
-
 // Build a map of tool_use_id -> tool_result content, and track which messages are fully paired
 function buildToolResultMap(messages: Message[]): {
   resultMap: ToolResultMap;
@@ -69,7 +58,7 @@ function buildToolResultMap(messages: Message[]): {
 
   // Second pass: map tool results to their tool_use IDs
   for (const msg of messages) {
-    if (msg.type === 'user' && isToolResultMessage(msg)) {
+    if (msg.type === 'user' && isToolResultMessage(msg.content as MessageContent)) {
       const resultBlocks = getToolResultBlocks(msg);
       let allPaired = true;
 
@@ -335,26 +324,15 @@ export function MessageList({
     setManuallyToggledTodoIds((prev) => new Set([...prev, toolId]));
   }, []);
 
-  // Filter the top-level transcript down to what should render as its own row.
+  // Filter the top-level transcript down to what should render as its own row:
+  // the shared transcript-visibility predicate, plus the top-level-only rule that
+  // subagent messages render nested inside their Task rather than here.
   const visibleMessages = useMemo(
     () =>
       messages.filter(
         (msg) =>
-          !pairedMessageIds.has(msg.id) &&
-          // Subagent messages render nested inside their Task, not at top level.
           getParentToolUseId(msg.content) === null &&
-          // Ignored system events carry no content; filter them here so they
-          // don't leave an empty spacer row in the list.
-          !isIgnoredSystemMessage(msg.content) &&
-          // System messages are hidden from the transcript (issue #312), except
-          // errors and compact boundaries.
-          !isHiddenSystemMessage(msg.type, msg.content as MessageContent) &&
-          // Empty assistant fragments (e.g. an empty thinking block) would
-          // otherwise leave an empty spacer row too.
-          !(
-            msg.type === 'assistant' &&
-            !hasRenderableAssistantContent(msg.content as MessageContent)
-          )
+          isVisibleTranscriptMessage(msg, pairedMessageIds)
       ),
     [messages, pairedMessageIds]
   );
@@ -586,7 +564,8 @@ export function MessageList({
         <MessageListProvider value={contextValue}>
           {visibleMessages.map((message, index) => {
             // Only right-align actual user messages, not tool results
-            const isUserMessage = message.type === 'user' && !isToolResultMessage(message);
+            const isUserMessage =
+              message.type === 'user' && !isToolResultMessage(message.content as MessageContent);
 
             // Spacing: full gap between messages, but tight when two consecutive
             // tool-call-only messages sit back-to-back (issue #312). The first

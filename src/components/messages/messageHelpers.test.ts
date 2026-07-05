@@ -11,6 +11,7 @@ import {
   hasRenderableAssistantContent,
   isHiddenSystemMessage,
   isToolCallOnlyMessage,
+  isVisibleTranscriptMessage,
   getParentToolUseId,
   groupSubagentMessages,
 } from './messageHelpers';
@@ -212,20 +213,12 @@ describe('isRecognizedMessage', () => {
     expect(isRecognizedMessage('user', content)).toEqual({ recognized: false });
   });
 
-  it('recognizes system init messages', () => {
+  it('does not specially recognize system init messages (hidden from transcript)', () => {
     const content: MessageContent = {
       subtype: 'init',
       model: 'claude-3',
       session_id: 'sess-1',
     };
-    expect(isRecognizedMessage('system', content)).toEqual({
-      recognized: true,
-      category: 'systemInit',
-    });
-  });
-
-  it('rejects system init messages without required fields', () => {
-    const content: MessageContent = { subtype: 'init' };
     expect(isRecognizedMessage('system', content)).toEqual({ recognized: false });
   });
 
@@ -253,27 +246,18 @@ describe('isRecognizedMessage', () => {
     });
   });
 
-  it('recognizes hook started messages', () => {
-    const content: MessageContent = { subtype: 'hook_started' };
-    expect(isRecognizedMessage('system', content)).toEqual({
-      recognized: true,
-      category: 'hookStarted',
+  it('does not specially recognize hook or generic system messages (hidden from transcript)', () => {
+    // init, hooks, and generic notices no longer get a dedicated category — they
+    // are hidden upstream by isHiddenSystemMessage, so isRecognizedMessage only
+    // still classifies the system subtypes that actually render (error, compact).
+    expect(isRecognizedMessage('system', { subtype: 'hook_started' })).toEqual({
+      recognized: false,
     });
-  });
-
-  it('recognizes hook response messages', () => {
-    const content: MessageContent = { subtype: 'hook_response' };
-    expect(isRecognizedMessage('system', content)).toEqual({
-      recognized: true,
-      category: 'hookResponse',
+    expect(isRecognizedMessage('system', { subtype: 'hook_response' })).toEqual({
+      recognized: false,
     });
-  });
-
-  it('recognizes generic system messages', () => {
-    const content: MessageContent = { content: 'system message' };
-    expect(isRecognizedMessage('system', content)).toEqual({
-      recognized: true,
-      category: 'system',
+    expect(isRecognizedMessage('system', { content: 'system message' })).toEqual({
+      recognized: false,
     });
   });
 
@@ -373,10 +357,10 @@ describe('getCopyText', () => {
   });
 
   it('returns JSON for other message types', () => {
-    const content: MessageContent = { subtype: 'init', model: 'claude-3' };
-    const result = getCopyText(content, 'systemInit', []);
+    const content: MessageContent = { subtype: 'success', session_id: 'sess-1' };
+    const result = getCopyText(content, 'result', []);
     expect(result).toContain('"subtype"');
-    expect(result).toContain('"init"');
+    expect(result).toContain('"success"');
   });
 });
 
@@ -404,9 +388,9 @@ describe('getDisplayContent', () => {
     expect(getDisplayContent(content, 'user')).toBe('## Context Usage\nSome content');
   });
 
-  it('returns content.content for system messages', () => {
+  it('returns content.content for non-user/assistant messages', () => {
     const content: MessageContent = { content: 'system text' };
-    expect(getDisplayContent(content, 'system')).toBe('system text');
+    expect(getDisplayContent(content, 'systemError')).toBe('system text');
   });
 });
 
@@ -559,6 +543,73 @@ describe('isToolCallOnlyMessage', () => {
       false
     );
     expect(isToolCallOnlyMessage({} as MessageContent)).toBe(false);
+  });
+
+  it('is false when a redacted_thinking or server_tool_use block renders alongside the tool', () => {
+    // These render their own visible indicator above the tool call, so the row is
+    // not purely a tool call and should keep normal spacing.
+    expect(
+      isToolCallOnlyMessage(
+        assistant({
+          content: [
+            { type: 'redacted_thinking', data: 'xxx' },
+            { type: 'tool_use', id: 't1', name: 'Bash', input: {} },
+          ] as never,
+        })
+      )
+    ).toBe(false);
+    expect(
+      isToolCallOnlyMessage(
+        assistant({
+          content: [
+            { type: 'server_tool_use', id: 's1', name: 'advisor', input: {} },
+            { type: 'tool_use', id: 't1', name: 'Bash', input: {} },
+          ] as never,
+        })
+      )
+    ).toBe(false);
+  });
+});
+
+describe('isVisibleTranscriptMessage', () => {
+  const message = (over: Partial<DisplayMessage>): DisplayMessage => ({
+    id: 'm1',
+    type: 'assistant',
+    sequence: 0,
+    content: { message: { content: [{ type: 'text', text: 'hi' }] } },
+    ...over,
+  });
+
+  it('shows a normal assistant message', () => {
+    expect(isVisibleTranscriptMessage(message({}), new Set())).toBe(true);
+  });
+
+  it('hides messages whose id is in the paired set', () => {
+    expect(isVisibleTranscriptMessage(message({ id: 'paired' }), new Set(['paired']))).toBe(false);
+  });
+
+  it('hides system messages except errors and compact boundaries', () => {
+    expect(
+      isVisibleTranscriptMessage(
+        message({ type: 'system', content: { subtype: 'init' } }),
+        new Set()
+      )
+    ).toBe(false);
+    expect(
+      isVisibleTranscriptMessage(
+        message({ type: 'system', content: { subtype: 'error' } }),
+        new Set()
+      )
+    ).toBe(true);
+  });
+
+  it('hides empty assistant fragments', () => {
+    expect(
+      isVisibleTranscriptMessage(
+        message({ content: { message: { content: [{ type: 'thinking', thinking: '' }] } } }),
+        new Set()
+      )
+    ).toBe(false);
   });
 });
 

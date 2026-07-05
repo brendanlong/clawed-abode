@@ -167,13 +167,9 @@ export function TaskDisplay({ tool }: { tool: ToolCall }) {
         </div>
       )}
 
-      {/* Subagent activity: the subagent's own nested transcript */}
-      {subagentTranscript && (
-        <div>
-          <div className="text-muted-foreground mb-1">Subagent activity:</div>
-          {subagentTranscript}
-        </div>
-      )}
+      {/* Subagent activity: the subagent's own nested transcript (renders its own
+          "Subagent activity:" heading, or nothing when there's nothing to show). */}
+      {subagentTranscript}
 
       {/* Output section */}
       {hasOutput && (
