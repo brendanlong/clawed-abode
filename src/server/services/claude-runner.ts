@@ -162,6 +162,22 @@ interface SessionState {
    * message comes from the SDK stream, not from us). Consumed once.
    */
   toolSanitizations: Map<string, SanitizationInfo>;
+  /**
+   * Sanitized user prompts sent while a main-agent turn was active, awaiting flush
+   * into a single combined turn as soon as the current turn ends (async "btw
+   * mode"). Persisted individually when queued (so they appear in the transcript
+   * immediately); this only holds the text to push into the SDK on flush.
+   * In-memory only — lost on stop/restart before flush.
+   */
+  queuedPrompts: string[];
+  /**
+   * True between flushing queued prompts and the flushed turn's `message_start`.
+   * While set, `applyStatus` suppresses the just-ended turn's `turnActive` clear
+   * (and its trailing `result`) so the flag stays continuously true across the
+   * handoff — no idle blip, no spurious "turn ended" side effects (work-complete
+   * notification, voice auto-read reset) between back-to-back queued turns.
+   */
+  awaitingFlushTurn: boolean;
 }
 
 /** Active sessions tracked in memory. */
@@ -304,6 +320,8 @@ function getSessionState(sessionId: string, workingDir: string): SessionState {
       boundSettings: null,
       settingsKey: '',
       toolSanitizations: new Map(),
+      queuedPrompts: [],
+      awaitingFlushTurn: false,
     };
     sessions.set(sessionId, state);
   } else if (workingDir) {
@@ -575,6 +593,10 @@ async function buildSdkOptions(params: {
  * a stale "running"/"background"/"retrying" indicator.
  */
 function clearLiveStatus(sessionId: string, state: SessionState): void {
+  // A pending flush is abandoned when the query tears down; drop any queued
+  // prompts and the handoff flag so a revived query starts clean.
+  state.awaitingFlushTurn = false;
+  state.queuedPrompts = [];
   if (state.status.turnActive) {
     state.status = { ...state.status, turnActive: false };
     sseEvents.emitClaudeRunning(sessionId, false);
@@ -604,14 +626,74 @@ function dropBackgroundTask(sessionId: string, state: SessionState, taskId: stri
 }
 
 /**
+ * Whether a message is the main agent's (top-level) `message_start` — the
+ * definitive signal that a new turn has begun. Used to close the flush-handoff
+ * suppression window (see {@link applyStatus}); it can't be inferred from the
+ * reducer's `changed.turnActive` there, because the flag is being held true
+ * across the handoff so the reducer sees no transition.
+ */
+function isTopLevelMessageStart(message: SDKMessage): boolean {
+  if (message.type !== 'stream_event') return false;
+  const parent = (message as { parent_tool_use_id?: string | null }).parent_tool_use_id;
+  if (parent !== null && parent !== undefined) return false;
+  const event = (message as { event?: { type?: string } }).event;
+  return event?.type === 'message_start';
+}
+
+/**
+ * Flush prompts queued while the main agent was busy into a single new turn.
+ * Called when the turn ends (see {@link applyStatus}). Multiple prompts queued
+ * during the turn are combined into one push so Claude addresses them together
+ * ("btw mode"). The prompts were already persisted individually when queued, so
+ * this only pushes the combined text; the SDK picking it up drives `turnActive`
+ * back to true via the next `message_start` (we deliberately do NOT toggle it
+ * here, so the just-ended turn's `result` can't clear an optimistic flag).
+ */
+function flushQueuedPrompts(sessionId: string, state: SessionState): void {
+  if (state.queuedPrompts.length === 0 || !state.input) return;
+  const combined = state.queuedPrompts.join('\n\n');
+  const count = state.queuedPrompts.length;
+  state.queuedPrompts = [];
+  log.info('Flushing queued prompts into a new turn', { sessionId, count });
+  state.input.push({
+    type: 'user',
+    message: { role: 'user', content: combined },
+    parent_tool_use_id: null,
+  });
+}
+
+/**
  * Fold one message into the session's live status and emit changed channels.
  * Runs for EVERY message (including ones that are skipped for persistence, since
  * `api_retry`/`task_*` drive status). Fires per-turn branch/PR detection when a
  * main turn ends.
  */
 function applyStatus(sessionId: string, state: SessionState, message: SDKMessage): void {
-  const { status, changed } = reduceSessionMessage(state.status, message);
-  const turnEnded = changed.turnActive && !status.turnActive;
+  const reduced = reduceSessionMessage(state.status, message);
+  let status = reduced.status;
+  const changed = { ...reduced.changed };
+  // The raw turn-end signal (before flush suppression), used for PR/branch detection.
+  const rawTurnEnded = changed.turnActive && !status.turnActive;
+
+  // Flush queued prompts when the main turn ends (see flushQueuedPrompts). Decided
+  // before emitting so we can suppress the intervening turnActive clear entirely.
+  const willFlush = rawTurnEnded && state.queuedPrompts.length > 0 && state.input != null;
+
+  // The flushed turn actually beginning (its own top-level message_start) closes
+  // the suppression window opened by the flush below.
+  if (state.awaitingFlushTurn && isTopLevelMessageStart(message)) {
+    state.awaitingFlushTurn = false;
+  }
+
+  // Keep turnActive continuously true across a queued-flush handoff: while the
+  // flush is pending, ignore the ended turn's clear (and its trailing `result`,
+  // plus any interleaved task events) until the flushed turn starts. `changed` is
+  // recomputed against the previous status so no spurious SSE toggle is emitted.
+  if ((willFlush || state.awaitingFlushTurn) && !status.turnActive) {
+    status = { ...status, turnActive: true };
+    changed.turnActive = status.turnActive !== state.status.turnActive;
+  }
+
   state.status = status;
 
   if (changed.turnActive) sseEvents.emitClaudeRunning(sessionId, status.turnActive);
@@ -620,9 +702,16 @@ function applyStatus(sessionId: string, state: SessionState, message: SDKMessage
   }
   if (changed.retry) sseEvents.emitClaudeRetry(sessionId, status.retry);
 
-  if (turnEnded) {
-    // PR/branch can change within a turn; refresh latest-value state at turn end.
+  // PR/branch can change within a turn; refresh at the genuine turn end only
+  // (skip the ended turn's trailing `result`, which also reports rawTurnEnded
+  // while a flush handoff is in progress).
+  if (rawTurnEnded && !state.awaitingFlushTurn) {
     void detectBranchAndPr(sessionId, state.workingDir);
+  }
+  if (willFlush) {
+    // Send any prompts the user queued while the turn was running, as one turn.
+    flushQueuedPrompts(sessionId, state);
+    state.awaitingFlushTurn = true;
   }
 }
 
@@ -886,13 +975,67 @@ async function applyLiveSettings(sessionId: string, state: SessionState): Promis
 }
 
 /**
- * Send a user prompt: ensure the query is live, apply any live settings changes,
- * mark the turn active optimistically, persist the user message, and push it into
- * the query's input stream.
+ * Build, sanitize, and persist a single user prompt, returning the sanitized text
+ * that should be sent to the model. Shared by {@link sendUserMessage} and
+ * {@link sendUserMessages} so a one-off send and a batch flush persist identically.
  *
  * `attachmentPaths` are absolute host paths of files the user uploaded (see
  * `uploads.ts`); when present they are prefixed onto the message so Claude knows
  * where to read them.
+ */
+async function persistUserPrompt(
+  sessionId: string,
+  prompt: string,
+  attachmentPaths: string[]
+): Promise<string> {
+  const promptWithAttachments = buildPromptWithAttachments(prompt, attachmentPaths);
+
+  // Strip hidden-content injection vectors before the prompt is persisted or
+  // seen by the model. The same chokepoint covers typed prompts and the initial
+  // prompt (which may embed an untrusted GitHub issue body). `info` records any
+  // findings so the persisted message can show a "content filtered" badge.
+  const { cleaned: sanitizedPrompt, info: sanitization } = await sanitizeUntrustedInput(
+    promptWithAttachments,
+    { sessionId, source: 'user-message' }
+  );
+
+  await insertMessage({
+    sessionId,
+    id: uuid(),
+    type: 'user',
+    content: { type: 'user', content: sanitizedPrompt, ...(sanitization ? { sanitization } : {}) },
+  });
+
+  return sanitizedPrompt;
+}
+
+/**
+ * Push a prepared (already-persisted) prompt into the query, or queue it if a
+ * main-agent turn is active. Queued prompts are combined and flushed together as
+ * one turn when the turn ends (async "btw mode" — see {@link flushQueuedPrompts}).
+ * The user is never blocked from sending while Claude is working.
+ */
+function pushOrQueuePrompt(sessionId: string, state: SessionState, text: string): void {
+  if (!state.input) throw new Error('Session query is not available');
+
+  // A turn is active → queue (the SDK can't cleanly take a new turn mid-generation).
+  if (state.status.turnActive) {
+    state.queuedPrompts.push(text);
+    return;
+  }
+
+  state.status = { ...state.status, turnActive: true };
+  sseEvents.emitClaudeRunning(sessionId, true);
+  state.input.push({
+    type: 'user',
+    message: { role: 'user', content: text },
+    parent_tool_use_id: null,
+  });
+}
+
+/**
+ * Send a single user prompt: ensure the query is live, apply any live settings
+ * changes, persist the message, and push it now (or queue it if a turn is active).
  */
 export async function sendUserMessage(
   sessionId: string,
@@ -907,38 +1050,39 @@ export async function sendUserMessage(
   // Apply model/MCP changes made since the query was built (no-op on fresh establish).
   await applyLiveSettings(sessionId, state);
 
-  const promptWithAttachments = buildPromptWithAttachments(prompt, attachmentPaths);
-
-  // Strip hidden-content injection vectors before the prompt is persisted or
-  // seen by the model. The same chokepoint covers typed prompts and the initial
-  // prompt (which may embed an untrusted GitHub issue body). `info` records any
-  // findings so the persisted message can show a "content filtered" badge.
-  const { cleaned: sanitizedPrompt, info: sanitization } = await sanitizeUntrustedInput(
-    promptWithAttachments,
-    {
-      sessionId,
-      source: 'user-message',
-    }
-  );
-
-  if (!state.status.turnActive) {
-    state.status = { ...state.status, turnActive: true };
-    sseEvents.emitClaudeRunning(sessionId, true);
-  }
-
-  await insertMessage({
-    sessionId,
-    id: uuid(),
-    type: 'user',
-    content: { type: 'user', content: sanitizedPrompt, ...(sanitization ? { sanitization } : {}) },
-  });
+  const sanitizedPrompt = await persistUserPrompt(sessionId, prompt, attachmentPaths);
   await bumpSessionActivity(sessionId);
 
-  state.input.push({
-    type: 'user',
-    message: { role: 'user', content: sanitizedPrompt },
-    parent_tool_use_id: null,
-  });
+  pushOrQueuePrompt(sessionId, state, sanitizedPrompt);
+}
+
+/**
+ * Send several user prompts as a **single** turn: persist each as its own
+ * transcript message (so they render as separate bubbles, in order) but combine
+ * their text into one push so the model answers them together. Used by
+ * `claude.sendBatch` to flush the client-held pending queue when a turn ends —
+ * multiple messages the user typed while Claude was working are delivered at once.
+ */
+export async function sendUserMessages(
+  sessionId: string,
+  items: { prompt: string; attachmentPaths: string[] }[]
+): Promise<void> {
+  if (items.length === 0) return;
+
+  const state = await ensureSessionQuery(sessionId);
+  if (!state.input) {
+    throw new Error('Session query is not available');
+  }
+
+  await applyLiveSettings(sessionId, state);
+
+  const texts: string[] = [];
+  for (const item of items) {
+    texts.push(await persistUserPrompt(sessionId, item.prompt, item.attachmentPaths));
+  }
+  await bumpSessionActivity(sessionId);
+
+  pushOrQueuePrompt(sessionId, state, texts.join('\n\n'));
 }
 
 /**
@@ -1038,6 +1182,15 @@ export async function interruptClaude(sessionId: string): Promise<boolean> {
     log.info('interruptClaude: no active turn', { sessionId });
     return false;
   }
+
+  // Close any open flush-handoff suppression window first. An interrupt during
+  // the handoff (after queued prompts were flushed but before the flushed turn's
+  // top-level `message_start`) produces a terminal `result` with no preceding
+  // `message_start` — which would never close the window, pinning `turnActive`
+  // true and silently killing the composer. Clearing the flag lets that terminal
+  // result flow through `applyStatus` and clear `turnActive` normally. Any queued
+  // prompts already pushed to the SDK are unaffected (they run as their own turn).
+  state.awaitingFlushTurn = false;
 
   try {
     await state.query.interrupt();

@@ -70,6 +70,8 @@ import { createPushable } from '@/lib/pushable';
 // Imported dynamically in beforeAll (after setupTestDb sets DATABASE_URL), since
 // claude-runner pulls in @/lib/prisma at module load.
 let sendUserMessage: typeof import('./claude-runner').sendUserMessage;
+let sendUserMessages: typeof import('./claude-runner').sendUserMessages;
+let interruptClaude: typeof import('./claude-runner').interruptClaude;
 let stopSession: typeof import('./claude-runner').stopSession;
 let isClaudeRunning: typeof import('./claude-runner').isClaudeRunning;
 let getSessionBackgroundTasks: typeof import('./claude-runner').getSessionBackgroundTasks;
@@ -158,6 +160,24 @@ function assistant(text: string, parent: string | null = null): SDKMessage {
 function result(subtype = 'success'): SDKMessage {
   return { type: 'result', subtype, session_id: 's', uuid: nextUuid() } as unknown as SDKMessage;
 }
+function messageStart(parent: string | null = null): SDKMessage {
+  return {
+    type: 'stream_event',
+    parent_tool_use_id: parent,
+    event: { type: 'message_start' },
+    session_id: 's',
+    uuid: nextUuid(),
+  } as unknown as SDKMessage;
+}
+function messageDelta(stopReason: string | null, parent: string | null = null): SDKMessage {
+  return {
+    type: 'stream_event',
+    parent_tool_use_id: parent,
+    event: { type: 'message_delta', delta: { stop_reason: stopReason } },
+    session_id: 's',
+    uuid: nextUuid(),
+  } as unknown as SDKMessage;
+}
 function taskStarted(taskId: string): SDKMessage {
   return {
     type: 'system',
@@ -216,6 +236,8 @@ describe('claude-runner persistent streaming loop', () => {
     await setupTestDb();
     const mod = await import('./claude-runner');
     sendUserMessage = mod.sendUserMessage;
+    sendUserMessages = mod.sendUserMessages;
+    interruptClaude = mod.interruptClaude;
     stopSession = mod.stopSession;
     isClaudeRunning = mod.isClaudeRunning;
     getSessionBackgroundTasks = mod.getSessionBackgroundTasks;
@@ -536,6 +558,162 @@ describe('claude-runner persistent streaming loop', () => {
 
     fake.emit(result());
     await waitFor(() => !isClaudeRunning(sessionId));
+    stopSession(sessionId);
+  });
+
+  it('queues prompts sent during a turn and flushes them together at turn end', async () => {
+    const fake = makeFakeQuery();
+    _setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+
+    // Turn 1 starts and pushes immediately (the fake reads input asynchronously).
+    await sendUserMessage(sessionId, 'first');
+    expect(isClaudeRunning(sessionId)).toBe(true);
+    await waitFor(() => fake.inputs.length >= 1);
+
+    // Two more sends while the turn is active are queued, not pushed. They are
+    // persisted right away so they show in the transcript.
+    await sendUserMessage(sessionId, 'second');
+    await sendUserMessage(sessionId, 'third');
+    await waitFor(async () => (await messagesFor(sessionId)).length >= 3);
+    const queuedMsgs = await messagesFor(sessionId);
+    expect(queuedMsgs.map((m) => m.type)).toEqual(['user', 'user', 'user']);
+    // Still only the first prompt reached the SDK; the rest are queued.
+    expect(fake.inputs).toHaveLength(1);
+
+    // The turn ends → queued prompts flush together as one combined push.
+    fake.emit(result());
+    await waitFor(() => fake.inputs.length >= 2);
+    expect(fake.inputs[1].message.content).toBe('second\n\nthird');
+
+    // turnActive stays continuously true across the handoff (no idle blip that
+    // would trip work-complete notifications / voice auto-read between turns).
+    expect(isClaudeRunning(sessionId)).toBe(true);
+    expect(mockSseEvents.emitClaudeRunning).not.toHaveBeenCalledWith(sessionId, false);
+
+    stopSession(sessionId);
+  });
+
+  it('holds turnActive continuously across the flush handoff (stream events + interleaved task)', async () => {
+    // Reproduces the real message ordering: the turn ends via a terminal
+    // message_delta, a task_notification lands before the trailing result, then
+    // the flushed turn opens with its own message_start. turnActive must never
+    // dip to false across the whole handoff (which would trip work-complete
+    // notifications / voice auto-read on the client).
+    const fake = makeFakeQuery();
+    _setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+
+    await sendUserMessage(sessionId, 'first');
+    await waitFor(() => fake.inputs.length >= 1);
+
+    // Turn 1 streams and the user queues a follow-up mid-turn.
+    fake.emit(messageStart());
+    await waitFor(() => isClaudeRunning(sessionId));
+    await sendUserMessage(sessionId, 'follow up');
+
+    mockSseEvents.emitClaudeRunning.mockClear();
+
+    // Turn 1 ends; a task notification lands before the trailing result.
+    fake.emit(messageDelta('end_turn'));
+    fake.emit(taskNotification('task-x'));
+    fake.emit(result());
+
+    // The queued prompt flushed as a new turn.
+    await waitFor(() => fake.inputs.length >= 2);
+    expect(fake.inputs[1].message.content).toBe('follow up');
+
+    // The flushed turn opens; then ends normally.
+    fake.emit(messageStart());
+    // Across the entire handoff, turnActive never dropped to false.
+    expect(mockSseEvents.emitClaudeRunning).not.toHaveBeenCalledWith(sessionId, false);
+    expect(isClaudeRunning(sessionId)).toBe(true);
+
+    // The final turn ending (no more queued prompts) clears turnActive exactly once.
+    fake.emit(messageDelta('end_turn'));
+    await waitFor(() => !isClaudeRunning(sessionId));
+    expect(mockSseEvents.emitClaudeRunning).toHaveBeenCalledWith(sessionId, false);
+
+    stopSession(sessionId);
+  });
+
+  it('sendUserMessages persists each message but pushes them as one combined turn', async () => {
+    const fake = makeFakeQuery();
+    _setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+
+    await sendUserMessages(sessionId, [
+      { prompt: 'one', attachmentPaths: [] },
+      { prompt: 'two', attachmentPaths: [] },
+    ]);
+
+    // Each message is persisted as its own transcript bubble, in order.
+    await waitFor(async () => (await messagesFor(sessionId)).length >= 2);
+    const msgs = await messagesFor(sessionId);
+    expect(msgs.map((m) => m.type)).toEqual(['user', 'user']);
+
+    // But the model receives a single combined turn.
+    await waitFor(() => fake.inputs.length >= 1);
+    expect(fake.inputs).toHaveLength(1);
+    expect(fake.inputs[0].message.content).toBe('one\n\ntwo');
+    expect(isClaudeRunning(sessionId)).toBe(true);
+
+    stopSession(sessionId);
+  });
+
+  it('sendUserMessages queues the combined turn when one is already active', async () => {
+    const fake = makeFakeQuery();
+    _setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+
+    // A turn is running.
+    await sendUserMessage(sessionId, 'first');
+    await waitFor(() => fake.inputs.length >= 1);
+
+    // A batch arriving mid-turn is persisted now but queued as one combined push.
+    await sendUserMessages(sessionId, [
+      { prompt: 'a', attachmentPaths: [] },
+      { prompt: 'b', attachmentPaths: [] },
+    ]);
+    await waitFor(async () => (await messagesFor(sessionId)).length >= 3);
+    expect(fake.inputs).toHaveLength(1);
+
+    // Turn ends → the combined batch flushes.
+    fake.emit(result());
+    await waitFor(() => fake.inputs.length >= 2);
+    expect(fake.inputs[1].message.content).toBe('a\n\nb');
+
+    stopSession(sessionId);
+  });
+
+  it('recovers turnActive when interrupted during the flush handoff (no message_start)', async () => {
+    // Regression: interrupting after queued prompts flushed but before the
+    // flushed turn's message_start must not strand awaitingFlushTurn/turnActive
+    // true. The interrupt's terminal result has no preceding message_start, so
+    // without the interrupt-time flag reset the composer would be silently dead.
+    const fake = makeFakeQuery();
+    _setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+
+    await sendUserMessage(sessionId, 'first');
+    fake.emit(messageStart());
+    await waitFor(() => isClaudeRunning(sessionId));
+    await sendUserMessage(sessionId, 'queued');
+
+    // Turn 1 ends → 'queued' flushes; turnActive is held true awaiting the
+    // flushed turn's message_start.
+    fake.emit(messageDelta('end_turn'));
+    await waitFor(() => fake.inputs.length >= 2);
+    expect(isClaudeRunning(sessionId)).toBe(true);
+
+    // User hits Stop during the handoff, then the interrupt's terminal result
+    // lands with no top-level message_start for the flushed turn.
+    expect(await interruptClaude(sessionId)).toBe(true);
+    fake.emit(result('error_during_execution'));
+
+    // turnActive recovers instead of being pinned true forever.
+    await waitFor(() => !isClaudeRunning(sessionId));
+
     stopSession(sessionId);
   });
 

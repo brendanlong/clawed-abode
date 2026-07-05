@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma';
 import { TRPCError } from '@trpc/server';
 import {
   sendUserMessage,
+  sendUserMessages,
   interruptClaude,
   isClaudeRunningAsync,
   markLastMessageAsInterrupted,
@@ -16,6 +17,7 @@ import {
 } from '../services/claude-runner';
 import { resolveUploadPaths } from '../services/uploads';
 import { MAX_ATTACHMENTS } from '@/lib/attachments';
+import { MAX_QUEUED_MESSAGES } from '@/lib/pending-message';
 import { estimateTokenUsage } from '@/lib/token-estimation';
 import {
   type ToolResponse,
@@ -80,21 +82,21 @@ async function submitToolResponse(
   return { routed: 'fallback' };
 }
 
+// One user message: typed text and/or previously-uploaded attachments (stored
+// names, see /api/upload). Either typed text or at least one attachment must be
+// present. Shared by `send` and each element of `sendBatch`.
+const messageInputSchema = z
+  .object({
+    prompt: z.string().max(100000),
+    attachments: z.array(z.string().min(1).max(255)).max(MAX_ATTACHMENTS).optional(),
+  })
+  .refine((v) => v.prompt.trim().length > 0 || (v.attachments?.length ?? 0) > 0, {
+    message: 'A prompt or at least one attachment is required',
+  });
+
 export const claudeRouter = router({
   send: protectedProcedure
-    .input(
-      z
-        .object({
-          sessionId: z.string().uuid(),
-          prompt: z.string().max(100000),
-          // Stored names of previously uploaded attachments (see /api/upload).
-          attachments: z.array(z.string().min(1).max(255)).max(MAX_ATTACHMENTS).optional(),
-        })
-        // Either typed text or at least one attachment must be present.
-        .refine((v) => v.prompt.trim().length > 0 || (v.attachments?.length ?? 0) > 0, {
-          message: 'A prompt or at least one attachment is required',
-        })
-    )
+    .input(z.object({ sessionId: z.string().uuid() }).and(messageInputSchema))
     .mutation(async ({ input }) => {
       const session = await prisma.session.findUnique({
         where: { id: input.sessionId },
@@ -115,20 +117,51 @@ export const claudeRouter = router({
         });
       }
 
-      // Reject only while a main-agent turn is active. A send is allowed while
-      // only background tasks are running (they never gate input).
-      if (await isClaudeRunningAsync(input.sessionId)) {
-        throw new TRPCError({
-          code: 'CONFLICT',
-          message: 'Claude is already running for this session',
-        });
-      }
-
+      // A send is always accepted while the session is running: if a main-agent
+      // turn is active, sendUserMessage queues the prompt and flushes it as soon
+      // as the turn ends (async "btw mode"). Background tasks never gate input.
       const attachmentPaths = input.attachments?.length
         ? await resolveUploadPaths(input.sessionId, input.attachments)
         : [];
 
       await sendUserMessage(input.sessionId, input.prompt, attachmentPaths);
+
+      return { success: true };
+    }),
+
+  // Flush the client-held pending queue: several messages the user typed while a
+  // turn was running, delivered together as one turn (each still persisted as its
+  // own transcript bubble, in order). See "Async Messages (Queued Sends)".
+  sendBatch: protectedProcedure
+    .input(
+      z.object({
+        sessionId: z.string().uuid(),
+        messages: z.array(messageInputSchema).min(1).max(MAX_QUEUED_MESSAGES),
+      })
+    )
+    .mutation(async ({ input }) => {
+      const session = await prisma.session.findUnique({
+        where: { id: input.sessionId },
+        select: { status: true },
+      });
+
+      if (!session) {
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'Session not found' });
+      }
+      if (session.status !== 'running') {
+        throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Session is not running' });
+      }
+
+      const items = await Promise.all(
+        input.messages.map(async (m) => ({
+          prompt: m.prompt,
+          attachmentPaths: m.attachments?.length
+            ? await resolveUploadPaths(input.sessionId, m.attachments)
+            : [],
+        }))
+      );
+
+      await sendUserMessages(input.sessionId, items);
 
       return { success: true };
     }),

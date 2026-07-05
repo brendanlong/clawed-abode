@@ -178,11 +178,20 @@ sessions.getEditorUrl({ sessionId: string })
 ```typescript
 claude.send({ sessionId: string, prompt: string, attachments?: string[] })
   → { success: true }
-  // Starts a query() call in-process using the Claude Agent SDK
-  // Messages stream to the client via SSE
-  // `attachments` are storedNames of files previously uploaded via POST /api/upload;
-  // their absolute paths are prefixed onto the message (see "File Uploads"). Either
-  // a non-empty prompt or at least one attachment is required.
+  // Sends one user message: persists it and pushes it into the session's streaming
+  // query (starting a turn), or — if a turn is already active server-side — queues
+  // it as a combined turn (a race backstop; the client normally only calls this
+  // while idle). Messages stream to the client via SSE. `attachments` are
+  // storedNames of files previously uploaded via POST /api/upload; their absolute
+  // paths are prefixed onto the message (see "File Uploads"). Either a non-empty
+  // prompt or at least one attachment is required.
+
+claude.sendBatch({ sessionId: string, messages: { prompt: string, attachments?: string[] }[] })
+  → { success: true }
+  // Flushes the client-held pending queue: several messages the user typed while a
+  // turn was running (async "btw mode"). Each is persisted as its own transcript
+  // bubble, in order, but all are delivered to the model as ONE combined turn. See
+  // "Async Messages (Queued Sends)". Same per-message rules as `send`.
 
 claude.answerQuestion({
   sessionId: string,
@@ -249,7 +258,7 @@ claude.getHistory({
 ### Interaction Flow
 
 1. User sends prompt via `claude.send()`
-2. The server ensures the session's long-lived streaming `query()` exists (establishing it with `resume` if needed) and pushes the prompt into its input channel — see [Query Model](#query-model)
+2. The server ensures the session's long-lived streaming `query()` exists (establishing it with `resume` if needed). If no main-agent turn is active it pushes the prompt into the input channel immediately; if a turn **is** active it queues the prompt and flushes it (combined with any other queued prompts) as soon as the turn ends — see [Query Model](#query-model) and [Async Messages (Queued Sends)](#async-messages-queued-sends)
 3. The `canUseTool` callback handles:
    - **AskUserQuestion** / **ExitPlanMode**: Parks a promise keyed by the SDK's `toolUseID`, sends the question/plan to the browser via SSE (as a normal assistant message with a `tool_use` block). The user responds via `claude.answerQuestion()` / `claude.respondToPlan()` (see [Answering Interactive Tools](#answering-interactive-tools)).
    - **All other tools**: Auto-approved (bypass permissions mode).
@@ -294,6 +303,25 @@ Interrupt stops the **current turn only** — the streaming query stays alive (i
 There are deliberately **no status timers** (no interrupt backstop, no turn watchdog). The server cannot distinguish a genuinely hung turn from a slow one by observation, so any timer would be a guess. Recovery for a hung turn is user-driven and deterministic: the header **Stop** (`sessions.stop`) closes the query → the loop `finally` forces `turnActive` off.
 
 Interrupt does **not** stop background tasks; those are stopped individually via `claude.stopBackgroundTask` (→ `query.stopTask`).
+
+### Async Messages (Queued Sends)
+
+The composer is **never disabled while Claude works** — the user can keep typing and sending. `turnActive` no longer gates input; it only shows the "working" indicator and the Stop (interrupt) button. This is "btw mode": a message sent mid-turn is held as a **pending message**, delivered as soon as the turn ends, and several pending messages are delivered together.
+
+**Pending messages are client-side and editable.** Because the requested UX makes them behave like _drafts_ — individually removable, and reclaimed into the composer on interrupt — they live on the client (in `session/[id]/page.tsx`), not in the DB, until they flush. `PromptInput`'s `onSubmit` carries the full `UploadedAttachment[]`, and the page routes on the live `isClaudeRunning`:
+
+- **Idle** → `claude.send` immediately (a turn starts).
+- **A turn is active** → append a `PendingMessage` (`{ id, text, attachments }`, [`src/lib/pending-message.ts`](../src/lib/pending-message.ts)) to client state. `MessageList` renders these pinned **below** the persisted transcript via `PendingMessageList`, in first-to-last order, each a user-styled bubble marked "Queued" with a **Remove** (✕) that drops just that one — no server round-trip, nothing persisted.
+
+**Flush at turn end.** When `isClaudeRunning` falls true→false with a non-empty pending queue, the page calls `claude.sendBatch({ messages })`. The server (`sendUserMessages`) **persists each message as its own transcript bubble** (in order) but **pushes their text combined into one turn**, so the model answers them together rather than one turn each. A `flushing` flag plus `pendingMessages.length` keep the client's `isWorking` signal continuously true across the brief flush handoff, so it doesn't fire a spurious "Claude finished" notification between turns.
+
+**Interrupt reclaims the queue.** Stop calls `handleInterrupt`, which joins the pending messages' text with newlines, restores them (and their attachments) into the composer via a `restoreDraft` prop (applied once per `nonce`), clears the pending queue, and then interrupts the current turn — so a queued-up thought is never lost, just handed back for editing.
+
+**Server-side queue as a race backstop.** The server still has an in-memory `queuedPrompts` path: `send`/`sendBatch` persist their message(s) and then, if a `turnActive` is somehow observed server-side (a race — the client normally only sends while idle, or a background subagent autonomously continued the turn), the (combined) prompt is queued and flushed by `flushQueuedPrompts` when the turn ends. That flush deliberately does **not** toggle `turnActive`; an `awaitingFlushTurn` flag holds it continuously true from the flush until the flushed turn's own top-level `message_start` — suppressing the ended turn's clear, its trailing `result`, and any interleaved `task_notification` (a false→true blip would trip the same notification / voice-auto-read effects). Because that window closes only on a `message_start`, an **interrupt during the handoff** is special-cased: the interrupt's terminal `result` has no preceding `message_start`, so `interruptClaude` clears `awaitingFlushTurn` up front (otherwise the composer would be silently pinned "working"); all other teardown paths clear it via `clearLiveStatus`.
+
+_Known limitation_: pending messages (client) and `queuedPrompts` (server) are both **in-memory**. A reload/navigation before flush drops client-held pending drafts (unsent, so acceptable), and a stop/restart before a server-side flush drops those prompts from Claude's input (they remain persisted in the transcript). Both mirror the other ephemeral session state.
+
+On the client, `PromptInput` keeps the textarea and submit button enabled while running (the button reads "Queue" instead of "Send"), and the Stop button is shown **alongside** it rather than replacing it, so a user can interrupt the current turn and queue the next message independently.
 
 ### Reconnection Flow
 
@@ -457,7 +485,7 @@ The top-level list and every nested `SubagentTranscript` share one visibility pr
 
 With one persistent query per session, "is Claude busy?" splits into two **independent** facts, both derived purely from the message stream by `reduceSessionMessage` ([`src/lib/session-status.ts`](../src/lib/session-status.ts)) and held in memory:
 
-- **`turnActive`** — whether the **main agent** is actively generating. Driven by the message **stream**, not the SDK turn `result`: a top-level (`parent_tool_use_id == null`) `stream_event` of `message_start` sets it true; a top-level `message_delta` whose `stop_reason` is terminal (`end_turn`/`stop_sequence`/`max_tokens`/`refusal`; `tool_use`/`pause_turn` mean the turn continues) sets it false. A top-level `result` also clears it as a safety net (and covers an interrupt's `error_during_execution`). **Why the stream and not the `result`:** a `run_in_background` subagent keeps the parent turn open — the SDK defers the turn `result` until the child settles — but the main agent finishes generating much earlier, so keying off `result` alone would wrongly show "running" for the entire background-subagent duration (confirmed by `scripts/spike-background-agent.ts`). Subagent traffic never moves it. This is the **only** input gate: emitted over the `running` SSE channel (and fanned out to the global session-list channel, so the home page can show running vs waiting per session) and read via `claude.isRunning` plus the `turnActive` field on `sessions.list`; the composer and Stop button key off it.
+- **`turnActive`** — whether the **main agent** is actively generating. Driven by the message **stream**, not the SDK turn `result`: a top-level (`parent_tool_use_id == null`) `stream_event` of `message_start` sets it true; a top-level `message_delta` whose `stop_reason` is terminal (`end_turn`/`stop_sequence`/`max_tokens`/`refusal`; `tool_use`/`pause_turn` mean the turn continues) sets it false. A top-level `result` also clears it as a safety net (and covers an interrupt's `error_during_execution`). **Why the stream and not the `result`:** a `run_in_background` subagent keeps the parent turn open — the SDK defers the turn `result` until the child settles — but the main agent finishes generating much earlier, so keying off `result` alone would wrongly show "running" for the entire background-subagent duration (confirmed by `scripts/spike-background-agent.ts`). Subagent traffic never moves it. It is emitted over the `running` SSE channel (and fanned out to the global session-list channel, so the home page can show running vs waiting per session) and read via `claude.isRunning` plus the `turnActive` field on `sessions.list`; the Stop/interrupt button and the "working" indicator key off it. It **no longer gates the composer** — a send while `turnActive` is queued and flushed at turn end (see [Async Messages (Queued Sends)](#async-messages-queued-sends)).
 - **background tasks** — a `Map<task_id, BackgroundTask>` driven by `task_started` (add) / `task_notification` **or** a terminal `task_updated.patch.status` (remove — two signals because the SDK only explicitly promises `task_notification` for `stopTask` and foreground-backgrounding; the authoritative `task_updated` state channel backstops every other ending and dropped notifications). Emitted as a latest-value `background` SSE event and read via `claude.getBackgroundTasks` (seeded once, updated by the stream, resynced on reconnect). This is an **indicator only** — it never gates input, so a user can keep chatting while a background task runs. This is genuinely interactive, not just cosmetic: a prompt sent while a background subagent runs is answered in a new turn that **interleaves** with the still-running subagent (confirmed by `scripts/spike-concurrent-send.ts` — the reply arrived ~19s before the subagent's `sleep 20` settled), not queued until it finishes. `ClaudeStatusIndicator` shows a separate "N background tasks running — you can keep chatting" line with per-task stop controls (`claude.stopBackgroundTask` → `query.stopTask`, then **optimistic removal**: the runner drops the entry from the live set itself rather than waiting for the SDK's terminal `task_notification`, so the ✕ reliably clears the indicator whether the task is still alive or a phantom whose notification was dropped — if it was real and the notification arrives later, the reducer's removal is a `has`-guarded no-op). The pure map-removal (`removeBackgroundTask` in [`session-status.ts`](../src/lib/session-status.ts)) is shared by the settle paths and the stop path. _Known limitation_: a task lingers in the map only if **all three** of `task_notification`, a terminal `task_updated`, and a user ✕ never happen — at which point it clears when the query is torn down. Since it is indicator-only, the impact is a stale count, never a stuck composer.
 
 `turnActive` is **purely event-driven** — set/cleared only by messages and forced false on every loop-exit path (SDK error, query close, stop/delete/shutdown). There are no status timers: the server can't tell a hung turn from a slow one, so a genuinely hung turn is recovered deterministically by the user (interrupt, or the header Stop which closes the query → `finally` clears the flag). A consequence: a persistent subprocess lives until stop / delete / shutdown / fatal error (no idle reaper) — fine for a single-user host with a handful of sessions. Both facts are in-memory only (lost on restart, re-derived as the revived query streams).
@@ -711,9 +739,10 @@ Both source [`scripts/lib-code-server.sh`](../scripts/lib-code-server.sh) so the
 ### Session View (Chat)
 
 - Message history with lazy loading on scroll up
-- Input field for new prompts
+- Input field for new prompts — **always usable while Claude is working**; a message sent mid-turn becomes a **pending message** pinned below the transcript and sent when the turn ends (async "btw mode", see [Async Messages (Queued Sends)](#async-messages-queued-sends)). The submit button reads "Queue" instead of "Send" during a turn.
+- Pending (queued) messages render at the bottom of the transcript, in order, each marked "Queued" with a **Remove** (✕) to drop it before it sends. Interrupting reclaims all pending messages into the composer (text joined by newlines, attachments restored) so nothing is lost.
 - File attach button: uploads files (allowed even while Claude is working); pending files show as removable chips on the composer and are prefixed onto the message when sent (see [File Uploads](#file-uploads))
-- Stop button (visible during Claude execution)
+- Stop button (visible during Claude execution, shown alongside the Queue button so the current turn can be interrupted independently of queuing the next message)
 - Tool calls rendered with expandable input/output
 - Status indicator (running, waiting, stopped)
 - Session info in header (repo, branch)
@@ -762,6 +791,7 @@ clawed-abode/
 │   │   ├── auth.ts               # Authentication utilities
 │   │   ├── auth-token.ts         # Client-side auth token storage (shared key)
 │   │   ├── attachments.ts        # Pure attachment prefix + filename sanitizing
+│   │   ├── pending-message.ts    # Client-held pending-queue message type (async "btw mode")
 │   │   ├── crypto.ts             # Encryption/decryption (AES-256-GCM)
 │   │   ├── logger.ts             # Centralized logging (createLogger)
 │   │   ├── prisma.ts             # Prisma client initialization
@@ -786,6 +816,7 @@ clawed-abode/
 │   └── components/
 │       ├── MessageList.tsx
 │       ├── PromptInput.tsx
+│       ├── PendingMessageList.tsx # Client-held pending queue, pinned below the transcript
 │       ├── SessionList.tsx
 │       ├── ConnectionStatusIndicator.tsx # "Reconnecting" banner when the SSE stream is down
 │       ├── Header.tsx
