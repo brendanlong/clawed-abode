@@ -31,6 +31,12 @@ export function useSessionState(sessionId: string) {
     },
   });
 
+  const renameMutation = trpc.sessions.rename.useMutation({
+    onSuccess: (data) => {
+      utils.sessions.get.setData({ sessionId }, { session: data.session });
+    },
+  });
+
   // The API endpoint is "delete" but it now archives instead of permanently deleting
   const archiveMutation = trpc.sessions.delete.useMutation({
     onSuccess: () => {
@@ -51,12 +57,20 @@ export function useSessionState(sessionId: string) {
     archiveMutation.mutate({ sessionId });
   }, [sessionId, archiveMutation]);
 
+  const rename = useCallback(
+    (name: string) => {
+      renameMutation.mutate({ sessionId, name });
+    },
+    [sessionId, renameMutation]
+  );
+
   return {
     session: sessionData?.session,
     isLoading,
     start,
     stop,
     archive,
+    rename,
     isStarting: startMutation.isPending,
     isStopping: stopMutation.isPending,
     isArchiving: archiveMutation.isPending,
