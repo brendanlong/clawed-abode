@@ -35,6 +35,7 @@ import {
 } from '@/lib/session-status';
 import { createPushable, type Pushable } from '@/lib/pushable';
 import { type ToolResponse, buildSyntheticToolResultContent } from '@/lib/tool-response';
+import { buildPromptWithAttachments } from '@/lib/attachments';
 import { extractRepoFullName } from '@/lib/utils';
 import { v4 as uuid, v5 as uuidv5 } from 'uuid';
 import { sseEvents } from './events';
@@ -888,8 +889,16 @@ async function applyLiveSettings(sessionId: string, state: SessionState): Promis
  * Send a user prompt: ensure the query is live, apply any live settings changes,
  * mark the turn active optimistically, persist the user message, and push it into
  * the query's input stream.
+ *
+ * `attachmentPaths` are absolute host paths of files the user uploaded (see
+ * `uploads.ts`); when present they are prefixed onto the message so Claude knows
+ * where to read them.
  */
-export async function sendUserMessage(sessionId: string, prompt: string): Promise<void> {
+export async function sendUserMessage(
+  sessionId: string,
+  prompt: string,
+  attachmentPaths: string[] = []
+): Promise<void> {
   const state = await ensureSessionQuery(sessionId);
   if (!state.input) {
     throw new Error('Session query is not available');
@@ -898,14 +907,19 @@ export async function sendUserMessage(sessionId: string, prompt: string): Promis
   // Apply model/MCP changes made since the query was built (no-op on fresh establish).
   await applyLiveSettings(sessionId, state);
 
+  const promptWithAttachments = buildPromptWithAttachments(prompt, attachmentPaths);
+
   // Strip hidden-content injection vectors before the prompt is persisted or
   // seen by the model. The same chokepoint covers typed prompts and the initial
   // prompt (which may embed an untrusted GitHub issue body). `info` records any
   // findings so the persisted message can show a "content filtered" badge.
-  const { cleaned: sanitizedPrompt, info: sanitization } = await sanitizeUntrustedInput(prompt, {
-    sessionId,
-    source: 'user-message',
-  });
+  const { cleaned: sanitizedPrompt, info: sanitization } = await sanitizeUntrustedInput(
+    promptWithAttachments,
+    {
+      sessionId,
+      source: 'user-message',
+    }
+  );
 
   if (!state.status.turnActive) {
     state.status = { ...state.status, turnActive: true };

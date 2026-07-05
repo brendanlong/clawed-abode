@@ -5,6 +5,7 @@ import { PromptInput } from './PromptInput';
 
 describe('PromptInput', () => {
   const defaultProps = {
+    sessionId: 'test-session-id',
     onSubmit: vi.fn(),
     onInterrupt: vi.fn(),
     isRunning: false,
@@ -96,7 +97,7 @@ describe('PromptInput', () => {
       await user.type(screen.getByRole('textbox'), '  Hello world  ');
       await user.click(screen.getByRole('button', { name: /send/i }));
 
-      expect(onSubmit).toHaveBeenCalledWith('Hello world');
+      expect(onSubmit).toHaveBeenCalledWith('Hello world', undefined);
     });
 
     it('clears input after successful submission', async () => {
@@ -160,7 +161,7 @@ describe('PromptInput', () => {
 
       await user.type(screen.getByRole('textbox'), 'Test message{Enter}');
 
-      expect(onSubmit).toHaveBeenCalledWith('Test message');
+      expect(onSubmit).toHaveBeenCalledWith('Test message', undefined);
     });
 
     it('does not submit on Shift+Enter', async () => {
