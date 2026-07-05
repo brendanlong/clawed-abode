@@ -6,15 +6,9 @@ import { observable } from '@trpc/server/observable';
 import { EventSourcePolyfill } from 'event-source-polyfill';
 import superjson from 'superjson';
 import type { AppRouter } from '@/server/routers';
+import { getAuthToken, clearAuthToken } from '@/lib/auth-token';
 
 export const trpc = createTRPCReact<AppRouter>();
-
-const TOKEN_KEY = 'auth_token';
-
-function getAuthToken(): string | null {
-  if (typeof window === 'undefined') return null;
-  return localStorage.getItem(TOKEN_KEY);
-}
 
 /**
  * Clears the auth token and redirects to login page.
@@ -23,7 +17,7 @@ function getAuthToken(): string | null {
 function handleUnauthorized() {
   if (typeof window === 'undefined') return;
 
-  localStorage.removeItem(TOKEN_KEY);
+  clearAuthToken();
   // Only redirect if we're not already on the login page
   if (window.location.pathname !== '/login') {
     window.location.href = '/login';
