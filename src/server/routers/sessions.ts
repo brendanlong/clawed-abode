@@ -2,7 +2,13 @@ import { z } from 'zod';
 import { router, protectedProcedure } from '../trpc';
 import { prisma } from '@/lib/prisma';
 import { TRPCError } from '@trpc/server';
-import { cloneRepo, createEmptyWorkspace, removeWorkspace } from '../services/worktree-manager';
+import {
+  cloneRepo,
+  createEmptyWorkspace,
+  removeWorkspace,
+  getSessionWorkingDir,
+} from '../services/worktree-manager';
+import { buildEditorUrl } from '@/lib/editor-url';
 import {
   sendUserMessage,
   stopSession,
@@ -180,6 +186,33 @@ export const sessionsRouter = router({
       }
 
       return { session };
+    }),
+
+  // Deep link into a self-hosted code-server (browser VS Code) instance opened
+  // on this session's worktree folder. Returns { url: null } when the editor is
+  // not configured (CODE_SERVER_URL unset) or the session has no workspace on
+  // disk (archived), so the UI can hide the button.
+  getEditorUrl: protectedProcedure
+    .input(z.object({ sessionId: z.string().uuid() }))
+    .query(async ({ input }) => {
+      const session = await prisma.session.findUnique({
+        where: { id: input.sessionId },
+      });
+
+      if (!session) {
+        throw new TRPCError({
+          code: 'NOT_FOUND',
+          message: 'Session not found',
+        });
+      }
+
+      // Archived sessions have their workspace removed from disk.
+      if (session.status === 'archived') {
+        return { url: null };
+      }
+
+      const workingDir = getSessionWorkingDir(session.id, session.repoPath);
+      return { url: buildEditorUrl(env.CODE_SERVER_URL, workingDir) };
     }),
 
   start: protectedProcedure
