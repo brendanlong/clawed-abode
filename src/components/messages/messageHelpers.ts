@@ -1,4 +1,10 @@
-import type { ContentBlock, MessageContent, ToolCall, ToolResultMap } from './types';
+import type {
+  ContentBlock,
+  DisplayMessage,
+  MessageContent,
+  ToolCall,
+  ToolResultMap,
+} from './types';
 import { formatAsJson, buildToolMessages } from './types';
 
 /**
@@ -15,12 +21,8 @@ export type MessageCategory =
   | 'user'
   | 'userInterrupt'
   | 'toolResult'
-  | 'system'
-  | 'systemInit'
   | 'systemError'
   | 'systemCompactBoundary'
-  | 'hookStarted'
-  | 'hookResponse'
   | 'result';
 
 export type RecognitionResult =
@@ -107,6 +109,109 @@ export function hasRenderableAssistantContent(content: MessageContent): boolean 
 }
 
 /**
+ * System subtypes still surfaced in the transcript. Everything else — session
+ * init banners, hook lifecycle, task/notification chatter, generic notices — is
+ * hidden to cut noise (issue #312). Errors and compact boundaries are kept
+ * because they carry meaningful signal the user needs to see.
+ */
+const VISIBLE_SYSTEM_SUBTYPES = new Set(['error', 'compact_boundary']);
+
+/**
+ * Whether a `system` message should be hidden from the transcript entirely.
+ * Non-system messages are never hidden by this. Pure so it can gate both the
+ * list-level filter (no empty spacer row) and the bubble-level render.
+ */
+export function isHiddenSystemMessage(type: string, content: MessageContent): boolean {
+  if (type !== 'system') return false;
+  return !(typeof content.subtype === 'string' && VISIBLE_SYSTEM_SUBTYPES.has(content.subtype));
+}
+
+/**
+ * Whether an assistant message is purely one or more tool calls, with no other
+ * visible content. Consecutive such messages are the "back-to-back tool calls"
+ * that should render tightly packed rather than with full inter-message spacing.
+ *
+ * Any block that renders its own visible element above the tool calls — non-empty
+ * text or thinking, a redacted-thinking indicator, or a server_tool_use (advisor)
+ * indicator — disqualifies the message. Keep in sync with
+ * {@link hasRenderableAssistantContent}.
+ */
+export function isToolCallOnlyMessage(content: MessageContent): boolean {
+  const blocks = content?.message?.content;
+  if (!Array.isArray(blocks)) return false;
+  let hasToolUse = false;
+  for (const block of blocks) {
+    switch (block.type) {
+      case 'tool_use':
+        hasToolUse = true;
+        break;
+      case 'text':
+        if (typeof block.text === 'string' && block.text.trim()) return false;
+        break;
+      case 'thinking':
+        if (typeof block.thinking === 'string' && block.thinking.trim()) return false;
+        break;
+      case 'redacted_thinking':
+      case 'server_tool_use':
+        return false;
+    }
+  }
+  return hasToolUse;
+}
+
+/**
+ * The tool_use id of the Task that spawned this message, or null for a top-level
+ * (main-agent) message. Subagent messages carry `parent_tool_use_id`.
+ */
+export function getParentToolUseId(content: unknown): string | null {
+  if (!content || typeof content !== 'object') return null;
+  const parent = (content as Record<string, unknown>).parent_tool_use_id;
+  return typeof parent === 'string' ? parent : null;
+}
+
+/**
+ * Group subagent messages by the tool_use id of the Task that spawned them.
+ * Messages without a `parent_tool_use_id` (main-agent messages) are omitted.
+ * Preserves input order within each group.
+ */
+export function groupSubagentMessages(messages: DisplayMessage[]): Map<string, DisplayMessage[]> {
+  const groups = new Map<string, DisplayMessage[]>();
+  for (const message of messages) {
+    const parent = getParentToolUseId(message.content);
+    if (!parent) continue;
+    const existing = groups.get(parent);
+    if (existing) {
+      existing.push(message);
+    } else {
+      groups.set(parent, [message]);
+    }
+  }
+  return groups;
+}
+
+/**
+ * Whether a message should render as its own row in a transcript (top-level list
+ * or a nested subagent transcript). Shared by both so the two can't drift.
+ *
+ * Excludes: tool-result messages already paired inline onto their tool call,
+ * hidden system messages (see {@link isHiddenSystemMessage} — which subsumes the
+ * ignored-subtype set, and skip_transcript messages are never persisted), and
+ * empty assistant fragments. Does NOT apply the top-level "no subagent messages"
+ * rule — callers add that separately, since a subagent transcript renders exactly
+ * those messages.
+ */
+export function isVisibleTranscriptMessage(
+  message: DisplayMessage,
+  pairedMessageIds: Set<string>
+): boolean {
+  if (pairedMessageIds.has(message.id)) return false;
+  const content = message.content as MessageContent;
+  if (isHiddenSystemMessage(message.type, content)) return false;
+  if (message.type === 'assistant' && !hasRenderableAssistantContent(content)) return false;
+  return true;
+}
+
+/**
  * Check if a message can be recognized and displayed with our typed components.
  * Returns the message category if recognized, or { recognized: false } for unknown types.
  */
@@ -146,15 +251,10 @@ export function isRecognizedMessage(type: string, content: MessageContent): Reco
     return { recognized: false };
   }
 
-  // System init messages
-  if (type === 'system' && content.subtype === 'init') {
-    if (content.model && content.session_id) {
-      return { recognized: true, category: 'systemInit' };
-    }
-    return { recognized: false };
-  }
-
-  // System error messages
+  // The only system messages shown in the transcript are errors and compact
+  // boundaries (see isHiddenSystemMessage). Every other system subtype — init,
+  // hooks, generic notices — is hidden upstream in MessageBubble/MessageList, so
+  // it is intentionally not given a dedicated category here.
   if (type === 'system' && content.subtype === 'error') {
     if (Array.isArray(content.content)) {
       return { recognized: true, category: 'systemError' };
@@ -167,21 +267,6 @@ export function isRecognizedMessage(type: string, content: MessageContent): Reco
     return { recognized: true, category: 'systemCompactBoundary' };
   }
 
-  // Hook started messages (pending hooks show loading state)
-  if (type === 'system' && content.subtype === 'hook_started') {
-    return { recognized: true, category: 'hookStarted' };
-  }
-
-  // Hook response messages
-  if (type === 'system' && content.subtype === 'hook_response') {
-    return { recognized: true, category: 'hookResponse' };
-  }
-
-  // Other system messages
-  if (type === 'system') {
-    return { recognized: true, category: 'system' };
-  }
-
   // Result messages
   if (type === 'result') {
     if (content.subtype && typeof content.session_id === 'string') {
@@ -192,127 +277,6 @@ export function isRecognizedMessage(type: string, content: MessageContent): Reco
 
   // Unknown type
   return { recognized: false };
-}
-
-/**
- * A concise, human-readable summary of a generic system message, used so these
- * messages render meaningful content instead of an empty "System" bubble.
- */
-export interface SystemMessageSummary {
-  /** Short label shown as a badge (e.g. "Retrying request"). */
-  label: string;
-  /** Optional detail line. Absent when the subtype carries no extra text. */
-  body?: string;
-  /** Drives styling — `warn` for retries/denials/errors. */
-  level: 'info' | 'warn';
-}
-
-/** Turn a snake_case subtype into a Title Case label (fallback for unknowns). */
-function humanizeSubtype(subtype: string | undefined): string {
-  if (!subtype) return 'System';
-  return subtype
-    .split('_')
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(' ');
-}
-
-/** Pull a readable message out of an SDK error value (string or {message}). */
-function extractErrorMessage(error: unknown): string | undefined {
-  if (typeof error === 'string') return error;
-  if (error && typeof error === 'object') {
-    const message = (error as Record<string, unknown>).message;
-    if (typeof message === 'string') return message;
-  }
-  return undefined;
-}
-
-const asString = (value: unknown): string | undefined =>
-  typeof value === 'string' ? value : undefined;
-
-/**
- * Summarize a generic `system` message (any subtype not handled by a dedicated
- * display). Known subtypes get a tailored summary; unknown/future ones fall back
- * to a humanized label plus any string `content`, so a system message is never
- * rendered blank.
- */
-export function summarizeSystemMessage(content: MessageContent): SystemMessageSummary {
-  switch (content.subtype) {
-    case 'notification': {
-      const priority = content.priority;
-      return {
-        label: 'Notification',
-        body: asString(content.text),
-        level: priority === 'high' || priority === 'immediate' ? 'warn' : 'info',
-      };
-    }
-    case 'permission_denied': {
-      const tool = asString(content.tool_name) ?? 'tool';
-      const message = asString(content.message);
-      return {
-        label: 'Permission denied',
-        body: message ? `${tool}: ${message}` : tool,
-        level: 'warn',
-      };
-    }
-    case 'model_refusal_fallback': {
-      const from = asString(content.original_model) ?? '?';
-      const to = asString(content.fallback_model) ?? '?';
-      const why = asString(content.api_refusal_explanation);
-      return {
-        label: 'Model switched after refusal',
-        body: `${from} → ${to}${why ? ` — ${why}` : ''}`,
-        level: 'warn',
-      };
-    }
-    case 'plugin_install': {
-      const name = asString(content.name);
-      const status = asString(content.status) ?? 'unknown';
-      const error = extractErrorMessage(content.error);
-      return {
-        label: name ? `Plugin: ${name}` : 'Plugin install',
-        body: error ? `${status} — ${error}` : status,
-        level: status === 'failed' ? 'warn' : 'info',
-      };
-    }
-    case 'memory_recall': {
-      const count = Array.isArray(content.memories) ? content.memories.length : 0;
-      const mode = asString(content.mode) ?? 'select';
-      return { label: 'Recalled memories', body: `${count} (${mode})`, level: 'info' };
-    }
-    case 'mirror_error':
-      return { label: 'Mirror error', body: extractErrorMessage(content.error), level: 'warn' };
-    case 'task_started': {
-      const description = asString(content.description);
-      const agent = asString(content.subagent_type);
-      return {
-        label: 'Subagent started',
-        body: [agent, description].filter(Boolean).join(': ') || undefined,
-        level: 'info',
-      };
-    }
-    case 'task_notification': {
-      const status = asString(content.status) ?? 'completed';
-      return {
-        label: `Subagent ${status}`,
-        body: asString(content.summary),
-        level: status === 'failed' ? 'warn' : 'info',
-      };
-    }
-    case 'local_command_output':
-      return {
-        label: 'Command output',
-        body: typeof content.content === 'string' ? stripXmlTags(content.content) : undefined,
-        level: 'info',
-      };
-    default:
-      return {
-        // Fall back to the message `type` when there is no subtype, so top-level
-        // types persisted as system (e.g. prompt_suggestion) get a real label.
-        label: humanizeSubtype(content.subtype ?? asString(content.type)),
-        body: asString(content.content),
-        level: 'info',
-      };
-  }
 }
 
 /**

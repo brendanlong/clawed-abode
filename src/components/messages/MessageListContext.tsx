@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useContext } from 'react';
+import { createContext, useContext, type ReactNode } from 'react';
 
 interface MessageListContextValue {
   /** The tool ID of the latest TodoWrite call (by sequence), or null */
@@ -17,6 +17,13 @@ interface MessageListContextValue {
   onRespondToPlan?: (toolUseId: string, approve: boolean, feedback?: string) => void;
   /** Reconstructed plan content per ExitPlanMode call, keyed by its tool_use id */
   planContentByToolUseId: Map<string, string>;
+  /**
+   * Render the nested transcript of a subagent Task, keyed by the Task's
+   * tool_use id, or null if that Task spawned no visible subagent messages.
+   * Provided by MessageList so TaskDisplay can show grouped subagent work
+   * without importing MessageBubble (which would create an import cycle).
+   */
+  renderSubagentTranscript: (toolUseId: string) => ReactNode;
 }
 
 const MessageListContext = createContext<MessageListContextValue | null>(null);
