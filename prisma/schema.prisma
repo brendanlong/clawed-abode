@@ -22,21 +22,22 @@ model AuthSession {
 }
 
 model Session {
-  id            String    @id @default(uuid())
-  name          String
-  repoUrl       String?   // null for no-repo sessions
-  branch        String?   // null for no-repo sessions
-  workspacePath String    @default("") // Path to workspace directory (e.g., ~/worktrees/{sessionId})
-  repoPath      String    @default("") // Path to repo relative to workspace (e.g., "my-repo")
-  status        String    @default("creating") // creating, running, stopped, error, archived
-  statusMessage String?   // Human-readable progress message during creation
-  initialPrompt  String?   // Optional prompt to send when session starts (e.g., from GitHub issue)
-  currentBranch  String?   // Current git branch (detected after each query)
-  createdAt      DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  lastActivityAt DateTime @default(now()) // Bumped when a message is persisted; drives session-list ordering
-  archivedAt    DateTime? // When the session was archived (null if not archived)
-  messages      Message[]
+  id              String    @id @default(uuid())
+  name            String
+  repoUrl         String? // null for no-repo sessions
+  branch          String? // null for no-repo sessions
+  workspacePath   String    @default("") // Path to workspace directory (e.g., ~/worktrees/{sessionId})
+  repoPath        String    @default("") // Path to repo relative to workspace (e.g., "my-repo")
+  status          String    @default("creating") // creating, running, stopped, error, archived
+  statusMessage   String? // Human-readable progress message during creation
+  initialPrompt   String? // Optional prompt to send when session starts (e.g., from GitHub issue)
+  currentBranch   String? // Current git branch (detected after each query)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  lastActivityAt  DateTime  @default(now()) // Bumped when a message is persisted; drives session-list ordering
+  archivedAt      DateTime? // When the session was archived (null if not archived)
+  messageSequence Int       @default(0) // Monotonic counter for atomic message sequence assignment (next sequence to assign)
+  messages        Message[]
 
   @@index([status])
 }
@@ -45,11 +46,11 @@ model Message {
   id        String   @id @default(uuid())
   sessionId String
   sequence  Int
-  type      String   // system, user, assistant, result
-  content   String   // JSON stored as string
+  type      String // system, user, assistant, result
+  content   String // JSON stored as string
   createdAt DateTime @default(now())
 
-  session   Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   @@unique([sessionId, sequence])
   @@index([sessionId, sequence])
@@ -61,8 +62,8 @@ model RepoSettings {
   repoFullName       String   @unique // e.g., "owner/repo"
   isFavorite         Boolean  @default(false)
   displayOrder       Int      @default(0) // For custom ordering within favorites
-  customSystemPrompt String?  // Optional prompt appended to the default system prompt
-  claudeModel        String?  // If set, overrides the global/env Claude model for this repo's sessions
+  customSystemPrompt String? // Optional prompt appended to the default system prompt
+  claudeModel        String? // If set, overrides the global/env Claude model for this repo's sessions
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
@@ -110,18 +111,18 @@ model McpServer {
 
 // Global application settings (singleton - only one row)
 model GlobalSettings {
-  id                        String   @id @default("global") // Singleton pattern
-  systemPromptOverride      String?  // If set, replaces the default system prompt
-  systemPromptOverrideEnabled Boolean @default(false) // Whether to use the override
-  systemPromptAppend        String?  // Additional content appended after default/override prompt
-  claudeModel               String?  // If set, overrides CLAUDE_MODEL env var
-  advisorModel              String?  // Model for the server-side advisor tool. Null (the default) disables the advisor tool.
-  claudeApiKey              String?  // If set (encrypted), overrides CLAUDE_CODE_OAUTH_TOKEN env var
-  ttsSpeed                  Float?   // TTS playback speed (0.25-4.0, default 1.0)
-  voiceAutoSend             Boolean  @default(true) // Auto-send after speech-to-text transcription
-  settingSourceUser         Boolean  @default(false) // Load Claude settings from the user scope (~/.claude): skills, CLAUDE.md, hooks
-  settingSourceProject      Boolean  @default(true)  // Load Claude settings from the project scope (<cwd>/.claude)
-  settingSourceLocal        Boolean  @default(false) // Load Claude settings from the local scope (<cwd>/.claude/settings.local.json)
-  createdAt                 DateTime @default(now())
-  updatedAt                 DateTime @updatedAt
+  id                          String   @id @default("global") // Singleton pattern
+  systemPromptOverride        String? // If set, replaces the default system prompt
+  systemPromptOverrideEnabled Boolean  @default(false) // Whether to use the override
+  systemPromptAppend          String? // Additional content appended after default/override prompt
+  claudeModel                 String? // If set, overrides CLAUDE_MODEL env var
+  advisorModel                String? // Model for the server-side advisor tool. Null (the default) disables the advisor tool.
+  claudeApiKey                String? // If set (encrypted), overrides CLAUDE_CODE_OAUTH_TOKEN env var
+  ttsSpeed                    Float? // TTS playback speed (0.25-4.0, default 1.0)
+  voiceAutoSend               Boolean  @default(true) // Auto-send after speech-to-text transcription
+  settingSourceUser           Boolean  @default(false) // Load Claude settings from the user scope (~/.claude): skills, CLAUDE.md, hooks
+  settingSourceProject        Boolean  @default(true) // Load Claude settings from the project scope (<cwd>/.claude)
+  settingSourceLocal          Boolean  @default(false) // Load Claude settings from the local scope (<cwd>/.claude/settings.local.json)
+  createdAt                   DateTime @default(now())
+  updatedAt                   DateTime @updatedAt
 }
