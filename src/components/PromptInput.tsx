@@ -85,8 +85,9 @@ export function PromptInput({
   // Dismissed only counts if the prompt hasn't changed since dismissal
   const isDismissed = dismissedForPrompt === prompt;
 
-  // Derive showCommands directly from state
-  const showCommands = filteredCommands.length > 0 && !disabled && !isRunning && !isDismissed;
+  // Derive showCommands directly from state. The composer stays usable while a
+  // turn is running (messages queue), so the command menu shows then too.
+  const showCommands = filteredCommands.length > 0 && !disabled && !isDismissed;
 
   const insertCommand = useCallback((command: SlashCommand) => {
     const newPrompt = `/${command.name} `;
@@ -98,8 +99,10 @@ export function PromptInput({
     textareaRef.current?.focus();
   }, []);
 
-  // Submit is allowed with typed text OR at least one attachment.
-  const canSubmit = (prompt.trim().length > 0 || attachments.length > 0) && !disabled && !isRunning;
+  // Submit is allowed with typed text OR at least one attachment. It stays allowed
+  // while a turn is running — the message is queued server-side and sent as soon
+  // as Claude finishes (async "btw mode").
+  const canSubmit = (prompt.trim().length > 0 || attachments.length > 0) && !disabled;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -175,7 +178,7 @@ export function PromptInput({
       const fullPrompt = (prompt + transcript).trim();
       setPrompt(fullPrompt);
 
-      if (voiceAutoSend && fullPrompt && !disabled && !isRunning) {
+      if (voiceAutoSend && fullPrompt && !disabled) {
         onSubmit(
           fullPrompt,
           attachments.length > 0 ? attachments.map((a) => a.storedName) : undefined
@@ -309,20 +312,20 @@ export function PromptInput({
               placeholder={
                 disabled
                   ? 'Session is not running'
-                  : isRunning
-                    ? 'Claude is thinking...'
-                    : isRecording
-                      ? 'Listening...'
+                  : isRecording
+                    ? 'Listening...'
+                    : isRunning
+                      ? 'Claude is working — your message will be sent when it finishes'
                       : 'Type your message... (Enter to send, Shift+Enter for new line)'
               }
-              disabled={disabled || isRunning}
+              disabled={disabled}
               readOnly={isRecording}
               rows={1}
               className="min-h-[44px] resize-none"
             />
           </div>
 
-          {voiceEnabled && !isRunning && (
+          {voiceEnabled && (
             <VoiceMicButton
               isRecording={isRecording}
               onClick={handleMicClick}
@@ -331,7 +334,9 @@ export function PromptInput({
             />
           )}
 
-          {isRunning ? (
+          {/* While a turn runs, Stop interrupts it and Send queues a new message
+              to be sent when the turn ends. */}
+          {isRunning && (
             <Button
               type="button"
               variant="destructive"
@@ -340,11 +345,10 @@ export function PromptInput({
             >
               {isInterrupting ? 'Stopping...' : 'Stop'}
             </Button>
-          ) : (
-            <Button type="submit" disabled={!canSubmit}>
-              Send
-            </Button>
           )}
+          <Button type="submit" disabled={!canSubmit}>
+            {isRunning ? 'Queue' : 'Send'}
+          </Button>
         </div>
       </div>
     </form>

@@ -115,15 +115,9 @@ export const claudeRouter = router({
         });
       }
 
-      // Reject only while a main-agent turn is active. A send is allowed while
-      // only background tasks are running (they never gate input).
-      if (await isClaudeRunningAsync(input.sessionId)) {
-        throw new TRPCError({
-          code: 'CONFLICT',
-          message: 'Claude is already running for this session',
-        });
-      }
-
+      // A send is always accepted while the session is running: if a main-agent
+      // turn is active, sendUserMessage queues the prompt and flushes it as soon
+      // as the turn ends (async "btw mode"). Background tasks never gate input.
       const attachmentPaths = input.attachments?.length
         ? await resolveUploadPaths(input.sessionId, input.attachments)
         : [];
