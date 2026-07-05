@@ -74,6 +74,7 @@ let stopSession: typeof import('./claude-runner').stopSession;
 let isClaudeRunning: typeof import('./claude-runner').isClaudeRunning;
 let getSessionBackgroundTasks: typeof import('./claude-runner').getSessionBackgroundTasks;
 let stopBackgroundTask: typeof import('./claude-runner').stopBackgroundTask;
+let insertMessage: typeof import('./claude-runner').insertMessage;
 let _setQueryFactory: typeof import('./claude-runner')._setQueryFactory;
 let mockLoadSettings: ReturnType<
   typeof vi.mocked<typeof import('./settings-merger').loadMergedSessionSettings>
@@ -192,6 +193,7 @@ describe('claude-runner persistent streaming loop', () => {
     isClaudeRunning = mod.isClaudeRunning;
     getSessionBackgroundTasks = mod.getSessionBackgroundTasks;
     stopBackgroundTask = mod.stopBackgroundTask;
+    insertMessage = mod.insertMessage;
     _setQueryFactory = mod._setQueryFactory;
     const sm = await import('./settings-merger');
     mockLoadSettings = vi.mocked(sm.loadMergedSessionSettings);
@@ -564,5 +566,72 @@ describe('claude-runner persistent streaming loop', () => {
     expect(factoryCalls).toBe(0); // no query was ever created
     expect(isClaudeRunning(sessionId)).toBe(false);
     expect(getSessionBackgroundTasks(sessionId)).toEqual([]);
+  });
+
+  it('assigns unique contiguous sequences under concurrent inserts (no collision)', async () => {
+    const sessionId = await createRunningSession();
+    const N = 50;
+
+    // Fire N inserts for the SAME session concurrently. With a read-then-insert
+    // this races on @@unique([sessionId, sequence]); the atomic counter must give
+    // each a distinct sequence.
+    const results = await Promise.all(
+      Array.from({ length: N }, (_, i) =>
+        insertMessage({
+          sessionId,
+          id: `msg-${i}`,
+          type: 'assistant',
+          content: { type: 'assistant', i },
+        })
+      )
+    );
+
+    // Every insert succeeded and got a sequence.
+    expect(results.every((r) => r.inserted)).toBe(true);
+    const sequences = results.map((r) => r.sequence!).sort((a, b) => a - b);
+    expect(sequences).toEqual([...Array(N).keys()]);
+
+    // The DB agrees: N rows with contiguous sequences 0..N-1.
+    const rows = await messagesFor(sessionId);
+    expect(rows.map((m) => m.sequence)).toEqual([...Array(N).keys()]);
+
+    // The counter points at the next sequence.
+    const session = await testPrisma.session.findUniqueOrThrow({ where: { id: sessionId } });
+    expect(session.messageSequence).toBe(N);
+  });
+
+  it('is idempotent on a duplicate id (no-op, no second row)', async () => {
+    const sessionId = await createRunningSession();
+
+    const first = await insertMessage({
+      sessionId,
+      id: 'dup',
+      type: 'user',
+      content: { type: 'user', content: 'hi' },
+    });
+    expect(first).toEqual({ inserted: true, sequence: 0 });
+
+    // Same id again: the create fails on the primary key and it is a no-op.
+    const second = await insertMessage({
+      sessionId,
+      id: 'dup',
+      type: 'user',
+      content: { type: 'user', content: 'hi' },
+    });
+    expect(second).toEqual({ inserted: false });
+
+    // The reserved sequence (1) is skipped — the next distinct insert lands at 2.
+    // A gap is harmless: pagination orders by sequence and never assumes contiguity.
+    const third = await insertMessage({
+      sessionId,
+      id: 'next',
+      type: 'assistant',
+      content: { type: 'assistant' },
+    });
+    expect(third).toEqual({ inserted: true, sequence: 2 });
+
+    // Only the two real rows exist (the duplicate never created one).
+    const rows = await messagesFor(sessionId);
+    expect(rows.map((m) => m.sequence)).toEqual([0, 2]);
   });
 });

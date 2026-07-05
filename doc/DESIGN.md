@@ -451,6 +451,12 @@ Context % reflects how full the window currently is, **not** total consumption: 
 
 Messages are stored with a monotonically increasing sequence number per session (see `Message` model in [`prisma/schema.prisma`](../prisma/schema.prisma)). This enables efficient cursor-based pagination.
 
+### Atomic Sequence Assignment
+
+Every insert site funnels through the single `insertMessage` helper in [`claude-runner.ts`](../src/server/services/claude-runner.ts), which assigns `sequence` **atomically** rather than with a race-prone read-then-insert. Each `Session` carries a `messageSequence` counter (the next sequence to assign); `insertMessage` reserves a value with one autocommit statement — `UPDATE "Session" SET "messageSequence" = "messageSequence" + 1 ... RETURNING "messageSequence"` — then inserts the message at `messageSequence - 1`. Because it is a single statement, SQLite serializes it on the write lock, so two concurrent inserts for the same session (e.g. two browser tabs, or an answer racing a `send` — both `runClaudeCommand` paths fire un-awaited) always get distinct sequences and can never collide on `@@unique([sessionId, sequence])`. There is no retry loop and no interactive transaction (on SQLite's single-writer model, many concurrent interactive transactions contend on the write lock and deadlock/time out; a single statement cannot).
+
+A duplicate `id` (the same message inserted twice — e.g. an idempotent synthetic `tool_result`, whose id is deterministic) makes the `message.create` fail on the primary key; `insertMessage` treats that as a no-op (`inserted: false`). The reserved sequence is then skipped, leaving a harmless gap — pagination orders by `sequence` and never assumes contiguity.
+
 ### Pagination Queries
 
 **Load recent (initial view):**
