@@ -24,7 +24,7 @@ import { useVoicePlayback, VoicePlaybackContext } from '@/hooks/useVoicePlayback
 import { getNewAutoReadMessages } from '@/lib/auto-read-helpers';
 import { VoiceControlPanel } from '@/components/voice/VoiceControlPanel';
 import type { UploadedAttachment } from '@/lib/attachments';
-import type { PendingMessage } from '@/lib/pending-message';
+import { MAX_QUEUED_MESSAGES, type PendingMessage } from '@/lib/pending-message';
 
 function SessionView({ sessionId }: { sessionId: string }) {
   // Session state: data, start/stop/archive
@@ -64,7 +64,6 @@ function SessionView({ sessionId }: { sessionId: string }) {
     backgroundActive,
     send: sendPrompt,
     sendBatch,
-    isBatchSending,
     interrupt,
     isInterrupting,
     answerQuestion,
@@ -136,6 +135,20 @@ function SessionView({ sessionId }: { sessionId: string }) {
     voicePlayback.stop();
   }, [voicePlayback]);
 
+  // Load some pending messages back into the composer (text joined by newlines,
+  // attachments merged) via a new-nonce restoreDraft — so drafts are never lost
+  // when they can't be sent (interrupt, or a failed flush). No-op if empty.
+  const reclaimToComposer = useCallback((msgs: PendingMessage[]) => {
+    if (msgs.length === 0) return;
+    const text = msgs
+      .map((m) => m.text)
+      .filter((t) => t.trim().length > 0)
+      .join('\n');
+    const attachments = msgs.flatMap((m) => m.attachments);
+    draftNonceRef.current += 1;
+    setRestoreDraft({ text, attachments, nonce: draftNonceRef.current });
+  }, []);
+
   // Send a prompt (also stops any playback). While a turn is active, the message
   // is held in the client-side pending queue and flushed when the turn ends;
   // otherwise it starts a turn immediately. Accepts full attachments so pending
@@ -146,16 +159,30 @@ function SessionView({ sessionId }: { sessionId: string }) {
         return;
       }
       stopWithAutoReadFlag();
-      if (isClaudeRunning) {
-        setPendingMessages((prev) => [
-          ...prev,
-          { id: `pending-${pendingIdRef.current++}`, text: prompt, attachments },
-        ]);
-      } else {
+      if (!isClaudeRunning) {
         sendPrompt(prompt, attachments.length ? attachments.map((a) => a.storedName) : undefined);
+        return;
       }
+      // Queue it — unless the queue is already full, in which case bounce it back
+      // to the composer rather than growing an unsendable batch (the flush's
+      // sendBatch caps at MAX_QUEUED_MESSAGES).
+      if (pendingMessages.length >= MAX_QUEUED_MESSAGES) {
+        reclaimToComposer([{ id: 'overflow', text: prompt, attachments }]);
+        return;
+      }
+      setPendingMessages((prev) => [
+        ...prev,
+        { id: `pending-${pendingIdRef.current++}`, text: prompt, attachments },
+      ]);
     },
-    [session, isClaudeRunning, sendPrompt, stopWithAutoReadFlag]
+    [
+      session,
+      isClaudeRunning,
+      pendingMessages.length,
+      sendPrompt,
+      stopWithAutoReadFlag,
+      reclaimToComposer,
+    ]
   );
 
   // Adapter for callers that only produce text (plan responses, voice transcripts).
@@ -171,53 +198,51 @@ function SessionView({ sessionId }: { sessionId: string }) {
   const handleDraftConsumed = useCallback(() => setRestoreDraft(null), []);
 
   // Interrupt the current turn and reclaim any pending messages into the composer
-  // (their text joined by newlines, attachments restored) so nothing is lost.
+  // so nothing is lost.
   const handleInterrupt = useCallback(() => {
-    if (pendingMessages.length > 0) {
-      const text = pendingMessages
-        .map((m) => m.text)
-        .filter((t) => t.trim().length > 0)
-        .join('\n');
-      const attachments = pendingMessages.flatMap((m) => m.attachments);
-      draftNonceRef.current += 1;
-      setRestoreDraft({ text, attachments, nonce: draftNonceRef.current });
-      setPendingMessages([]);
-    }
+    reclaimToComposer(pendingMessages);
+    setPendingMessages([]);
     interrupt();
-  }, [pendingMessages, interrupt]);
+  }, [pendingMessages, interrupt, reclaimToComposer]);
 
-  // Flush the pending queue as one turn when the current turn ends. Keyed on the
-  // running true->false transition; `flushing` bridges until the flushed turn starts.
-  // Only flush while the session is still running — if `isClaudeRunning` fell
-  // because the session was stopped (header Stop), keep the pending drafts visible
-  // rather than firing a doomed sendBatch and dropping them.
-  const isSessionRunning = session?.status === 'running';
+  // Flush the pending queue as one turn when the current turn ends, and drop the
+  // `flushing` bridge when the next turn starts — both keyed on the running
+  // transition (prev vs current) so `isWorking` never dips across the handoff.
+  // The flush is skipped while a Stop is in flight: `sessions.stop` emits
+  // running=false *before* the DB flips to `stopped`, so the session-status cache
+  // is stale here; `isStopping` is the reliable signal that this drop is a stop.
   const prevRunningForFlushRef = useRef(false);
   useEffect(() => {
     const wasRunning = prevRunningForFlushRef.current;
     prevRunningForFlushRef.current = isClaudeRunning;
-    if (wasRunning && !isClaudeRunning && isSessionRunning && pendingMessages.length > 0) {
-      setFlushing(true);
-      sendBatch(
-        pendingMessages.map((m) => ({
-          prompt: m.text,
-          attachments: m.attachments.length ? m.attachments.map((a) => a.storedName) : undefined,
-        }))
-      );
-      setPendingMessages([]);
-    }
-  }, [isClaudeRunning, isSessionRunning, pendingMessages, sendBatch]);
 
-  // Clear the flushing bridge once the flushed turn starts, or if the batch send
-  // settled without starting one (e.g. an error) so `isWorking` can't stick true.
-  const prevBatchSendingRef = useRef(false);
-  useEffect(() => {
-    const wasSending = prevBatchSendingRef.current;
-    prevBatchSendingRef.current = isBatchSending;
-    if (isClaudeRunning || (wasSending && !isBatchSending)) {
+    // A turn just started → the flushed (or a fresh) turn is live; drop the bridge.
+    if (!wasRunning && isClaudeRunning) {
       setFlushing(false);
+      return;
     }
-  }, [isClaudeRunning, isBatchSending]);
+
+    // A turn just ended → flush queued drafts as one combined turn.
+    if (!(wasRunning && !isStopping && pendingMessages.length > 0)) return;
+
+    const flushed = pendingMessages;
+    setFlushing(true);
+    setPendingMessages([]);
+    sendBatch(
+      flushed.map((m) => ({
+        prompt: m.text,
+        attachments: m.attachments.length ? m.attachments.map((a) => a.storedName) : undefined,
+      })),
+      {
+        // The flush is automatic, so a dropped batch must not silently lose the
+        // drafts — hand them back to the composer instead.
+        onError: () => {
+          setFlushing(false);
+          reclaimToComposer(flushed);
+        },
+      }
+    );
+  }, [isClaudeRunning, isStopping, pendingMessages, sendBatch, reclaimToComposer]);
 
   // During a turn: enqueue new assistant text messages as they arrive
   useEffect(() => {

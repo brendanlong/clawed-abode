@@ -57,9 +57,14 @@ export function useClaudeState(sessionId: string) {
 
   // Flush the client-held pending queue as one turn (see PendingMessage). Each
   // message becomes its own transcript bubble; the model answers them together.
+  // `callbacks` lets the caller recover on failure (the flush fires automatically,
+  // so a dropped batch must not silently lose the user's drafts).
   const sendBatch = useCallback(
-    (messages: { prompt: string; attachments?: string[] }[]) => {
-      sendBatchMutation.mutate({ sessionId, messages });
+    (
+      messages: { prompt: string; attachments?: string[] }[],
+      callbacks?: { onSuccess?: () => void; onError?: () => void }
+    ) => {
+      sendBatchMutation.mutate({ sessionId, messages }, callbacks);
     },
     [sessionId, sendBatchMutation]
   );
