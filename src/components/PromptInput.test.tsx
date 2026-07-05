@@ -33,10 +33,12 @@ describe('PromptInput', () => {
       ).toBeInTheDocument();
     });
 
-    it('shows "Claude is thinking..." placeholder when running', () => {
+    it('shows a queueing placeholder when running', () => {
       render(<PromptInput {...defaultProps} isRunning={true} />);
 
-      expect(screen.getByPlaceholderText(/claude is thinking/i)).toBeInTheDocument();
+      expect(
+        screen.getByPlaceholderText(/claude is working.*sent when it finishes/i)
+      ).toBeInTheDocument();
     });
 
     it('shows "Session is not running" placeholder when disabled', () => {
@@ -47,11 +49,12 @@ describe('PromptInput', () => {
   });
 
   describe('send button behavior', () => {
-    it('shows Stop button when Claude is running', () => {
+    it('shows both Stop and Queue buttons when Claude is running', () => {
       render(<PromptInput {...defaultProps} isRunning={true} />);
 
+      // Stop interrupts the current turn; Queue sends a new message afterwards.
       expect(screen.getByRole('button', { name: /stop/i })).toBeInTheDocument();
-      expect(screen.queryByRole('button', { name: /send/i })).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /queue/i })).toBeInTheDocument();
     });
 
     it('shows "Stopping..." when isInterrupting is true', () => {
@@ -144,12 +147,18 @@ describe('PromptInput', () => {
       expect(screen.getByRole('button', { name: /send/i })).toBeDisabled();
     });
 
-    it('does not call onSubmit when running', () => {
+    it('queues a message (calls onSubmit) while running', async () => {
       const onSubmit = vi.fn();
+      const user = userEvent.setup();
       render(<PromptInput {...defaultProps} onSubmit={onSubmit} isRunning={true} />);
 
-      // Textarea should be disabled when running
-      expect(screen.getByRole('textbox')).toBeDisabled();
+      // The composer stays usable while running so messages can be queued.
+      const textarea = screen.getByRole('textbox');
+      expect(textarea).not.toBeDisabled();
+      await user.type(textarea, 'queued message');
+      await user.click(screen.getByRole('button', { name: /queue/i }));
+
+      expect(onSubmit).toHaveBeenCalledWith('queued message', undefined);
     });
   });
 
@@ -210,10 +219,10 @@ describe('PromptInput', () => {
       expect(screen.getByRole('textbox')).toBeDisabled();
     });
 
-    it('disables textarea when Claude is running', () => {
+    it('keeps textarea enabled when Claude is running (messages queue)', () => {
       render(<PromptInput {...defaultProps} isRunning={true} />);
 
-      expect(screen.getByRole('textbox')).toBeDisabled();
+      expect(screen.getByRole('textbox')).not.toBeDisabled();
     });
 
     it('allows typing when not disabled or running', async () => {

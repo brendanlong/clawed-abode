@@ -229,7 +229,7 @@ describe('claudeRouter integration', () => {
       });
     });
 
-    it('should throw CONFLICT if Claude is already running', async () => {
+    it('accepts a send while Claude is running (message is queued)', async () => {
       const session = await testPrisma.session.create({
         data: {
           name: 'Running Session',
@@ -240,19 +240,20 @@ describe('claudeRouter integration', () => {
         },
       });
 
+      // A turn being active no longer blocks a send — sendUserMessage queues it
+      // and flushes at turn end (async "btw mode").
       mockIsClaudeRunningAsync.mockResolvedValue(true);
+      mockSendUserMessage.mockResolvedValue(undefined);
 
       const caller = createCaller('auth-session-id');
 
-      await expect(
-        caller.claude.send({
-          sessionId: session.id,
-          prompt: 'Hello!',
-        })
-      ).rejects.toMatchObject({
-        code: 'CONFLICT',
-        message: 'Claude is already running for this session',
+      const result = await caller.claude.send({
+        sessionId: session.id,
+        prompt: 'Hello!',
       });
+
+      expect(result).toEqual({ success: true });
+      expect(mockSendUserMessage).toHaveBeenCalledWith(session.id, 'Hello!', []);
     });
 
     it('should require authentication', async () => {
