@@ -99,7 +99,10 @@ function NewSessionForm() {
 
   const handleRepoSelect = useCallback(
     (repo: Repo) => {
+      // selectRepo resets the rest of the form (name, prompt); clear the
+      // separately-held attachments too so nothing carries across the reset.
       dispatch({ type: 'selectRepo', repo });
+      setFiles([]);
     },
     [dispatch]
   );
