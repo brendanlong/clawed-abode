@@ -37,6 +37,10 @@ const TOOL_DISPLAY_MAP: Record<string, React.ComponentType<{ tool: ToolCall }>> 
   Bash: BashDisplay,
   NotebookEdit: NotebookEditDisplay,
   Skill: SkillDisplay,
+  // Subagent invocation. Current SDK spawns subagents via the `Agent` tool;
+  // older sessions used `Task`. Both share the same input shape (subagent_type /
+  // description / prompt) and both nest the subagent's grouped transcript.
+  Agent: TaskDisplay,
   Task: TaskDisplay,
   EnterPlanMode: EnterPlanModeDisplay,
   ExitPlanMode: ExitPlanModeDisplay,
