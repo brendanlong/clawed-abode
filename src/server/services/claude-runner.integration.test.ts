@@ -70,6 +70,7 @@ import { createPushable } from '@/lib/pushable';
 // Imported dynamically in beforeAll (after setupTestDb sets DATABASE_URL), since
 // claude-runner pulls in @/lib/prisma at module load.
 let sendUserMessage: typeof import('./claude-runner').sendUserMessage;
+let interruptClaude: typeof import('./claude-runner').interruptClaude;
 let stopSession: typeof import('./claude-runner').stopSession;
 let isClaudeRunning: typeof import('./claude-runner').isClaudeRunning;
 let getSessionBackgroundTasks: typeof import('./claude-runner').getSessionBackgroundTasks;
@@ -234,6 +235,7 @@ describe('claude-runner persistent streaming loop', () => {
     await setupTestDb();
     const mod = await import('./claude-runner');
     sendUserMessage = mod.sendUserMessage;
+    interruptClaude = mod.interruptClaude;
     stopSession = mod.stopSession;
     isClaudeRunning = mod.isClaudeRunning;
     getSessionBackgroundTasks = mod.getSessionBackgroundTasks;
@@ -629,6 +631,37 @@ describe('claude-runner persistent streaming loop', () => {
     fake.emit(messageDelta('end_turn'));
     await waitFor(() => !isClaudeRunning(sessionId));
     expect(mockSseEvents.emitClaudeRunning).toHaveBeenCalledWith(sessionId, false);
+
+    stopSession(sessionId);
+  });
+
+  it('recovers turnActive when interrupted during the flush handoff (no message_start)', async () => {
+    // Regression: interrupting after queued prompts flushed but before the
+    // flushed turn's message_start must not strand awaitingFlushTurn/turnActive
+    // true. The interrupt's terminal result has no preceding message_start, so
+    // without the interrupt-time flag reset the composer would be silently dead.
+    const fake = makeFakeQuery();
+    _setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+
+    await sendUserMessage(sessionId, 'first');
+    fake.emit(messageStart());
+    await waitFor(() => isClaudeRunning(sessionId));
+    await sendUserMessage(sessionId, 'queued');
+
+    // Turn 1 ends → 'queued' flushes; turnActive is held true awaiting the
+    // flushed turn's message_start.
+    fake.emit(messageDelta('end_turn'));
+    await waitFor(() => fake.inputs.length >= 2);
+    expect(isClaudeRunning(sessionId)).toBe(true);
+
+    // User hits Stop during the handoff, then the interrupt's terminal result
+    // lands with no top-level message_start for the flushed turn.
+    expect(await interruptClaude(sessionId)).toBe(true);
+    fake.emit(result('error_during_execution'));
+
+    // turnActive recovers instead of being pinned true forever.
+    await waitFor(() => !isClaudeRunning(sessionId));
 
     stopSession(sessionId);
   });

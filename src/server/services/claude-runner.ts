@@ -1138,6 +1138,15 @@ export async function interruptClaude(sessionId: string): Promise<boolean> {
     return false;
   }
 
+  // Close any open flush-handoff suppression window first. An interrupt during
+  // the handoff (after queued prompts were flushed but before the flushed turn's
+  // top-level `message_start`) produces a terminal `result` with no preceding
+  // `message_start` — which would never close the window, pinning `turnActive`
+  // true and silently killing the composer. Clearing the flag lets that terminal
+  // result flow through `applyStatus` and clear `turnActive` normally. Any queued
+  // prompts already pushed to the SDK are unaffected (they run as their own turn).
+  state.awaitingFlushTurn = false;
+
   try {
     await state.query.interrupt();
   } catch (err) {
