@@ -221,6 +221,37 @@ export const sessionsRouter = router({
       return { session: updatedSession };
     }),
 
+  rename: protectedProcedure
+    .input(
+      z.object({
+        sessionId: z.string().uuid(),
+        name: z.string().trim().min(1).max(SESSION_NAME_MAX_LENGTH),
+      })
+    )
+    .mutation(async ({ input }) => {
+      const session = await prisma.session.findUnique({
+        where: { id: input.sessionId },
+      });
+
+      if (!session) {
+        throw new TRPCError({
+          code: 'NOT_FOUND',
+          message: 'Session not found',
+        });
+      }
+
+      // Renaming only changes the display name; the session id and workspace
+      // are untouched. lastActivityAt is deliberately not bumped so renaming
+      // doesn't reorder the session list.
+      const updatedSession = await prisma.session.update({
+        where: { id: session.id },
+        data: { name: input.name },
+      });
+
+      sseEvents.emitSessionUpdate(input.sessionId, updatedSession);
+      return { session: updatedSession };
+    }),
+
   stop: protectedProcedure
     .input(z.object({ sessionId: z.string().uuid() }))
     .mutation(async ({ input }) => {

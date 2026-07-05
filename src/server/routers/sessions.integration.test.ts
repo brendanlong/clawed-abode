@@ -510,6 +510,104 @@ describe('sessionsRouter integration', () => {
     });
   });
 
+  describe('rename', () => {
+    it('should update the session name without changing the id', async () => {
+      const session = await testPrisma.session.create({
+        data: {
+          name: 'Old Name',
+          repoUrl: 'https://github.com/owner/repo.git',
+          branch: 'main',
+          workspacePath: '/workspace/test',
+          status: 'running',
+        },
+      });
+
+      const caller = createCaller('auth-session-id');
+      const result = await caller.sessions.rename({ sessionId: session.id, name: 'New Name' });
+
+      expect(result.session.id).toBe(session.id);
+      expect(result.session.name).toBe('New Name');
+
+      const dbSession = await testPrisma.session.findUnique({ where: { id: session.id } });
+      expect(dbSession!.name).toBe('New Name');
+      expect(dbSession!.id).toBe(session.id);
+    });
+
+    it('should trim whitespace from the new name', async () => {
+      const session = await testPrisma.session.create({
+        data: {
+          name: 'Old Name',
+          workspacePath: '/workspace/test',
+          status: 'running',
+        },
+      });
+
+      const caller = createCaller('auth-session-id');
+      const result = await caller.sessions.rename({
+        sessionId: session.id,
+        name: '  Trimmed Name  ',
+      });
+
+      expect(result.session.name).toBe('Trimmed Name');
+    });
+
+    it('should reject an empty name', async () => {
+      const session = await testPrisma.session.create({
+        data: {
+          name: 'Old Name',
+          workspacePath: '/workspace/test',
+          status: 'running',
+        },
+      });
+
+      const caller = createCaller('auth-session-id');
+      await expect(
+        caller.sessions.rename({ sessionId: session.id, name: '   ' })
+      ).rejects.toThrow();
+    });
+
+    it('should emit a session update event', async () => {
+      const session = await testPrisma.session.create({
+        data: {
+          name: 'Old Name',
+          workspacePath: '/workspace/test',
+          status: 'running',
+        },
+      });
+
+      mockSseEvents.emitSessionUpdate.mockClear();
+      const caller = createCaller('auth-session-id');
+      await caller.sessions.rename({ sessionId: session.id, name: 'New Name' });
+
+      expect(mockSseEvents.emitSessionUpdate).toHaveBeenCalledWith(
+        session.id,
+        expect.objectContaining({ name: 'New Name' })
+      );
+    });
+
+    it('should throw NOT_FOUND for non-existent session', async () => {
+      const caller = createCaller('auth-session-id');
+
+      await expect(
+        caller.sessions.rename({
+          sessionId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',
+          name: 'New Name',
+        })
+      ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    });
+
+    it('should require authentication', async () => {
+      const caller = createCaller(null);
+
+      await expect(
+        caller.sessions.rename({
+          sessionId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',
+          name: 'New Name',
+        })
+      ).rejects.toThrow();
+    });
+  });
+
   describe('delete (archive)', () => {
     it('should archive a session and clean up resources but keep messages', async () => {
       const session = await testPrisma.session.create({

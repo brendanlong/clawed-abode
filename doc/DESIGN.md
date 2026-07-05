@@ -153,6 +153,11 @@ sessions.start({ sessionId: string })
   → { session: Session }
   // Marks session as running (workspace already exists on disk)
 
+sessions.rename({ sessionId: string, name: string })
+  → { session: Session }
+  // Renames a session (updates the display name only). The id, workspace, and
+  // lastActivityAt are untouched — renaming does not reorder the session list.
+
 sessions.stop({ sessionId: string })
   → { session: Session }
   // Stops any running Claude query, marks session as stopped
@@ -654,6 +659,7 @@ Voice mode provides speech-to-text input and text-to-speech output for hands-fre
 - Tool calls rendered with expandable input/output
 - Status indicator (running, waiting, stopped)
 - Session info in header (repo, branch)
+- Editable session title in header: click the name to rename inline (Enter saves, Escape cancels) via `sessions.rename` — see `EditableSessionName`
 
 ## File Structure
 
