@@ -528,6 +528,7 @@ describe('MessageBubble', () => {
             onTodoManualToggle,
             planContentByToolUseId: new Map(),
             renderSubagentTranscript: () => null,
+            editor: null,
           }}
         >
           <MessageBubble message={message} />

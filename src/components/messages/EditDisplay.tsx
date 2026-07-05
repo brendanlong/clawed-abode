@@ -3,6 +3,7 @@
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
+import { OpenInEditorFileLink } from './OpenInEditorFileLink';
 import { InlineDiff } from './InlineDiff';
 import type { ToolCall } from './types';
 
@@ -48,6 +49,7 @@ export function EditDisplay({ tool }: { tool: ToolCall }) {
         </>
       }
       subtitle={<div className="text-muted-foreground text-xs mt-1 truncate">{filePath}</div>}
+      headerAction={<OpenInEditorFileLink filePath={filePath} />}
       doneBadge={null}
     >
       {/* Inline diff of old vs new content */}

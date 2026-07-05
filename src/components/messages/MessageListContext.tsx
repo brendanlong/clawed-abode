@@ -1,6 +1,7 @@
 'use client';
 
 import { createContext, useContext, type ReactNode } from 'react';
+import type { EditorInfo } from '@/lib/editor-url';
 
 interface MessageListContextValue {
   /** The tool ID of the latest TodoWrite call (by sequence), or null */
@@ -24,6 +25,13 @@ interface MessageListContextValue {
    * without importing MessageBubble (which would create an import cycle).
    */
   renderSubagentTranscript: (toolUseId: string) => ReactNode;
+  /**
+   * Code-server deep-link info for this session (base URL + worktree folder), or
+   * null when the editor is not configured or the session has no workspace on
+   * disk. Read/Edit/Write displays use it to show per-file "open in VS Code"
+   * links via {@link buildEditorFileUrl}.
+   */
+  editor: EditorInfo | null;
 }
 
 const MessageListContext = createContext<MessageListContextValue | null>(null);

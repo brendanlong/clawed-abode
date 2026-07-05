@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils';
 import { MessageBubble } from './messages/MessageBubble';
 import { SubagentTranscript } from './messages/SubagentTranscript';
 import type { ToolResultMap, ContentBlock, MessageContent, DisplayMessage } from './messages/types';
+import type { EditorInfo } from '@/lib/editor-url';
 import { MessageListProvider } from './messages/MessageListContext';
 import { Spinner } from '@/components/ui/spinner';
 import { ContextUsageIndicator } from '@/components/ContextUsageIndicator';
@@ -212,6 +213,8 @@ interface MessageListProps {
   onSendResponse?: (response: string) => void;
   onAnswerQuestion?: (toolUseId: string, answers: Record<string, string>) => void;
   onRespondToPlan?: (toolUseId: string, approve: boolean, feedback?: string) => void;
+  /** Code-server deep-link info, or null when the editor isn't configured. */
+  editor?: EditorInfo | null;
 }
 
 export function MessageList({
@@ -223,6 +226,7 @@ export function MessageList({
   onSendResponse,
   onAnswerQuestion,
   onRespondToPlan,
+  editor = null,
 }: MessageListProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const topSentinelRef = useRef<HTMLDivElement>(null);
@@ -525,6 +529,7 @@ export function MessageList({
       onRespondToPlan,
       planContentByToolUseId,
       renderSubagentTranscript,
+      editor,
     }),
     [
       latestTodoWriteId,
@@ -535,6 +540,7 @@ export function MessageList({
       onRespondToPlan,
       planContentByToolUseId,
       renderSubagentTranscript,
+      editor,
     ]
   );
 

@@ -166,11 +166,14 @@ sessions.delete({ sessionId: string })
   → { success: true }
   // Stops query, removes workspace, archives session
 
-sessions.getEditorUrl({ sessionId: string })
-  → { url: string | null }
-  // Deep link into a self-hosted code-server (browser VS Code) opened on this
-  // session's worktree folder. null when CODE_SERVER_URL is unset or the
-  // session is archived (workspace removed). See "Remote File Editing".
+sessions.getEditorInfo({ sessionId: string })
+  → { editor: { baseUrl: string; workspaceDir: string } | null }
+  // The pieces the client needs to deep-link into a self-hosted code-server
+  // (browser VS Code): the base URL and the session's worktree folder. The
+  // client builds both the header folder link and per-file "open in VS Code"
+  // links (on Read/Edit/Write tool displays) from these. editor is null when
+  // CODE_SERVER_URL is unset or the session is archived (workspace removed).
+  // See "Remote File Editing".
 ```
 
 ### Claude Interaction
@@ -662,12 +665,14 @@ Voice mode provides speech-to-text input and text-to-speech output for hands-fre
 
 ### Remote File Editing
 
-To view and edit the files an agent is working on — without building a bespoke file browser/editor — the app integrates with a **self-hosted [code-server](https://github.com/coder/code-server)** (browser VS Code) running alongside it on the host. This is deliberately a thin integration: code-server owns the entire editor (file tree, multi-file edit, integrated terminal, search, extensions); the app only contributes a deep link.
+To view and edit the files an agent is working on — without building a bespoke file browser/editor — the app integrates with a **self-hosted [code-server](https://github.com/coder/code-server)** (browser VS Code) running alongside it on the host. This is deliberately a thin integration: code-server owns the entire editor (file tree, multi-file edit, integrated terminal, search, extensions); the app only contributes deep links.
 
-**How it works.** Each session's worktree lives at a stable absolute path (`~/worktrees/{sessionId}/{repoName}`, or `~/worktrees/{sessionId}` for no-repo sessions — see [Workspace Structure](#workspace-structure)). code-server opens any folder via a `?folder=<absolute-path>` query param, so the "Open in VS Code" button in the session header is just a link to `${CODE_SERVER_URL}/?folder=<workingDir>`.
+**How it works.** Each session's worktree lives at a stable absolute path (`~/worktrees/{sessionId}/{repoName}`, or `~/worktrees/{sessionId}` for no-repo sessions — see [Workspace Structure](#workspace-structure)). There are two link shapes, both built client-side by pure helpers in [`src/lib/editor-url.ts`](../src/lib/editor-url.ts) from the base URL + worktree folder the server hands back via `sessions.getEditorInfo` (`{ editor: { baseUrl, workspaceDir } | null }`, resolving the absolute working dir with `getSessionWorkingDir` — the same path logic the runner uses, so the client never needs to know the host's home directory or worktrees root):
 
-- The link is built server-side by the pure `buildEditorUrl` ([`src/lib/editor-url.ts`](../src/lib/editor-url.ts)) and served by `sessions.getEditorUrl`, which resolves the session's absolute working dir with `getSessionWorkingDir` (the same path logic the runner uses) — the client never needs to know the host's home directory or worktrees root.
-- The feature is **opt-in**: `getEditorUrl` returns `{ url: null }` when `CODE_SERVER_URL` is unset (or the session is `archived`, since its workspace is removed from disk), and `OpenInEditorButton` ([`src/components/OpenInEditorButton.tsx`](../src/components/OpenInEditorButton.tsx)) renders nothing for a null url. As with [Answering Interactive Tools](#answering-interactive-tools), the server is authoritative and the UI stays dumb.
+- **Folder link** (`buildEditorFolderUrl`): code-server opens any folder via a `?folder=<absolute-path>` query param, so the header "Open in VS Code" button (`OpenInEditorButton`) is just a link to `${baseUrl}/?folder=<workspaceDir>`.
+- **File link** (`buildEditorFileUrl`): code-server has no documented query param for opening a single file, but its web workbench honors VS Code's `payload=[["openFile",<uri>]]` mechanism where the file is addressed with the workbench's remote authority — for code-server the constant `remote` — as `vscode-remote://remote<abs-path>`. So each Read/Edit/Write tool display carries a small "open this file" link to `${baseUrl}/?folder=<workspaceDir>&payload=[["openFile","vscode-remote://remote<filePath>"]]`. This was **verified empirically** against a live code-server (a `:line:col` suffix does not work — it is treated as a literal filename — so file links carry no cursor position). The link is rendered as a sibling of the tool card's collapsible trigger (via `ToolDisplayWrapper`'s `headerAction` slot) so clicking it opens the file rather than toggling the card; `OpenInEditorFileLink` reads the editor info off `MessageListContext` and renders nothing when the editor is unconfigured or the path isn't absolute.
+
+- The feature is **opt-in**: `getEditorInfo` returns `{ editor: null }` when `CODE_SERVER_URL` is unset (or the session is `archived`, since its workspace is removed from disk), and both `OpenInEditorButton` ([`src/components/OpenInEditorButton.tsx`](../src/components/OpenInEditorButton.tsx)) and `OpenInEditorFileLink` ([`src/components/messages/OpenInEditorFileLink.tsx`](../src/components/messages/OpenInEditorFileLink.tsx)) render nothing without it. As with [Answering Interactive Tools](#answering-interactive-tools), the server is authoritative and the UI stays dumb.
 
 **Deployment.** Setup is split into two scripts so the Tailscale step (which usually needs privileges the app's account lacks) is separable from the app-side install:
 
@@ -714,7 +719,7 @@ Both source [`scripts/lib-code-server.sh`](../scripts/lib-code-server.sh) so the
 - Input field for new prompts
 - File attach button: uploads files (allowed even while Claude is working); pending files show as removable chips on the composer and are prefixed onto the message when sent (see [File Uploads](#file-uploads))
 - Stop button (visible during Claude execution)
-- Tool calls rendered with expandable input/output
+- Tool calls rendered with expandable input/output; Read/Edit/Write displays carry a per-file "open in VS Code" link when `CODE_SERVER_URL` is configured — see [Remote File Editing](#remote-file-editing)
 - Status indicator (running, waiting, stopped)
 - Session info in header (repo, branch)
 - Editable session title in header: click the name to rename inline (Enter saves, Escape cancels) via `sessions.rename` — see `EditableSessionName`

@@ -19,6 +19,13 @@ interface ToolDisplayWrapperProps {
   headerContent?: React.ReactNode;
   /** Description line below the title row */
   subtitle?: React.ReactNode;
+  /**
+   * Action rendered at the far right of the header row, as a sibling of the
+   * collapsible trigger (not inside it). Use for interactive elements like
+   * links/buttons that must not be nested inside the trigger button and must
+   * not toggle the card when clicked (e.g. an "open file in VS Code" link).
+   */
+  headerAction?: React.ReactNode;
   /** Custom done badge (replaces the default green "Done" badge). Set to null to hide. */
   doneBadge?: React.ReactNode | null;
   /** Additional card className for custom border colors etc. */
@@ -49,6 +56,7 @@ export function ToolDisplayWrapper({
   pendingText = 'Running...',
   headerContent,
   subtitle,
+  headerAction,
   doneBadge,
   cardClassName,
   expandedOverride,
@@ -89,31 +97,34 @@ export function ToolDisplayWrapper({
             cardClassName
           )}
         >
-          <CollapsibleTrigger className="w-full px-3 py-2 text-left flex items-center justify-between text-sm hover:bg-muted/50 rounded-t-xl">
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                {icon}
-                <span className="font-mono text-primary">{title}</span>
-                {headerContent}
-                {isPending && (
-                  <Badge
-                    variant="outline"
-                    className="text-xs border-yellow-500 text-yellow-700 dark:text-yellow-400"
-                  >
-                    {pendingText}
-                  </Badge>
-                )}
-                {isError && (
-                  <Badge variant="destructive" className="text-xs">
-                    Error
-                  </Badge>
-                )}
-                {hasOutput && !isError && resolvedDoneBadge}
+          <div className="flex items-stretch">
+            <CollapsibleTrigger className="flex-1 min-w-0 px-3 py-2 text-left flex items-center justify-between text-sm hover:bg-muted/50 rounded-t-xl">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  {icon}
+                  <span className="font-mono text-primary">{title}</span>
+                  {headerContent}
+                  {isPending && (
+                    <Badge
+                      variant="outline"
+                      className="text-xs border-yellow-500 text-yellow-700 dark:text-yellow-400"
+                    >
+                      {pendingText}
+                    </Badge>
+                  )}
+                  {isError && (
+                    <Badge variant="destructive" className="text-xs">
+                      Error
+                    </Badge>
+                  )}
+                  {hasOutput && !isError && resolvedDoneBadge}
+                </div>
+                {subtitle}
               </div>
-              {subtitle}
-            </div>
-            <span className="text-muted-foreground ml-2 shrink-0">{expanded ? '−' : '+'}</span>
-          </CollapsibleTrigger>
+              <span className="text-muted-foreground ml-2 shrink-0">{expanded ? '−' : '+'}</span>
+            </CollapsibleTrigger>
+            {headerAction && <div className="flex items-center pr-2 shrink-0">{headerAction}</div>}
+          </div>
 
           <CollapsibleContent>
             <CardContent className="p-3 space-y-3 text-xs">{children}</CardContent>

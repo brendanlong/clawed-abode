@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { getFileType } from '@/lib/file-types';
 import { FileIcon } from './FileIcon';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
+import { OpenInEditorFileLink } from './OpenInEditorFileLink';
 import { CodeBlock } from './CodeBlock';
 import { parseReadOutput } from './read-output';
 import type { ToolCall } from './types';
@@ -43,6 +44,7 @@ export function ReadDisplay({ tool }: { tool: ToolCall }) {
         <span className="text-muted-foreground font-mono text-xs truncate">{fileName}</span>
       }
       subtitle={<div className="text-muted-foreground text-xs mt-1 truncate">{filePath}</div>}
+      headerAction={<OpenInEditorFileLink filePath={filePath} />}
       doneBadge={
         <Badge
           variant="outline"

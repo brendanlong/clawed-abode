@@ -23,6 +23,7 @@ import { useVoiceConfig } from '@/hooks/useVoiceConfig';
 import { useVoicePlayback, VoicePlaybackContext } from '@/hooks/useVoicePlayback';
 import { getNewAutoReadMessages } from '@/lib/auto-read-helpers';
 import { VoiceControlPanel } from '@/components/voice/VoiceControlPanel';
+import { trpc } from '@/lib/trpc';
 
 function SessionView({ sessionId }: { sessionId: string }) {
   // Session state: data, start/stop/archive
@@ -93,6 +94,12 @@ function SessionView({ sessionId }: { sessionId: string }) {
 
   // Show notification when Claude finishes processing (if tab was hidden)
   useWorkCompleteNotification(session?.name, isClaudeRunning, showNotification);
+
+  // Code-server deep-link info (base URL + worktree folder), used for the header
+  // "Open in VS Code" button and per-file links on Read/Edit/Write tool displays.
+  // Null when the editor isn't configured or the session's workspace is gone.
+  const { data: editorInfo } = trpc.sessions.getEditorInfo.useQuery({ sessionId });
+  const editor = editorInfo?.editor ?? null;
 
   // Voice features
   const voiceConfig = useVoiceConfig(sessionId);
@@ -220,6 +227,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
               hasMore={hasMore}
               onLoadMore={fetchMore}
               tokenUsage={tokenUsage}
+              editor={editor}
             />
             <div className="border-t bg-muted/50 px-4 py-3 text-center text-sm text-muted-foreground">
               This session has been archived. You can view the message history but cannot send new
@@ -277,6 +285,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
           onSendResponse={handleSendPromptWithVoice}
           onAnswerQuestion={answerQuestion}
           onRespondToPlan={respondToPlan}
+          editor={editor}
         />
 
         {voiceOverlayOpen && voiceConfig.enabled ? (

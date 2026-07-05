@@ -8,7 +8,7 @@ import {
   removeWorkspace,
   getSessionWorkingDir,
 } from '../services/worktree-manager';
-import { buildEditorUrl } from '@/lib/editor-url';
+import type { EditorInfo } from '@/lib/editor-url';
 import {
   sendUserMessage,
   stopSession,
@@ -188,13 +188,16 @@ export const sessionsRouter = router({
       return { session };
     }),
 
-  // Deep link into a self-hosted code-server (browser VS Code) instance opened
-  // on this session's worktree folder. Returns { url: null } when the editor is
-  // not configured (CODE_SERVER_URL unset) or the session has no workspace on
-  // disk (archived), so the UI can hide the button.
-  getEditorUrl: protectedProcedure
+  // Pieces the client needs to deep-link into a self-hosted code-server (browser
+  // VS Code) instance: the base URL and the session's worktree folder. The
+  // client builds both the folder link (header button) and per-file links
+  // (Read/Edit/Write displays) from these via the pure editor-url helpers.
+  // Returns { editor: null } when the editor is not configured (CODE_SERVER_URL
+  // unset) or the session has no workspace on disk (archived), so the UI can
+  // hide the affordances.
+  getEditorInfo: protectedProcedure
     .input(z.object({ sessionId: z.string().uuid() }))
-    .query(async ({ input }) => {
+    .query(async ({ input }): Promise<{ editor: EditorInfo | null }> => {
       const session = await prisma.session.findUnique({
         where: { id: input.sessionId },
       });
@@ -206,13 +209,14 @@ export const sessionsRouter = router({
         });
       }
 
+      const baseUrl = env.CODE_SERVER_URL?.trim();
       // Archived sessions have their workspace removed from disk.
-      if (session.status === 'archived') {
-        return { url: null };
+      if (!baseUrl || session.status === 'archived') {
+        return { editor: null };
       }
 
-      const workingDir = getSessionWorkingDir(session.id, session.repoPath);
-      return { url: buildEditorUrl(env.CODE_SERVER_URL, workingDir) };
+      const workspaceDir = getSessionWorkingDir(session.id, session.repoPath);
+      return { editor: { baseUrl, workspaceDir } };
     }),
 
   start: protectedProcedure
