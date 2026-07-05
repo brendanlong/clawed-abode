@@ -40,7 +40,7 @@ jobs:
         run: pnpm run format:check
 
   test:
-    name: Unit Tests
+    name: Unit & Component Tests
     runs-on: ubuntu-latest
 
     steps:
@@ -64,6 +64,9 @@ jobs:
 
       - name: Run unit tests
         run: pnpm run test:unit
+
+      - name: Run component tests
+        run: pnpm run test:component
 
   test-integration:
     name: Integration Tests
