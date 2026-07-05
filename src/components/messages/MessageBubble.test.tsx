@@ -308,6 +308,63 @@ describe('MessageBubble', () => {
 
       expect(screen.getByText('User prompt text')).toBeInTheDocument();
     });
+
+    it('shows a sanitization badge when the prompt was filtered', () => {
+      const message = {
+        type: 'user',
+        content: {
+          content: 'Please review this',
+          sanitization: {
+            found: ['invisible-unicode'],
+            warnings: ['Stripped 1 zero-width character'],
+            removed: true,
+          },
+        } as MessageContent,
+      };
+
+      render(<MessageBubble message={message} />);
+
+      expect(screen.getByText('Hidden content removed')).toBeInTheDocument();
+    });
+
+    it('does not show a sanitization badge on a clean prompt', () => {
+      const message = {
+        type: 'user',
+        content: { content: 'Please review this' } as MessageContent,
+      };
+
+      render(<MessageBubble message={message} />);
+
+      expect(screen.queryByText('Hidden content removed')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('tool result messages', () => {
+    it('shows a sanitization badge on a filtered tool result', () => {
+      const message = {
+        type: 'user',
+        content: {
+          message: {
+            content: [
+              {
+                type: 'tool_result',
+                tool_use_id: 'toolu_1',
+                content: 'fetched page',
+                sanitization: {
+                  found: ['html-comment'],
+                  warnings: ['1 HTML comment(s) replaced'],
+                  removed: true,
+                },
+              },
+            ],
+          },
+        } as MessageContent,
+      };
+
+      render(<MessageBubble message={message} />);
+
+      expect(screen.getByText('Hidden content removed')).toBeInTheDocument();
+    });
   });
 
   describe('user interrupt messages', () => {

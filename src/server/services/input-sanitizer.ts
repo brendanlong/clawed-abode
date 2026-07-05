@@ -1,6 +1,7 @@
 import { sanitize } from 'agent-input-sanitizer';
 import type { HookInput, HookJSONOutput } from '@anthropic-ai/claude-agent-sdk';
 import { createLogger, toError } from '@/lib/logger';
+import { buildSanitizationInfo, type SanitizationInfo } from '@/lib/sanitization';
 
 const log = createLogger('input-sanitizer');
 
@@ -31,7 +32,7 @@ export async function sanitizeUntrustedInput(
   text: string,
   context: SanitizeContext,
   sanitizeFn: typeof sanitize = sanitize
-): Promise<string> {
+): Promise<{ cleaned: string; info: SanitizationInfo | null }> {
   try {
     const { cleaned, found, warnings } = await sanitizeFn(text, { html: true });
     if (found.length > 0) {
@@ -41,12 +42,15 @@ export async function sanitizeUntrustedInput(
         warnings,
       });
     }
-    return cleaned;
+    // `info` is surfaced on the persisted message so the UI can show which
+    // findings applied to this prompt; `removed` distinguishes an actual rewrite
+    // from advisory-only detection (exfil URLs are flagged but left in place).
+    return { cleaned, info: buildSanitizationInfo(found, warnings, cleaned !== text) };
   } catch (err) {
     log.error('Sanitizing untrusted input failed; passing original text through', toError(err), {
       ...context,
     });
-    return text;
+    return { cleaned: text, info: null };
   }
 }
 
@@ -105,7 +109,7 @@ async function sanitizeStringsDeep(value: unknown, acc: SanitizeAccumulator): Pr
 export async function sanitizeToolOutput(
   toolResponse: unknown,
   context: SanitizeContext
-): Promise<{ output: unknown; changed: boolean; warnings: string[] }> {
+): Promise<{ output: unknown; changed: boolean; found: string[]; warnings: string[] }> {
   const acc: SanitizeAccumulator = {
     found: new Set<string>(),
     warnings: new Set<string>(),
@@ -119,7 +123,7 @@ export async function sanitizeToolOutput(
       neutralized: acc.mutated,
     });
   }
-  return { output, changed: acc.mutated, warnings: [...acc.warnings] };
+  return { output, changed: acc.mutated, found: [...acc.found], warnings: [...acc.warnings] };
 }
 
 /**
@@ -145,14 +149,20 @@ function buildSanitizationNote(warnings: string[]): string {
  */
 export async function sanitizeToolOutputHook(
   input: HookInput,
-  sessionId: string
+  sessionId: string,
+  onFindings?: (toolUseId: string, info: SanitizationInfo) => void
 ): Promise<HookJSONOutput> {
   if (input.hook_event_name !== 'PostToolUse') return {};
   try {
-    const { output, changed, warnings } = await sanitizeToolOutput(input.tool_response, {
+    const { output, changed, found, warnings } = await sanitizeToolOutput(input.tool_response, {
       sessionId,
       source: `tool:${input.tool_name}`,
     });
+    // Report findings (even advisory-only exfil-URL detections that don't rewrite
+    // text) so the caller can attach them to the persisted tool_result message and
+    // the UI can surface a badge on it. Keyed by tool_use_id for correlation.
+    const info = buildSanitizationInfo(found, warnings, changed);
+    if (info && onFindings) onFindings(input.tool_use_id, info);
     if (!changed) return {};
     return {
       hookSpecificOutput: {
