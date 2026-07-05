@@ -48,6 +48,8 @@ import {
 } from './settings-merger';
 import { StreamAccumulator } from './stream-accumulator';
 import { sanitizeUntrustedInput, sanitizeToolOutputHook } from './input-sanitizer';
+import { type SanitizationInfo } from '@/lib/sanitization';
+import { attachToolResultSanitizations } from '@/lib/message-sanitization';
 import { PARTIAL_MESSAGE_ID_PREFIX } from '@/lib/message-cache';
 import type { ContainerEnvVar } from './repo-settings';
 
@@ -153,6 +155,12 @@ interface SessionState {
   boundSettings: MergedSessionSettings | null;
   /** Settings key (repoFullName or '__no_repo__') for reloading merged settings. */
   settingsKey: string;
+  /**
+   * Sanitizer findings from the PostToolUse hook, keyed by tool_use_id, awaiting
+   * the matching tool_result message so they can be attached on persist (the
+   * message comes from the SDK stream, not from us). Consumed once.
+   */
+  toolSanitizations: Map<string, SanitizationInfo>;
 }
 
 /** Active sessions tracked in memory. */
@@ -294,6 +302,7 @@ function getSessionState(sessionId: string, workingDir: string): SessionState {
       commands: persistedCommands.get(sessionId) ?? [],
       boundSettings: null,
       settingsKey: '',
+      toolSanitizations: new Map(),
     };
     sessions.set(sessionId, state);
   } else if (workingDir) {
@@ -503,8 +512,19 @@ async function buildSdkOptions(params: {
       // Sanitize tool output before the model sees it — the primary
       // hidden-content injection surface (web/MCP responses, fetched issue/PR
       // bodies, file/command output). See sanitizeToolOutputHook for the
-      // shape-preserving rewrite, change-gating, and fail-open behavior.
-      PostToolUse: [{ hooks: [(input) => sanitizeToolOutputHook(input, sessionId)] }],
+      // shape-preserving rewrite, change-gating, and fail-open behavior. Findings
+      // are recorded by tool_use_id so the matching tool_result message can carry
+      // a visible "content filtered" badge in the UI (attached on persist below).
+      PostToolUse: [
+        {
+          hooks: [
+            (input) =>
+              sanitizeToolOutputHook(input, sessionId, (toolUseId, info) => {
+                state.toolSanitizations.set(toolUseId, info);
+              }),
+          ],
+        },
+      ],
     },
   };
 
@@ -699,13 +719,26 @@ async function runSessionLoop(sessionId: string, state: SessionState, q: Query):
       const handling = classifyMessage(message);
       if (handling.kind !== 'persist') continue;
 
+      // Attach any sanitizer findings for this message's tool results (recorded
+      // by the PostToolUse hook, keyed by tool_use_id) so the UI can badge the
+      // exact tool result whose hidden content was filtered. The findings are
+      // only removed from the map once the message is durably persisted (below),
+      // so a duplicate/no-op insert can't consume a badge it never wrote.
+      const attachedSanitizations =
+        handling.dbType === 'user' && state.toolSanitizations.size > 0
+          ? attachToolResultSanitizations(message, state.toolSanitizations)
+          : [];
+
       const id = (message as { uuid?: string }).uuid || uuid();
-      const { sequence } = await insertMessage({
+      const { inserted, sequence } = await insertMessage({
         sessionId,
         id,
         type: handling.dbType,
         content: message,
       });
+      if (inserted) {
+        for (const toolUseId of attachedSanitizations) state.toolSanitizations.delete(toolUseId);
+      }
       if (sequence !== undefined) nextPartialSequence = sequence + 1;
     }
     log.info('runSessionLoop: stream ended', { sessionId });
@@ -867,8 +900,9 @@ export async function sendUserMessage(sessionId: string, prompt: string): Promis
 
   // Strip hidden-content injection vectors before the prompt is persisted or
   // seen by the model. The same chokepoint covers typed prompts and the initial
-  // prompt (which may embed an untrusted GitHub issue body).
-  const sanitizedPrompt = await sanitizeUntrustedInput(prompt, {
+  // prompt (which may embed an untrusted GitHub issue body). `info` records any
+  // findings so the persisted message can show a "content filtered" badge.
+  const { cleaned: sanitizedPrompt, info: sanitization } = await sanitizeUntrustedInput(prompt, {
     sessionId,
     source: 'user-message',
   });
@@ -882,7 +916,7 @@ export async function sendUserMessage(sessionId: string, prompt: string): Promis
     sessionId,
     id: uuid(),
     type: 'user',
-    content: { type: 'user', content: sanitizedPrompt },
+    content: { type: 'user', content: sanitizedPrompt, ...(sanitization ? { sanitization } : {}) },
   });
   await bumpSessionActivity(sessionId);
 

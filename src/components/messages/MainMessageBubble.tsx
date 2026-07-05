@@ -7,7 +7,9 @@ import { OctagonX, Loader2 } from 'lucide-react';
 
 import { CopyButton } from './CopyButton';
 import { ToolCallDisplay } from './ToolCallDisplay';
+import { SanitizationBadge } from './SanitizationBadge';
 import { renderContent } from './ContentRenderer';
+import { parseSanitizationInfo } from '@/lib/sanitization';
 import { MessagePlayButton } from '@/components/voice/MessagePlayButton';
 import { useVoicePlaybackContext } from '@/hooks/useVoicePlayback';
 import {
@@ -52,6 +54,12 @@ export function MainMessageBubble({
   }, [content, category, toolCalls]);
 
   const displayContent = getDisplayContent(content, category);
+
+  // Sanitizer findings persisted on a user prompt whose text was filtered.
+  const sanitization = useMemo(
+    () => (isUser ? parseSanitizationInfo(content.sanitization) : null),
+    [isUser, content.sanitization]
+  );
 
   // Voice playback: show play button on completed assistant messages with text
   const playback = useVoicePlaybackContext();
@@ -99,6 +107,12 @@ export function MainMessageBubble({
             {content.tool_calls.map((tool, index) => (
               <ToolCallDisplay key={index} tool={tool} />
             ))}
+          </div>
+        )}
+
+        {sanitization && (
+          <div className="mt-2">
+            <SanitizationBadge info={sanitization} surface="message" />
           </div>
         )}
       </div>
