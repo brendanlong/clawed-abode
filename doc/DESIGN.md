@@ -504,6 +504,13 @@ Both seams live in [`src/server/services/input-sanitizer.ts`](../src/server/serv
 
 **Filtering is visible to the agent.** When the tool-output hook rewrites a result, it also returns `additionalContext` (which the SDK delivers to the model alongside `updatedToolOutput`) telling the agent that hidden/invisible content was removed and — forwarding the library's own `warnings` — how to recover the exact bytes if a coding/tokenization task needs them (re-read with a hex dump such as `xxd` / `od -c`, whose ASCII output survives sanitization). This resolves the "scrubbed blind" failure mode: the agent can tell filtering occurred and work around it. The note is emitted only when output actually changed, so the benign path stays silent.
 
+**Filtering is visible to the user.** The same findings are surfaced in the transcript on the exact message they applied to, so the operator isn't left guessing why text differs from the source. Both seams return a `SanitizationInfo` (`{ found, warnings, removed }`, defined in the dependency-free [`src/lib/sanitization.ts`](../src/lib/sanitization.ts) so the server writer and client renderer share one schema):
+
+- **User prompts**: `sanitizeUntrustedInput` returns the info alongside the cleaned text; `sendUserMessage` persists it as a `sanitization` field on the stored user message.
+- **Tool output**: the `PostToolUse` hook takes an `onFindings(toolUseId, info)` callback (wired in `buildSdkOptions`) that records findings into a short-lived per-session `toolSanitizations` map keyed by `tool_use_id`. The matching `tool_result` message arrives later from the SDK stream, not from us, so `runSessionLoop` stitches the finding onto the block just before persisting it (`attachToolResultSanitizations` in [`src/lib/message-sanitization.ts`](../src/lib/message-sanitization.ts), consumed once per entry).
+
+The client renders a small amber `SanitizationBadge` (a click-to-expand popover listing the sanitizer's warnings) on the affected user prompt (`MainMessageBubble`) or tool result (`ToolResultDisplay`). It is purely informational and non-blocking. `removed` distinguishes an actual rewrite ("Hidden content removed") from an advisory-only detection; note the pinned library version only populates `found` when it rewrites, so in practice the advisory-only branch is dormant but kept for forward-compatibility.
+
 - **Exfil-URL detection is advisory**: such URLs are reported (logged) but not rewritten, so the URL survives.
 - This is **defense-in-depth, not a hard boundary**. Without a sandbox/egress firewall it catches mistakes and obvious injection, not a determined adversary. The complementary AI-monitor layer (a per-tool-call gate) is intentionally deferred — see the [monitor-server sidecar issue](https://github.com/brendanlong/clawed-abode/issues/366).
 - The sanitizer is **precision-favoring** (deletion-only over a narrow payload-shaped set; preserves ZWNJ/ZWJ joiners; never strips silently), so the scrub-everything default rarely touches legitimate text — and the agent-facing recovery note above covers the residual cases. A per-session opt-out could still be added if a workflow needs raw bytes throughout.
@@ -700,6 +707,8 @@ clawed-abode/
 │   │   ├── system-prompt.ts      # Pure system-prompt builder (DEFAULT_SYSTEM_PROMPT)
 │   │   ├── message-cache.ts      # Pure merge of live messages into the infinite-query cache
 │   │   ├── sse-resume.ts         # Resume-token (watermark:counter) format/parse for SSE
+│   │   ├── sanitization.ts       # Shared SanitizationInfo schema + pure helpers (server + client)
+│   │   ├── message-sanitization.ts # Pure attach of tool-output findings onto a tool_result message
 │   │   └── types.ts              # Global TypeScript types
 │   ├── hooks/                    # React hooks (useSessionStream + useSessionListStream for SSE,
 │   │                             #   useSessionMessages/State, useClaudeState, etc.)

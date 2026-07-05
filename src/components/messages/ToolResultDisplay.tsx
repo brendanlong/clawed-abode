@@ -6,8 +6,10 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Badge } from '@/components/ui/badge';
 import { CopyButton } from './CopyButton';
+import { SanitizationBadge } from './SanitizationBadge';
 import { formatAsJson } from './types';
 import type { ContentBlock } from './types';
+import { parseSanitizationInfo } from '@/lib/sanitization';
 
 /**
  * Display for tool results (from user messages containing tool_result blocks).
@@ -19,8 +21,22 @@ export function ToolResultDisplay({ results }: { results: ContentBlock[] }) {
   // Check if any result is an error
   const hasError = results.some((r) => r.is_error);
 
+  // Sanitizer findings attached to any of these results (see SanitizationBadge).
+  // Rendered above the collapsible so the Popover trigger isn't nested inside the
+  // CollapsibleTrigger button (invalid button-in-button).
+  const sanitizations = results
+    .map((r) => parseSanitizationInfo(r.sanitization))
+    .filter((info): info is NonNullable<typeof info> => info !== null);
+
   return (
     <div className="group">
+      {sanitizations.length > 0 && (
+        <div className="mb-1 flex flex-wrap gap-1">
+          {sanitizations.map((info, index) => (
+            <SanitizationBadge key={index} info={info} surface="tool result" />
+          ))}
+        </div>
+      )}
       <Collapsible open={expanded} onOpenChange={setExpanded}>
         <Card className={cn('border', hasError && 'border-red-300 dark:border-red-700')}>
           <CollapsibleTrigger className="w-full px-3 py-2 text-left flex items-center justify-between text-sm hover:bg-muted/50 rounded-t-xl">
