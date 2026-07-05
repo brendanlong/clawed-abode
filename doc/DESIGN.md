@@ -170,10 +170,13 @@ sessions.delete({ sessionId: string })
 ### Claude Interaction
 
 ```typescript
-claude.send({ sessionId: string, prompt: string })
+claude.send({ sessionId: string, prompt: string, attachments?: string[] })
   → { success: true }
   // Starts a query() call in-process using the Claude Agent SDK
   // Messages stream to the client via SSE
+  // `attachments` are storedNames of files previously uploaded via POST /api/upload;
+  // their absolute paths are prefixed onto the message (see "File Uploads"). Either
+  // a non-empty prompt or at least one attachment is required.
 
 claude.answerQuestion({
   sessionId: string,
@@ -249,6 +252,14 @@ claude.getHistory({
    - **Complete messages**: Saved to database with incrementing sequence numbers, emitted via SSE.
 5. Browser client receives SSE events (over the single multiplexed per-session stream — see [Real-Time Updates](#real-time-updates-sse)) and updates the message cache.
 6. On completion, `result` message marks end of turn.
+
+### File Uploads
+
+Users can attach files to a message. Files are stored **outside** any repo clone (default `/tmp/clawed-abode-uploads/{sessionId}/`, override with `UPLOADS_DIR`) so they survive workspace teardown and don't pollute git status, but still on the host filesystem where Claude — running with the host's tools — can read them.
+
+- **Upload transport**: a dedicated `POST /api/upload` route ([`src/app/api/upload/route.ts`](../src/app/api/upload/route.ts)) accepts `multipart/form-data` (fields `sessionId` + one or more `files`). A route (rather than a tRPC mutation) is used so binary bodies stream through `FormData` instead of being base64-inflated through superjson. It authenticates by reusing the tRPC `createContext` (same Bearer token), enforces a per-file size cap (`MAX_UPLOAD_BYTES`), and returns the saved attachments (`{ name, storedName, path }`). Stored names are prefixed with a short random token so re-uploading the same filename never overwrites an earlier upload (no check-then-set), and file names are sanitized to a safe basename (`sanitizeFileName`), neutralizing path traversal. Implementation: [`src/server/services/uploads.ts`](../src/server/services/uploads.ts).
+- **Uploads while Claude is working**: the attach control is not gated by `turnActive` — a user can upload files mid-turn. Uploaded files are held **client-side** as pending attachments (chips on the composer, via `useFileUpload`); they are **not** shown in the transcript until the message is sent, matching the requested UX.
+- **Prefixing the next message**: on submit the client passes the pending attachments' `storedName`s to `claude.send`. The server resolves them back to absolute paths (`resolveUploadPaths`, which `basename`s each name to re-neutralize traversal and drops any file no longer on disk), and the pure `buildPromptWithAttachments` ([`src/lib/attachments.ts`](../src/lib/attachments.ts)) prefixes the message with `[User uploaded file(s): /path/a.md, /path/b.png]`. The prefix is part of the persisted/sanitized user message, so the transcript reflects exactly what the model saw. A message may be sent with attachments and no typed text (the prefix is then the whole message).
 
 ### System Prompt
 
@@ -668,6 +679,7 @@ Voice mode provides speech-to-text input and text-to-speech output for hands-fre
 
 - Message history with lazy loading on scroll up
 - Input field for new prompts
+- File attach button: uploads files (allowed even while Claude is working); pending files show as removable chips on the composer and are prefixed onto the message when sent (see [File Uploads](#file-uploads))
 - Stop button (visible during Claude execution)
 - Tool calls rendered with expandable input/output
 - Status indicator (running, waiting, stopped)
@@ -706,10 +718,13 @@ clawed-abode/
 │   │   │   ├── anthropic-models.ts # Claude model configuration
 │   │   │   ├── github.ts         # GitHub API service
 │   │   │   ├── mcp-validator.ts  # MCP server config validation
+│   │   │   ├── uploads.ts        # Uploaded-file storage (outside repo) + path resolution
 │   │   │   └── session-reconciler.ts # Counts running sessions for lazy revive on restart
 │   │   └── trpc.ts
 │   ├── lib/
 │   │   ├── auth.ts               # Authentication utilities
+│   │   ├── auth-token.ts         # Client-side auth token storage (shared key)
+│   │   ├── attachments.ts        # Pure attachment prefix + filename sanitizing
 │   │   ├── crypto.ts             # Encryption/decryption (AES-256-GCM)
 │   │   ├── logger.ts             # Centralized logging (createLogger)
 │   │   ├── prisma.ts             # Prisma client initialization
@@ -725,6 +740,7 @@ clawed-abode/
 │   ├── hooks/                    # React hooks (useSessionStream + useSessionListStream for SSE,
 │   │                             #   useSessionMessages/State, useClaudeState, etc.)
 │   ├── app/
+│   │   ├── api/upload/route.ts   # multipart file-upload endpoint (→ services/uploads.ts)
 │   │   ├── page.tsx              # Session list
 │   │   ├── new/page.tsx          # New session
 │   │   ├── session/[id]/page.tsx # Session view

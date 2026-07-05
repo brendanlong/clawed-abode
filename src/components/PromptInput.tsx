@@ -1,10 +1,13 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { Paperclip, X, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { VoiceMicButton } from '@/components/voice/VoiceMicButton';
 import { useVoiceRecording } from '@/hooks/useVoiceRecording';
+import { useFileUpload } from '@/hooks/useFileUpload';
+import type { UploadedAttachment } from '@/lib/attachments';
 
 export interface SlashCommand {
   name: string;
@@ -13,7 +16,8 @@ export interface SlashCommand {
 }
 
 interface PromptInputProps {
-  onSubmit: (prompt: string) => void;
+  sessionId: string;
+  onSubmit: (prompt: string, attachments?: string[]) => void;
   onInterrupt: () => void;
   isRunning: boolean;
   isInterrupting: boolean;
@@ -24,6 +28,7 @@ interface PromptInputProps {
 }
 
 export function PromptInput({
+  sessionId,
   onSubmit,
   onInterrupt,
   isRunning,
@@ -37,8 +42,13 @@ export function PromptInput({
   const [selectedIndex, setSelectedIndex] = useState(0);
   // Track the prompt value when user explicitly dismissed the dropdown
   const [dismissedForPrompt, setDismissedForPrompt] = useState<string | null>(null);
+  // Files uploaded and pending until the next message is sent. Not shown in the
+  // transcript until submit — only as chips on the composer.
+  const [attachments, setAttachments] = useState<UploadedAttachment[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const commandsRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const { upload, uploading, error: uploadError, clearError } = useFileUpload(sessionId);
 
   const {
     isRecording,
@@ -88,13 +98,38 @@ export function PromptInput({
     textareaRef.current?.focus();
   }, []);
 
+  // Submit is allowed with typed text OR at least one attachment.
+  const canSubmit = (prompt.trim().length > 0 || attachments.length > 0) && !disabled && !isRunning;
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (prompt.trim() && !disabled && !isRunning) {
-      onSubmit(prompt.trim());
+    if (canSubmit) {
+      onSubmit(
+        prompt.trim(),
+        attachments.length > 0 ? attachments.map((a) => a.storedName) : undefined
+      );
       setPrompt('');
+      setAttachments([]);
     }
   };
+
+  const handleFilesSelected = useCallback(
+    async (fileList: FileList | null) => {
+      if (!fileList || fileList.length === 0) return;
+      const files = Array.from(fileList);
+      try {
+        const uploaded = await upload(files);
+        setAttachments((prev) => [...prev, ...uploaded]);
+      } catch {
+        // Error is surfaced via uploadError; nothing else to do here.
+      }
+    },
+    [upload]
+  );
+
+  const removeAttachment = useCallback((storedName: string) => {
+    setAttachments((prev) => prev.filter((a) => a.storedName !== storedName));
+  }, []);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (showCommands && filteredCommands.length > 0) {
@@ -141,8 +176,12 @@ export function PromptInput({
       setPrompt(fullPrompt);
 
       if (voiceAutoSend && fullPrompt && !disabled && !isRunning) {
-        onSubmit(fullPrompt);
+        onSubmit(
+          fullPrompt,
+          attachments.length > 0 ? attachments.map((a) => a.storedName) : undefined
+        );
         setPrompt('');
+        setAttachments([]);
       } else {
         textareaRef.current?.focus();
       }
@@ -195,7 +234,72 @@ export function PromptInput({
           </div>
         )}
 
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          className="hidden"
+          onChange={(e) => {
+            void handleFilesSelected(e.currentTarget.files);
+            // Reset so selecting the same file again re-triggers onChange.
+            e.currentTarget.value = '';
+          }}
+        />
+
+        {(attachments.length > 0 || uploadError) && (
+          <div className="mb-2 flex flex-wrap items-center gap-2">
+            {attachments.map((att) => (
+              <span
+                key={att.storedName}
+                className="inline-flex items-center gap-1.5 rounded-md border bg-muted px-2 py-1 text-xs"
+              >
+                <Paperclip className="h-3 w-3 shrink-0 text-muted-foreground" />
+                <span className="max-w-[12rem] truncate" title={att.name}>
+                  {att.name}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => removeAttachment(att.storedName)}
+                  className="text-muted-foreground hover:text-foreground"
+                  aria-label={`Remove ${att.name}`}
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </span>
+            ))}
+            {uploadError && (
+              <span className="inline-flex items-center gap-1.5 text-xs text-destructive">
+                {uploadError}
+                <button
+                  type="button"
+                  onClick={clearError}
+                  className="hover:text-foreground"
+                  aria-label="Dismiss upload error"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </span>
+            )}
+          </div>
+        )}
+
         <div className="flex items-end gap-2">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={disabled || uploading}
+            title="Attach files"
+            aria-label="Attach files"
+          >
+            {uploading ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Paperclip className="h-4 w-4" />
+            )}
+          </Button>
+
           <div className="flex-1">
             <Textarea
               ref={textareaRef}
@@ -237,7 +341,7 @@ export function PromptInput({
               {isInterrupting ? 'Stopping...' : 'Stop'}
             </Button>
           ) : (
-            <Button type="submit" disabled={!prompt.trim() || disabled}>
+            <Button type="submit" disabled={!canSubmit}>
               Send
             </Button>
           )}
