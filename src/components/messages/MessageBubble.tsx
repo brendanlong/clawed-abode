@@ -5,17 +5,14 @@ import { OctagonX } from 'lucide-react';
 
 import { RawJsonDisplay } from './RawJsonDisplay';
 import { ToolResultDisplay } from './ToolResultDisplay';
-import { SystemInitDisplay } from './SystemInitDisplay';
 import { ResultDisplay } from './ResultDisplay';
-import { HookResponseDisplay } from './HookResponseDisplay';
-import { HookStartedDisplay } from './HookStartedDisplay';
 import { CompactBoundaryDisplay } from './CompactBoundaryDisplay';
 import { MainMessageBubble } from './MainMessageBubble';
-import { SystemMessageDisplay } from './SystemMessageDisplay';
 import {
   isRecognizedMessage,
   getToolResults,
   hasRenderableAssistantContent,
+  isHiddenSystemMessage,
 } from './messageHelpers';
 import { isIgnoredSystemMessage } from '@/lib/claude-messages';
 import type { ToolResultMap, MessageContent } from './types';
@@ -43,6 +40,12 @@ export function MessageBubble({
     return null;
   }
 
+  // System messages are hidden from the transcript to reduce noise (issue #312).
+  // Only errors and compact boundaries remain visible (see isHiddenSystemMessage).
+  if (isHiddenSystemMessage(type, content)) {
+    return null;
+  }
+
   // Assistant fragments with nothing renderable (e.g. an empty thinking block
   // with only a continuity signature) would otherwise show as an empty bubble.
   if (category === 'assistant' && !hasRenderableAssistantContent(content)) {
@@ -57,34 +60,10 @@ export function MessageBubble({
     );
   }
 
-  if (category === 'systemInit') {
-    return (
-      <div className="w-full max-w-[85%]">
-        <SystemInitDisplay content={content} />
-      </div>
-    );
-  }
-
   if (category === 'systemCompactBoundary') {
     return (
       <div className="w-full">
         <CompactBoundaryDisplay content={content} />
-      </div>
-    );
-  }
-
-  if (category === 'hookStarted') {
-    return (
-      <div className="w-full max-w-[85%]">
-        <HookStartedDisplay content={content} />
-      </div>
-    );
-  }
-
-  if (category === 'hookResponse') {
-    return (
-      <div className="w-full max-w-[85%]">
-        <HookResponseDisplay content={content} />
       </div>
     );
   }
@@ -113,14 +92,6 @@ export function MessageBubble({
           <OctagonX className="h-4 w-4" />
           <span>Interrupted</span>
         </div>
-      </div>
-    );
-  }
-
-  if (category === 'system') {
-    return (
-      <div className="w-full max-w-[85%]">
-        <SystemMessageDisplay content={content} />
       </div>
     );
   }
