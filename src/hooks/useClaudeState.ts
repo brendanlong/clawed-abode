@@ -48,8 +48,8 @@ export function useClaudeState(sessionId: string) {
   const stopBackgroundTaskMutation = trpc.claude.stopBackgroundTask.useMutation();
 
   const send = useCallback(
-    (prompt: string) => {
-      sendMutation.mutate({ sessionId, prompt });
+    (prompt: string, attachments?: string[]) => {
+      sendMutation.mutate({ sessionId, prompt, attachments });
     },
     [sessionId, sendMutation]
   );

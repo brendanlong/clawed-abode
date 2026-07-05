@@ -100,11 +100,11 @@ function SessionView({ sessionId }: { sessionId: string }) {
   const [voiceOverlayOpen, setVoiceOverlayOpen] = useState(false);
 
   const handleSendPrompt = useCallback(
-    (prompt: string) => {
+    (prompt: string, attachments?: string[]) => {
       if (!session || session.status !== 'running') {
         return;
       }
-      sendPrompt(prompt);
+      sendPrompt(prompt, attachments);
     },
     [session, sendPrompt]
   );
@@ -124,9 +124,9 @@ function SessionView({ sessionId }: { sessionId: string }) {
 
   // Stop playback when user sends a new prompt
   const handleSendPromptWithVoice = useCallback(
-    (prompt: string) => {
+    (prompt: string, attachments?: string[]) => {
       stopWithAutoReadFlag();
-      handleSendPrompt(prompt);
+      handleSendPrompt(prompt, attachments);
     },
     [handleSendPrompt, stopWithAutoReadFlag]
   );
@@ -299,6 +299,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
               containerStatus={session.status}
             />
             <PromptInput
+              sessionId={sessionId}
               onSubmit={handleSendPromptWithVoice}
               onInterrupt={interrupt}
               isRunning={isClaudeRunning}

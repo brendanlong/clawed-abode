@@ -14,6 +14,7 @@ import {
   getSessionBackgroundTasks,
   stopBackgroundTask,
 } from '../services/claude-runner';
+import { resolveUploadPaths } from '../services/uploads';
 import { estimateTokenUsage } from '@/lib/token-estimation';
 import {
   type ToolResponse,
@@ -81,10 +82,17 @@ async function submitToolResponse(
 export const claudeRouter = router({
   send: protectedProcedure
     .input(
-      z.object({
-        sessionId: z.string().uuid(),
-        prompt: z.string().min(1).max(100000),
-      })
+      z
+        .object({
+          sessionId: z.string().uuid(),
+          prompt: z.string().max(100000),
+          // Stored names of previously uploaded attachments (see /api/upload).
+          attachments: z.array(z.string().min(1).max(255)).max(20).optional(),
+        })
+        // Either typed text or at least one attachment must be present.
+        .refine((v) => v.prompt.trim().length > 0 || (v.attachments?.length ?? 0) > 0, {
+          message: 'A prompt or at least one attachment is required',
+        })
     )
     .mutation(async ({ input }) => {
       const session = await prisma.session.findUnique({
@@ -115,7 +123,11 @@ export const claudeRouter = router({
         });
       }
 
-      await sendUserMessage(input.sessionId, input.prompt);
+      const attachmentPaths = input.attachments?.length
+        ? await resolveUploadPaths(input.sessionId, input.attachments)
+        : [];
+
+      await sendUserMessage(input.sessionId, input.prompt, attachmentPaths);
 
       return { success: true };
     }),

@@ -2,6 +2,7 @@
 
 import type { ReactNode } from 'react';
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { getAuthToken, setAuthToken, clearAuthToken } from '@/lib/auth-token';
 
 interface AuthContextType {
   isAuthenticated: boolean;
@@ -12,8 +13,6 @@ interface AuthContextType {
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
-
-const TOKEN_KEY = 'auth_token';
 
 interface AuthState {
   token: string | null;
@@ -30,7 +29,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Restore auth state from localStorage after hydration
     // Using queueMicrotask to avoid synchronous setState in effect (React 19 lint rule)
     queueMicrotask(() => {
-      const storedToken = localStorage.getItem(TOKEN_KEY);
+      const storedToken = getAuthToken();
 
       setAuthState({
         token: storedToken,
@@ -40,12 +39,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const login = useCallback((newToken: string) => {
-    localStorage.setItem(TOKEN_KEY, newToken);
+    setAuthToken(newToken);
     setAuthState({ token: newToken, isLoading: false });
   }, []);
 
   const logout = useCallback(() => {
-    localStorage.removeItem(TOKEN_KEY);
+    clearAuthToken();
     setAuthState({ token: null, isLoading: false });
   }, []);
 
