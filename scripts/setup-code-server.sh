@@ -45,6 +45,15 @@ else
   PASSWORD_IS_NEW=true
 fi
 
+# Choose a random free loopback port on first write (8080 collides often); reuse
+# the config's recorded port on every re-run (resolved in lib-code-server.sh).
+if [ -z "$CODE_SERVER_PORT" ]; then
+  CODE_SERVER_PORT="$(pick_free_port)"
+  echo "    Selected random loopback port $CODE_SERVER_PORT"
+else
+  echo "    Using loopback port $CODE_SERVER_PORT"
+fi
+
 # Write the config with restrictive permissions *before* the secret lands in it.
 touch "$CODE_SERVER_CONFIG_FILE"
 chmod 600 "$CODE_SERVER_CONFIG_FILE"
