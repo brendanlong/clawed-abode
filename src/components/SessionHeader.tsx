@@ -5,6 +5,7 @@ import { Mic } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { SessionStatusToggle } from '@/components/SessionStatusToggle';
 import { SessionActionButton } from '@/components/SessionActionButton';
+import { EditableSessionName } from '@/components/EditableSessionName';
 import { VoiceAutoReadToggle } from '@/components/voice/VoiceAutoReadToggle';
 
 interface SessionHeaderProps {
@@ -20,6 +21,7 @@ interface SessionHeaderProps {
   onStart: () => void;
   onStop: () => void;
   onArchive?: () => void;
+  onRename?: (name: string) => void;
   isStarting: boolean;
   isStopping: boolean;
   isArchiving?: boolean;
@@ -35,6 +37,7 @@ export function SessionHeader({
   onStart,
   onStop,
   onArchive,
+  onRename,
   isStarting,
   isStopping,
   isArchiving = false,
@@ -65,7 +68,11 @@ export function SessionHeader({
             </Link>
           </Button>
           <div className="min-w-0">
-            <h1 className="font-semibold break-words">{session.name}</h1>
+            {onRename ? (
+              <EditableSessionName name={session.name} onRename={onRename} />
+            ) : (
+              <h1 className="font-semibold break-words">{session.name}</h1>
+            )}
             {repoName && <p className="text-sm text-muted-foreground truncate">{repoName}</p>}
           </div>
         </div>
