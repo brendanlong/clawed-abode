@@ -15,9 +15,21 @@ export interface SlashCommand {
   argumentHint: string;
 }
 
+/**
+ * A draft to load into the composer (text + attachments). The `nonce` makes each
+ * request distinct so the same text can be restored twice; the composer applies a
+ * draft once per new nonce. Used to reclaim pending messages into the input box
+ * when the user interrupts (see the session page).
+ */
+export interface ComposerDraft {
+  text: string;
+  attachments: UploadedAttachment[];
+  nonce: number;
+}
+
 interface PromptInputProps {
   sessionId: string;
-  onSubmit: (prompt: string, attachments?: string[]) => void;
+  onSubmit: (prompt: string, attachments?: UploadedAttachment[]) => void;
   onInterrupt: () => void;
   isRunning: boolean;
   isInterrupting: boolean;
@@ -25,6 +37,10 @@ interface PromptInputProps {
   commands?: SlashCommand[];
   voiceEnabled?: boolean;
   voiceAutoSend?: boolean;
+  /** When set (new nonce), load this text + attachments into the composer. */
+  restoreDraft?: ComposerDraft | null;
+  /** Called once a `restoreDraft` has been applied, so the parent can clear it. */
+  onDraftConsumed?: () => void;
 }
 
 export function PromptInput({
@@ -37,6 +53,8 @@ export function PromptInput({
   commands = [],
   voiceEnabled = false,
   voiceAutoSend = true,
+  restoreDraft = null,
+  onDraftConsumed,
 }: PromptInputProps) {
   const [prompt, setPrompt] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -65,6 +83,24 @@ export function PromptInput({
     }
   }, [prompt, interimTranscript]);
 
+  // Load a restored draft (e.g. pending messages reclaimed on interrupt) into the
+  // composer, once per new nonce. Appends to any text the user has already typed
+  // so an in-progress draft isn't clobbered, and merges attachments (deduped by
+  // storedName).
+  const appliedDraftNonceRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!restoreDraft || restoreDraft.nonce === appliedDraftNonceRef.current) return;
+    appliedDraftNonceRef.current = restoreDraft.nonce;
+
+    setPrompt((prev) => (prev.trim() ? `${restoreDraft.text}\n${prev}` : restoreDraft.text));
+    setAttachments((prev) => {
+      const seen = new Set(prev.map((a) => a.storedName));
+      return [...prev, ...restoreDraft.attachments.filter((a) => !seen.has(a.storedName))];
+    });
+    textareaRef.current?.focus();
+    onDraftConsumed?.();
+  }, [restoreDraft, onDraftConsumed]);
+
   // Determine which commands to show based on input
   const filteredCommands = useMemo(() => {
     if (commands.length === 0) return [];
@@ -85,8 +121,9 @@ export function PromptInput({
   // Dismissed only counts if the prompt hasn't changed since dismissal
   const isDismissed = dismissedForPrompt === prompt;
 
-  // Derive showCommands directly from state
-  const showCommands = filteredCommands.length > 0 && !disabled && !isRunning && !isDismissed;
+  // Derive showCommands directly from state. The composer stays usable while a
+  // turn is running (messages queue), so the command menu shows then too.
+  const showCommands = filteredCommands.length > 0 && !disabled && !isDismissed;
 
   const insertCommand = useCallback((command: SlashCommand) => {
     const newPrompt = `/${command.name} `;
@@ -98,16 +135,15 @@ export function PromptInput({
     textareaRef.current?.focus();
   }, []);
 
-  // Submit is allowed with typed text OR at least one attachment.
-  const canSubmit = (prompt.trim().length > 0 || attachments.length > 0) && !disabled && !isRunning;
+  // Submit is allowed with typed text OR at least one attachment. It stays allowed
+  // while a turn is running — the message is queued server-side and sent as soon
+  // as Claude finishes (async "btw mode").
+  const canSubmit = (prompt.trim().length > 0 || attachments.length > 0) && !disabled;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (canSubmit) {
-      onSubmit(
-        prompt.trim(),
-        attachments.length > 0 ? attachments.map((a) => a.storedName) : undefined
-      );
+      onSubmit(prompt.trim(), attachments.length > 0 ? attachments : undefined);
       setPrompt('');
       setAttachments([]);
     }
@@ -175,11 +211,8 @@ export function PromptInput({
       const fullPrompt = (prompt + transcript).trim();
       setPrompt(fullPrompt);
 
-      if (voiceAutoSend && fullPrompt && !disabled && !isRunning) {
-        onSubmit(
-          fullPrompt,
-          attachments.length > 0 ? attachments.map((a) => a.storedName) : undefined
-        );
+      if (voiceAutoSend && fullPrompt && !disabled) {
+        onSubmit(fullPrompt, attachments.length > 0 ? attachments : undefined);
         setPrompt('');
         setAttachments([]);
       } else {
@@ -309,20 +342,20 @@ export function PromptInput({
               placeholder={
                 disabled
                   ? 'Session is not running'
-                  : isRunning
-                    ? 'Claude is thinking...'
-                    : isRecording
-                      ? 'Listening...'
+                  : isRecording
+                    ? 'Listening...'
+                    : isRunning
+                      ? 'Claude is working — your message will be sent when it finishes'
                       : 'Type your message... (Enter to send, Shift+Enter for new line)'
               }
-              disabled={disabled || isRunning}
+              disabled={disabled}
               readOnly={isRecording}
               rows={1}
               className="min-h-[44px] resize-none"
             />
           </div>
 
-          {voiceEnabled && !isRunning && (
+          {voiceEnabled && (
             <VoiceMicButton
               isRecording={isRecording}
               onClick={handleMicClick}
@@ -331,7 +364,9 @@ export function PromptInput({
             />
           )}
 
-          {isRunning ? (
+          {/* While a turn runs, Stop interrupts it and Send queues a new message
+              to be sent when the turn ends. */}
+          {isRunning && (
             <Button
               type="button"
               variant="destructive"
@@ -340,11 +375,10 @@ export function PromptInput({
             >
               {isInterrupting ? 'Stopping...' : 'Stop'}
             </Button>
-          ) : (
-            <Button type="submit" disabled={!canSubmit}>
-              Send
-            </Button>
           )}
+          <Button type="submit" disabled={!canSubmit}>
+            {isRunning ? 'Queue' : 'Send'}
+          </Button>
         </div>
       </div>
     </form>
