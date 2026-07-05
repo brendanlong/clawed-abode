@@ -32,6 +32,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
     start,
     stop,
     archive,
+    rename,
     isStarting,
     isStopping,
     isArchiving,
@@ -256,6 +257,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
           onStart={start}
           onStop={stop}
           onArchive={archive}
+          onRename={rename}
           isStarting={isStarting}
           isStopping={isStopping}
           isArchiving={isArchiving}
