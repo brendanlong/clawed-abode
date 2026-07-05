@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { MessageBubble } from './MessageBubble';
 import { MessageListProvider } from './MessageListContext';
 import type { ToolResultMap, MessageContent } from './types';
@@ -537,6 +537,56 @@ describe('MessageBubble', () => {
       // TodoWriteDisplay should be rendered (check for its specific elements)
       expect(screen.getByText('TodoWrite')).toBeInTheDocument();
     });
+  });
+
+  describe('subagent invocation', () => {
+    // The SDK spawns subagents via the `Agent` tool (older sessions used `Task`).
+    // Both must route to TaskDisplay so the subagent's grouped transcript nests
+    // under the call rather than being unreachable.
+    it.each(['Agent', 'Task'])(
+      'renders %s tool calls with the subagent badge and nested transcript',
+      (toolName) => {
+        const message = {
+          type: 'assistant',
+          content: {
+            message: {
+              content: [
+                {
+                  type: 'tool_use',
+                  id: 'toolu_sub_1',
+                  name: toolName,
+                  input: { subagent_type: 'Explore', description: 'Find configs', prompt: 'go' },
+                },
+              ],
+            },
+          } as MessageContent,
+        };
+
+        render(
+          <MessageListProvider
+            value={{
+              latestTodoWriteId: null,
+              manuallyToggledTodoIds: new Set<string>(),
+              onTodoManualToggle: () => {},
+              planContentByToolUseId: new Map(),
+              renderSubagentTranscript: (id: string) => <div>nested transcript for {id}</div>,
+            }}
+          >
+            <MessageBubble message={message} />
+          </MessageListProvider>
+        );
+
+        expect(screen.getByText('Task')).toBeInTheDocument();
+        expect(screen.getByText('Explore')).toBeInTheDocument();
+
+        // Expand the collapsible (its content is unmounted while collapsed).
+        fireEvent.click(screen.getByText('Task'));
+
+        // The nested transcript is requested for this tool's id (proving the
+        // grouped subagent work is reachable, not just the prompt).
+        expect(screen.getByText(/nested transcript for toolu_sub_1/)).toBeInTheDocument();
+      }
+    );
   });
 
   describe('server tool use (advisor)', () => {
