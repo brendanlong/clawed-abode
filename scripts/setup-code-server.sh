@@ -3,10 +3,13 @@
 # and edit session worktrees remotely.
 #
 # This is the app-side half of the setup: install code-server, point it at
-# ~/worktrees, and run it as a service. It does NOT touch Tailscale, so it can be
-# run by the account that runs the app (which may not have permission to manage
-# Tailscale). Expose it to the tailnet separately with
-# expose-code-server-tailscale.sh (run by someone with Tailscale access).
+# ~/worktrees, and run it as a *user-level* systemd service (systemctl --user).
+# It needs no sudo and does NOT touch Tailscale, so it can be run by the account
+# that runs the app (which may lack sudo and Tailscale access). If code-server is
+# not already installed, its installer needs sudo — have an admin install it once
+# (a system-wide install lands on this account's PATH), then re-run this. Expose
+# it to the tailnet separately with expose-code-server-tailscale.sh (run by
+# someone with Tailscale access).
 #
 # Idempotent: safe to re-run.
 set -euo pipefail
@@ -53,17 +56,56 @@ cert: false
 EOF
 echo "    Wrote $CODE_SERVER_CONFIG_FILE (mode 600)"
 
-echo "==> Enabling code-server as a systemd service"
+echo "==> Enabling code-server as a user-level systemd service"
 # Open the worktrees dir by default; individual sessions are deep-linked with ?folder=.
 mkdir -p "$WORKTREES_DIR"
-# The code-server installer ships a system-scope template unit run as the target
-# user: `sudo systemctl enable --now code-server@$USER` (its own post-install note).
-if command -v systemctl >/dev/null 2>&1 &&
-  sudo systemctl enable --now "code-server@$USER"; then
-  echo "    Enabled code-server@$USER"
+
+# Run code-server as a *user* service (systemctl --user) so no sudo/root is
+# needed — the account running the app may not have sudo. The installer only
+# ships a system-scope template unit, so write our own user unit pointing at
+# whichever code-server binary is on PATH (it may have been installed by another
+# user; a system-wide install is still on this account's PATH).
+CODE_SERVER_BIN="$(command -v code-server || true)"
+if [ -z "$CODE_SERVER_BIN" ]; then
+  echo "Error: code-server is not on PATH; cannot create the service." >&2
+  echo "Install it first (see the script header), then re-run." >&2
+  exit 1
+fi
+
+USER_UNIT_DIR="$HOME/.config/systemd/user"
+USER_UNIT_FILE="$USER_UNIT_DIR/code-server.service"
+mkdir -p "$USER_UNIT_DIR"
+cat >"$USER_UNIT_FILE" <<EOF
+[Unit]
+Description=code-server (browser VS Code)
+After=network.target
+
+[Service]
+ExecStart=${CODE_SERVER_BIN}
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target
+EOF
+echo "    Wrote $USER_UNIT_FILE"
+
+if command -v systemctl >/dev/null 2>&1 && systemctl --user daemon-reload 2>/dev/null; then
+  if systemctl --user enable --now code-server.service; then
+    echo "    Enabled code-server.service (user scope, no sudo)"
+    # Keep the user service running when logged out / across reboot. Enabling
+    # lingering needs admin, so it is best-effort and non-fatal.
+    if ! loginctl enable-linger "$USER" 2>/dev/null; then
+      echo "    Note: lingering not enabled (needs admin); the service stops when you log out."
+      echo "    To persist across logout/reboot, ask an admin to run: sudo loginctl enable-linger $USER"
+    fi
+  else
+    echo "    Wrote the unit but could not start it."
+    echo "    Start it manually with:  systemctl --user enable --now code-server.service"
+  fi
 else
-  echo "    Could not enable the service automatically."
-  echo "    Start it manually with:  code-server   (or: sudo systemctl enable --now code-server@$USER)"
+  echo "    No systemd --user session available."
+  echo "    Start code-server manually with:  code-server"
 fi
 
 echo
