@@ -16,6 +16,12 @@ export interface UploadedAttachment {
 }
 
 /**
+ * Max number of files per upload request and per message. Shared by the upload
+ * route and the `claude.send` input schema so the two ceilings can't drift.
+ */
+export const MAX_ATTACHMENTS = 20;
+
+/**
  * Build the prompt sent to Claude, prefixing a note about any uploaded files.
  * Matches the format requested in issue #75:
  *   [User uploaded file(s): /tmp/.../a.md, /tmp/.../b.png]
