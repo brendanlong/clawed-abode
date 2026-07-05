@@ -1,15 +1,23 @@
 #!/usr/bin/env bash
-# Expose a running code-server to the tailnet via Tailscale Serve and print the
-# CODE_SERVER_URL to put in the app's .env.
+# Expose a running code-server to the tailnet as a Tailscale *service* and print
+# the CODE_SERVER_URL to put in the app's .env.
 #
 # This is the Tailscale half of the setup, split out because managing Tailscale
 # usually needs privileges the app's account does not have (the operator/root, or
 # membership in the tailscale group). Run setup-code-server.sh first (installs and
 # starts code-server on loopback); then run this as a user with Tailscale access.
 #
-# Keeps code-server off the public internet: it uses `tailscale serve` (tailnet
-# only), not `tailscale funnel`. Idempotent: safe to re-run. Requires an existing
-# Tailscale login on this host, and jq or python3 to read the host's DNS name.
+# Exposes code-server as its own tailnet hostname (https://code.<tailnet>.ts.net)
+# via a Tailscale *service* (svc:code) — the same way the host's other services
+# (clawed, wiki, ...) each get a distinct name, rather than sharing one host and a
+# nonstandard port. It stays on the tailnet (a `serve` service, never `funnel`),
+# the same trust boundary as the app. Idempotent: safe to re-run. Requires an
+# existing Tailscale login on this host, and jq or python3 to read the tailnet's
+# DNS suffix.
+#
+# NOTE: the first time a service name is advertised, a tailnet admin must approve
+# it in the admin console (https://login.tailscale.com/admin/services) before the
+# hostname resolves. Re-running after approval is a no-op.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -29,29 +37,34 @@ if [ -z "$CODE_SERVER_PORT" ]; then
   exit 1
 fi
 
-echo "==> Exposing code-server over Tailscale Serve on port ${CODE_SERVER_HTTPS_PORT}"
-tailscale serve --bg --https "${CODE_SERVER_HTTPS_PORT}" "http://127.0.0.1:${CODE_SERVER_PORT}"
+SERVICE="svc:${CODE_SERVER_SERVICE}"
+echo "==> Advertising code-server as Tailscale service ${SERVICE} (HTTPS 443 -> 127.0.0.1:${CODE_SERVER_PORT})"
+# Configuring a service with `tailscale serve` also advertises this node as its
+# proxy (no separate `serve advertise` needed). Standard HTTPS (443), so the URL
+# carries no port. On first run this prints an "approval required" notice.
+tailscale serve --service="${SERVICE}" --bg --https=443 "http://127.0.0.1:${CODE_SERVER_PORT}"
 
-# Resolve *this host's* MagicDNS name. Parse the Self object explicitly rather
-# than grabbing the first DNSName in the JSON (which could be a peer).
+# The service hostname is ${CODE_SERVER_SERVICE}.<tailnet-suffix>. Read the
+# tailnet's MagicDNS suffix (e.g. tail1234.ts.net) rather than this host's own
+# DNS name — the service has its own name, independent of the host's.
 if command -v jq >/dev/null 2>&1; then
-  HOSTNAME_FQDN="$(tailscale status --json | jq -r '.Self.DNSName')"
+  DNS_SUFFIX="$(tailscale status --json | jq -r '.CurrentTailnet.MagicDNSSuffix')"
 elif command -v python3 >/dev/null 2>&1; then
-  HOSTNAME_FQDN="$(tailscale status --json |
-    python3 -c 'import sys,json; print(json.load(sys.stdin)["Self"]["DNSName"])')"
+  DNS_SUFFIX="$(tailscale status --json |
+    python3 -c 'import sys,json; print(json.load(sys.stdin)["CurrentTailnet"]["MagicDNSSuffix"])')"
 else
-  echo "Error: need jq or python3 to read this host's Tailscale name." >&2
+  echo "Error: need jq or python3 to read this tailnet's DNS suffix." >&2
   exit 1
 fi
-HOSTNAME_FQDN="${HOSTNAME_FQDN%.}" # strip the trailing dot MagicDNS returns
+DNS_SUFFIX="${DNS_SUFFIX%.}" # strip any trailing dot
 
-if [ -z "$HOSTNAME_FQDN" ] || [ "$HOSTNAME_FQDN" = "null" ]; then
-  echo "Error: could not determine this host's Tailscale DNS name." >&2
+if [ -z "$DNS_SUFFIX" ] || [ "$DNS_SUFFIX" = "null" ]; then
+  echo "Error: could not determine this tailnet's DNS suffix." >&2
   echo "Is Tailscale logged in? Try: tailscale status" >&2
   exit 1
 fi
 
-URL="https://${HOSTNAME_FQDN}:${CODE_SERVER_HTTPS_PORT}"
+URL="https://${CODE_SERVER_SERVICE}.${DNS_SUFFIX}"
 
 echo
 echo "==> Done."
@@ -59,10 +72,18 @@ echo
 echo "  code-server is reachable at:  ${URL}"
 cat <<EOF
 
-  Add this to your .env and restart the app:
+  If this is the first time advertising ${SERVICE}, approve it once as a tailnet
+  admin before the hostname resolves:
+
+    https://login.tailscale.com/admin/services
+
+  Then add this to your .env and restart the app:
 
     CODE_SERVER_URL="${URL}"
 
   The "Open in VS Code" button in each session will then deep-link into that
   session's worktree folder.
+
+  To stop exposing it:  tailscale serve --service=${SERVICE} --https=443 off
+  To remove the config: tailscale serve clear ${SERVICE}
 EOF

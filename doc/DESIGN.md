@@ -672,9 +672,9 @@ To view and edit the files an agent is working on — without building a bespoke
 **Deployment.** Setup is split into two scripts so the Tailscale step (which usually needs privileges the app's account lacks) is separable from the app-side install:
 
 1. [`scripts/setup-code-server.sh`](../scripts/setup-code-server.sh) — installs code-server, gives it its own generated password (config written mode `600`), points it at `~/worktrees`, and runs it as a **user-level** systemd service (`systemctl --user`, its own unit at `~/.config/systemd/user/code-server.service`) on loopback. **No sudo and no Tailscale**, so it can be run by the account that runs the app (which may lack both). Enabling lingering — so the user service survives logout/reboot — needs admin, so it is best-effort; if it fails the script prints the `sudo loginctl enable-linger` command for an admin. code-server's own installer does need sudo, so if it is not already present an admin installs it once (a system-wide install is on the account's PATH).
-2. [`scripts/expose-code-server-tailscale.sh`](../scripts/expose-code-server-tailscale.sh) — exposes the loopback code-server over **Tailscale Serve** on a dedicated HTTPS port (keeping it on the tailnet — the same trust boundary as the app, never `funnel`) and prints the `CODE_SERVER_URL` to set. Run by someone with Tailscale access.
+2. [`scripts/expose-code-server-tailscale.sh`](../scripts/expose-code-server-tailscale.sh) — exposes the loopback code-server as a **Tailscale service** (`svc:code`), giving it its own tailnet hostname `https://code.<tailnet>.ts.net` on standard HTTPS (443, so the URL carries no port) — the same way the host's other services (clawed, wiki, ...) each get a distinct name rather than sharing one host + a nonstandard port. It stays on the tailnet (a `serve` service, never `funnel`, the same trust boundary as the app) and prints the `CODE_SERVER_URL` to set. Run by someone with Tailscale access. The first time a service name is advertised a tailnet admin must approve it once in the admin console before the hostname resolves; re-running after approval is a no-op. Override the service name with `CODE_SERVER_SERVICE` if `code` is taken.
 
-Both source [`scripts/lib-code-server.sh`](../scripts/lib-code-server.sh) so the loopback/HTTPS ports stay in sync. code-server binds a **random free loopback port** chosen once on first setup (recorded as `bind-addr` in its config, which is then the source of truth for both scripts and every re-run) rather than the commonly-used 8080; override with `CODE_SERVER_PORT` if needed. Because code-server runs as a normal host process with filesystem access to the worktrees, edits made in it land directly in the session's clone, ready for the agent (or the user) to commit and push.
+Both source [`scripts/lib-code-server.sh`](../scripts/lib-code-server.sh) so the loopback port and service name stay in sync. code-server binds a **random free loopback port** chosen once on first setup (recorded as `bind-addr` in its config, which is then the source of truth for both scripts and every re-run) rather than the commonly-used 8080; override with `CODE_SERVER_PORT` if needed. Because code-server runs as a normal host process with filesystem access to the worktrees, edits made in it land directly in the session's clone, ready for the agent (or the user) to commit and push.
 
 ## UI Screens
 
@@ -730,7 +730,7 @@ clawed-abode/
 │   ├── hash-password.ts        # Password hashing utility
 │   ├── lib-code-server.sh      # Shared config sourced by the code-server scripts
 │   ├── setup-code-server.sh    # Install + run code-server (app-side, no Tailscale)
-│   ├── expose-code-server-tailscale.sh # Expose code-server over Tailscale Serve
+│   ├── expose-code-server-tailscale.sh # Expose code-server as a Tailscale service
 │   └── update.sh               # Production update: pull, install, migrate, build, restart
 ├── src/
 │   ├── server/
