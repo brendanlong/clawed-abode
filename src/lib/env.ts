@@ -26,6 +26,10 @@ const envSchema = z.object({
   // 32+ character key for encrypting secrets (env vars, MCP API keys)
   // Generate with: openssl rand -base64 32
   ENCRYPTION_KEY: z.string().min(32).optional(),
+  // Base URL of a self-hosted code-server (browser VS Code) instance used to
+  // view/edit session worktrees remotely (e.g. https://host.tailnet.ts.net:8443).
+  // When unset, the "Open in VS Code" button is hidden. See scripts/setup-code-server.sh.
+  CODE_SERVER_URL: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

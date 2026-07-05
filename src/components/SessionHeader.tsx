@@ -7,6 +7,7 @@ import { SessionStatusToggle } from '@/components/SessionStatusToggle';
 import { SessionActionButton } from '@/components/SessionActionButton';
 import { EditableSessionName } from '@/components/EditableSessionName';
 import { VoiceAutoReadToggle } from '@/components/voice/VoiceAutoReadToggle';
+import { OpenInEditorButton } from '@/components/OpenInEditorButton';
 
 interface SessionHeaderProps {
   session: {
@@ -79,6 +80,7 @@ export function SessionHeader({
 
         <div className="flex flex-col items-end gap-1 shrink-0">
           <div className="flex items-center gap-1">
+            <OpenInEditorButton sessionId={session.id} />
             {voiceEnabled && onToggleVoiceMode && (
               <Button
                 variant={voiceModeActive ? 'secondary' : 'ghost'}
