@@ -8,9 +8,13 @@ import {
   buildToolCalls,
   getCopyText,
   getDisplayContent,
-  summarizeSystemMessage,
   hasRenderableAssistantContent,
+  isHiddenSystemMessage,
+  isToolCallOnlyMessage,
+  getParentToolUseId,
+  groupSubagentMessages,
 } from './messageHelpers';
+import type { DisplayMessage } from './types';
 
 describe('extractTextContent', () => {
   it('extracts text from assistant message content array', () => {
@@ -484,77 +488,114 @@ describe('hasRenderableAssistantContent', () => {
   });
 });
 
-describe('summarizeSystemMessage', () => {
-  // SDK system messages use loose fields (some, like `message`, collide with the
-  // typed MessageContent wrapper), so build them as plain objects.
-  const sys = (c: Record<string, unknown>) =>
-    summarizeSystemMessage(c as unknown as MessageContent);
-
-  it('summarizes a notification, escalating priority to warn', () => {
-    expect(sys({ subtype: 'notification', text: 'Heads up', priority: 'high' })).toEqual({
-      label: 'Notification',
-      body: 'Heads up',
-      level: 'warn',
-    });
-    expect(sys({ subtype: 'notification', text: 'fyi', priority: 'low' })).toEqual({
-      label: 'Notification',
-      body: 'fyi',
-      level: 'info',
-    });
+describe('isHiddenSystemMessage', () => {
+  it('hides generic system subtypes, init banners, and hooks', () => {
+    for (const subtype of [
+      'init',
+      'hook_started',
+      'hook_response',
+      'notification',
+      'task_started',
+    ]) {
+      expect(isHiddenSystemMessage('system', { subtype } as MessageContent)).toBe(true);
+    }
+    // A system message with no subtype at all is also hidden.
+    expect(isHiddenSystemMessage('system', {} as MessageContent)).toBe(true);
   });
 
-  it('summarizes permission_denied with tool and message', () => {
+  it('keeps errors and compact boundaries visible', () => {
+    expect(isHiddenSystemMessage('system', { subtype: 'error' } as MessageContent)).toBe(false);
+    expect(isHiddenSystemMessage('system', { subtype: 'compact_boundary' } as MessageContent)).toBe(
+      false
+    );
+  });
+
+  it('never hides non-system messages', () => {
+    expect(isHiddenSystemMessage('assistant', { subtype: 'init' } as MessageContent)).toBe(false);
+    expect(isHiddenSystemMessage('user', {} as MessageContent)).toBe(false);
+    expect(isHiddenSystemMessage('result', { subtype: 'success' } as MessageContent)).toBe(false);
+  });
+});
+
+describe('isToolCallOnlyMessage', () => {
+  const assistant = (content: MessageContent['message']): MessageContent => ({ message: content });
+
+  it('is true for an assistant message with only tool_use blocks', () => {
     expect(
-      sys({ subtype: 'permission_denied', tool_name: 'Bash', message: 'not allowed' })
-    ).toEqual({ label: 'Permission denied', body: 'Bash: not allowed', level: 'warn' });
+      isToolCallOnlyMessage(
+        assistant({ content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: {} }] })
+      )
+    ).toBe(true);
   });
 
-  it('summarizes subagent start and completion', () => {
+  it('is false when there is visible text alongside the tool call', () => {
     expect(
-      sys({ subtype: 'task_started', subagent_type: 'Explore', description: 'find usages' })
-    ).toEqual({ label: 'Subagent started', body: 'Explore: find usages', level: 'info' });
-    expect(sys({ subtype: 'task_notification', status: 'failed', summary: 'boom' })).toEqual({
-      label: 'Subagent failed',
-      body: 'boom',
-      level: 'warn',
-    });
+      isToolCallOnlyMessage(
+        assistant({
+          content: [
+            { type: 'text', text: 'Let me check' },
+            { type: 'tool_use', id: 't1', name: 'Bash', input: {} },
+          ],
+        })
+      )
+    ).toBe(false);
   });
 
-  it('summarizes a failed plugin install, extracting an object error', () => {
+  it('ignores empty/whitespace text blocks', () => {
     expect(
-      sys({ subtype: 'plugin_install', name: 'foo', status: 'failed', error: { message: 'nope' } })
-    ).toEqual({ label: 'Plugin: foo', body: 'failed — nope', level: 'warn' });
+      isToolCallOnlyMessage(
+        assistant({
+          content: [
+            { type: 'text', text: '   ' },
+            { type: 'tool_use', id: 't1', name: 'Bash', input: {} },
+          ],
+        })
+      )
+    ).toBe(true);
   });
 
-  it('summarizes a mirror error from a string', () => {
-    expect(sys({ subtype: 'mirror_error', error: 'disk full' })).toEqual({
-      label: 'Mirror error',
-      body: 'disk full',
-      level: 'warn',
-    });
+  it('is false when there are no tool_use blocks', () => {
+    expect(isToolCallOnlyMessage(assistant({ content: [{ type: 'text', text: 'hi' }] }))).toBe(
+      false
+    );
+    expect(isToolCallOnlyMessage({} as MessageContent)).toBe(false);
+  });
+});
+
+describe('getParentToolUseId', () => {
+  it('returns the parent id for a subagent message', () => {
+    expect(getParentToolUseId({ parent_tool_use_id: 'task-1' })).toBe('task-1');
   });
 
-  it('falls back to a humanized label for unknown subtypes', () => {
-    expect(sys({ subtype: 'some_future_thing' })).toEqual({
-      label: 'Some Future Thing',
-      body: undefined,
-      level: 'info',
-    });
+  it('returns null for top-level messages and non-objects', () => {
+    expect(getParentToolUseId({ parent_tool_use_id: null })).toBeNull();
+    expect(getParentToolUseId({})).toBeNull();
+    expect(getParentToolUseId(undefined)).toBeNull();
+    expect(getParentToolUseId('string')).toBeNull();
+  });
+});
+
+describe('groupSubagentMessages', () => {
+  const msg = (id: string, parent: string | null): DisplayMessage => ({
+    id,
+    type: 'assistant',
+    sequence: 0,
+    content: { parent_tool_use_id: parent },
   });
 
-  it('labels top-level types (no subtype) from the message type', () => {
-    expect(sys({ type: 'prompt_suggestion', suggestion: 'try this' })).toEqual({
-      label: 'Prompt Suggestion',
-      body: undefined,
-      level: 'info',
-    });
+  it('groups messages by parent_tool_use_id, dropping top-level messages', () => {
+    const groups = groupSubagentMessages([
+      msg('a', null),
+      msg('b', 'task-1'),
+      msg('c', 'task-1'),
+      msg('d', 'task-2'),
+    ]);
+    expect([...groups.keys()].sort()).toEqual(['task-1', 'task-2']);
+    expect(groups.get('task-1')!.map((m) => m.id)).toEqual(['b', 'c']);
+    expect(groups.get('task-2')!.map((m) => m.id)).toEqual(['d']);
   });
 
-  it('uses string content as the body for unknown subtypes', () => {
-    expect(sys({ subtype: 'mystery', content: 'raw text' })).toEqual({
-      label: 'Mystery',
-      body: 'raw text',
-      level: 'info',
-    });
+  it('returns an empty map when there are no subagent messages', () => {
+    expect(groupSubagentMessages([msg('a', null)]).size).toBe(0);
   });
 });

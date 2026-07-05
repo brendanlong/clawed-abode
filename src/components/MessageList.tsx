@@ -1,8 +1,10 @@
 'use client';
 
 import { useRef, useEffect, useCallback, useMemo, useState } from 'react';
+import { cn } from '@/lib/utils';
 import { MessageBubble } from './messages/MessageBubble';
-import type { ToolResultMap, ContentBlock, MessageContent } from './messages/types';
+import { SubagentTranscript } from './messages/SubagentTranscript';
+import type { ToolResultMap, ContentBlock, MessageContent, DisplayMessage } from './messages/types';
 import { MessageListProvider } from './messages/MessageListContext';
 import { Spinner } from '@/components/ui/spinner';
 import { ContextUsageIndicator } from '@/components/ContextUsageIndicator';
@@ -11,14 +13,15 @@ import { useNotification } from '@/hooks/useNotification';
 import { useVoicePlaybackContext } from '@/hooks/useVoicePlayback';
 import { isPlanFile, reconstructPlansByToolUseId, type PlanEvent } from './messages/plan-utils';
 import { isIgnoredSystemMessage } from '@/lib/claude-messages';
-import { hasRenderableAssistantContent } from './messages/messageHelpers';
+import {
+  hasRenderableAssistantContent,
+  isHiddenSystemMessage,
+  isToolCallOnlyMessage,
+  getParentToolUseId,
+  groupSubagentMessages,
+} from './messages/messageHelpers';
 
-interface Message {
-  id: string;
-  type: string;
-  content: unknown;
-  sequence: number;
-}
+type Message = DisplayMessage;
 
 // Extract tool_use IDs from an assistant message
 function getToolUseIds(message: Message): string[] {
@@ -34,27 +37,6 @@ function getToolResultBlocks(message: Message): ContentBlock[] {
   const blocks = content?.message?.content;
   if (!Array.isArray(blocks)) return [];
   return blocks.filter((b) => b.type === 'tool_result');
-}
-
-// Build a set of hook_ids that have corresponding hook_response messages
-function getCompletedHookIds(messages: Message[]): Set<string> {
-  const completedIds = new Set<string>();
-  for (const msg of messages) {
-    const content = msg.content as MessageContent | undefined;
-    if (msg.type === 'system' && content?.subtype === 'hook_response' && content.hook_id) {
-      completedIds.add(content.hook_id);
-    }
-  }
-  return completedIds;
-}
-
-// Check if a hook_started message should be hidden (has a corresponding hook_response)
-function isCompletedHookStarted(message: Message, completedHookIds: Set<string>): boolean {
-  if (message.type !== 'system') return false;
-  const content = message.content as MessageContent | undefined;
-  if (content?.subtype !== 'hook_started') return false;
-  // Hide if we have a response for this hook
-  return content.hook_id ? completedHookIds.has(content.hook_id) : false;
 }
 
 // Check if a message is a tool result (comes as type "user" but contains tool_result content)
@@ -308,8 +290,9 @@ export function MessageList({
   // Build the tool result map and determine which messages to hide
   const { resultMap, pairedMessageIds } = useMemo(() => buildToolResultMap(messages), [messages]);
 
-  // Build the set of hook_ids that have responses (for hiding completed hook_started messages)
-  const completedHookIds = useMemo(() => getCompletedHookIds(messages), [messages]);
+  // Group subagent messages (parent_tool_use_id set) by their Task's tool_use id
+  // so they render nested inside that Task instead of cluttering the top level.
+  const subagentMessagesByToolUseId = useMemo(() => groupSubagentMessages(messages), [messages]);
 
   // Find the latest TodoWrite ID (last one by sequence)
   const latestTodoWriteId = useMemo(() => {
@@ -352,18 +335,20 @@ export function MessageList({
     setManuallyToggledTodoIds((prev) => new Set([...prev, toolId]));
   }, []);
 
-  // Filter out messages that have been fully paired with their tool_use,
-  // and hook_started messages that have a corresponding hook_response
-  // (pending hook_started messages are kept to show loading state)
+  // Filter the top-level transcript down to what should render as its own row.
   const visibleMessages = useMemo(
     () =>
       messages.filter(
         (msg) =>
           !pairedMessageIds.has(msg.id) &&
-          !isCompletedHookStarted(msg, completedHookIds) &&
+          // Subagent messages render nested inside their Task, not at top level.
+          getParentToolUseId(msg.content) === null &&
           // Ignored system events carry no content; filter them here so they
           // don't leave an empty spacer row in the list.
           !isIgnoredSystemMessage(msg.content) &&
+          // System messages are hidden from the transcript (issue #312), except
+          // errors and compact boundaries.
+          !isHiddenSystemMessage(msg.type, msg.content as MessageContent) &&
           // Empty assistant fragments (e.g. an empty thinking block) would
           // otherwise leave an empty spacer row too.
           !(
@@ -371,7 +356,7 @@ export function MessageList({
             !hasRenderableAssistantContent(msg.content as MessageContent)
           )
       ),
-    [messages, pairedMessageIds, completedHookIds]
+    [messages, pairedMessageIds]
   );
 
   const scrollToBottom = useCallback(() => {
@@ -535,6 +520,23 @@ export function MessageList({
     }
   }, [voiceIsPlaying, scrollToBottom]);
 
+  // Render a subagent Task's nested transcript. Lives here (not in TaskDisplay)
+  // so the recursive MessageBubble import stays out of the tool-display modules.
+  const renderSubagentTranscript = useCallback(
+    (toolUseId: string) => {
+      const children = subagentMessagesByToolUseId.get(toolUseId);
+      if (!children || children.length === 0) return null;
+      return (
+        <SubagentTranscript
+          messages={children}
+          toolResults={resultMap}
+          pairedMessageIds={pairedMessageIds}
+        />
+      );
+    },
+    [subagentMessagesByToolUseId, resultMap, pairedMessageIds]
+  );
+
   const contextValue = useMemo(
     () => ({
       latestTodoWriteId,
@@ -544,6 +546,7 @@ export function MessageList({
       onAnswerQuestion,
       onRespondToPlan,
       planContentByToolUseId,
+      renderSubagentTranscript,
     }),
     [
       latestTodoWriteId,
@@ -553,19 +556,20 @@ export function MessageList({
       onAnswerQuestion,
       onRespondToPlan,
       planContentByToolUseId,
+      renderSubagentTranscript,
     ]
   );
 
   return (
     <div className="relative flex-1 min-h-0">
-      <div ref={containerRef} className="h-full overflow-y-auto p-4 space-y-4">
+      <div ref={containerRef} className="h-full overflow-y-auto p-4">
         {/* Sentinel for triggering infinite scroll - placed before messages */}
         {/* overflow-anchor:none prevents browser from anchoring to these elements */}
         {/* so when new messages load above, the view stays on current messages */}
         <div ref={topSentinelRef} className="h-1" style={{ overflowAnchor: 'none' }} />
 
         {hasMore && isLoading && (
-          <div className="text-center py-2" style={{ overflowAnchor: 'none' }}>
+          <div className="text-center py-2 mb-4" style={{ overflowAnchor: 'none' }}>
             <Spinner size="sm" className="mx-auto" />
           </div>
         )}
@@ -580,14 +584,29 @@ export function MessageList({
         )}
 
         <MessageListProvider value={contextValue}>
-          {visibleMessages.map((message) => {
+          {visibleMessages.map((message, index) => {
             // Only right-align actual user messages, not tool results
             const isUserMessage = message.type === 'user' && !isToolResultMessage(message);
+
+            // Spacing: full gap between messages, but tight when two consecutive
+            // tool-call-only messages sit back-to-back (issue #312). The first
+            // message gets no top margin (the container padding handles it).
+            const prev = visibleMessages[index - 1];
+            const backToBackToolCalls =
+              prev !== undefined &&
+              isToolCallOnlyMessage(prev.content as MessageContent) &&
+              isToolCallOnlyMessage(message.content as MessageContent);
+            const spacingClass = index === 0 ? '' : backToBackToolCalls ? 'mt-1' : 'mt-4';
+
             return (
               <div
                 key={message.id}
                 data-message-id={message.id}
-                className={`flex ${isUserMessage ? 'justify-end' : 'justify-start'}`}
+                className={cn(
+                  'flex',
+                  isUserMessage ? 'justify-end' : 'justify-start',
+                  spacingClass
+                )}
               >
                 <MessageBubble
                   message={{
