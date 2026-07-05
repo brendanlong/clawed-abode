@@ -659,7 +659,12 @@ To view and edit the files an agent is working on — without building a bespoke
 - The link is built server-side by the pure `buildEditorUrl` ([`src/lib/editor-url.ts`](../src/lib/editor-url.ts)) and served by `sessions.getEditorUrl`, which resolves the session's absolute working dir with `getSessionWorkingDir` (the same path logic the runner uses) — the client never needs to know the host's home directory or worktrees root.
 - The feature is **opt-in**: `getEditorUrl` returns `{ url: null }` when `CODE_SERVER_URL` is unset (or the session is `archived`, since its workspace is removed from disk), and `OpenInEditorButton` ([`src/components/OpenInEditorButton.tsx`](../src/components/OpenInEditorButton.tsx)) renders nothing for a null url. As with [Answering Interactive Tools](#answering-interactive-tools), the server is authoritative and the UI stays dumb.
 
-**Deployment.** [`scripts/setup-code-server.sh`](../scripts/setup-code-server.sh) installs code-server, points it at `~/worktrees`, gives it its own generated password, exposes it over **Tailscale Serve** on a dedicated HTTPS port (keeping it on the tailnet — the same trust boundary as the app), and prints the `CODE_SERVER_URL` to set. Because it runs as a normal host process with filesystem access to the worktrees, edits made in code-server land directly in the session's clone, ready for the agent (or the user) to commit and push.
+**Deployment.** Setup is split into two scripts so the Tailscale step (which usually needs privileges the app's account lacks) is separable from the app-side install:
+
+1. [`scripts/setup-code-server.sh`](../scripts/setup-code-server.sh) — installs code-server, gives it its own generated password (config written mode `600`), points it at `~/worktrees`, and runs it as a service on loopback. **No Tailscale involvement**, so it can be run by the account that runs the app.
+2. [`scripts/expose-code-server-tailscale.sh`](../scripts/expose-code-server-tailscale.sh) — exposes the loopback code-server over **Tailscale Serve** on a dedicated HTTPS port (keeping it on the tailnet — the same trust boundary as the app, never `funnel`) and prints the `CODE_SERVER_URL` to set. Run by someone with Tailscale access.
+
+Both source [`scripts/lib-code-server.sh`](../scripts/lib-code-server.sh) so the loopback/HTTPS ports stay in sync. Because code-server runs as a normal host process with filesystem access to the worktrees, edits made in it land directly in the session's clone, ready for the agent (or the user) to commit and push.
 
 ## UI Screens
 
@@ -713,7 +718,9 @@ clawed-abode/
 │   └── agent-types.ts          # Shared types (PartialAssistantMessage)
 ├── scripts/
 │   ├── hash-password.ts        # Password hashing utility
-│   ├── setup-code-server.sh    # Install/expose code-server for remote file editing
+│   ├── lib-code-server.sh      # Shared config sourced by the code-server scripts
+│   ├── setup-code-server.sh    # Install + run code-server (app-side, no Tailscale)
+│   ├── expose-code-server-tailscale.sh # Expose code-server over Tailscale Serve
 │   └── update.sh               # Production update: pull, install, migrate, build, restart
 ├── src/
 │   ├── server/
