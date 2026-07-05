@@ -41,7 +41,17 @@ To keep the transcript focused, `MessageList` / `MessageBubble` apply three rule
   `renderSubagentTranscript` on `MessageListContext` (a callback rather than a
   direct import, to avoid a `TaskDisplay` → `MessageBubble` cycle). Nesting works
   recursively because a nested Task inside a subagent transcript reads the same
-  context.
+  context. `SubagentTranscript` owns its "Subagent activity:" heading and returns
+  `null` when every child filters out, so the Task never shows an empty section.
+
+The top-level list and each nested `SubagentTranscript` share one row-visibility
+predicate, `isVisibleTranscriptMessage(message, pairedMessageIds)`, so the two
+lists can't drift; the top-level list layers on only the
+`getParentToolUseId === null` clause.
+
+`isRecognizedMessage` only assigns a category to system subtypes that still
+render (`error`, `compact_boundary`); `init`/hooks/generic notices are hidden
+upstream, so they intentionally have no category.
 
 ### Adding a Specialized Tool Renderer
 
@@ -60,6 +70,6 @@ To keep the transcript focused, `MessageList` / `MessageBubble` apply three rule
 
 - `assistant` - Claude responses with text/tool_use blocks
 - `user` - User prompts or tool results
-- `systemInit` - Session started metadata
+- `systemError` / `systemCompactBoundary` - the only system messages that render
 - `result` - Turn completion with cost/usage
 - Unknown types fall back to `RawJsonDisplay`

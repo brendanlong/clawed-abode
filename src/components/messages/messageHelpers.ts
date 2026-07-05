@@ -21,12 +21,8 @@ export type MessageCategory =
   | 'user'
   | 'userInterrupt'
   | 'toolResult'
-  | 'system'
-  | 'systemInit'
   | 'systemError'
   | 'systemCompactBoundary'
-  | 'hookStarted'
-  | 'hookResponse'
   | 'result';
 
 export type RecognitionResult =
@@ -131,25 +127,33 @@ export function isHiddenSystemMessage(type: string, content: MessageContent): bo
 }
 
 /**
- * Whether an assistant message is purely one or more tool calls, with no visible
- * text or thinking. Consecutive such messages are the "back-to-back tool calls"
+ * Whether an assistant message is purely one or more tool calls, with no other
+ * visible content. Consecutive such messages are the "back-to-back tool calls"
  * that should render tightly packed rather than with full inter-message spacing.
+ *
+ * Any block that renders its own visible element above the tool calls — non-empty
+ * text or thinking, a redacted-thinking indicator, or a server_tool_use (advisor)
+ * indicator — disqualifies the message. Keep in sync with
+ * {@link hasRenderableAssistantContent}.
  */
 export function isToolCallOnlyMessage(content: MessageContent): boolean {
   const blocks = content?.message?.content;
   if (!Array.isArray(blocks)) return false;
   let hasToolUse = false;
   for (const block of blocks) {
-    if (block.type === 'tool_use') {
-      hasToolUse = true;
-    } else if (block.type === 'text' && typeof block.text === 'string' && block.text.trim()) {
-      return false;
-    } else if (
-      block.type === 'thinking' &&
-      typeof block.thinking === 'string' &&
-      block.thinking.trim()
-    ) {
-      return false;
+    switch (block.type) {
+      case 'tool_use':
+        hasToolUse = true;
+        break;
+      case 'text':
+        if (typeof block.text === 'string' && block.text.trim()) return false;
+        break;
+      case 'thinking':
+        if (typeof block.thinking === 'string' && block.thinking.trim()) return false;
+        break;
+      case 'redacted_thinking':
+      case 'server_tool_use':
+        return false;
     }
   }
   return hasToolUse;
@@ -183,6 +187,28 @@ export function groupSubagentMessages(messages: DisplayMessage[]): Map<string, D
     }
   }
   return groups;
+}
+
+/**
+ * Whether a message should render as its own row in a transcript (top-level list
+ * or a nested subagent transcript). Shared by both so the two can't drift.
+ *
+ * Excludes: tool-result messages already paired inline onto their tool call,
+ * hidden system messages (see {@link isHiddenSystemMessage} — which subsumes the
+ * ignored-subtype set, and skip_transcript messages are never persisted), and
+ * empty assistant fragments. Does NOT apply the top-level "no subagent messages"
+ * rule — callers add that separately, since a subagent transcript renders exactly
+ * those messages.
+ */
+export function isVisibleTranscriptMessage(
+  message: DisplayMessage,
+  pairedMessageIds: Set<string>
+): boolean {
+  if (pairedMessageIds.has(message.id)) return false;
+  const content = message.content as MessageContent;
+  if (isHiddenSystemMessage(message.type, content)) return false;
+  if (message.type === 'assistant' && !hasRenderableAssistantContent(content)) return false;
+  return true;
 }
 
 /**
@@ -225,15 +251,10 @@ export function isRecognizedMessage(type: string, content: MessageContent): Reco
     return { recognized: false };
   }
 
-  // System init messages
-  if (type === 'system' && content.subtype === 'init') {
-    if (content.model && content.session_id) {
-      return { recognized: true, category: 'systemInit' };
-    }
-    return { recognized: false };
-  }
-
-  // System error messages
+  // The only system messages shown in the transcript are errors and compact
+  // boundaries (see isHiddenSystemMessage). Every other system subtype — init,
+  // hooks, generic notices — is hidden upstream in MessageBubble/MessageList, so
+  // it is intentionally not given a dedicated category here.
   if (type === 'system' && content.subtype === 'error') {
     if (Array.isArray(content.content)) {
       return { recognized: true, category: 'systemError' };
@@ -244,21 +265,6 @@ export function isRecognizedMessage(type: string, content: MessageContent): Reco
   // Compact boundary messages
   if (type === 'system' && content.subtype === 'compact_boundary') {
     return { recognized: true, category: 'systemCompactBoundary' };
-  }
-
-  // Hook started messages (pending hooks show loading state)
-  if (type === 'system' && content.subtype === 'hook_started') {
-    return { recognized: true, category: 'hookStarted' };
-  }
-
-  // Hook response messages
-  if (type === 'system' && content.subtype === 'hook_response') {
-    return { recognized: true, category: 'hookResponse' };
-  }
-
-  // Other system messages
-  if (type === 'system') {
-    return { recognized: true, category: 'system' };
   }
 
   // Result messages
