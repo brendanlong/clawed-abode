@@ -80,9 +80,6 @@ export function mergeSlashCommands(
 // Namespace UUID for generating deterministic IDs from content.
 const ERROR_LINE_NAMESPACE = '6ba7b810-9dad-11d1-80b4-00c04fd430c8';
 
-/** Number of times to retry sequence assignment when a concurrent insert wins the race. */
-const SEQUENCE_RETRY_LIMIT = 5;
-
 /**
  * `turnActive` is derived ENTIRELY from the message stream by `reduceSessionMessage`
  * ([`session-status.ts`](../../lib/session-status.ts)) — a top-level
@@ -180,13 +177,24 @@ export function _setQueryFactory(factory: QueryFactory | null): void {
 }
 
 /**
- * Insert a message with the next per-session sequence, retrying on sequence
- * collision. Distinguishes a true duplicate (same `id` already present → returns
- * `inserted: false`) from a `(sessionId, sequence)` race against a concurrent
- * insert (recompute and retry, so a real message is never silently dropped).
- * Emits the `new_message` SSE event on success.
+ * Insert a message, assigning its per-session `sequence` ATOMICALLY. The sequence
+ * is drawn from the `Session.messageSequence` counter via a single
+ * `UPDATE ... SET messageSequence = messageSequence + 1 ... RETURNING` statement.
+ * Because it is one autocommit statement, SQLite serializes it on the write lock,
+ * so concurrent inserts for the same session each get a distinct value and can
+ * never collide on `@@unique([sessionId, sequence])` — no read-then-insert, no
+ * retry. (An interactive transaction is deliberately avoided: on SQLite's
+ * single-writer model, many concurrent interactive transactions contend on the
+ * write lock and deadlock/time out; a single statement cannot.)
+ *
+ * A duplicate `id` (same message inserted twice — e.g. an idempotent synthetic
+ * tool_result) makes the `message.create` fail with P2002; the call is a no-op
+ * returning `inserted: false`. The counter was already advanced, so that
+ * `sequence` is skipped — a harmless gap, since pagination orders by `sequence`
+ * and never assumes contiguity. Emits the `new_message` SSE event on a real
+ * insert.
  */
-async function insertMessage(params: {
+export async function insertMessage(params: {
   sessionId: string;
   id: string;
   type: 'system' | 'user' | 'assistant' | 'result';
@@ -195,45 +203,38 @@ async function insertMessage(params: {
   const { sessionId, id, type, content } = params;
   const contentJson = JSON.stringify(content);
 
-  for (let attempt = 0; attempt < SEQUENCE_RETRY_LIMIT; attempt++) {
-    const last = await prisma.message.findFirst({
-      where: { sessionId },
-      orderBy: { sequence: 'desc' },
-      select: { sequence: true },
-    });
-    const sequence = (last?.sequence ?? -1) + 1;
+  // Atomically reserve this insert's exclusive sequence. RETURNING gives back the
+  // post-increment counter; the reserved sequence is one less.
+  const rows = await prisma.$queryRaw<{ messageSequence: number | bigint }[]>`
+    UPDATE "Session"
+    SET "messageSequence" = "messageSequence" + 1
+    WHERE "id" = ${sessionId}
+    RETURNING "messageSequence"
+  `;
+  if (rows.length === 0) {
+    throw new Error(`insertMessage: session ${sessionId} not found`);
+  }
+  const sequence = Number(rows[0].messageSequence) - 1;
 
-    try {
-      const message = await prisma.message.create({
-        data: { id, sessionId, sequence, type, content: contentJson },
-      });
-      sseEvents.emitNewMessage(sessionId, {
-        id,
-        sessionId,
-        sequence,
-        type,
-        content,
-        createdAt: message.createdAt,
-      });
-      return { inserted: true, sequence };
-    } catch (err) {
-      if (!(err && typeof err === 'object' && 'code' in err && err.code === 'P2002')) {
-        throw err;
-      }
-      // Unique violation: distinguish a duplicate id (idempotent no-op) from a
-      // sequence race (different id collided) — only the latter should retry.
-      const existing = await prisma.message.findUnique({ where: { id }, select: { id: true } });
-      if (existing) {
-        log.debug('insertMessage: duplicate id, skipping', { sessionId, id });
-        return { inserted: false };
-      }
-      log.debug('insertMessage: sequence collision, retrying', { sessionId, attempt });
+  let createdAt: Date;
+  try {
+    const message = await prisma.message.create({
+      data: { id, sessionId, sequence, type, content: contentJson },
+    });
+    createdAt = message.createdAt;
+  } catch (err) {
+    // The only unique key left to violate is the primary-key `id` (the sequence
+    // is race-free): a duplicate message. Idempotent no-op; the reserved sequence
+    // is skipped (a harmless gap).
+    if (err && typeof err === 'object' && 'code' in err && err.code === 'P2002') {
+      log.debug('insertMessage: duplicate id, skipping', { sessionId, id });
+      return { inserted: false };
     }
+    throw err;
   }
 
-  throw new Error(
-    `Failed to insert message ${id} for ${sessionId} after ${SEQUENCE_RETRY_LIMIT} attempts`
-  );
+  sseEvents.emitNewMessage(sessionId, { id, sessionId, sequence, type, content, createdAt });
+  return { inserted: true, sequence };
 }
 
 /**
