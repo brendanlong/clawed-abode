@@ -3,6 +3,7 @@
 import React from 'react';
 import { MarkdownContent } from '@/components/MarkdownContent';
 import type { ContentBlock, ToolCall, ToolResultMap } from './types';
+import { buildToolCallFromBlock } from './messageHelpers';
 import { ToolCallDisplay } from './ToolCallDisplay';
 import { GlobDisplay } from './GlobDisplay';
 import { GrepDisplay } from './GrepDisplay';
@@ -14,7 +15,7 @@ import { WebFetchDisplay } from './WebFetchDisplay';
 import { BashDisplay } from './BashDisplay';
 import { NotebookEditDisplay } from './NotebookEditDisplay';
 import { SkillDisplay } from './SkillDisplay';
-import { TaskDisplay } from './TaskDisplay';
+import { SubagentToolDisplay } from './SubagentToolDisplay';
 import { EnterPlanModeDisplay } from './EnterPlanModeDisplay';
 import { ExitPlanModeDisplay } from './ExitPlanModeDisplay';
 import { TodoWriteDisplay } from './TodoWriteDisplay';
@@ -39,9 +40,12 @@ const TOOL_DISPLAY_MAP: Record<string, React.ComponentType<{ tool: ToolCall }>> 
   Skill: SkillDisplay,
   // Subagent invocation. Current SDK spawns subagents via the `Agent` tool;
   // older sessions used `Task`. Both share the same input shape (subagent_type /
-  // description / prompt) and both nest the subagent's grouped transcript.
-  Agent: TaskDisplay,
-  Task: TaskDisplay,
+  // description / prompt). SubagentToolDisplay renders the full box inline, or a
+  // compact "started" breadcrumb when MessageList has relocated the box (running
+  // subagents pin to the bottom; finished-concurrent ones move to their finish
+  // position). See computeSubagentPlacements.
+  Agent: SubagentToolDisplay,
+  Task: SubagentToolDisplay,
   EnterPlanMode: EnterPlanModeDisplay,
   ExitPlanMode: ExitPlanModeDisplay,
   TodoWrite: TodoWriteDisplay,
@@ -89,14 +93,7 @@ function renderContentBlocks(blocks: ContentBlock[], toolResults?: ToolResultMap
       {toolUseBlocks.length > 0 && (
         <div className="mt-2 space-y-2">
           {toolUseBlocks.map((block) => {
-            const result = block.id ? toolResults?.get(block.id) : undefined;
-            const tool: ToolCall = {
-              name: block.name || 'Unknown',
-              id: block.id,
-              input: block.input,
-              output: result?.content,
-              is_error: result?.is_error,
-            };
+            const tool = buildToolCallFromBlock(block, toolResults);
 
             const DisplayComponent = TOOL_DISPLAY_MAP[block.name ?? ''];
             if (DisplayComponent) {

@@ -20,6 +20,12 @@ class ObserverStub {
 globalThis.ResizeObserver = ObserverStub as unknown as typeof ResizeObserver;
 globalThis.IntersectionObserver = ObserverStub as unknown as typeof IntersectionObserver;
 
+// jsdom doesn't implement scrollIntoView, which MessageList calls on mount to
+// auto-scroll to the bottom. Stub it so mounting the list doesn't throw.
+if (!Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = function scrollIntoView(): void {};
+}
+
 // Cleanup after each test
 afterEach(() => {
   cleanup();

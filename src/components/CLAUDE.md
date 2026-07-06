@@ -14,6 +14,8 @@ MessageList.tsx          # Orchestrates message list, pairs tool calls with resu
     ├── ToolCallDisplay.tsx     # Generic tool call (collapsible input/output)
     ├── TodoWriteDisplay.tsx    # Specialized: checklist with status icons
     ├── ToolResultDisplay.tsx
+    ├── SubagentToolDisplay.tsx # Routes an Agent/Task call to the full TaskDisplay
+    │                           #   or a "Subagent started" breadcrumb when relocated
     ├── TaskDisplay.tsx         # Subagent Task; nests the subagent's transcript
     ├── SubagentTranscript.tsx  # Nested transcript rendered inside a TaskDisplay
     ├── ResultDisplay.tsx
@@ -43,6 +45,16 @@ To keep the transcript focused, `MessageList` / `MessageBubble` apply three rule
   recursively because a nested Task inside a subagent transcript reads the same
   context. `SubagentTranscript` owns its "Subagent activity:" heading and returns
   `null` when every child filters out, so the Task never shows an empty section.
+- **Concurrent subagent boxes are relocated.** A background/async subagent runs
+  while the main agent generates its own top-level messages, so anchoring its box
+  at the spawn point makes that concurrent main-agent work look ungrouped.
+  `computeSubagentPlacements` (pure) leaves a compact "Subagent started"
+  breadcrumb at the spawn point (`SubagentToolDisplay` picks breadcrumb-vs-box
+  from `relocatedSubagentIds` on the context) and either **pins the live box at
+  the bottom** while it runs (gated on `isSessionRunning`) or **settles it inline
+  at its finish position** (terminal `task_notification`, else last child) once
+  done. Foreground subagents with nothing interleaved, and orphaned ones, stay
+  inline at spawn — unchanged. See DESIGN.md "Subagent Grouping & Output Density".
 
 The top-level list and each nested `SubagentTranscript` share one row-visibility
 predicate, `isVisibleTranscriptMessage(message, pairedMessageIds)`, so the two
