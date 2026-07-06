@@ -26,6 +26,13 @@ const mockSseEvents = vi.hoisted(() => ({
 }));
 vi.mock('./events', () => ({ sseEvents: mockSseEvents }));
 
+// Uploads: resolve stored names to paths. Default passthrough; a test overrides it
+// to reject, to exercise the non-destructive flush/idle-send error paths.
+const mockResolveUploadPaths = vi.hoisted(() =>
+  vi.fn(async (_id: string, names: string[]) => names)
+);
+vi.mock('./uploads', () => ({ resolveUploadPaths: mockResolveUploadPaths }));
+
 vi.mock('./github', () => ({
   fetchPullRequestForBranch: vi.fn().mockResolvedValue(undefined),
 }));
@@ -677,6 +684,78 @@ describe('claude-runner persistent streaming loop', () => {
     expect(fake.inputs[1].message.content).toBe('leftover\n\nnew');
     expect(getQueuedMessages(sessionId)).toHaveLength(0);
     expect(isClaudeRunning(sessionId)).toBe(true);
+
+    stopSession(sessionId);
+  });
+
+  it('re-queues (does not lose) messages when a flush fails to persist', async () => {
+    // Non-destructive flush: if preparing/persisting a queued message throws at
+    // turn end, the messages must be handed back to the queue (not silently lost)
+    // and the session must go idle rather than pin the composer "working".
+    const fake = makeFakeQuery();
+    _setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+
+    await sendUserMessage(sessionId, 'first');
+    fake.emit(messageStart());
+    await waitFor(() => isClaudeRunning(sessionId));
+
+    // Queue a message with an attachment; resolving it will blow up during flush.
+    await sendUserMessage(sessionId, 'has attachment', ['aaaa1111-doc.md']);
+    expect(getQueuedMessages(sessionId).map((m) => m.text)).toEqual(['has attachment']);
+    mockResolveUploadPaths.mockRejectedValueOnce(new Error('fs boom'));
+
+    // Turn ends naturally → flush fires → prepare throws → non-destructive recovery.
+    fake.emit(messageDelta('end_turn'));
+    fake.emit(result());
+    await waitFor(() => !isClaudeRunning(sessionId));
+
+    // The message is back in the queue (with its attachment), nothing was pushed to
+    // the SDK, and the composer is idle.
+    const requeued = getQueuedMessages(sessionId);
+    expect(requeued.map((m) => m.text)).toEqual(['has attachment']);
+    expect(requeued[0].attachments).toEqual(['aaaa1111-doc.md']);
+    expect(fake.inputs).toHaveLength(1);
+    expect(mockSseEvents.emitClaudeRunning).toHaveBeenLastCalledWith(sessionId, false);
+
+    stopSession(sessionId);
+  });
+
+  it('leaves the queue intact when interrupted during the flush window (before the push)', async () => {
+    // The interrupt-vs-flush race: the turn ends naturally and the flush starts,
+    // but the user hits Stop while the flush is still preparing (before it pushes).
+    // The flush must abort — re-queue and go idle — NOT fire the queue as a turn.
+    const fake = makeFakeQuery();
+    _setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+
+    await sendUserMessage(sessionId, 'first');
+    fake.emit(messageStart());
+    await waitFor(() => isClaudeRunning(sessionId));
+    await sendUserMessage(sessionId, 'queued', ['aaaa1111-doc.md']);
+
+    // Make attachment resolution hang so we can interrupt mid-flush.
+    let release!: () => void;
+    mockResolveUploadPaths.mockReturnValueOnce(
+      new Promise((res) => {
+        release = () => res(['/p/doc.md']);
+      })
+    );
+
+    // Turn ends → the flush starts and blocks in prepare.
+    fake.emit(messageDelta('end_turn'));
+    fake.emit(result());
+    await waitFor(() => mockResolveUploadPaths.mock.calls.length >= 1);
+
+    // User hits Stop during the flush window.
+    expect(await interruptClaude(sessionId)).toBe(true);
+
+    // Let prepare finish; the flush detects the interrupt, re-queues, goes idle.
+    release();
+    await waitFor(() => !isClaudeRunning(sessionId));
+
+    expect(fake.inputs).toHaveLength(1); // the queue was NOT pushed as a new turn
+    expect(getQueuedMessages(sessionId).map((m) => m.text)).toEqual(['queued']);
 
     stopSession(sessionId);
   });
