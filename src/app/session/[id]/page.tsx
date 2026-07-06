@@ -128,20 +128,28 @@ function SessionView({ sessionId }: { sessionId: string }) {
   // Send a prompt (also stops any playback). The server decides whether it starts
   // a turn or is queued (async "btw mode") — the client always just sends. A
   // running session is required. Attachments are passed as their stored names.
+  // Returns the send promise so the composer can restore text on failure.
   const handleSendPrompt = useCallback(
     (prompt: string, attachments: UploadedAttachment[] = []) => {
       if (!session || session.status !== 'running') {
-        return;
+        return Promise.reject(new Error('Session is not running'));
       }
       stopWithAutoReadFlag();
-      sendPrompt(prompt, attachments.length ? attachments.map((a) => a.storedName) : undefined);
+      return sendPrompt(
+        prompt,
+        attachments.length ? attachments.map((a) => a.storedName) : undefined
+      );
     },
     [session, sendPrompt, stopWithAutoReadFlag]
   );
 
-  // Adapter for callers that only produce text (plan responses, voice transcripts).
+  // Adapter for callers that only produce text (plan responses, voice transcripts)
+  // and don't handle the send promise. Swallow rejection so a failed send doesn't
+  // surface as an unhandled promise rejection (the composer path handles its own).
   const handleSendText = useCallback(
-    (prompt: string) => handleSendPrompt(prompt),
+    (prompt: string) => {
+      void handleSendPrompt(prompt).catch(() => {});
+    },
     [handleSendPrompt]
   );
 
@@ -330,6 +338,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
               isRunning={isClaudeRunning}
               isInterrupting={isInterrupting}
               disabled={session.status !== 'running'}
+              queuedCount={queuedMessages.length}
               commands={commands}
               voiceEnabled={voiceConfig.enabled}
               voiceAutoSend={voiceConfig.autoSend}

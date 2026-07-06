@@ -1,7 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { PromptInput } from './PromptInput';
+import { MAX_QUEUED_MESSAGES } from '@/lib/queued-message';
+
+// Mock the upload hook so a file can be attached without hitting /api/upload.
+const { mockUpload } = vi.hoisted(() => ({ mockUpload: vi.fn() }));
+vi.mock('@/hooks/useFileUpload', () => ({
+  useFileUpload: () => ({
+    upload: mockUpload,
+    uploading: false,
+    error: null,
+    clearError: vi.fn(),
+  }),
+}));
 
 describe('PromptInput', () => {
   const defaultProps = {
@@ -159,6 +171,121 @@ describe('PromptInput', () => {
       await user.click(screen.getByRole('button', { name: /queue/i }));
 
       expect(onSubmit).toHaveBeenCalledWith('queued message', undefined);
+    });
+  });
+
+  describe('send failure handling', () => {
+    it('restores the typed text and shows an error when the send rejects', async () => {
+      const onSubmit = vi.fn().mockRejectedValue(new Error('Queue is full'));
+      const user = userEvent.setup();
+      render(<PromptInput {...defaultProps} onSubmit={onSubmit} />);
+
+      const textarea = screen.getByRole('textbox');
+      await user.type(textarea, 'important message');
+      await user.click(screen.getByRole('button', { name: /send/i }));
+
+      // The failed text is restored so it isn't lost, and the error surfaces.
+      await waitFor(() => expect(textarea).toHaveValue('important message'));
+      expect(screen.getByText('Queue is full')).toBeInTheDocument();
+    });
+
+    it('does not restore text if the user started a new message before the error', async () => {
+      let rejectSend: (reason: Error) => void = () => {};
+      const onSubmit = vi.fn().mockReturnValue(
+        new Promise((_, reject) => {
+          rejectSend = reject;
+        })
+      );
+      const user = userEvent.setup();
+      render(<PromptInput {...defaultProps} onSubmit={onSubmit} />);
+
+      const textarea = screen.getByRole('textbox');
+      await user.type(textarea, 'first');
+      await user.click(screen.getByRole('button', { name: /send/i }));
+      // Composer cleared optimistically; user starts typing a new message.
+      await user.type(textarea, 'second');
+
+      rejectSend(new Error('boom'));
+
+      // The in-progress new message is preserved (not clobbered by the restore).
+      await waitFor(() => expect(screen.getByText('boom')).toBeInTheDocument());
+      expect(textarea).toHaveValue('second');
+    });
+
+    it('clears the send error when the user edits the composer', async () => {
+      const onSubmit = vi.fn().mockRejectedValue(new Error('Queue is full'));
+      const user = userEvent.setup();
+      render(<PromptInput {...defaultProps} onSubmit={onSubmit} />);
+
+      const textarea = screen.getByRole('textbox');
+      await user.type(textarea, 'msg');
+      await user.click(screen.getByRole('button', { name: /send/i }));
+      await waitFor(() => expect(screen.getByText('Queue is full')).toBeInTheDocument());
+
+      await user.type(textarea, '!');
+      expect(screen.queryByText('Queue is full')).not.toBeInTheDocument();
+    });
+
+    it('restores attachments (not just text) when the send rejects', async () => {
+      const attachment = {
+        name: 'photo.png',
+        storedName: 'x1_photo.png',
+        path: '/tmp/x1_photo.png',
+      };
+      mockUpload.mockResolvedValue([attachment]);
+      const onSubmit = vi.fn().mockRejectedValue(new Error('Queue is full'));
+      const user = userEvent.setup();
+      const { container } = render(<PromptInput {...defaultProps} onSubmit={onSubmit} />);
+
+      const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+      await user.upload(fileInput, new File(['data'], 'photo.png', { type: 'image/png' }));
+
+      // The attachment chip appears (an attachment alone can be sent).
+      await waitFor(() => expect(screen.getByText('photo.png')).toBeInTheDocument());
+      await user.click(screen.getByRole('button', { name: /send/i }));
+
+      // Sent with the attachment, then restored after the rejection.
+      await waitFor(() => expect(onSubmit).toHaveBeenCalledWith('', [attachment]));
+      await waitFor(() => expect(screen.getByText('photo.png')).toBeInTheDocument());
+      expect(screen.getByText('Queue is full')).toBeInTheDocument();
+    });
+  });
+
+  describe('queue overflow', () => {
+    it('disables submit and explains when the queue is full while running', async () => {
+      const onSubmit = vi.fn();
+      const user = userEvent.setup();
+      render(
+        <PromptInput
+          {...defaultProps}
+          onSubmit={onSubmit}
+          isRunning={true}
+          queuedCount={MAX_QUEUED_MESSAGES}
+        />
+      );
+
+      await user.type(screen.getByRole('textbox'), 'one more');
+
+      const queueButton = screen.getByRole('button', { name: /queue/i });
+      expect(queueButton).toBeDisabled();
+      expect(screen.getByText(/messages already queued/i)).toBeInTheDocument();
+
+      await user.click(queueButton);
+      expect(onSubmit).not.toHaveBeenCalled();
+    });
+
+    it('does not block submit when the queue is full but no turn is running', async () => {
+      // Idle sends start a turn rather than queueing, so the cap does not apply.
+      const onSubmit = vi.fn();
+      const user = userEvent.setup();
+      render(
+        <PromptInput {...defaultProps} onSubmit={onSubmit} queuedCount={MAX_QUEUED_MESSAGES} />
+      );
+
+      await user.type(screen.getByRole('textbox'), 'hello');
+      await user.click(screen.getByRole('button', { name: /send/i }));
+
+      expect(onSubmit).toHaveBeenCalledWith('hello', undefined);
     });
   });
 

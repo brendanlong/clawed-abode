@@ -332,6 +332,8 @@ _Known limitation_: `queuedMessages` is **in-memory** only. A stop/restart befor
 
 On the client, `PromptInput` keeps the textarea and submit button enabled while running (the button reads "Queue" instead of "Send"), and the Stop button is shown **alongside** it rather than replacing it, so a user can interrupt the current turn and queue the next message independently.
 
+**A failed send never loses text typed in the composer.** Because the server owns the queue, **every** `claude.send` is a round-trip that can fail (queue overflow, a network blip, or the session flipping out of `running`). `PromptInput` clears the composer optimistically for a snappy feel, but `send` returns the mutation's promise (via `mutateAsync`), so on rejection the composer **restores** the just-typed text and attachments — unless the user already began a new message, which is left intact — and surfaces the reason inline (reusing the same dismissible affordance as the upload-error path; a fresh edit also clears it). Overflow is additionally prevented proactively: the queue is bounded at `MAX_QUEUED_MESSAGES` (from [`queued-message.ts`](../src/lib/queued-message.ts), surfaced to the client via `getQueuedMessages`), and while a turn is running with the queue already full the Queue button is disabled with an explanatory line, so the pathological 50-queued edge is blocked rather than erroring. (The cap gates only mid-turn queueing — an idle send starts a turn and is never queued.) _Not yet covered_: the `VoiceControlPanel` send paths route through `handleSendText`, which swallows the rejection (`.catch`) and does not restore the transcript, so a voice message sent while the queue is full / session non-running is still lost silently — tracked as a follow-up.
+
 ### Reconnection Flow
 
 Reconnection is handled by the SSE layer's native resume rather than an explicit
@@ -853,22 +855,29 @@ clawed-abode/
 
 ### Test Categories
 
-- **Unit tests** (`*.test.ts`): Pure functions and isolated logic. Run with `pnpm test:unit`.
-- **Integration tests** (`*.integration.test.ts`): Tests using real external systems (git, SQLite). Run with `pnpm test:integration`.
+Each category has its own Vitest config, so they can run (and be isolated) independently:
+
+- **Unit tests** (`*.test.ts`): Pure functions and isolated logic, in a `node` environment. Run with `pnpm test:unit` (`vitest.config.ts`). This config **excludes** `*.integration.test.ts` and component `*.test.tsx`.
+- **Component tests** (`*.test.tsx`): React component / DOM tests in a `jsdom` environment (e.g. `PromptInput.test.tsx`). Run with `pnpm test:component` (`vitest.component.config.ts`). These live under a separate config because they need a DOM, so a bare `vitest run` (unit config) would silently skip them.
+- **Integration tests** (`*.integration.test.ts`): Tests using real external systems (git, SQLite). Run with `pnpm test:integration` (`vitest.integration.config.ts`).
+
+`pnpm test:run` runs **all three** suites in sequence (unit → component → integration) — the same set CI runs — so it's the single command to verify before committing.
 
 ### Test File Locations
 
 Tests are co-located with source files:
 
-- `src/lib/auth.ts` → `src/lib/auth.test.ts`
-- `src/server/services/git.ts` → `src/server/services/git.integration.test.ts`
+- `src/lib/auth.ts` → `src/lib/auth.test.ts` (unit)
+- `src/components/PromptInput.tsx` → `src/components/PromptInput.test.tsx` (component)
+- `src/server/services/git.ts` → `src/server/services/git.integration.test.ts` (integration)
 
 ### Running Tests
 
 ```bash
 pnpm test          # Watch mode
-pnpm test:run      # Single run
+pnpm test:run      # Single run — ALL suites (unit + component + integration)
 pnpm test:unit     # Unit tests only
+pnpm test:component    # Component/DOM tests only
 pnpm test:integration  # Integration tests only
 pnpm test:coverage # With coverage report
 ```

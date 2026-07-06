@@ -264,7 +264,7 @@ pnpm start            # Production server
 pnpm run db:migrate   # Run database migrations
 pnpm run db:generate  # Generate Prisma client
 pnpm test             # Run tests (watch mode)
-pnpm test:run         # Run tests (single run)
+pnpm test:run         # Run all test suites once (unit + component + integration)
 ```
 
 ## Troubleshooting
