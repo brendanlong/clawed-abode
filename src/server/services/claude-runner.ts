@@ -53,6 +53,8 @@ import { type SanitizationInfo } from '@/lib/sanitization';
 import { attachToolResultSanitizations } from '@/lib/message-sanitization';
 import { PARTIAL_MESSAGE_ID_PREFIX } from '@/lib/message-cache';
 import type { ContainerEnvVar } from './repo-settings';
+import { resolveUploadPaths } from './uploads';
+import { MAX_QUEUED_MESSAGES, type QueuedMessage } from '@/lib/queued-message';
 
 const execFileAsync = promisify(execFile);
 
@@ -163,15 +165,24 @@ interface SessionState {
    */
   toolSanitizations: Map<string, SanitizationInfo>;
   /**
-   * Sanitized user prompts sent while a main-agent turn was active, awaiting flush
-   * into a single combined turn as soon as the current turn ends (async "btw
-   * mode"). Persisted individually when queued (so they appear in the transcript
-   * immediately); this only holds the text to push into the SDK on flush.
-   * In-memory only — lost on stop/restart before flush.
+   * User messages sent while a main-agent turn was active (async "btw mode"),
+   * awaiting flush into a single combined turn when the turn ends. Unlike the
+   * old design these are NOT persisted while queued — they live only here and are
+   * surfaced to the client over the `queued` SSE channel, so the user can ✕-remove
+   * one before it sends (see {@link cancelQueuedMessage}). Persisted (as separate
+   * transcript bubbles) only when they flush. In-memory only — lost on stop/restart
+   * before flush (nothing lingers in the transcript because nothing was persisted).
    */
-  queuedPrompts: string[];
+  queuedMessages: QueuedMessage[];
   /**
-   * True between flushing queued prompts and the flushed turn's `message_start`.
+   * Set by {@link interruptClaude} so the turn-end it triggers does NOT flush the
+   * queue: an interrupt must leave queued messages sitting (removable), never fire
+   * them as a fresh turn the instant the user hit Stop. Consumed (cleared) by the
+   * turn-end in {@link applyStatus}.
+   */
+  interruptRequested: boolean;
+  /**
+   * True between flushing queued messages and the flushed turn's `message_start`.
    * While set, `applyStatus` suppresses the just-ended turn's `turnActive` clear
    * (and its trailing `result`) so the flag stays continuously true across the
    * handoff — no idle blip, no spurious "turn ended" side effects (work-complete
@@ -320,7 +331,8 @@ function getSessionState(sessionId: string, workingDir: string): SessionState {
       boundSettings: null,
       settingsKey: '',
       toolSanitizations: new Map(),
-      queuedPrompts: [],
+      queuedMessages: [],
+      interruptRequested: false,
       awaitingFlushTurn: false,
     };
     sessions.set(sessionId, state);
@@ -594,9 +606,14 @@ async function buildSdkOptions(params: {
  */
 function clearLiveStatus(sessionId: string, state: SessionState): void {
   // A pending flush is abandoned when the query tears down; drop any queued
-  // prompts and the handoff flag so a revived query starts clean.
+  // messages and the handoff flag so a revived query starts clean. Emit the empty
+  // queue so the client's indicator clears too (they were never persisted).
   state.awaitingFlushTurn = false;
-  state.queuedPrompts = [];
+  state.interruptRequested = false;
+  if (state.queuedMessages.length > 0) {
+    state.queuedMessages = [];
+    sseEvents.emitQueuedMessages(sessionId, []);
+  }
   if (state.status.turnActive) {
     state.status = { ...state.status, turnActive: false };
     sseEvents.emitClaudeRunning(sessionId, false);
@@ -640,26 +657,132 @@ function isTopLevelMessageStart(message: SDKMessage): boolean {
   return event?.type === 'message_start';
 }
 
+/** A user message that has been resolved + sanitized but not yet persisted. */
+interface PreparedMessage {
+  content: string;
+  sanitization?: SanitizationInfo;
+}
+
 /**
- * Flush prompts queued while the main agent was busy into a single new turn.
- * Called when the turn ends (see {@link applyStatus}). Multiple prompts queued
- * during the turn are combined into one push so Claude addresses them together
- * ("btw mode"). The prompts were already persisted individually when queued, so
- * this only pushes the combined text; the SDK picking it up drives `turnActive`
- * back to true via the next `message_start` (we deliberately do NOT toggle it
- * here, so the just-ended turn's `result` can't clear an optimistic flag).
+ * Resolve attachments, build the attachment prefix, and sanitize — with **no DB
+ * writes or other side effects**, so a prepared message can be safely discarded if
+ * the delivery is aborted (an interrupt or teardown landing during the async
+ * window). This separation is what keeps the flush/idle-send paths non-destructive:
+ * the expensive/failure-prone work (fs, sanitizer) happens before anything is
+ * committed, so on abort the queued messages can just be handed back untouched.
  */
-function flushQueuedPrompts(sessionId: string, state: SessionState): void {
-  if (state.queuedPrompts.length === 0 || !state.input) return;
-  const combined = state.queuedPrompts.join('\n\n');
-  const count = state.queuedPrompts.length;
-  state.queuedPrompts = [];
-  log.info('Flushing queued prompts into a new turn', { sessionId, count });
-  state.input.push({
-    type: 'user',
-    message: { role: 'user', content: combined },
-    parent_tool_use_id: null,
+async function prepareUserMessage(
+  sessionId: string,
+  text: string,
+  attachments: string[]
+): Promise<PreparedMessage> {
+  const paths = attachments.length ? await resolveUploadPaths(sessionId, attachments) : [];
+  const withAttachments = buildPromptWithAttachments(text, paths);
+  // Strip hidden-content injection vectors before the prompt is persisted or seen
+  // by the model. `info` records any findings so the persisted message can show a
+  // "content filtered" badge.
+  const { cleaned, info } = await sanitizeUntrustedInput(withAttachments, {
+    sessionId,
+    source: 'user-message',
   });
+  return { content: cleaned, ...(info ? { sanitization: info } : {}) };
+}
+
+/** Persist a prepared message as its own transcript bubble. */
+function insertPreparedMessage(sessionId: string, prepared: PreparedMessage) {
+  return insertMessage({
+    sessionId,
+    id: uuid(),
+    type: 'user',
+    content: {
+      type: 'user',
+      content: prepared.content,
+      ...(prepared.sanitization ? { sanitization: prepared.sanitization } : {}),
+    },
+  });
+}
+
+/**
+ * Put messages back at the front of the queue (order preserved) and re-emit, so an
+ * aborted flush/idle-send (interrupt, teardown, or a persist error) never silently
+ * loses the user's queued messages. No-op for an empty list.
+ */
+function requeueMessages(sessionId: string, state: SessionState, messages: QueuedMessage[]): void {
+  if (messages.length === 0) return;
+  state.queuedMessages = [...messages, ...state.queuedMessages];
+  sseEvents.emitQueuedMessages(sessionId, state.queuedMessages);
+}
+
+/**
+ * End a flush handoff without a flushed turn: clear the handoff/interrupt flags and
+ * drop `turnActive` to idle, emitting the change. Used when a flush is aborted
+ * (interrupt landed, query torn down, or a persist error) so the composer isn't
+ * left pinned "working".
+ */
+function endFlushHandoff(sessionId: string, state: SessionState): void {
+  state.awaitingFlushTurn = false;
+  state.interruptRequested = false;
+  if (state.status.turnActive) {
+    state.status = { ...state.status, turnActive: false };
+    sseEvents.emitClaudeRunning(sessionId, false);
+  }
+}
+
+/**
+ * Flush messages queued while the main agent was busy into a single new turn.
+ * Called (fire-and-forget) when the turn ends naturally — the caller captures and
+ * clears the queue synchronously; this delivers them ("btw mode": Claude addresses
+ * them together). The SDK picking up the push drives `turnActive` back to true via
+ * the next `message_start`; we deliberately do NOT toggle it here, and
+ * `awaitingFlushTurn` bridges the gap so there's no idle blip.
+ *
+ * Robustness: sanitizing/resolving (the failure-prone, side-effect-free work) runs
+ * BEFORE any bubble is persisted, so if an interrupt lands in the flush window, or
+ * the query is torn down, or preparation throws, the messages are handed back to
+ * the queue (never silently lost) and the session goes idle. In particular an
+ * interrupt during the window must NOT let the queue fire as a fresh turn — the
+ * whole point of leaving queued messages queued on Stop.
+ */
+async function flushQueuedMessages(
+  sessionId: string,
+  state: SessionState,
+  messages: QueuedMessage[]
+): Promise<void> {
+  if (messages.length === 0) return;
+  log.info('Flushing queued messages into a new turn', { sessionId, count: messages.length });
+  try {
+    const prepared: PreparedMessage[] = [];
+    for (const m of messages) {
+      prepared.push(await prepareUserMessage(sessionId, m.text, m.attachments));
+    }
+
+    // An interrupt landed during preparation (user hit Stop in the flush window),
+    // or the query was torn down: abort — hand the messages back and go idle rather
+    // than firing them as a new turn.
+    if (state.interruptRequested || !state.input) {
+      requeueMessages(sessionId, state, messages);
+      endFlushHandoff(sessionId, state);
+      return;
+    }
+
+    for (const p of prepared) await insertPreparedMessage(sessionId, p);
+    if (!state.input) {
+      endFlushHandoff(sessionId, state);
+      return;
+    }
+    state.input.push({
+      type: 'user',
+      message: { role: 'user', content: prepared.map((p) => p.content).join('\n\n') },
+      parent_tool_use_id: null,
+    });
+  } catch (err) {
+    log.error('flushQueuedMessages: failed to flush queue', toError(err), { sessionId });
+    // Non-destructive: sanitizing has no side effects, so hand the messages back to
+    // the queue and go idle. (A DB error mid-persist is rare enough that a possible
+    // duplicate bubble on the next flush is preferable to silently losing them.)
+    requeueMessages(sessionId, state, messages);
+    endFlushHandoff(sessionId, state);
+  }
 }
 
 /**
@@ -675,9 +798,24 @@ function applyStatus(sessionId: string, state: SessionState, message: SDKMessage
   // The raw turn-end signal (before flush suppression), used for PR/branch detection.
   const rawTurnEnded = changed.turnActive && !status.turnActive;
 
-  // Flush queued prompts when the main turn ends (see flushQueuedPrompts). Decided
-  // before emitting so we can suppress the intervening turnActive clear entirely.
-  const willFlush = rawTurnEnded && state.queuedPrompts.length > 0 && state.input != null;
+  // An interrupt's turn-end must NOT flush the queue — queued messages stay put
+  // (removable) instead of firing as a fresh turn the instant the user hit Stop.
+  // `interruptRequested` is a one-shot flag set by interruptClaude; consume it here.
+  const interrupted = rawTurnEnded && state.interruptRequested;
+  if (rawTurnEnded) state.interruptRequested = false;
+
+  // Flush queued messages when the main turn ends naturally (see
+  // flushQueuedMessages). Decided before emitting so we can suppress the
+  // intervening turnActive clear entirely. `!awaitingFlushTurn` guards against a
+  // second flush from the just-ended turn's trailing `result` (which also reports
+  // rawTurnEnded while a flush is already in flight) — messages queued during the
+  // handoff instead flush at the flushed turn's own natural end.
+  const willFlush =
+    rawTurnEnded &&
+    !interrupted &&
+    !state.awaitingFlushTurn &&
+    state.queuedMessages.length > 0 &&
+    state.input != null;
 
   // The flushed turn actually beginning (its own top-level message_start) closes
   // the suppression window opened by the flush below.
@@ -709,9 +847,14 @@ function applyStatus(sessionId: string, state: SessionState, message: SDKMessage
     void detectBranchAndPr(sessionId, state.workingDir);
   }
   if (willFlush) {
-    // Send any prompts the user queued while the turn was running, as one turn.
-    flushQueuedPrompts(sessionId, state);
+    // Capture and clear the queue synchronously (emit the empty list so the
+    // client drops its queued bubbles), then flush asynchronously — persisting
+    // each message as its own bubble and pushing them as one turn.
+    const toFlush = state.queuedMessages;
+    state.queuedMessages = [];
+    sseEvents.emitQueuedMessages(sessionId, []);
     state.awaitingFlushTurn = true;
+    void flushQueuedMessages(sessionId, state, toFlush);
   }
 }
 
@@ -975,72 +1118,44 @@ async function applyLiveSettings(sessionId: string, state: SessionState): Promis
 }
 
 /**
- * Build, sanitize, and persist a single user prompt, returning the sanitized text
- * that should be sent to the model. Shared by {@link sendUserMessage} and
- * {@link sendUserMessages} so a one-off send and a batch flush persist identically.
- *
- * `attachmentPaths` are absolute host paths of files the user uploaded (see
- * `uploads.ts`); when present they are prefixed onto the message so Claude knows
- * where to read them.
+ * Add a message to the session's queue (a main-agent turn is active) and emit the
+ * updated list so the client can render it as a removable queued bubble. NOT
+ * persisted — see {@link QueuedMessage}. Throws if the queue is already at
+ * {@link MAX_QUEUED_MESSAGES} (pathological), so the send surfaces an error rather
+ * than growing an unbounded batch.
  */
-async function persistUserPrompt(
+function enqueueMessage(
   sessionId: string,
-  prompt: string,
-  attachmentPaths: string[]
-): Promise<string> {
-  const promptWithAttachments = buildPromptWithAttachments(prompt, attachmentPaths);
-
-  // Strip hidden-content injection vectors before the prompt is persisted or
-  // seen by the model. The same chokepoint covers typed prompts and the initial
-  // prompt (which may embed an untrusted GitHub issue body). `info` records any
-  // findings so the persisted message can show a "content filtered" badge.
-  const { cleaned: sanitizedPrompt, info: sanitization } = await sanitizeUntrustedInput(
-    promptWithAttachments,
-    { sessionId, source: 'user-message' }
-  );
-
-  await insertMessage({
-    sessionId,
-    id: uuid(),
-    type: 'user',
-    content: { type: 'user', content: sanitizedPrompt, ...(sanitization ? { sanitization } : {}) },
-  });
-
-  return sanitizedPrompt;
-}
-
-/**
- * Push a prepared (already-persisted) prompt into the query, or queue it if a
- * main-agent turn is active. Queued prompts are combined and flushed together as
- * one turn when the turn ends (async "btw mode" — see {@link flushQueuedPrompts}).
- * The user is never blocked from sending while Claude is working.
- */
-function pushOrQueuePrompt(sessionId: string, state: SessionState, text: string): void {
-  if (!state.input) throw new Error('Session query is not available');
-
-  // A turn is active → queue (the SDK can't cleanly take a new turn mid-generation).
-  if (state.status.turnActive) {
-    state.queuedPrompts.push(text);
-    return;
+  state: SessionState,
+  text: string,
+  attachments: string[]
+): void {
+  if (state.queuedMessages.length >= MAX_QUEUED_MESSAGES) {
+    throw new Error(`Too many queued messages (max ${MAX_QUEUED_MESSAGES})`);
   }
-
-  state.status = { ...state.status, turnActive: true };
-  sseEvents.emitClaudeRunning(sessionId, true);
-  state.input.push({
-    type: 'user',
-    message: { role: 'user', content: text },
-    parent_tool_use_id: null,
-  });
+  const message: QueuedMessage = { id: uuid(), text, attachments };
+  state.queuedMessages = [...state.queuedMessages, message];
+  sseEvents.emitQueuedMessages(sessionId, state.queuedMessages);
 }
 
 /**
- * Send a single user prompt: ensure the query is live, apply any live settings
- * changes, persist the message, and push it now (or queue it if a turn is active).
+ * Send a single user prompt. The server owns the queue decision (the client never
+ * routes based on its own view of the turn state):
+ *
+ *  - **A main-agent turn is active** → hold the message in the session queue,
+ *    surfaced to the client as a removable "queued" bubble; NOT persisted until it
+ *    flushes at turn end (see {@link flushQueuedMessages}).
+ *  - **Idle** → start a turn now. Any messages still queued (e.g. left sitting
+ *    after an interrupt) are flushed ahead of this one, combined into one turn, in
+ *    order — so nothing is silently stranded.
+ *
+ * `attachments` are stored names (see /api/upload), resolved to paths lazily at
+ * persist time.
  */
 export async function sendUserMessage(
   sessionId: string,
   prompt: string,
-  attachmentPaths: string[] = []
+  attachments: string[] = []
 ): Promise<void> {
   const state = await ensureSessionQuery(sessionId);
   if (!state.input) {
@@ -1049,40 +1164,84 @@ export async function sendUserMessage(
 
   // Apply model/MCP changes made since the query was built (no-op on fresh establish).
   await applyLiveSettings(sessionId, state);
-
-  const sanitizedPrompt = await persistUserPrompt(sessionId, prompt, attachmentPaths);
   await bumpSessionActivity(sessionId);
 
-  pushOrQueuePrompt(sessionId, state, sanitizedPrompt);
+  if (state.status.turnActive) {
+    enqueueMessage(sessionId, state, prompt, attachments);
+    return;
+  }
+
+  // Idle: deliver now, draining any leftover queue (e.g. left after an interrupt)
+  // ahead of this message so ordering/intent are preserved (queued-then-typed). The
+  // queue is cleared before the (awaited) prepare so a concurrent send can't
+  // double-drain it; on any failure the leftover is handed back (see below).
+  const leftover = state.queuedMessages;
+  if (leftover.length > 0) {
+    state.queuedMessages = [];
+    sseEvents.emitQueuedMessages(sessionId, []);
+  }
+  const items: QueuedMessage[] = [...leftover, { id: uuid(), text: prompt, attachments }];
+
+  // Sanitize/resolve up front (no side effects) so a failure or a racing turn can
+  // abort cleanly before anything is persisted.
+  let prepared: PreparedMessage[];
+  try {
+    prepared = [];
+    for (const it of items) {
+      prepared.push(await prepareUserMessage(sessionId, it.text, it.attachments));
+    }
+  } catch (err) {
+    // Nothing persisted — hand the leftover back to the queue and surface the error
+    // to the caller (the client keeps the just-typed message to retry).
+    requeueMessages(sessionId, state, leftover);
+    throw err;
+  }
+
+  // A turn racing in during prepare (a concurrent send, or a background subagent
+  // autonomously continuing the turn) means we must NOT start a second turn — queue
+  // these as pending instead, so the SDK isn't handed a new turn mid-generation.
+  if (state.status.turnActive || !state.input) {
+    requeueMessages(sessionId, state, items);
+    if (!state.input) throw new Error('Session query is not available');
+    return;
+  }
+
+  try {
+    for (const p of prepared) await insertPreparedMessage(sessionId, p);
+  } catch (err) {
+    requeueMessages(sessionId, state, leftover);
+    throw err;
+  }
+  if (!state.input) throw new Error('Session query is not available');
+  state.status = { ...state.status, turnActive: true };
+  sseEvents.emitClaudeRunning(sessionId, true);
+  state.input.push({
+    type: 'user',
+    message: { role: 'user', content: prepared.map((p) => p.content).join('\n\n') },
+    parent_tool_use_id: null,
+  });
 }
 
 /**
- * Send several user prompts as a **single** turn: persist each as its own
- * transcript message (so they render as separate bubbles, in order) but combine
- * their text into one push so the model answers them together. Used by
- * `claude.sendBatch` to flush the client-held pending queue when a turn ends —
- * multiple messages the user typed while Claude was working are delivered at once.
+ * Remove a single queued message before it flushes (the ✕ on a queued bubble).
+ * Emits the updated list. Idempotent: removing an absent id (already flushed or
+ * cancelled) is a no-op that still reports success — the post-condition (that id
+ * is not queued) holds. Returns false only when there is no live session state.
  */
-export async function sendUserMessages(
-  sessionId: string,
-  items: { prompt: string; attachmentPaths: string[] }[]
-): Promise<void> {
-  if (items.length === 0) return;
-
-  const state = await ensureSessionQuery(sessionId);
-  if (!state.input) {
-    throw new Error('Session query is not available');
+export function cancelQueuedMessage(sessionId: string, queuedId: string): boolean {
+  const state = sessions.get(sessionId);
+  if (!state) return false;
+  const next = state.queuedMessages.filter((m) => m.id !== queuedId);
+  if (next.length !== state.queuedMessages.length) {
+    state.queuedMessages = next;
+    sseEvents.emitQueuedMessages(sessionId, next);
   }
+  return true;
+}
 
-  await applyLiveSettings(sessionId, state);
-
-  const texts: string[] = [];
-  for (const item of items) {
-    texts.push(await persistUserPrompt(sessionId, item.prompt, item.attachmentPaths));
-  }
-  await bumpSessionActivity(sessionId);
-
-  pushOrQueuePrompt(sessionId, state, texts.join('\n\n'));
+/** The messages currently queued for a session (seeds the client; empty if none). */
+export function getQueuedMessages(sessionId: string): QueuedMessage[] {
+  return sessions.get(sessionId)?.queuedMessages ?? [];
 }
 
 /**
@@ -1184,17 +1343,25 @@ export async function interruptClaude(sessionId: string): Promise<boolean> {
   }
 
   // Close any open flush-handoff suppression window first. An interrupt during
-  // the handoff (after queued prompts were flushed but before the flushed turn's
+  // the handoff (after queued messages were flushed but before the flushed turn's
   // top-level `message_start`) produces a terminal `result` with no preceding
   // `message_start` — which would never close the window, pinning `turnActive`
   // true and silently killing the composer. Clearing the flag lets that terminal
   // result flow through `applyStatus` and clear `turnActive` normally. Any queued
-  // prompts already pushed to the SDK are unaffected (they run as their own turn).
+  // messages already pushed to the SDK are unaffected (they run as their own turn).
   state.awaitingFlushTurn = false;
+
+  // Mark this turn-end as an interrupt so `applyStatus` does NOT flush the queue:
+  // stopping Claude must leave queued messages sitting (removable), never fire
+  // them as a fresh turn the instant the user hit Stop.
+  state.interruptRequested = true;
 
   try {
     await state.query.interrupt();
   } catch (err) {
+    // The interrupt didn't take, so no interrupt-driven turn-end is coming; clear
+    // the flag so it can't suppress the flush of a later, natural turn-end.
+    state.interruptRequested = false;
     log.warn('interruptClaude: failed', { sessionId, error: toError(err).message });
     return false;
   }

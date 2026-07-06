@@ -65,6 +65,7 @@ export function useSessionStream(sessionId: string, options: UseSessionStreamOpt
     void utils.claude.getTokenUsage.refetch({ sessionId });
     void utils.claude.getRetryState.refetch({ sessionId });
     void utils.claude.getBackgroundTasks.refetch({ sessionId });
+    void utils.claude.getQueuedMessages.refetch({ sessionId });
   }, [utils, sessionId]);
 
   const subscription = trpc.sse.onSessionEvents.useSubscription(
@@ -117,6 +118,10 @@ export function useSessionStream(sessionId: string, options: UseSessionStreamOpt
           }
           case 'background': {
             utils.claude.getBackgroundTasks.setData({ sessionId }, { tasks: event.tasks });
+            break;
+          }
+          case 'queued': {
+            utils.claude.getQueuedMessages.setData({ sessionId }, { messages: event.messages });
             break;
           }
           default:
