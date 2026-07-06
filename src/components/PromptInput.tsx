@@ -8,6 +8,7 @@ import { VoiceMicButton } from '@/components/voice/VoiceMicButton';
 import { useVoiceRecording } from '@/hooks/useVoiceRecording';
 import { useFileUpload } from '@/hooks/useFileUpload';
 import type { UploadedAttachment } from '@/lib/attachments';
+import { MAX_QUEUED_MESSAGES } from '@/lib/queued-message';
 
 export interface SlashCommand {
   name: string;
@@ -17,11 +18,18 @@ export interface SlashCommand {
 
 interface PromptInputProps {
   sessionId: string;
-  onSubmit: (prompt: string, attachments?: UploadedAttachment[]) => void;
+  /**
+   * Send the message. May return a promise; if it rejects, the composer restores
+   * the just-typed text/attachments (so a failed send doesn't lose them) and
+   * shows an inline error.
+   */
+  onSubmit: (prompt: string, attachments?: UploadedAttachment[]) => void | Promise<unknown>;
   onInterrupt: () => void;
   isRunning: boolean;
   isInterrupting: boolean;
   disabled: boolean;
+  /** Number of messages currently queued server-side (async "btw mode"). */
+  queuedCount?: number;
   commands?: SlashCommand[];
   voiceEnabled?: boolean;
   voiceAutoSend?: boolean;
@@ -34,6 +42,7 @@ export function PromptInput({
   isRunning,
   isInterrupting,
   disabled,
+  queuedCount = 0,
   commands = [],
   voiceEnabled = false,
   voiceAutoSend = true,
@@ -45,6 +54,9 @@ export function PromptInput({
   // Files uploaded and pending until the next message is sent. Not shown in the
   // transcript until submit — only as chips on the composer.
   const [attachments, setAttachments] = useState<UploadedAttachment[]>([]);
+  // Error surfaced when a send fails (e.g. queue overflow, network blip). The
+  // failed text/attachments are restored into the composer so they aren't lost.
+  const [sendError, setSendError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const commandsRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -99,17 +111,37 @@ export function PromptInput({
     textareaRef.current?.focus();
   }, []);
 
+  // The server-owned queue is bounded: a send while a turn runs is rejected once
+  // MAX_QUEUED_MESSAGES are already queued. Block submit proactively so overflow
+  // surfaces as a disabled button rather than a lost message + error.
+  const queueFull = isRunning && queuedCount >= MAX_QUEUED_MESSAGES;
+
   // Submit is allowed with typed text OR at least one attachment. It stays allowed
   // while a turn is running — the message is queued server-side and sent as soon
-  // as Claude finishes (async "btw mode").
-  const canSubmit = (prompt.trim().length > 0 || attachments.length > 0) && !disabled;
+  // as Claude finishes (async "btw mode") — unless the queue is already full.
+  const canSubmit = (prompt.trim().length > 0 || attachments.length > 0) && !disabled && !queueFull;
+
+  // Clear the composer optimistically for snappy input, then send. If the send
+  // fails, restore the just-typed text/attachments (unless the user already began
+  // a new message) and surface the error so nothing is silently lost.
+  const submit = useCallback(
+    (text: string, atts: UploadedAttachment[]) => {
+      setPrompt('');
+      setAttachments([]);
+      setSendError(null);
+      Promise.resolve(onSubmit(text, atts.length > 0 ? atts : undefined)).catch((err: unknown) => {
+        setPrompt((current) => (current.length === 0 ? text : current));
+        setAttachments((current) => (current.length === 0 ? atts : current));
+        setSendError(err instanceof Error ? err.message : 'Failed to send message');
+      });
+    },
+    [onSubmit]
+  );
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (canSubmit) {
-      onSubmit(prompt.trim(), attachments.length > 0 ? attachments : undefined);
-      setPrompt('');
-      setAttachments([]);
+      submit(prompt.trim(), attachments);
     }
   };
 
@@ -166,6 +198,8 @@ export function PromptInput({
     setPrompt(newValue);
     // Reset selected index when prompt changes
     setSelectedIndex(0);
+    // A fresh edit dismisses a stale send error.
+    setSendError(null);
   }, []);
 
   const handleMicClick = () => {
@@ -175,10 +209,8 @@ export function PromptInput({
       const fullPrompt = (prompt + transcript).trim();
       setPrompt(fullPrompt);
 
-      if (voiceAutoSend && fullPrompt && !disabled) {
-        onSubmit(fullPrompt, attachments.length > 0 ? attachments : undefined);
-        setPrompt('');
-        setAttachments([]);
+      if (voiceAutoSend && fullPrompt && !disabled && !queueFull) {
+        submit(fullPrompt, attachments);
       } else {
         textareaRef.current?.focus();
       }
@@ -243,7 +275,7 @@ export function PromptInput({
           }}
         />
 
-        {(attachments.length > 0 || uploadError) && (
+        {(attachments.length > 0 || uploadError || sendError || queueFull) && (
           <div className="mb-2 flex flex-wrap items-center gap-2">
             {attachments.map((att) => (
               <span
@@ -275,6 +307,25 @@ export function PromptInput({
                 >
                   <X className="h-3 w-3" />
                 </button>
+              </span>
+            )}
+            {sendError && (
+              <span className="inline-flex items-center gap-1.5 text-xs text-destructive">
+                {sendError}
+                <button
+                  type="button"
+                  onClick={() => setSendError(null)}
+                  className="hover:text-foreground"
+                  aria-label="Dismiss send error"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </span>
+            )}
+            {queueFull && (
+              <span className="text-xs text-muted-foreground">
+                {MAX_QUEUED_MESSAGES} messages already queued — wait for Claude to catch up before
+                sending more.
               </span>
             )}
           </div>
