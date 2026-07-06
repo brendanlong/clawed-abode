@@ -332,6 +332,8 @@ _Known limitation_: `queuedMessages` is **in-memory** only. A stop/restart befor
 
 On the client, `PromptInput` keeps the textarea and submit button enabled while running (the button reads "Queue" instead of "Send"), and the Stop button is shown **alongside** it rather than replacing it, so a user can interrupt the current turn and queue the next message independently.
 
+**Send failures never lose typed text.** Because the server owns the queue, **every** `claude.send` is a round-trip that can fail (queue overflow, a network blip, or the session flipping out of `running`). `PromptInput` clears the composer optimistically for a snappy feel, but `send` returns the mutation's promise (via `mutateAsync`), so on rejection the composer **restores** the just-typed text and attachments — unless the user already began a new message, which is left intact — and surfaces the reason inline (reusing the same dismissible affordance as the upload-error path; a fresh edit also clears it). Overflow is additionally prevented proactively: the queue is bounded at `MAX_QUEUED_MESSAGES` (from [`queued-message.ts`](../src/lib/queued-message.ts), surfaced to the client via `getQueuedMessages`), and while a turn is running with the queue already full the Queue button is disabled with an explanatory line, so the pathological 50-queued edge is blocked rather than erroring. (The cap gates only mid-turn queueing — an idle send starts a turn and is never queued.)
+
 ### Reconnection Flow
 
 Reconnection is handled by the SSE layer's native resume rather than an explicit
