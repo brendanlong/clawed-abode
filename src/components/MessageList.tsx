@@ -152,8 +152,10 @@ function collectSubagentLifecycles(
   const lifecycles: SubagentLifecycle[] = [];
   for (const [toolUseId, spawnSequence] of spawnSequenceByToolUseId) {
     const children = subagentMessagesByToolUseId.get(toolUseId);
+    // reduce (not Math.max(...spread)) to avoid an argument-count limit on a
+    // chatty subagent's large child array, and without assuming child order.
     const lastChildSequence = children?.length
-      ? Math.max(...children.map((c) => c.sequence))
+      ? children.reduce((max, c) => Math.max(max, c.sequence), -Infinity)
       : null;
     lifecycles.push({
       toolUseId,

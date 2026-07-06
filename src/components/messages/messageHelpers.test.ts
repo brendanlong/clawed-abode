@@ -730,13 +730,19 @@ describe('computeSubagentPlacements', () => {
     expect(finished).toEqual([]);
   });
 
-  it('pins a resultless foreground subagent only while live; orphans it inline when not', () => {
-    const live = computeSubagentPlacements([life('t', 6)], [6, 11], true);
-    expect(live.running).toEqual(['t']);
-
-    const dead = computeSubagentPlacements([life('t', 6)], [6, 11], false);
-    expect(dead.running).toEqual([]);
-    expect(dead.relocatedIds.has('t')).toBe(false);
+  it('never pins a foreground subagent — it stays inline whether the session is live or not', () => {
+    // A synchronous subagent blocks the main agent, so there is no concurrent
+    // traffic to escape past; relocating it would only add redundant chrome.
+    for (const live of [true, false]) {
+      const { relocatedIds, running, finished } = computeSubagentPlacements(
+        [life('t', 6)], // foreground, no result yet
+        [6, 11],
+        live
+      );
+      expect(running).toEqual([]);
+      expect(finished).toEqual([]);
+      expect(relocatedIds.has('t')).toBe(false);
+    }
   });
 
   it('sorts multiple finished boxes by finish position and preserves running spawn order', () => {

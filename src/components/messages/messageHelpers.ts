@@ -227,8 +227,9 @@ export interface SubagentPlacements {
  * - A background subagent without one is still running while the session is live;
  *   once the session is idle it has settled — its last child message (or its
  *   launch ack) is the best available finish position.
- * - A foreground subagent finishes at its `tool_result`; without one it is running
- *   while live, else an orphan (query died) that stays inline at its spawn point.
+ * - A foreground subagent **never pins**: it blocks the main agent, so there is no
+ *   concurrent traffic to escape past. It finishes at its `tool_result`; before
+ *   that (or if the query died before one) it stays inline at its spawn point.
  */
 function resolveSubagentFinish(
   life: SubagentLifecycle,
@@ -244,11 +245,12 @@ function resolveSubagentFinish(
       ? { kind: 'finished', atSequence: settled }
       : { kind: 'inline' };
   }
-  // Foreground.
-  if (life.resultSequence !== null) {
-    return { kind: 'finished', atSequence: life.resultSequence };
-  }
-  return isSessionRunning ? { kind: 'running' } : { kind: 'inline' };
+  // Foreground: inline at spawn until its tool_result settles it. Never pinned —
+  // a synchronous subagent runs with no concurrent main-agent messages, so
+  // relocating it would only add a redundant breadcrumb + bottom box.
+  return life.resultSequence !== null
+    ? { kind: 'finished', atSequence: life.resultSequence }
+    : { kind: 'inline' };
 }
 
 /**
