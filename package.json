@@ -19,7 +19,7 @@
     "prepare": "husky",
     "hash-password": "tsx scripts/hash-password.ts",
     "test": "vitest",
-    "test:run": "vitest run",
+    "test:run": "pnpm test:unit && pnpm test:component && pnpm test:integration",
     "test:unit": "vitest run --config vitest.config.ts",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
