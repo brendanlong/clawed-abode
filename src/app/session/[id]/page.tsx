@@ -301,6 +301,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
           onRespondToPlan={respondToPlan}
           queuedMessages={queuedMessages}
           onCancelQueued={handleCancelQueued}
+          isSessionRunning={isClaudeRunning}
         />
 
         {voiceOverlayOpen && voiceConfig.enabled ? (

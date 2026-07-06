@@ -528,6 +528,7 @@ describe('MessageBubble', () => {
             onTodoManualToggle,
             planContentByToolUseId: new Map(),
             renderSubagentTranscript: () => null,
+            relocatedSubagentIds: new Set(),
           }}
         >
           <MessageBubble message={message} />
@@ -570,6 +571,7 @@ describe('MessageBubble', () => {
               onTodoManualToggle: () => {},
               planContentByToolUseId: new Map(),
               renderSubagentTranscript: (id: string) => <div>nested transcript for {id}</div>,
+              relocatedSubagentIds: new Set(),
             }}
           >
             <MessageBubble message={message} />
