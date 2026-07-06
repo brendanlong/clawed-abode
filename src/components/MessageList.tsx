@@ -4,7 +4,14 @@ import { useRef, useEffect, useCallback, useMemo, useState } from 'react';
 import { cn } from '@/lib/utils';
 import { MessageBubble } from './messages/MessageBubble';
 import { SubagentTranscript } from './messages/SubagentTranscript';
-import type { ToolResultMap, ContentBlock, MessageContent, DisplayMessage } from './messages/types';
+import { TaskDisplay } from './messages/TaskDisplay';
+import type {
+  ToolResultMap,
+  ToolCall,
+  ContentBlock,
+  MessageContent,
+  DisplayMessage,
+} from './messages/types';
 import { MessageListProvider } from './messages/MessageListContext';
 import { Spinner } from '@/components/ui/spinner';
 import { ContextUsageIndicator } from '@/components/ContextUsageIndicator';
@@ -20,6 +27,8 @@ import {
   isVisibleTranscriptMessage,
   getParentToolUseId,
   groupSubagentMessages,
+  computeSubagentPlacements,
+  type SubagentLifecycle,
 } from './messages/messageHelpers';
 
 type Message = DisplayMessage;
@@ -44,9 +53,12 @@ function getToolResultBlocks(message: Message): ContentBlock[] {
 function buildToolResultMap(messages: Message[]): {
   resultMap: ToolResultMap;
   pairedMessageIds: Set<string>;
+  /** Sequence of the message carrying each tool_use's result (its finish point). */
+  resultSequenceByToolUseId: Map<string, number>;
 } {
   const resultMap: ToolResultMap = new Map();
   const pairedMessageIds = new Set<string>();
+  const resultSequenceByToolUseId = new Map<string, number>();
 
   // First pass: collect all tool_use IDs from assistant messages
   const toolUseIds = new Set<string>();
@@ -70,6 +82,7 @@ function buildToolResultMap(messages: Message[]): {
             content: typeof block.content === 'string' ? block.content : undefined,
             is_error: block.is_error,
           });
+          resultSequenceByToolUseId.set(block.tool_use_id, msg.sequence);
         } else {
           // This result doesn't have a matching tool_use
           allPaired = false;
@@ -83,7 +96,89 @@ function buildToolResultMap(messages: Message[]): {
     }
   }
 
-  return { resultMap, pairedMessageIds };
+  return { resultMap, pairedMessageIds, resultSequenceByToolUseId };
+}
+
+// Read a `system` message's subtype + tool_use_id (task lifecycle messages carry
+// the tool_use_id of the subagent/backgrounded tool they describe).
+function systemTaskInfo(msg: Message): { subtype?: string; toolUseId?: string } {
+  const content = msg.content as { subtype?: string; tool_use_id?: string } | undefined;
+  return { subtype: content?.subtype, toolUseId: content?.tool_use_id };
+}
+
+// Collect the lifecycle of each top-level (main-agent) subagent Task, and index
+// the Agent/Task tool_use blocks by id so a relocated box can be reconstructed
+// from its call. Background subagents are identified by a `task_started`, and
+// their finish by a `task_notification` (both carry the subagent's tool_use_id).
+function collectSubagentLifecycles(
+  messages: Message[],
+  subagentMessagesByToolUseId: Map<string, DisplayMessage[]>,
+  resultSequenceByToolUseId: Map<string, number>
+): { lifecycles: SubagentLifecycle[]; agentBlockById: Map<string, ContentBlock> } {
+  const agentBlockById = new Map<string, ContentBlock>();
+  const spawnSequenceByToolUseId = new Map<string, number>();
+  const backgroundToolUseIds = new Set<string>();
+  const notificationSequenceByToolUseId = new Map<string, number>();
+
+  for (const msg of messages) {
+    if (msg.type === 'assistant' && getParentToolUseId(msg.content) === null) {
+      const blocks = (msg.content as MessageContent | undefined)?.message?.content;
+      if (Array.isArray(blocks)) {
+        for (const block of blocks) {
+          if (
+            block.type === 'tool_use' &&
+            block.id &&
+            (block.name === 'Agent' || block.name === 'Task')
+          ) {
+            agentBlockById.set(block.id, block);
+            spawnSequenceByToolUseId.set(block.id, msg.sequence);
+          }
+        }
+      }
+    } else if (msg.type === 'system') {
+      const { subtype, toolUseId } = systemTaskInfo(msg);
+      if (!toolUseId) continue;
+      if (subtype === 'task_started') {
+        backgroundToolUseIds.add(toolUseId);
+      } else if (subtype === 'task_notification') {
+        // First terminal notification wins as the finish point.
+        if (!notificationSequenceByToolUseId.has(toolUseId)) {
+          notificationSequenceByToolUseId.set(toolUseId, msg.sequence);
+        }
+      }
+    }
+  }
+
+  const lifecycles: SubagentLifecycle[] = [];
+  for (const [toolUseId, spawnSequence] of spawnSequenceByToolUseId) {
+    const children = subagentMessagesByToolUseId.get(toolUseId);
+    const lastChildSequence = children?.length
+      ? Math.max(...children.map((c) => c.sequence))
+      : null;
+    lifecycles.push({
+      toolUseId,
+      spawnSequence,
+      isBackground: backgroundToolUseIds.has(toolUseId),
+      notificationSequence: notificationSequenceByToolUseId.get(toolUseId) ?? null,
+      lastChildSequence,
+      resultSequence: resultSequenceByToolUseId.get(toolUseId) ?? null,
+    });
+  }
+  // Preserve spawn order (Map iteration is insertion order = document order).
+  return { lifecycles, agentBlockById };
+}
+
+// Reconstruct a ToolCall for a relocated subagent box from its Agent/Task call
+// block plus any result. Mirrors the tool shape ContentRenderer builds inline.
+function toolCallFromBlock(block: ContentBlock, resultMap: ToolResultMap): ToolCall {
+  const result = block.id ? resultMap.get(block.id) : undefined;
+  return {
+    name: block.name || 'Agent',
+    id: block.id,
+    input: block.input,
+    output: result?.content,
+    is_error: result?.is_error,
+  };
 }
 
 // Extract TodoWrite tool call IDs from messages, ordered by sequence
@@ -217,6 +312,12 @@ interface MessageListProps {
   /** Server-owned queued messages, pinned below the transcript (async "btw mode"). */
   queuedMessages?: QueuedMessage[];
   onCancelQueued?: (id: string) => void;
+  /**
+   * Whether the session's query is live. Gates pinning a still-running subagent's
+   * box to the bottom (a subagent whose result was lost to a dead query would
+   * otherwise pin forever). See {@link computeSubagentPlacements}.
+   */
+  isSessionRunning?: boolean;
 }
 
 export function MessageList({
@@ -230,6 +331,7 @@ export function MessageList({
   onRespondToPlan,
   queuedMessages = [],
   onCancelQueued,
+  isSessionRunning = false,
 }: MessageListProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const topSentinelRef = useRef<HTMLDivElement>(null);
@@ -284,11 +386,22 @@ export function MessageList({
   }, [hasMore, isLoading, onLoadMore]);
 
   // Build the tool result map and determine which messages to hide
-  const { resultMap, pairedMessageIds } = useMemo(() => buildToolResultMap(messages), [messages]);
+  const { resultMap, pairedMessageIds, resultSequenceByToolUseId } = useMemo(
+    () => buildToolResultMap(messages),
+    [messages]
+  );
 
   // Group subagent messages (parent_tool_use_id set) by their Task's tool_use id
   // so they render nested inside that Task instead of cluttering the top level.
   const subagentMessagesByToolUseId = useMemo(() => groupSubagentMessages(messages), [messages]);
+
+  // Index top-level subagent lifecycles (and their call blocks) so their boxes can
+  // be relocated out of the spawn point (running → pinned; finished → finish point).
+  const { lifecycles, agentBlockById } = useMemo(
+    () =>
+      collectSubagentLifecycles(messages, subagentMessagesByToolUseId, resultSequenceByToolUseId),
+    [messages, subagentMessagesByToolUseId, resultSequenceByToolUseId]
+  );
 
   // Find the latest TodoWrite ID (last one by sequence)
   const latestTodoWriteId = useMemo(() => {
@@ -343,6 +456,45 @@ export function MessageList({
       ),
     [messages, pairedMessageIds]
   );
+
+  // Decide which subagent boxes to relocate, and where. Interleaving is measured
+  // against the top-level rows that actually render (visibleMessages), so a plain
+  // foreground wait (subagent with no rows between spawn and finish) stays inline.
+  const placements = useMemo(
+    () =>
+      computeSubagentPlacements(
+        lifecycles,
+        visibleMessages.map((m) => m.sequence),
+        isSessionRunning
+      ),
+    [lifecycles, visibleMessages, isSessionRunning]
+  );
+
+  // Merge the top-level message rows with relocated finished-subagent boxes,
+  // ordered by sequence so each box lands at its finish position. Running boxes
+  // are rendered separately, pinned at the bottom.
+  const renderRows = useMemo(() => {
+    type RenderRow =
+      | { kind: 'message'; sequence: number; message: Message }
+      | { kind: 'taskbox'; sequence: number; toolUseId: string; tool: ToolCall };
+    const rows: RenderRow[] = visibleMessages.map((message) => ({
+      kind: 'message',
+      sequence: message.sequence,
+      message,
+    }));
+    for (const { toolUseId, atSequence } of placements.finished) {
+      const block = agentBlockById.get(toolUseId);
+      if (!block) continue;
+      rows.push({
+        kind: 'taskbox',
+        sequence: atSequence,
+        toolUseId,
+        tool: toolCallFromBlock(block, resultMap),
+      });
+    }
+    rows.sort((a, b) => a.sequence - b.sequence);
+    return rows;
+  }, [visibleMessages, placements.finished, agentBlockById, resultMap]);
 
   const scrollToBottom = useCallback(() => {
     // Always use instant scroll to avoid race conditions with smooth animation.
@@ -533,6 +685,7 @@ export function MessageList({
       onRespondToPlan,
       planContentByToolUseId,
       renderSubagentTranscript,
+      relocatedSubagentIds: placements.relocatedIds,
     }),
     [
       latestTodoWriteId,
@@ -543,6 +696,7 @@ export function MessageList({
       onRespondToPlan,
       planContentByToolUseId,
       renderSubagentTranscript,
+      placements.relocatedIds,
     ]
   );
 
@@ -570,7 +724,23 @@ export function MessageList({
         )}
 
         <MessageListProvider value={contextValue}>
-          {visibleMessages.map((message, index) => {
+          {renderRows.map((row, index) => {
+            if (row.kind === 'taskbox') {
+              // A relocated finished subagent box, at its finish position.
+              const prev = renderRows[index - 1];
+              const spacingClass = index === 0 ? '' : prev?.kind === 'taskbox' ? 'mt-1' : 'mt-4';
+              return (
+                <div
+                  key={`taskbox-${row.toolUseId}`}
+                  data-subagent-box={row.toolUseId}
+                  className={cn('flex justify-start', spacingClass)}
+                >
+                  <TaskDisplay tool={row.tool} isPendingOverride={false} />
+                </div>
+              );
+            }
+
+            const message = row.message;
             // Only right-align actual user messages, not tool results
             const isUserMessage =
               message.type === 'user' && !isToolResultMessage(message.content as MessageContent);
@@ -578,10 +748,10 @@ export function MessageList({
             // Spacing: full gap between messages, but tight when two consecutive
             // tool-call-only messages sit back-to-back (issue #312). The first
             // message gets no top margin (the container padding handles it).
-            const prev = visibleMessages[index - 1];
+            const prev = renderRows[index - 1];
             const backToBackToolCalls =
-              prev !== undefined &&
-              isToolCallOnlyMessage(prev.content as MessageContent) &&
+              prev?.kind === 'message' &&
+              isToolCallOnlyMessage(prev.message.content as MessageContent) &&
               isToolCallOnlyMessage(message.content as MessageContent);
             const spacingClass = index === 0 ? '' : backToBackToolCalls ? 'mt-1' : 'mt-4';
 
@@ -606,6 +776,28 @@ export function MessageList({
               </div>
             );
           })}
+
+          {/* Running subagents pinned at the bottom: their live boxes stay next to
+              the newest main-agent messages instead of collapsed at the spawn
+              point far above. They settle to their finish position once done. */}
+          {placements.running.length > 0 && (
+            <div className="mt-4 border-t border-dashed pt-3" data-pinned-subagents>
+              <div className="text-muted-foreground text-xs mb-2">
+                Running subagent{placements.running.length > 1 ? 's' : ''}
+              </div>
+              <div className="space-y-2">
+                {placements.running.map((toolUseId) => {
+                  const block = agentBlockById.get(toolUseId);
+                  if (!block) return null;
+                  return (
+                    <div key={`pinned-${toolUseId}`} className="flex justify-start">
+                      <TaskDisplay tool={toolCallFromBlock(block, resultMap)} isPendingOverride />
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </MessageListProvider>
 
         {onCancelQueued && (

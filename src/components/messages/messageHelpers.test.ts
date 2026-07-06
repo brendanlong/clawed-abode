@@ -14,6 +14,8 @@ import {
   isVisibleTranscriptMessage,
   getParentToolUseId,
   groupSubagentMessages,
+  computeSubagentPlacements,
+  type SubagentLifecycle,
 } from './messageHelpers';
 import type { DisplayMessage } from './types';
 
@@ -648,5 +650,108 @@ describe('groupSubagentMessages', () => {
 
   it('returns an empty map when there are no subagent messages', () => {
     expect(groupSubagentMessages([msg('a', null)]).size).toBe(0);
+  });
+});
+
+describe('computeSubagentPlacements', () => {
+  const life = (
+    toolUseId: string,
+    spawnSequence: number,
+    over: Partial<SubagentLifecycle> = {}
+  ): SubagentLifecycle => ({
+    toolUseId,
+    spawnSequence,
+    isBackground: false,
+    notificationSequence: null,
+    lastChildSequence: null,
+    resultSequence: null,
+    ...over,
+  });
+
+  it('relocates a finished foreground subagent to its tool_result when work interleaved', () => {
+    const { relocatedIds, finished, running } = computeSubagentPlacements(
+      [life('task-1', 6, { resultSequence: 50 })],
+      [6, 11, 14, 60], // 11 and 14 are between spawn and finish
+      false
+    );
+    expect(relocatedIds.has('task-1')).toBe(true);
+    expect(finished).toEqual([{ toolUseId: 'task-1', atSequence: 50 }]);
+    expect(running).toEqual([]);
+  });
+
+  it('keeps a finished subagent inline at spawn when nothing interleaved (foreground wait)', () => {
+    const { relocatedIds, finished } = computeSubagentPlacements(
+      [life('task-1', 6, { resultSequence: 50 })],
+      [6, 60], // no row strictly between 6 and 50
+      false
+    );
+    expect(relocatedIds.has('task-1')).toBe(false);
+    expect(finished).toEqual([]);
+  });
+
+  it('uses the terminal task_notification as the finish point over the launch ack', () => {
+    // Background subagent: tool_result (ack) at 9, real completion notification at 80.
+    const { finished } = computeSubagentPlacements(
+      [
+        life('task-1', 6, {
+          isBackground: true,
+          resultSequence: 9,
+          lastChildSequence: 70,
+          notificationSequence: 80,
+        }),
+      ],
+      [6, 20, 40], // interleaved
+      false
+    );
+    expect(finished).toEqual([{ toolUseId: 'task-1', atSequence: 80 }]);
+  });
+
+  it('settles a done background subagent (no notification, session idle) at its last child', () => {
+    // The real reported case: async Explore, ack at 9, children out to 100, no
+    // notification persisted, session no longer live.
+    const { relocatedIds, finished, running } = computeSubagentPlacements(
+      [life('task-1', 6, { isBackground: true, resultSequence: 9, lastChildSequence: 100 })],
+      [6, 11, 14, 50, 120], // main-agent work interleaved between 6 and 100
+      false
+    );
+    expect(relocatedIds.has('task-1')).toBe(true);
+    expect(finished).toEqual([{ toolUseId: 'task-1', atSequence: 100 }]);
+    expect(running).toEqual([]);
+  });
+
+  it('pins a running background subagent while the session is live', () => {
+    const { relocatedIds, running, finished } = computeSubagentPlacements(
+      [life('task-1', 6, { isBackground: true, resultSequence: 9, lastChildSequence: 100 })],
+      [6, 11, 14],
+      true
+    );
+    expect(relocatedIds.has('task-1')).toBe(true);
+    expect(running).toEqual(['task-1']);
+    expect(finished).toEqual([]);
+  });
+
+  it('pins a resultless foreground subagent only while live; orphans it inline when not', () => {
+    const live = computeSubagentPlacements([life('t', 6)], [6, 11], true);
+    expect(live.running).toEqual(['t']);
+
+    const dead = computeSubagentPlacements([life('t', 6)], [6, 11], false);
+    expect(dead.running).toEqual([]);
+    expect(dead.relocatedIds.has('t')).toBe(false);
+  });
+
+  it('sorts multiple finished boxes by finish position and preserves running spawn order', () => {
+    const { finished, running } = computeSubagentPlacements(
+      [
+        life('a', 1, { resultSequence: 90 }),
+        life('b', 2, { resultSequence: 40 }),
+        life('c', 3, { isBackground: true }),
+      ],
+      [1, 2, 3, 20, 50, 70], // interleaving rows for both a and b
+      true
+    );
+    // a finishes at 90, b at 40 → sorted by finish sequence
+    expect(finished.map((f) => f.toolUseId)).toEqual(['b', 'a']);
+    // c is background with no notification and the session is live → pinned
+    expect(running).toEqual(['c']);
   });
 });

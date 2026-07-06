@@ -14,7 +14,7 @@ import { WebFetchDisplay } from './WebFetchDisplay';
 import { BashDisplay } from './BashDisplay';
 import { NotebookEditDisplay } from './NotebookEditDisplay';
 import { SkillDisplay } from './SkillDisplay';
-import { TaskDisplay } from './TaskDisplay';
+import { SubagentToolDisplay } from './SubagentToolDisplay';
 import { EnterPlanModeDisplay } from './EnterPlanModeDisplay';
 import { ExitPlanModeDisplay } from './ExitPlanModeDisplay';
 import { TodoWriteDisplay } from './TodoWriteDisplay';
@@ -39,9 +39,12 @@ const TOOL_DISPLAY_MAP: Record<string, React.ComponentType<{ tool: ToolCall }>> 
   Skill: SkillDisplay,
   // Subagent invocation. Current SDK spawns subagents via the `Agent` tool;
   // older sessions used `Task`. Both share the same input shape (subagent_type /
-  // description / prompt) and both nest the subagent's grouped transcript.
-  Agent: TaskDisplay,
-  Task: TaskDisplay,
+  // description / prompt). SubagentToolDisplay renders the full box inline, or a
+  // compact "started" breadcrumb when MessageList has relocated the box (running
+  // subagents pin to the bottom; finished-concurrent ones move to their finish
+  // position). See computeSubagentPlacements.
+  Agent: SubagentToolDisplay,
+  Task: SubagentToolDisplay,
   EnterPlanMode: EnterPlanModeDisplay,
   ExitPlanMode: ExitPlanModeDisplay,
   TodoWrite: TodoWriteDisplay,

@@ -71,7 +71,7 @@ function parseTaskOutput(output: unknown): { text: string; agentId?: string } {
 /**
  * Get a nice label for the subagent type.
  */
-function getSubagentLabel(subagentType: string): { label: string; color: string } {
+export function getSubagentLabel(subagentType: string): { label: string; color: string } {
   switch (subagentType.toLowerCase()) {
     case 'explore':
       return { label: 'Explore', color: 'text-blue-700 dark:text-blue-400 border-blue-500' };
@@ -90,7 +90,7 @@ function getSubagentLabel(subagentType: string): { label: string; color: string 
 }
 
 // Agent icon component - extracted outside of render
-function AgentIcon() {
+export function AgentIcon() {
   return (
     <svg
       className="w-4 h-4 text-muted-foreground shrink-0"
@@ -112,7 +112,20 @@ function AgentIcon() {
  * Specialized display for Task tool calls.
  * Shows the subagent type, description, prompt, and formatted output.
  */
-export function TaskDisplay({ tool }: { tool: ToolCall }) {
+export function TaskDisplay({
+  tool,
+  isPendingOverride,
+}: {
+  tool: ToolCall;
+  /**
+   * Force the Running/Done state, overriding the default (derived from whether
+   * the call has output). Used by MessageList when it relocates a subagent box:
+   * a background subagent's `tool_result` is only a launch ack, so output
+   * presence doesn't reflect whether it actually settled. `true` while pinned
+   * and running, `false` for a finished box moved to its finish position.
+   */
+  isPendingOverride?: boolean;
+}) {
   const hasOutput = tool.output !== undefined;
 
   const inputObj = tool.input as TaskInput | undefined;
@@ -138,6 +151,7 @@ export function TaskDisplay({ tool }: { tool: ToolCall }) {
   return (
     <ToolDisplayWrapper
       tool={tool}
+      isPendingOverride={isPendingOverride}
       icon={<AgentIcon />}
       title="Task"
       headerContent={
