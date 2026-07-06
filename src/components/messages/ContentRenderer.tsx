@@ -3,6 +3,7 @@
 import React from 'react';
 import { MarkdownContent } from '@/components/MarkdownContent';
 import type { ContentBlock, ToolCall, ToolResultMap } from './types';
+import { buildToolCallFromBlock } from './messageHelpers';
 import { ToolCallDisplay } from './ToolCallDisplay';
 import { GlobDisplay } from './GlobDisplay';
 import { GrepDisplay } from './GrepDisplay';
@@ -92,14 +93,7 @@ function renderContentBlocks(blocks: ContentBlock[], toolResults?: ToolResultMap
       {toolUseBlocks.length > 0 && (
         <div className="mt-2 space-y-2">
           {toolUseBlocks.map((block) => {
-            const result = block.id ? toolResults?.get(block.id) : undefined;
-            const tool: ToolCall = {
-              name: block.name || 'Unknown',
-              id: block.id,
-              input: block.input,
-              output: result?.content,
-              is_error: result?.is_error,
-            };
+            const tool = buildToolCallFromBlock(block, toolResults);
 
             const DisplayComponent = TOOL_DISPLAY_MAP[block.name ?? ''];
             if (DisplayComponent) {
