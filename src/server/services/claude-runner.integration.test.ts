@@ -19,11 +19,19 @@ const mockSseEvents = vi.hoisted(() => ({
   emitClaudeRunning: vi.fn(),
   emitClaudeRetry: vi.fn(),
   emitBackgroundTasks: vi.fn(),
+  emitQueuedMessages: vi.fn(),
   emitCommands: vi.fn(),
   emitSessionUpdate: vi.fn(),
   emitPrUpdate: vi.fn(),
 }));
 vi.mock('./events', () => ({ sseEvents: mockSseEvents }));
+
+// Uploads: resolve stored names to paths. Default passthrough; a test overrides it
+// to reject, to exercise the non-destructive flush/idle-send error paths.
+const mockResolveUploadPaths = vi.hoisted(() =>
+  vi.fn(async (_id: string, names: string[]) => names)
+);
+vi.mock('./uploads', () => ({ resolveUploadPaths: mockResolveUploadPaths }));
 
 vi.mock('./github', () => ({
   fetchPullRequestForBranch: vi.fn().mockResolvedValue(undefined),
@@ -70,7 +78,8 @@ import { createPushable } from '@/lib/pushable';
 // Imported dynamically in beforeAll (after setupTestDb sets DATABASE_URL), since
 // claude-runner pulls in @/lib/prisma at module load.
 let sendUserMessage: typeof import('./claude-runner').sendUserMessage;
-let sendUserMessages: typeof import('./claude-runner').sendUserMessages;
+let cancelQueuedMessage: typeof import('./claude-runner').cancelQueuedMessage;
+let getQueuedMessages: typeof import('./claude-runner').getQueuedMessages;
 let interruptClaude: typeof import('./claude-runner').interruptClaude;
 let stopSession: typeof import('./claude-runner').stopSession;
 let isClaudeRunning: typeof import('./claude-runner').isClaudeRunning;
@@ -236,7 +245,8 @@ describe('claude-runner persistent streaming loop', () => {
     await setupTestDb();
     const mod = await import('./claude-runner');
     sendUserMessage = mod.sendUserMessage;
-    sendUserMessages = mod.sendUserMessages;
+    cancelQueuedMessage = mod.cancelQueuedMessage;
+    getQueuedMessages = mod.getQueuedMessages;
     interruptClaude = mod.interruptClaude;
     stopSession = mod.stopSession;
     isClaudeRunning = mod.isClaudeRunning;
@@ -561,7 +571,7 @@ describe('claude-runner persistent streaming loop', () => {
     stopSession(sessionId);
   });
 
-  it('queues prompts sent during a turn and flushes them together at turn end', async () => {
+  it('queues messages sent during a turn (unpersisted, surfaced) and flushes them at turn end', async () => {
     const fake = makeFakeQuery();
     _setQueryFactory(fake.factory);
     const sessionId = await createRunningSession();
@@ -571,25 +581,181 @@ describe('claude-runner persistent streaming loop', () => {
     expect(isClaudeRunning(sessionId)).toBe(true);
     await waitFor(() => fake.inputs.length >= 1);
 
-    // Two more sends while the turn is active are queued, not pushed. They are
-    // persisted right away so they show in the transcript.
+    // Two more sends while the turn is active are queued, not pushed — and unlike
+    // before, NOT persisted: only the first message is in the transcript so far.
     await sendUserMessage(sessionId, 'second');
     await sendUserMessage(sessionId, 'third');
-    await waitFor(async () => (await messagesFor(sessionId)).length >= 3);
-    const queuedMsgs = await messagesFor(sessionId);
-    expect(queuedMsgs.map((m) => m.type)).toEqual(['user', 'user', 'user']);
+    expect(getQueuedMessages(sessionId).map((m) => m.text)).toEqual(['second', 'third']);
+    expect(mockSseEvents.emitQueuedMessages).toHaveBeenCalled();
+    const duringTurn = await messagesFor(sessionId);
+    expect(duringTurn).toHaveLength(1);
     // Still only the first prompt reached the SDK; the rest are queued.
     expect(fake.inputs).toHaveLength(1);
 
-    // The turn ends → queued prompts flush together as one combined push.
+    // The turn ends → queued messages persist (as their own bubbles) and flush
+    // together as one combined push.
     fake.emit(result());
     await waitFor(() => fake.inputs.length >= 2);
     expect(fake.inputs[1].message.content).toBe('second\n\nthird');
+    await waitFor(
+      async () => (await messagesFor(sessionId)).filter((m) => m.type === 'user').length >= 3
+    );
+    const userMsgs = (await messagesFor(sessionId)).filter((m) => m.type === 'user');
+    expect(userMsgs).toHaveLength(3);
+    // The queue is emptied and the empty list emitted.
+    expect(getQueuedMessages(sessionId)).toHaveLength(0);
+    expect(mockSseEvents.emitQueuedMessages).toHaveBeenCalledWith(sessionId, []);
 
     // turnActive stays continuously true across the handoff (no idle blip that
     // would trip work-complete notifications / voice auto-read between turns).
     expect(isClaudeRunning(sessionId)).toBe(true);
     expect(mockSseEvents.emitClaudeRunning).not.toHaveBeenCalledWith(sessionId, false);
+
+    stopSession(sessionId);
+  });
+
+  it('leaves queued messages queued on interrupt (does not flush them as a new turn)', async () => {
+    const fake = makeFakeQuery();
+    _setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+
+    await sendUserMessage(sessionId, 'first');
+    fake.emit(messageStart());
+    await waitFor(() => isClaudeRunning(sessionId));
+
+    // Queue a message mid-turn, then Stop.
+    await sendUserMessage(sessionId, 'queued while working');
+    expect(getQueuedMessages(sessionId).map((m) => m.text)).toEqual(['queued while working']);
+
+    expect(await interruptClaude(sessionId)).toBe(true);
+    // The interrupt's terminal result ends the turn WITHOUT flushing the queue.
+    fake.emit(result('error_during_execution'));
+    await waitFor(() => !isClaudeRunning(sessionId));
+
+    // The queued message is still queued (never pushed to the SDK, never persisted).
+    expect(fake.inputs).toHaveLength(1);
+    expect(getQueuedMessages(sessionId).map((m) => m.text)).toEqual(['queued while working']);
+    expect((await messagesFor(sessionId)).filter((m) => m.type === 'user')).toHaveLength(1);
+
+    stopSession(sessionId);
+  });
+
+  it('cancelQueuedMessage removes a queued message and emits the update', async () => {
+    const fake = makeFakeQuery();
+    _setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+
+    await sendUserMessage(sessionId, 'first');
+    fake.emit(messageStart());
+    await waitFor(() => isClaudeRunning(sessionId));
+    await sendUserMessage(sessionId, 'remove me');
+
+    const [queued] = getQueuedMessages(sessionId);
+    expect(queued.text).toBe('remove me');
+
+    expect(cancelQueuedMessage(sessionId, queued.id)).toBe(true);
+    expect(getQueuedMessages(sessionId)).toHaveLength(0);
+    expect(mockSseEvents.emitQueuedMessages).toHaveBeenLastCalledWith(sessionId, []);
+
+    // Removing an absent id is an idempotent no-op that still reports success.
+    expect(cancelQueuedMessage(sessionId, 'nope')).toBe(true);
+
+    stopSession(sessionId);
+  });
+
+  it('flushes leftover queued messages ahead of an idle send, combined in order', async () => {
+    const fake = makeFakeQuery();
+    _setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+
+    // Queue a message mid-turn, then interrupt so it's left sitting (idle).
+    await sendUserMessage(sessionId, 'first');
+    fake.emit(messageStart());
+    await waitFor(() => isClaudeRunning(sessionId));
+    await sendUserMessage(sessionId, 'leftover');
+    await interruptClaude(sessionId);
+    fake.emit(result('error_during_execution'));
+    await waitFor(() => !isClaudeRunning(sessionId));
+    expect(getQueuedMessages(sessionId).map((m) => m.text)).toEqual(['leftover']);
+
+    // A fresh idle send drains the leftover ahead of the new message, as one turn.
+    await sendUserMessage(sessionId, 'new');
+    await waitFor(() => fake.inputs.length >= 2);
+    expect(fake.inputs[1].message.content).toBe('leftover\n\nnew');
+    expect(getQueuedMessages(sessionId)).toHaveLength(0);
+    expect(isClaudeRunning(sessionId)).toBe(true);
+
+    stopSession(sessionId);
+  });
+
+  it('re-queues (does not lose) messages when a flush fails to persist', async () => {
+    // Non-destructive flush: if preparing/persisting a queued message throws at
+    // turn end, the messages must be handed back to the queue (not silently lost)
+    // and the session must go idle rather than pin the composer "working".
+    const fake = makeFakeQuery();
+    _setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+
+    await sendUserMessage(sessionId, 'first');
+    fake.emit(messageStart());
+    await waitFor(() => isClaudeRunning(sessionId));
+
+    // Queue a message with an attachment; resolving it will blow up during flush.
+    await sendUserMessage(sessionId, 'has attachment', ['aaaa1111-doc.md']);
+    expect(getQueuedMessages(sessionId).map((m) => m.text)).toEqual(['has attachment']);
+    mockResolveUploadPaths.mockRejectedValueOnce(new Error('fs boom'));
+
+    // Turn ends naturally → flush fires → prepare throws → non-destructive recovery.
+    fake.emit(messageDelta('end_turn'));
+    fake.emit(result());
+    await waitFor(() => !isClaudeRunning(sessionId));
+
+    // The message is back in the queue (with its attachment), nothing was pushed to
+    // the SDK, and the composer is idle.
+    const requeued = getQueuedMessages(sessionId);
+    expect(requeued.map((m) => m.text)).toEqual(['has attachment']);
+    expect(requeued[0].attachments).toEqual(['aaaa1111-doc.md']);
+    expect(fake.inputs).toHaveLength(1);
+    expect(mockSseEvents.emitClaudeRunning).toHaveBeenLastCalledWith(sessionId, false);
+
+    stopSession(sessionId);
+  });
+
+  it('leaves the queue intact when interrupted during the flush window (before the push)', async () => {
+    // The interrupt-vs-flush race: the turn ends naturally and the flush starts,
+    // but the user hits Stop while the flush is still preparing (before it pushes).
+    // The flush must abort — re-queue and go idle — NOT fire the queue as a turn.
+    const fake = makeFakeQuery();
+    _setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+
+    await sendUserMessage(sessionId, 'first');
+    fake.emit(messageStart());
+    await waitFor(() => isClaudeRunning(sessionId));
+    await sendUserMessage(sessionId, 'queued', ['aaaa1111-doc.md']);
+
+    // Make attachment resolution hang so we can interrupt mid-flush.
+    let release!: () => void;
+    mockResolveUploadPaths.mockReturnValueOnce(
+      new Promise((res) => {
+        release = () => res(['/p/doc.md']);
+      })
+    );
+
+    // Turn ends → the flush starts and blocks in prepare.
+    fake.emit(messageDelta('end_turn'));
+    fake.emit(result());
+    await waitFor(() => mockResolveUploadPaths.mock.calls.length >= 1);
+
+    // User hits Stop during the flush window.
+    expect(await interruptClaude(sessionId)).toBe(true);
+
+    // Let prepare finish; the flush detects the interrupt, re-queues, goes idle.
+    release();
+    await waitFor(() => !isClaudeRunning(sessionId));
+
+    expect(fake.inputs).toHaveLength(1); // the queue was NOT pushed as a new turn
+    expect(getQueuedMessages(sessionId).map((m) => m.text)).toEqual(['queued']);
 
     stopSession(sessionId);
   });
@@ -633,55 +799,6 @@ describe('claude-runner persistent streaming loop', () => {
     fake.emit(messageDelta('end_turn'));
     await waitFor(() => !isClaudeRunning(sessionId));
     expect(mockSseEvents.emitClaudeRunning).toHaveBeenCalledWith(sessionId, false);
-
-    stopSession(sessionId);
-  });
-
-  it('sendUserMessages persists each message but pushes them as one combined turn', async () => {
-    const fake = makeFakeQuery();
-    _setQueryFactory(fake.factory);
-    const sessionId = await createRunningSession();
-
-    await sendUserMessages(sessionId, [
-      { prompt: 'one', attachmentPaths: [] },
-      { prompt: 'two', attachmentPaths: [] },
-    ]);
-
-    // Each message is persisted as its own transcript bubble, in order.
-    await waitFor(async () => (await messagesFor(sessionId)).length >= 2);
-    const msgs = await messagesFor(sessionId);
-    expect(msgs.map((m) => m.type)).toEqual(['user', 'user']);
-
-    // But the model receives a single combined turn.
-    await waitFor(() => fake.inputs.length >= 1);
-    expect(fake.inputs).toHaveLength(1);
-    expect(fake.inputs[0].message.content).toBe('one\n\ntwo');
-    expect(isClaudeRunning(sessionId)).toBe(true);
-
-    stopSession(sessionId);
-  });
-
-  it('sendUserMessages queues the combined turn when one is already active', async () => {
-    const fake = makeFakeQuery();
-    _setQueryFactory(fake.factory);
-    const sessionId = await createRunningSession();
-
-    // A turn is running.
-    await sendUserMessage(sessionId, 'first');
-    await waitFor(() => fake.inputs.length >= 1);
-
-    // A batch arriving mid-turn is persisted now but queued as one combined push.
-    await sendUserMessages(sessionId, [
-      { prompt: 'a', attachmentPaths: [] },
-      { prompt: 'b', attachmentPaths: [] },
-    ]);
-    await waitFor(async () => (await messagesFor(sessionId)).length >= 3);
-    expect(fake.inputs).toHaveLength(1);
-
-    // Turn ends → the combined batch flushes.
-    fake.emit(result());
-    await waitFor(() => fake.inputs.length >= 2);
-    expect(fake.inputs[1].message.content).toBe('a\n\nb');
 
     stopSession(sessionId);
   });

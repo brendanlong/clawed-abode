@@ -2,21 +2,23 @@
 
 import { Paperclip, X, Clock } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import type { PendingMessage } from '@/lib/pending-message';
+import { displayFileName } from '@/lib/attachments';
+import type { QueuedMessage } from '@/lib/queued-message';
 
-interface PendingMessageListProps {
-  messages: PendingMessage[];
+interface QueuedMessageListProps {
+  messages: QueuedMessage[];
   onCancel: (id: string) => void;
 }
 
 /**
- * Renders the client-held pending queue pinned at the bottom of the transcript
- * (below the persisted messages), in first-to-last order. Each is a user-styled
- * bubble marked "Queued" with an ✕ to remove it before it sends. These are not
- * persisted — they flush together via `claude.sendBatch` when the turn ends, or
- * are reclaimed into the composer on interrupt. See {@link PendingMessage}.
+ * Renders the server-owned queue pinned at the bottom of the transcript (below
+ * the persisted messages), in first-to-last order. Each is a user-styled bubble
+ * marked "Queued" with an ✕ to remove it before it sends. These are not persisted
+ * — the server flushes them together as one turn when the current turn ends
+ * naturally, and an interrupt deliberately leaves them queued. See
+ * {@link QueuedMessage}.
  */
-export function PendingMessageList({ messages, onCancel }: PendingMessageListProps) {
+export function QueuedMessageList({ messages, onCancel }: QueuedMessageListProps) {
   if (messages.length === 0) return null;
 
   return (
@@ -36,17 +38,20 @@ export function PendingMessageList({ messages, onCancel }: PendingMessageListPro
 
               {message.attachments.length > 0 && (
                 <div className="mt-2 flex flex-wrap gap-1.5">
-                  {message.attachments.map((att) => (
-                    <span
-                      key={att.storedName}
-                      className="inline-flex items-center gap-1.5 rounded-md border bg-background/60 px-2 py-1 text-xs"
-                    >
-                      <Paperclip className="h-3 w-3 shrink-0 text-muted-foreground" />
-                      <span className="max-w-[12rem] truncate" title={att.name}>
-                        {att.name}
+                  {message.attachments.map((storedName) => {
+                    const name = displayFileName(storedName);
+                    return (
+                      <span
+                        key={storedName}
+                        className="inline-flex items-center gap-1.5 rounded-md border bg-background/60 px-2 py-1 text-xs"
+                      >
+                        <Paperclip className="h-3 w-3 shrink-0 text-muted-foreground" />
+                        <span className="max-w-[12rem] truncate" title={name}>
+                          {name}
+                        </span>
                       </span>
-                    </span>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
 
