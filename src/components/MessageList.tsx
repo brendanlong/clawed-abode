@@ -28,6 +28,7 @@ import {
   getParentToolUseId,
   groupSubagentMessages,
   computeSubagentPlacements,
+  buildToolCallFromBlock,
   type SubagentLifecycle,
 } from './messages/messageHelpers';
 
@@ -168,19 +169,6 @@ function collectSubagentLifecycles(
   }
   // Preserve spawn order (Map iteration is insertion order = document order).
   return { lifecycles, agentBlockById };
-}
-
-// Reconstruct a ToolCall for a relocated subagent box from its Agent/Task call
-// block plus any result. Mirrors the tool shape ContentRenderer builds inline.
-function toolCallFromBlock(block: ContentBlock, resultMap: ToolResultMap): ToolCall {
-  const result = block.id ? resultMap.get(block.id) : undefined;
-  return {
-    name: block.name || 'Agent',
-    id: block.id,
-    input: block.input,
-    output: result?.content,
-    is_error: result?.is_error,
-  };
 }
 
 // Extract TodoWrite tool call IDs from messages, ordered by sequence
@@ -491,7 +479,7 @@ export function MessageList({
         kind: 'taskbox',
         sequence: atSequence,
         toolUseId,
-        tool: toolCallFromBlock(block, resultMap),
+        tool: buildToolCallFromBlock(block, resultMap),
       });
     }
     rows.sort((a, b) => a.sequence - b.sequence);
@@ -793,7 +781,10 @@ export function MessageList({
                   if (!block) return null;
                   return (
                     <div key={`pinned-${toolUseId}`} className="flex justify-start">
-                      <TaskDisplay tool={toolCallFromBlock(block, resultMap)} isPendingOverride />
+                      <TaskDisplay
+                        tool={buildToolCallFromBlock(block, resultMap)}
+                        isPendingOverride
+                      />
                     </div>
                   );
                 })}

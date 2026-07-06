@@ -407,26 +407,33 @@ export function isRecognizedMessage(type: string, content: MessageContent): Reco
 }
 
 /**
+ * Build the ToolCall view-model for a single `tool_use` block, pairing it with
+ * its result from the result map. The one place the (block + result) → ToolCall
+ * shape is defined — shared by {@link buildToolCalls}, `ContentRenderer` (inline
+ * tool rendering), and `MessageList` (reconstructing a relocated subagent box
+ * from its call block) so the shape and defaults can't drift.
+ */
+export function buildToolCallFromBlock(block: ContentBlock, toolResults?: ToolResultMap): ToolCall {
+  const result = block.id ? toolResults?.get(block.id) : undefined;
+  return {
+    name: block.name || 'Unknown',
+    id: block.id,
+    input: block.input,
+    output: result?.content,
+    is_error: result?.is_error,
+  };
+}
+
+/**
  * Build tool call objects with results for assistant messages.
  */
 export function buildToolCalls(content: MessageContent, toolResults?: ToolResultMap): ToolCall[] {
   const messageContent = content.message?.content;
   if (!Array.isArray(messageContent)) return [];
 
-  const toolUseBlocks = messageContent.filter(
-    (block): block is ContentBlock => block.type === 'tool_use'
-  );
-
-  return toolUseBlocks.map((block) => {
-    const result = block.id ? toolResults?.get(block.id) : undefined;
-    return {
-      name: block.name || 'Unknown',
-      id: block.id,
-      input: block.input,
-      output: result?.content,
-      is_error: result?.is_error,
-    };
-  });
+  return messageContent
+    .filter((block): block is ContentBlock => block.type === 'tool_use')
+    .map((block) => buildToolCallFromBlock(block, toolResults));
 }
 
 /**
