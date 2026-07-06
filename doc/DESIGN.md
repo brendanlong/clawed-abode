@@ -855,22 +855,29 @@ clawed-abode/
 
 ### Test Categories
 
-- **Unit tests** (`*.test.ts`): Pure functions and isolated logic. Run with `pnpm test:unit`.
-- **Integration tests** (`*.integration.test.ts`): Tests using real external systems (git, SQLite). Run with `pnpm test:integration`.
+Each category has its own Vitest config, so they can run (and be isolated) independently:
+
+- **Unit tests** (`*.test.ts`): Pure functions and isolated logic, in a `node` environment. Run with `pnpm test:unit` (`vitest.config.ts`). This config **excludes** `*.integration.test.ts` and component `*.test.tsx`.
+- **Component tests** (`*.test.tsx`): React component / DOM tests in a `jsdom` environment (e.g. `PromptInput.test.tsx`). Run with `pnpm test:component` (`vitest.component.config.ts`). These live under a separate config because they need a DOM, so a bare `vitest run` (unit config) would silently skip them.
+- **Integration tests** (`*.integration.test.ts`): Tests using real external systems (git, SQLite). Run with `pnpm test:integration` (`vitest.integration.config.ts`).
+
+`pnpm test:run` runs **all three** suites in sequence (unit → component → integration) — the same set CI runs — so it's the single command to verify before committing.
 
 ### Test File Locations
 
 Tests are co-located with source files:
 
-- `src/lib/auth.ts` → `src/lib/auth.test.ts`
-- `src/server/services/git.ts` → `src/server/services/git.integration.test.ts`
+- `src/lib/auth.ts` → `src/lib/auth.test.ts` (unit)
+- `src/components/PromptInput.tsx` → `src/components/PromptInput.test.tsx` (component)
+- `src/server/services/git.ts` → `src/server/services/git.integration.test.ts` (integration)
 
 ### Running Tests
 
 ```bash
 pnpm test          # Watch mode
-pnpm test:run      # Single run
+pnpm test:run      # Single run — ALL suites (unit + component + integration)
 pnpm test:unit     # Unit tests only
+pnpm test:component    # Component/DOM tests only
 pnpm test:integration  # Integration tests only
 pnpm test:coverage # With coverage report
 ```
