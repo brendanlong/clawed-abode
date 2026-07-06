@@ -4,6 +4,7 @@ import type { SlashCommand } from '@anthropic-ai/claude-agent-sdk';
 import type { PullRequestInfo } from './github';
 import type { RetryState } from '@/lib/claude-messages';
 import type { BackgroundTask } from '@/lib/session-status';
+import type { QueuedMessage } from '@/lib/queued-message';
 
 // Message with parsed content (for SSE events)
 export type ParsedMessage = Omit<Message, 'content'> & { content: unknown };
@@ -51,6 +52,12 @@ export interface BackgroundTasksEvent {
   tasks: BackgroundTask[];
 }
 
+export interface QueuedMessagesEvent {
+  type: 'queued_messages';
+  sessionId: string;
+  messages: QueuedMessage[];
+}
+
 export type SSEEvent =
   | SessionUpdateEvent
   | MessageEvent
@@ -58,7 +65,8 @@ export type SSEEvent =
   | CommandsEvent
   | PrUpdateEvent
   | ClaudeRetryEvent
-  | BackgroundTasksEvent;
+  | BackgroundTasksEvent
+  | QueuedMessagesEvent;
 
 /**
  * Normalized union delivered over the single multiplexed per-session SSE stream.
@@ -73,7 +81,8 @@ export type SessionStreamEvent =
   | { kind: 'pr'; pullRequest: PullRequestInfo | null }
   | { kind: 'session'; session: Session }
   | { kind: 'retry'; retry: RetryState | null }
-  | { kind: 'background'; tasks: BackgroundTask[] };
+  | { kind: 'background'; tasks: BackgroundTask[] }
+  | { kind: 'queued'; messages: QueuedMessage[] };
 
 // Global channel name for cross-session list updates (not session-scoped).
 const SESSION_LIST_EVENT = 'session-list';
@@ -203,6 +212,20 @@ class SSEEventEmitter extends EventEmitter {
     return () => this.off(eventName, callback);
   }
 
+  emitQueuedMessages(sessionId: string, messages: QueuedMessage[]): void {
+    this.emit(`queued:${sessionId}`, {
+      type: 'queued_messages',
+      sessionId,
+      messages,
+    } satisfies QueuedMessagesEvent);
+  }
+
+  onQueuedMessages(sessionId: string, callback: (event: QueuedMessagesEvent) => void): () => void {
+    const eventName = `queued:${sessionId}`;
+    this.on(eventName, callback);
+    return () => this.off(eventName, callback);
+  }
+
   /**
    * Subscribe to all event kinds for a session as a single normalized stream.
    * Returns one unsubscribe that detaches every underlying channel listener.
@@ -216,6 +239,7 @@ class SSEEventEmitter extends EventEmitter {
       this.onSessionUpdate(sessionId, (e) => callback({ kind: 'session', session: e.session })),
       this.onClaudeRetry(sessionId, (e) => callback({ kind: 'retry', retry: e.retry })),
       this.onBackgroundTasks(sessionId, (e) => callback({ kind: 'background', tasks: e.tasks })),
+      this.onQueuedMessages(sessionId, (e) => callback({ kind: 'queued', messages: e.messages })),
     ];
     return () => unsubscribes.forEach((unsubscribe) => unsubscribe());
   }

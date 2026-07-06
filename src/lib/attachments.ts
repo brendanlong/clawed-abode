@@ -39,6 +39,17 @@ export function buildPromptWithAttachments(prompt: string, paths: string[]): str
 }
 
 /**
+ * Recover a human-friendly file name from a stored name for display. Stored
+ * names are `${8-hex-token}-${safeName}` (see `saveUploadedFile`); this strips
+ * the collision-proofing token so a queued-message chip shows the original-ish
+ * name rather than the random prefix. Falls back to the input if it doesn't
+ * match the expected shape.
+ */
+export function displayFileName(storedName: string): string {
+  return storedName.replace(/^[0-9a-f]{8}-/, '');
+}
+
+/**
  * Strip directory components and unsafe characters from an uploaded file name,
  * neutralizing path traversal. Returns a safe basename suitable for storage.
  */
