@@ -6,7 +6,7 @@ import {
   cloneRepo,
   createEmptyWorkspace,
   removeWorkspace,
-  getSessionWorkingDir,
+  getSessionWorkspacePath,
 } from '../services/worktree-manager';
 import { buildEditorUrl } from '@/lib/editor-url';
 import {
@@ -211,8 +211,11 @@ export const sessionsRouter = router({
         return { url: null };
       }
 
-      const workingDir = getSessionWorkingDir(session.id, session.repoPath);
-      return { url: buildEditorUrl(env.CODE_SERVER_URL, workingDir) };
+      // Open the session's workspace root (not just the repo checkout) so the
+      // operator sees all of the session's files — the repo clone alongside the
+      // uploads/ sibling folder.
+      const workspaceDir = getSessionWorkspacePath(session.id);
+      return { url: buildEditorUrl(env.CODE_SERVER_URL, workspaceDir) };
     }),
 
   start: protectedProcedure

@@ -10,9 +10,7 @@ vi.mock('../services/worktree-manager', () => ({
   cloneRepo: mockCloneRepo,
   createEmptyWorkspace: mockCreateEmptyWorkspace,
   removeWorkspace: mockRemoveWorkspace,
-  getSessionWorkingDir: vi.fn((sessionId: string, repoPath: string) =>
-    repoPath ? `/worktrees/${sessionId}/${repoPath}` : `/worktrees/${sessionId}`
-  ),
+  getSessionWorkspacePath: vi.fn((sessionId: string) => `/worktrees/${sessionId}`),
 }));
 
 // Mock claude-runner
@@ -434,8 +432,10 @@ describe('sessionsRouter integration', () => {
       const caller = createCaller('auth-session-id');
       const result = await caller.sessions.getEditorUrl({ sessionId: session.id });
 
+      // Opens the workspace root (not the repo subfolder) so all of the
+      // session's files are visible — the repo clone plus the uploads/ sibling.
       expect(result.url).toBe(
-        `https://host.ts.net:8443/?folder=${encodeURIComponent(`/worktrees/${session.id}/repo`)}`
+        `https://host.ts.net:8443/?folder=${encodeURIComponent(`/worktrees/${session.id}`)}`
       );
     });
 
