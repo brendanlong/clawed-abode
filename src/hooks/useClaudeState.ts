@@ -29,20 +29,29 @@ export function useClaudeState(sessionId: string) {
   const { data: backgroundData, refetch: refetchBackground } =
     trpc.claude.getBackgroundTasks.useQuery({ sessionId }, { staleTime: Infinity });
 
+  // Fetch messages queued while a turn is active (server-owned). Seeded once and
+  // kept current by the SSE `queued` channel (staleTime Infinity so a focus
+  // refetch can't clobber the live value).
+  const { data: queuedData, refetch: refetchQueued } = trpc.claude.getQueuedMessages.useQuery(
+    { sessionId },
+    { staleTime: Infinity }
+  );
+
   // Refetch when app regains visibility or network reconnects
   const refetchAll = useCallback(() => {
     refetch();
     refetchCommands();
     refetchRetry();
     refetchBackground();
-  }, [refetch, refetchCommands, refetchRetry, refetchBackground]);
+    refetchQueued();
+  }, [refetch, refetchCommands, refetchRetry, refetchBackground, refetchQueued]);
   useRefetchOnReconnect(refetchAll);
 
   // Live running-state and command updates arrive via the multiplexed SSE stream
   // (useSessionStream), which writes directly into these query caches.
 
   const sendMutation = trpc.claude.send.useMutation();
-  const sendBatchMutation = trpc.claude.sendBatch.useMutation();
+  const cancelQueuedMutation = trpc.claude.cancelQueued.useMutation();
   const interruptMutation = trpc.claude.interrupt.useMutation();
   const answerMutation = trpc.claude.answerQuestion.useMutation();
   const respondToPlanMutation = trpc.claude.respondToPlan.useMutation();
@@ -55,18 +64,13 @@ export function useClaudeState(sessionId: string) {
     [sessionId, sendMutation]
   );
 
-  // Flush the client-held pending queue as one turn (see PendingMessage). Each
-  // message becomes its own transcript bubble; the model answers them together.
-  // `callbacks` lets the caller recover on failure (the flush fires automatically,
-  // so a dropped batch must not silently lose the user's drafts).
-  const sendBatch = useCallback(
-    (
-      messages: { prompt: string; attachments?: string[] }[],
-      callbacks?: { onSuccess?: () => void; onError?: () => void }
-    ) => {
-      sendBatchMutation.mutate({ sessionId, messages }, callbacks);
+  // Remove a queued message before it flushes (the ✕ on a queued bubble). The
+  // queue is server-owned; the live `queued` SSE event drives the actual removal.
+  const cancelQueued = useCallback(
+    (queuedId: string) => {
+      cancelQueuedMutation.mutate({ sessionId, queuedId });
     },
-    [sessionId, sendBatchMutation]
+    [sessionId, cancelQueuedMutation]
   );
 
   const interrupt = useCallback(() => {
@@ -100,15 +104,16 @@ export function useClaudeState(sessionId: string) {
   const commands = commandsData?.commands ?? [];
   const retry = retryData?.retry ?? null;
   const backgroundTasks = backgroundData?.tasks ?? [];
+  const queuedMessages = queuedData?.messages ?? [];
 
   return {
     isRunning,
     retry,
     backgroundTasks,
     backgroundActive: backgroundTasks.length > 0,
+    queuedMessages,
     send,
-    sendBatch,
-    isBatchSending: sendBatchMutation.isPending,
+    cancelQueued,
     interrupt,
     isInterrupting: interruptMutation.isPending,
     answerQuestion,

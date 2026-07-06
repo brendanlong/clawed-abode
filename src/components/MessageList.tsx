@@ -8,8 +8,8 @@ import type { ToolResultMap, ContentBlock, MessageContent, DisplayMessage } from
 import { MessageListProvider } from './messages/MessageListContext';
 import { Spinner } from '@/components/ui/spinner';
 import { ContextUsageIndicator } from '@/components/ContextUsageIndicator';
-import { PendingMessageList } from '@/components/PendingMessageList';
-import type { PendingMessage } from '@/lib/pending-message';
+import { QueuedMessageList } from '@/components/QueuedMessageList';
+import type { QueuedMessage } from '@/lib/queued-message';
 import type { TokenUsageStats } from '@/lib/token-estimation';
 import { useNotification } from '@/hooks/useNotification';
 import { useVoicePlaybackContext } from '@/hooks/useVoicePlayback';
@@ -214,9 +214,9 @@ interface MessageListProps {
   onSendResponse?: (response: string) => void;
   onAnswerQuestion?: (toolUseId: string, answers: Record<string, string>) => void;
   onRespondToPlan?: (toolUseId: string, approve: boolean, feedback?: string) => void;
-  /** Client-held pending messages, pinned below the transcript (async "btw mode"). */
-  pendingMessages?: PendingMessage[];
-  onCancelPending?: (id: string) => void;
+  /** Server-owned queued messages, pinned below the transcript (async "btw mode"). */
+  queuedMessages?: QueuedMessage[];
+  onCancelQueued?: (id: string) => void;
 }
 
 export function MessageList({
@@ -228,8 +228,8 @@ export function MessageList({
   onSendResponse,
   onAnswerQuestion,
   onRespondToPlan,
-  pendingMessages = [],
-  onCancelPending,
+  queuedMessages = [],
+  onCancelQueued,
 }: MessageListProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const topSentinelRef = useRef<HTMLDivElement>(null);
@@ -372,8 +372,8 @@ export function MessageList({
     if (hasInitialScrolled.current && isAtBottomRef.current && !voiceIsTrackingMessage) {
       scrollToBottom();
     }
-    // pendingMessages.length so queuing a message scrolls it into view too.
-  }, [messages, pendingMessages.length, scrollToBottom, voiceIsPlaying, voiceCurrentMessageId]);
+    // queuedMessages.length so queuing a message scrolls it into view too.
+  }, [messages, queuedMessages.length, scrollToBottom, voiceIsPlaying, voiceCurrentMessageId]);
 
   // Track if user is at bottom using IntersectionObserver (for auto-scroll on new messages)
   // This is more reliable than scroll-position math because layout changes (textarea resize,
@@ -608,8 +608,8 @@ export function MessageList({
           })}
         </MessageListProvider>
 
-        {onCancelPending && (
-          <PendingMessageList messages={pendingMessages} onCancel={onCancelPending} />
+        {onCancelQueued && (
+          <QueuedMessageList messages={queuedMessages} onCancel={onCancelQueued} />
         )}
 
         <div ref={bottomRef} style={{ overflowAnchor: 'none' }} />

@@ -178,20 +178,29 @@ sessions.getEditorUrl({ sessionId: string })
 ```typescript
 claude.send({ sessionId: string, prompt: string, attachments?: string[] })
   → { success: true }
-  // Sends one user message: persists it and pushes it into the session's streaming
-  // query (starting a turn), or — if a turn is already active server-side — queues
-  // it as a combined turn (a race backstop; the client normally only calls this
-  // while idle). Messages stream to the client via SSE. `attachments` are
-  // storedNames of files previously uploaded via POST /api/upload; their absolute
-  // paths are prefixed onto the message (see "File Uploads"). Either a non-empty
-  // prompt or at least one attachment is required.
+  // Sends one user message. The SERVER owns the queue decision (the client never
+  // routes on its own view of the turn state): if no main-agent turn is active it
+  // persists the message and pushes it into the streaming query (starting a turn);
+  // if a turn IS active it holds the message in the session's server-side queue —
+  // NOT persisted, surfaced to the client over the `queued` SSE channel as a
+  // removable bubble — and flushes it (combined with any others) as one turn when
+  // the turn ends naturally (async "btw mode"). `attachments` are storedNames of
+  // files previously uploaded via POST /api/upload; their absolute paths are
+  // prefixed onto the message at flush/send time (see "File Uploads"). Either a
+  // non-empty prompt or at least one attachment is required.
 
-claude.sendBatch({ sessionId: string, messages: { prompt: string, attachments?: string[] }[] })
-  → { success: true }
-  // Flushes the client-held pending queue: several messages the user typed while a
-  // turn was running (async "btw mode"). Each is persisted as its own transcript
-  // bubble, in order, but all are delivered to the model as ONE combined turn. See
-  // "Async Messages (Queued Sends)". Same per-message rules as `send`.
+claude.cancelQueued({ sessionId: string, queuedId: string })
+  → { success: boolean }
+  // Remove a queued message before it flushes (the ✕ on a queued bubble). The
+  // queue is server-owned and in-memory; idempotent (a no-op if the message
+  // already flushed or was removed). `success: false` only when there is no live
+  // session state to act on. See "Async Messages (Queued Sends)".
+
+claude.getQueuedMessages({ sessionId: string })
+  → { messages: QueuedMessage[] }
+  // Messages currently queued for the session (async "btw mode"). Seeds the
+  // client; kept live by the `queued` SSE channel. In-memory only (empty after a
+  // restart — queued messages are never persisted until they flush).
 
 claude.answerQuestion({
   sessionId: string,
@@ -258,7 +267,7 @@ claude.getHistory({
 ### Interaction Flow
 
 1. User sends prompt via `claude.send()`
-2. The server ensures the session's long-lived streaming `query()` exists (establishing it with `resume` if needed). If no main-agent turn is active it pushes the prompt into the input channel immediately; if a turn **is** active it queues the prompt and flushes it (combined with any other queued prompts) as soon as the turn ends — see [Query Model](#query-model) and [Async Messages (Queued Sends)](#async-messages-queued-sends)
+2. The server ensures the session's long-lived streaming `query()` exists (establishing it with `resume` if needed). If no main-agent turn is active it persists the prompt and pushes it into the input channel immediately; if a turn **is** active it holds the message in the server-side queue (unpersisted, surfaced to the client as a removable bubble) and flushes it (combined with any others) when the turn ends naturally — see [Query Model](#query-model) and [Async Messages (Queued Sends)](#async-messages-queued-sends)
 3. The `canUseTool` callback handles:
    - **AskUserQuestion** / **ExitPlanMode**: Parks a promise keyed by the SDK's `toolUseID`, sends the question/plan to the browser via SSE (as a normal assistant message with a `tool_use` block). The user responds via `claude.answerQuestion()` / `claude.respondToPlan()` (see [Answering Interactive Tools](#answering-interactive-tools)).
    - **All other tools**: Auto-approved (bypass permissions mode).
@@ -306,20 +315,20 @@ Interrupt does **not** stop background tasks; those are stopped individually via
 
 ### Async Messages (Queued Sends)
 
-The composer is **never disabled while Claude works** — the user can keep typing and sending. `turnActive` no longer gates input; it only shows the "working" indicator and the Stop (interrupt) button. This is "btw mode": a message sent mid-turn is held as a **pending message**, delivered as soon as the turn ends, and several pending messages are delivered together.
+The composer is **never disabled while Claude works** — the user can keep typing and sending. `turnActive` no longer gates input; it only shows the "working" indicator and the Stop (interrupt) button. This is "btw mode": a message sent mid-turn is queued, delivered as soon as the turn ends, and several queued messages are delivered together.
 
-**Pending messages are client-side and editable.** Because the requested UX makes them behave like _drafts_ — individually removable, and reclaimed into the composer on interrupt — they live on the client (in `session/[id]/page.tsx`), not in the DB, until they flush. `PromptInput`'s `onSubmit` carries the full `UploadedAttachment[]`, and the page routes on the live `isClaudeRunning`:
+**The queue is server-owned; the client never decides routing.** The client always calls `claude.send` — it does **not** consult its own view of `isClaudeRunning` to choose between "send now" and "queue". This is deliberate: whether a message can start a turn depends on the live turn state that only the server owns, and a replicated client copy can lag or be seeded stale (the earlier client-side queue silently fell back to a committed, non-removable send whenever the two disagreed). `sendUserMessage` ([`claude-runner.ts`](../src/server/services/claude-runner.ts)) makes the decision atomically against the in-memory `turnActive`:
 
-- **Idle** → `claude.send` immediately (a turn starts).
-- **A turn is active** → append a `PendingMessage` (`{ id, text, attachments }`, [`src/lib/pending-message.ts`](../src/lib/pending-message.ts)) to client state. `MessageList` renders these pinned **below** the persisted transcript via `PendingMessageList`, in first-to-last order, each a user-styled bubble marked "Queued" with a **Remove** (✕) that drops just that one — no server round-trip, nothing persisted.
+- **Idle** → persist the message and push it into the streaming query (a turn starts). Any messages still queued (e.g. left after an interrupt) are drained ahead of it, combined into one turn, in order.
+- **A turn is active** → append a `QueuedMessage` (`{ id, text, attachments }`, [`src/lib/queued-message.ts`](../src/lib/queued-message.ts)) to the session's in-memory `queuedMessages` and emit the updated list over the `queued` SSE channel. It is **not persisted** — nothing is written to the transcript until it flushes.
 
-**Flush at turn end.** When `isClaudeRunning` falls true→false with a non-empty pending queue, the page calls `claude.sendBatch({ messages })`. The server (`sendUserMessages`) **persists each message as its own transcript bubble** (in order) but **pushes their text combined into one turn**, so the model answers them together rather than one turn each. A `flushing` flag plus `pendingMessages.length` keep the client's `isWorking` signal continuously true across the brief flush handoff, so it doesn't fire a spurious "Claude finished" notification between turns.
+**The client renders the queue from server state.** `useClaudeState` seeds `getQueuedMessages` and keeps it live via the `queued` SSE event; `MessageList` renders `queuedMessages` pinned **below** the persisted transcript via `QueuedMessageList`, in first-to-last order, each a user-styled bubble marked "Queued" with a **Remove** (✕). Remove calls `claude.cancelQueued({ queuedId })`, which drops that one from the server queue and re-emits — the message was never persisted, so nothing is removed from the DB. (Attachment chips show a display name derived from the stored name by `displayFileName`.)
 
-**Interrupt reclaims the queue.** Stop calls `handleInterrupt`, which joins the pending messages' text with newlines, restores them (and their attachments) into the composer via a `restoreDraft` prop (applied once per `nonce`), clears the pending queue, and then interrupts the current turn — so a queued-up thought is never lost, just handed back for editing.
+**Flush at turn end (natural only).** When the main turn ends **naturally**, `applyStatus` captures and clears `queuedMessages`, emits the empty list, and fires `flushQueuedMessages`: it persists each queued message as its own transcript bubble (sanitizing and prefixing attachments **at flush time**) and pushes their text **combined into one turn**, so the model answers them together. Deferring persistence to the flush is exactly what makes a queued message removable — a message that is ✕-removed (or lost to a stop) before flushing was never written to the transcript. The push doesn't toggle `turnActive`; an `awaitingFlushTurn` flag holds it continuously true from the flush until the flushed turn's own top-level `message_start` — suppressing the ended turn's clear, its trailing `result`, and any interleaved `task_notification` (a false→true blip would trip the "Claude finished" notification / voice-auto-read). Because the server holds `turnActive` true across this handoff, the client needs no `isWorking` bridge of its own.
 
-**Server-side queue as a race backstop.** The server still has an in-memory `queuedPrompts` path: `send`/`sendBatch` persist their message(s) and then, if a `turnActive` is somehow observed server-side (a race — the client normally only sends while idle, or a background subagent autonomously continued the turn), the (combined) prompt is queued and flushed by `flushQueuedPrompts` when the turn ends. That flush deliberately does **not** toggle `turnActive`; an `awaitingFlushTurn` flag holds it continuously true from the flush until the flushed turn's own top-level `message_start` — suppressing the ended turn's clear, its trailing `result`, and any interleaved `task_notification` (a false→true blip would trip the same notification / voice-auto-read effects). Because that window closes only on a `message_start`, an **interrupt during the handoff** is special-cased: the interrupt's terminal `result` has no preceding `message_start`, so `interruptClaude` clears `awaitingFlushTurn` up front (otherwise the composer would be silently pinned "working"); all other teardown paths clear it via `clearLiveStatus`.
+**Interrupt leaves the queue intact.** Stopping the current turn must **not** fire the queue as a fresh turn the instant the user hits Stop. `interruptClaude` sets a one-shot `interruptRequested` flag; the resulting terminal `result` ends the turn but `applyStatus` sees `interruptRequested` and **skips the flush**, so queued messages stay put (still shown, still removable). They go out later — flushed ahead of the user's next idle send, combined in order (see the idle branch above) — or the user can ✕-remove any they no longer want. The interrupt also clears `awaitingFlushTurn` up front: an interrupt **during** a flush handoff produces a terminal `result` with no preceding `message_start`, which would otherwise never close the suppression window and pin the composer "working" (all other teardown paths clear it via `clearLiveStatus`).
 
-_Known limitation_: pending messages (client) and `queuedPrompts` (server) are both **in-memory**. A reload/navigation before flush drops client-held pending drafts (unsent, so acceptable), and a stop/restart before a server-side flush drops those prompts from Claude's input (they remain persisted in the transcript). Both mirror the other ephemeral session state.
+_Known limitation_: `queuedMessages` is **in-memory** only. A stop/restart before a queued message flushes drops it (it was never persisted). This mirrors the other ephemeral session state (background tasks, retry).
 
 On the client, `PromptInput` keeps the textarea and submit button enabled while running (the button reads "Queue" instead of "Send"), and the Stop button is shown **alongside** it rather than replacing it, so a user can interrupt the current turn and queue the next message independently.
 
@@ -333,9 +342,9 @@ catch-up query (see [Real-Time Updates](#real-time-updates-sse)):
 2. The server parses the resume token, replays persisted messages with `sequence`
    greater than the token's watermark, then resumes live streaming.
 3. The client merges replayed messages into the React Query cache (deduped by id).
-4. Latest-value state (running, commands, PR, session, retry, background tasks) is not
-   replayed; the client refetches those queries on reconnect (`useRefetchOnReconnect`)
-   as a resync.
+4. Latest-value state (running, commands, PR, session, retry, background tasks, queued
+   messages) is not replayed; the client refetches those queries on reconnect
+   (`useRefetchOnReconnect`) as a resync.
 5. A `ConnectionStatusIndicator` shows a "reconnecting" banner while the stream is
    not connected.
 
@@ -404,8 +413,8 @@ subscription, so the app is deliberately structured around just **two** streams:
 
 1. **Per-session multiplexed stream** — `sse.onSessionEvents({ sessionId })`. A single
    subscription yields a discriminated union of every event kind for the session
-   (`message`, `running`, `commands`, `pr`, `session`, `retry`, `background`). The server
-   folds the seven in-process emitter channels into this union via `sseEvents.onSessionEvents`
+   (`message`, `running`, `commands`, `pr`, `session`, `retry`, `background`, `queued`). The server
+   folds the eight in-process emitter channels into this union via `sseEvents.onSessionEvents`
    ([`events.ts`](../src/server/services/events.ts)). On the client, `useSessionStream`
    ([`src/hooks/useSessionStream.ts`](../src/hooks/useSessionStream.ts)) is mounted once
    per session page and fans each event to the relevant React Query cache (the message
@@ -739,8 +748,8 @@ Both source [`scripts/lib-code-server.sh`](../scripts/lib-code-server.sh) so the
 ### Session View (Chat)
 
 - Message history with lazy loading on scroll up
-- Input field for new prompts — **always usable while Claude is working**; a message sent mid-turn becomes a **pending message** pinned below the transcript and sent when the turn ends (async "btw mode", see [Async Messages (Queued Sends)](#async-messages-queued-sends)). The submit button reads "Queue" instead of "Send" during a turn.
-- Pending (queued) messages render at the bottom of the transcript, in order, each marked "Queued" with a **Remove** (✕) to drop it before it sends. Interrupting reclaims all pending messages into the composer (text joined by newlines, attachments restored) so nothing is lost.
+- Input field for new prompts — **always usable while Claude is working**; a message sent mid-turn becomes a **queued message** (server-owned) pinned below the transcript and sent when the turn ends naturally (async "btw mode", see [Async Messages (Queued Sends)](#async-messages-queued-sends)). The submit button reads "Queue" instead of "Send" during a turn.
+- Queued messages render at the bottom of the transcript, in order, each marked "Queued" with a **Remove** (✕) that drops it via `claude.cancelQueued` before it sends. Interrupting the turn leaves queued messages queued (they don't fire as a new turn on Stop); they flush ahead of the next send, or can be ✕-removed.
 - File attach button: uploads files (allowed even while Claude is working); pending files show as removable chips on the composer and are prefixed onto the message when sent (see [File Uploads](#file-uploads))
 - Stop button (visible during Claude execution, shown alongside the Queue button so the current turn can be interrupted independently of queuing the next message)
 - Tool calls rendered with expandable input/output
@@ -791,7 +800,7 @@ clawed-abode/
 │   │   ├── auth.ts               # Authentication utilities
 │   │   ├── auth-token.ts         # Client-side auth token storage (shared key)
 │   │   ├── attachments.ts        # Pure attachment prefix + filename sanitizing
-│   │   ├── pending-message.ts    # Client-held pending-queue message type (async "btw mode")
+│   │   ├── queued-message.ts     # Server-owned queued-message type (async "btw mode")
 │   │   ├── crypto.ts             # Encryption/decryption (AES-256-GCM)
 │   │   ├── logger.ts             # Centralized logging (createLogger)
 │   │   ├── prisma.ts             # Prisma client initialization
@@ -816,7 +825,7 @@ clawed-abode/
 │   └── components/
 │       ├── MessageList.tsx
 │       ├── PromptInput.tsx
-│       ├── PendingMessageList.tsx # Client-held pending queue, pinned below the transcript
+│       ├── QueuedMessageList.tsx # Server-owned queue, pinned below the transcript
 │       ├── SessionList.tsx
 │       ├── ConnectionStatusIndicator.tsx # "Reconnecting" banner when the SSE stream is down
 │       ├── Header.tsx
