@@ -57,9 +57,12 @@ export function useClaudeState(sessionId: string) {
   const respondToPlanMutation = trpc.claude.respondToPlan.useMutation();
   const stopBackgroundTaskMutation = trpc.claude.stopBackgroundTask.useMutation();
 
+  // Returns a promise that rejects if the send fails (e.g. queue overflow,
+  // network blip, session no longer running), so the composer can restore the
+  // just-typed text instead of losing it to the optimistic clear.
   const send = useCallback(
     (prompt: string, attachments?: string[]) => {
-      sendMutation.mutate({ sessionId, prompt, attachments });
+      return sendMutation.mutateAsync({ sessionId, prompt, attachments });
     },
     [sessionId, sendMutation]
   );
