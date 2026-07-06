@@ -4,6 +4,17 @@ import userEvent from '@testing-library/user-event';
 import { PromptInput } from './PromptInput';
 import { MAX_QUEUED_MESSAGES } from '@/lib/queued-message';
 
+// Mock the upload hook so a file can be attached without hitting /api/upload.
+const { mockUpload } = vi.hoisted(() => ({ mockUpload: vi.fn() }));
+vi.mock('@/hooks/useFileUpload', () => ({
+  useFileUpload: () => ({
+    upload: mockUpload,
+    uploading: false,
+    error: null,
+    clearError: vi.fn(),
+  }),
+}));
+
 describe('PromptInput', () => {
   const defaultProps = {
     sessionId: 'test-session-id',
@@ -213,6 +224,30 @@ describe('PromptInput', () => {
 
       await user.type(textarea, '!');
       expect(screen.queryByText('Queue is full')).not.toBeInTheDocument();
+    });
+
+    it('restores attachments (not just text) when the send rejects', async () => {
+      const attachment = {
+        name: 'photo.png',
+        storedName: 'x1_photo.png',
+        path: '/tmp/x1_photo.png',
+      };
+      mockUpload.mockResolvedValue([attachment]);
+      const onSubmit = vi.fn().mockRejectedValue(new Error('Queue is full'));
+      const user = userEvent.setup();
+      const { container } = render(<PromptInput {...defaultProps} onSubmit={onSubmit} />);
+
+      const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+      await user.upload(fileInput, new File(['data'], 'photo.png', { type: 'image/png' }));
+
+      // The attachment chip appears (an attachment alone can be sent).
+      await waitFor(() => expect(screen.getByText('photo.png')).toBeInTheDocument());
+      await user.click(screen.getByRole('button', { name: /send/i }));
+
+      // Sent with the attachment, then restored after the rejection.
+      await waitFor(() => expect(onSubmit).toHaveBeenCalledWith('', [attachment]));
+      await waitFor(() => expect(screen.getByText('photo.png')).toBeInTheDocument());
+      expect(screen.getByText('Queue is full')).toBeInTheDocument();
     });
   });
 
