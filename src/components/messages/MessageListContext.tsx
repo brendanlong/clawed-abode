@@ -24,6 +24,13 @@ interface MessageListContextValue {
    * without importing MessageBubble (which would create an import cycle).
    */
   renderSubagentTranscript: (toolUseId: string) => ReactNode;
+  /**
+   * Tool_use ids of top-level subagents whose box MessageList has relocated
+   * (pinned at the bottom while running, or moved to their finish position).
+   * For these, the spawn-point render is a compact breadcrumb instead of the
+   * full box. See {@link computeSubagentPlacements}.
+   */
+  relocatedSubagentIds: Set<string>;
 }
 
 const MessageListContext = createContext<MessageListContextValue | null>(null);

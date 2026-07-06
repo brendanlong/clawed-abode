@@ -35,6 +35,7 @@ function renderWithContext(
         onTodoManualToggle: vi.fn(),
         planContentByToolUseId: new Map(),
         renderSubagentTranscript: () => null,
+        relocatedSubagentIds: new Set(),
         ...ctx,
       }}
     >

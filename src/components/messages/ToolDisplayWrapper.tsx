@@ -108,7 +108,7 @@ export function ToolDisplayWrapper({
                     Error
                   </Badge>
                 )}
-                {hasOutput && !isError && resolvedDoneBadge}
+                {!isPending && !isError && resolvedDoneBadge}
               </div>
               {subtitle}
             </div>
