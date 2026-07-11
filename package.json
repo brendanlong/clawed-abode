@@ -62,7 +62,7 @@
     "highlight.js": "^11.11.1",
     "lucide-react": "^1.21.0",
     "marked": "^17.0.6",
-    "next": "^16.2.7",
+    "next": "^16.2.10",
     "prisma": "^5.22.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
