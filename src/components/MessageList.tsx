@@ -15,9 +15,11 @@ import type {
 import { MessageListProvider } from './messages/MessageListContext';
 import { Spinner } from '@/components/ui/spinner';
 import { ContextUsageIndicator } from '@/components/ContextUsageIndicator';
+import { UsageLimitsIndicator } from '@/components/UsageLimitsIndicator';
 import { QueuedMessageList } from '@/components/QueuedMessageList';
 import type { QueuedMessage } from '@/lib/queued-message';
 import type { TokenUsageStats } from '@/lib/token-estimation';
+import type { UsageLimit } from '@/lib/usage-limits';
 import { useNotification } from '@/hooks/useNotification';
 import { useVoicePlaybackContext } from '@/hooks/useVoicePlayback';
 import { isPlanFile, reconstructPlansByToolUseId, type PlanEvent } from './messages/plan-utils';
@@ -296,6 +298,8 @@ interface MessageListProps {
   hasMore: boolean;
   onLoadMore: () => void;
   tokenUsage?: TokenUsageStats | null;
+  /** claude.ai subscription usage limits (account-global); null/undefined hides the bars. */
+  usageLimits?: UsageLimit[] | null;
   onSendResponse?: (response: string) => void;
   onAnswerQuestion?: (toolUseId: string, answers: Record<string, string>) => void;
   onRespondToPlan?: (toolUseId: string, approve: boolean, feedback?: string) => void;
@@ -316,6 +320,7 @@ export function MessageList({
   hasMore,
   onLoadMore,
   tokenUsage,
+  usageLimits,
   onSendResponse,
   onAnswerQuestion,
   onRespondToPlan,
@@ -800,12 +805,19 @@ export function MessageList({
         <div ref={bottomRef} style={{ overflowAnchor: 'none' }} />
       </div>
 
-      {/* Context usage indicator - positioned in bottom right */}
-      <ContextUsageIndicator
-        stats={tokenUsage}
-        totalCostUsd={tokenUsage?.totalCostUsd}
-        className="absolute bottom-3 right-3 shadow-xs"
-      />
+      {/* Usage indicators - positioned in bottom right */}
+      <div className="absolute bottom-3 right-3 flex items-center gap-1.5">
+        <UsageLimitsIndicator
+          limits={usageLimits}
+          model={tokenUsage?.model ?? null}
+          className="shadow-xs"
+        />
+        <ContextUsageIndicator
+          stats={tokenUsage}
+          totalCostUsd={tokenUsage?.totalCostUsd}
+          className="shadow-xs"
+        />
+      </div>
     </div>
   );
 }

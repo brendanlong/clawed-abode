@@ -24,6 +24,12 @@ import { useVoicePlayback, VoicePlaybackContext } from '@/hooks/useVoicePlayback
 import { getNewAutoReadMessages } from '@/lib/auto-read-helpers';
 import { VoiceControlPanel } from '@/components/voice/VoiceControlPanel';
 import type { UploadedAttachment } from '@/lib/attachments';
+import { trpc } from '@/lib/trpc';
+
+// claude.ai subscription usage limits are account-global and cached server-side
+// for ~60s, so polling at the same cadence keeps the bars fresh without extra
+// upstream requests.
+const USAGE_LIMITS_REFETCH_MS = 60_000;
 
 function SessionView({ sessionId }: { sessionId: string }) {
   // Session state: data, start/stop/archive
@@ -54,6 +60,13 @@ function SessionView({ sessionId }: { sessionId: string }) {
   // Single multiplexed SSE stream: fans live events into the relevant caches.
   // Anchored to the loaded history so no messages are missed between snapshots.
   const { status: streamStatus } = useSessionStream(sessionId, { historyLoaded, newestSequence });
+
+  // claude.ai subscription usage limits (issue #379). Hidden unless a claude.ai
+  // session cookie is configured in Settings.
+  const { data: usageLimitsData } = trpc.claude.getUsageLimits.useQuery(undefined, {
+    refetchOnWindowFocus: false,
+    refetchInterval: USAGE_LIMITS_REFETCH_MS,
+  });
 
   // Claude state: running (main turn), background tasks, send, interrupt, commands
   const {
@@ -304,6 +317,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
           hasMore={hasMore}
           onLoadMore={fetchMore}
           tokenUsage={tokenUsage}
+          usageLimits={usageLimitsData?.limits ?? null}
           onSendResponse={handleSendText}
           onAnswerQuestion={answerQuestion}
           onRespondToPlan={respondToPlan}

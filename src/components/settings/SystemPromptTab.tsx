@@ -90,6 +90,26 @@ export function SystemPromptTab() {
 
       <Card>
         <CardHeader>
+          <CardTitle>Usage Limits</CardTitle>
+          <CardDescription>
+            Show subscription usage limits (session and weekly) next to the context indicator.
+            Requires your claude.ai session cookie: open claude.ai in a browser, then copy the{' '}
+            <code className="text-xs bg-muted px-1 py-0.5 rounded">sessionKey</code> cookie value
+            from devtools (Application → Cookies). The organization is auto-detected unless set
+            explicitly.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <UsageLimitsSection
+            hasCookie={settings?.hasClaudeAiSessionCookie ?? false}
+            orgId={settings?.claudeAiOrgId ?? null}
+            onUpdate={refetch}
+          />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
           <CardTitle>System Prompt Override</CardTitle>
           <CardDescription>
             Replace the default system prompt with a custom one. When disabled, the built-in default
@@ -597,6 +617,172 @@ function ClaudeApiKeySection({
           </Button>
         )}
       </div>
+    </div>
+  );
+}
+
+function UsageLimitsSection({
+  hasCookie,
+  orgId,
+  onUpdate,
+}: {
+  hasCookie: boolean;
+  orgId: string | null;
+  onUpdate: () => void;
+}) {
+  const [isEditingCookie, setIsEditingCookie] = useState(false);
+  const [cookieValue, setCookieValue] = useState('');
+  const [orgIdValue, setOrgIdValue] = useState(orgId ?? '');
+  const [error, setError] = useState<string | null>(null);
+
+  const utils = trpc.useUtils();
+
+  // Live fetch status so a bad cookie is debuggable from the settings page.
+  const { data: usage } = trpc.claude.getUsageLimits.useQuery(undefined, {
+    enabled: hasCookie,
+    refetchOnWindowFocus: false,
+  });
+
+  const cookieMutation = trpc.globalSettings.setClaudeAiSessionCookie.useMutation({
+    onSuccess: () => {
+      setIsEditingCookie(false);
+      setCookieValue('');
+      onUpdate();
+      void utils.claude.getUsageLimits.invalidate();
+    },
+    onError: (err) => setError(err.message),
+  });
+
+  const orgIdMutation = trpc.globalSettings.setClaudeAiOrgId.useMutation({
+    onSuccess: () => {
+      onUpdate();
+      void utils.claude.getUsageLimits.invalidate();
+    },
+    onError: (err) => setError(err.message),
+  });
+
+  const handleSaveCookie = () => {
+    setError(null);
+    if (!cookieValue.trim()) {
+      setError('Session cookie cannot be empty');
+      return;
+    }
+    cookieMutation.mutate({ claudeAiSessionCookie: cookieValue.trim() });
+  };
+
+  const handleClearCookie = () => {
+    setError(null);
+    cookieMutation.mutate({ claudeAiSessionCookie: '' });
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="space-y-3">
+        <Label>Session Cookie</Label>
+        {isEditingCookie ? (
+          <>
+            <Input
+              type="password"
+              value={cookieValue}
+              onChange={(e) => setCookieValue(e.target.value)}
+              placeholder="sessionKey value from claude.ai..."
+              className="font-mono text-sm"
+            />
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setIsEditingCookie(false);
+                  setCookieValue('');
+                  setError(null);
+                }}
+              >
+                Cancel
+              </Button>
+              <Button size="sm" onClick={handleSaveCookie} disabled={cookieMutation.isPending}>
+                {cookieMutation.isPending ? <Spinner size="sm" /> : 'Save'}
+              </Button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="flex items-center gap-2">
+              {hasCookie ? (
+                <>
+                  <Check className="h-4 w-4 text-green-500" />
+                  <span className="text-sm">Configured</span>
+                </>
+              ) : (
+                <>
+                  <X className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-sm text-muted-foreground">Not configured</span>
+                </>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={() => setIsEditingCookie(true)}>
+                {hasCookie ? 'Update Cookie' : 'Set Cookie'}
+              </Button>
+              {hasCookie && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleClearCookie}
+                  disabled={cookieMutation.isPending}
+                >
+                  {cookieMutation.isPending ? <Spinner size="sm" /> : 'Remove Cookie'}
+                </Button>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="claude-ai-org-id">Organization ID (optional)</Label>
+        <div className="flex gap-2">
+          <Input
+            id="claude-ai-org-id"
+            value={orgIdValue}
+            onChange={(e) => setOrgIdValue(e.target.value)}
+            placeholder="Auto-detected"
+            className="font-mono text-sm"
+          />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setError(null);
+              orgIdMutation.mutate({ claudeAiOrgId: orgIdValue.trim() || null });
+            }}
+            disabled={orgIdMutation.isPending || (orgIdValue.trim() || null) === orgId}
+          >
+            {orgIdMutation.isPending ? <Spinner size="sm" /> : 'Save'}
+          </Button>
+        </div>
+      </div>
+
+      {error && <p className="text-sm text-destructive">{error}</p>}
+
+      {hasCookie && usage && (
+        <div className="flex items-center gap-2 text-sm">
+          {usage.error ? (
+            <>
+              <X className="h-4 w-4 text-destructive" />
+              <span className="text-destructive">Fetch failed: {usage.error}</span>
+            </>
+          ) : usage.limits ? (
+            <>
+              <Check className="h-4 w-4 text-green-500" />
+              <span className="text-muted-foreground">
+                Working —{' '}
+                {usage.limits.map((limit) => `${limit.kind} ${limit.percent}%`).join(', ')}
+              </span>
+            </>
+          ) : null}
+        </div>
+      )}
     </div>
   );
 }
