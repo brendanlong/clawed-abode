@@ -27,6 +27,10 @@ interface SpeechRecognitionInstance extends EventTarget {
 
 type SpeechRecognitionConstructor = new () => SpeechRecognitionInstance;
 
+function isAndroid(): boolean {
+  return typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent);
+}
+
 function getSpeechRecognition(): SpeechRecognitionConstructor | null {
   if (typeof window === 'undefined') return null;
   return (
@@ -98,10 +102,15 @@ export function useVoiceRecording() {
       // event.results is the browser's authoritative, self-consistent view of
       // this session, so overwriting is idempotent: revised, repeated, or
       // cumulative results replace what we had instead of appending garbage.
+      // Android Chrome delivers each final result a second time as a duplicate
+      // entry with confidence 0; skip those or every utterance appears twice.
+      const skipZeroConfidenceFinals = isAndroid();
+
       let sessionFinals = '';
       let interim = '';
       for (let i = 0; i < event.results.length; i++) {
         if (event.results[i].isFinal) {
+          if (skipZeroConfidenceFinals && event.results[i][0].confidence === 0) continue;
           sessionFinals += event.results[i][0].transcript;
         } else {
           interim += event.results[i][0].transcript;
