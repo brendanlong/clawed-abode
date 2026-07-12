@@ -118,6 +118,8 @@ model GlobalSettings {
   claudeModel                 String? // If set, overrides CLAUDE_MODEL env var
   advisorModel                String? // Model for the server-side advisor tool. Null (the default) disables the advisor tool.
   claudeApiKey                String? // If set (encrypted), overrides CLAUDE_CODE_OAUTH_TOKEN env var
+  claudeAiSessionCookie       String? // claude.ai session cookie (encrypted) for the usage-limits indicator. Null disables it.
+  claudeAiOrgId               String? // claude.ai organization UUID for usage limits. Null = auto-discover via /api/organizations.
   ttsSpeed                    Float? // TTS playback speed (0.25-4.0, default 1.0)
   voiceAutoSend               Boolean  @default(true) // Auto-send after speech-to-text transcription
   settingSourceUser           Boolean  @default(false) // Load Claude settings from the user scope (~/.claude): skills, CLAUDE.md, hooks

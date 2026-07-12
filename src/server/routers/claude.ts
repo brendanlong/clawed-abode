@@ -17,6 +17,7 @@ import {
   getQueuedMessages,
 } from '../services/claude-runner';
 import { MAX_ATTACHMENTS } from '@/lib/attachments';
+import { getUsageLimits } from '../services/claude-usage';
 import { estimateTokenUsage } from '@/lib/token-estimation';
 import {
   type ToolResponse,
@@ -312,6 +313,14 @@ export const claudeRouter = router({
 
       return estimateTokenUsage(parsedMessages);
     }),
+
+  // claude.ai subscription usage limits (session + weekly), fetched from
+  // claude.ai's internal API with the configured session cookie and cached
+  // server-side. Account-global, not per-session; the client picks which
+  // weekly limit to show based on the session's active model.
+  getUsageLimits: protectedProcedure.query(async () => {
+    return getUsageLimits();
+  }),
 
   getCommands: protectedProcedure
     .input(z.object({ sessionId: z.string().uuid() }))

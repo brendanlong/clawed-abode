@@ -55,6 +55,8 @@ describe('globalSettings router', () => {
         claudeModel: null,
         advisorModel: null,
         hasClaudeApiKey: false,
+        hasClaudeAiSessionCookie: false,
+        claudeAiOrgId: null,
         ttsSpeed: null,
         voiceAutoSend: true,
         settingSources: { user: false, project: true, local: false },
@@ -372,6 +374,58 @@ describe('globalSettings router', () => {
       const { getGlobalSettingsForContainer } = await import('../services/global-settings');
       const containerSettings = await getGlobalSettingsForContainer();
       expect(containerSettings.claudeApiKey).toBe('my-secret-token');
+    });
+  });
+
+  describe('setClaudeAiSessionCookie', () => {
+    it('should set an encrypted session cookie', async () => {
+      const caller = createCaller();
+
+      await caller.globalSettings.setClaudeAiSessionCookie({
+        claudeAiSessionCookie: 'sk-ant-sid01-secret',
+      });
+
+      const result = await caller.globalSettings.get();
+      expect(result.hasClaudeAiSessionCookie).toBe(true);
+
+      // Verify it's encrypted in the DB
+      const dbSettings = await testPrisma.globalSettings.findUnique({
+        where: { id: 'global' },
+      });
+      expect(dbSettings!.claudeAiSessionCookie).not.toBe('sk-ant-sid01-secret');
+      expect(dbSettings!.claudeAiSessionCookie).toContain(':'); // Encrypted format includes colons
+    });
+
+    it('should clear the cookie when set to empty string', async () => {
+      const caller = createCaller();
+
+      await caller.globalSettings.setClaudeAiSessionCookie({
+        claudeAiSessionCookie: 'sk-ant-sid01-secret',
+      });
+      await caller.globalSettings.setClaudeAiSessionCookie({ claudeAiSessionCookie: '' });
+
+      const result = await caller.globalSettings.get();
+      expect(result.hasClaudeAiSessionCookie).toBe(false);
+    });
+  });
+
+  describe('setClaudeAiOrgId', () => {
+    it('should set and clear the org id', async () => {
+      const caller = createCaller();
+
+      await caller.globalSettings.setClaudeAiOrgId({ claudeAiOrgId: 'org-uuid-123' });
+      expect((await caller.globalSettings.get()).claudeAiOrgId).toBe('org-uuid-123');
+
+      await caller.globalSettings.setClaudeAiOrgId({ claudeAiOrgId: null });
+      expect((await caller.globalSettings.get()).claudeAiOrgId).toBeNull();
+    });
+
+    it('should treat an empty string as clearing', async () => {
+      const caller = createCaller();
+
+      await caller.globalSettings.setClaudeAiOrgId({ claudeAiOrgId: 'org-uuid-123' });
+      await caller.globalSettings.setClaudeAiOrgId({ claudeAiOrgId: '  ' });
+      expect((await caller.globalSettings.get()).claudeAiOrgId).toBeNull();
     });
   });
 

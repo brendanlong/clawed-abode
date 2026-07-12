@@ -19,6 +19,7 @@ import {
   type DisplayMcpServer,
 } from '../services/settings-helpers';
 import { validateMcpServer } from '../services/mcp-validator';
+import { clearUsageCache } from '../services/claude-usage';
 import { getModelSuggestions } from '../services/anthropic-models';
 import { SUGGESTED_ADVISOR_MODEL } from '@/lib/advisor';
 import { settingSourceFlagsFromRow, settingSourceFlagsSchema } from '@/lib/setting-sources';
@@ -64,6 +65,9 @@ export const globalSettingsRouter = router({
       claudeModel: settings?.claudeModel ?? null,
       advisorModel: settings?.advisorModel ?? null,
       hasClaudeApiKey: settings?.claudeApiKey !== null && settings?.claudeApiKey !== undefined,
+      hasClaudeAiSessionCookie:
+        settings?.claudeAiSessionCookie !== null && settings?.claudeAiSessionCookie !== undefined,
+      claudeAiOrgId: settings?.claudeAiOrgId ?? null,
       ttsSpeed: settings?.ttsSpeed ?? null,
       voiceAutoSend: settings?.voiceAutoSend ?? true,
       settingSources: settingSourceFlagsFromRow(settings),
@@ -460,6 +464,66 @@ export const globalSettingsRouter = router({
         log.info('Set Claude API key');
       }
 
+      return { success: true };
+    }),
+
+  /**
+   * Set the claude.ai session cookie used by the usage-limits indicator.
+   * Stored encrypted at rest. Pass empty string to clear (disables the indicator).
+   */
+  setClaudeAiSessionCookie: protectedProcedure
+    .input(
+      z.object({
+        claudeAiSessionCookie: z.string().max(20000),
+      })
+    )
+    .mutation(async ({ input }) => {
+      const cookie = input.claudeAiSessionCookie.trim();
+
+      if (!cookie) {
+        await prisma.globalSettings.upsert({
+          where: { id: GLOBAL_SETTINGS_ID },
+          create: { id: GLOBAL_SETTINGS_ID, claudeAiSessionCookie: null },
+          update: { claudeAiSessionCookie: null },
+        });
+        log.info('Cleared claude.ai session cookie');
+      } else {
+        requireEncryptionForSecrets(true);
+        const encrypted = encrypt(cookie);
+        await prisma.globalSettings.upsert({
+          where: { id: GLOBAL_SETTINGS_ID },
+          create: { id: GLOBAL_SETTINGS_ID, claudeAiSessionCookie: encrypted },
+          update: { claudeAiSessionCookie: encrypted },
+        });
+        log.info('Set claude.ai session cookie');
+      }
+
+      clearUsageCache();
+      return { success: true };
+    }),
+
+  /**
+   * Set the claude.ai organization UUID used by the usage-limits indicator.
+   * Pass null or empty string to auto-discover via /api/organizations.
+   */
+  setClaudeAiOrgId: protectedProcedure
+    .input(
+      z.object({
+        claudeAiOrgId: z.string().max(200).nullable(),
+      })
+    )
+    .mutation(async ({ input }) => {
+      const orgId = input.claudeAiOrgId?.trim() || null;
+
+      await prisma.globalSettings.upsert({
+        where: { id: GLOBAL_SETTINGS_ID },
+        create: { id: GLOBAL_SETTINGS_ID, claudeAiOrgId: orgId },
+        update: { claudeAiOrgId: orgId },
+      });
+
+      log.info('Set claude.ai org id', { claudeAiOrgId: orgId });
+
+      clearUsageCache();
       return { success: true };
     }),
 
