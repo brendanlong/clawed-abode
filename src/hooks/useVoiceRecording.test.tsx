@@ -4,7 +4,7 @@ import { useVoiceRecording } from './useVoiceRecording';
 
 // Minimal fake of the Web Speech API's SpeechRecognition, letting tests drive
 // onresult/onend directly.
-type FakeResult = { transcript: string; isFinal: boolean };
+type FakeResult = { transcript: string; isFinal: boolean; confidence?: number };
 
 class FakeSpeechRecognition extends EventTarget {
   static instances: FakeSpeechRecognition[] = [];
@@ -38,7 +38,7 @@ class FakeSpeechRecognition extends EventTarget {
       resultIndex: 0,
       results: results.map((r) => ({
         isFinal: r.isFinal,
-        0: { transcript: r.transcript },
+        0: { transcript: r.transcript, confidence: r.confidence ?? 0.9 },
         length: 1,
       })),
     });
@@ -53,6 +53,8 @@ describe('useVoiceRecording', () => {
 
   afterEach(() => {
     delete (window as unknown as Record<string, unknown>).SpeechRecognition;
+    // Remove any own userAgent override, restoring jsdom's prototype getter
+    delete (window.navigator as unknown as Record<string, unknown>).userAgent;
     vi.restoreAllMocks();
   });
 
@@ -90,14 +92,35 @@ describe('useVoiceRecording', () => {
     expect(hook.result.current.interimTranscript).toBe('yellow');
   });
 
-  it('does not repeat words when the browser re-delivers cumulative results (Android)', () => {
+  it('tracks a final result the browser revises to something shorter', () => {
     const { hook, recognition } = record();
 
+    act(() => recognition.emitResults([{ transcript: 'one two three', isFinal: true }]));
+    // A revision that shrinks the final result was invisible to the old
+    // length-delta accumulation (length never exceeded the previous length),
+    // leaving the stale text behind.
     act(() => recognition.emitResults([{ transcript: 'one two', isFinal: true }]));
-    // Android Chrome re-delivers the full utterance so far as the results list
-    // grows; rebuilding from event.results must not duplicate "one two".
-    act(() => recognition.emitResults([{ transcript: 'one two three', isFinal: true }]));
-    act(() => recognition.emitResults([{ transcript: 'one two three', isFinal: true }]));
+    act(() => recognition.emitResults([{ transcript: 'one two four', isFinal: true }]));
+
+    expect(hook.result.current.interimTranscript).toBe('one two four');
+  });
+
+  it('skips duplicate confidence-0 final results on Android Chrome', () => {
+    Object.defineProperty(window.navigator, 'userAgent', {
+      value: 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Chrome/126.0 Mobile',
+      configurable: true,
+    });
+    const { hook, recognition } = record();
+
+    // Android Chrome re-delivers each final result as an extra entry with
+    // confidence 0 — concatenating them repeats every utterance.
+    act(() =>
+      recognition.emitResults([
+        { transcript: 'one two', isFinal: true, confidence: 0.9 },
+        { transcript: 'one two', isFinal: true, confidence: 0 },
+        { transcript: ' three', isFinal: false },
+      ])
+    );
 
     expect(hook.result.current.interimTranscript).toBe('one two three');
   });
