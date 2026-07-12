@@ -27,6 +27,10 @@ interface SpeechRecognitionInstance extends EventTarget {
 
 type SpeechRecognitionConstructor = new () => SpeechRecognitionInstance;
 
+function isAndroid(): boolean {
+  return typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent);
+}
+
 function getSpeechRecognition(): SpeechRecognitionConstructor | null {
   if (typeof window === 'undefined') return null;
   return (
@@ -49,11 +53,14 @@ export function useVoiceRecording() {
   const [interimTranscript, setInterimTranscript] = useState('');
   const [error, setError] = useState<string | null>(null);
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
-  // Accumulated finalized text across all recognition sessions
-  const accumulatedFinalsRef = useRef('');
-  // Tracks finalized text length within the CURRENT recognition session only.
-  // Reset to 0 on each auto-restart so the fresh event.results is handled correctly.
-  const sessionFinalsLengthRef = useRef(0);
+  // Text accumulated from PREVIOUS recognition sessions (folded in when a
+  // session ends). Never touched mid-session.
+  const previousSessionsRef = useRef('');
+  // Finalized text of the CURRENT recognition session, rebuilt in full from
+  // event.results on every onresult. Rebuilding (instead of appending deltas)
+  // is what keeps the transcript correct when the browser revises earlier
+  // results or delivers cumulative/repeated results (Android Chrome does both).
+  const sessionFinalsRef = useRef('');
   // Current interim text (for returning residual when stopped)
   const currentInterimRef = useRef('');
 
@@ -74,8 +81,8 @@ export function useVoiceRecording() {
 
     setError(null);
     setInterimTranscript('');
-    accumulatedFinalsRef.current = '';
-    sessionFinalsLengthRef.current = 0;
+    previousSessionsRef.current = '';
+    sessionFinalsRef.current = '';
     currentInterimRef.current = '';
 
     const SpeechRecognition = getSpeechRecognition();
@@ -91,26 +98,28 @@ export function useVoiceRecording() {
     recognitionRef.current = recognition;
 
     recognition.onresult = (event: SpeechRecognitionEvent) => {
+      // Rebuild the current session's transcript from scratch on every event.
+      // event.results is the browser's authoritative, self-consistent view of
+      // this session, so overwriting is idempotent: revised, repeated, or
+      // cumulative results replace what we had instead of appending garbage.
+      // Android Chrome delivers each final result a second time as a duplicate
+      // entry with confidence 0; skip those or every utterance appears twice.
+      const skipZeroConfidenceFinals = isAndroid();
+
       let sessionFinals = '';
       let interim = '';
       for (let i = 0; i < event.results.length; i++) {
         if (event.results[i].isFinal) {
+          if (skipZeroConfidenceFinals && event.results[i][0].confidence === 0) continue;
           sessionFinals += event.results[i][0].transcript;
         } else {
           interim += event.results[i][0].transcript;
         }
       }
 
-      // Detect new finalized text within this recognition session
-      if (sessionFinals.length > sessionFinalsLengthRef.current) {
-        const delta = sessionFinals.substring(sessionFinalsLengthRef.current);
-        sessionFinalsLengthRef.current = sessionFinals.length;
-        accumulatedFinalsRef.current += delta;
-      }
-
+      sessionFinalsRef.current = sessionFinals;
       currentInterimRef.current = interim;
-      // Expose the full transcript: all accumulated finals + current interim
-      setInterimTranscript(accumulatedFinalsRef.current + interim);
+      setInterimTranscript(previousSessionsRef.current + sessionFinals + interim);
     };
 
     recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
@@ -130,8 +139,12 @@ export function useVoiceRecording() {
       // the browser stopped unexpectedly (e.g. silence timeout in some browsers).
       // Auto-restart to maintain continuous recording.
       if (recognitionRef.current === recognition) {
-        // Reset session-level tracking since the new session starts with fresh results
-        sessionFinalsLengthRef.current = 0;
+        // Fold the ended session's text (including any interim residual that
+        // never finalized) into the cross-session accumulator, then reset the
+        // session refs — the new session starts with fresh event.results.
+        previousSessionsRef.current += sessionFinalsRef.current + currentInterimRef.current;
+        sessionFinalsRef.current = '';
+        currentInterimRef.current = '';
         try {
           recognition.start();
         } catch {
@@ -162,10 +175,11 @@ export function useVoiceRecording() {
       recognition.stop();
     }
     setIsRecording(false);
-    const result = accumulatedFinalsRef.current + currentInterimRef.current;
-    accumulatedFinalsRef.current = '';
+    const result =
+      previousSessionsRef.current + sessionFinalsRef.current + currentInterimRef.current;
+    previousSessionsRef.current = '';
+    sessionFinalsRef.current = '';
     currentInterimRef.current = '';
-    sessionFinalsLengthRef.current = 0;
     setInterimTranscript('');
     return result;
   }, []);
