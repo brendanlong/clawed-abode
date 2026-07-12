@@ -102,6 +102,9 @@ interface UsageCache {
 }
 
 let usageCache: UsageCache | null = null;
+// In-flight fetch, so concurrent cache misses (e.g. the session page and the
+// settings page polling together) coalesce into one upstream request.
+let inFlight: { key: string; promise: Promise<UsageLimitsResult> } | null = null;
 // Discovered org id, keyed by the cookie it was discovered with. Kept until
 // the cookie changes — org membership effectively never changes mid-session.
 let discoveredOrg: { cookieKey: string; orgId: string } | null = null;
@@ -109,7 +112,39 @@ let discoveredOrg: { cookieKey: string; orgId: string } | null = null;
 /** Reset all in-memory caches (settings mutations and tests). */
 export function clearUsageCache(): void {
   usageCache = null;
+  inFlight = null;
   discoveredOrg = null;
+}
+
+async function fetchAndCacheUsage(
+  cookieCiphertext: string,
+  storedOrgId: string | null,
+  cacheKey: string,
+  fetchFn: typeof fetch
+): Promise<UsageLimitsResult> {
+  let result: UsageLimitsResult;
+  try {
+    const cookieHeader = buildCookieHeader(decrypt(cookieCiphertext));
+    let orgId = storedOrgId?.trim() || null;
+    if (!orgId) {
+      if (discoveredOrg?.cookieKey === cookieCiphertext) {
+        orgId = discoveredOrg.orgId;
+      } else {
+        orgId = await discoverOrganizationId(cookieHeader, fetchFn);
+        discoveredOrg = { cookieKey: cookieCiphertext, orgId };
+        log.info('Discovered claude.ai organization for usage limits', { orgId });
+      }
+    }
+    const limits = await fetchUsageFromClaudeAi(cookieHeader, orgId, fetchFn);
+    result = { configured: true, limits, error: null };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log.error('Failed to fetch claude.ai usage limits', err instanceof Error ? err : undefined);
+    result = { configured: true, limits: null, error: message };
+  }
+
+  usageCache = { key: cacheKey, fetchedAt: Date.now(), result };
+  return result;
 }
 
 /**
@@ -127,36 +162,28 @@ export async function getUsageLimits(fetchFn: typeof fetch = fetch): Promise<Usa
   }
 
   const cacheKey = `${settings.claudeAiSessionCookie}|${settings.claudeAiOrgId ?? ''}`;
-  const now = Date.now();
   if (
     usageCache &&
     usageCache.key === cacheKey &&
-    now - usageCache.fetchedAt < USAGE_CACHE_TTL_MS
+    Date.now() - usageCache.fetchedAt < USAGE_CACHE_TTL_MS
   ) {
     return usageCache.result;
   }
 
-  let result: UsageLimitsResult;
-  try {
-    const cookieHeader = buildCookieHeader(decrypt(settings.claudeAiSessionCookie));
-    let orgId = settings.claudeAiOrgId?.trim() || null;
-    if (!orgId) {
-      if (discoveredOrg?.cookieKey === settings.claudeAiSessionCookie) {
-        orgId = discoveredOrg.orgId;
-      } else {
-        orgId = await discoverOrganizationId(cookieHeader, fetchFn);
-        discoveredOrg = { cookieKey: settings.claudeAiSessionCookie, orgId };
-        log.info('Discovered claude.ai organization for usage limits', { orgId });
-      }
-    }
-    const limits = await fetchUsageFromClaudeAi(cookieHeader, orgId, fetchFn);
-    result = { configured: true, limits, error: null };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    log.error('Failed to fetch claude.ai usage limits', err instanceof Error ? err : undefined);
-    result = { configured: true, limits: null, error: message };
+  if (inFlight?.key === cacheKey) {
+    return inFlight.promise;
   }
 
-  usageCache = { key: cacheKey, fetchedAt: now, result };
-  return result;
+  const promise = fetchAndCacheUsage(
+    settings.claudeAiSessionCookie,
+    settings.claudeAiOrgId,
+    cacheKey,
+    fetchFn
+  );
+  inFlight = { key: cacheKey, promise };
+  try {
+    return await promise;
+  } finally {
+    inFlight = null;
+  }
 }

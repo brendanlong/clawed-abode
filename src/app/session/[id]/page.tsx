@@ -62,10 +62,12 @@ function SessionView({ sessionId }: { sessionId: string }) {
   const { status: streamStatus } = useSessionStream(sessionId, { historyLoaded, newestSequence });
 
   // claude.ai subscription usage limits (issue #379). Hidden unless a claude.ai
-  // session cookie is configured in Settings.
+  // session cookie is configured in Settings. Archived sessions never show the
+  // bars, so don't poll for them there.
   const { data: usageLimitsData } = trpc.claude.getUsageLimits.useQuery(undefined, {
     refetchOnWindowFocus: false,
     refetchInterval: USAGE_LIMITS_REFETCH_MS,
+    enabled: !!session && session.status !== 'archived',
   });
 
   // Claude state: running (main turn), background tasks, send, interrupt, commands
