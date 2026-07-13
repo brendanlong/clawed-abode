@@ -69,8 +69,7 @@ export type EnvVarFormAction =
   | { type: 'setIsSecret'; isSecret: boolean }
   | { type: 'setError'; error: string | null }
   | { type: 'startSubmit' }
-  | { type: 'submitError'; error: string }
-  | { type: 'finishSubmit' };
+  | { type: 'submitError'; error: string };
 
 export function createInitialEnvVarFormState(existing?: {
   name: string;
@@ -103,7 +102,5 @@ export function envVarFormReducer(
       return { ...state, error: null, isPending: true };
     case 'submitError':
       return { ...state, error: action.error, isPending: false };
-    case 'finishSubmit':
-      return { ...state, isPending: false };
   }
 }

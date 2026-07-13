@@ -1,52 +1,5 @@
-// Session status constants
-export const SessionStatus = {
-  creating: 'creating',
-  running: 'running',
-  stopped: 'stopped',
-  error: 'error',
-  archived: 'archived',
-} as const;
-
-export type SessionStatus = (typeof SessionStatus)[keyof typeof SessionStatus];
-
-// Message type constants
-export const MessageType = {
-  system: 'system',
-  user: 'user',
-  assistant: 'assistant',
-  result: 'result',
-} as const;
-
-export type MessageType = (typeof MessageType)[keyof typeof MessageType];
-
 // Session constants
 export const SESSION_NAME_MAX_LENGTH = 100;
-
-// Session interface
-export interface Session {
-  id: string;
-  name: string;
-  repoUrl: string;
-  branch: string;
-  workspacePath: string;
-  status: SessionStatus;
-  statusMessage: string | null;
-  initialPrompt: string | null;
-  createdAt: Date;
-  updatedAt: Date;
-  lastActivityAt: Date;
-  archivedAt: Date | null;
-}
-
-// Message interface
-export interface Message {
-  id: string;
-  sessionId: string;
-  sequence: number;
-  type: MessageType;
-  content: string;
-  createdAt: Date;
-}
 
 // GitHub Issue interface
 export interface Issue {

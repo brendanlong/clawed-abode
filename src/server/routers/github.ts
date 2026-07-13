@@ -4,9 +4,13 @@ import { TRPCError } from '@trpc/server';
 import { env } from '@/lib/env';
 import { prisma } from '@/lib/prisma';
 import { extractRepoFullName } from '@/lib/utils';
-import { fetchPullRequestForBranch } from '../services/github';
-
-const GITHUB_API = 'https://api.github.com';
+import {
+  fetchPullRequestForBranch,
+  githubFetch as serviceGithubFetch,
+  githubFetchResponse as serviceGithubFetchResponse,
+  parseLinkHeader,
+  GitHubApiError,
+} from '../services/github';
 
 interface GitHubRepo {
   id: number;
@@ -37,32 +41,27 @@ interface GitHubIssue {
   updated_at: string;
 }
 
-async function githubFetchResponse(path: string, token?: string): Promise<Response> {
-  const headers: Record<string, string> = {
-    Accept: 'application/vnd.github+json',
-    'X-GitHub-Api-Version': '2022-11-28',
-  };
-
-  if (token) {
-    headers.Authorization = `Bearer ${token}`;
-  }
-
-  const response = await fetch(`${GITHUB_API}${path}`, { headers });
-
-  if (!response.ok) {
-    if (response.status === 401) {
+/**
+ * Map the shared service's {@link GitHubApiError} to the tRPC error surface the
+ * router (and its clients) expect. The underlying fetch/link-header helpers live
+ * in `../services/github`; these wrappers only translate the error shape so the
+ * router's tRPC responses stay unchanged.
+ */
+function mapGitHubError(err: unknown): never {
+  if (err instanceof GitHubApiError) {
+    if (err.status === 401) {
       throw new TRPCError({
         code: 'PRECONDITION_FAILED',
         message: 'GitHub token is invalid or expired',
       });
     }
-    if (response.status === 403) {
+    if (err.status === 403) {
       throw new TRPCError({
         code: 'FORBIDDEN',
         message: 'GitHub rate limit exceeded or access denied',
       });
     }
-    if (response.status === 404) {
+    if (err.status === 404) {
       throw new TRPCError({
         code: 'NOT_FOUND',
         message: 'GitHub resource not found',
@@ -70,39 +69,26 @@ async function githubFetchResponse(path: string, token?: string): Promise<Respon
     }
     throw new TRPCError({
       code: 'INTERNAL_SERVER_ERROR',
-      message: `GitHub API error: ${response.status}`,
+      message: `GitHub API error: ${err.status}`,
     });
   }
+  throw err;
+}
 
-  return response;
+async function githubFetchResponse(path: string, token?: string): Promise<Response> {
+  try {
+    return await serviceGithubFetchResponse(path, token);
+  } catch (err) {
+    mapGitHubError(err);
+  }
 }
 
 async function githubFetch<T>(path: string, token?: string): Promise<T> {
-  const response = await githubFetchResponse(path, token);
-  return response.json();
-}
-
-function parseLinkHeader(header: string | null): { next?: string } {
-  if (!header) return {};
-
-  const links: { next?: string } = {};
-  const parts = header.split(',');
-
-  for (const part of parts) {
-    const match = part.match(/<([^>]+)>;\s*rel="([^"]+)"/);
-    if (match) {
-      const [, url, rel] = match;
-      if (rel === 'next') {
-        // Extract page number from URL
-        const pageMatch = url.match(/[?&]page=(\d+)/);
-        if (pageMatch) {
-          links.next = pageMatch[1];
-        }
-      }
-    }
+  try {
+    return await serviceGithubFetch<T>(path, token);
+  } catch (err) {
+    mapGitHubError(err);
   }
-
-  return links;
 }
 
 export const githubRouter = router({

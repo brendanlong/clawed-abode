@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { getFileType } from '@/lib/file-types';
 import { FileIcon } from './FileIcon';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
+import { ToolOutputBlock } from './ToolOutputBlock';
 import { CodeBlock } from './CodeBlock';
 import { parseReadOutput } from './read-output';
 import type { ToolCall } from './types';
@@ -81,9 +82,7 @@ export function ReadDisplay({ tool }: { tool: ToolCall }) {
       {hasOutput && (
         <div>
           {tool.is_error ? (
-            <pre className="bg-red-50 dark:bg-red-950 text-red-800 dark:text-red-200 p-2 rounded overflow-x-auto max-h-96 overflow-y-auto whitespace-pre-wrap break-words">
-              {typeof tool.output === 'string' ? tool.output : JSON.stringify(tool.output, null, 2)}
-            </pre>
+            <ToolOutputBlock output={tool.output} isError wrap />
           ) : code === '' ? (
             <div className="text-muted-foreground italic py-2">(empty file)</div>
           ) : (

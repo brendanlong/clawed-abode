@@ -1422,11 +1422,6 @@ export async function isClaudeRunningAsync(sessionId: string): Promise<boolean> 
   return isClaudeRunning(sessionId);
 }
 
-/** Whether a live streaming query exists for a session (in-memory check). */
-export function hasLiveQuery(sessionId: string): boolean {
-  return sessions.get(sessionId)?.query != null;
-}
-
 /**
  * Mark the last main-agent message as interrupted and append an interrupt marker.
  * Targets the last assistant/result message (skipping interleaved background and

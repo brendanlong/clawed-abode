@@ -140,15 +140,6 @@ describe('mcpServerSectionReducer', () => {
       expect(result.validationResults.get('other')).toEqual({ success: true });
       expect(result.validationResults.get('memory')).toEqual({ success: true });
     });
-
-    it('finishes validating without result', () => {
-      const state: McpServerSectionState = {
-        ...initialMcpServerSectionState,
-        validatingServer: 'memory',
-      };
-      const result = mcpServerSectionReducer(state, { type: 'finishValidating' });
-      expect(result.validatingServer).toBeNull();
-    });
   });
 });
 
@@ -314,15 +305,6 @@ describe('mcpServerFormReducer', () => {
         error: 'Failed to save',
       });
       expect(result.error).toBe('Failed to save');
-      expect(result.isPending).toBe(false);
-    });
-
-    it('finishSubmit clears isPending', () => {
-      const state: McpServerFormState = {
-        ...createInitialMcpServerFormState(),
-        isPending: true,
-      };
-      const result = mcpServerFormReducer(state, { type: 'finishSubmit' });
       expect(result.isPending).toBe(false);
     });
   });

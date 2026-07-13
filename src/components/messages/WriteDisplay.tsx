@@ -1,11 +1,11 @@
 'use client';
 
 import { useMemo } from 'react';
-import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { getFileType } from '@/lib/file-types';
 import { FileIcon } from './FileIcon';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
+import { ToolOutputBlock } from './ToolOutputBlock';
 import { CodeBlock } from './CodeBlock';
 import type { ToolCall } from './types';
 
@@ -84,19 +84,12 @@ export function WriteDisplay({ tool }: { tool: ToolCall }) {
 
       {/* Output/Result if available */}
       {hasOutput && (
-        <div>
-          <div className="text-muted-foreground mb-1">Result:</div>
-          <pre
-            className={cn(
-              'p-2 rounded overflow-x-auto max-h-32 overflow-y-auto',
-              tool.is_error
-                ? 'bg-red-50 dark:bg-red-950 text-red-800 dark:text-red-200'
-                : 'bg-muted'
-            )}
-          >
-            {typeof tool.output === 'string' ? tool.output : JSON.stringify(tool.output, null, 2)}
-          </pre>
-        </div>
+        <ToolOutputBlock
+          label="Result:"
+          output={tool.output}
+          isError={tool.is_error}
+          maxHeight="max-h-32"
+        />
       )}
     </ToolDisplayWrapper>
   );
