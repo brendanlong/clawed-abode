@@ -1417,11 +1417,6 @@ export function isClaudeRunning(sessionId: string): boolean {
   return sessions.get(sessionId)?.status.turnActive ?? false;
 }
 
-/** Async variant (everything is in-process now). */
-export async function isClaudeRunningAsync(sessionId: string): Promise<boolean> {
-  return isClaudeRunning(sessionId);
-}
-
 /**
  * Mark the last main-agent message as interrupted and append an interrupt marker.
  * Targets the last assistant/result message (skipping interleaved background and

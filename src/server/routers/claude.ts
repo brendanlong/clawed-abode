@@ -5,7 +5,7 @@ import { TRPCError } from '@trpc/server';
 import {
   sendUserMessage,
   interruptClaude,
-  isClaudeRunningAsync,
+  isClaudeRunning,
   markLastMessageAsInterrupted,
   submitLiveToolResponse,
   persistSyntheticToolResult,
@@ -61,7 +61,7 @@ async function submitToolResponse(
   // A live promise should have been found above; if a turn is still active it
   // hasn't parked yet (or is busy with something else). Don't start a second
   // turn — let the client retry.
-  if (await isClaudeRunningAsync(sessionId)) {
+  if (isClaudeRunning(sessionId)) {
     throw new TRPCError({
       code: 'CONFLICT',
       message: 'Claude is still processing. Try again in a moment.',
@@ -263,7 +263,7 @@ export const claudeRouter = router({
     .input(z.object({ sessionId: z.string().uuid() }))
     .query(async ({ input }) => {
       return {
-        running: await isClaudeRunningAsync(input.sessionId),
+        running: isClaudeRunning(input.sessionId),
       };
     }),
 
