@@ -25,10 +25,16 @@ vi.mock('@/lib/logger', () => ({
   toError: (e: unknown) => (e instanceof Error ? e : new Error(String(e))),
 }));
 
-// Mock the github service (used by getSessionPrStatus endpoint)
-vi.mock('../services/github', () => ({
-  fetchPullRequestForBranch: (...args: unknown[]) => mockFetchPullRequestForBranch(...args),
-}));
+// Mock the github service: stub fetchPullRequestForBranch (used by the
+// getSessionPrStatus endpoint) but keep the real fetch/link-header helpers and
+// GitHubApiError so the router exercises them against the mocked global.fetch.
+vi.mock('../services/github', async (importActual) => {
+  const actual = await importActual<typeof import('../services/github')>();
+  return {
+    ...actual,
+    fetchPullRequestForBranch: (...args: unknown[]) => mockFetchPullRequestForBranch(...args),
+  };
+});
 
 // Mock prisma (used by getSessionPrStatus endpoint)
 vi.mock('@/lib/prisma', () => ({
