@@ -14,6 +14,7 @@ import {
   stopSession,
   cleanupSession,
   isClaudeRunning,
+  isSessionBackgroundActive,
 } from '../services/claude-runner';
 import { sseEvents } from '../services/events';
 import { createLogger, toError } from '@/lib/logger';
@@ -161,12 +162,14 @@ export const sessionsRouter = router({
         orderBy: { lastActivityAt: 'desc' },
       });
 
-      // Attach the live main-agent turn state (in-memory lookup, no extra query)
-      // so the list can distinguish "running" (generating) from "waiting" (idle).
+      // Attach the live status axes (in-memory lookups, no extra query) so the
+      // list can distinguish "running" (main agent generating) from "background"
+      // (only a subagent/background task running) from "waiting" (fully idle).
       return {
         sessions: sessions.map((session) => ({
           ...session,
           turnActive: isClaudeRunning(session.id),
+          backgroundActive: isSessionBackgroundActive(session.id),
         })),
       };
     }),

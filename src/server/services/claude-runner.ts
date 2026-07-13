@@ -29,6 +29,7 @@ import { classifyMessage, SystemInitContentSchema, type RetryState } from '@/lib
 import {
   reduceSessionMessage,
   removeBackgroundTask,
+  backgroundActive,
   INITIAL_LIVE_STATUS,
   type LiveStatus,
   type BackgroundTask,
@@ -835,13 +836,21 @@ function applyStatus(sessionId: string, state: SessionState, message: SDKMessage
   state.status = status;
 
   if (changed.turnActive) sseEvents.emitClaudeRunning(sessionId, status.turnActive);
-  // A genuine, natural turn completion — the turn cleared to idle here, and it was
-  // neither an interrupt (`interrupted`) nor a flush handoff (which forces
-  // `status.turnActive` true above). Stop/delete/error teardown goes through
-  // clearLiveStatus, which never routes here. This is the "Claude finished" signal
-  // the app-level work-complete notifier keys off (distinct from a bare
-  // running:false edge, which also fires on interrupt/stop).
-  if (changed.turnActive && !status.turnActive && !interrupted) {
+  // "Claude finished" fires when a main-agent turn ends NATURALLY *and* the session
+  // is now fully idle — no background tasks (subagents / Monitor / backgrounded
+  // Bash) remain running. It excludes interrupts (`interrupted`), flush handoffs
+  // (which force `status.turnActive` true above), and stop/delete/error teardown
+  // (which goes through clearLiveStatus and never routes here). Distinct from a bare
+  // running:false edge, which also fires on interrupt/stop.
+  //
+  // We deliberately fire only on a turn-end (not when a background task drains):
+  // when a background task settles the main agent autonomously continues in a new
+  // turn (see "Query Model" in DESIGN.md), and *that* turn's end is where we reach
+  // fully idle. Firing on the drain would notify prematurely and then again at the
+  // continuation's end. The residual case — a background task settling with no
+  // continuation — leaves no "finished" signal, an accepted tradeoff (favoring no
+  // spurious notification over no missed one).
+  if (changed.turnActive && !status.turnActive && !interrupted && !backgroundActive(status)) {
     sseEvents.emitClaudeFinished(sessionId);
   }
   if (changed.background) {
@@ -1424,6 +1433,15 @@ export async function stopBackgroundTask(sessionId: string, taskId: string): Pro
 /** Whether a main-agent turn is active for a session (in-memory check). */
 export function isClaudeRunning(sessionId: string): boolean {
   return sessions.get(sessionId)?.status.turnActive ?? false;
+}
+
+/**
+ * Whether any background task (subagent / Monitor / backgrounded Bash) is running
+ * for a session (in-memory check). Independent of {@link isClaudeRunning}: the
+ * main turn can be idle while a background task keeps running.
+ */
+export function isSessionBackgroundActive(sessionId: string): boolean {
+  return (sessions.get(sessionId)?.status.backgroundTasks.size ?? 0) > 0;
 }
 
 /**

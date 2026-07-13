@@ -19,6 +19,7 @@ vi.mock('../services/claude-runner', () => ({
   stopSession: vi.fn(),
   cleanupSession: vi.fn(),
   isClaudeRunning: vi.fn().mockReturnValue(false),
+  isSessionBackgroundActive: vi.fn().mockReturnValue(false),
 }));
 
 // Mock settings-merger
