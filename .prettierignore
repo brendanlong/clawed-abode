@@ -10,6 +10,7 @@ dist/
 *.min.js
 *.min.css
 prisma/migrations/
+src/generated/
 
 # Package manager
 package-lock.json
