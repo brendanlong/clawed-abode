@@ -53,15 +53,28 @@ function resolveClaudeBinary(): string | null {
   }
 }
 
-/** Whether an unprivileged systemd user scope can actually be created here. */
+/**
+ * Whether an unprivileged systemd user scope can actually be created here — using
+ * the SAME flags the launcher will (`--unit` + `TimeoutStopSec`), so a host that
+ * passes the probe will also succeed at the real launch (the launcher can't fall
+ * back after `exec`ing systemd-run). The probe unit is `--collect`ed away.
+ */
 async function probeUserScope(): Promise<boolean> {
   try {
     await execFileAsync(
       'systemd-run',
-      ['--user', '--scope', '--collect', '--quiet', '--', 'true'],
-      {
-        timeout: 5000,
-      }
+      [
+        '--user',
+        '--scope',
+        '--collect',
+        '--quiet',
+        '-p',
+        'TimeoutStopSec=10',
+        `--unit=clawed-probe-${process.pid}.scope`,
+        '--',
+        'true',
+      ],
+      { timeout: 5000 }
     );
     return true;
   } catch (err) {
@@ -72,9 +85,13 @@ async function probeUserScope(): Promise<boolean> {
   }
 }
 
-/** Write the launcher script to a stable temp path once and return it. */
+/**
+ * Write the launcher script to a stable temp path and return it. A fixed name (no
+ * pid) means at most one such file exists — re-runs overwrite identical bytes —
+ * so it doesn't accumulate across restarts.
+ */
 async function writeLauncher(): Promise<string> {
-  const path = join(tmpdir(), `clawed-session-launcher-${process.pid}.sh`);
+  const path = join(tmpdir(), 'clawed-session-launcher.sh');
   await writeFile(path, SESSION_SCOPE_LAUNCHER, { mode: 0o755 });
   await chmod(path, 0o755);
   return path;
