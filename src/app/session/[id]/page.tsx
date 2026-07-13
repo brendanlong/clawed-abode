@@ -11,14 +11,12 @@ import { ClaudeStatusIndicator } from '@/components/ClaudeStatusIndicator';
 import { ConnectionStatusIndicator } from '@/components/ConnectionStatusIndicator';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
-import { useNotification } from '@/hooks/useNotification';
 import { useWorkingIndicator } from '@/hooks/useWorkingIndicator';
 import { useWorkingContext } from '@/lib/working-context';
 import { useSessionState } from '@/hooks/useSessionState';
 import { useSessionMessages } from '@/hooks/useSessionMessages';
 import { useClaudeState } from '@/hooks/useClaudeState';
 import { useSessionStream } from '@/hooks/useSessionStream';
-import { useWorkCompleteNotification } from '@/hooks/useWorkCompleteNotification';
 import { useVoiceConfig } from '@/hooks/useVoiceConfig';
 import { useVoicePlayback, VoicePlaybackContext } from '@/hooks/useVoicePlayback';
 import { getNewAutoReadMessages } from '@/lib/auto-read-helpers';
@@ -93,19 +91,9 @@ function SessionView({ sessionId }: { sessionId: string }) {
     return () => setWorking(false);
   }, [isWorking, setWorking]);
 
-  // Request notification permission on mount
-  const { requestPermission, permission, showNotification } = useNotification();
-  useEffect(() => {
-    // Request permission if not yet decided
-    if (permission === 'default') {
-      requestPermission();
-    }
-  }, [permission, requestPermission]);
-
-  // Show notification when Claude finishes processing (if tab was hidden). The
-  // server holds turnActive true across a natural queued-flush handoff, so
-  // isClaudeRunning alone won't dip between back-to-back queued turns.
-  useWorkCompleteNotification(session?.name, isClaudeRunning, showNotification);
+  // Work-complete notifications are handled app-wide by <WorkCompleteNotifier>
+  // (mounted in Providers), so they fire for every session — not just this one —
+  // and are suppressed only while this session is the one on screen and focused.
 
   // Voice features
   const voiceConfig = useVoiceConfig(sessionId);
