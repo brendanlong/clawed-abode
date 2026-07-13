@@ -3,6 +3,7 @@
 import { Badge } from '@/components/ui/badge';
 import { MarkdownContent } from '@/components/MarkdownContent';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
+import { ToolOutputBlock } from './ToolOutputBlock';
 import type { ToolCall } from './types';
 
 interface SkillInput {
@@ -71,9 +72,7 @@ export function SkillDisplay({ tool }: { tool: ToolCall }) {
         <div>
           <div className="text-muted-foreground mb-1">Output:</div>
           {tool.is_error ? (
-            <pre className="bg-red-50 dark:bg-red-950 text-red-800 dark:text-red-200 p-2 rounded overflow-x-auto max-h-96 overflow-y-auto whitespace-pre-wrap break-words">
-              {typeof tool.output === 'string' ? tool.output : JSON.stringify(tool.output, null, 2)}
-            </pre>
+            <ToolOutputBlock output={tool.output} isError wrap />
           ) : typeof tool.output === 'string' ? (
             <div className="bg-muted rounded p-3 max-h-96 overflow-y-auto prose prose-sm dark:prose-invert max-w-none">
               <MarkdownContent content={tool.output} />

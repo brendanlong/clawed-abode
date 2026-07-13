@@ -3,6 +3,7 @@
 import { useMemo } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
+import { ToolOutputBlock } from './ToolOutputBlock';
 import type { ToolCall } from './types';
 
 interface GrepInput {
@@ -122,9 +123,7 @@ export function GrepDisplay({ tool }: { tool: ToolCall }) {
         <div>
           <div className="text-muted-foreground mb-1">Results:</div>
           {tool.is_error ? (
-            <pre className="bg-red-50 dark:bg-red-950 text-red-800 dark:text-red-200 p-2 rounded overflow-x-auto max-h-96 overflow-y-auto whitespace-pre-wrap break-words">
-              {typeof tool.output === 'string' ? tool.output : JSON.stringify(tool.output, null, 2)}
-            </pre>
+            <ToolOutputBlock output={tool.output} isError wrap />
           ) : typeof tool.output === 'string' && tool.output.trim() ? (
             <pre className="bg-muted rounded p-2 max-h-96 overflow-y-auto overflow-x-auto text-sm font-mono whitespace-pre-wrap break-words">
               {tool.output}
