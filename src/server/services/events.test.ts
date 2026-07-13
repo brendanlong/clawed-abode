@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import type { Session } from '@prisma/client';
+import type { Session } from '@/generated/prisma/client';
 import { sseEvents, type SessionListEvent, type SessionStreamEvent } from './events';
 
 const fakeSession = { id: 'session-1', name: 'Test' } as Session;
