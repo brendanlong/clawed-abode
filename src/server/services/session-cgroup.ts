@@ -28,7 +28,10 @@ export interface SessionScopeConfig {
  */
 function resolveClaudeBinary(): string | null {
   try {
-    const req = createRequire(import.meta.url);
+    // Anchor resolution at the app root (where node_modules lives), not
+    // import.meta.url — in a bundled/Turbopack prod build the module may live
+    // under .next/, from which the SDK package might not resolve.
+    const req = createRequire(join(process.cwd(), 'package.json'));
     const sdkReq = createRequire(req.resolve('@anthropic-ai/claude-agent-sdk'));
     let libc = '';
     try {
