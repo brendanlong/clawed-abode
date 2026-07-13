@@ -30,8 +30,12 @@ describe('SESSION_SCOPE_LAUNCHER', () => {
     expect(SESSION_SCOPE_LAUNCHER).toContain(`exec "$${CLAUDE_BIN_ENV}" "$@"`);
   });
 
-  it('gates scoping on both the scope env and systemd-run being present', () => {
+  it('gates scoping on the scope env and a runtime scope-creation probe', () => {
     expect(SESSION_SCOPE_LAUNCHER).toContain(`[ -n "$${SESSION_SCOPE_ENV}" ]`);
-    expect(SESSION_SCOPE_LAUNCHER).toContain('command -v systemd-run');
+    // Actually create-and-collect a throwaway scope so a runtime failure (no bus,
+    // no delegation) degrades to unwrapped rather than a non-recoverable exec.
+    expect(SESSION_SCOPE_LAUNCHER).toContain(
+      'systemd-run --user --scope --collect --quiet -- true'
+    );
   });
 });

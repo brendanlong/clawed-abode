@@ -74,7 +74,23 @@ vi.mock('./settings-merger', async (importOriginal) => {
   };
 });
 
+// Mock session-cgroup so the runner's scope wiring is observable and the other
+// tests don't touch real systemd. getSessionScopeConfig returns a fake config
+// (so buildSdkOptions sets state.sessionScope), the nonce is fixed for a
+// deterministic unit name, and stopSessionScope is a spy.
+const mockStopSessionScope = vi.hoisted(() => vi.fn(async (_unit: string) => {}));
+vi.mock('./session-cgroup', () => ({
+  getSessionScopeConfig: vi.fn(async () => ({
+    launcherPath: '/fake/launcher.sh',
+    claudeBin: '/fake/claude',
+  })),
+  sessionScopeNonce: vi.fn(() => 'testnonce'),
+  stopSessionScope: mockStopSessionScope,
+  sweepSessionScopes: vi.fn(async () => {}),
+}));
+
 import { createPushable } from '@/lib/pushable';
+import { sessionScopeUnitName } from '@/lib/session-scope';
 
 // Imported dynamically in beforeAll (after setupTestDb sets DATABASE_URL), since
 // claude-runner pulls in @/lib/prisma at module load.
@@ -296,6 +312,32 @@ describe('claude-runner persistent streaming loop', () => {
     expect(mockSseEvents.emitClaudeFinished).toHaveBeenCalledWith(sessionId);
 
     stopSession(sessionId);
+  });
+
+  it('stops the session cgroup scope on stopSession', async () => {
+    const fake = makeFakeQuery();
+    _setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+    await sendUserMessage(sessionId, 'hello');
+    await waitFor(() => fake.inputs.length > 0); // query established → scope set
+
+    stopSession(sessionId);
+
+    expect(mockStopSessionScope).toHaveBeenCalledWith(sessionScopeUnitName(sessionId, 'testnonce'));
+  });
+
+  it('stops the session cgroup scope when the query loop exits on its own', async () => {
+    const fake = makeFakeQuery();
+    _setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+    await sendUserMessage(sessionId, 'hello');
+    await waitFor(() => fake.inputs.length > 0);
+
+    fake.end(); // stream ends → runSessionLoop finally, no stopSession involved
+
+    const expected = sessionScopeUnitName(sessionId, 'testnonce');
+    await waitFor(() => mockStopSessionScope.mock.calls.some((c) => c[0] === expected));
+    expect(mockStopSessionScope).toHaveBeenCalledWith(expected);
   });
 
   it('bumps lastActivityAt on user sends but not on assistant traffic', async () => {

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdtemp, writeFile, chmod, readFile, rm, access } from 'node:fs/promises';
+import { constants as fsConstants } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -176,15 +177,12 @@ describe('session cgroup launcher + teardown (real processes)', () => {
 });
 
 describe('getSessionScopeConfig', () => {
-  it('resolves an existing, executable Claude binary and launcher when supported', async () => {
+  it('resolves an existing, executable Claude binary and writes the launcher', async () => {
+    // Independent of systemd: the launcher self-probes at runtime, so the config
+    // is available whenever the CLI binary resolves (it's installed here + on CI).
     const config = await getSessionScopeConfig();
-    if (!(await userScopeAvailable())) {
-      // On a host without a user scope the config is null (sessions run unwrapped).
-      expect(config).toBeNull();
-      return;
-    }
     expect(config).not.toBeNull();
-    await expect(access(config!.claudeBin)).resolves.toBeUndefined();
-    await expect(access(config!.launcherPath)).resolves.toBeUndefined();
+    await expect(access(config!.claudeBin, fsConstants.X_OK)).resolves.toBeUndefined();
+    await expect(access(config!.launcherPath, fsConstants.X_OK)).resolves.toBeUndefined();
   }, 20000);
 });
