@@ -429,14 +429,16 @@ subscription, so the app is deliberately structured around just **two** streams:
    (`useSessionMessages`, `useSessionState`, `useClaudeState`, `usePullRequestStatus`)
    are read/mutate-only and never open their own subscriptions.
 
-2. **Global session-list stream** — `sse.onSessionListEvents()`. `emitSessionUpdate`
-   and `emitClaudeRunning` fan every session change and main-agent turn-state flip out
-   to a global channel; `useSessionListStream`
+2. **Global session-list stream** — `sse.onSessionListEvents()`. `emitSessionUpdate`,
+   `emitClaudeRunning`, and `emitBackgroundTasks` (via a lightweight `claude_background`
+   signal) fan every session change, main-agent turn-state flip, and background-set
+   flip out to a global channel; `useSessionListStream`
    ([`src/hooks/useSessionListStream.ts`](../src/hooks/useSessionListStream.ts)) refetches
-   the home-page list so it updates live for any session (including its
-   running/waiting badge), without one subscription per row. The refetched
-   `sessions.list` carries `turnActive`, so reload, tab-switch, and reconnect all
-   resync to the server's in-memory truth rather than trusting streamed state.
+   the home-page list on any of them so it updates live for any session (including its
+   running/background/waiting badge), without one subscription per row. The refetched
+   `sessions.list` carries `turnActive` and `backgroundActive`, so reload, tab-switch,
+   and reconnect all resync to the server's in-memory truth rather than trusting
+   streamed state.
 
    The global stream also carries a dedicated **`claude_finished`** event
    (`emitClaudeFinished`, fanned to the global channel only) and has a **second
@@ -545,7 +547,7 @@ The top-level list and every nested `SubagentTranscript` share one visibility pr
 With one persistent query per session, "is Claude busy?" splits into two **independent** facts, both derived purely from the message stream by `reduceSessionMessage` ([`src/lib/session-status.ts`](../src/lib/session-status.ts)) and held in memory:
 
 - **`turnActive`** — whether the **main agent** is actively generating. Driven by the message **stream**, not the SDK turn `result`: a top-level (`parent_tool_use_id == null`) `stream_event` of `message_start` sets it true; a top-level `message_delta` whose `stop_reason` is terminal (`end_turn`/`stop_sequence`/`max_tokens`/`refusal`; `tool_use`/`pause_turn` mean the turn continues) sets it false. A top-level `result` also clears it as a safety net (and covers an interrupt's `error_during_execution`). **Why the stream and not the `result`:** a `run_in_background` subagent keeps the parent turn open — the SDK defers the turn `result` until the child settles — but the main agent finishes generating much earlier, so keying off `result` alone would wrongly show "running" for the entire background-subagent duration (confirmed by `scripts/spike-background-agent.ts`). Subagent traffic never moves it. It is emitted over the `running` SSE channel (and fanned out to the global session-list channel, so the home page can show running vs background vs waiting per session) and read via `claude.isRunning` plus the `turnActive` field on `sessions.list`; the Stop/interrupt button and the "working" indicator key off it. It **no longer gates the composer** — a send while `turnActive` is queued and flushed at turn end (see [Async Messages (Queued Sends)](#async-messages-queued-sends)).
-- **background tasks** — a `Map<task_id, BackgroundTask>` driven by `task_started` (add) / `task_notification` (remove). Emitted as a latest-value `background` SSE event and read via `claude.getBackgroundTasks` (seeded once, updated by the stream, resynced on reconnect). Whether the map is non-empty (`backgroundActive`) is also surfaced to the session list via `sessions.list` (`isSessionBackgroundActive`), so a live-but-main-idle session with a running subagent shows the **background** badge (see [Session List](#session-list-home)); the session-view `ClaudeStatusIndicator` likewise shows "Main agent idle — a background task is still running" instead of "waiting" in that state. This is an **indicator only** — it never gates input, so a user can keep chatting while a background task runs. This is genuinely interactive, not just cosmetic: a prompt sent while a background subagent runs is answered in a new turn that **interleaves** with the still-running subagent (confirmed by `scripts/spike-concurrent-send.ts` — the reply arrived ~19s before the subagent's `sleep 20` settled), not queued until it finishes. `ClaudeStatusIndicator` shows a separate "N background tasks running — you can keep chatting" line with per-task stop controls (`claude.stopBackgroundTask` → `query.stopTask`, then **optimistic removal**: the runner drops the entry from the live set itself rather than waiting for the SDK's terminal `task_notification`, so the ✕ reliably clears the indicator whether the task is still alive or a phantom whose notification was dropped — if it was real and the notification arrives later, the reducer's removal is a `has`-guarded no-op). The pure map-removal (`removeBackgroundTask` in [`session-status.ts`](../src/lib/session-status.ts)) is shared by the notification-settle path and the stop path. _Known limitation_: a task lingers in the map if **neither** a `task_notification` **nor** a user ✕ ever happens — notably a `killed` task, for which the SDK emits no `task_notification` — at which point it clears when the query is torn down. This is an accepted tradeoff (simpler than the former terminal-`task_updated` backstop): since it is indicator-only, the impact is a stale count, never a stuck composer.
+- **background tasks** — a `Map<task_id, BackgroundTask>` driven by `task_started` (add) / `task_notification` (remove). Emitted as a latest-value `background` SSE event and read via `claude.getBackgroundTasks` (seeded once, updated by the stream, resynced on reconnect). Whether the map is non-empty (`backgroundActive`) is also surfaced to the session list via `sessions.list` (`isSessionBackgroundActive`), so a live-but-main-idle session with a running subagent shows the **background** badge (see [Session List](#session-list-home)); `emitBackgroundTasks` also fans a global `claude_background` signal so that badge stays live on every background-set flip, including the ones with no `running`/`finished` edge (a task settling with no continuation, or a ✕-stop). The session-view `ClaudeStatusIndicator` likewise shows "Main agent idle — a background task is still running" instead of "waiting" in that state. This is an **indicator only** — it never gates input, so a user can keep chatting while a background task runs. This is genuinely interactive, not just cosmetic: a prompt sent while a background subagent runs is answered in a new turn that **interleaves** with the still-running subagent (confirmed by `scripts/spike-concurrent-send.ts` — the reply arrived ~19s before the subagent's `sleep 20` settled), not queued until it finishes. `ClaudeStatusIndicator` shows a separate "N background tasks running — you can keep chatting" line with per-task stop controls (`claude.stopBackgroundTask` → `query.stopTask`, then **optimistic removal**: the runner drops the entry from the live set itself rather than waiting for the SDK's terminal `task_notification`, so the ✕ reliably clears the indicator whether the task is still alive or a phantom whose notification was dropped — if it was real and the notification arrives later, the reducer's removal is a `has`-guarded no-op). The pure map-removal (`removeBackgroundTask` in [`session-status.ts`](../src/lib/session-status.ts)) is shared by the notification-settle path and the stop path. _Known limitation_: a task lingers in the map if **neither** a `task_notification` **nor** a user ✕ ever happens — notably a `killed` task, for which the SDK emits no `task_notification` — at which point it clears when the query is torn down. This is an accepted tradeoff (simpler than the former terminal-`task_updated` backstop): since it is indicator-only, the impact is a stale count, never a stuck composer.
 
 `turnActive` is **purely event-driven** — set/cleared only by messages and forced false on every loop-exit path (SDK error, query close, stop/delete/shutdown). There are no status timers: the server can't tell a hung turn from a slow one, so a genuinely hung turn is recovered deterministically by the user (interrupt, or the header Stop which closes the query → `finally` clears the flag). A consequence: a persistent subprocess lives until stop / delete / shutdown / fatal error (no idle reaper) — fine for a single-user host with a handful of sessions. Both facts are in-memory only (lost on restart, re-derived as the revived query streams).
 
@@ -779,10 +781,14 @@ Both source [`scripts/lib-code-server.sh`](../scripts/lib-code-server.sh) so the
   **background** (the main agent is idle but a background task/subagent is still
   running), and **waiting** (fully idle, waiting for input). Other statuses
   (stopped, creating, error, archived) show as-is. The badge stays live off the
-  global session-list stream: a subagent is always spawned inside an active turn,
-  so the `running` event fired when that turn ends (main idle, subagent still
-  running) flips the badge running→background, and the `finished` event fired when
-  the session becomes fully idle flips it background→waiting
+  global session-list stream: the `running` event fired when a turn ends (main
+  idle, subagent still running) flips the badge running→background, and a
+  dedicated global `claude_background` signal (fanned from `emitBackgroundTasks`
+  whenever the background set changes) flips it background→waiting even when the
+  last task settles with no main-agent continuation or the user ✕-stops it —
+  neither of which produces a `running`/`finished` edge. Any global event just
+  triggers a `sessions.list` refetch, which carries the authoritative
+  `backgroundActive`
 - "New Session" button
 - Quick actions: resume, stop, delete
 
