@@ -20,10 +20,8 @@ export interface VoicePlaybackState {
   enabled: boolean;
   isPlaying: boolean;
   currentMessageId: string | null;
-  isLoading: boolean;
   supportsPause: boolean;
   play: (messageId: string, text: string) => Promise<void>;
-  playSequential: (items: PlaybackQueueItem[]) => void;
   enqueue: (item: PlaybackQueueItem) => void;
   pause: () => void;
   stop: () => void;
@@ -34,10 +32,8 @@ const defaultPlaybackState: VoicePlaybackState = {
   enabled: false,
   isPlaying: false,
   currentMessageId: null,
-  isLoading: false,
   supportsPause: false,
   play: async () => {},
-  playSequential: () => {},
   enqueue: () => {},
   pause: () => {},
   stop: () => {},
@@ -142,7 +138,6 @@ export function useVoicePlayback(
 ): VoicePlaybackState {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentMessageId, setCurrentMessageId] = useState<string | null>(null);
-  const [isLoading] = useState(false);
 
   // Track the current text for restart functionality
   const currentTextRef = useRef<string | null>(null);
@@ -407,18 +402,6 @@ export function useVoicePlayback(
     [currentMessageId, isPlaying, speakText, pause]
   );
 
-  // --- Sequential playback (auto-read) ---
-
-  const playSequential = useCallback(
-    (items: PlaybackQueueItem[]) => {
-      if (items.length === 0) return;
-
-      queueRef.current = items.slice(1);
-      speakText(items[0].messageId, items[0].text);
-    },
-    [speakText]
-  );
-
   // --- Enqueue ---
 
   const enqueue = useCallback(
@@ -448,10 +431,8 @@ export function useVoicePlayback(
     enabled: true,
     isPlaying,
     currentMessageId,
-    isLoading,
     supportsPause,
     play,
-    playSequential,
     enqueue,
     pause,
     stop,

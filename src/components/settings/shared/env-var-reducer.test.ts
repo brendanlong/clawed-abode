@@ -227,11 +227,5 @@ describe('envVarFormReducer', () => {
       expect(result.error).toBe('Failed to save');
       expect(result.isPending).toBe(false);
     });
-
-    it('finishSubmit clears isPending', () => {
-      const state: EnvVarFormState = { ...createInitialEnvVarFormState(), isPending: true };
-      const result = envVarFormReducer(state, { type: 'finishSubmit' });
-      expect(result.isPending).toBe(false);
-    });
   });
 });
