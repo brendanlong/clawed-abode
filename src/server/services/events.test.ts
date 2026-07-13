@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { Session } from '@prisma/client';
-import { sseEvents, type SessionListEvent } from './events';
+import { sseEvents, type SessionListEvent, type SessionStreamEvent } from './events';
 
 const fakeSession = { id: 'session-1', name: 'Test' } as Session;
 
@@ -33,17 +33,13 @@ describe('sseEvents session-list fan-out', () => {
     unsubscribe();
   });
 
-  it('still delivers claude_running on the per-session channel', () => {
-    const listener = vi.fn();
-    const unsubscribe = sseEvents.onClaudeRunning('session-1', listener);
+  it('still delivers claude_running on the multiplexed per-session stream', () => {
+    const listener = vi.fn<(event: SessionStreamEvent) => void>();
+    const unsubscribe = sseEvents.onSessionEvents('session-1', listener);
 
     sseEvents.emitClaudeRunning('session-1', false);
 
-    expect(listener).toHaveBeenCalledWith({
-      type: 'claude_running',
-      sessionId: 'session-1',
-      running: false,
-    });
+    expect(listener).toHaveBeenCalledWith({ kind: 'running', running: false });
     unsubscribe();
   });
 
