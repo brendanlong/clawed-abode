@@ -88,11 +88,8 @@ sleep 300 & wait
 }
 
 describe('session cgroup launcher + teardown (real processes)', () => {
-  it('runs the CLI in a scope; stopSessionScope reaps the double-forked daemon', async () => {
-    if (!(await userScopeAvailable())) {
-      console.warn('skipping: systemd user scope unavailable');
-      return;
-    }
+  it('runs the CLI in a scope; stopSessionScope reaps the double-forked daemon', async (ctx) => {
+    if (!(await userScopeAvailable())) ctx.skip('systemd user scope unavailable');
     const dir = await mkdtemp(join(tmpdir(), 'ca-sess-scope-'));
     const daemonPidFile = join(dir, 'daemon.pid');
     const ranMarker = join(dir, 'ran');
@@ -126,11 +123,8 @@ describe('session cgroup launcher + teardown (real processes)', () => {
     }
   }, 30000);
 
-  it('sweepSessionScopes reaps a leftover session scope', async () => {
-    if (!(await userScopeAvailable())) {
-      console.warn('skipping: systemd user scope unavailable');
-      return;
-    }
+  it('sweepSessionScopes reaps a leftover session scope', async (ctx) => {
+    if (!(await userScopeAvailable())) ctx.skip('systemd user scope unavailable');
     const dir = await mkdtemp(join(tmpdir(), 'ca-sess-sweep-'));
     const daemonPidFile = join(dir, 'daemon.pid');
     const ranMarker = join(dir, 'ran');
