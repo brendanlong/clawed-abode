@@ -2,14 +2,19 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createRequire } from 'node:module';
 import { randomBytes } from 'node:crypto';
-import { writeFile, chmod } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { writeFile, chmod, mkdir, access } from 'node:fs/promises';
+import { constants as fsConstants } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createLogger, toError } from '@/lib/logger';
 import { SESSION_SCOPE_LAUNCHER, SESSION_SCOPE_UNIT_GLOB } from '@/lib/session-scope';
 
 const execFileAsync = promisify(execFile);
 const log = createLogger('session-cgroup');
+
+/** App-owned launcher location (not world-writable /tmp, not tmp-reaped). */
+const LAUNCHER_DIR = join(homedir(), '.clawed');
+const LAUNCHER_PATH = join(LAUNCHER_DIR, 'session-launcher.sh');
 
 /** Resolved config needed to launch a session inside a systemd user scope. */
 export interface SessionScopeConfig {
@@ -24,9 +29,10 @@ export interface SessionScopeConfig {
  * SDK's own module context (the platform package is an optionalDependency of the
  * SDK, not hoisted to the app's node_modules). Mirrors the SDK's own selection:
  * `@anthropic-ai/claude-agent-sdk-<platform>-<arch>[-musl]`. Returns null if it
- * can't be resolved (e.g. an unexpected platform) so the caller runs unwrapped.
+ * can't be resolved or isn't executable — the caller then launches the CLI the
+ * SDK's own way (no scope), so a bad guess never breaks sessions.
  */
-function resolveClaudeBinary(): string | null {
+async function resolveClaudeBinary(): Promise<string | null> {
   try {
     // Anchor resolution at the app root (where node_modules lives), not
     // import.meta.url — in a bundled/Turbopack prod build the module may live
@@ -44,7 +50,9 @@ function resolveClaudeBinary(): string | null {
       // Assume glibc if the report is unavailable.
     }
     const pkg = `@anthropic-ai/claude-agent-sdk-${process.platform}-${process.arch}${libc}`;
-    return sdkReq.resolve(`${pkg}/claude`);
+    const bin = sdkReq.resolve(`${pkg}/claude`);
+    await access(bin, fsConstants.X_OK);
+    return bin;
   } catch (err) {
     log.warn('Could not resolve the Claude CLI binary; sessions run without a cgroup scope', {
       error: toError(err).message,
@@ -53,81 +61,55 @@ function resolveClaudeBinary(): string | null {
   }
 }
 
+let claudeBinPromise: Promise<string | null> | null = null;
+
+/** The resolved Claude CLI binary, probed once and memoized (path is stable). */
+function getClaudeBinary(): Promise<string | null> {
+  if (!claudeBinPromise) claudeBinPromise = resolveClaudeBinary();
+  return claudeBinPromise;
+}
+
 /**
- * Whether an unprivileged systemd user scope can actually be created here — using
- * the SAME flags the launcher will (`--unit` + `TimeoutStopSec`), so a host that
- * passes the probe will also succeed at the real launch (the launcher can't fall
- * back after `exec`ing systemd-run). The probe unit is `--collect`ed away.
+ * Ensure the launcher script exists at its app-owned path and return it (or null
+ * if it can't be written). Not memoized — cheap and re-verified per establishment
+ * so a manually deleted / never-created launcher self-heals rather than bricking
+ * every session with a spawn ENOENT. Whether systemd is actually usable is
+ * decided at runtime *inside* the launcher (see SESSION_SCOPE_LAUNCHER), so this
+ * only guarantees the file is present.
  */
-async function probeUserScope(): Promise<boolean> {
+async function ensureSessionLauncher(): Promise<string | null> {
   try {
-    await execFileAsync(
-      'systemd-run',
-      [
-        '--user',
-        '--scope',
-        '--collect',
-        '--quiet',
-        '-p',
-        'TimeoutStopSec=10',
-        `--unit=clawed-probe-${process.pid}.scope`,
-        '--',
-        'true',
-      ],
-      { timeout: 5000 }
-    );
-    return true;
+    await mkdir(LAUNCHER_DIR, { recursive: true, mode: 0o700 });
+    await writeFile(LAUNCHER_PATH, SESSION_SCOPE_LAUNCHER, { mode: 0o755 });
+    await chmod(LAUNCHER_PATH, 0o755);
+    return LAUNCHER_PATH;
   } catch (err) {
-    log.info('systemd user scope unavailable; sessions run without a cgroup scope', {
+    log.warn('Could not write the session-scope launcher; session runs unwrapped', {
       error: toError(err).message,
     });
-    return false;
+    return null;
   }
 }
 
 /**
- * Write the launcher script to a stable temp path and return it. A fixed name (no
- * pid) means at most one such file exists — re-runs overwrite identical bytes —
- * so it doesn't accumulate across restarts.
- */
-async function writeLauncher(): Promise<string> {
-  const path = join(tmpdir(), 'clawed-session-launcher.sh');
-  await writeFile(path, SESSION_SCOPE_LAUNCHER, { mode: 0o755 });
-  await chmod(path, 0o755);
-  return path;
-}
-
-let scopeConfigPromise: Promise<SessionScopeConfig | null> | null = null;
-
-/**
- * The session-scope launch config for this host, probed once and memoized
- * (capabilities don't change over the process lifetime). Resolves to null when
- * systemd user scopes or the CLI binary aren't available — the caller then
- * launches the session normally (unwrapped, no reaping).
+ * Config to launch a session inside a cgroup scope, or null when unavailable (no
+ * resolvable CLI binary, or the launcher can't be written) — the caller then
+ * launches the session normally. Note: whether a scope is *actually* created is
+ * decided at runtime by the launcher's own probe, so on a host without a usable
+ * systemd user scope this still returns a config but the launcher runs the CLI
+ * unwrapped.
  */
 export async function getSessionScopeConfig(): Promise<SessionScopeConfig | null> {
-  if (!scopeConfigPromise) {
-    scopeConfigPromise = (async () => {
-      const [supported, claudeBin] = await Promise.all([probeUserScope(), resolveClaudeBinary()]);
-      if (!supported || !claudeBin) return null;
-      try {
-        const launcherPath = await writeLauncher();
-        log.info('Session cgroup reaping enabled', { launcherPath, claudeBin });
-        return { launcherPath, claudeBin };
-      } catch (err) {
-        log.warn('Could not write the session-scope launcher; sessions run unwrapped', {
-          error: toError(err).message,
-        });
-        return null;
-      }
-    })();
-  }
-  return scopeConfigPromise;
+  const claudeBin = await getClaudeBinary();
+  if (!claudeBin) return null;
+  const launcherPath = await ensureSessionLauncher();
+  if (!launcherPath) return null;
+  return { launcherPath, claudeBin };
 }
 
 /** A short random suffix distinguishing scope units across establishments. */
 export function sessionScopeNonce(): string {
-  return randomBytes(4).toString('hex');
+  return randomBytes(8).toString('hex');
 }
 
 /**
@@ -139,7 +121,8 @@ export async function stopSessionScope(unitName: string): Promise<void> {
   try {
     await execFileAsync('systemctl', ['--user', 'stop', unitName], { timeout: 15000 });
   } catch (err) {
-    // Non-zero when the unit is already gone — expected, not an error worth surfacing.
+    // Non-zero when the unit is already gone (the common case — the session may
+    // have run unwrapped), so this is debug, not an error.
     log.debug('stopSessionScope: stop returned non-zero (unit likely already gone)', {
       unitName,
       error: toError(err).message,
@@ -156,6 +139,11 @@ export async function stopSessionScope(unitName: string): Promise<void> {
  * Stop every session scope. Run once at startup to reap scopes orphaned by a
  * previous server crash (which never ran teardown) before sessions revive into
  * fresh scopes. Best-effort.
+ *
+ * The glob has no per-instance discriminator, so this MUST NOT run when another
+ * app instance may be live as the same user — it would cgroup-kill that
+ * instance's running sessions. The caller gates it to the single production
+ * instance (see instrumentation.ts); a dev instance never sweeps.
  */
 export async function sweepSessionScopes(): Promise<void> {
   try {

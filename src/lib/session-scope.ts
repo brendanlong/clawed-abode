@@ -39,12 +39,20 @@ export function sessionScopeUnitName(sessionId: string, nonce: string): string {
  * Launcher the SDK spawns as `pathToClaudeCodeExecutable`. It runs the real
  * Claude CLI (`$CLAWED_CLAUDE_BIN`, resolved by the app) inside the session's
  * transient user scope (`$CLAWED_SESSION_SCOPE`), forwarding all CLI args and
- * stdio unchanged. Falls back to running the CLI directly if the scope env or
- * `systemd-run` is unavailable, so a host without systemd degrades to unwrapped
- * rather than failing.
+ * stdio unchanged.
+ *
+ * The gate is a **runtime** probe — it actually creates a throwaway scope
+ * (`systemd-run … -- true`) in this exact launch environment — not just a
+ * `command -v` check. `exec` can't recover if the real `systemd-run` fails, so
+ * we must know scope creation works *before* committing to it: if the probe
+ * fails (no systemd-run, no user bus / linger after logout, no cgroup
+ * delegation, a PATH/`XDG_RUNTIME_DIR` that differs from the app's probe env),
+ * the launcher runs the CLI directly (unwrapped) instead of hard-failing the
+ * session. This makes reaping best-effort and robust to environment drift after
+ * the app's own start-time probe.
  */
 export const SESSION_SCOPE_LAUNCHER = `#!/bin/bash
-if [ -n "\$${SESSION_SCOPE_ENV}" ] && command -v systemd-run >/dev/null 2>&1; then
+if [ -n "\$${SESSION_SCOPE_ENV}" ] && systemd-run --user --scope --collect --quiet -- true >/dev/null 2>&1; then
   exec systemd-run --user --scope --collect --quiet -p TimeoutStopSec=10 \\
     --unit="\$${SESSION_SCOPE_ENV}" -- "\$${CLAUDE_BIN_ENV}" "\$@"
 fi
