@@ -49,6 +49,7 @@ import {
 } from './settings-merger';
 import { StreamAccumulator } from './stream-accumulator';
 import { sanitizeUntrustedInput, sanitizeToolOutputHook } from './input-sanitizer';
+import { backgroundReaperHook } from './background-reaper';
 import { type SanitizationInfo } from '@/lib/sanitization';
 import { attachToolResultSanitizations } from '@/lib/message-sanitization';
 import { PARTIAL_MESSAGE_ID_PREFIX } from '@/lib/message-cache';
@@ -540,6 +541,15 @@ async function buildSdkOptions(params: {
       return { behavior: 'allow', updatedInput: input };
     },
     hooks: {
+      // Wrap backgrounded Bash commands in a supervisor that reaps their full
+      // process tree when the SDK terminates the task, so daemonized grandchildren
+      // (e.g. Postgres via `pg_ctl start`) aren't orphaned. See backgroundReaperHook
+      // (issue #424). No-op for foreground/non-Bash calls; fails open.
+      PreToolUse: [
+        {
+          hooks: [(input) => backgroundReaperHook(input)],
+        },
+      ],
       // Sanitize tool output before the model sees it — the primary
       // hidden-content injection surface (web/MCP responses, fetched issue/PR
       // bodies, file/command output). See sanitizeToolOutputHook for the
