@@ -8,9 +8,8 @@ import {
 } from './background-command';
 
 /**
- * Pull the base64 payload back out of a wrapped command and decode it. The
- * payload is the single long base64-only quoted token (the process-group mode
- * embeds it in `printf %s '<b64>'`, the cgroup mode as a positional arg).
+ * Pull the base64 payload back out of a wrapped command and decode it. It is the
+ * single long base64-only quoted token (the positional arg to the scope launcher).
  */
 function decodeEmbeddedCommand(wrapped: string): string {
   const match = wrapped.match(/'([A-Za-z0-9+/=]{16,})'/);
@@ -19,33 +18,21 @@ function decodeEmbeddedCommand(wrapped: string): string {
 }
 
 describe('wrapBackgroundCommand', () => {
-  it('cgroup mode wraps with a systemd scope and a teardown trap', () => {
-    const wrapped = wrapBackgroundCommand('echo hi', 'cgroup');
+  it('wraps with a systemd user scope and a teardown trap', () => {
+    const wrapped = wrapBackgroundCommand('echo hi');
     expect(wrapped).toContain(BACKGROUND_REAPER_MARKER);
     expect(wrapped).toContain('systemd-run --user --scope --collect --quiet');
     expect(wrapped).toContain('systemctl --user stop');
     expect(wrapped).toContain("trap '__ca_reap; exit 143' TERM INT HUP");
   });
 
-  it('process-group mode wraps with job control and a group kill', () => {
-    const wrapped = wrapBackgroundCommand('echo hi', 'process-group');
-    expect(wrapped).toContain(BACKGROUND_REAPER_MARKER);
-    expect(wrapped).toContain('set -m');
-    expect(wrapped).toContain('kill -TERM -"$__ca_pid"');
-    expect(wrapped).toContain('kill -KILL -"$__ca_pid"');
-    expect(wrapped).not.toContain('systemd-run');
-  });
-
   it('preserves the exact original command bytes via base64 (no quoting hazard)', () => {
     const tricky = `echo "it's a $VAR"; trap 'cleanup' EXIT && printf '%s\\n' 'done'`;
-    for (const mode of ['cgroup', 'process-group'] as const) {
-      expect(decodeEmbeddedCommand(wrapBackgroundCommand(tricky, mode))).toBe(tricky);
-    }
+    expect(decodeEmbeddedCommand(wrapBackgroundCommand(tricky))).toBe(tricky);
   });
 
   it('produces a command that is detected as already wrapped (idempotency)', () => {
-    const wrapped = wrapBackgroundCommand('echo hi', 'cgroup');
-    expect(isAlreadyWrapped(wrapped)).toBe(true);
+    expect(isAlreadyWrapped(wrapBackgroundCommand('echo hi'))).toBe(true);
   });
 });
 
@@ -76,7 +63,7 @@ describe('isBackgroundBashToWrap', () => {
   });
 
   it('is false for an already-wrapped command (no double wrapping)', () => {
-    const wrapped = wrapBackgroundCommand('pnpm services', 'cgroup');
+    const wrapped = wrapBackgroundCommand('pnpm services');
     expect(isBackgroundBashToWrap('Bash', { command: wrapped, run_in_background: true })).toBe(
       false
     );
@@ -91,7 +78,7 @@ describe('computeBackgroundBashRewrite', () => {
       description: 'start services',
       timeout: 600000,
     };
-    const rewrite = computeBackgroundBashRewrite('Bash', input, 'process-group');
+    const rewrite = computeBackgroundBashRewrite('Bash', input);
     expect(rewrite).not.toBeNull();
     expect(rewrite).toMatchObject({
       run_in_background: true,
@@ -104,10 +91,10 @@ describe('computeBackgroundBashRewrite', () => {
 
   it('returns null when the call should not be wrapped', () => {
     expect(
-      computeBackgroundBashRewrite('Bash', { command: 'ls', run_in_background: false }, 'cgroup')
+      computeBackgroundBashRewrite('Bash', { command: 'ls', run_in_background: false })
     ).toBeNull();
     expect(
-      computeBackgroundBashRewrite('Read', { command: 'ls', run_in_background: true }, 'cgroup')
+      computeBackgroundBashRewrite('Read', { command: 'ls', run_in_background: true })
     ).toBeNull();
   });
 });
