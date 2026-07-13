@@ -540,6 +540,19 @@ With one persistent query per session, "is Claude busy?" splits into two **indep
 
 **Ephemeral retry status.** `api_retry` messages (the SDK retrying a rate-limited/overloaded request) are ignored above so they never pollute the transcript, but the _current_ retry state is surfaced live. The runner parses each via `parseRetryState` ([`claude-messages.ts`](../src/lib/claude-messages.ts)), stores it on the in-memory session state, and emits it over the `retry` SSE channel as a latest-value event (`{ attempt, maxRetries, errorStatus?, error? } | null`). Any non-retry message clears it (the request recovered), as does turn end. The client reads it via `claude.getRetryState` (seeded once, updated by the stream, resynced on reconnect) and `ClaudeStatusIndicator` shows "Retrying (overloaded) — attempt n/10…" while it is set. Because it is in-memory only, a server restart loses it — acceptable for a transient indicator.
 
+### Background-Task Process Reaping
+
+When the SDK terminates a long-lived `run_in_background` **Bash** task (it sends the task's direct child a SIGTERM — exit 143 — periodically, e.g. as new background work launches), it does **not** reap the child's descendants. A process the task **daemonizes** — one that double-forks to detach from the task's process group, the classic case being Postgres via `pg_ctl start` — is reparented to init and keeps running, often against an already-deleted data dir. This silently drops dev services mid-workflow and leaks orphaned clusters on the shared host (issue #424).
+
+The app fixes this with a **`PreToolUse` hook** (`backgroundReaperHook` in [`src/server/services/background-reaper.ts`](../src/server/services/background-reaper.ts), wired in `buildSdkOptions`). For a backgrounded Bash call it rewrites the tool's `command` (via the hook's `updatedInput`) to run under a supervisor that reaps the **whole process tree** on SIGTERM/SIGINT/SIGHUP. Only `run_in_background` Bash is wrapped; every other tool call passes through untouched, and the hook **fails open** (any error runs the command unwrapped). The command-building is the pure, unit-tested `wrapBackgroundCommand` in [`src/lib/background-command.ts`](../src/lib/background-command.ts); the real reaping is covered by `background-reaper.integration.test.ts` (spawns a double-forking daemon and asserts it dies).
+
+Two teardown mechanisms, chosen by a one-time capability probe (`detectReaperMode`, memoized):
+
+- **`cgroup` (preferred).** The command runs inside a transient **systemd user scope** (`systemd-run --user --scope`) — its own cgroup — and the supervisor's trap does `systemctl --user stop <scope>`. A cgroup stop kills every process in the tree regardless of double-forking or `setsid`, so it reaps the daemonized grandchild. This is the unprivileged-cgroup approach; it requires a systemd **user** session with cgroup delegation, which the probe (`systemd-run --user --scope -- true`) detects. The original command is passed to the scope **base64-encoded as a positional arg** and decoded (`base64 -d <<<"$1" | bash`) _inside_ the scope: systemd applies its own `ExecStart` expansion to the command line (`$$` → `$`, `$VAR` → env), so any `$` in the script must be kept out of systemd's view — base64's alphabet has no `$`, and `$1` is digit-led so systemd doesn't treat it as a variable.
+- **`process-group` (fallback).** When no user scope is available, the command runs as a job in its own process group (`set -m`, so the job's pid == its pgid) and the trap signals the whole group: SIGTERM (a grace period lets the command's own shell `trap` handlers run — e.g. the common `pnpm services` case where the trap does `pg_ctl stop`), then SIGKILL. A grandchild that double-forked out of the group still escapes this mode — best-effort only.
+
+The wrapper preserves the command's stdout/stderr and exit code (verified empirically for both modes), so the SDK's `BashOutput` view and completion status are unchanged. _Known limitation_: an untrappable SIGKILL to the supervisor can't run the teardown, so a `cgroup` scope would linger until its own processes exit; the observed termination is the trappable SIGTERM.
+
 ### Cost & Context Usage Estimation
 
 The `ContextUsageIndicator` (context % + session cost) is computed server-side by the pure `estimateTokenUsage` ([`src/lib/token-estimation.ts`](../src/lib/token-estimation.ts)), served by `claude.getTokenUsage` from the persisted result/system messages plus the latest top-level assistant message. It relies on result-message semantics that were verified empirically against real sessions, because the two families of fields on a `result` have **different scopes**:
@@ -833,12 +846,14 @@ clawed-abode/
 │   │   │   ├── github.ts         # GitHub API service
 │   │   │   ├── mcp-validator.ts  # MCP server config validation
 │   │   │   ├── uploads.ts        # Uploaded-file storage (workspace uploads/ dir) + path resolution
+│   │   │   ├── background-reaper.ts # PreToolUse hook: wrap background Bash so its process tree is reaped
 │   │   │   └── session-reconciler.ts # Counts running sessions for lazy revive on restart
 │   │   └── trpc.ts
 │   ├── lib/
 │   │   ├── auth.ts               # Authentication utilities
 │   │   ├── auth-token.ts         # Client-side auth token storage (shared key)
 │   │   ├── attachments.ts        # Pure attachment prefix + filename sanitizing
+│   │   ├── background-command.ts # Pure supervisor-wrapper builder for background Bash reaping
 │   │   ├── queued-message.ts     # Server-owned queued-message type (async "btw mode")
 │   │   ├── crypto.ts             # Encryption/decryption (AES-256-GCM)
 │   │   ├── logger.ts             # Centralized logging (createLogger)
