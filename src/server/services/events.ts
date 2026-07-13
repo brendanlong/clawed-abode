@@ -63,6 +63,20 @@ export interface BackgroundTasksEvent {
   tasks: BackgroundTask[];
 }
 
+/**
+ * A session's background-task set flipped between empty and non-empty. Global-channel
+ * only: a lightweight signal (no task payload) so the home page can flip a session's
+ * badge running↔background↔waiting live even when the change produces no
+ * `claude_running`/`claude_finished` edge — e.g. the last background task settling with
+ * no main-agent continuation, or a user ✕-stopping it. The list refetches `sessions.list`
+ * on any global event, which carries the authoritative `backgroundActive`.
+ */
+export interface ClaudeBackgroundEvent {
+  type: 'claude_background';
+  sessionId: string;
+  active: boolean;
+}
+
 export interface QueuedMessagesEvent {
   type: 'queued_messages';
   sessionId: string;
@@ -93,7 +107,11 @@ const SESSION_LIST_EVENT = 'session-list';
  * plus main-agent running-state changes, so the home page can show
  * running/waiting per session without a subscription per row.
  */
-export type SessionListEvent = SessionUpdateEvent | ClaudeRunningEvent | ClaudeFinishedEvent;
+export type SessionListEvent =
+  | SessionUpdateEvent
+  | ClaudeRunningEvent
+  | ClaudeFinishedEvent
+  | ClaudeBackgroundEvent;
 
 // Create a typed event emitter
 class SSEEventEmitter extends EventEmitter {
@@ -173,6 +191,15 @@ class SSEEventEmitter extends EventEmitter {
       sessionId,
       tasks,
     } satisfies BackgroundTasksEvent);
+    // Fan a lightweight active/idle signal to the global list channel so the home
+    // page's badge stays live even when the background set changes outside a
+    // main-agent turn transition (a task settling with no continuation, or a user
+    // ✕-stop) — those produce no claude_running/finished edge to trigger a refetch.
+    this.emit(SESSION_LIST_EVENT, {
+      type: 'claude_background',
+      sessionId,
+      active: tasks.length > 0,
+    } satisfies ClaudeBackgroundEvent);
   }
 
   emitQueuedMessages(sessionId: string, messages: QueuedMessage[]): void {
