@@ -151,46 +151,12 @@ class SSEEventEmitter extends EventEmitter {
     } satisfies CommandsEvent);
   }
 
-  // Subscribe to session updates for a specific session
-  onSessionUpdate(sessionId: string, callback: (event: SessionUpdateEvent) => void): () => void {
-    const eventName = `session:${sessionId}`;
-    this.on(eventName, callback);
-    return () => this.off(eventName, callback);
-  }
-
-  // Subscribe to new messages for a specific session
-  onNewMessage(sessionId: string, callback: (event: MessageEvent) => void): () => void {
-    const eventName = `messages:${sessionId}`;
-    this.on(eventName, callback);
-    return () => this.off(eventName, callback);
-  }
-
-  // Subscribe to Claude running state changes for a specific session
-  onClaudeRunning(sessionId: string, callback: (event: ClaudeRunningEvent) => void): () => void {
-    const eventName = `claude:${sessionId}`;
-    this.on(eventName, callback);
-    return () => this.off(eventName, callback);
-  }
-
-  // Subscribe to commands updates for a specific session
-  onCommands(sessionId: string, callback: (event: CommandsEvent) => void): () => void {
-    const eventName = `commands:${sessionId}`;
-    this.on(eventName, callback);
-    return () => this.off(eventName, callback);
-  }
-
   emitPrUpdate(sessionId: string, pullRequest: PullRequestInfo | null): void {
     this.emit(`pr:${sessionId}`, {
       type: 'pr_update',
       sessionId,
       pullRequest,
     } satisfies PrUpdateEvent);
-  }
-
-  onPrUpdate(sessionId: string, callback: (event: PrUpdateEvent) => void): () => void {
-    const eventName = `pr:${sessionId}`;
-    this.on(eventName, callback);
-    return () => this.off(eventName, callback);
   }
 
   emitClaudeRetry(sessionId: string, retry: RetryState | null): void {
@@ -201,27 +167,12 @@ class SSEEventEmitter extends EventEmitter {
     } satisfies ClaudeRetryEvent);
   }
 
-  onClaudeRetry(sessionId: string, callback: (event: ClaudeRetryEvent) => void): () => void {
-    const eventName = `retry:${sessionId}`;
-    this.on(eventName, callback);
-    return () => this.off(eventName, callback);
-  }
-
   emitBackgroundTasks(sessionId: string, tasks: BackgroundTask[]): void {
     this.emit(`background:${sessionId}`, {
       type: 'background_tasks',
       sessionId,
       tasks,
     } satisfies BackgroundTasksEvent);
-  }
-
-  onBackgroundTasks(
-    sessionId: string,
-    callback: (event: BackgroundTasksEvent) => void
-  ): () => void {
-    const eventName = `background:${sessionId}`;
-    this.on(eventName, callback);
-    return () => this.off(eventName, callback);
   }
 
   emitQueuedMessages(sessionId: string, messages: QueuedMessage[]): void {
@@ -232,10 +183,14 @@ class SSEEventEmitter extends EventEmitter {
     } satisfies QueuedMessagesEvent);
   }
 
-  onQueuedMessages(sessionId: string, callback: (event: QueuedMessagesEvent) => void): () => void {
-    const eventName = `queued:${sessionId}`;
-    this.on(eventName, callback);
-    return () => this.off(eventName, callback);
+  /**
+   * Subscribe to a single per-session EventEmitter channel, returning an
+   * unsubscribe. The channel payloads are the typed `*Event` interfaces above;
+   * the caller maps them into the normalized {@link SessionStreamEvent} union.
+   */
+  private onChannel<E>(channel: string, callback: (event: E) => void): () => void {
+    this.on(channel, callback);
+    return () => this.off(channel, callback);
   }
 
   /**
@@ -244,14 +199,30 @@ class SSEEventEmitter extends EventEmitter {
    */
   onSessionEvents(sessionId: string, callback: (event: SessionStreamEvent) => void): () => void {
     const unsubscribes = [
-      this.onNewMessage(sessionId, (e) => callback({ kind: 'message', message: e.message })),
-      this.onClaudeRunning(sessionId, (e) => callback({ kind: 'running', running: e.running })),
-      this.onCommands(sessionId, (e) => callback({ kind: 'commands', commands: e.commands })),
-      this.onPrUpdate(sessionId, (e) => callback({ kind: 'pr', pullRequest: e.pullRequest })),
-      this.onSessionUpdate(sessionId, (e) => callback({ kind: 'session', session: e.session })),
-      this.onClaudeRetry(sessionId, (e) => callback({ kind: 'retry', retry: e.retry })),
-      this.onBackgroundTasks(sessionId, (e) => callback({ kind: 'background', tasks: e.tasks })),
-      this.onQueuedMessages(sessionId, (e) => callback({ kind: 'queued', messages: e.messages })),
+      this.onChannel<MessageEvent>(`messages:${sessionId}`, (e) =>
+        callback({ kind: 'message', message: e.message })
+      ),
+      this.onChannel<ClaudeRunningEvent>(`claude:${sessionId}`, (e) =>
+        callback({ kind: 'running', running: e.running })
+      ),
+      this.onChannel<CommandsEvent>(`commands:${sessionId}`, (e) =>
+        callback({ kind: 'commands', commands: e.commands })
+      ),
+      this.onChannel<PrUpdateEvent>(`pr:${sessionId}`, (e) =>
+        callback({ kind: 'pr', pullRequest: e.pullRequest })
+      ),
+      this.onChannel<SessionUpdateEvent>(`session:${sessionId}`, (e) =>
+        callback({ kind: 'session', session: e.session })
+      ),
+      this.onChannel<ClaudeRetryEvent>(`retry:${sessionId}`, (e) =>
+        callback({ kind: 'retry', retry: e.retry })
+      ),
+      this.onChannel<BackgroundTasksEvent>(`background:${sessionId}`, (e) =>
+        callback({ kind: 'background', tasks: e.tasks })
+      ),
+      this.onChannel<QueuedMessagesEvent>(`queued:${sessionId}`, (e) =>
+        callback({ kind: 'queued', messages: e.messages })
+      ),
     ];
     return () => unsubscribes.forEach((unsubscribe) => unsubscribe());
   }

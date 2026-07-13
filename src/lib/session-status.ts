@@ -62,18 +62,18 @@ export function backgroundActive(status: LiveStatus): boolean {
 }
 
 /**
- * Remove a task from the background-task set (pure). Returns the SAME map
- * reference when the task is absent, so callers can detect "no change" by
- * reference identity. Shared by two paths: a terminal `task_notification`
- * settling a task, and the user stopping one via the ✕ button (optimistic
- * removal — see `dropBackgroundTask` in the runner — so the indicator clears
- * even when the SDK never emits the terminal notification).
+ * Remove a task from the background-task set (pure), returning a new map without
+ * it. A no-op if the task is absent (the returned map simply won't contain it).
+ * Shared by two paths: a `task_notification` settling a task, and the user
+ * stopping one via the ✕ button (optimistic removal — see `dropBackgroundTask`
+ * in the runner — so the indicator clears even when the SDK never emits the
+ * terminal notification). Callers that need to know whether anything changed
+ * check membership (`tasks.has(taskId)`) before calling.
  */
 export function removeBackgroundTask(
   tasks: ReadonlyMap<string, BackgroundTask>,
   taskId: string
 ): ReadonlyMap<string, BackgroundTask> {
-  if (!tasks.has(taskId)) return tasks;
   const next = new Map(tasks);
   next.delete(taskId);
   return next;
@@ -113,25 +113,15 @@ type BackgroundEvent =
   | { kind: 'settled'; taskId: string };
 
 /**
- * Terminal `task_updated.patch.status` values that settle a task. The SDK's
- * authoritative task state travels on `task_updated` (documented as a "wire-safe
- * subset of TaskState fields that changed"), and its status enum is a SUPERSET of
- * `task_notification`'s — notably `killed`, which has no `task_notification`
- * counterpart at all. `task_notification` is only *explicitly* promised after
- * `stopTask` and when a backgrounded foreground task settles; for other endings
- * (and dropped notifications) the terminal `task_updated` is the backstop that
- * keeps a finished task from lingering in the live set. `pending`/`running`/
- * `paused` are non-terminal and ignored. Whichever signal lands first removes the
- * task; the second is a no-op (removal guards on presence).
- */
-const TERMINAL_TASK_UPDATE_STATUSES = new Set(['completed', 'failed', 'killed']);
-
-/**
- * Extract a background-task lifecycle event, or `null`. `task_started` adds;
- * a task settles on either a `task_notification` (status completed/failed/stopped)
- * or a `task_updated` carrying a terminal `patch.status` (see
- * {@link TERMINAL_TASK_UPDATE_STATUSES}). The high-frequency `task_progress` ticks
- * and non-terminal `task_updated` patches are intentionally ignored.
+ * Extract a background-task lifecycle event, or `null`. `task_started` adds and
+ * `task_notification` settles a task. The high-frequency `task_progress` ticks
+ * and `task_updated` patches are intentionally ignored.
+ *
+ * A background task lingering in the indicator until query teardown is possible
+ * if its `task_notification` never arrives (e.g. a `killed` task, for which the
+ * SDK emits no notification). This is an accepted tradeoff for a single-user
+ * indicator: it never gates input, so the only impact is a stale count, and the
+ * user can always clear it with the ✕ button (`stopBackgroundTask`).
  */
 function parseBackgroundTaskEvent(message: SDKMessage): BackgroundEvent | null {
   if (message.type !== 'system') return null;
@@ -143,7 +133,6 @@ function parseBackgroundTaskEvent(message: SDKMessage): BackgroundEvent | null {
     task_type?: string;
     subagent_type?: string;
     skip_transcript?: boolean;
-    patch?: { status?: string };
   };
   if (typeof m.task_id !== 'string') return null;
 
@@ -161,13 +150,6 @@ function parseBackgroundTaskEvent(message: SDKMessage): BackgroundEvent | null {
     };
   }
   if (m.subtype === 'task_notification') {
-    return { kind: 'settled', taskId: m.task_id };
-  }
-  if (
-    m.subtype === 'task_updated' &&
-    m.patch?.status &&
-    TERMINAL_TASK_UPDATE_STATUSES.has(m.patch.status)
-  ) {
     return { kind: 'settled', taskId: m.task_id };
   }
   return null;
@@ -190,9 +172,9 @@ function parseBackgroundTaskEvent(message: SDKMessage): BackgroundEvent | null {
  *   path relies on `includePartialMessages: true` (the runner hard-enables it) so the
  *   terminal `message_delta` arrives; without partials only the `result` backstop
  *   would clear it.
- * - background tasks: `task_started` adds; a `task_notification` (any terminal
- *   status) or a `task_updated` with a terminal `patch.status` removes (see
- *   `TERMINAL_TASK_UPDATE_STATUSES` for why both signals are honored).
+ * - background tasks: `task_started` adds; a `task_notification` removes. A task
+ *   with no `task_notification` (e.g. `killed`) lingers until teardown — an
+ *   accepted tradeoff for an indicator-only count (see `parseBackgroundTaskEvent`).
  * - retry: an `api_retry` message sets it; any other TOP-LEVEL message clears it
  *   (the main request recovered). Background traffic leaves retry untouched, so a
  *   subagent's messages can't prematurely clear a main-turn retry indicator.
@@ -215,7 +197,7 @@ export function reduceSessionMessage(prev: LiveStatus, message: SDKMessage): Red
     const next = new Map(backgroundTasks);
     next.set(bg.task.taskId, bg.task);
     backgroundTasks = next;
-  } else if (bg?.kind === 'settled') {
+  } else if (bg?.kind === 'settled' && backgroundTasks.has(bg.taskId)) {
     backgroundTasks = removeBackgroundTask(backgroundTasks, bg.taskId);
   }
 

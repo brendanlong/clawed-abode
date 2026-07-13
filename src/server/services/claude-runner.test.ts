@@ -49,7 +49,6 @@ import {
   getSessionCommands,
   submitLiveToolResponse,
   isClaudeRunning,
-  isClaudeRunningAsync,
   cleanupSession,
   _setPersistedCommands,
   _clearPersistedCommands,
@@ -265,12 +264,6 @@ describe('claude-runner', () => {
   describe('isClaudeRunning', () => {
     it('should return false for nonexistent sessions', () => {
       expect(isClaudeRunning('nonexistent-session')).toBe(false);
-    });
-  });
-
-  describe('isClaudeRunningAsync', () => {
-    it('should return false for nonexistent sessions', async () => {
-      expect(await isClaudeRunningAsync('nonexistent-session')).toBe(false);
     });
   });
 });
