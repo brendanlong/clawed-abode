@@ -22,6 +22,8 @@ function toSessionListStreamEvent(event: SessionListEvent) {
       return { kind: 'running' as const, sessionId: event.sessionId, running: event.running };
     case 'claude_finished':
       return { kind: 'finished' as const, sessionId: event.sessionId };
+    case 'claude_background':
+      return { kind: 'background' as const, sessionId: event.sessionId, active: event.active };
     default:
       return assertNeverFallback(event, null);
   }
