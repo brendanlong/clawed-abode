@@ -10,6 +10,15 @@ export async function register() {
 
     console.log('Starting server - reconciling sessions...');
 
+    // Reap any session cgroup scopes orphaned by a previous crash (which never ran
+    // teardown) before sessions revive into fresh scopes. Best-effort.
+    try {
+      const { sweepSessionScopes } = await import('@/server/services/session-cgroup');
+      await sweepSessionScopes();
+    } catch (err) {
+      console.error('Error sweeping orphaned session scopes:', err);
+    }
+
     try {
       const result = await reconcileSessions();
       if (result.runningSessionsToRevive > 0) {

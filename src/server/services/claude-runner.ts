@@ -49,7 +49,8 @@ import {
 } from './settings-merger';
 import { StreamAccumulator } from './stream-accumulator';
 import { sanitizeUntrustedInput, sanitizeToolOutputHook } from './input-sanitizer';
-import { backgroundReaperHook } from './background-reaper';
+import { getSessionScopeConfig, sessionScopeNonce, stopSessionScope } from './session-cgroup';
+import { CLAUDE_BIN_ENV, SESSION_SCOPE_ENV, sessionScopeUnitName } from '@/lib/session-scope';
 import { type SanitizationInfo } from '@/lib/sanitization';
 import { attachToolResultSanitizations } from '@/lib/message-sanitization';
 import { PARTIAL_MESSAGE_ID_PREFIX } from '@/lib/message-cache';
@@ -182,6 +183,12 @@ interface SessionState {
    * turn-end in {@link applyStatus}.
    */
   interruptRequested: boolean;
+  /**
+   * Name of the transient systemd user scope this session's query is running in
+   * (set at establishment when cgroup reaping is available, else null). Stopped on
+   * teardown to cgroup-kill the whole session process tree. See session-cgroup.
+   */
+  sessionScope: string | null;
   /**
    * True between flushing queued messages and the flushed turn's `message_start`.
    * While set, `applyStatus` suppresses the just-ended turn's `turnActive` clear
@@ -334,6 +341,7 @@ function getSessionState(sessionId: string, workingDir: string): SessionState {
       toolSanitizations: new Map(),
       queuedMessages: [],
       interruptRequested: false,
+      sessionScope: null,
       awaitingFlushTurn: false,
     };
     sessions.set(sessionId, state);
@@ -541,15 +549,6 @@ async function buildSdkOptions(params: {
       return { behavior: 'allow', updatedInput: input };
     },
     hooks: {
-      // Wrap backgrounded Bash commands in a supervisor that reaps their full
-      // process tree when the SDK terminates the task, so daemonized grandchildren
-      // (e.g. Postgres via `pg_ctl start`) aren't orphaned. See backgroundReaperHook
-      // (issue #424). No-op for foreground/non-Bash calls; fails open.
-      PreToolUse: [
-        {
-          hooks: [(input) => backgroundReaperHook(input)],
-        },
-      ],
       // Sanitize tool output before the model sees it — the primary
       // hidden-content injection surface (web/MCP responses, fetched issue/PR
       // bodies, file/command output). See sanitizeToolOutputHook for the
@@ -604,6 +603,23 @@ async function buildSdkOptions(params: {
       ...options.extraArgs,
       settings: JSON.stringify({ advisorModel: settings.advisorModel }),
     };
+  }
+
+  // Run the session's Claude CLI (and every process it spawns) inside a transient
+  // systemd user scope — its own cgroup — so the whole tree, including daemons the
+  // agent backgrounds, is reaped when we stop the scope on teardown (issue #424).
+  // We point `pathToClaudeCodeExecutable` at a launcher that execs the real CLI
+  // under `systemd-run --user --scope`; a fresh nonce'd unit name per establish
+  // avoids colliding with a not-yet-torn-down scope on stop→start / resume, and is
+  // stored on state so teardown stops exactly this scope. When systemd/the CLI
+  // aren't available the config is null and the session launches normally.
+  const scopeConfig = await getSessionScopeConfig();
+  if (scopeConfig) {
+    const unit = sessionScopeUnitName(sessionId, sessionScopeNonce());
+    state.sessionScope = unit;
+    options.pathToClaudeCodeExecutable = scopeConfig.launcherPath;
+    agentEnv[SESSION_SCOPE_ENV] = unit;
+    agentEnv[CLAUDE_BIN_ENV] = scopeConfig.claudeBin;
   }
 
   return options;
@@ -1495,6 +1511,13 @@ export function stopSession(sessionId: string): void {
     state.query?.close();
   } catch {
     // ignore close errors
+  }
+  // Closing the query kills the launcher/systemd-run process, but a stopped scope
+  // is what actually cgroup-kills the session's whole tree (incl. daemons the
+  // agent backgrounded), so stop it explicitly. Fire-and-forget; idempotent.
+  if (state.sessionScope) {
+    void stopSessionScope(state.sessionScope);
+    state.sessionScope = null;
   }
   if (state.pendingInput) {
     state.pendingInput.reject(new Error('Session stopped'));
