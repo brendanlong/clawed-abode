@@ -1021,10 +1021,20 @@ async function runSessionLoop(sessionId: string, state: SessionState, q: Query):
     }
     // Drop the live query handle so the next interaction re-establishes (resume).
     // Keep the state record in the map (commands etc. persist); only stop/delete
-    // remove it entirely.
+    // remove it entirely. The `=== q` guard skips this when a newer query has
+    // already re-established (so we never tear down the live one).
     if (state.query === q) {
       state.query = null;
       state.input = null;
+      // This query's CLI subprocess is gone (the loop only exits on error / stream
+      // end / close), so stop its scope to reap anything it left running (incl.
+      // daemons the agent backgrounded). Also clears the name so a re-establish's
+      // fresh scope isn't orphaned. stopSession already handled this on the stop
+      // path (sessionScope nulled → this is a no-op there).
+      if (state.sessionScope) {
+        void stopSessionScope(state.sessionScope);
+        state.sessionScope = null;
+      }
     }
   }
 }
@@ -1546,7 +1556,14 @@ export async function stopAllSessions(): Promise<void> {
   if (sessionIds.length === 0) return;
 
   log.info('Stopping all active sessions for shutdown', { count: sessionIds.length });
+  // Capture scope names before stopSession clears them, then AWAIT the cgroup
+  // stops (stopSession's own scope-stop is fire-and-forget, which shutdown would
+  // exit before) so a graceful restart doesn't leave scopes running.
+  const scopes = sessionIds
+    .map((id) => sessions.get(id)?.sessionScope)
+    .filter((s): s is string => Boolean(s));
   for (const id of sessionIds) {
     stopSession(id);
   }
+  await Promise.allSettled(scopes.map((scope) => stopSessionScope(scope)));
 }
