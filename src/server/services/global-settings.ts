@@ -8,20 +8,6 @@ import { settingSourceFlagsFromRow, type SettingSourceFlags } from '@/lib/settin
 const GLOBAL_SETTINGS_ID = 'global';
 
 /**
- * Global settings for display in the UI (no secrets exposed)
- */
-export interface GlobalDisplaySettings {
-  systemPromptOverride: string | null;
-  systemPromptOverrideEnabled: boolean;
-  systemPromptAppend: string | null;
-  claudeModel: string | null;
-  advisorModel: string | null;
-  hasClaudeApiKey: boolean;
-  ttsSpeed: number | null;
-  voiceAutoSend: boolean;
-}
-
-/**
  * Global settings for use in Claude sessions (prompt building)
  */
 export interface GlobalSystemPromptSettings {
@@ -40,40 +26,6 @@ export interface GlobalContainerSettings extends GlobalSystemPromptSettings {
   settingSources: SettingSourceFlags;
   envVars: ContainerEnvVar[];
   mcpServers: ContainerMcpServer[];
-}
-
-/**
- * Get global settings for display in the UI.
- * Does not expose secret values.
- */
-export async function getGlobalSettings(): Promise<GlobalDisplaySettings> {
-  const settings = await prisma.globalSettings.findUnique({
-    where: { id: GLOBAL_SETTINGS_ID },
-  });
-
-  if (!settings) {
-    return {
-      systemPromptOverride: null,
-      systemPromptOverrideEnabled: false,
-      systemPromptAppend: null,
-      claudeModel: null,
-      advisorModel: null,
-      hasClaudeApiKey: false,
-      ttsSpeed: null,
-      voiceAutoSend: true,
-    };
-  }
-
-  return {
-    systemPromptOverride: settings.systemPromptOverride,
-    systemPromptOverrideEnabled: settings.systemPromptOverrideEnabled,
-    systemPromptAppend: settings.systemPromptAppend,
-    claudeModel: settings.claudeModel,
-    advisorModel: settings.advisorModel,
-    hasClaudeApiKey: settings.claudeApiKey !== null,
-    ttsSpeed: settings.ttsSpeed,
-    voiceAutoSend: settings.voiceAutoSend,
-  };
 }
 
 /**

@@ -58,16 +58,6 @@ export interface QueuedMessagesEvent {
   messages: QueuedMessage[];
 }
 
-export type SSEEvent =
-  | SessionUpdateEvent
-  | MessageEvent
-  | ClaudeRunningEvent
-  | CommandsEvent
-  | PrUpdateEvent
-  | ClaudeRetryEvent
-  | BackgroundTasksEvent
-  | QueuedMessagesEvent;
-
 /**
  * Normalized union delivered over the single multiplexed per-session SSE stream.
  * The five per-channel events above are folded into this discriminated union by

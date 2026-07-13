@@ -11,8 +11,6 @@ export const loginSchema = z.object({
   password: z.string().min(1, 'Password is required'),
 });
 
-export type LoginInput = z.infer<typeof loginSchema>;
-
 export async function hashPassword(password: string): Promise<string> {
   return argon2.hash(password);
 }
