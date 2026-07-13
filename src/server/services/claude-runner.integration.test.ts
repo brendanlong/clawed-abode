@@ -17,6 +17,7 @@ import { setupTestDb, teardownTestDb, testPrisma, clearTestDb } from '@/test/set
 const mockSseEvents = vi.hoisted(() => ({
   emitNewMessage: vi.fn(),
   emitClaudeRunning: vi.fn(),
+  emitClaudeFinished: vi.fn(),
   emitClaudeRetry: vi.fn(),
   emitBackgroundTasks: vi.fn(),
   emitQueuedMessages: vi.fn(),
@@ -291,6 +292,8 @@ describe('claude-runner persistent streaming loop', () => {
     await waitFor(() => !isClaudeRunning(sessionId));
     expect(mockSseEvents.emitClaudeRunning).toHaveBeenCalledWith(sessionId, true);
     expect(mockSseEvents.emitClaudeRunning).toHaveBeenCalledWith(sessionId, false);
+    // A natural turn end signals work-complete (drives the app-level notifier).
+    expect(mockSseEvents.emitClaudeFinished).toHaveBeenCalledWith(sessionId);
 
     stopSession(sessionId);
   });
@@ -627,10 +630,14 @@ describe('claude-runner persistent streaming loop', () => {
     await sendUserMessage(sessionId, 'queued while working');
     expect(getQueuedMessages(sessionId).map((m) => m.text)).toEqual(['queued while working']);
 
+    mockSseEvents.emitClaudeFinished.mockClear();
     expect(await interruptClaude(sessionId)).toBe(true);
     // The interrupt's terminal result ends the turn WITHOUT flushing the queue.
     fake.emit(result('error_during_execution'));
     await waitFor(() => !isClaudeRunning(sessionId));
+
+    // An interrupt is NOT a natural completion — no work-complete signal fires.
+    expect(mockSseEvents.emitClaudeFinished).not.toHaveBeenCalled();
 
     // The queued message is still queued (never pushed to the SDK, never persisted).
     expect(fake.inputs).toHaveLength(1);
@@ -779,6 +786,7 @@ describe('claude-runner persistent streaming loop', () => {
     await sendUserMessage(sessionId, 'follow up');
 
     mockSseEvents.emitClaudeRunning.mockClear();
+    mockSseEvents.emitClaudeFinished.mockClear();
 
     // Turn 1 ends; a task notification lands before the trailing result.
     fake.emit(messageDelta('end_turn'));
@@ -794,11 +802,16 @@ describe('claude-runner persistent streaming loop', () => {
     // Across the entire handoff, turnActive never dropped to false.
     expect(mockSseEvents.emitClaudeRunning).not.toHaveBeenCalledWith(sessionId, false);
     expect(isClaudeRunning(sessionId)).toBe(true);
+    // The intermediate (flushed-over) turn end is NOT a completion — no work-complete
+    // signal fires until the final turn ends.
+    expect(mockSseEvents.emitClaudeFinished).not.toHaveBeenCalled();
 
     // The final turn ending (no more queued prompts) clears turnActive exactly once.
     fake.emit(messageDelta('end_turn'));
     await waitFor(() => !isClaudeRunning(sessionId));
     expect(mockSseEvents.emitClaudeRunning).toHaveBeenCalledWith(sessionId, false);
+    // Exactly one work-complete signal, for the whole handoff.
+    expect(mockSseEvents.emitClaudeFinished).toHaveBeenCalledTimes(1);
 
     stopSession(sessionId);
   });

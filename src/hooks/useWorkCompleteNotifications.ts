@@ -5,22 +5,20 @@ import { usePathname } from 'next/navigation';
 import { trpc } from '@/lib/trpc';
 import { useAuth } from '@/lib/auth-context';
 import { useNotification } from './useNotification';
-import {
-  parseViewedSessionId,
-  shouldNotifyOnRunningChange,
-} from '@/lib/work-complete-notification';
+import { parseViewedSessionId, isActivelyWatching } from '@/lib/work-complete-notification';
 
 /**
  * App-level notifier: fires a "Claude finished" desktop notification whenever any
- * session that isn't currently being watched transitions from working (a
- * main-agent turn active) to idle.
+ * session that isn't currently being watched completes a turn.
  *
  * This replaces the old per-session-page hook (which only existed for the one
  * open session and only fired when the whole tab was hidden — issue #420). It
- * subscribes to the global session-list SSE stream (`emitClaudeRunning` fans out
- * per-session `turnActive` flips) so it covers *every* session regardless of
- * which page is open. A session is suppressed only when its page is on screen and
- * the tab is visible — i.e. you're actively watching it.
+ * subscribes to the global session-list SSE stream, keying off the `finished`
+ * event (`emitClaudeFinished` — a *natural* turn end; the server excludes
+ * interrupt/stop/error, so we never notify "finished" for work the user cancelled).
+ * It covers every session regardless of which page is open, and suppresses only
+ * the session whose page is on screen while the tab is visible — i.e. the one
+ * you're actively watching.
  *
  * Meant to be mounted exactly once, app-wide. It is inert until authenticated.
  */
@@ -37,15 +35,10 @@ export function useWorkCompleteNotifications() {
     viewedSessionIdRef.current = viewedSessionId;
   }, [viewedSessionId]);
 
-  // Per-session running (turnActive) state, so we can detect true -> false edges.
-  const runningRef = useRef<Map<string, boolean>>(new Map());
-  // Per-session display name for the notification body.
+  // Per-session display name for the notification body. Seeded from the list
+  // snapshot and kept current from `session` events (a `finished` event carries
+  // only the id).
   const namesRef = useRef<Map<string, string>>(new Map());
-
-  // Seed names and baseline running state from the list snapshot, so a session
-  // already running when the notifier mounts is caught when it later finishes.
-  // Only seed running for sessions we aren't already tracking live, so a query
-  // refetch never clobbers a fresher value from the event stream.
   const { data: listData } = trpc.sessions.list.useQuery(
     { includeArchived: false },
     { enabled: isAuthenticated }
@@ -53,9 +46,6 @@ export function useWorkCompleteNotifications() {
   useEffect(() => {
     for (const session of listData?.sessions ?? []) {
       namesRef.current.set(session.id, session.name);
-      if (!runningRef.current.has(session.id)) {
-        runningRef.current.set(session.id, session.turnActive);
-      }
     }
   }, [listData]);
 
@@ -64,30 +54,26 @@ export function useWorkCompleteNotifications() {
     onData: (tracked) => {
       const event = tracked.data;
       // Keep names current even for sessions off the home page (a session update
-      // carries the full record); running edges are handled below.
+      // carries the full record).
       if (event.kind === 'session') {
         namesRef.current.set(event.session.id, event.session.name);
         return;
       }
-      if (event.kind !== 'running') return;
+      if (event.kind !== 'finished') return;
 
-      const { sessionId, running } = event;
-      const wasRunning = runningRef.current.get(sessionId);
-      runningRef.current.set(sessionId, running);
+      const watching = isActivelyWatching({
+        finishedSessionId: event.sessionId,
+        viewedSessionId: viewedSessionIdRef.current,
+        tabHidden: typeof document !== 'undefined' && document.hidden,
+      });
+      if (watching) return;
 
-      const isWatching =
-        sessionId === viewedSessionIdRef.current &&
-        typeof document !== 'undefined' &&
-        !document.hidden;
-
-      if (shouldNotifyOnRunningChange({ wasRunning, nowRunning: running, isWatching })) {
-        const name = namesRef.current.get(sessionId);
-        void showNotification('Claude finished', {
-          body: name ? `Work complete on ${name}` : 'Work complete',
-          // Per-session tag so several sessions finishing don't collapse into one.
-          tag: `work-complete-${sessionId}`,
-        });
-      }
+      const name = namesRef.current.get(event.sessionId);
+      void showNotification('Claude finished', {
+        body: name ? `Work complete on ${name}` : 'Work complete',
+        // Per-session tag so several sessions finishing don't collapse into one.
+        tag: `work-complete-${event.sessionId}`,
+      });
     },
     onError: (err) => {
       console.error('Work-complete notifier SSE error:', err);

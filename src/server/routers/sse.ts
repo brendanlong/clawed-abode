@@ -20,6 +20,8 @@ function toSessionListStreamEvent(event: SessionListEvent) {
       return { kind: 'session' as const, session: event.session };
     case 'claude_running':
       return { kind: 'running' as const, sessionId: event.sessionId, running: event.running };
+    case 'claude_finished':
+      return { kind: 'finished' as const, sessionId: event.sessionId };
     default:
       return assertNeverFallback(event, null);
   }
