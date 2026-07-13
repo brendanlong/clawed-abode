@@ -224,18 +224,12 @@ describe('reduceSessionMessage — background tasks', () => {
     expect(status.turnActive).toBe(false);
   });
 
-  it.each(['completed', 'failed', 'killed'])(
-    'task_updated with terminal status %s settles the task',
-    (status) => {
-      const started = reduceSessionMessage(INITIAL_LIVE_STATUS, taskStarted('t1')).status;
-      const { status: next, changed } = reduceSessionMessage(started, taskUpdated('t1', status));
-      expect(backgroundActive(next)).toBe(false);
-      expect(changed.background).toBe(true);
-    }
-  );
-
-  it.each(['pending', 'running', 'paused'])(
-    'task_updated with non-terminal status %s leaves the task running',
+  // task_updated no longer settles a task — only task_notification does. The
+  // terminal-status backstop was removed (its only value was clearing a cosmetic
+  // stale count on a `killed` task with no notification; for a single-user
+  // indicator that lingering count is an accepted tradeoff).
+  it.each(['completed', 'failed', 'killed', 'pending', 'running', 'paused'])(
+    'task_updated with status %s is ignored and leaves the task running',
     (status) => {
       const started = reduceSessionMessage(INITIAL_LIVE_STATUS, taskStarted('t1')).status;
       const { status: next, changed } = reduceSessionMessage(started, taskUpdated('t1', status));
@@ -250,12 +244,13 @@ describe('reduceSessionMessage — background tasks', () => {
     expect(changed.background).toBe(false);
   });
 
-  it('a terminal task_updated then a late task_notification is a no-op (already settled)', () => {
+  it('a terminal task_updated leaves the task running; only the task_notification settles it', () => {
     let s = reduceSessionMessage(INITIAL_LIVE_STATUS, taskStarted('t1')).status;
     s = reduceSessionMessage(s, taskUpdated('t1', 'completed')).status;
-    expect(backgroundActive(s)).toBe(false);
-    const { changed } = reduceSessionMessage(s, taskNotification('t1'));
-    expect(changed.background).toBe(false);
+    expect(backgroundActive(s)).toBe(true);
+    const { status, changed } = reduceSessionMessage(s, taskNotification('t1'));
+    expect(backgroundActive(status)).toBe(false);
+    expect(changed.background).toBe(true);
   });
 });
 
@@ -272,9 +267,11 @@ describe('removeBackgroundTask (optimistic ✕ removal)', () => {
     expect(next.has('t2')).toBe(true);
   });
 
-  it('returns the SAME map reference when the task is absent (no change)', () => {
+  it('returns a new map without the id when the task is absent (harmless no-op)', () => {
     const tasks = withTasks('t1');
-    expect(removeBackgroundTask(tasks, 'ghost')).toBe(tasks);
+    const next = removeBackgroundTask(tasks, 'ghost');
+    expect(next.has('ghost')).toBe(false);
+    expect(next.has('t1')).toBe(true);
   });
 
   it('removing the last task yields an empty set', () => {

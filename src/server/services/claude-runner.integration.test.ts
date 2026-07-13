@@ -364,7 +364,7 @@ describe('claude-runner persistent streaming loop', () => {
     stopSession(sessionId);
   });
 
-  it('settles a background task via a terminal task_updated (no task_notification)', async () => {
+  it('ignores task_updated; only task_notification settles a background task', async () => {
     const fake = makeFakeQuery();
     _setQueryFactory(fake.factory);
     const sessionId = await createRunningSession();
@@ -375,9 +375,21 @@ describe('claude-runner persistent streaming loop', () => {
     await waitFor(() => getSessionBackgroundTasks(sessionId).length === 1);
     mockSseEvents.emitBackgroundTasks.mockClear();
 
-    // The task ends via task_updated(killed) with NO terminal task_notification.
+    // A terminal task_updated is no longer honored — the task keeps running.
     fake.emit(taskUpdated('task-1', 'killed'));
+    // Drive a turn so we can deterministically wait for the message to be processed.
+    fake.emit(assistant('still there'));
+    fake.emit(result());
+    await waitFor(async () =>
+      (await messagesFor(sessionId)).some(
+        (m) => m.type === 'assistant' && m.content.includes('still there')
+      )
+    );
+    expect(getSessionBackgroundTasks(sessionId).length).toBe(1);
+    expect(mockSseEvents.emitBackgroundTasks).not.toHaveBeenCalled();
 
+    // The task_notification is what settles it.
+    fake.emit(taskNotification('task-1'));
     await waitFor(() => getSessionBackgroundTasks(sessionId).length === 0);
     expect(mockSseEvents.emitBackgroundTasks).toHaveBeenCalledWith(sessionId, []);
 

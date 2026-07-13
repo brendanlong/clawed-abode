@@ -635,8 +635,8 @@ function clearLiveStatus(sessionId: string, state: SessionState): void {
  * than waiting for the SDK's terminal `task_notification` (which it can drop).
  */
 function dropBackgroundTask(sessionId: string, state: SessionState, taskId: string): boolean {
+  if (!state.status.backgroundTasks.has(taskId)) return false;
   const next = removeBackgroundTask(state.status.backgroundTasks, taskId);
-  if (next === state.status.backgroundTasks) return false;
   state.status = { ...state.status, backgroundTasks: next };
   sseEvents.emitBackgroundTasks(sessionId, [...next.values()]);
   return true;
