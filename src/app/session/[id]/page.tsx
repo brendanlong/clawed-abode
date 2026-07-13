@@ -315,7 +315,9 @@ function SessionView({ sessionId }: { sessionId: string }) {
             sessionId={sessionId}
             messages={messages}
             isRunning={isClaudeRunning}
-            onSendPrompt={handleSendText}
+            // Pass the promise-returning send so the panel can restore the
+            // transcript and show an error if the send fails (issue #408).
+            onSendPrompt={handleSendPrompt}
             onClose={() => setVoiceOverlayOpen(false)}
             onInterrupt={handleInterrupt}
           />
