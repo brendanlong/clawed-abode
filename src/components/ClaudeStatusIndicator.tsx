@@ -16,8 +16,16 @@ interface ClaudeStatusIndicatorProps {
   onStopBackgroundTask?: (taskId: string) => void;
 }
 
-/** The turn-status line: retrying / working / waiting. */
-function TurnStatus({ isRunning, retry }: { isRunning: boolean; retry?: RetryState | null }) {
+/** The turn-status line: retrying / working / background / waiting. */
+function TurnStatus({
+  isRunning,
+  backgroundActive,
+  retry,
+}: {
+  isRunning: boolean;
+  backgroundActive: boolean;
+  retry?: RetryState | null;
+}) {
   // A retry only happens mid-request, so it implies Claude is still working.
   if (isRunning && retry) {
     const reason = formatRetryReason(retry);
@@ -36,6 +44,17 @@ function TurnStatus({ isRunning, retry }: { isRunning: boolean; retry?: RetrySta
       <div className="flex items-center justify-center gap-2 py-3 px-4 bg-muted/50 border-t text-sm text-muted-foreground">
         <Spinner size="sm" />
         <span>Claude is working...</span>
+      </div>
+    );
+  }
+
+  // The main agent is idle, but a background task/subagent is still running — don't
+  // claim Claude is "waiting for your message" when work is still in flight.
+  if (backgroundActive) {
+    return (
+      <div className="flex items-center justify-center gap-2 py-3 px-4 bg-muted/50 border-t text-sm text-muted-foreground">
+        <div className="w-2 h-2 rounded-full bg-blue-500" />
+        <span>Main agent idle — a background task is still running</span>
       </div>
     );
   }
@@ -61,6 +80,7 @@ export function ClaudeStatusIndicator({
   }
 
   const tasks = backgroundTasks ?? [];
+  const backgroundActive = tasks.length > 0;
 
   return (
     <>
@@ -94,7 +114,7 @@ export function ClaudeStatusIndicator({
           ))}
         </div>
       )}
-      <TurnStatus isRunning={isRunning} retry={retry} />
+      <TurnStatus isRunning={isRunning} backgroundActive={backgroundActive} retry={retry} />
     </>
   );
 }

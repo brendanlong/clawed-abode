@@ -367,6 +367,43 @@ describe('claude-runner persistent streaming loop', () => {
     stopSession(sessionId);
   });
 
+  it('suppresses the work-complete signal until every background task is done', async () => {
+    const fake = makeFakeQuery();
+    _setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+
+    await sendUserMessage(sessionId, 'start a background job');
+    fake.emit(messageStart());
+    await waitFor(() => isClaudeRunning(sessionId));
+    fake.emit(taskStarted('bg-1'));
+
+    mockSseEvents.emitClaudeFinished.mockClear();
+
+    // The main turn ends while the background task is still running: the session is
+    // NOT fully idle, so no work-complete signal fires (the app-level notifier must
+    // stay silent while a subagent keeps working).
+    fake.emit(messageDelta('end_turn'));
+    await waitFor(() => !isClaudeRunning(sessionId));
+    expect(getSessionBackgroundTasks(sessionId).map((t) => t.taskId)).toEqual(['bg-1']);
+    expect(mockSseEvents.emitClaudeFinished).not.toHaveBeenCalled();
+
+    // The task settles; draining it alone does NOT fire a completion — the main agent
+    // autonomously continues in a new turn, and that turn's end is the real finish.
+    fake.emit(taskNotification('bg-1'));
+    await waitFor(() => getSessionBackgroundTasks(sessionId).length === 0);
+    expect(mockSseEvents.emitClaudeFinished).not.toHaveBeenCalled();
+
+    // The continuation turn runs and ends with no background tasks left: fully idle,
+    // so the work-complete signal fires exactly once.
+    fake.emit(messageStart());
+    await waitFor(() => isClaudeRunning(sessionId));
+    fake.emit(messageDelta('end_turn'));
+    await waitFor(() => !isClaudeRunning(sessionId));
+    expect(mockSseEvents.emitClaudeFinished).toHaveBeenCalledTimes(1);
+
+    stopSession(sessionId);
+  });
+
   it('ignores task_updated; only task_notification settles a background task', async () => {
     const fake = makeFakeQuery();
     _setQueryFactory(fake.factory);
