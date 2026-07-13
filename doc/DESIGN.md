@@ -434,6 +434,22 @@ subscription, so the app is deliberately structured around just **two** streams:
    `sessions.list` carries `turnActive`, so reload, tab-switch, and reconnect all
    resync to the server's in-memory truth rather than trusting streamed state.
 
+   The global stream has a **second consumer**: the app-level **work-complete
+   notifier** (`WorkCompleteNotifier` in [`src/components/WorkCompleteNotifier.tsx`](../src/components/WorkCompleteNotifier.tsx),
+   mounted once in `Providers`, driven by `useWorkCompleteNotifications`). It watches the
+   same `emitClaudeRunning` flips and fires a "Claude finished" desktop notification
+   whenever **any** session transitions from working → idle — regardless of which page is
+   open — **except** the one the user is actively watching (its `/session/{id}` page is on
+   screen **and** the tab is visible, `document.hidden === false`). This fixes the old
+   per-open-page + whole-tab-hidden scoping (issue #420): previously the only session that
+   could ever notify was the one whose page you had open, and only with the entire tab
+   backgrounded. Transition detection and the "am I watching this one?" suppression are the
+   pure, unit-tested `shouldNotifyOnRunningChange` / `parseViewedSessionId` in
+   [`src/lib/work-complete-notification.ts`](../src/lib/work-complete-notification.ts). Session
+   names for the body are seeded from `sessions.list` and kept current from `session` events;
+   baseline running state is seeded from `turnActive` so a session already generating when the
+   notifier mounts is still caught when it finishes. It runs only while authenticated.
+
 **Resume tokens & catch-up.** The subscription input is **stable** — `{ sessionId,
 afterSequence }`, where `afterSequence` is the client's newest cached sequence captured
 **once** when history first loads and then frozen (`useSessionStream` gates the subscription
