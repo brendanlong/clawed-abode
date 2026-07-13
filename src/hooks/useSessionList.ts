@@ -10,6 +10,8 @@ export interface Session {
   status: string;
   /** Whether the main agent is mid-turn (live, in-memory; false when stopped). */
   turnActive: boolean;
+  /** Whether a background task/subagent is running (live, in-memory; false when stopped). */
+  backgroundActive: boolean;
   /** Time of the user's last interaction with the session (drives list ordering). */
   lastActivityAt: Date;
 }

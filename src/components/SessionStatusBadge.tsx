@@ -6,6 +6,7 @@ const statusVariants: Record<
   'default' | 'secondary' | 'destructive' | 'outline'
 > = {
   running: 'default',
+  background: 'secondary',
   waiting: 'secondary',
   stopped: 'outline',
   creating: 'outline',
