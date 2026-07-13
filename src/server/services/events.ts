@@ -1,5 +1,5 @@
 import { EventEmitter } from 'events';
-import type { Message, Session } from '@prisma/client';
+import type { Message, Session } from '@/generated/prisma/client';
 import type { SlashCommand } from '@anthropic-ai/claude-agent-sdk';
 import type { PullRequestInfo } from './github';
 import type { RetryState } from '@/lib/claude-messages';
