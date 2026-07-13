@@ -83,6 +83,7 @@ describe('SessionList', () => {
         branch: 'main',
         status: 'running',
         turnActive: true,
+        backgroundActive: false,
         lastActivityAt: new Date('2024-01-15T10:00:00Z'),
       },
       {
@@ -92,6 +93,7 @@ describe('SessionList', () => {
         branch: 'feature-branch',
         status: 'stopped',
         turnActive: false,
+        backgroundActive: false,
         lastActivityAt: new Date('2024-01-14T09:00:00Z'),
       },
       {
@@ -101,6 +103,7 @@ describe('SessionList', () => {
         branch: 'main',
         status: 'running',
         turnActive: false,
+        backgroundActive: false,
         lastActivityAt: new Date('2024-01-13T08:00:00Z'),
       },
     ];
@@ -167,6 +170,30 @@ describe('SessionList', () => {
       expect(items[1]).toHaveTextContent('stopped');
       // Session 3: status running but idle → "waiting"
       expect(items[2]).toHaveTextContent('waiting');
+    });
+
+    it('shows "background" when the main agent is idle but a subagent runs', () => {
+      const backgroundSession: Session = {
+        id: 'session-bg',
+        name: 'Background Session',
+        repoUrl: 'https://github.com/user/repo-bg.git',
+        branch: 'main',
+        status: 'running',
+        turnActive: false,
+        backgroundActive: true,
+        lastActivityAt: new Date('2024-01-12T08:00:00Z'),
+      };
+      render(
+        <SessionList
+          sessions={[backgroundSession]}
+          isLoading={false}
+          showArchived={false}
+          onToggleArchived={vi.fn()}
+        />
+      );
+
+      const [item] = screen.getAllByRole('listitem');
+      expect(item).toHaveTextContent('background');
     });
   });
 });
