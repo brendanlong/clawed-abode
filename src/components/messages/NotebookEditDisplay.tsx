@@ -3,6 +3,7 @@
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
+import { ToolOutputBlock } from './ToolOutputBlock';
 import type { ToolCall } from './types';
 
 interface NotebookEditInput {
@@ -107,19 +108,12 @@ export function NotebookEditDisplay({ tool }: { tool: ToolCall }) {
 
       {/* Output/Result */}
       {hasOutput && (
-        <div>
-          <div className="text-muted-foreground mb-1">Result:</div>
-          <pre
-            className={cn(
-              'p-2 rounded overflow-x-auto max-h-32 overflow-y-auto',
-              tool.is_error
-                ? 'bg-red-50 dark:bg-red-950 text-red-800 dark:text-red-200'
-                : 'bg-muted'
-            )}
-          >
-            {typeof tool.output === 'string' ? tool.output : JSON.stringify(tool.output, null, 2)}
-          </pre>
-        </div>
+        <ToolOutputBlock
+          label="Result:"
+          output={tool.output}
+          isError={tool.is_error}
+          maxHeight="max-h-32"
+        />
       )}
     </ToolDisplayWrapper>
   );

@@ -15,8 +15,7 @@ export interface McpServerSectionState extends SettingsListState {
 
 type McpServerSpecificAction =
   | { type: 'startValidating'; name: string }
-  | { type: 'setValidationResult'; name: string; result: ValidationResult }
-  | { type: 'finishValidating' };
+  | { type: 'setValidationResult'; name: string; result: ValidationResult };
 
 export type McpServerSectionAction = SettingsListAction | McpServerSpecificAction;
 
@@ -41,8 +40,6 @@ export function mcpServerSectionReducer(
       next.set(action.name, action.result);
       return { ...state, validationResults: next, validatingServer: null };
     }
-    case 'finishValidating':
-      return { ...state, validatingServer: null };
     default:
       return state;
   }
@@ -78,8 +75,7 @@ export type McpServerFormAction =
   | { type: 'setHeaders'; headers: KeyValueEntry[] }
   | { type: 'setError'; error: string | null }
   | { type: 'startSubmit' }
-  | { type: 'submitError'; error: string }
-  | { type: 'finishSubmit' };
+  | { type: 'submitError'; error: string };
 
 export function createInitialMcpServerFormState(existing?: {
   name: string;
@@ -140,7 +136,5 @@ export function mcpServerFormReducer(
       return { ...state, error: null, isPending: true };
     case 'submitError':
       return { ...state, error: action.error, isPending: false };
-    case 'finishSubmit':
-      return { ...state, isPending: false };
   }
 }

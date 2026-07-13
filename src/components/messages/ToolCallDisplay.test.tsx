@@ -123,10 +123,12 @@ describe('ToolCallDisplay', () => {
   });
 
   describe('input display', () => {
-    it('displays command directly for Bash tool', async () => {
+    it('displays JSON-formatted input for tools in the generic fallback', async () => {
+      // Bash routes to BashDisplay in ContentRenderer, so it never reaches this
+      // generic display; anything that does falls through to JSON rendering.
       const user = userEvent.setup();
       const tool: ToolCall = {
-        name: 'Bash',
+        name: 'SomeTool',
         id: 'test-9',
         input: { command: 'npm run build' },
         output: 'Build successful',
@@ -135,7 +137,7 @@ describe('ToolCallDisplay', () => {
       render(<ToolCallDisplay tool={tool} />);
       await user.click(screen.getByRole('button'));
 
-      expect(screen.getByText('npm run build')).toBeInTheDocument();
+      expect(screen.getByText(/"command": "npm run build"/)).toBeInTheDocument();
     });
 
     it('displays JSON for non-Bash tools', async () => {

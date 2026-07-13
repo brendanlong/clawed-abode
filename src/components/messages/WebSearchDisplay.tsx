@@ -3,6 +3,7 @@
 import { useMemo } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
+import { ToolOutputBlock } from './ToolOutputBlock';
 import type { ToolCall } from './types';
 
 interface WebSearchInput {
@@ -159,12 +160,14 @@ export function WebSearchDisplay({ tool }: { tool: ToolCall }) {
 
       {/* Error display */}
       {tool.is_error && hasOutput && (
-        <div>
-          <div className="text-muted-foreground text-xs mb-1">Error:</div>
-          <pre className="bg-red-50 dark:bg-red-950 text-red-800 dark:text-red-200 p-2 rounded overflow-x-auto max-h-48 overflow-y-auto text-xs">
-            {typeof tool.output === 'string' ? tool.output : JSON.stringify(tool.output, null, 2)}
-          </pre>
-        </div>
+        <ToolOutputBlock
+          label="Error:"
+          labelClassName="text-xs"
+          output={tool.output}
+          isError
+          maxHeight="max-h-48"
+          preClassName="text-xs"
+        />
       )}
 
       {/* Sources section */}
@@ -206,12 +209,13 @@ export function WebSearchDisplay({ tool }: { tool: ToolCall }) {
 
       {/* Fallback if parsing failed */}
       {hasOutput && !tool.is_error && !parsed && (
-        <div>
-          <div className="text-muted-foreground text-xs mb-1">Result:</div>
-          <pre className="bg-muted p-2 rounded overflow-x-auto max-h-48 overflow-y-auto text-xs font-mono">
-            {typeof tool.output === 'string' ? tool.output : JSON.stringify(tool.output, null, 2)}
-          </pre>
-        </div>
+        <ToolOutputBlock
+          label="Result:"
+          labelClassName="text-xs"
+          output={tool.output}
+          maxHeight="max-h-48"
+          preClassName="text-xs font-mono"
+        />
       )}
     </ToolDisplayWrapper>
   );

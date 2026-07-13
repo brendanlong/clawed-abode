@@ -41,15 +41,3 @@ export function useWorkingIndicator(sessionName: string | undefined, isWorking: 
     };
   }, [isWorking]);
 }
-
-/**
- * Hook that just returns the working state without side effects.
- * Useful for components that need to display working state visually
- * without managing the document title/favicon.
- *
- * @param isWorking - Whether Claude is currently working
- * @returns Object with the current working state
- */
-export function useWorkingState(isWorking: boolean) {
-  return { isWorking };
-}
