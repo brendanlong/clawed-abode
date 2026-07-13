@@ -1,12 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { access, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { HookInput, SyncHookJSONOutput } from '@anthropic-ai/claude-agent-sdk';
-import { wrapBackgroundCommand, isAlreadyWrapped } from '@/lib/background-command';
-import { backgroundReaperHook } from './background-reaper';
+import { wrapBackgroundCommand } from '@/lib/background-command';
 
 const execFileAsync = promisify(execFile);
 
@@ -31,13 +29,6 @@ async function waitFor(fn: () => boolean | Promise<boolean>, timeoutMs: number):
   return false;
 }
 
-async function fileExists(path: string): Promise<boolean> {
-  return access(path).then(
-    () => true,
-    () => false
-  );
-}
-
 async function readPid(path: string): Promise<number | null> {
   try {
     const raw = (await readFile(path, 'utf8')).trim();
@@ -59,13 +50,19 @@ async function waitForPid(path: string, timeoutMs: number): Promise<number | nul
   return null;
 }
 
-/** Whether this host supports the unprivileged systemd user scope (cgroup mode). */
+/**
+ * Whether this host has the unprivileged systemd user scope the reaper relies on.
+ * The deployment host always does; CI runners generally don't, so the reaping
+ * tests below skip there rather than fail.
+ */
 async function cgroupSupported(): Promise<boolean> {
   try {
     await execFileAsync(
       'systemd-run',
       ['--user', '--scope', '--collect', '--quiet', '--', 'true'],
-      { timeout: 5000 }
+      {
+        timeout: 5000,
+      }
     );
     return true;
   } catch {
@@ -74,48 +71,8 @@ async function cgroupSupported(): Promise<boolean> {
 }
 
 describe('background command reaper (real processes)', () => {
-  it('process-group mode: SIGTERM runs the command trap and kills the whole group', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'ca-reaper-pg-'));
-    const trapFile = join(dir, 'trap');
-    const childPidFile = join(dir, 'child.pid');
-    const readyFile = join(dir, 'ready');
-
-    // A command with its own cleanup trap plus a long-lived in-group child.
-    const command = [
-      `trap 'echo done > ${trapFile}; exit 0' TERM INT`,
-      `sleep 300 & echo $! > ${childPidFile}`,
-      `: > ${readyFile}`,
-      'wait',
-    ].join('\n');
-
-    const wrapped = wrapBackgroundCommand(command, 'process-group');
-    const proc = spawn('bash', ['-c', wrapped], { stdio: 'ignore' });
-
-    let childPid: number | null = null;
-    try {
-      expect(await waitFor(() => fileExists(readyFile), 5000)).toBe(true);
-      childPid = await waitForPid(childPidFile, 5000);
-      expect(childPid).not.toBeNull();
-      expect(isAlive(childPid!)).toBe(true);
-
-      proc.kill('SIGTERM');
-
-      // The command's own trap must run (proves the group got SIGTERM, not just
-      // the supervisor), and the in-group child must die.
-      expect(await waitFor(() => fileExists(trapFile), 8000)).toBe(true);
-      expect((await readFile(trapFile, 'utf8')).trim()).toBe('done');
-      expect(await waitFor(() => !isAlive(childPid!), 8000)).toBe(true);
-    } finally {
-      if (childPid && isAlive(childPid)) process.kill(childPid, 'SIGKILL');
-      proc.kill('SIGKILL');
-      await rm(dir, { recursive: true, force: true });
-    }
-  }, 30000);
-
-  it('cgroup mode: SIGTERM reaps a daemonized double-forked grandchild', async () => {
+  it('SIGTERM reaps a daemonized double-forked grandchild via the cgroup', async () => {
     if (!(await cgroupSupported())) {
-      // Best-effort feature; on hosts without a systemd user scope the app falls
-      // back to process-group mode (covered above).
       console.warn('skipping cgroup reaper test: systemd user scope unavailable');
       return;
     }
@@ -125,14 +82,14 @@ describe('background command reaper (real processes)', () => {
     const readyFile = join(dir, 'ready');
 
     // Double-fork a daemon that detaches into its own session (the Postgres
-    // `pg_ctl start` pattern) — a process-group kill could not reach it.
+    // `pg_ctl start` pattern) — a plain process-group kill could not reach it.
     const command = [
       `setsid bash -c 'echo $$ > ${daemonPidFile}; exec sleep 300' </dev/null >/dev/null 2>&1 &`,
       `: > ${readyFile}`,
       'sleep 300 & wait',
     ].join('\n');
 
-    const wrapped = wrapBackgroundCommand(command, 'cgroup');
+    const wrapped = wrapBackgroundCommand(command);
     const proc = spawn('bash', ['-c', wrapped], { stdio: 'ignore' });
 
     let daemonPid: number | null = null;
@@ -165,68 +122,14 @@ function runToCompletion(wrapped: string): Promise<{ code: number | null; stdout
 }
 
 describe('wrapper stdout / exit-code preservation', () => {
-  const modes = ['process-group', 'cgroup'] as const;
-  for (const mode of modes) {
-    it(`${mode} mode passes through stdout and the command's exit code`, async () => {
-      if (mode === 'cgroup' && !(await cgroupSupported())) {
-        console.warn('skipping cgroup preservation test: systemd user scope unavailable');
-        return;
-      }
-      const wrapped = wrapBackgroundCommand('echo hello-from-cmd; exit 37', mode);
-      const { code, stdout } = await runToCompletion(wrapped);
-      expect(stdout.trim()).toBe('hello-from-cmd');
-      expect(code).toBe(37);
-    }, 20000);
-  }
-});
-
-// Exercises the real capability probe (spawns systemd-run), hence integration.
-describe('backgroundReaperHook', () => {
-  const base = { session_id: 's', transcript_path: '', cwd: '' };
-
-  const preToolUse = (toolName: string, toolInput: unknown): HookInput => ({
-    ...base,
-    hook_event_name: 'PreToolUse',
-    tool_name: toolName,
-    tool_input: toolInput,
-    tool_use_id: 'tu_test',
-  });
-
-  it('rewrites a backgrounded Bash command, preserving other fields', async () => {
-    const out = (await backgroundReaperHook(
-      preToolUse('Bash', {
-        command: 'pnpm services',
-        run_in_background: true,
-        description: 'svc',
-      })
-    )) as SyncHookJSONOutput;
-    const hso = out.hookSpecificOutput as
-      | { hookEventName: string; updatedInput?: Record<string, unknown> }
-      | undefined;
-    expect(hso?.hookEventName).toBe('PreToolUse');
-    const updated = hso?.updatedInput;
-    expect(updated).toBeDefined();
-    expect(updated!.description).toBe('svc');
-    expect(updated!.run_in_background).toBe(true);
-    expect(isAlreadyWrapped(updated!.command as string)).toBe(true);
-  });
-
-  it('passes through a foreground Bash command untouched', async () => {
-    expect(await backgroundReaperHook(preToolUse('Bash', { command: 'ls' }))).toEqual({});
-  });
-
-  it('passes through non-Bash tools and non-PreToolUse events untouched', async () => {
-    expect(
-      await backgroundReaperHook(preToolUse('Read', { command: 'x', run_in_background: true }))
-    ).toEqual({});
-    const postToolUse: HookInput = {
-      ...base,
-      hook_event_name: 'PostToolUse',
-      tool_name: 'Bash',
-      tool_input: { command: 'x', run_in_background: true },
-      tool_response: 'ok',
-      tool_use_id: 'tu',
-    };
-    expect(await backgroundReaperHook(postToolUse)).toEqual({});
-  });
+  it('passes the command stdout and exit code through the scope unchanged', async () => {
+    if (!(await cgroupSupported())) {
+      console.warn('skipping preservation test: systemd user scope unavailable');
+      return;
+    }
+    const wrapped = wrapBackgroundCommand('echo hello-from-cmd; exit 37');
+    const { code, stdout } = await runToCompletion(wrapped);
+    expect(stdout.trim()).toBe('hello-from-cmd');
+    expect(code).toBe(37);
+  }, 20000);
 });
