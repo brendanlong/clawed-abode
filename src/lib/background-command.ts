@@ -90,7 +90,10 @@ export function wrapBackgroundCommand(command: string, mode: ReaperMode): string
       // Stopping the scope cgroup-kills every process in the tree (incl. daemonized
       // double-forks), then we exit 143 to mirror the SIGTERM the SDK expects.
       "trap '__ca_reap; exit 143' TERM INT HUP",
-      `systemd-run --user --scope --collect --quiet --unit="$__ca_unit" -- bash -c '${launcher}' clawed-bg '${encoded}' &`,
+      // TimeoutStopSec bounds the stop: systemd SIGTERMs the whole cgroup, waits
+      // this long for the command's own cleanup to run, then SIGKILLs it — so a
+      // process that ignores SIGTERM can't wedge teardown near systemd's 90s default.
+      `systemd-run --user --scope --collect --quiet -p TimeoutStopSec=10 --unit="$__ca_unit" -- bash -c '${launcher}' clawed-bg '${encoded}' &`,
       '__ca_pid=$!',
       'wait "$__ca_pid"',
     ].join('\n');
