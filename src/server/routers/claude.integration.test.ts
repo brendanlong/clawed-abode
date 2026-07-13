@@ -4,7 +4,7 @@ import { setupTestDb, teardownTestDb, testPrisma, clearTestDb } from '@/test/set
 // Mock claude-runner service (has real Docker dependencies)
 const mockSendUserMessage = vi.hoisted(() => vi.fn());
 const mockInterruptClaude = vi.hoisted(() => vi.fn());
-const mockIsClaudeRunningAsync = vi.hoisted(() => vi.fn());
+const mockIsClaudeRunning = vi.hoisted(() => vi.fn());
 const mockMarkLastMessageAsInterrupted = vi.hoisted(() => vi.fn());
 
 vi.mock('../services/claude-runner', async (importOriginal) => {
@@ -13,7 +13,7 @@ vi.mock('../services/claude-runner', async (importOriginal) => {
     ...actual,
     sendUserMessage: mockSendUserMessage,
     interruptClaude: mockInterruptClaude,
-    isClaudeRunningAsync: mockIsClaudeRunningAsync,
+    isClaudeRunning: mockIsClaudeRunning,
     markLastMessageAsInterrupted: mockMarkLastMessageAsInterrupted,
   };
 });
@@ -109,7 +109,7 @@ describe('claudeRouter integration', () => {
         },
       });
 
-      mockIsClaudeRunningAsync.mockResolvedValue(false);
+      mockIsClaudeRunning.mockReturnValue(false);
       mockSendUserMessage.mockResolvedValue(undefined);
 
       const caller = createCaller('auth-session-id');
@@ -127,7 +127,7 @@ describe('claudeRouter integration', () => {
         data: { name: 'Attach Session', workspacePath: '/workspace/test', status: 'running' },
       });
 
-      mockIsClaudeRunningAsync.mockResolvedValue(false);
+      mockIsClaudeRunning.mockReturnValue(false);
       mockSendUserMessage.mockResolvedValue(undefined);
 
       const caller = createCaller('auth-session-id');
@@ -152,7 +152,7 @@ describe('claudeRouter integration', () => {
         data: { name: 'No Attach', workspacePath: '/workspace/test', status: 'running' },
       });
 
-      mockIsClaudeRunningAsync.mockResolvedValue(false);
+      mockIsClaudeRunning.mockReturnValue(false);
       mockSendUserMessage.mockResolvedValue(undefined);
 
       const caller = createCaller('auth-session-id');
@@ -166,7 +166,7 @@ describe('claudeRouter integration', () => {
         data: { name: 'Attach Only', workspacePath: '/workspace/test', status: 'running' },
       });
 
-      mockIsClaudeRunningAsync.mockResolvedValue(false);
+      mockIsClaudeRunning.mockReturnValue(false);
       mockSendUserMessage.mockResolvedValue(undefined);
 
       const caller = createCaller('auth-session-id');
@@ -238,7 +238,7 @@ describe('claudeRouter integration', () => {
 
       // A turn being active no longer blocks a send — sendUserMessage queues it
       // and flushes at turn end (async "btw mode").
-      mockIsClaudeRunningAsync.mockResolvedValue(true);
+      mockIsClaudeRunning.mockReturnValue(true);
       mockSendUserMessage.mockResolvedValue(undefined);
 
       const caller = createCaller('auth-session-id');
@@ -316,7 +316,7 @@ describe('claudeRouter integration', () => {
 
     it('marks the question answered and resumes with a new turn', async () => {
       const session = await createRunningSession();
-      mockIsClaudeRunningAsync.mockResolvedValue(false);
+      mockIsClaudeRunning.mockReturnValue(false);
       mockSendUserMessage.mockResolvedValue(undefined);
 
       const caller = createCaller('auth-session-id');
@@ -345,7 +345,7 @@ describe('claudeRouter integration', () => {
 
     it('is idempotent: a duplicate answer does not start a second turn', async () => {
       const session = await createRunningSession();
-      mockIsClaudeRunningAsync.mockResolvedValue(false);
+      mockIsClaudeRunning.mockReturnValue(false);
       mockSendUserMessage.mockResolvedValue(undefined);
 
       const caller = createCaller('auth-session-id');
@@ -368,7 +368,7 @@ describe('claudeRouter integration', () => {
       // sequence assignment. Both must be written (with retry) — neither should
       // be silently reported as already-answered.
       const session = await createRunningSession();
-      mockIsClaudeRunningAsync.mockResolvedValue(false);
+      mockIsClaudeRunning.mockReturnValue(false);
       mockSendUserMessage.mockResolvedValue(undefined);
 
       const caller = createCaller('auth-session-id');
@@ -403,7 +403,7 @@ describe('claudeRouter integration', () => {
 
     it('throws CONFLICT when a query is still processing', async () => {
       const session = await createRunningSession();
-      mockIsClaudeRunningAsync.mockResolvedValue(true);
+      mockIsClaudeRunning.mockReturnValue(true);
 
       const caller = createCaller('auth-session-id');
 
@@ -451,7 +451,7 @@ describe('claudeRouter integration', () => {
           status: 'running',
         },
       });
-      mockIsClaudeRunningAsync.mockResolvedValue(false);
+      mockIsClaudeRunning.mockReturnValue(false);
       mockSendUserMessage.mockResolvedValue(undefined);
 
       const caller = createCaller('auth-session-id');
@@ -677,7 +677,7 @@ describe('claudeRouter integration', () => {
 
   describe('isRunning', () => {
     it('should return running status', async () => {
-      mockIsClaudeRunningAsync.mockResolvedValue(true);
+      mockIsClaudeRunning.mockReturnValue(true);
 
       const caller = createCaller('auth-session-id');
       const result = await caller.claude.isRunning({
@@ -688,7 +688,7 @@ describe('claudeRouter integration', () => {
     });
 
     it('should return not running status', async () => {
-      mockIsClaudeRunningAsync.mockResolvedValue(false);
+      mockIsClaudeRunning.mockReturnValue(false);
 
       const caller = createCaller('auth-session-id');
       const result = await caller.claude.isRunning({
