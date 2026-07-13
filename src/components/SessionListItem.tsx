@@ -56,7 +56,11 @@ export function SessionListItem({ session, onMutationSuccess }: SessionListItemP
         <div className="flex items-center gap-4">
           {pullRequest && <PrStatusIndicator pullRequest={pullRequest} />}
           <SessionStatusBadge
-            status={deriveSessionDisplayStatus(session.status, session.turnActive)}
+            status={deriveSessionDisplayStatus(
+              session.status,
+              session.turnActive,
+              session.backgroundActive
+            )}
           />
 
           <div className="flex items-center gap-2">
