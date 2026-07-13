@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseViewedSessionId, shouldNotifyOnRunningChange } from './work-complete-notification';
+import { parseViewedSessionId, isActivelyWatching } from './work-complete-notification';
 
 describe('parseViewedSessionId', () => {
   it('extracts the id from a session path', () => {
@@ -26,34 +26,28 @@ describe('parseViewedSessionId', () => {
   });
 });
 
-describe('shouldNotifyOnRunningChange', () => {
-  it('notifies on a working -> idle transition of an unwatched session', () => {
+describe('isActivelyWatching', () => {
+  it('is true when the finished session is on screen and the tab is visible', () => {
     expect(
-      shouldNotifyOnRunningChange({ wasRunning: true, nowRunning: false, isWatching: false })
+      isActivelyWatching({ finishedSessionId: 'a', viewedSessionId: 'a', tabHidden: false })
     ).toBe(true);
   });
 
-  it('does not notify when the finished session is being watched', () => {
+  it('is false when the finished session is on screen but the tab is hidden', () => {
     expect(
-      shouldNotifyOnRunningChange({ wasRunning: true, nowRunning: false, isWatching: true })
+      isActivelyWatching({ finishedSessionId: 'a', viewedSessionId: 'a', tabHidden: true })
     ).toBe(false);
   });
 
-  it('does not notify on an idle -> working transition', () => {
+  it('is false when a different session is on screen', () => {
     expect(
-      shouldNotifyOnRunningChange({ wasRunning: false, nowRunning: true, isWatching: false })
+      isActivelyWatching({ finishedSessionId: 'a', viewedSessionId: 'b', tabHidden: false })
     ).toBe(false);
   });
 
-  it('does not notify when the previous state is unknown (first event seen)', () => {
+  it('is false when no session is on screen (e.g. home page)', () => {
     expect(
-      shouldNotifyOnRunningChange({ wasRunning: undefined, nowRunning: false, isWatching: false })
-    ).toBe(false);
-  });
-
-  it('does not notify on a repeated idle state', () => {
-    expect(
-      shouldNotifyOnRunningChange({ wasRunning: false, nowRunning: false, isWatching: false })
+      isActivelyWatching({ finishedSessionId: 'a', viewedSessionId: null, tabHidden: false })
     ).toBe(false);
   });
 });

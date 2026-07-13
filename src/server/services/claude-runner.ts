@@ -835,6 +835,15 @@ function applyStatus(sessionId: string, state: SessionState, message: SDKMessage
   state.status = status;
 
   if (changed.turnActive) sseEvents.emitClaudeRunning(sessionId, status.turnActive);
+  // A genuine, natural turn completion — the turn cleared to idle here, and it was
+  // neither an interrupt (`interrupted`) nor a flush handoff (which forces
+  // `status.turnActive` true above). Stop/delete/error teardown goes through
+  // clearLiveStatus, which never routes here. This is the "Claude finished" signal
+  // the app-level work-complete notifier keys off (distinct from a bare
+  // running:false edge, which also fires on interrupt/stop).
+  if (changed.turnActive && !status.turnActive && !interrupted) {
+    sseEvents.emitClaudeFinished(sessionId);
+  }
   if (changed.background) {
     sseEvents.emitBackgroundTasks(sessionId, [...status.backgroundTasks.values()]);
   }

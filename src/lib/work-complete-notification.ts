@@ -1,11 +1,12 @@
 /**
  * Pure helpers for the app-level "Claude finished" notifier.
  *
- * The notifier watches the global session-list stream and fires a desktop
- * notification whenever *any* session that isn't currently being watched
- * transitions from working (a main-agent turn active) to idle. "Being watched"
- * means its page is on screen *and* the browser tab is visible — a session you
- * are actively looking at shouldn't notify; every other session should.
+ * The notifier watches the global session-list stream for `finished` events (a
+ * main-agent turn ending *naturally* — the server excludes interrupt/stop/error,
+ * see `emitClaudeFinished`) and raises a desktop notification for any session that
+ * isn't currently being watched. "Being watched" means its page is on screen *and*
+ * the browser tab is visible — a session you are actively looking at shouldn't
+ * notify; every other session should.
  */
 
 /**
@@ -19,23 +20,22 @@ export function parseViewedSessionId(pathname: string | null | undefined): strin
 }
 
 /**
- * Decide whether a running-state change should raise a work-complete
- * notification. Fires only on a genuine working → idle transition (so we need a
- * prior `true`, not `undefined`), and never for the session the user is actively
- * watching.
+ * Whether the user is actively watching the session that just finished — i.e. its
+ * page is the one on screen and the tab is visible. Such a finish is suppressed;
+ * every other session notifies.
  *
- * @param wasRunning  the session's previous turn-active state (undefined if unseen)
- * @param nowRunning  the session's new turn-active state
- * @param isWatching  the session is on screen and the tab is visible
+ * @param finishedSessionId  the session whose turn just ended
+ * @param viewedSessionId    the session whose page is on screen (null if none)
+ * @param tabHidden          whether the browser tab is currently hidden
  */
-export function shouldNotifyOnRunningChange({
-  wasRunning,
-  nowRunning,
-  isWatching,
+export function isActivelyWatching({
+  finishedSessionId,
+  viewedSessionId,
+  tabHidden,
 }: {
-  wasRunning: boolean | undefined;
-  nowRunning: boolean;
-  isWatching: boolean;
+  finishedSessionId: string;
+  viewedSessionId: string | null;
+  tabHidden: boolean;
 }): boolean {
-  return wasRunning === true && nowRunning === false && !isWatching;
+  return finishedSessionId === viewedSessionId && !tabHidden;
 }

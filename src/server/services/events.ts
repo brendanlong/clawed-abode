@@ -28,6 +28,17 @@ export interface ClaudeRunningEvent {
   running: boolean;
 }
 
+/**
+ * A main-agent turn ended **naturally** (not interrupted, not stopped/torn down,
+ * not a queued-flush handoff). Distinct from `claude_running: false`, which also
+ * fires on interrupt/stop/error — this is the genuine "Claude finished" signal the
+ * app-level work-complete notifier keys off of. Global-channel only.
+ */
+export interface ClaudeFinishedEvent {
+  type: 'claude_finished';
+  sessionId: string;
+}
+
 export interface CommandsEvent {
   type: 'commands';
   sessionId: string;
@@ -82,7 +93,7 @@ const SESSION_LIST_EVENT = 'session-list';
  * plus main-agent running-state changes, so the home page can show
  * running/waiting per session without a subscription per row.
  */
-export type SessionListEvent = SessionUpdateEvent | ClaudeRunningEvent;
+export type SessionListEvent = SessionUpdateEvent | ClaudeRunningEvent | ClaudeFinishedEvent;
 
 // Create a typed event emitter
 class SSEEventEmitter extends EventEmitter {
@@ -119,6 +130,17 @@ class SSEEventEmitter extends EventEmitter {
     // Fan out to the global list channel so the home page can flip a session
     // between "running" and "waiting" live.
     this.emit(SESSION_LIST_EVENT, event);
+  }
+
+  /**
+   * Signal that a main-agent turn ended naturally (see {@link ClaudeFinishedEvent}).
+   * Global-channel only — consumed by the app-level work-complete notifier.
+   */
+  emitClaudeFinished(sessionId: string): void {
+    this.emit(SESSION_LIST_EVENT, {
+      type: 'claude_finished',
+      sessionId,
+    } satisfies ClaudeFinishedEvent);
   }
 
   emitCommands(sessionId: string, commands: SlashCommand[]): void {
