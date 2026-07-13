@@ -153,6 +153,33 @@ describe('background command reaper (real processes)', () => {
   }, 30000);
 });
 
+/** Run a wrapped command to natural completion, capturing stdout + exit code. */
+function runToCompletion(wrapped: string): Promise<{ code: number | null; stdout: string }> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn('bash', ['-c', wrapped], { stdio: ['ignore', 'pipe', 'ignore'] });
+    let stdout = '';
+    proc.stdout.on('data', (d) => (stdout += d.toString()));
+    proc.on('error', reject);
+    proc.on('close', (code) => resolve({ code, stdout }));
+  });
+}
+
+describe('wrapper stdout / exit-code preservation', () => {
+  const modes = ['process-group', 'cgroup'] as const;
+  for (const mode of modes) {
+    it(`${mode} mode passes through stdout and the command's exit code`, async () => {
+      if (mode === 'cgroup' && !(await cgroupSupported())) {
+        console.warn('skipping cgroup preservation test: systemd user scope unavailable');
+        return;
+      }
+      const wrapped = wrapBackgroundCommand('echo hello-from-cmd; exit 37', mode);
+      const { code, stdout } = await runToCompletion(wrapped);
+      expect(stdout.trim()).toBe('hello-from-cmd');
+      expect(code).toBe(37);
+    }, 20000);
+  }
+});
+
 // Exercises the real capability probe (spawns systemd-run), hence integration.
 describe('backgroundReaperHook', () => {
   const base = { session_id: 's', transcript_path: '', cwd: '' };
