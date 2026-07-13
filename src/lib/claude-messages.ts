@@ -1,8 +1,8 @@
 /**
  * Claude Code Message Types
  *
- * This module provides typed parsing for all message types from Claude Code's
- * stream-json output format. Uses Zod for runtime validation.
+ * Zod schemas describing the content shapes of Claude Code messages, plus the
+ * classification/retry helpers used by the runner and UI.
  */
 
 import { z } from 'zod';
@@ -19,7 +19,6 @@ export const TextBlockSchema = z.object({
   type: z.literal('text'),
   text: z.string(),
 });
-export type TextBlock = z.infer<typeof TextBlockSchema>;
 
 /**
  * Thinking content block - represents Claude's extended-thinking reasoning.
@@ -30,7 +29,6 @@ export const ThinkingBlockSchema = z.object({
   thinking: z.string(),
   signature: z.string().optional(),
 });
-export type ThinkingBlock = z.infer<typeof ThinkingBlockSchema>;
 
 /**
  * Redacted thinking block - thinking that the API encrypted rather than returning.
@@ -40,7 +38,6 @@ export const RedactedThinkingBlockSchema = z.object({
   type: z.literal('redacted_thinking'),
   data: z.string(),
 });
-export type RedactedThinkingBlock = z.infer<typeof RedactedThinkingBlockSchema>;
 
 /**
  * Tool use content block - represents a tool call by the assistant
@@ -51,7 +48,6 @@ export const ToolUseBlockSchema = z.object({
   name: z.string(),
   input: z.record(z.string(), z.unknown()),
 });
-export type ToolUseBlock = z.infer<typeof ToolUseBlockSchema>;
 
 /**
  * Tool result content block - represents the result of a tool call
@@ -62,7 +58,6 @@ export const ToolResultBlockSchema = z.object({
   content: z.string().optional(),
   is_error: z.boolean().optional(),
 });
-export type ToolResultBlock = z.infer<typeof ToolResultBlockSchema>;
 
 /**
  * Server tool use content block - a tool executed server-side by the Anthropic
@@ -76,7 +71,6 @@ export const ServerToolUseBlockSchema = z.object({
   name: z.string(),
   input: z.record(z.string(), z.unknown()),
 });
-export type ServerToolUseBlock = z.infer<typeof ServerToolUseBlockSchema>;
 
 /**
  * Advisor tool result block - the advisor's response to a `server_tool_use`
@@ -88,7 +82,6 @@ export const AdvisorToolResultBlockSchema = z.object({
   tool_use_id: z.string(),
   content: z.unknown().optional(),
 });
-export type AdvisorToolResultBlock = z.infer<typeof AdvisorToolResultBlockSchema>;
 
 /**
  * Union of all content block types
@@ -115,7 +108,6 @@ export const CacheCreationSchema = z.object({
   ephemeral_5m_input_tokens: z.number().optional(),
   ephemeral_1h_input_tokens: z.number().optional(),
 });
-export type CacheCreation = z.infer<typeof CacheCreationSchema>;
 
 /**
  * Usage statistics for a single message
@@ -128,7 +120,6 @@ export const MessageUsageSchema = z.object({
   cache_creation: CacheCreationSchema.optional(),
   service_tier: z.string().optional(),
 });
-export type MessageUsage = z.infer<typeof MessageUsageSchema>;
 
 /**
  * Usage stats for a specific model in result messages
@@ -143,7 +134,6 @@ export const ModelUsageSchema = z.object({
   contextWindow: z.number().optional(),
   maxOutputTokens: z.number().optional(),
 });
-export type ModelUsage = z.infer<typeof ModelUsageSchema>;
 
 /**
  * Server tool use stats
@@ -152,7 +142,6 @@ export const ServerToolUseSchema = z.object({
   web_search_requests: z.number().optional(),
   web_fetch_requests: z.number().optional(),
 });
-export type ServerToolUse = z.infer<typeof ServerToolUseSchema>;
 
 /**
  * Aggregated usage for result messages.
@@ -171,7 +160,6 @@ export const ResultUsageSchema = z.object({
   inference_geo: z.string().nullable().optional(),
   speed: z.enum(['standard', 'fast']).nullable().optional(),
 });
-export type ResultUsage = z.infer<typeof ResultUsageSchema>;
 
 // =============================================================================
 // Inner Message Schemas
@@ -191,7 +179,6 @@ export const ApiMessageSchema = z.object({
   usage: MessageUsageSchema.optional(),
   context_management: z.unknown().nullable().optional(),
 });
-export type ApiMessage = z.infer<typeof ApiMessageSchema>;
 
 // =============================================================================
 // Message Content Schemas (outer wrapper)
@@ -207,7 +194,6 @@ export const AssistantContentSchema = z.object({
   session_id: z.string(),
   uuid: z.string(),
 });
-export type AssistantContent = z.infer<typeof AssistantContentSchema>;
 
 /**
  * User message content (can contain tool results)
@@ -246,51 +232,6 @@ export const SystemInitContentSchema = z.object({
   plugins: z.array(z.unknown()).optional(),
   uuid: z.string().optional(),
 });
-export type SystemInitContent = z.infer<typeof SystemInitContentSchema>;
-
-/**
- * System error message content - can contain embedded JSON with tool results
- */
-export const SystemErrorContentSchema = z.object({
-  type: z.literal('system'),
-  subtype: z.literal('error'),
-  content: z.array(
-    z.object({
-      type: z.literal('text'),
-      text: z.string(),
-    })
-  ),
-});
-export type SystemErrorContent = z.infer<typeof SystemErrorContentSchema>;
-
-/**
- * Compact boundary message content - emitted when /compact is used or auto-compaction triggers
- */
-export const SystemCompactBoundaryContentSchema = z.object({
-  type: z.literal('system'),
-  subtype: z.literal('compact_boundary'),
-  compact_metadata: z.object({
-    trigger: z.enum(['manual', 'auto']),
-    pre_tokens: z.number(),
-  }),
-  uuid: z.string(),
-  session_id: z.string(),
-});
-export type SystemCompactBoundaryContent = z.infer<typeof SystemCompactBoundaryContentSchema>;
-
-/**
- * Generic system content (for other subtypes like status, hook_started, hook_response, etc.)
- * Uses passthrough() to preserve all properties from the original message, since different
- * system subtypes have varying fields (e.g., hook_id, status, task_id, etc.).
- */
-export const SystemGenericContentSchema = z
-  .object({
-    type: z.literal('system'),
-    subtype: z.string().optional(),
-    content: z.unknown().optional(),
-  })
-  .passthrough();
-export type SystemGenericContent = z.infer<typeof SystemGenericContentSchema>;
 
 /**
  * Permission denial info from result messages
@@ -335,506 +276,8 @@ export const ResultContentSchema = z.object({
 export type ResultContent = z.infer<typeof ResultContentSchema>;
 
 // =============================================================================
-// Database Message Schemas (what we store and retrieve)
+// Message Handling Types
 // =============================================================================
-
-/**
- * Schema for messages as stored in the database
- */
-export const StoredMessageSchema = z.object({
-  id: z.string(),
-  sessionId: z.string(),
-  sequence: z.number(),
-  type: z.enum(['system', 'user', 'assistant', 'result']),
-  content: z.unknown(), // JSON content varies by type
-  createdAt: z.date().or(z.string().transform((s) => new Date(s))),
-});
-export type StoredMessage = z.infer<typeof StoredMessageSchema>;
-
-// =============================================================================
-// Parsed Message Classes
-// =============================================================================
-
-/**
- * Base class for all parsed messages
- */
-export abstract class ParsedMessage {
-  constructor(
-    public readonly id: string,
-    public readonly sessionId: string,
-    public readonly sequence: number,
-    public readonly createdAt: Date
-  ) {}
-
-  abstract get messageType(): 'system' | 'user' | 'assistant' | 'result';
-}
-
-/**
- * Parsed assistant message
- */
-export class AssistantMessage extends ParsedMessage {
-  readonly messageType = 'assistant' as const;
-
-  constructor(
-    id: string,
-    sessionId: string,
-    sequence: number,
-    createdAt: Date,
-    public readonly content: AssistantContent
-  ) {
-    super(id, sessionId, sequence, createdAt);
-  }
-
-  /** Get all text content concatenated */
-  getText(): string {
-    return this.content.message.content
-      .filter((block): block is TextBlock => block.type === 'text')
-      .map((block) => block.text)
-      .join('\n');
-  }
-
-  /** Get all tool use blocks */
-  getToolUses(): ToolUseBlock[] {
-    return this.content.message.content.filter(
-      (block): block is ToolUseBlock => block.type === 'tool_use'
-    );
-  }
-
-  /** Get the model used */
-  get model(): string | undefined {
-    return this.content.message.model;
-  }
-
-  /** Get token usage */
-  get usage(): MessageUsage | undefined {
-    return this.content.message.usage;
-  }
-}
-
-/**
- * Parsed user message (often contains tool results)
- */
-export class UserMessage extends ParsedMessage {
-  readonly messageType = 'user' as const;
-
-  constructor(
-    id: string,
-    sessionId: string,
-    sequence: number,
-    createdAt: Date,
-    public readonly content: UserContent
-  ) {
-    super(id, sessionId, sequence, createdAt);
-  }
-
-  /** Check if this is a tool result message */
-  isToolResult(): boolean {
-    return this.content.message.content.some((block) => block.type === 'tool_result');
-  }
-
-  /** Get all tool result blocks */
-  getToolResults(): ToolResultBlock[] {
-    return this.content.message.content.filter(
-      (block): block is ToolResultBlock => block.type === 'tool_result'
-    );
-  }
-
-  /** Build a map of tool_use_id -> result for matching with tool uses */
-  getToolResultMap(): Map<string, { content?: string; is_error?: boolean }> {
-    const map = new Map<string, { content?: string; is_error?: boolean }>();
-    for (const result of this.getToolResults()) {
-      map.set(result.tool_use_id, {
-        content: result.content,
-        is_error: result.is_error,
-      });
-    }
-    return map;
-  }
-}
-
-/**
- * Parsed system message
- */
-export class SystemMessage extends ParsedMessage {
-  readonly messageType = 'system' as const;
-
-  constructor(
-    id: string,
-    sessionId: string,
-    sequence: number,
-    createdAt: Date,
-    public readonly content:
-      | SystemInitContent
-      | SystemErrorContent
-      | SystemCompactBoundaryContent
-      | SystemGenericContent
-  ) {
-    super(id, sessionId, sequence, createdAt);
-  }
-
-  /** Check if this is an init message */
-  isInit(): this is SystemMessage & { content: SystemInitContent } {
-    return this.content.subtype === 'init';
-  }
-
-  /** Check if this is an error message */
-  isError(): this is SystemMessage & { content: SystemErrorContent } {
-    return this.content.subtype === 'error';
-  }
-
-  /** Check if this is a compact boundary message */
-  isCompactBoundary(): this is SystemMessage & { content: SystemCompactBoundaryContent } {
-    return this.content.subtype === 'compact_boundary';
-  }
-
-  /** Get error text if this is an error message */
-  getErrorText(): string | undefined {
-    if (!this.isError()) return undefined;
-    const errorContent = this.content as SystemErrorContent;
-    return errorContent.content.map((c) => c.text).join('\n');
-  }
-
-  /** Get session info if this is an init message */
-  getInitInfo():
-    | {
-        model: string;
-        cwd: string;
-        tools?: string[];
-        version?: string;
-      }
-    | undefined {
-    if (!this.isInit()) return undefined;
-    const initContent = this.content as SystemInitContent;
-    return {
-      model: initContent.model,
-      cwd: initContent.cwd,
-      tools: initContent.tools,
-      version: initContent.claude_code_version,
-    };
-  }
-
-  /** Get compact metadata if this is a compact boundary message */
-  getCompactInfo():
-    | {
-        trigger: 'manual' | 'auto';
-        preTokens: number;
-      }
-    | undefined {
-    if (!this.isCompactBoundary()) return undefined;
-    const compactContent = this.content as SystemCompactBoundaryContent;
-    return {
-      trigger: compactContent.compact_metadata.trigger,
-      preTokens: compactContent.compact_metadata.pre_tokens,
-    };
-  }
-}
-
-/**
- * Parsed result message (session completion)
- */
-export class ResultMessage extends ParsedMessage {
-  readonly messageType = 'result' as const;
-
-  constructor(
-    id: string,
-    sessionId: string,
-    sequence: number,
-    createdAt: Date,
-    public readonly content: ResultContent
-  ) {
-    super(id, sessionId, sequence, createdAt);
-  }
-
-  /** Check if the session completed successfully */
-  get isSuccess(): boolean {
-    return this.content.subtype === 'success' && !this.content.is_error;
-  }
-
-  /** Get the result text */
-  get resultText(): string | undefined {
-    return this.content.result;
-  }
-
-  /** Get total cost in USD */
-  get costUsd(): number | undefined {
-    return this.content.total_cost_usd;
-  }
-
-  /** Get duration in milliseconds */
-  get durationMs(): number | undefined {
-    return this.content.duration_ms;
-  }
-
-  /** Get number of turns */
-  get numTurns(): number | undefined {
-    return this.content.num_turns;
-  }
-
-  /** Get aggregated usage stats */
-  get usage(): ResultUsage | undefined {
-    return this.content.usage;
-  }
-}
-
-/**
- * Raw/unknown message - used for messages that fail validation or are unknown types
- * These should be displayed as collapsed JSON in the UI
- */
-export class RawMessage extends ParsedMessage {
-  readonly messageType = 'system' as const; // Treat as system for display purposes
-
-  constructor(
-    id: string,
-    sessionId: string,
-    sequence: number,
-    createdAt: Date,
-    public readonly rawContent: unknown,
-    public readonly parseError?: string
-  ) {
-    super(id, sessionId, sequence, createdAt);
-  }
-
-  /** Get the raw content as a formatted JSON string */
-  getFormattedJson(): string {
-    try {
-      return JSON.stringify(this.rawContent, null, 2);
-    } catch {
-      return String(this.rawContent);
-    }
-  }
-
-  /** Check if this was a parse error vs just unknown type */
-  get isParseError(): boolean {
-    return this.parseError !== undefined;
-  }
-}
-
-// Union type for all parsed messages
-export type AnyParsedMessage =
-  | AssistantMessage
-  | UserMessage
-  | SystemMessage
-  | ResultMessage
-  | RawMessage;
-
-// =============================================================================
-// Parsing Functions
-// =============================================================================
-
-/**
- * Parse a stored message into a typed ParsedMessage
- * Returns RawMessage for unknown types or validation failures
- */
-export function parseStoredMessage(stored: StoredMessage): AnyParsedMessage {
-  const { id, sessionId, sequence, type, content, createdAt } = stored;
-  const date = createdAt instanceof Date ? createdAt : new Date(createdAt);
-
-  switch (type) {
-    case 'assistant': {
-      const parsed = AssistantContentSchema.safeParse(content);
-      if (!parsed.success) {
-        console.warn('Failed to parse assistant message:', parsed.error);
-        return new RawMessage(
-          id,
-          sessionId,
-          sequence,
-          date,
-          content,
-          `Failed to parse assistant message: ${parsed.error.message}`
-        );
-      }
-      return new AssistantMessage(id, sessionId, sequence, date, parsed.data);
-    }
-
-    case 'user': {
-      const parsed = UserContentSchema.safeParse(content);
-      if (!parsed.success) {
-        console.warn('Failed to parse user message:', parsed.error);
-        return new RawMessage(
-          id,
-          sessionId,
-          sequence,
-          date,
-          content,
-          `Failed to parse user message: ${parsed.error.message}`
-        );
-      }
-      return new UserMessage(id, sessionId, sequence, date, parsed.data);
-    }
-
-    case 'system': {
-      // Try specific schemas first, then fall back to generic
-      const initParsed = SystemInitContentSchema.safeParse(content);
-      if (initParsed.success) {
-        return new SystemMessage(id, sessionId, sequence, date, initParsed.data);
-      }
-
-      const errorParsed = SystemErrorContentSchema.safeParse(content);
-      if (errorParsed.success) {
-        return new SystemMessage(id, sessionId, sequence, date, errorParsed.data);
-      }
-
-      const compactParsed = SystemCompactBoundaryContentSchema.safeParse(content);
-      if (compactParsed.success) {
-        return new SystemMessage(id, sessionId, sequence, date, compactParsed.data);
-      }
-
-      // Fall back to generic (handles status, hook_started, hook_response, etc.)
-      const genericParsed = SystemGenericContentSchema.safeParse(content);
-      if (genericParsed.success) {
-        return new SystemMessage(id, sessionId, sequence, date, genericParsed.data);
-      }
-
-      // All system parsers failed - return raw
-      console.warn('Failed to parse system message:', content);
-      return new RawMessage(
-        id,
-        sessionId,
-        sequence,
-        date,
-        content,
-        'Failed to parse system message'
-      );
-    }
-
-    case 'result': {
-      const parsed = ResultContentSchema.safeParse(content);
-      if (!parsed.success) {
-        console.warn('Failed to parse result message:', parsed.error);
-        return new RawMessage(
-          id,
-          sessionId,
-          sequence,
-          date,
-          content,
-          `Failed to parse result message: ${parsed.error.message}`
-        );
-      }
-      return new ResultMessage(id, sessionId, sequence, date, parsed.data);
-    }
-
-    default: {
-      // Unknown type - return raw message
-      console.warn('Unknown message type:', type);
-      return new RawMessage(
-        id,
-        sessionId,
-        sequence,
-        date,
-        content,
-        `Unknown message type: ${type}`
-      );
-    }
-  }
-}
-
-/**
- * Result of parsing a Claude stream line
- */
-export type StreamLineParseResult =
-  | {
-      success: true;
-      data:
-        | AssistantContent
-        | UserContent
-        | SystemInitContent
-        | SystemErrorContent
-        | SystemCompactBoundaryContent
-        | SystemGenericContent
-        | ResultContent;
-    }
-  | { success: false; raw: unknown; error: string };
-
-/**
- * Parse raw JSON content from Claude Code stream.
- * Handles all known SDK message types including system subtypes
- * (init, error, compact_boundary, status, hooks) and non-system types
- * (tool_progress, tool_use_summary, auth_status).
- */
-export function parseClaudeStreamLine(json: unknown): StreamLineParseResult {
-  if (!json || typeof json !== 'object') {
-    return { success: false, raw: json, error: 'Invalid JSON: expected object' };
-  }
-
-  const obj = json as Record<string, unknown>;
-  const type = obj.type as string;
-
-  switch (type) {
-    case 'assistant': {
-      const parsed = AssistantContentSchema.safeParse(json);
-      if (parsed.success) {
-        return { success: true, data: parsed.data };
-      }
-      return {
-        success: false,
-        raw: json,
-        error: `Failed to parse assistant: ${parsed.error.message}`,
-      };
-    }
-    case 'user': {
-      const parsed = UserContentSchema.safeParse(json);
-      if (parsed.success) {
-        return { success: true, data: parsed.data };
-      }
-      return { success: false, raw: json, error: `Failed to parse user: ${parsed.error.message}` };
-    }
-    case 'system': {
-      // Try specific schemas first, then fall back to generic
-      const initParsed = SystemInitContentSchema.safeParse(json);
-      if (initParsed.success) {
-        return { success: true, data: initParsed.data };
-      }
-
-      const errorParsed = SystemErrorContentSchema.safeParse(json);
-      if (errorParsed.success) {
-        return { success: true, data: errorParsed.data };
-      }
-
-      const compactParsed = SystemCompactBoundaryContentSchema.safeParse(json);
-      if (compactParsed.success) {
-        return { success: true, data: compactParsed.data };
-      }
-
-      // Fall back to generic for other system subtypes (status, hook_started,
-      // hook_response, hook_progress, files_persisted, task_notification)
-      const genericParsed = SystemGenericContentSchema.safeParse(json);
-      if (genericParsed.success) {
-        return { success: true, data: genericParsed.data };
-      }
-
-      return { success: false, raw: json, error: 'Failed to parse system message' };
-    }
-    case 'result': {
-      const parsed = ResultContentSchema.safeParse(json);
-      if (parsed.success) {
-        return { success: true, data: parsed.data };
-      }
-      return {
-        success: false,
-        raw: json,
-        error: `Failed to parse result: ${parsed.error.message}`,
-      };
-    }
-    // Additional SDK message types that are not 'system' but are stored as system in DB
-    case 'tool_progress':
-    case 'tool_use_summary':
-    case 'auth_status': {
-      // These have their own top-level type in the SDK but are stored as 'system' in our DB.
-      // Parse them as generic system content for forward compatibility.
-      const genericParsed = SystemGenericContentSchema.safeParse({
-        ...json,
-        type: 'system',
-        subtype: type,
-      });
-      if (genericParsed.success) {
-        return { success: true, data: genericParsed.data };
-      }
-      return { success: false, raw: json, error: `Failed to parse ${type} message` };
-    }
-    default:
-      return { success: false, raw: json, error: `Unknown message type: ${type}` };
-  }
-}
 
 /**
  * The four message types stored in the `Message.type` DB column.
@@ -1034,43 +477,4 @@ export function classifyMessage(message: SDKMessage): MessageHandling {
     default:
       return assertNeverFallback(message, { kind: 'persist', dbType: 'system' });
   }
-}
-
-// =============================================================================
-// Helper functions for working with messages
-// =============================================================================
-
-/**
- * Build a map of tool_use_id -> result from a list of messages
- * This matches tool_use blocks with their corresponding tool_result
- */
-export function buildToolResultMap(
-  messages: AnyParsedMessage[]
-): Map<string, { content?: string; is_error?: boolean }> {
-  const map = new Map<string, { content?: string; is_error?: boolean }>();
-
-  for (const msg of messages) {
-    if (msg instanceof UserMessage) {
-      const results = msg.getToolResultMap();
-      for (const [id, result] of results) {
-        map.set(id, result);
-      }
-    }
-  }
-
-  return map;
-}
-
-/**
- * Get all tool use IDs from an assistant message
- */
-export function getToolUseIds(msg: AssistantMessage): string[] {
-  return msg.getToolUses().map((tu) => tu.id);
-}
-
-/**
- * Check if a message is a standalone tool result (not part of regular conversation)
- */
-export function isStandaloneToolResult(msg: AnyParsedMessage): boolean {
-  return msg instanceof UserMessage && msg.isToolResult();
 }
