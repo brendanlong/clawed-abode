@@ -3,7 +3,6 @@ import {
   CLAUDE_BIN_ENV,
   SESSION_SCOPE_ENV,
   SESSION_SCOPE_LAUNCHER,
-  SESSION_SCOPE_UNIT_GLOB,
   sessionScopeUnitName,
 } from './session-scope';
 
@@ -14,11 +13,11 @@ describe('sessionScopeUnitName', () => {
     );
   });
 
-  it('is matched by the sweep glob (a literal prefix + .scope suffix)', () => {
-    const name = sessionScopeUnitName('sess', 'ff00');
-    expect(name.startsWith('clawed-session-')).toBe(true);
-    expect(name.endsWith('.scope')).toBe(true);
-    expect(SESSION_SCOPE_UNIT_GLOB).toBe('clawed-session-*.scope');
+  it('produces a distinct unit name per nonce so a stop→start does not collide', () => {
+    const a = sessionScopeUnitName('sess', 'aaaa0000');
+    const b = sessionScopeUnitName('sess', 'bbbb0000');
+    expect(a).not.toBe(b);
+    expect(a.endsWith('.scope')).toBe(true);
   });
 });
 
