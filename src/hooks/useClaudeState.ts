@@ -1,5 +1,6 @@
 import { useCallback } from 'react';
 import { trpc } from '@/lib/trpc';
+import { taskHasEndState } from '@/lib/session-status';
 import { useRefetchOnReconnect } from './useRefetchOnReconnect';
 
 /**
@@ -113,7 +114,9 @@ export function useClaudeState(sessionId: string) {
     isRunning,
     retry,
     backgroundTasks,
-    backgroundActive: backgroundTasks.length > 0,
+    // Only tasks with a knowable end state gate the background-vs-waiting status;
+    // a permanently-backgrounded Bash daemon (dev server) shouldn't read as "busy".
+    backgroundActive: backgroundTasks.some(taskHasEndState),
     queuedMessages,
     send,
     cancelQueued,
