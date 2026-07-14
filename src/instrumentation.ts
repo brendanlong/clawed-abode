@@ -11,18 +11,23 @@ export async function register() {
     console.log('Starting server - reconciling sessions...');
 
     // Reap session cgroup scopes orphaned by a previous crash (which never ran
-    // teardown) before sessions revive into fresh scopes. Best-effort. Gated to
-    // production only: the sweep glob has no per-instance discriminator, so a dev
-    // instance (`pnpm dev`) must not run it or it would cgroup-kill the running
-    // sessions of a concurrent production instance owned by the same user. (The
-    // deployment host runs a single production instance.)
-    if (process.env.NODE_ENV === 'production') {
-      try {
-        const { sweepSessionScopes } = await import('@/server/services/session-cgroup');
-        await sweepSessionScopes();
-      } catch (err) {
-        console.error('Error sweeping orphaned session scopes:', err);
-      }
+    // teardown) before sessions revive into fresh scopes. Best-effort. Reaps
+    // EXACTLY the scope names recorded on this instance's own session rows (no
+    // glob), so — unlike the old broad sweep — it can only touch scopes named in
+    // this instance's DB. That's why it no longer needs the production gate: a
+    // `pnpm dev` instance with its OWN DATABASE_URL has its own session ids and
+    // scope names, so it can never reach a co-tenant production instance's
+    // sessions (the old glob could, regardless of DB — the mass-kill bug).
+    // Caveat: this safety rests on instances not SHARING a DATABASE_URL. Two live
+    // instances on one DB would have this reap stop the other's live scopes by
+    // exact name — but a shared DB already breaks the app's single-instance model
+    // (in-memory-vs-DB session state, message-sequence counters), so "don't share
+    // a DB across concurrent instances" is a pre-existing invariant, not a new one.
+    try {
+      const { reapOrphanedSessionScopes } = await import('@/server/services/claude-runner');
+      await reapOrphanedSessionScopes();
+    } catch (err) {
+      console.error('Error reaping orphaned session scopes:', err);
     }
 
     try {

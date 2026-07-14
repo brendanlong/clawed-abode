@@ -20,12 +20,6 @@ export const SESSION_SCOPE_ENV = 'CLAWED_SESSION_SCOPE';
 export const CLAUDE_BIN_ENV = 'CLAWED_CLAUDE_BIN';
 
 /**
- * Glob matching every session scope unit. Used at startup to stop scopes orphaned
- * by a previous server crash (which never ran teardown) before sessions revive.
- */
-export const SESSION_SCOPE_UNIT_GLOB = 'clawed-session-*.scope';
-
-/**
  * Transient systemd scope unit name for one query establishment. A per-establish
  * `nonce` keeps a stop→start (or resume) from colliding with a not-yet-torn-down
  * scope of the same session; the exact name is stored on session state so
