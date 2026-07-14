@@ -317,6 +317,14 @@ export const sessionsRouter = router({
         });
       }
 
+      // Archived sessions are read-only (workspace removed, no live query).
+      if (session.status === 'archived') {
+        throw new TRPCError({
+          code: 'PRECONDITION_FAILED',
+          message: 'Cannot change the model of an archived session',
+        });
+      }
+
       const model = input.claudeModel?.trim() || null;
 
       const updatedSession = await prisma.session.update({
