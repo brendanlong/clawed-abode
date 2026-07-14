@@ -16,6 +16,8 @@ import { Spinner } from '@/components/ui/spinner';
 import { RepoSelector, NO_REPO_SENTINEL } from '@/components/RepoSelector';
 import { BranchSelector } from '@/components/BranchSelector';
 import { IssueSelector } from '@/components/IssueSelector';
+import { ModelOverrideField } from '@/components/settings/shared/ModelOverrideField';
+import { Cpu } from 'lucide-react';
 import type { Repo } from '@/components/RepoSelector';
 import type { Issue } from '@/lib/types';
 import { SESSION_NAME_MAX_LENGTH } from '@/lib/types';
@@ -53,6 +55,10 @@ function NewSessionForm() {
 
   const isNoRepo = form.selectedRepo?.fullName === NO_REPO_SENTINEL;
   const hasRepo = form.selectedRepo && !isNoRepo;
+
+  const { data: globalSettings } = trpc.globalSettings.get.useQuery();
+  const fallbackModel =
+    globalSettings?.claudeModel ?? globalSettings?.defaultClaudeModel ?? 'opus[1m]';
 
   const createMutation = trpc.sessions.create.useMutation({
     onSuccess: (data) => {
@@ -125,6 +131,7 @@ function NewSessionForm() {
       repoFullName: isNoRepo ? undefined : form.selectedRepo.fullName,
       branch: isNoRepo ? undefined : form.selectedBranch,
       initialPrompt: form.initialPrompt.trim() || undefined,
+      claudeModel: form.claudeModel ?? undefined,
     });
   };
 
@@ -185,6 +192,29 @@ function NewSessionForm() {
             />
             <p className="text-xs text-muted-foreground">
               If provided, this prompt will be sent to Claude automatically when the session starts.
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label className="flex items-center gap-1.5">
+              <Cpu className="h-4 w-4 text-muted-foreground" />
+              Claude model (optional)
+            </Label>
+            <ModelOverrideField
+              currentModel={form.claudeModel}
+              defaultModel={fallbackModel}
+              onSave={(model, onSuccess) => {
+                dispatch({ type: 'editModel', claudeModel: model });
+                onSuccess();
+              }}
+              isPending={false}
+              error={null}
+              setButtonLabel="Set Model"
+              emptyHint="(default)"
+            />
+            <p className="text-xs text-muted-foreground">
+              Overrides the model for this session only. You can change it later from the session
+              header.
             </p>
           </div>
         </>
