@@ -4,6 +4,7 @@ import {
   reduceSessionMessage,
   removeBackgroundTask,
   backgroundActive,
+  taskHasEndState,
   INITIAL_LIVE_STATUS,
   type LiveStatus,
   type BackgroundTask,
@@ -251,6 +252,52 @@ describe('reduceSessionMessage — background tasks', () => {
     const { status, changed } = reduceSessionMessage(s, taskNotification('t1'));
     expect(backgroundActive(status)).toBe(false);
     expect(changed.background).toBe(true);
+  });
+});
+
+describe('taskHasEndState (daemon exclusion)', () => {
+  const make = (taskType?: string): BackgroundTask => ({ taskId: 't', ambient: false, taskType });
+
+  it('excludes backgrounded Bash daemons (local_bash)', () => {
+    expect(taskHasEndState(make('local_bash'))).toBe(false);
+  });
+
+  it.each(['local_agent', 'remote_agent', 'monitor', 'local_workflow'])(
+    'counts %s (settles on its own)',
+    (taskType) => {
+      expect(taskHasEndState(make(taskType))).toBe(true);
+    }
+  );
+
+  it('counts a task with an unknown/absent task_type (safe default)', () => {
+    expect(taskHasEndState(make(undefined))).toBe(true);
+    expect(taskHasEndState(make('some_future_kind'))).toBe(true);
+  });
+});
+
+describe('backgroundActive — daemon-only sets read as idle', () => {
+  it('a lone backgrounded Bash daemon does not count as background-active', () => {
+    const { status } = reduceSessionMessage(
+      INITIAL_LIVE_STATUS,
+      taskStarted('bash1', { task_type: 'local_bash' })
+    );
+    // Still tracked (visible/stoppable in the indicator)...
+    expect(status.backgroundTasks.has('bash1')).toBe(true);
+    // ...but does not gate the background-vs-waiting badge / notification.
+    expect(backgroundActive(status)).toBe(false);
+  });
+
+  it('a subagent alongside a daemon still reads background-active', () => {
+    let s = reduceSessionMessage(
+      INITIAL_LIVE_STATUS,
+      taskStarted('bash1', { task_type: 'local_bash' })
+    ).status;
+    s = reduceSessionMessage(s, taskStarted('agent1', { task_type: 'local_agent' })).status;
+    expect(backgroundActive(s)).toBe(true);
+    // When the subagent settles, the lingering daemon no longer keeps it active.
+    s = reduceSessionMessage(s, taskNotification('agent1')).status;
+    expect(s.backgroundTasks.has('bash1')).toBe(true);
+    expect(backgroundActive(s)).toBe(false);
   });
 });
 

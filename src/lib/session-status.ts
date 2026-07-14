@@ -56,9 +56,43 @@ export interface ReduceResult {
   changed: LiveStatusChange;
 }
 
-/** Whether any background task is currently running. */
+/**
+ * SDK `task_type` for a backgrounded Bash command. This is the ONE task kind that
+ * can be a permanently-running daemon (a dev server, a database, a supervisor) with
+ * no self-determined end state — the model backgrounds it and it may run until the
+ * session is torn down. Subagents (`local_agent`/`remote_agent`), Monitor watches
+ * (`monitor`), and workflows (`local_workflow`) all settle on their own and emit a
+ * terminal `task_notification`.
+ */
+const BACKGROUND_BASH_TASK_TYPE = 'local_bash';
+
+/**
+ * Whether a background task should count toward the "is the agent still working?"
+ * status axis — i.e. whether it has a knowable end state.
+ *
+ * A backgrounded Bash command (`local_bash`) is EXCLUDED: it may be a permanent
+ * daemon that never emits a `task_notification`, so counting it would pin the
+ * session in the "background" state and suppress the "Claude finished" notification
+ * forever (until teardown). Everything else — subagents, Monitor watches, workflows,
+ * and any task with an unknown/absent `task_type` — is a bounded unit of work and
+ * counts. This gates ONLY the background-vs-waiting badge and the finished
+ * notification; a `local_bash` daemon still appears in the stoppable background-task
+ * list (`getBackgroundTasks`) so the user can see and ✕-stop it.
+ */
+export function taskHasEndState(task: BackgroundTask): boolean {
+  return task.taskType !== BACKGROUND_BASH_TASK_TYPE;
+}
+
+/**
+ * Whether any background task with a knowable end state is currently running (see
+ * {@link taskHasEndState}). Permanently-backgroundable Bash daemons are ignored, so
+ * a session running only a dev server reads as idle for the badge/notification.
+ */
 export function backgroundActive(status: LiveStatus): boolean {
-  return status.backgroundTasks.size > 0;
+  for (const task of status.backgroundTasks.values()) {
+    if (taskHasEndState(task)) return true;
+  }
+  return false;
 }
 
 /**
