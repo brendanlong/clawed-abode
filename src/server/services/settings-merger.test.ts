@@ -9,21 +9,29 @@ import {
 import type { ContainerEnvVar, ContainerMcpServer } from './repo-settings';
 
 describe('resolveClaudeModel', () => {
-  it('prefers the per-repo model over global and env', () => {
-    expect(resolveClaudeModel('repo-model', 'global-model', 'env-model')).toBe('repo-model');
+  it('prefers the per-session model over repo, global, and env', () => {
+    expect(resolveClaudeModel('session-model', 'repo-model', 'global-model', 'env-model')).toBe(
+      'session-model'
+    );
   });
 
-  it('falls back to the global model when no repo override', () => {
-    expect(resolveClaudeModel(null, 'global-model', 'env-model')).toBe('global-model');
-    expect(resolveClaudeModel(undefined, 'global-model', 'env-model')).toBe('global-model');
+  it('falls back to the per-repo model when no session override', () => {
+    expect(resolveClaudeModel(null, 'repo-model', 'global-model', 'env-model')).toBe('repo-model');
+    expect(resolveClaudeModel(undefined, 'repo-model', 'global-model', 'env-model')).toBe(
+      'repo-model'
+    );
   });
 
-  it('falls back to the env model when neither repo nor global is set', () => {
-    expect(resolveClaudeModel(null, null, 'env-model')).toBe('env-model');
+  it('falls back to the global model when no session or repo override', () => {
+    expect(resolveClaudeModel(null, null, 'global-model', 'env-model')).toBe('global-model');
+  });
+
+  it('falls back to the env model when neither session, repo, nor global is set', () => {
+    expect(resolveClaudeModel(null, null, null, 'env-model')).toBe('env-model');
   });
 
   it('returns undefined when nothing is set', () => {
-    expect(resolveClaudeModel(null, null, undefined)).toBeUndefined();
+    expect(resolveClaudeModel(null, null, null, undefined)).toBeUndefined();
   });
 });
 
