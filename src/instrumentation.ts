@@ -11,18 +11,17 @@ export async function register() {
     console.log('Starting server - reconciling sessions...');
 
     // Reap session cgroup scopes orphaned by a previous crash (which never ran
-    // teardown) before sessions revive into fresh scopes. Best-effort. Gated to
-    // production only: the sweep glob has no per-instance discriminator, so a dev
-    // instance (`pnpm dev`) must not run it or it would cgroup-kill the running
-    // sessions of a concurrent production instance owned by the same user. (The
-    // deployment host runs a single production instance.)
-    if (process.env.NODE_ENV === 'production') {
-      try {
-        const { sweepSessionScopes } = await import('@/server/services/session-cgroup');
-        await sweepSessionScopes();
-      } catch (err) {
-        console.error('Error sweeping orphaned session scopes:', err);
-      }
+    // teardown) before sessions revive into fresh scopes. Best-effort. Reaps
+    // EXACTLY the scope names recorded on this instance's own session rows (no
+    // glob), so — unlike the old broad sweep — it can only touch scopes this
+    // deployment created. That makes it safe to run in any mode: a `pnpm dev`
+    // instance has its own DB and thus its own scope names, so it can never
+    // cgroup-kill a co-tenant production instance's live sessions.
+    try {
+      const { reapOrphanedSessionScopes } = await import('@/server/services/claude-runner');
+      await reapOrphanedSessionScopes();
+    } catch (err) {
+      console.error('Error reaping orphaned session scopes:', err);
     }
 
     try {
