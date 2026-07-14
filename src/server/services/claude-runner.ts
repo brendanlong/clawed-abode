@@ -1615,6 +1615,22 @@ export async function stopAllSessions(): Promise<void> {
     stopSession(id);
   }
   await Promise.allSettled(scopes.map((scope) => stopSessionScope(scope)));
+  // stopSession's per-session DB clear is fire-and-forget and would race
+  // process.exit; await one bulk clear so a graceful restart genuinely reaps
+  // nothing (a missed clear is only a harmless no-op reap, but this keeps the DB
+  // honest across clean restarts).
+  if (scopes.length > 0) {
+    try {
+      await prisma.session.updateMany({
+        where: { sessionScope: { in: scopes } },
+        data: { sessionScope: null },
+      });
+    } catch (err) {
+      log.debug('stopAllSessions: failed to clear recorded scopes', {
+        error: toError(err).message,
+      });
+    }
+  }
 }
 
 /**
@@ -1644,9 +1660,14 @@ export async function reapOrphanedSessionScopes(): Promise<void> {
   log.info('Reaping orphaned session scopes on startup', { count: scopes.length });
   await reapSessionScopes(scopes);
 
+  // Clear exactly the names we just reaped — not a blanket `sessionScope != null`
+  // — so if a session ever recorded a fresh live scope between the findMany and
+  // here, we never null a name still in use (which would leak that live scope on
+  // the next crash). Safe today given "runs once before any revive", robust if
+  // that invariant ever weakens.
   try {
     await prisma.session.updateMany({
-      where: { sessionScope: { not: null } },
+      where: { sessionScope: { in: scopes } },
       data: { sessionScope: null },
     });
   } catch (err) {
