@@ -11,7 +11,7 @@ import {
   SESSION_SCOPE_LAUNCHER,
   sessionScopeUnitName,
 } from '@/lib/session-scope';
-import { getSessionScopeConfig, stopSessionScope, sweepSessionScopes } from './session-cgroup';
+import { getSessionScopeConfig, stopSessionScope, reapSessionScopes } from './session-cgroup';
 
 const execFileAsync = promisify(execFile);
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -124,32 +124,50 @@ describe('session cgroup launcher + teardown (real processes)', () => {
     }
   }, 30000);
 
-  it('sweepSessionScopes reaps a leftover session scope', async (ctx) => {
+  it('reapSessionScopes reaps only the named scope, leaving others alive', async (ctx) => {
     if (!(await userScopeAvailable())) ctx.skip('systemd user scope unavailable');
-    const dir = await mkdtemp(join(tmpdir(), 'ca-sess-sweep-'));
-    const daemonPidFile = join(dir, 'daemon.pid');
-    const ranMarker = join(dir, 'ran');
-    const unit = sessionScopeUnitName('sweep', 'feed0000');
-    const { launcher, fakeCli } = await fixtures(dir, daemonPidFile, ranMarker);
+    // Two scoped sessions running concurrently: one is the crash orphan we reap
+    // by exact name, the other stands in for a co-tenant's live session that the
+    // reap must NOT touch (the bug the old broad glob caused).
+    const dirA = await mkdtemp(join(tmpdir(), 'ca-sess-reapA-'));
+    const dirB = await mkdtemp(join(tmpdir(), 'ca-sess-reapB-'));
+    const pidA = join(dirA, 'daemon.pid');
+    const pidB = join(dirB, 'daemon.pid');
+    const unitA = sessionScopeUnitName('reap', 'aaaa0000');
+    const unitB = sessionScopeUnitName('reap', 'bbbb0000');
+    const fixA = await fixtures(dirA, pidA, join(dirA, 'ran'));
+    const fixB = await fixtures(dirB, pidB, join(dirB, 'ran'));
 
-    // Launch a scoped session (an orphan a crashed server would leave behind).
-    const proc = spawn('bash', [launcher], {
+    const procA = spawn('bash', [fixA.launcher], {
       stdio: 'ignore',
-      env: { ...process.env, [SESSION_SCOPE_ENV]: unit, [CLAUDE_BIN_ENV]: fakeCli },
+      env: { ...process.env, [SESSION_SCOPE_ENV]: unitA, [CLAUDE_BIN_ENV]: fixA.fakeCli },
     });
-    let daemonPid: number | null = null;
+    const procB = spawn('bash', [fixB.launcher], {
+      stdio: 'ignore',
+      env: { ...process.env, [SESSION_SCOPE_ENV]: unitB, [CLAUDE_BIN_ENV]: fixB.fakeCli },
+    });
+    let daemonA: number | null = null;
+    let daemonB: number | null = null;
     try {
-      daemonPid = await waitForPid(daemonPidFile, 8000);
-      expect(daemonPid).not.toBeNull();
+      daemonA = await waitForPid(pidA, 8000);
+      daemonB = await waitForPid(pidB, 8000);
+      expect(daemonA).not.toBeNull();
+      expect(daemonB).not.toBeNull();
 
-      await sweepSessionScopes();
+      // Reap ONLY scope A by exact name.
+      await reapSessionScopes([unitA]);
 
-      expect(await waitFor(() => !isAlive(daemonPid!), 10000)).toBe(true);
+      expect(await waitFor(() => !isAlive(daemonA!), 10000)).toBe(true);
+      // B was never named, so it (and its daemon) survives.
+      expect(isAlive(daemonB!)).toBe(true);
     } finally {
-      if (daemonPid && isAlive(daemonPid)) process.kill(daemonPid, 'SIGKILL');
-      proc.kill('SIGKILL');
-      await stopSessionScope(unit);
-      await rm(dir, { recursive: true, force: true });
+      for (const pid of [daemonA, daemonB]) if (pid && isAlive(pid)) process.kill(pid, 'SIGKILL');
+      procA.kill('SIGKILL');
+      procB.kill('SIGKILL');
+      await stopSessionScope(unitA);
+      await stopSessionScope(unitB);
+      await rm(dirA, { recursive: true, force: true });
+      await rm(dirB, { recursive: true, force: true });
     }
   }, 30000);
 

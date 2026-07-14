@@ -50,7 +50,12 @@ import {
 } from './settings-merger';
 import { StreamAccumulator } from './stream-accumulator';
 import { sanitizeUntrustedInput, sanitizeToolOutputHook } from './input-sanitizer';
-import { getSessionScopeConfig, sessionScopeNonce, stopSessionScope } from './session-cgroup';
+import {
+  getSessionScopeConfig,
+  sessionScopeNonce,
+  stopSessionScope,
+  reapSessionScopes,
+} from './session-cgroup';
 import { CLAUDE_BIN_ENV, SESSION_SCOPE_ENV, sessionScopeUnitName } from '@/lib/session-scope';
 import { type SanitizationInfo } from '@/lib/sanitization';
 import { attachToolResultSanitizations } from '@/lib/message-sanitization';
@@ -618,12 +623,36 @@ async function buildSdkOptions(params: {
   if (scopeConfig) {
     const unit = sessionScopeUnitName(sessionId, sessionScopeNonce());
     state.sessionScope = unit;
+    // Record the scope name durably BEFORE the query subprocess (and thus the
+    // scope) is spawned, so a crash between here and teardown can always reap it
+    // by exact name. Over-recording (a name written for a scope that ends up not
+    // created, e.g. establish aborts) is harmless — the reap's stop is a no-op.
+    await persistSessionScope(sessionId, unit);
     options.pathToClaudeCodeExecutable = scopeConfig.launcherPath;
     agentEnv[SESSION_SCOPE_ENV] = unit;
     agentEnv[CLAUDE_BIN_ENV] = scopeConfig.claudeBin;
   }
 
   return options;
+}
+
+/**
+ * Mirror a session's current systemd scope unit name onto its DB row (or clear it
+ * with null on teardown), so a crash — which never runs teardown — leaves the
+ * orphaned scope name behind for `reapOrphanedSessionScopes` to stop at startup.
+ * Best-effort: a failed write only risks a leaked scope after a crash, never
+ * correctness. `updateMany` so a missing row (deleted session) is a silent no-op
+ * rather than a throw.
+ */
+async function persistSessionScope(sessionId: string, unit: string | null): Promise<void> {
+  try {
+    await prisma.session.updateMany({ where: { id: sessionId }, data: { sessionScope: unit } });
+  } catch (err) {
+    log.warn('Failed to persist session scope for crash reaping', {
+      sessionId,
+      error: toError(err).message,
+    });
+  }
 }
 
 /**
@@ -1042,6 +1071,7 @@ async function runSessionLoop(sessionId: string, state: SessionState, q: Query):
       // path (sessionScope nulled → this is a no-op there).
       if (state.sessionScope) {
         void stopSessionScope(state.sessionScope);
+        void persistSessionScope(sessionId, null);
         state.sessionScope = null;
       }
     }
@@ -1545,6 +1575,7 @@ export function stopSession(sessionId: string): void {
   // agent backgrounded), so stop it explicitly. Fire-and-forget; idempotent.
   if (state.sessionScope) {
     void stopSessionScope(state.sessionScope);
+    void persistSessionScope(sessionId, null);
     state.sessionScope = null;
   }
   if (state.pendingInput) {
@@ -1584,4 +1615,43 @@ export async function stopAllSessions(): Promise<void> {
     stopSession(id);
   }
   await Promise.allSettled(scopes.map((scope) => stopSessionScope(scope)));
+}
+
+/**
+ * Reap systemd scopes orphaned by a previous crash (which never ran teardown).
+ * Called once at startup, before any session revives into a fresh scope. Reaps
+ * EXACTLY the scope unit names recorded on session rows — never a `clawed-*`
+ * glob — so it can only ever touch scopes THIS deployment created (recorded in
+ * its own DB), never a concurrent instance's or a test's sessions. The old broad
+ * glob sweep would cgroup-kill any co-tenant instance's live sessions; this
+ * cannot. Clears the recorded names once stopped so a clean next boot reaps
+ * nothing. Best-effort.
+ */
+export async function reapOrphanedSessionScopes(): Promise<void> {
+  let rows: { sessionScope: string | null }[];
+  try {
+    rows = await prisma.session.findMany({
+      where: { sessionScope: { not: null } },
+      select: { sessionScope: true },
+    });
+  } catch (err) {
+    log.error('reapOrphanedSessionScopes: failed to load recorded scopes', toError(err));
+    return;
+  }
+  const scopes = rows.map((r) => r.sessionScope).filter((s): s is string => Boolean(s));
+  if (scopes.length === 0) return;
+
+  log.info('Reaping orphaned session scopes on startup', { count: scopes.length });
+  await reapSessionScopes(scopes);
+
+  try {
+    await prisma.session.updateMany({
+      where: { sessionScope: { not: null } },
+      data: { sessionScope: null },
+    });
+  } catch (err) {
+    log.debug('reapOrphanedSessionScopes: failed to clear recorded scopes', {
+      error: toError(err).message,
+    });
+  }
 }
