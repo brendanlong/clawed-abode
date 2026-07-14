@@ -2,7 +2,11 @@ import { describe, it, expect, afterAll } from 'vitest';
 import { rm, readFile, stat } from 'fs/promises';
 import path from 'path';
 import { v4 as uuid } from 'uuid';
-import { writeSessionMcpConfig, getSessionMcpConfigPath } from './mcp-config-file';
+import {
+  writeSessionMcpConfig,
+  removeSessionMcpConfig,
+  getSessionMcpConfigPath,
+} from './mcp-config-file';
 import { getSessionWorkspacePath } from './worktree-manager';
 
 // The config lives inside the real session workspace (~/worktrees/{sessionId}).
@@ -52,5 +56,18 @@ describe('mcp-config-file service', () => {
     const parsed = JSON.parse(await readFile(filePath, 'utf8'));
     expect(parsed).toEqual({ mcpServers: { b: { command: 'second', env: { TOKEN: 'two' } } } });
     expect((await stat(filePath)).mode & 0o777).toBe(0o600);
+  });
+
+  it('removeSessionMcpConfig deletes the file and is idempotent when absent', async () => {
+    const filePath = await writeSessionMcpConfig(sessionId, {
+      a: { command: 'x', env: { TOKEN: 'secret' } },
+    });
+    await stat(filePath); // exists
+
+    await removeSessionMcpConfig(sessionId);
+    await expect(stat(filePath)).rejects.toThrow();
+
+    // Idempotent: a second removal on an already-absent file is a no-op.
+    await expect(removeSessionMcpConfig(sessionId)).resolves.toBeUndefined();
   });
 });
