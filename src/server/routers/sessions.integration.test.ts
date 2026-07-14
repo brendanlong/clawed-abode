@@ -14,12 +14,15 @@ vi.mock('../services/worktree-manager', () => ({
 }));
 
 // Mock claude-runner
+const mockRefreshSessionSettings = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+
 vi.mock('../services/claude-runner', () => ({
   sendUserMessage: vi.fn().mockResolvedValue(undefined),
   stopSession: vi.fn(),
   cleanupSession: vi.fn(),
   isClaudeRunning: vi.fn().mockReturnValue(false),
   isSessionBackgroundActive: vi.fn().mockReturnValue(false),
+  refreshSessionSettings: mockRefreshSessionSettings,
 }));
 
 // Mock settings-merger
@@ -130,6 +133,30 @@ describe('sessionsRouter integration', () => {
         where: { id: result.session.id },
       });
       expect(dbSession!.initialPrompt).toBe('Fix the bug in issue #123');
+    });
+
+    it('should store a per-session model override, trimmed', async () => {
+      const caller = createCaller('auth-session-id');
+      const result = await caller.sessions.create({
+        name: 'Model Session',
+        claudeModel: '  sonnet  ',
+      });
+
+      expect(result.session.claudeModel).toBe('sonnet');
+
+      const dbSession = await testPrisma.session.findUnique({
+        where: { id: result.session.id },
+      });
+      expect(dbSession!.claudeModel).toBe('sonnet');
+    });
+
+    it('should store null claudeModel when omitted or blank', async () => {
+      const caller = createCaller('auth-session-id');
+      const omitted = await caller.sessions.create({ name: 'No Model' });
+      const blank = await caller.sessions.create({ name: 'Blank Model', claudeModel: '   ' });
+
+      expect(omitted.session.claudeModel).toBeNull();
+      expect(blank.session.claudeModel).toBeNull();
     });
 
     it('should require authentication', async () => {
@@ -678,6 +705,123 @@ describe('sessionsRouter integration', () => {
         caller.sessions.rename({
           sessionId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',
           name: 'New Name',
+        })
+      ).rejects.toThrow();
+    });
+  });
+
+  describe('setModel', () => {
+    const createRunningSession = (claudeModel: string | null = null) =>
+      testPrisma.session.create({
+        data: {
+          name: 'Model Session',
+          workspacePath: '/workspace/test',
+          status: 'running',
+          claudeModel,
+        },
+      });
+
+    it('should set the per-session model override', async () => {
+      const session = await createRunningSession();
+
+      const caller = createCaller('auth-session-id');
+      const result = await caller.sessions.setModel({
+        sessionId: session.id,
+        claudeModel: 'sonnet',
+      });
+
+      expect(result.session.claudeModel).toBe('sonnet');
+
+      const dbSession = await testPrisma.session.findUnique({ where: { id: session.id } });
+      expect(dbSession!.claudeModel).toBe('sonnet');
+    });
+
+    it('should trim the model and collapse blank to null', async () => {
+      const session = await createRunningSession('opus');
+
+      const caller = createCaller('auth-session-id');
+      const trimmed = await caller.sessions.setModel({
+        sessionId: session.id,
+        claudeModel: '  haiku  ',
+      });
+      expect(trimmed.session.claudeModel).toBe('haiku');
+
+      const cleared = await caller.sessions.setModel({
+        sessionId: session.id,
+        claudeModel: '   ',
+      });
+      expect(cleared.session.claudeModel).toBeNull();
+    });
+
+    it('should clear the override with null', async () => {
+      const session = await createRunningSession('opus');
+
+      const caller = createCaller('auth-session-id');
+      const result = await caller.sessions.setModel({
+        sessionId: session.id,
+        claudeModel: null,
+      });
+
+      expect(result.session.claudeModel).toBeNull();
+    });
+
+    it('should apply the change to the live query', async () => {
+      const session = await createRunningSession();
+      mockRefreshSessionSettings.mockClear();
+
+      const caller = createCaller('auth-session-id');
+      await caller.sessions.setModel({ sessionId: session.id, claudeModel: 'sonnet' });
+
+      expect(mockRefreshSessionSettings).toHaveBeenCalledWith(session.id);
+    });
+
+    it('should emit a session update event', async () => {
+      const session = await createRunningSession();
+      mockSseEvents.emitSessionUpdate.mockClear();
+
+      const caller = createCaller('auth-session-id');
+      await caller.sessions.setModel({ sessionId: session.id, claudeModel: 'sonnet' });
+
+      expect(mockSseEvents.emitSessionUpdate).toHaveBeenCalledWith(
+        session.id,
+        expect.objectContaining({ claudeModel: 'sonnet' })
+      );
+    });
+
+    it('should reject changing the model of an archived session', async () => {
+      const session = await testPrisma.session.create({
+        data: {
+          name: 'Archived',
+          workspacePath: '/workspace/test',
+          status: 'archived',
+          archivedAt: new Date(),
+        },
+      });
+
+      const caller = createCaller('auth-session-id');
+      await expect(
+        caller.sessions.setModel({ sessionId: session.id, claudeModel: 'sonnet' })
+      ).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+    });
+
+    it('should throw NOT_FOUND for non-existent session', async () => {
+      const caller = createCaller('auth-session-id');
+
+      await expect(
+        caller.sessions.setModel({
+          sessionId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',
+          claudeModel: 'sonnet',
+        })
+      ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    });
+
+    it('should require authentication', async () => {
+      const caller = createCaller(null);
+
+      await expect(
+        caller.sessions.setModel({
+          sessionId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',
+          claudeModel: 'sonnet',
         })
       ).rejects.toThrow();
     });
