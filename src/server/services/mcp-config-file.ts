@@ -1,4 +1,4 @@
-import { mkdir, writeFile, chmod } from 'fs/promises';
+import { mkdir, writeFile, chmod, rm } from 'fs/promises';
 import path from 'path';
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import { getSessionWorkspacePath } from './worktree-manager';
@@ -49,4 +49,14 @@ export async function writeSessionMcpConfig(
 
   log.info('Wrote session MCP config', { sessionId, servers: Object.keys(mcpServers).length });
   return filePath;
+}
+
+/**
+ * Remove a session's MCP config file if it exists. Called on establish when the
+ * session has no MCP servers, so a config written earlier (when it did have
+ * servers, possibly with secrets) doesn't linger on disk until archive.
+ * Idempotent — a no-op when the file is already absent.
+ */
+export async function removeSessionMcpConfig(sessionId: string): Promise<void> {
+  await rm(getSessionMcpConfigPath(sessionId), { force: true });
 }

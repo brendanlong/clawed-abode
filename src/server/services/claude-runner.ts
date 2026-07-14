@@ -62,7 +62,7 @@ import { attachToolResultSanitizations } from '@/lib/message-sanitization';
 import { PARTIAL_MESSAGE_ID_PREFIX } from '@/lib/message-cache';
 import type { ContainerEnvVar } from './repo-settings';
 import { resolveUploadPaths } from './uploads';
-import { writeSessionMcpConfig } from './mcp-config-file';
+import { writeSessionMcpConfig, removeSessionMcpConfig } from './mcp-config-file';
 import { MAX_QUEUED_MESSAGES, type QueuedMessage } from '@/lib/queued-message';
 
 const execFileAsync = promisify(execFile);
@@ -598,6 +598,10 @@ async function buildSdkOptions(params: {
       ...options.extraArgs,
       'mcp-config': mcpConfigPath,
     };
+  } else {
+    // No MCP servers: drop any config written on a previous establish so old
+    // secrets don't linger on disk until the workspace is archived.
+    await removeSessionMcpConfig(sessionId);
   }
 
   // The advisor model is a settings-schema field (no dedicated SDK option), so
