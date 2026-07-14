@@ -62,6 +62,7 @@ import { attachToolResultSanitizations } from '@/lib/message-sanitization';
 import { PARTIAL_MESSAGE_ID_PREFIX } from '@/lib/message-cache';
 import type { ContainerEnvVar } from './repo-settings';
 import { resolveUploadPaths } from './uploads';
+import { writeSessionMcpConfig, removeSessionMcpConfig } from './mcp-config-file';
 import { MAX_QUEUED_MESSAGES, type QueuedMessage } from '@/lib/queued-message';
 
 const execFileAsync = promisify(execFile);
@@ -583,8 +584,24 @@ async function buildSdkOptions(params: {
   if (settings.claudeModel) {
     options.model = settings.claudeModel;
   }
+  // Pass MCP servers via a mode-0600 file (`--mcp-config <path>`) rather than
+  // setting `options.mcpServers`, which the SDK would serialize inline on the CLI
+  // argv as `--mcp-config '<json>'` — leaking any PAT / Authorization header /
+  // stdio env secret into journald and world-readable /proc/<pid>/cmdline (issue
+  // #428). The file lives in the session workspace and is rewritten on each
+  // establish (self-heals a deletion, picks up settings changes). Live
+  // mid-session MCP changes still go through query.setMcpServers (a stdin control
+  // message, not a respawn), so they never touch argv.
   if (mcpServersRecord && Object.keys(mcpServersRecord).length > 0) {
-    options.mcpServers = mcpServersRecord;
+    const mcpConfigPath = await writeSessionMcpConfig(sessionId, mcpServersRecord);
+    options.extraArgs = {
+      ...options.extraArgs,
+      'mcp-config': mcpConfigPath,
+    };
+  } else {
+    // No MCP servers: drop any config written on a previous establish so old
+    // secrets don't linger on disk until the workspace is archived.
+    await removeSessionMcpConfig(sessionId);
   }
 
   // The advisor model is a settings-schema field (no dedicated SDK option), so

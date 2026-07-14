@@ -703,6 +703,8 @@ Users can configure per-repository settings that are automatically applied when 
 - Displays masked values (`••••••••`) in the UI
 - Decrypts values only when starting a Claude query (passed as environment or SDK options)
 
+**MCP secrets never touch the CLI argv.** The merged MCP config can carry secrets — a GitHub PAT in a stdio `env`, HTTP/SSE `Authorization` headers. Setting the SDK's `options.mcpServers` would make the SDK serialize that config **inline on the CLI argv** as `--mcp-config '<json>'`, which leaks into journald (the session scope unit's `ExecStart`) and world-readable `/proc/<pid>/cmdline` — any local user on the host could read the tokens (issue #428). Instead, `buildSdkOptions` writes the config (as `{ mcpServers: … }`, the shape the CLI's `--mcp-config` expects for a file) to a **mode-`0600`** file in the **session workspace** — `~/worktrees/{sessionId}/mcp-config.json`, alongside the repo clone like `uploads/` (for a repo session, a sibling of the `{repoName}/` checkout, so it doesn't pollute git status; for a no-repo session the workspace root _is_ the cwd) — via `writeSessionMcpConfig` ([`src/server/services/mcp-config-file.ts`](../src/server/services/mcp-config-file.ts)), and passes `--mcp-config <path>` through `options.extraArgs` (while **not** setting `options.mcpServers`). The only readers are same-uid/root — the same trust boundary as the app. The file is rewritten on each query establishment (self-heals a deletion, picks up settings changes, which are bound at establish anyway) and removed with the workspace on archive (`removeWorkspace`), so no separate reaper is needed. When a session has **no** MCP servers, establish instead calls `removeSessionMcpConfig` so a file written on a prior establish (when it did have servers, possibly with secrets) doesn't linger on disk. Live mid-session MCP changes are unaffected: they go through `query.setMcpServers` (a stdin control message, not a process respawn), which never touches argv.
+
 **Configuration**:
 
 1. Set `ENCRYPTION_KEY` to a 32+ character random string (generate with: `openssl rand -base64 32`)
@@ -899,6 +901,7 @@ clawed-abode/
 │   │   │   ├── github.ts         # GitHub API service
 │   │   │   ├── mcp-validator.ts  # MCP server config validation
 │   │   │   ├── uploads.ts        # Uploaded-file storage (workspace uploads/ dir) + path resolution
+│   │   │   ├── mcp-config-file.ts # Write merged MCP config to a mode-0600 file (keeps secrets off CLI argv)
 │   │   │   ├── session-cgroup.ts  # Run each session's CLI in a systemd user scope; reap the scope on teardown
 │   │   │   └── session-reconciler.ts # Counts running sessions for lazy revive on restart
 │   │   └── trpc.ts
