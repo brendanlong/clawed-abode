@@ -3,7 +3,7 @@ import type { Message, Session } from '@/generated/prisma/client';
 import type { SlashCommand } from '@anthropic-ai/claude-agent-sdk';
 import type { PullRequestInfo } from './github';
 import type { RetryState } from '@/lib/claude-messages';
-import type { BackgroundTask } from '@/lib/session-status';
+import { taskHasEndState, type BackgroundTask } from '@/lib/session-status';
 import type { QueuedMessage } from '@/lib/queued-message';
 
 // Message with parsed content (for SSE events)
@@ -195,10 +195,12 @@ class SSEEventEmitter extends EventEmitter {
     // page's badge stays live even when the background set changes outside a
     // main-agent turn transition (a task settling with no continuation, or a user
     // ✕-stop) — those produce no claude_running/finished edge to trigger a refetch.
+    // `active` mirrors the busy axis (tasks with a knowable end state only) — the
+    // client refetches on any event rather than reading it, but keep it truthful.
     this.emit(SESSION_LIST_EVENT, {
       type: 'claude_background',
       sessionId,
-      active: tasks.length > 0,
+      active: tasks.some(taskHasEndState),
     } satisfies ClaudeBackgroundEvent);
   }
 
