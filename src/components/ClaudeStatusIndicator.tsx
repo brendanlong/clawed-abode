@@ -2,7 +2,7 @@ import { Spinner } from '@/components/ui/spinner';
 import { Button } from '@/components/ui/button';
 import { X } from 'lucide-react';
 import { formatRetryReason, type RetryState } from '@/lib/claude-messages';
-import type { BackgroundTask } from '@/lib/session-status';
+import { taskHasEndState, type BackgroundTask } from '@/lib/session-status';
 
 interface ClaudeStatusIndicatorProps {
   /** A main-agent turn is active (gates the composer). */
@@ -80,7 +80,10 @@ export function ClaudeStatusIndicator({
   }
 
   const tasks = backgroundTasks ?? [];
-  const backgroundActive = tasks.length > 0;
+  // The list below shows ALL running tasks (so a daemon stays ✕-stoppable), but the
+  // "background vs waiting" line only counts tasks with a knowable end state — a
+  // permanently-backgrounded Bash daemon shouldn't keep the agent looking busy.
+  const backgroundActive = tasks.some(taskHasEndState);
 
   return (
     <>

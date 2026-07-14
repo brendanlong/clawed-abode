@@ -27,6 +27,13 @@ export interface BackgroundTask {
   subagentType?: string;
   /** Ambient/housekeeping task the SDK flags to hide from the inline transcript. */
   ambient: boolean;
+  /**
+   * A session-length `persistent: true` Monitor watch — no `timeout_ms` deadline,
+   * so it has no knowable end state (see {@link taskHasEndState}). Detected by
+   * linking the task's `tool_use_id` back to its Monitor `tool_use` block's input,
+   * which streams through the reducer before the `task_started`.
+   */
+  persistent: boolean;
 }
 
 export interface LiveStatus {
@@ -36,12 +43,23 @@ export interface LiveStatus {
   backgroundTasks: ReadonlyMap<string, BackgroundTask>;
   /** Current API-retry status, or `null` when not retrying. */
   retry: RetryState | null;
+  /**
+   * Bookkeeping for {@link BackgroundTask.persistent}: `tool_use_id`s of Monitor
+   * calls with `persistent: true` whose `task_started` hasn't arrived yet. Ids are
+   * added when the assistant message carrying the `tool_use` block is folded and
+   * consumed by the matching `task_started`. An id whose task never starts (the
+   * tool call errors) lingers harmlessly for the session state's in-memory
+   * lifetime (until stop/delete drops it) — harmless because `tool_use_id`s are
+   * globally unique, so a stale id can never match a future unrelated task.
+   */
+  persistentMonitorToolUseIds: ReadonlySet<string>;
 }
 
 export const INITIAL_LIVE_STATUS: LiveStatus = {
   turnActive: false,
   backgroundTasks: new Map(),
   retry: null,
+  persistentMonitorToolUseIds: new Set(),
 };
 
 /** Which status axes changed in a {@link reduceSessionMessage} step. */
@@ -56,9 +74,56 @@ export interface ReduceResult {
   changed: LiveStatusChange;
 }
 
-/** Whether any background task is currently running. */
+/**
+ * SDK `task_type` for a backgrounded Bash command — the task kind most likely to be
+ * a permanently-running daemon (a dev server, a database, a supervisor) with no
+ * self-determined end state; the model backgrounds it and it may run until the
+ * session is torn down. The other kinds settle on their own and emit a terminal
+ * `task_notification`: subagents (`local_agent`/`remote_agent`) and workflows
+ * (`local_workflow`) run to completion, and Monitor watches (`monitor`) carry a
+ * hard deadline (`timeout_ms`, default 5 min, max 1 h) — except `persistent: true`
+ * monitors, which are session-length by design and tracked via
+ * {@link BackgroundTask.persistent}.
+ */
+const BACKGROUND_BASH_TASK_TYPE = 'local_bash';
+
+/**
+ * Whether a background task should count toward the "is the agent still working?"
+ * status axis — i.e. whether it has a knowable end state.
+ *
+ * Two kinds are EXCLUDED, because they may never emit a `task_notification` and
+ * counting them would pin the session in the "background" state and suppress the
+ * "Claude finished" notification forever (until teardown):
+ * - a backgrounded Bash command (`local_bash`) — may be a permanent daemon;
+ * - a `persistent: true` Monitor watch — session-length by design (its `timeout_ms`
+ *   deadline is ignored), detected from the Monitor `tool_use` input.
+ *
+ * Everything else — subagents, deadline-bounded Monitor watches, workflows, and any
+ * task with an unknown/absent `task_type` — counts. This gates ONLY the
+ * background-vs-waiting badge and the finished notification; excluded tasks still
+ * appear in the stoppable background-task list (`getBackgroundTasks`) so the user
+ * can see and ✕-stop them.
+ *
+ * One accepted imperfection (the `task_type` is the best signal the SDK gives us —
+ * a daemon is indistinguishable from a finite command at `task_started` time): a
+ * FINITE backgrounded Bash (a long build/test run) is also excluded, so a turn
+ * ending while one runs notifies "finished" early. Self-correcting: when the task
+ * settles the main agent auto-continues, and that turn's end notifies again.
+ */
+export function taskHasEndState(task: BackgroundTask): boolean {
+  return task.taskType !== BACKGROUND_BASH_TASK_TYPE && !task.persistent;
+}
+
+/**
+ * Whether any background task with a knowable end state is currently running (see
+ * {@link taskHasEndState}). Permanently-backgroundable Bash daemons are ignored, so
+ * a session running only a dev server reads as idle for the badge/notification.
+ */
 export function backgroundActive(status: LiveStatus): boolean {
-  return status.backgroundTasks.size > 0;
+  for (const task of status.backgroundTasks.values()) {
+    if (taskHasEndState(task)) return true;
+  }
+  return false;
 }
 
 /**
@@ -146,6 +211,9 @@ function parseBackgroundTaskEvent(message: SDKMessage): BackgroundEvent | null {
         taskType: m.task_type,
         subagentType: m.subagent_type,
         ambient: m.skip_transcript === true,
+        // Overridden in the reducer when the tool_use_id links back to a
+        // persistent Monitor call (see persistentMonitorToolUseIds).
+        persistent: false,
       },
     };
   }
@@ -153,6 +221,39 @@ function parseBackgroundTaskEvent(message: SDKMessage): BackgroundEvent | null {
     return { kind: 'settled', taskId: m.task_id };
   }
   return null;
+}
+
+/**
+ * `tool_use` ids of `persistent: true` Monitor calls in a complete assistant
+ * message, or `null` when there are none. The Monitor's input (where the
+ * `persistent` flag lives) only exists on the `tool_use` block — the later
+ * `task_started` carries just the `tool_use_id` — so the reducer remembers these
+ * ids to flag the task when it starts. Scans ALL assistant messages (not just
+ * top-level): a subagent can start a Monitor too, and `tool_use_id`s are globally
+ * unique.
+ */
+function parsePersistentMonitorCalls(message: SDKMessage): string[] | null {
+  if (message.type !== 'assistant') return null;
+  const content = (message as { message?: { content?: unknown } }).message?.content;
+  if (!Array.isArray(content)) return null;
+  let ids: string[] | null = null;
+  for (const block of content) {
+    const b = block as {
+      type?: string;
+      id?: string;
+      name?: string;
+      input?: { persistent?: unknown };
+    };
+    if (
+      b?.type === 'tool_use' &&
+      b.name === 'Monitor' &&
+      b.input?.persistent === true &&
+      typeof b.id === 'string'
+    ) {
+      (ids ??= []).push(b.id);
+    }
+  }
+  return ids;
 }
 
 /**
@@ -180,7 +281,7 @@ function parseBackgroundTaskEvent(message: SDKMessage): BackgroundEvent | null {
  *   subagent's messages can't prematurely clear a main-turn retry indicator.
  */
 export function reduceSessionMessage(prev: LiveStatus, message: SDKMessage): ReduceResult {
-  let { turnActive, backgroundTasks, retry } = prev;
+  let { turnActive, backgroundTasks, retry, persistentMonitorToolUseIds } = prev;
   const topLevel = isTopLevel(message);
 
   // --- retry (turn-scoped) ---
@@ -191,11 +292,27 @@ export function reduceSessionMessage(prev: LiveStatus, message: SDKMessage): Red
     retry = null;
   }
 
+  // --- persistent-Monitor calls (remembered until their task_started arrives) ---
+  const persistentCalls = parsePersistentMonitorCalls(message);
+  if (persistentCalls) {
+    const next = new Set(persistentMonitorToolUseIds);
+    for (const id of persistentCalls) next.add(id);
+    persistentMonitorToolUseIds = next;
+  }
+
   // --- background tasks ---
   const bg = parseBackgroundTaskEvent(message);
   if (bg?.kind === 'started') {
+    const { toolUseId } = bg.task;
+    const persistent = toolUseId !== undefined && persistentMonitorToolUseIds.has(toolUseId);
+    if (persistent) {
+      // Consume the id — the linkage is one-shot.
+      const next = new Set(persistentMonitorToolUseIds);
+      next.delete(toolUseId);
+      persistentMonitorToolUseIds = next;
+    }
     const next = new Map(backgroundTasks);
-    next.set(bg.task.taskId, bg.task);
+    next.set(bg.task.taskId, { ...bg.task, persistent });
     backgroundTasks = next;
   } else if (bg?.kind === 'settled' && backgroundTasks.has(bg.taskId)) {
     backgroundTasks = removeBackgroundTask(backgroundTasks, bg.taskId);
@@ -222,7 +339,7 @@ export function reduceSessionMessage(prev: LiveStatus, message: SDKMessage): Red
   }
 
   return {
-    status: { turnActive, backgroundTasks, retry },
+    status: { turnActive, backgroundTasks, retry, persistentMonitorToolUseIds },
     changed: {
       turnActive: turnActive !== prev.turnActive,
       background: backgroundTasks !== prev.backgroundTasks,
