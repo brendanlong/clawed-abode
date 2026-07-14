@@ -7,7 +7,7 @@ import { constants as fsConstants } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createLogger, toError } from '@/lib/logger';
-import { SESSION_SCOPE_LAUNCHER, SESSION_SCOPE_UNIT_GLOB } from '@/lib/session-scope';
+import { SESSION_SCOPE_LAUNCHER } from '@/lib/session-scope';
 
 const execFileAsync = promisify(execFile);
 const log = createLogger('session-cgroup');
@@ -136,25 +136,12 @@ export async function stopSessionScope(unitName: string): Promise<void> {
 }
 
 /**
- * Stop every session scope. Run once at startup to reap scopes orphaned by a
- * previous server crash (which never ran teardown) before sessions revive into
- * fresh scopes. Best-effort.
- *
- * The glob has no per-instance discriminator, so this MUST NOT run when another
- * app instance may be live as the same user — it would cgroup-kill that
- * instance's running sessions. The caller gates it to the single production
- * instance (see instrumentation.ts); a dev instance never sweeps.
+ * Stop a specific set of session scopes by exact unit name, cgroup-killing each
+ * process tree. Best-effort and idempotent (a missing/already-stopped unit is
+ * fine). Used at startup to reap scopes recorded in the DB that a previous crash
+ * orphaned — by EXACT name, never a glob, so it can only ever touch scopes this
+ * deployment created and never a concurrent instance's (or a test's) sessions.
  */
-export async function sweepSessionScopes(): Promise<void> {
-  try {
-    await execFileAsync('systemctl', ['--user', 'stop', SESSION_SCOPE_UNIT_GLOB], {
-      timeout: 15000,
-    });
-    log.info('Swept orphaned session scopes on startup');
-  } catch (err) {
-    // Non-zero when no units match — the common, healthy case.
-    log.debug('sweepSessionScopes: nothing to sweep or systemd unavailable', {
-      error: toError(err).message,
-    });
-  }
+export async function reapSessionScopes(unitNames: string[]): Promise<void> {
+  await Promise.allSettled(unitNames.map((unit) => stopSessionScope(unit)));
 }

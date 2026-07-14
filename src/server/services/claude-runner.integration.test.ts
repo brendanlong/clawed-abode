@@ -79,6 +79,7 @@ vi.mock('./settings-merger', async (importOriginal) => {
 // (so buildSdkOptions sets state.sessionScope), the nonce is fixed for a
 // deterministic unit name, and stopSessionScope is a spy.
 const mockStopSessionScope = vi.hoisted(() => vi.fn(async (_unit: string) => {}));
+const mockReapSessionScopes = vi.hoisted(() => vi.fn(async (_units: string[]) => {}));
 vi.mock('./session-cgroup', () => ({
   getSessionScopeConfig: vi.fn(async () => ({
     launcherPath: '/fake/launcher.sh',
@@ -86,7 +87,7 @@ vi.mock('./session-cgroup', () => ({
   })),
   sessionScopeNonce: vi.fn(() => 'testnonce'),
   stopSessionScope: mockStopSessionScope,
-  sweepSessionScopes: vi.fn(async () => {}),
+  reapSessionScopes: mockReapSessionScopes,
 }));
 
 import { createPushable } from '@/lib/pushable';
@@ -103,6 +104,7 @@ let isClaudeRunning: typeof import('./claude-runner').isClaudeRunning;
 let getSessionBackgroundTasks: typeof import('./claude-runner').getSessionBackgroundTasks;
 let stopBackgroundTask: typeof import('./claude-runner').stopBackgroundTask;
 let insertMessage: typeof import('./claude-runner').insertMessage;
+let reapOrphanedSessionScopes: typeof import('./claude-runner').reapOrphanedSessionScopes;
 let _setQueryFactory: typeof import('./claude-runner')._setQueryFactory;
 let mockLoadSettings: ReturnType<
   typeof vi.mocked<typeof import('./settings-merger').loadMergedSessionSettings>
@@ -270,6 +272,7 @@ describe('claude-runner persistent streaming loop', () => {
     getSessionBackgroundTasks = mod.getSessionBackgroundTasks;
     stopBackgroundTask = mod.stopBackgroundTask;
     insertMessage = mod.insertMessage;
+    reapOrphanedSessionScopes = mod.reapOrphanedSessionScopes;
     _setQueryFactory = mod._setQueryFactory;
     const sm = await import('./settings-merger');
     mockLoadSettings = vi.mocked(sm.loadMergedSessionSettings);
@@ -338,6 +341,63 @@ describe('claude-runner persistent streaming loop', () => {
     const expected = sessionScopeUnitName(sessionId, 'testnonce');
     await waitFor(() => mockStopSessionScope.mock.calls.some((c) => c[0] === expected));
     expect(mockStopSessionScope).toHaveBeenCalledWith(expected);
+  });
+
+  it('records the scope unit on the DB row while live and clears it on stop', async () => {
+    const fake = makeFakeQuery();
+    _setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+    await sendUserMessage(sessionId, 'hello');
+    await waitFor(() => fake.inputs.length > 0); // query established → scope recorded
+
+    const expected = sessionScopeUnitName(sessionId, 'testnonce');
+    await waitFor(
+      async () =>
+        (await testPrisma.session.findUnique({ where: { id: sessionId } }))?.sessionScope ===
+        expected
+    );
+
+    stopSession(sessionId);
+
+    // Cleared so the next startup reap doesn't stop an already-torn-down scope.
+    await waitFor(
+      async () =>
+        (await testPrisma.session.findUnique({ where: { id: sessionId } }))?.sessionScope === null
+    );
+  });
+
+  it('reapOrphanedSessionScopes stops exactly the recorded scopes and clears them', async () => {
+    // Two sessions, only one carrying an orphaned scope (as a crash would leave).
+    const orphaned = await testPrisma.session.create({
+      data: {
+        name: 'Orphan',
+        workspacePath: '/tmp/ws',
+        repoPath: '',
+        status: 'running',
+        sessionScope: 'clawed-session-orphan-abc123.scope',
+      },
+    });
+    const clean = await createRunningSession(); // sessionScope null
+
+    await reapOrphanedSessionScopes();
+
+    // Only the recorded scope is reaped — no glob, so the clean session is untouched.
+    expect(mockReapSessionScopes).toHaveBeenCalledTimes(1);
+    expect(mockReapSessionScopes).toHaveBeenCalledWith(['clawed-session-orphan-abc123.scope']);
+
+    // The recorded name is cleared so a clean next boot reaps nothing.
+    expect(
+      (await testPrisma.session.findUnique({ where: { id: orphaned.id } }))?.sessionScope
+    ).toBe(null);
+    expect((await testPrisma.session.findUnique({ where: { id: clean } }))?.sessionScope).toBe(
+      null
+    );
+  });
+
+  it('reapOrphanedSessionScopes is a no-op when no scopes are recorded', async () => {
+    await createRunningSession();
+    await reapOrphanedSessionScopes();
+    expect(mockReapSessionScopes).not.toHaveBeenCalled();
   });
 
   it('bumps lastActivityAt on user sends but not on assistant traffic', async () => {
