@@ -48,7 +48,9 @@ export interface LiveStatus {
    * calls with `persistent: true` whose `task_started` hasn't arrived yet. Ids are
    * added when the assistant message carrying the `tool_use` block is folded and
    * consumed by the matching `task_started`. An id whose task never starts (the
-   * tool call errors) lingers harmlessly until query teardown.
+   * tool call errors) lingers harmlessly for the session state's in-memory
+   * lifetime (until stop/delete drops it) — harmless because `tool_use_id`s are
+   * globally unique, so a stale id can never match a future unrelated task.
    */
   persistentMonitorToolUseIds: ReadonlySet<string>;
 }
@@ -301,12 +303,12 @@ export function reduceSessionMessage(prev: LiveStatus, message: SDKMessage): Red
   // --- background tasks ---
   const bg = parseBackgroundTaskEvent(message);
   if (bg?.kind === 'started') {
-    const persistent =
-      bg.task.toolUseId !== undefined && persistentMonitorToolUseIds.has(bg.task.toolUseId);
+    const { toolUseId } = bg.task;
+    const persistent = toolUseId !== undefined && persistentMonitorToolUseIds.has(toolUseId);
     if (persistent) {
       // Consume the id — the linkage is one-shot.
       const next = new Set(persistentMonitorToolUseIds);
-      next.delete(bg.task.toolUseId!);
+      next.delete(toolUseId);
       persistentMonitorToolUseIds = next;
     }
     const next = new Map(backgroundTasks);
