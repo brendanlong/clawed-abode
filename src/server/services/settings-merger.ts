@@ -28,7 +28,8 @@ export interface MergedSessionSettings {
  * and merges env vars and MCP servers.
  */
 export async function loadMergedSessionSettings(
-  repoFullName: string | null | undefined
+  repoFullName: string | null | undefined,
+  sessionModel?: string | null | undefined
 ): Promise<MergedSessionSettings> {
   const [repoSettings, globalSettings] = await Promise.all([
     repoFullName ? getRepoSettingsForContainer(repoFullName) : null,
@@ -48,6 +49,7 @@ export async function loadMergedSessionSettings(
     envVars,
     mcpServers,
     claudeModel: resolveClaudeModel(
+      sessionModel,
       repoSettings?.claudeModel,
       globalSettings.claudeModel,
       env.CLAUDE_MODEL
@@ -62,14 +64,15 @@ export async function loadMergedSessionSettings(
 
 /**
  * Resolve the effective Claude model, in precedence order:
- * per-repo override → global override → CLAUDE_MODEL env var.
+ * per-session override → per-repo override → global override → CLAUDE_MODEL env var.
  */
 export function resolveClaudeModel(
+  sessionModel: string | null | undefined,
   repoModel: string | null | undefined,
   globalModel: string | null | undefined,
   envModel: string | undefined
 ): string | undefined {
-  return repoModel ?? globalModel ?? envModel;
+  return sessionModel ?? repoModel ?? globalModel ?? envModel;
 }
 
 /**
