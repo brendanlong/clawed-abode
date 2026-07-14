@@ -65,6 +65,15 @@ const baseSettings = {
   },
 };
 
+// Stub the MCP config file writer so the wiring test doesn't touch the real
+// filesystem; it returns a deterministic path to assert extraArgs against.
+const mockWriteSessionMcpConfig = vi.hoisted(() =>
+  vi.fn(async (sessionId: string) => `/tmp/worktrees/${sessionId}/mcp-config.json`)
+);
+vi.mock('./mcp-config-file', () => ({
+  writeSessionMcpConfig: mockWriteSessionMcpConfig,
+}));
+
 // Keep the real mcpServersEqual (applyLiveSettings uses it); only stub the loader.
 vi.mock('./settings-merger', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./settings-merger')>();
@@ -680,6 +689,49 @@ describe('claude-runner persistent streaming loop', () => {
 
     await sendUserMessage(sessionId, 'hello');
     expect(options?.extraArgs?.settings).toBe(JSON.stringify({ advisorModel: 'claude-opus-4-8' }));
+
+    fake.emit(result());
+    await waitFor(() => !isClaudeRunning(sessionId));
+    stopSession(sessionId);
+  });
+
+  it('passes MCP servers via a --mcp-config file, not inline on argv', async () => {
+    const fake = makeFakeQuery();
+    let options:
+      | { extraArgs?: Record<string, string>; mcpServers?: Record<string, unknown> }
+      | undefined;
+    _setQueryFactory((p) => {
+      options = p.options as {
+        extraArgs?: Record<string, string>;
+        mcpServers?: Record<string, unknown>;
+      };
+      return fake.factory(p);
+    });
+    mockLoadSettings.mockResolvedValue({
+      ...baseSettings,
+      mcpServers: [
+        {
+          name: 'secret',
+          type: 'http',
+          url: 'https://example.com/mcp',
+          headers: { Authorization: 'Bearer super-secret-token' },
+        },
+      ],
+    });
+    const sessionId = await createRunningSession();
+
+    await sendUserMessage(sessionId, 'hello');
+    // Secrets go to a file path, never onto argv via options.mcpServers.
+    expect(mockWriteSessionMcpConfig).toHaveBeenCalledWith(
+      sessionId,
+      expect.objectContaining({
+        secret: expect.objectContaining({
+          headers: { Authorization: 'Bearer super-secret-token' },
+        }),
+      })
+    );
+    expect(options?.extraArgs?.['mcp-config']).toBe(`/tmp/worktrees/${sessionId}/mcp-config.json`);
+    expect(options?.mcpServers).toBeUndefined();
 
     fake.emit(result());
     await waitFor(() => !isClaudeRunning(sessionId));
