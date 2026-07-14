@@ -57,12 +57,14 @@ export interface ReduceResult {
 }
 
 /**
- * SDK `task_type` for a backgrounded Bash command. This is the ONE task kind that
- * can be a permanently-running daemon (a dev server, a database, a supervisor) with
- * no self-determined end state — the model backgrounds it and it may run until the
- * session is torn down. Subagents (`local_agent`/`remote_agent`), Monitor watches
- * (`monitor`), and workflows (`local_workflow`) all settle on their own and emit a
- * terminal `task_notification`.
+ * SDK `task_type` for a backgrounded Bash command — the task kind most likely to be
+ * a permanently-running daemon (a dev server, a database, a supervisor) with no
+ * self-determined end state; the model backgrounds it and it may run until the
+ * session is torn down. The other kinds settle on their own and emit a terminal
+ * `task_notification`: subagents (`local_agent`/`remote_agent`) and workflows
+ * (`local_workflow`) run to completion, and Monitor watches (`monitor`) carry a
+ * hard deadline (`timeout_ms`, default 5 min, max 1 h) — except `persistent: true`
+ * monitors, which are session-length by design (see {@link taskHasEndState}).
  */
 const BACKGROUND_BASH_TASK_TYPE = 'local_bash';
 
@@ -74,10 +76,19 @@ const BACKGROUND_BASH_TASK_TYPE = 'local_bash';
  * daemon that never emits a `task_notification`, so counting it would pin the
  * session in the "background" state and suppress the "Claude finished" notification
  * forever (until teardown). Everything else — subagents, Monitor watches, workflows,
- * and any task with an unknown/absent `task_type` — is a bounded unit of work and
- * counts. This gates ONLY the background-vs-waiting badge and the finished
- * notification; a `local_bash` daemon still appears in the stoppable background-task
- * list (`getBackgroundTasks`) so the user can see and ✕-stop it.
+ * and any task with an unknown/absent `task_type` — counts. This gates ONLY the
+ * background-vs-waiting badge and the finished notification; a `local_bash` daemon
+ * still appears in the stoppable background-task list (`getBackgroundTasks`) so the
+ * user can see and ✕-stop it.
+ *
+ * Two accepted imperfections (the type is the best signal the SDK gives us — a
+ * daemon is indistinguishable from a finite command at `task_started` time):
+ * - A FINITE backgrounded Bash (a long build/test run) is also excluded, so a turn
+ *   ending while one runs notifies "finished" early. Self-correcting: when the task
+ *   settles the main agent auto-continues, and that turn's end notifies again.
+ * - A `persistent: true` Monitor is session-length (no `timeout_ms` deadline), so it
+ *   suppresses the notification until ✕-stopped — rare (explicit opt-in by the
+ *   model) and visible in the stoppable task list.
  */
 export function taskHasEndState(task: BackgroundTask): boolean {
   return task.taskType !== BACKGROUND_BASH_TASK_TYPE;
