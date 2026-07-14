@@ -13,10 +13,16 @@ export async function register() {
     // Reap session cgroup scopes orphaned by a previous crash (which never ran
     // teardown) before sessions revive into fresh scopes. Best-effort. Reaps
     // EXACTLY the scope names recorded on this instance's own session rows (no
-    // glob), so — unlike the old broad sweep — it can only touch scopes this
-    // deployment created. That makes it safe to run in any mode: a `pnpm dev`
-    // instance has its own DB and thus its own scope names, so it can never
-    // cgroup-kill a co-tenant production instance's live sessions.
+    // glob), so — unlike the old broad sweep — it can only touch scopes named in
+    // this instance's DB. That's why it no longer needs the production gate: a
+    // `pnpm dev` instance with its OWN DATABASE_URL has its own session ids and
+    // scope names, so it can never reach a co-tenant production instance's
+    // sessions (the old glob could, regardless of DB — the mass-kill bug).
+    // Caveat: this safety rests on instances not SHARING a DATABASE_URL. Two live
+    // instances on one DB would have this reap stop the other's live scopes by
+    // exact name — but a shared DB already breaks the app's single-instance model
+    // (in-memory-vs-DB session state, message-sequence counters), so "don't share
+    // a DB across concurrent instances" is a pre-existing invariant, not a new one.
     try {
       const { reapOrphanedSessionScopes } = await import('@/server/services/claude-runner');
       await reapOrphanedSessionScopes();
