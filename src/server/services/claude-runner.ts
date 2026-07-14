@@ -1502,12 +1502,14 @@ export function isClaudeRunning(sessionId: string): boolean {
 }
 
 /**
- * Whether any background task (subagent / Monitor / backgrounded Bash) is running
- * for a session (in-memory check). Independent of {@link isClaudeRunning}: the
- * main turn can be idle while a background task keeps running.
+ * Whether any background task with a knowable end state (subagent / Monitor /
+ * workflow — NOT a permanently-backgroundable Bash daemon) is running for a session
+ * (in-memory check). Independent of {@link isClaudeRunning}: the main turn can be
+ * idle while a background task keeps running. See {@link taskHasEndState}.
  */
 export function isSessionBackgroundActive(sessionId: string): boolean {
-  return (sessions.get(sessionId)?.status.backgroundTasks.size ?? 0) > 0;
+  const state = sessions.get(sessionId);
+  return state ? backgroundActive(state.status) : false;
 }
 
 /**
