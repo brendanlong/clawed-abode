@@ -38,6 +38,7 @@ model Session {
   archivedAt      DateTime? // When the session was archived (null if not archived)
   messageSequence Int       @default(0) // Monotonic counter for atomic message sequence assignment (next sequence to assign)
   sessionScope    String? // systemd user scope unit this session's CLI runs in; recorded so a crash-restart can reap the exact orphaned scope (null when not scoped / after clean teardown)
+  claudeModel     String? // If set, overrides the repo/global/env Claude model for this session only (highest precedence)
   messages        Message[]
 
   @@index([status])

@@ -15,6 +15,7 @@ import {
   cleanupSession,
   isClaudeRunning,
   isSessionBackgroundActive,
+  refreshSessionSettings,
 } from '../services/claude-runner';
 import { sseEvents } from '../services/events';
 import { createLogger, toError } from '@/lib/logger';
@@ -110,6 +111,7 @@ export const sessionsRouter = router({
           .optional(),
         branch: z.string().min(1).optional(),
         initialPrompt: z.string().max(100000).optional(),
+        claudeModel: z.string().max(200).optional(),
       })
     )
     .mutation(async ({ input }) => {
@@ -125,6 +127,7 @@ export const sessionsRouter = router({
           status: 'creating',
           statusMessage: hasRepo ? 'Cloning repository...' : 'Creating workspace...',
           initialPrompt: input.initialPrompt,
+          claudeModel: input.claudeModel?.trim() || null,
         },
       });
 
@@ -286,6 +289,43 @@ export const sessionsRouter = router({
         where: { id: session.id },
         data: { name: input.name },
       });
+
+      sseEvents.emitSessionUpdate(input.sessionId, updatedSession);
+      return { session: updatedSession };
+    }),
+
+  // Set the per-session Claude model override (highest precedence — see
+  // resolveClaudeModel). Pass null/empty to clear (reverts to repo/global/env
+  // model). Persisted, so it survives restarts; applied live to a running query
+  // on the next turn (refreshSessionSettings applies it now if idle).
+  setModel: protectedProcedure
+    .input(
+      z.object({
+        sessionId: z.string().uuid(),
+        claudeModel: z.string().max(200).nullable(),
+      })
+    )
+    .mutation(async ({ input }) => {
+      const session = await prisma.session.findUnique({
+        where: { id: input.sessionId },
+      });
+
+      if (!session) {
+        throw new TRPCError({
+          code: 'NOT_FOUND',
+          message: 'Session not found',
+        });
+      }
+
+      const model = input.claudeModel?.trim() || null;
+
+      const updatedSession = await prisma.session.update({
+        where: { id: session.id },
+        data: { claudeModel: model },
+      });
+
+      // Apply to the live query now (no-op if the session isn't running).
+      await refreshSessionSettings(input.sessionId);
 
       sseEvents.emitSessionUpdate(input.sessionId, updatedSession);
       return { session: updatedSession };

@@ -8,6 +8,7 @@ import { SessionActionButton } from '@/components/SessionActionButton';
 import { EditableSessionName } from '@/components/EditableSessionName';
 import { VoiceAutoReadToggle } from '@/components/voice/VoiceAutoReadToggle';
 import { OpenInEditorButton } from '@/components/OpenInEditorButton';
+import { SessionModelButton } from '@/components/SessionModelButton';
 
 interface SessionHeaderProps {
   session: {
@@ -18,6 +19,7 @@ interface SessionHeaderProps {
     status: string;
     statusMessage?: string | null;
     initialPrompt?: string | null;
+    claudeModel?: string | null;
   };
   onStart: () => void;
   onStop: () => void;
@@ -80,6 +82,12 @@ export function SessionHeader({
 
         <div className="flex flex-col items-end gap-1 shrink-0">
           <div className="flex items-center gap-1">
+            {session.status !== 'archived' && (
+              <SessionModelButton
+                sessionId={session.id}
+                claudeModel={session.claudeModel ?? null}
+              />
+            )}
             <OpenInEditorButton sessionId={session.id} />
             {voiceEnabled && onToggleVoiceMode && (
               <Button

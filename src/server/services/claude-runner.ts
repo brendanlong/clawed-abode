@@ -1089,7 +1089,7 @@ async function establishSessionQuery(
 ): Promise<SessionState> {
   const session = await prisma.session.findUnique({
     where: { id: sessionId },
-    select: { repoUrl: true, repoPath: true },
+    select: { repoUrl: true, repoPath: true, claudeModel: true },
   });
   if (!session) {
     throw new Error('Session not found');
@@ -1097,7 +1097,7 @@ async function establishSessionQuery(
 
   const repoFullName = session.repoUrl ? extractRepoFullName(session.repoUrl) : null;
   const settingsKey = repoFullName ?? '__no_repo__';
-  const settings = await loadMergedSessionSettings(settingsKey);
+  const settings = await loadMergedSessionSettings(settingsKey, session.claudeModel);
   const workingDir = getSessionWorkingDir(sessionId, session.repoPath);
 
   const shouldResume = (await prisma.message.count({ where: { sessionId } })) > 0;
@@ -1176,7 +1176,13 @@ async function applyLiveSettings(sessionId: string, state: SessionState): Promis
   if (!state.query || !state.boundSettings) return;
   let settings: MergedSessionSettings;
   try {
-    settings = await loadMergedSessionSettings(state.settingsKey);
+    // Re-read the per-session model override too, so changing it (via
+    // sessions.setModel) applies live on the next turn like repo/global changes.
+    const session = await prisma.session.findUnique({
+      where: { id: sessionId },
+      select: { claudeModel: true },
+    });
+    settings = await loadMergedSessionSettings(state.settingsKey, session?.claudeModel);
   } catch (err) {
     log.debug('applyLiveSettings: failed to load settings', {
       sessionId,
@@ -1499,6 +1505,18 @@ export async function stopBackgroundTask(sessionId: string, taskId: string): Pro
 /** Whether a main-agent turn is active for a session (in-memory check). */
 export function isClaudeRunning(sessionId: string): boolean {
   return sessions.get(sessionId)?.status.turnActive ?? false;
+}
+
+/**
+ * Apply live settings (model / MCP servers) to a session's running query now, if
+ * one exists. Used after persisting a per-session model change so it takes effect
+ * without waiting for the next send. A no-op when the session has no live query —
+ * the change is picked up on the next establish/send anyway. Best-effort.
+ */
+export async function refreshSessionSettings(sessionId: string): Promise<void> {
+  const state = sessions.get(sessionId);
+  if (!state?.query) return;
+  await applyLiveSettings(sessionId, state);
 }
 
 /**
