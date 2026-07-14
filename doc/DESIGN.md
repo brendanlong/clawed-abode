@@ -42,7 +42,7 @@ The system runs **directly on the host** without containers:
 
 The database schema is defined in [`prisma/schema.prisma`](../prisma/schema.prisma). Key models:
 
-- **Session**: Claude Code sessions tied to git clones or standalone workspaces. `repoUrl` and `branch` are nullable — when null, the session has no repository (workspace-only). `lastActivityAt` drives session-list ordering and is bumped only on **user interactions** (sending a prompt, answering an AskUserQuestion / ExitPlanMode) — not on assistant/background traffic or lifecycle changes like stop/start — so the list orders by where the user last acted and doesn't shuffle while other sessions generate.
+- **Session**: Claude Code sessions tied to git clones or standalone workspaces. `repoUrl` and `branch` are nullable — when null, the session has no repository (workspace-only). `lastActivityAt` drives session-list ordering and is bumped only on **user interactions** (sending a prompt, answering an AskUserQuestion / ExitPlanMode) — not on assistant/background traffic or lifecycle changes like stop/start — so the list orders by where the user last acted and doesn't shuffle while other sessions generate. `claudeModel` is a nullable **per-session model override** — when set it takes precedence over the repo/global/env model (the highest-precedence layer of `resolveClaudeModel`); null (the default) means the session uses the repo/global/env default. It can be set at creation and changed later via `sessions.setModel`.
 - **Message**: Chat messages with sequence numbers for cursor-based pagination
 - **AuthSession**: Login sessions with tokens and audit info
 - **GlobalSettings**: Global application settings (system prompt override and append, Claude model, advisor model, Claude API key, TTS speed, voice auto-send)
@@ -133,7 +133,8 @@ sessions.create({
   name: string,
   repoFullName?: string,   // e.g., "brendanlong/math-llm" — omit for no-repo sessions
   branch?: string,         // omit for no-repo sessions
-  initialPrompt?: string   // Optional prompt to auto-send when session starts
+  initialPrompt?: string,  // Optional prompt to auto-send when session starts
+  claudeModel?: string     // Optional per-session model override (persisted on the session)
 })
   → { session: Session }
   // Returns immediately with session in "creating" status
@@ -161,6 +162,13 @@ sessions.rename({ sessionId: string, name: string })
   → { session: Session }
   // Renames a session (updates the display name only). The id, workspace, and
   // lastActivityAt are untouched — renaming does not reorder the session list.
+
+sessions.setModel({ sessionId: string, claudeModel: string | null })
+  → { session: Session }
+  // Sets (or clears, with null/empty) the per-session Claude model override. This is
+  // the highest-precedence layer of resolveClaudeModel (session → repo → global → env).
+  // Persisted on the session row, so it survives restarts; applied live to a running
+  // query on the next turn (refreshSessionSettings applies it immediately when idle).
 
 sessions.stop({ sessionId: string })
   → { session: Session }
@@ -682,7 +690,7 @@ Users can configure per-repository settings that are automatically applied when 
 
 - **Favorites**: Mark repositories (or "No Repository") as favorites so they appear at the top of the repo selector
 - **Custom System Prompt**: Additional instructions appended to the default system prompt for all sessions using this repository
-- **Claude Model**: Override the model for all sessions using this repository. Takes precedence over the global model and the `CLAUDE_MODEL` env var. Falls back to those when not set.
+- **Claude Model**: Override the model for all sessions using this repository. Takes precedence over the global model and the `CLAUDE_MODEL` env var, but is itself overridden by a per-session model (see [Per-Session Model Override](#per-session-model-override)). Falls back to those when not set.
 - **Environment Variables**: Custom env vars set for Claude sessions (e.g., API keys, config values)
 - **MCP Servers**: Configure [MCP servers](https://modelcontextprotocol.io/) for Claude to use, supporting three transport types:
   - **Stdio**: Traditional command-based servers (e.g., `npx @anthropic/mcp-server-memory`)
@@ -707,7 +715,7 @@ Users can configure per-repository settings that are automatically applied when 
 
 Users can configure global settings that apply to all sessions:
 
-- **Claude Model**: Override the `CLAUDE_MODEL` environment variable. Free-text field accepting model names like `opus`, `sonnet`, or full IDs like `claude-opus-4-6`. A per-repo model override (if set) takes precedence over this; otherwise this is used, falling back to the env var default when neither is set. Resolution order is `repo model → global model → CLAUDE_MODEL env var` (see `resolveClaudeModel` in `settings-merger.ts`).
+- **Claude Model**: Override the `CLAUDE_MODEL` environment variable. Free-text field accepting model names like `opus`, `sonnet`, or full IDs like `claude-opus-4-6`. A per-session or per-repo model override (if set) takes precedence over this; otherwise this is used, falling back to the env var default when neither is set. Resolution order is `session model → repo model → global model → CLAUDE_MODEL env var` (see `resolveClaudeModel` in `settings-merger.ts`).
 - **Advisor Model**: The model used by the server-side advisor tool (which Claude can consult for a second opinion mid-session). Uses the same free-text model selector as Claude Model. This is a global-only setting with **no env-var or per-repo layer**: the effective value is `global advisor model → null`, resolved by `resolveAdvisorModel` in `settings-merger.ts`. The advisor tool is **opt-in and disabled by default** — when no model is set the value resolves to null and the tool is not wired into requests at all; setting a model enables it (and picks which model it uses), and clearing it (Disable) turns the tool back off. `SUGGESTED_ADVISOR_MODEL` (`claude-fable-5`, in the dependency-free [`src/lib/advisor.ts`](../src/lib/advisor.ts) so both the server router and the client settings UI share one source of truth) is the model an empty **Enable → Save** adopts and the input placeholder — not a resolution fallback; the only way to reach the disabled state is the **Disable** button. The advisor model is a settings-schema field with no dedicated SDK option, so when set it is passed to the Claude Agent SDK as an ad-hoc `--settings` source via `Options.extraArgs` (`{ advisorModel }`) — the `settings` arg is omitted entirely when the advisor is disabled; see `buildSdkOptions` in `claude-runner.ts`. This only takes effect on a CLI/SDK version that actually implements the advisor tool: it wires the `advisor_20260301` server tool into each request (the `advisor-tool-2026-03-01` beta header is already sent unconditionally by the CLI). The dependency is pinned to an exact version (`@anthropic-ai/claude-agent-sdk` `0.3.196`) because earlier versions (e.g. `0.3.173`) ignore `advisorModel` entirely and `0.3.198` ships a dangling `SDKConversationResetMessage` type that degrades `SDKMessage` to `any` and breaks the `classifyMessage` exhaustiveness guard. To re-verify after a bump, capture the CLI's outgoing `/v1/messages` request (e.g. a logging proxy set via `ANTHROPIC_BASE_URL`) and check the `tools` array for `advisor_20260301`.
 - **Claude API Key**: Override the `CLAUDE_CODE_OAUTH_TOKEN` environment variable. Stored encrypted at rest. The actual value is never exposed to the UI — only a "configured" status is shown. Falls back to the env var when not set.
 - **Setting Sources**: Which Claude Code [scopes](https://code.claude.com/docs/en/settings#available-scopes) the SDK loads filesystem config (CLAUDE.md, **skills**, hooks, permissions) from, as three independent toggles — `user` (`~/.claude/`), `project` (`<cwd>/.claude/`), and `local` (`<cwd>/.claude/settings.local.json`). This is a **global-only** setting (no env-var or per-repo layer) with defaults matching the historical hardcoded behavior: only `project` on. Enabling `user` is what surfaces personal skills / a global CLAUDE.md / user hooks from the home directory of the account running the app; a repo can still ship skills via a committed `.claude/skills/` whenever `project` is on. Stored as three booleans on `GlobalSettings`; the pure `resolveSettingSources` ([`src/lib/setting-sources.ts`](../src/lib/setting-sources.ts), dependency-free so the router and settings UI share one source of truth) turns the flags into the SDK's ordered `settingSources` array (all-off yields `[]`, disabling all filesystem config). Because these scopes also load **hooks** (which execute) and permissions, widening them is a trust decision — `project` already carries the same property for a checked-out repo's `.claude/settings.json`. A settings-file `PostToolUse` hook **merges with** (does not displace) the app's programmatic tool-output sanitizer hook, so enabling a scope never silently disables sanitization — verified in both `user` and `project` scopes by `scripts/spike-hook-merge.ts`.
@@ -728,9 +736,17 @@ Users can configure global settings that apply to all sessions:
 
 - **Environment Variables**: Global env vars are included in all sessions. If a per-repo env var has the same name as a global one, the per-repo value takes precedence.
 - **MCP Servers**: Global MCP servers are included in all sessions. If a per-repo MCP server has the same name as a global one, the per-repo configuration takes precedence.
-- **Claude Model**: Resolved in precedence order `per-repo model → global model → CLAUDE_MODEL env var`.
+- **Claude Model**: Resolved in precedence order `per-session model → per-repo model → global model → CLAUDE_MODEL env var`.
 
-**Live vs. restart-bound settings.** Because a session's query is long-lived, settings are bound when the query is established. **Model and MCP servers** are re-applied live on the next `send` when they differ from what the query was built with (`query.setModel` / `query.setMcpServers`, gated by `mcpServersEqual`). **Environment variables, the system prompt, the advisor model, and the setting sources** are bound at construction and only take effect after a Stop→Start (which rebuilds the query with fresh settings) — the SDK exposes no live setter for these.
+### Per-Session Model Override
+
+Each session can pin its own Claude model, stored on the `Session.claudeModel` column and taking precedence over every other layer — it is the first argument of `resolveClaudeModel` (`session → repo → global → env`). The override is null by default, so a session runs with the repo/global/env default unless explicitly changed.
+
+- **Set at creation**: the New Session form has an optional model field (reusing `ModelOverrideField`); the value flows through `sessions.create` onto the new row.
+- **Changed later**: a per-session **gear button** in the session header (`SessionModelButton`, next to the "Open in VS Code" link) opens a panel to view/change/clear the override via `sessions.setModel`.
+- **Threading**: `establishSessionQuery` selects `claudeModel` and passes it to `loadMergedSessionSettings(settingsKey, sessionModel)`, which forwards it to `resolveClaudeModel`. Because the model is a **live-applicable** SDK setting (`query.setModel`), `applyLiveSettings` re-reads the session's `claudeModel` on each send, so changing it takes effect on the next turn without a Stop→Start. `sessions.setModel` additionally calls `refreshSessionSettings` to apply it immediately to an idle live query.
+
+**Live vs. restart-bound settings.** Because a session's query is long-lived, settings are bound when the query is established. **Model and MCP servers** are re-applied live on the next `send` when they differ from what the query was built with (`query.setModel` / `query.setMcpServers`, gated by `mcpServersEqual`) — this covers a change to the per-session, per-repo, or global model. **Environment variables, the system prompt, the advisor model, and the setting sources** are bound at construction and only take effect after a Stop→Start (which rebuilds the query with fresh settings) — the SDK exposes no live setter for these.
 
 **Configuration**: Go to Settings → System Prompt to manage prompt and model settings. Go to Settings → Audio to manage voice/audio settings (TTS speed, voice auto-send).
 
@@ -830,6 +846,7 @@ Both source [`scripts/lib-code-server.sh`](../scripts/lib-code-server.sh) so the
 - Initial prompt (optional) — editable textarea, pre-filled when issue is selected
   - If provided, sent server-side after session setup completes (works even if client disconnects)
   - When omitted, session starts without a prompt (useful for voice mode)
+- Claude model (optional) — a `ModelOverrideField` to pin a [per-session model](#per-session-model-override); defaults to the repo/global/env model and can be changed later from the session header
 - Create button
 
 ### Session View (Chat)
@@ -844,6 +861,7 @@ Both source [`scripts/lib-code-server.sh`](../scripts/lib-code-server.sh) so the
 - Session info in header (repo, branch)
 - Editable session title in header: click the name to rename inline (Enter saves, Escape cancels) via `sessions.rename` — see `EditableSessionName`
 - "Open in VS Code" button in the header (only when `CODE_SERVER_URL` is configured) that deep-links into the session's worktree in code-server — see [Remote File Editing](#remote-file-editing)
+- Per-session **gear** button in the header (`SessionModelButton`, next to the VS Code link, hidden for archived sessions) that opens a panel to view/change the [per-session Claude model override](#per-session-model-override) via `sessions.setModel`
 
 ## File Structure
 

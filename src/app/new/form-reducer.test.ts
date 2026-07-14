@@ -49,6 +49,7 @@ describe('formReducer', () => {
         nameManuallyEdited: true,
         initialPrompt: 'some prompt',
         promptManuallyEdited: true,
+        claudeModel: 'sonnet',
       };
 
       const result = formReducer(state, { type: 'selectRepo', repo: mockRepo2 });
@@ -61,6 +62,7 @@ describe('formReducer', () => {
         nameManuallyEdited: false,
         initialPrompt: '',
         promptManuallyEdited: false,
+        claudeModel: null,
       });
     });
 
@@ -99,6 +101,7 @@ describe('formReducer', () => {
         nameManuallyEdited: true,
         initialPrompt: 'my prompt',
         promptManuallyEdited: true,
+        claudeModel: null,
       };
 
       const result = formReducer(state, { type: 'selectBranch', branch: 'develop' });
@@ -312,6 +315,24 @@ describe('formReducer', () => {
 
       expect(result.initialPrompt).toBe('');
       expect(result.promptManuallyEdited).toBe(true);
+    });
+  });
+
+  describe('editModel', () => {
+    it('sets the per-session model override', () => {
+      const state: FormState = { ...initialFormState, selectedRepo: mockRepo };
+
+      const result = formReducer(state, { type: 'editModel', claudeModel: 'sonnet' });
+
+      expect(result.claudeModel).toBe('sonnet');
+    });
+
+    it('clears the override when set to null', () => {
+      const state: FormState = { ...initialFormState, claudeModel: 'sonnet' };
+
+      const result = formReducer(state, { type: 'editModel', claudeModel: null });
+
+      expect(result.claudeModel).toBeNull();
     });
   });
 
