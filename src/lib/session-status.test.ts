@@ -22,6 +22,32 @@ function assistant(parentToolUseId: string | null = null): SDKMessage {
   } as unknown as SDKMessage;
 }
 
+/** Assistant message whose content includes a Monitor tool_use block. */
+function monitorCall(
+  toolUseId: string,
+  persistent: boolean,
+  parentToolUseId: string | null = null
+): SDKMessage {
+  return {
+    type: 'assistant',
+    parent_tool_use_id: parentToolUseId,
+    message: {
+      role: 'assistant',
+      content: [
+        { type: 'text', text: 'Watching…' },
+        {
+          type: 'tool_use',
+          id: toolUseId,
+          name: 'Monitor',
+          input: { description: 'watch CI', persistent, timeout_ms: 300000 },
+        },
+      ],
+    },
+    session_id: 's',
+    uuid: 'u',
+  } as unknown as SDKMessage;
+}
+
 function messageStart(parentToolUseId: string | null = null): SDKMessage {
   return {
     type: 'stream_event',
@@ -256,10 +282,19 @@ describe('reduceSessionMessage — background tasks', () => {
 });
 
 describe('taskHasEndState (daemon exclusion)', () => {
-  const make = (taskType?: string): BackgroundTask => ({ taskId: 't', ambient: false, taskType });
+  const make = (taskType?: string, persistent = false): BackgroundTask => ({
+    taskId: 't',
+    ambient: false,
+    taskType,
+    persistent,
+  });
 
   it('excludes backgrounded Bash daemons (local_bash)', () => {
     expect(taskHasEndState(make('local_bash'))).toBe(false);
+  });
+
+  it('excludes persistent Monitor watches', () => {
+    expect(taskHasEndState(make('monitor', true))).toBe(false);
   });
 
   it.each(['local_agent', 'remote_agent', 'monitor', 'local_workflow'])(
@@ -301,9 +336,71 @@ describe('backgroundActive — daemon-only sets read as idle', () => {
   });
 });
 
+describe('persistent Monitor detection (tool_use → task_started linkage)', () => {
+  it('flags a task whose tool_use_id links back to a persistent: true Monitor call', () => {
+    let s = reduceSessionMessage(INITIAL_LIVE_STATUS, monitorCall('tu1', true)).status;
+    expect(s.persistentMonitorToolUseIds.has('tu1')).toBe(true);
+    s = reduceSessionMessage(
+      s,
+      taskStarted('m1', { task_type: 'monitor', tool_use_id: 'tu1' })
+    ).status;
+    // Tracked (visible/stoppable) but excluded from the busy axis…
+    expect(s.backgroundTasks.get('m1')?.persistent).toBe(true);
+    expect(backgroundActive(s)).toBe(false);
+    // …and the linkage id is consumed.
+    expect(s.persistentMonitorToolUseIds.has('tu1')).toBe(false);
+  });
+
+  it('a persistent: false Monitor call leaves the task counted', () => {
+    let s = reduceSessionMessage(INITIAL_LIVE_STATUS, monitorCall('tu1', false)).status;
+    expect(s.persistentMonitorToolUseIds.size).toBe(0);
+    s = reduceSessionMessage(
+      s,
+      taskStarted('m1', { task_type: 'monitor', tool_use_id: 'tu1' })
+    ).status;
+    expect(s.backgroundTasks.get('m1')?.persistent).toBe(false);
+    expect(backgroundActive(s)).toBe(true);
+  });
+
+  it('a monitor task with no matching call counts (safe default)', () => {
+    const { status } = reduceSessionMessage(
+      INITIAL_LIVE_STATUS,
+      taskStarted('m1', { task_type: 'monitor', tool_use_id: 'unseen' })
+    );
+    expect(status.backgroundTasks.get('m1')?.persistent).toBe(false);
+    expect(backgroundActive(status)).toBe(true);
+  });
+
+  it('links a persistent Monitor started by a subagent (non-top-level call)', () => {
+    let s = reduceSessionMessage(INITIAL_LIVE_STATUS, monitorCall('tu1', true, 'parent1')).status;
+    s = reduceSessionMessage(
+      s,
+      taskStarted('m1', { task_type: 'monitor', tool_use_id: 'tu1' })
+    ).status;
+    expect(s.backgroundTasks.get('m1')?.persistent).toBe(true);
+    expect(backgroundActive(s)).toBe(false);
+  });
+
+  it('a persistent Monitor settling via task_notification still clears normally', () => {
+    let s = reduceSessionMessage(INITIAL_LIVE_STATUS, monitorCall('tu1', true)).status;
+    s = reduceSessionMessage(
+      s,
+      taskStarted('m1', { task_type: 'monitor', tool_use_id: 'tu1' })
+    ).status;
+    s = reduceSessionMessage(s, taskNotification('m1')).status;
+    expect(s.backgroundTasks.has('m1')).toBe(false);
+  });
+
+  it('an assistant message without Monitor calls leaves the id set untouched', () => {
+    const withId = reduceSessionMessage(INITIAL_LIVE_STATUS, monitorCall('tu1', true)).status;
+    const { status } = reduceSessionMessage(withId, assistant());
+    expect(status.persistentMonitorToolUseIds).toBe(withId.persistentMonitorToolUseIds);
+  });
+});
+
 describe('removeBackgroundTask (optimistic ✕ removal)', () => {
   function withTasks(...taskIds: string[]): ReadonlyMap<string, BackgroundTask> {
-    return new Map(taskIds.map((id) => [id, { taskId: id, ambient: false }]));
+    return new Map(taskIds.map((id) => [id, { taskId: id, ambient: false, persistent: false }]));
   }
 
   it('removes a present task and returns a new map without it', () => {
