@@ -48,8 +48,8 @@ describe('sseEvents session-list fan-out', () => {
     const unsubscribe = sseEvents.onSessionListChanged(listener);
 
     sseEvents.emitBackgroundTasks('session-1', [
-      { taskId: 't1', ambient: false },
-      { taskId: 't2', ambient: false },
+      { taskId: 't1', ambient: false, persistent: false },
+      { taskId: 't2', ambient: false, persistent: false },
     ]);
     expect(listener).toHaveBeenCalledWith({
       type: 'claude_background',
@@ -66,6 +66,19 @@ describe('sseEvents session-list fan-out', () => {
       sessionId: 'session-1',
       active: false,
     });
+
+    // A set holding only no-end-state tasks (a Bash daemon, a persistent Monitor)
+    // also signals idle — they don't count toward the busy axis (taskHasEndState).
+    listener.mockClear();
+    sseEvents.emitBackgroundTasks('session-1', [
+      { taskId: 'd1', ambient: false, persistent: false, taskType: 'local_bash' },
+      { taskId: 'm1', ambient: false, persistent: true, taskType: 'monitor' },
+    ]);
+    expect(listener).toHaveBeenCalledWith({
+      type: 'claude_background',
+      sessionId: 'session-1',
+      active: false,
+    });
     unsubscribe();
   });
 
@@ -73,7 +86,7 @@ describe('sseEvents session-list fan-out', () => {
     const listener = vi.fn<(event: SessionStreamEvent) => void>();
     const unsubscribe = sseEvents.onSessionEvents('session-1', listener);
 
-    const tasks = [{ taskId: 't1', ambient: false }];
+    const tasks = [{ taskId: 't1', ambient: false, persistent: false }];
     sseEvents.emitBackgroundTasks('session-1', tasks);
 
     expect(listener).toHaveBeenCalledWith({ kind: 'background', tasks });
