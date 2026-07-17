@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo } from 'react';
-import { marked, Renderer } from 'marked';
+import { marked, Renderer, type Tokens } from 'marked';
 import DOMPurify from 'dompurify';
 
 interface MarkdownContentProps {
@@ -23,13 +23,21 @@ marked.setOptions({
   renderer,
 });
 
-// Disable strikethrough (`~text~` / `~~text~~`). Claude uses `~` to mean
-// "approximately" far more often than for strikethrough, so we treat tildes as
-// literal text by having the `del` inline tokenizer never match.
+// Only allow double-tilde strikethrough (`~~text~~`). Claude uses a single `~`
+// to mean "approximately" (e.g. `~5 minutes`) far more often than for
+// strikethrough, so override the `del` inline tokenizer to match `~~…~~` only
+// and leave single tildes as literal text.
 marked.use({
   tokenizer: {
-    del(): undefined {
-      return undefined;
+    del(src: string): Tokens.Del | undefined {
+      const match = /^~~(?=\S)([\s\S]*?\S)~~/.exec(src);
+      if (!match) return undefined;
+      return {
+        type: 'del',
+        raw: match[0],
+        text: match[1],
+        tokens: this.lexer.inlineTokens(match[1]),
+      };
     },
   },
 });

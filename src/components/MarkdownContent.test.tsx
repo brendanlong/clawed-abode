@@ -30,14 +30,17 @@ describe('MarkdownContent', () => {
     expect(screen.getByText('italic')).toBeInTheDocument();
   });
 
-  it('does not render strikethrough, keeping tildes literal', () => {
-    // Claude uses `~` to mean "approximately", so `~5` and `~~x~~` must not
-    // become strikethrough.
-    const { container } = render(<MarkdownContent content="It takes ~5 minutes and ~~10~~." />);
+  it('keeps single tildes literal (Claude uses `~` to mean "approximately")', () => {
+    const { container } = render(<MarkdownContent content="It takes ~5 minutes." />);
     expect(container.querySelector('del')).toBeNull();
-    expect(container.querySelector('s')).toBeNull();
     expect(container.textContent).toContain('~5 minutes');
-    expect(container.textContent).toContain('~~10~~');
+  });
+
+  it('still renders double-tilde strikethrough', () => {
+    const { container } = render(<MarkdownContent content="This is ~~struck~~." />);
+    const del = container.querySelector('del');
+    expect(del).not.toBeNull();
+    expect(del?.textContent).toBe('struck');
   });
 
   it('renders code blocks', () => {
