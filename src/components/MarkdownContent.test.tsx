@@ -30,6 +30,19 @@ describe('MarkdownContent', () => {
     expect(screen.getByText('italic')).toBeInTheDocument();
   });
 
+  it('keeps single tildes literal (Claude uses `~` to mean "approximately")', () => {
+    const { container } = render(<MarkdownContent content="It takes ~5 minutes." />);
+    expect(container.querySelector('del')).toBeNull();
+    expect(container.textContent).toContain('~5 minutes');
+  });
+
+  it('still renders double-tilde strikethrough', () => {
+    const { container } = render(<MarkdownContent content="This is ~~struck~~." />);
+    const del = container.querySelector('del');
+    expect(del).not.toBeNull();
+    expect(del?.textContent).toBe('struck');
+  });
+
   it('renders code blocks', () => {
     render(<MarkdownContent content={'```js\nconst x = 1;\n```'} />);
     // Code blocks contain the language identifier and code
