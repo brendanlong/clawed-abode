@@ -23,6 +23,17 @@ marked.setOptions({
   renderer,
 });
 
+// Disable strikethrough (`~text~` / `~~text~~`). Claude uses `~` to mean
+// "approximately" far more often than for strikethrough, so we treat tildes as
+// literal text by having the `del` inline tokenizer never match.
+marked.use({
+  tokenizer: {
+    del(): undefined {
+      return undefined;
+    },
+  },
+});
+
 export function MarkdownContent({ content, className = '' }: MarkdownContentProps) {
   const html = useMemo(() => {
     try {

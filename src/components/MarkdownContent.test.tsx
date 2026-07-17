@@ -30,6 +30,16 @@ describe('MarkdownContent', () => {
     expect(screen.getByText('italic')).toBeInTheDocument();
   });
 
+  it('does not render strikethrough, keeping tildes literal', () => {
+    // Claude uses `~` to mean "approximately", so `~5` and `~~x~~` must not
+    // become strikethrough.
+    const { container } = render(<MarkdownContent content="It takes ~5 minutes and ~~10~~." />);
+    expect(container.querySelector('del')).toBeNull();
+    expect(container.querySelector('s')).toBeNull();
+    expect(container.textContent).toContain('~5 minutes');
+    expect(container.textContent).toContain('~~10~~');
+  });
+
   it('renders code blocks', () => {
     render(<MarkdownContent content={'```js\nconst x = 1;\n```'} />);
     // Code blocks contain the language identifier and code
