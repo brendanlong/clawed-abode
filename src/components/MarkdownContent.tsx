@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo } from 'react';
-import { marked, Renderer } from 'marked';
+import { marked, Renderer, type Tokens } from 'marked';
 import DOMPurify from 'dompurify';
 
 interface MarkdownContentProps {
@@ -21,6 +21,25 @@ marked.setOptions({
   gfm: true, // GitHub Flavored Markdown
   breaks: true, // Convert \n to <br>
   renderer,
+});
+
+// Only allow double-tilde strikethrough (`~~text~~`). Claude uses a single `~`
+// to mean "approximately" (e.g. `~5 minutes`) far more often than for
+// strikethrough, so override the `del` inline tokenizer to match `~~…~~` only
+// and leave single tildes as literal text.
+marked.use({
+  tokenizer: {
+    del(src: string): Tokens.Del | undefined {
+      const match = /^~~(?=\S)([\s\S]*?\S)~~/.exec(src);
+      if (!match) return undefined;
+      return {
+        type: 'del',
+        raw: match[0],
+        text: match[1],
+        tokens: this.lexer.inlineTokens(match[1]),
+      };
+    },
+  },
 });
 
 export function MarkdownContent({ content, className = '' }: MarkdownContentProps) {
