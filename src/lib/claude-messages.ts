@@ -291,9 +291,7 @@ export type DbMessageType = 'system' | 'user' | 'assistant' | 'result';
  * - `persist`: a complete message stored under `dbType`
  */
 export type MessageHandling =
-  | { kind: 'stream_event' }
-  | { kind: 'skip' }
-  | { kind: 'persist'; dbType: DbMessageType };
+  { kind: 'stream_event' } | { kind: 'skip' } | { kind: 'persist'; dbType: DbMessageType };
 
 /**
  * System message subtypes that carry no durable value — pure progress ticks or
