@@ -80,12 +80,12 @@ export function EditableSessionName({
   return (
     <h1
       className={cn(
-        'font-semibold break-words',
+        'font-semibold truncate',
         !disabled && 'cursor-text rounded hover:bg-muted/50',
         className
       )}
       onClick={startEditing}
-      title={disabled ? undefined : 'Click to rename'}
+      title={disabled ? name : `${name} — click to rename`}
     >
       {name}
     </h1>

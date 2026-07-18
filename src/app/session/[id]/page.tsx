@@ -343,7 +343,7 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
 
   return (
     <AuthGuard>
-      <div className="h-screen bg-background flex flex-col overflow-hidden">
+      <div className="h-dvh bg-background flex flex-col overflow-hidden">
         <Header />
         <SessionView sessionId={resolvedParams.id} />
       </div>
