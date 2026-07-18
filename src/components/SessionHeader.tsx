@@ -74,7 +74,9 @@ export function SessionHeader({
             {onRename ? (
               <EditableSessionName name={session.name} onRename={onRename} />
             ) : (
-              <h1 className="font-semibold break-words">{session.name}</h1>
+              <h1 className="font-semibold truncate" title={session.name}>
+                {session.name}
+              </h1>
             )}
             {repoName && <p className="text-sm text-muted-foreground truncate">{repoName}</p>}
           </div>
