@@ -43,7 +43,8 @@ async function resolveClaudeBinary(): Promise<string | null> {
     try {
       // glibcVersionRuntime is present on glibc, absent on musl.
       const report = process.report?.getReport() as
-        { header?: { glibcVersionRuntime?: string } } | undefined;
+        | { header?: { glibcVersionRuntime?: string } }
+        | undefined;
       if (report && !report.header?.glibcVersionRuntime) libc = '-musl';
     } catch {
       // Assume glibc if the report is unavailable.

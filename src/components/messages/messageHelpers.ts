@@ -27,7 +27,8 @@ export type MessageCategory =
   | 'result';
 
 export type RecognitionResult =
-  { recognized: true; category: MessageCategory } | { recognized: false };
+  | { recognized: true; category: MessageCategory }
+  | { recognized: false };
 
 /**
  * Extract text content from message content blocks.
