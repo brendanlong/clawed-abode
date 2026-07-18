@@ -700,8 +700,7 @@ describe('claude-runner persistent streaming loop', () => {
   it('passes MCP servers via a --mcp-config file, not inline on argv', async () => {
     const fake = makeFakeQuery();
     let options:
-      | { extraArgs?: Record<string, string>; mcpServers?: Record<string, unknown> }
-      | undefined;
+      { extraArgs?: Record<string, string>; mcpServers?: Record<string, unknown> } | undefined;
     _setQueryFactory((p) => {
       options = p.options as {
         extraArgs?: Record<string, string>;

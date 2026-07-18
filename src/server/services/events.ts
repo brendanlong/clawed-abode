@@ -108,10 +108,7 @@ const SESSION_LIST_EVENT = 'session-list';
  * running/waiting per session without a subscription per row.
  */
 export type SessionListEvent =
-  | SessionUpdateEvent
-  | ClaudeRunningEvent
-  | ClaudeFinishedEvent
-  | ClaudeBackgroundEvent;
+  SessionUpdateEvent | ClaudeRunningEvent | ClaudeFinishedEvent | ClaudeBackgroundEvent;
 
 // Create a typed event emitter
 class SSEEventEmitter extends EventEmitter {
