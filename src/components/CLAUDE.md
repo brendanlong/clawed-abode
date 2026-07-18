@@ -30,9 +30,11 @@ To keep the transcript focused, `MessageList` / `MessageBubble` apply three rule
 (all derived from pure helpers in `messageHelpers.ts`, so they're unit-tested):
 
 - **System messages are hidden.** `isHiddenSystemMessage` drops every `system`
-  message except `error` and `compact_boundary` (which carry real signal). Both
-  the list-level filter and the bubble-level render check it, so a hidden message
-  leaves no empty spacer row.
+  message except `error`, `compact_boundary`, and `model_refusal_fallback` (which
+  carry real signal). Both the list-level filter and the bubble-level render check
+  it, so a hidden message leaves no empty spacer row. `model_refusal_fallback`
+  (a silent Fable→Opus downgrade after an API refusal) renders via
+  `RefusalFallbackDisplay` as an amber banner — restored after #312 hid it.
 - **Back-to-back tool calls are tightly packed.** The list has no blanket
   `space-y`; each row computes its own top margin. Two consecutive
   `isToolCallOnlyMessage` rows (assistant messages that are only tool calls, no
@@ -62,8 +64,8 @@ lists can't drift; the top-level list layers on only the
 `getParentToolUseId === null` clause.
 
 `isRecognizedMessage` only assigns a category to system subtypes that still
-render (`error`, `compact_boundary`); `init`/hooks/generic notices are hidden
-upstream, so they intentionally have no category.
+render (`error`, `compact_boundary`, `model_refusal_fallback`); `init`/hooks/generic
+notices are hidden upstream, so they intentionally have no category.
 
 ### Adding a Specialized Tool Renderer
 
@@ -82,6 +84,6 @@ upstream, so they intentionally have no category.
 
 - `assistant` - Claude responses with text/tool_use blocks
 - `user` - User prompts or tool results
-- `systemError` / `systemCompactBoundary` - the only system messages that render
+- `systemError` / `systemCompactBoundary` / `systemRefusalFallback` - the only system messages that render
 - `result` - Turn completion with cost/usage
 - Unknown types fall back to `RawJsonDisplay`

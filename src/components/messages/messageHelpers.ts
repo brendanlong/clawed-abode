@@ -23,6 +23,7 @@ export type MessageCategory =
   | 'toolResult'
   | 'systemError'
   | 'systemCompactBoundary'
+  | 'systemRefusalFallback'
   | 'result';
 
 export type RecognitionResult =
@@ -111,10 +112,11 @@ export function hasRenderableAssistantContent(content: MessageContent): boolean 
 /**
  * System subtypes still surfaced in the transcript. Everything else — session
  * init banners, hook lifecycle, task/notification chatter, generic notices — is
- * hidden to cut noise (issue #312). Errors and compact boundaries are kept
- * because they carry meaningful signal the user needs to see.
+ * hidden to cut noise (issue #312). Errors, compact boundaries, and
+ * model_refusal_fallback (a silent Fable→Opus downgrade the user needs to know
+ * about) are kept because they carry meaningful signal the user needs to see.
  */
-const VISIBLE_SYSTEM_SUBTYPES = new Set(['error', 'compact_boundary']);
+const VISIBLE_SYSTEM_SUBTYPES = new Set(['error', 'compact_boundary', 'model_refusal_fallback']);
 
 /**
  * Whether a `system` message should be hidden from the transcript entirely.
@@ -378,10 +380,10 @@ export function isRecognizedMessage(type: string, content: MessageContent): Reco
     return { recognized: false };
   }
 
-  // The only system messages shown in the transcript are errors and compact
-  // boundaries (see isHiddenSystemMessage). Every other system subtype — init,
-  // hooks, generic notices — is hidden upstream in MessageBubble/MessageList, so
-  // it is intentionally not given a dedicated category here.
+  // The only system messages shown in the transcript are errors, compact
+  // boundaries, and refusal fallbacks (see isHiddenSystemMessage). Every other
+  // system subtype — init, hooks, generic notices — is hidden upstream in
+  // MessageBubble/MessageList, so it is intentionally not given a category here.
   if (type === 'system' && content.subtype === 'error') {
     if (Array.isArray(content.content)) {
       return { recognized: true, category: 'systemError' };
@@ -392,6 +394,11 @@ export function isRecognizedMessage(type: string, content: MessageContent): Reco
   // Compact boundary messages
   if (type === 'system' && content.subtype === 'compact_boundary') {
     return { recognized: true, category: 'systemCompactBoundary' };
+  }
+
+  // Fable→Opus refusal fallback: a silent model downgrade the user needs to see.
+  if (type === 'system' && content.subtype === 'model_refusal_fallback') {
+    return { recognized: true, category: 'systemRefusalFallback' };
   }
 
   // Result messages

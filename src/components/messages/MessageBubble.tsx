@@ -7,6 +7,7 @@ import { RawJsonDisplay } from './RawJsonDisplay';
 import { ToolResultDisplay } from './ToolResultDisplay';
 import { ResultDisplay } from './ResultDisplay';
 import { CompactBoundaryDisplay } from './CompactBoundaryDisplay';
+import { RefusalFallbackDisplay } from './RefusalFallbackDisplay';
 import { MainMessageBubble } from './MainMessageBubble';
 import {
   isRecognizedMessage,
@@ -64,6 +65,14 @@ export function MessageBubble({
     return (
       <div className="w-full">
         <CompactBoundaryDisplay content={content} />
+      </div>
+    );
+  }
+
+  if (category === 'systemRefusalFallback') {
+    return (
+      <div className="w-full max-w-[85%]">
+        <RefusalFallbackDisplay content={content} />
       </div>
     );
   }
