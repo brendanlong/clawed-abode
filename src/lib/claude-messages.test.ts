@@ -264,6 +264,10 @@ describe('claude-messages', () => {
       expect(msg({ type: 'prompt_suggestion' })).toEqual({ kind: 'persist', dbType: 'system' });
     });
 
+    it('skips conversation_reset lifecycle messages', () => {
+      expect(msg({ type: 'conversation_reset' })).toEqual({ kind: 'skip' });
+    });
+
     it('persists ordinary system messages as system', () => {
       expect(msg({ type: 'system', subtype: 'init' })).toEqual({
         kind: 'persist',
