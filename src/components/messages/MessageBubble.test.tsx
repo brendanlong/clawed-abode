@@ -420,6 +420,48 @@ describe('MessageBubble', () => {
     });
   });
 
+  describe('model refusal fallback messages', () => {
+    it('renders the model switch banner with transition, category, and explanation', () => {
+      const message = {
+        type: 'system',
+        content: {
+          type: 'system',
+          subtype: 'model_refusal_fallback',
+          original_model: 'claude-fable-5',
+          fallback_model: 'claude-opus-4-8',
+          api_refusal_category: 'cyber',
+          content: "Fable 5's safeguards flagged this message. Switched to Opus 4.8.",
+        } as MessageContent,
+      };
+
+      render(<MessageBubble message={message} />);
+
+      expect(screen.getByText('Model switched after refusal')).toBeInTheDocument();
+      expect(screen.getByText('claude-fable-5 → claude-opus-4-8')).toBeInTheDocument();
+      expect(screen.getByText('cyber')).toBeInTheDocument();
+      expect(screen.getByText(/Switched to Opus 4.8/)).toBeInTheDocument();
+    });
+
+    it('renders without a category or explanation', () => {
+      const message = {
+        type: 'system',
+        content: {
+          type: 'system',
+          subtype: 'model_refusal_fallback',
+          original_model: 'claude-fable-5',
+          fallback_model: 'claude-opus-4-8',
+          api_refusal_category: null,
+          api_refusal_explanation: null,
+        } as MessageContent,
+      };
+
+      render(<MessageBubble message={message} />);
+
+      expect(screen.getByText('Model switched after refusal')).toBeInTheDocument();
+      expect(screen.getByText('claude-fable-5 → claude-opus-4-8')).toBeInTheDocument();
+    });
+  });
+
   describe('result messages', () => {
     it('renders turn complete display', () => {
       const message = {
