@@ -49,7 +49,9 @@ export interface ContainerSseMcpServer {
  * MCP server configuration for container (discriminated union)
  */
 export type ContainerMcpServer =
-  ContainerStdioMcpServer | ContainerHttpMcpServer | ContainerSseMcpServer;
+  | ContainerStdioMcpServer
+  | ContainerHttpMcpServer
+  | ContainerSseMcpServer;
 
 /**
  * Repo settings ready for container creation

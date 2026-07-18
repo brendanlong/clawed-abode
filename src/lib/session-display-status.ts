@@ -16,7 +16,13 @@
  * All other statuses pass through unchanged.
  */
 export type SessionDisplayStatus =
-  'running' | 'background' | 'waiting' | 'stopped' | 'creating' | 'error' | 'archived';
+  | 'running'
+  | 'background'
+  | 'waiting'
+  | 'stopped'
+  | 'creating'
+  | 'error'
+  | 'archived';
 
 export function deriveSessionDisplayStatus(
   status: string,
