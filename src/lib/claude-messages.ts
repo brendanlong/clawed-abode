@@ -474,6 +474,11 @@ export function classifyMessage(message: SDKMessage): MessageHandling {
     case 'rate_limit_event':
     case 'prompt_suggestion':
       return { kind: 'persist', dbType: 'system' };
+    case 'conversation_reset':
+      // Internal SDK lifecycle signal (the conversation was reset to a new
+      // conversation id). Carries no transcript value — like session_state_changed,
+      // it is dropped rather than persisted so it never renders a system bubble.
+      return { kind: 'skip' };
     default:
       return assertNeverFallback(message, { kind: 'persist', dbType: 'system' });
   }
