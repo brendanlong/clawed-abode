@@ -248,6 +248,18 @@ describe('isRecognizedMessage', () => {
     });
   });
 
+  it('recognizes model_refusal_fallback messages', () => {
+    const content: MessageContent = {
+      subtype: 'model_refusal_fallback',
+      original_model: 'claude-fable-5',
+      fallback_model: 'claude-opus-4-8',
+    };
+    expect(isRecognizedMessage('system', content)).toEqual({
+      recognized: true,
+      category: 'systemRefusalFallback',
+    });
+  });
+
   it('does not specially recognize hook or generic system messages (hidden from transcript)', () => {
     // init, hooks, and generic notices no longer get a dedicated category — they
     // are hidden upstream by isHiddenSystemMessage, so isRecognizedMessage only
@@ -489,11 +501,14 @@ describe('isHiddenSystemMessage', () => {
     expect(isHiddenSystemMessage('system', {} as MessageContent)).toBe(true);
   });
 
-  it('keeps errors and compact boundaries visible', () => {
+  it('keeps errors, compact boundaries, and refusal fallbacks visible', () => {
     expect(isHiddenSystemMessage('system', { subtype: 'error' } as MessageContent)).toBe(false);
     expect(isHiddenSystemMessage('system', { subtype: 'compact_boundary' } as MessageContent)).toBe(
       false
     );
+    expect(
+      isHiddenSystemMessage('system', { subtype: 'model_refusal_fallback' } as MessageContent)
+    ).toBe(false);
   });
 
   it('never hides non-system messages', () => {
