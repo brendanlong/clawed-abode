@@ -300,23 +300,10 @@ Users can attach files to a message. Files are stored in an `uploads/` folder in
 
 ### System Prompt
 
-A system prompt is appended to all Claude sessions to ensure proper workflow. Since users interact through the web interface and have no local access to files, Claude must always commit, push, and open PRs for changes to be visible.
+A system prompt is appended to all Claude sessions (`DEFAULT_SYSTEM_PROMPT` in [`src/lib/system-prompt.ts`](../src/lib/system-prompt.ts)). Its exact wording lives in code; this section records only the design rationale that the code doesn't make obvious:
 
-The system prompt instructs Claude to:
-
-1. Always commit changes with clear, descriptive commit messages
-2. Always push commits to the remote repository
-3. Open a Pull Request (using `gh pr create`) for new branches or changes that benefit from review
-4. If a PR already exists, just push to update it
-
-This ensures users can see all changes through GitHub, which is their only way to access the codebase.
-
-It also carries a **process-safety** note for the shared host: every session runs as the same user alongside the app server, so a bare `pkill`/`killall` by name matches processes across all sessions (and the server) and can kill another session's work. The prompt directs Claude to either kill by explicit PID or scope a pattern-kill to its own session's cgroup — `pkill --cgroup "$(sed 's#^0::##' /proc/self/cgroup)" -f <pattern>` (each session's CLI tree lives in its own systemd scope, see [Session Process Reaping (cgroup)](#session-process-reaping-cgroup)). Two caveats the prompt encodes:
-
-- **The cgroup must actually be the per-session scope.** In the unwrapped-fallback mode (the systemd scope couldn't be created — see the cgroup section), the CLI inherits a cgroup **shared with the server and other unwrapped sessions**, so `--cgroup` on it would signal them. The prompt tells Claude to first confirm `/proc/self/cgroup` ends in `clawed-session-<id>.scope` and to fall back to PID-kill otherwise.
-- **`--cgroup` is an exact match, not a subtree match**, so it only reaps processes in the session's own cgroup — not any _child_ cgroup a daemon created by starting its own systemd unit/scope (those are still caught by the teardown `systemctl stop <scope>`, which kills the whole subtree, but not by an in-session `pkill --cgroup`). This is the safe direction (under-match), and Claude kills such stragglers by PID.
-
-This is advisory guidance, not an enforced boundary — an agent that ignores it can still signal cross-session.
+- **Commit / push / PR workflow.** Users interact through the web interface with no local file access, so changes are only visible once pushed to GitHub — the prompt therefore requires committing, pushing, and opening PRs.
+- **Process-safety on the shared host.** Every session runs as the same user alongside the app server (see [Session Isolation](#session-isolation)), so the per-session cgroup gives clean _teardown_ isolation but **not** runtime signal isolation — a bare `pkill`/`killall` by name can kill other sessions or the server. The prompt steers Claude to PID-kill or a `--cgroup`-scoped kill. Two non-obvious constraints it encodes: the scope guard (`/proc/self/cgroup` must end in `clawed-session-<id>.scope`, else it's the **shared** cgroup of the [unwrapped fallback](#session-process-reaping-cgroup) and would hit the server), and that `--cgroup` is an exact — not subtree — match (so it under-matches daemons in child cgroups, the safe direction, which the whole-subtree `systemctl stop <scope>` teardown still covers). This is advisory, not an enforced boundary.
 
 ### Interruption Flow
 
