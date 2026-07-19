@@ -8,10 +8,13 @@ describe('buildSystemPrompt', () => {
     expect(prompt).toContain('push your commits');
   });
 
-  it('should warn against unscoped process kills', () => {
+  it('should warn against unscoped process kills and give the exact scoped command', () => {
     const prompt = buildSystemPrompt({});
-    expect(prompt).toContain('pkill');
-    expect(prompt).toContain('--cgroup');
+    // The full command form is pinned so a regression in the sed/cgroup
+    // extraction or the template-literal escaping fails the test.
+    expect(prompt).toContain(`pkill --cgroup "$(sed 's#^0::##' /proc/self/cgroup)" -f <pattern>`);
+    // The guard against the unwrapped-fallback case (shared cgroup) must survive.
+    expect(prompt).toContain('clawed-session-<id>.scope');
   });
 
   it('should use global override when enabled', () => {
