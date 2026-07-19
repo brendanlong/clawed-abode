@@ -12,7 +12,15 @@ export const DEFAULT_SYSTEM_PROMPT = `IMPORTANT: The user is accessing this sess
 3. If you're working on a new branch or the changes would benefit from review, open a Pull Request using the GitHub CLI (gh pr create)
 4. If a PR already exists for the current branch, just push to update it
 
-Never leave uncommitted or unpushed changes - the user cannot see them otherwise.`;
+Never leave uncommitted or unpushed changes - the user cannot see them otherwise.
+
+This is a shared host: other sessions run as the same user, alongside the server that hosts this app. Never run a bare \`pkill\`/\`killall\`/\`pgrep\` by name — it matches processes across the whole host and can kill other sessions' work or the server itself. If you must pattern-kill, scope it to your own session's cgroup so it can only touch processes you started:
+
+\`\`\`
+pkill --cgroup "$(sed 's#^0::##' /proc/self/cgroup)" -f <pattern>
+\`\`\`
+
+Otherwise, kill by explicit PID.`;
 
 /**
  * Build the full system prompt from global settings and per-repo custom prompt.

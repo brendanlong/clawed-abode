@@ -8,6 +8,12 @@ describe('buildSystemPrompt', () => {
     expect(prompt).toContain('push your commits');
   });
 
+  it('should warn against unscoped process kills', () => {
+    const prompt = buildSystemPrompt({});
+    expect(prompt).toContain('pkill');
+    expect(prompt).toContain('--cgroup');
+  });
+
   it('should use global override when enabled', () => {
     const prompt = buildSystemPrompt({
       globalSettings: {
