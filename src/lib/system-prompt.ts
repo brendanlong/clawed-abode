@@ -14,13 +14,15 @@ export const DEFAULT_SYSTEM_PROMPT = `IMPORTANT: The user is accessing this sess
 
 Never leave uncommitted or unpushed changes - the user cannot see them otherwise.
 
-This is a shared host: other sessions run as the same user, alongside the server that hosts this app. Never run a bare \`pkill\`/\`killall\`/\`pgrep\` by name — it matches processes across the whole host and can kill other sessions' work or the server itself. If you must pattern-kill, scope it to your own session's cgroup so it can only touch processes you started:
+This is a shared host: other sessions run as the same user, alongside the server that hosts this app. Never run a bare \`pkill\`/\`killall\` by name - it matches processes across the whole host and can kill other sessions' work or the server itself. Prefer to kill by explicit PID.
+
+If you must pattern-kill, you can scope it to your own session's cgroup - but only when you're in a dedicated session scope. Check first: \`cat /proc/self/cgroup\` should end in \`clawed-session-<id>.scope\`. If it does, this only touches processes you started:
 
 \`\`\`
 pkill --cgroup "$(sed 's#^0::##' /proc/self/cgroup)" -f <pattern>
 \`\`\`
 
-Otherwise, kill by explicit PID.`;
+If it does NOT end in a session scope, you're in a cgroup shared with the server and other sessions - do not use \`--cgroup\`; kill by explicit PID instead.`;
 
 /**
  * Build the full system prompt from global settings and per-repo custom prompt.

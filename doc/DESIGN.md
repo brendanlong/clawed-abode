@@ -311,7 +311,12 @@ The system prompt instructs Claude to:
 
 This ensures users can see all changes through GitHub, which is their only way to access the codebase.
 
-It also carries a **process-safety** note for the shared host: every session runs as the same user alongside the app server, so a bare `pkill`/`killall`/`pgrep` by name matches processes across all sessions (and the server) and can kill another session's work. The prompt directs Claude to either kill by explicit PID or scope a pattern-kill to its own session's cgroup — `pkill --cgroup "$(sed 's#^0::##' /proc/self/cgroup)" -f <pattern>`, which can only touch processes this session started (each session's CLI tree lives in its own systemd scope, see [Session Process Reaping (cgroup)](#session-process-reaping-cgroup)). This is advisory guidance, not an enforced boundary — an agent that ignores it can still signal cross-session.
+It also carries a **process-safety** note for the shared host: every session runs as the same user alongside the app server, so a bare `pkill`/`killall` by name matches processes across all sessions (and the server) and can kill another session's work. The prompt directs Claude to either kill by explicit PID or scope a pattern-kill to its own session's cgroup — `pkill --cgroup "$(sed 's#^0::##' /proc/self/cgroup)" -f <pattern>` (each session's CLI tree lives in its own systemd scope, see [Session Process Reaping (cgroup)](#session-process-reaping-cgroup)). Two caveats the prompt encodes:
+
+- **The cgroup must actually be the per-session scope.** In the unwrapped-fallback mode (the systemd scope couldn't be created — see the cgroup section), the CLI inherits a cgroup **shared with the server and other unwrapped sessions**, so `--cgroup` on it would signal them. The prompt tells Claude to first confirm `/proc/self/cgroup` ends in `clawed-session-<id>.scope` and to fall back to PID-kill otherwise.
+- **`--cgroup` is an exact match, not a subtree match**, so it only reaps processes in the session's own cgroup — not any _child_ cgroup a daemon created by starting its own systemd unit/scope (those are still caught by the teardown `systemctl stop <scope>`, which kills the whole subtree, but not by an in-session `pkill --cgroup`). This is the safe direction (under-match), and Claude kills such stragglers by PID.
+
+This is advisory guidance, not an enforced boundary — an agent that ignores it can still signal cross-session.
 
 ### Interruption Flow
 
