@@ -311,6 +311,8 @@ The system prompt instructs Claude to:
 
 This ensures users can see all changes through GitHub, which is their only way to access the codebase.
 
+It also carries a **process-safety** note for the shared host: every session runs as the same user alongside the app server, so a bare `pkill`/`killall`/`pgrep` by name matches processes across all sessions (and the server) and can kill another session's work. The prompt directs Claude to either kill by explicit PID or scope a pattern-kill to its own session's cgroup — `pkill --cgroup "$(sed 's#^0::##' /proc/self/cgroup)" -f <pattern>`, which can only touch processes this session started (each session's CLI tree lives in its own systemd scope, see [Session Process Reaping (cgroup)](#session-process-reaping-cgroup)). This is advisory guidance, not an enforced boundary — an agent that ignores it can still signal cross-session.
+
 ### Interruption Flow
 
 Interrupt stops the **current turn only** — the streaming query stays alive (it is reusable for the next turn, confirmed by the spike).
