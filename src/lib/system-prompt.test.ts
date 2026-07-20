@@ -17,6 +17,12 @@ describe('buildSystemPrompt', () => {
     expect(prompt).toContain('clawed-session-<id>.scope');
   });
 
+  it('should warn against mutating global/user-level config on the shared host', () => {
+    const prompt = buildSystemPrompt({});
+    expect(prompt).toContain('git config --global');
+    expect(prompt).toContain('git config --local');
+  });
+
   it('should use global override when enabled', () => {
     const prompt = buildSystemPrompt({
       globalSettings: {
