@@ -18,7 +18,9 @@ This host is shared: other sessions and the app server run as the same user, so 
 
 \`\`\`
 pkill --cgroup "$(sed 's#^0::##' /proc/self/cgroup)" -f <pattern>
-\`\`\``;
+\`\`\`
+
+For the same reason, don't touch global or user-level configuration unless the user explicitly asks: no \`git config --global\`, \`~/.bashrc\`, or other \`$HOME\` dotfiles. Those changes permanently affect every other session on this host. Scope tests to your repo or environment if necessary.`;
 
 /**
  * Build the full system prompt from global settings and per-repo custom prompt.
