@@ -917,7 +917,7 @@ function applyStatus(sessionId: string, state: SessionState, message: SDKMessage
   //
   // We deliberately fire only on a turn-end (not when a background task drains):
   // when a background task settles the main agent autonomously continues in a new
-  // turn (see "Query Model" in DESIGN.md), and *that* turn's end is where we reach
+  // turn (see doc/claude-sessions.md), and *that* turn's end is where we reach
   // fully idle. Firing on the drain would notify prematurely and then again at the
   // continuation's end. The residual case — a background task settling with no
   // continuation — leaves no "finished" signal, an accepted tradeoff (favoring no
