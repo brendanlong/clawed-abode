@@ -47,7 +47,7 @@ Key decisions:
 - **Isolation is convention-only.** Each session gets its own clone at `~/worktrees/{sessionId}/{repoName}` (no-repo sessions get a bare `~/worktrees/{sessionId}/`), but all sessions share the host user, filesystem, and installed tools, and can see each other's worktrees. `bypassPermissions` mode is used; the machine must be dedicated to this app.
 - **SQLite + Prisma 7** with the Rust-free `prisma-client` generator (client generated to `src/generated/prisma/`, gitignored; imported via `@/generated/prisma/client`). Schema: [`prisma/schema.prisma`](../prisma/schema.prisma); CLI config: [`prisma.config.ts`](../prisma.config.ts).
 - **tRPC for the API** ([`src/server/routers/`](../src/server/routers/)); **SSE for all server→client streaming**. Client→server actions are ordinary mutations, so a bidirectional transport (WebSockets) is unnecessary.
-- **Single-user auth**: Argon2 password hash in `PASSWORD_HASH`, DB-backed sessions with random tokens, 7-day expiry, IP/user-agent audit ([`src/lib/auth.ts`](../src/lib/auth.ts)).
+- **Single-user password auth** behind Tailscale — see [`security.md`](security.md).
 - **Cursor-based pagination everywhere**, keyed on per-session message `sequence` numbers.
 
 ## Data Model
@@ -84,7 +84,7 @@ The "Open in VS Code" button deep-links into a self-hosted [code-server](https:/
 ## Where Things Live
 
 - [`src/server/routers/`](../src/server/routers/) — tRPC API (auth, github, sessions, claude, sse, settings)
-- [`src/server/services/`](../src/server/services/) — session/query/workspace management; [`claude-runner.ts`](../src/server/services/claude-runner.ts) is the core (see `src/server/services/CLAUDE.md`)
+- [`src/server/services/`](../src/server/services/) — session/query/workspace management; [`claude-runner.ts`](../src/server/services/claude-runner.ts) is the core (see [`src/server/services/CLAUDE.md`](../src/server/services/CLAUDE.md))
 - [`src/lib/`](../src/lib/) — pure, unit-testable logic shared by server and client
 - [`src/hooks/`](../src/hooks/) — React Query + SSE wiring
-- [`src/components/`](../src/components/) — UI (see `src/components/CLAUDE.md`)
+- [`src/components/`](../src/components/) — UI (see [`src/components/CLAUDE.md`](../src/components/CLAUDE.md))
