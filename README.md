@@ -4,6 +4,8 @@ A self-hosted web application that provides mobile-friendly access to Claude Cod
 
 > **Note:** This is an unofficial community project and is not affiliated with, endorsed by, or supported by Anthropic. [Claude Code](https://claude.ai/code) is a product of Anthropic, but this web interface is an independent project.
 
+Read more: [Clawed Abode: Claude Code is Too Cloudy](https://www.brendanlong.com/claude-code-is-too-cloudy.html)
+
 ## Features
 
 - Run Claude Code sessions from any device with a web browser
