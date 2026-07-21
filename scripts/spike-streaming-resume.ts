@@ -1,6 +1,6 @@
 /**
- * Throwaway spike for the persistent-streaming-queries refactor.
- * See doc/plans/persistent-streaming-queries.md.
+ * Throwaway spike for the persistent-streaming-queries refactor
+ * (see "Persistent Streaming Query" in doc/claude-sessions.md).
  *
  * De-risks the two UNPROVEN SDK assumptions (plus interrupt as a bonus):
  *
