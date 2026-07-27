@@ -61,7 +61,7 @@
     "highlight.js": "^11.11.1",
     "lucide-react": "^1.25.0",
     "marked": "^17.0.6",
-    "next": "^16.2.10",
+    "next": "^16.2.11",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "superjson": "^2.2.6",
