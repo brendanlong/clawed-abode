@@ -59,7 +59,7 @@
     "dompurify": "^3.4.12",
     "event-source-polyfill": "^1.0.31",
     "highlight.js": "^11.11.1",
-    "lucide-react": "^1.23.0",
+    "lucide-react": "^1.25.0",
     "marked": "^17.0.6",
     "next": "^16.2.10",
     "react": "^19.2.7",
