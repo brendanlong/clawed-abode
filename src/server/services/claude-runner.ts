@@ -1368,6 +1368,12 @@ async function removeMessage(sessionId: string, messageId: string): Promise<void
  * reports false and we leave it alone, bubble included, because the agent did read
  * it. A cancelled one is deleted from the transcript (it describes something that
  * never happened) and handed back so the composer can restore the user's text.
+ *
+ * **Runs before the interrupt, not after.** The abort is what wakes the CLI's drain
+ * loop, and the drain starts the next queued command immediately — cancelling
+ * afterwards loses that race every time (observed end-to-end, and the SDK's own
+ * `still_queued` docs say a post-interrupt probe "always loses the race against the
+ * drain loop"). Cancelling first leaves the drain nothing to start.
  */
 async function cancelPendingCommands(
   sessionId: string,
@@ -1418,6 +1424,10 @@ export async function interruptClaude(sessionId: string): Promise<InterruptResul
     return { interrupted: false, cancelled: [] };
   }
 
+  // Empty the CLI's command queue first — see cancelPendingCommands: the abort
+  // below wakes the drain loop, so anything left queued at that moment runs.
+  const cancelled = await cancelPendingCommands(sessionId, state, state.query);
+
   // Mark this turn-end as an interrupt so `applyStatus` doesn't report it as
   // Claude *finishing* — the user stopped it.
   state.interruptRequested = true;
@@ -1426,16 +1436,15 @@ export async function interruptClaude(sessionId: string): Promise<InterruptResul
     await state.query.interrupt();
   } catch (err) {
     // The interrupt didn't take, so no interrupt-driven turn-end is coming; clear
-    // the flag so it can't suppress a later, natural turn-end's notification.
+    // the flag so it can't suppress a later, natural turn-end's notification. The
+    // cancellations already happened and are still reported, so the composer gets
+    // those prompts back either way.
     state.interruptRequested = false;
     log.warn('interruptClaude: failed', { sessionId, error: toError(err).message });
-    return { interrupted: false, cancelled: [] };
+    return { interrupted: false, cancelled };
   }
 
-  return {
-    interrupted: true,
-    cancelled: await cancelPendingCommands(sessionId, state, state.query),
-  };
+  return { interrupted: true, cancelled };
 }
 
 /**
