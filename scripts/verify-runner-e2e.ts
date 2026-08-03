@@ -164,7 +164,7 @@ async function testInterrupt() {
   );
   await waitFor(() => runner.isClaudeRunning(id), 30_000, 'turn started');
   await sleep(3000);
-  const interrupted = await runner.interruptClaude(id);
+  const { interrupted } = await runner.interruptClaude(id);
   check(interrupted, 'interrupt returned true');
   await waitFor(() => !runner.isClaudeRunning(id), 30_000, 'turnActive cleared after interrupt');
   check(!runner.isClaudeRunning(id), 'turnActive false after interrupt');

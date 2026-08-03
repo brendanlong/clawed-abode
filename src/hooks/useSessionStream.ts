@@ -2,7 +2,11 @@
 
 import { useCallback, useState } from 'react';
 import { trpc } from '@/lib/trpc';
-import { mergeMessageIntoCache, isPartialMessageId } from '@/lib/message-cache';
+import {
+  mergeMessageIntoCache,
+  removeMessageFromCache,
+  isPartialMessageId,
+} from '@/lib/message-cache';
 import { assertNeverFallback } from '@/lib/claude-messages';
 import type { PullRequestInfo } from './usePullRequestStatus';
 import type { inferRouterOutputs } from '@trpc/server';
@@ -65,7 +69,7 @@ export function useSessionStream(sessionId: string, options: UseSessionStreamOpt
     void utils.claude.getTokenUsage.refetch({ sessionId });
     void utils.claude.getRetryState.refetch({ sessionId });
     void utils.claude.getBackgroundTasks.refetch({ sessionId });
-    void utils.claude.getQueuedMessages.refetch({ sessionId });
+    void utils.claude.getPendingMessageIds.refetch({ sessionId });
   }, [utils, sessionId]);
 
   const subscription = trpc.sse.onSessionEvents.useSubscription(
@@ -120,8 +124,18 @@ export function useSessionStream(sessionId: string, options: UseSessionStreamOpt
             utils.claude.getBackgroundTasks.setData({ sessionId }, { tasks: event.tasks });
             break;
           }
-          case 'queued': {
-            utils.claude.getQueuedMessages.setData({ sessionId }, { messages: event.messages });
+          case 'message_removed': {
+            utils.claude.getHistory.setInfiniteData(
+              { sessionId, limit: MESSAGE_PAGE_SIZE },
+              (old) => removeMessageFromCache(old, event.messageId)
+            );
+            break;
+          }
+          case 'pending': {
+            utils.claude.getPendingMessageIds.setData(
+              { sessionId },
+              { messageIds: event.messageIds }
+            );
             break;
           }
           default:

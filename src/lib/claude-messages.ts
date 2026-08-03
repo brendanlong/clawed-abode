@@ -415,6 +415,33 @@ export function formatRetryReason(retry: RetryState): string | null {
 }
 
 /**
+ * Delivery lifecycle of one user message we pushed into the streaming query.
+ *
+ * The CLI emits these for every user message stamped with a `uuid`, but the type
+ * is absent from the SDK's `SDKMessage` union (`@anthropic-ai/claude-agent-sdk`
+ * 0.3.219), so it is parsed defensively instead of typed. `state` is left open
+ * (`string`) for the same reason: only `'queued'` — accepted into the CLI's
+ * command queue but not yet handed to the model — is load-bearing, and anything
+ * else means the message has left the queue.
+ */
+export const CommandLifecycleSchema = z.object({
+  type: z.literal('command_lifecycle'),
+  command_uuid: z.string().min(1),
+  state: z.string().min(1),
+});
+export type CommandLifecycle = z.infer<typeof CommandLifecycleSchema>;
+
+/**
+ * Parse a `command_lifecycle` message, or `null` for anything else. The observed
+ * sequence for a delivered message is `queued` → `started` → `completed`;
+ * `started` is the moment the agent actually sees it.
+ */
+export function parseCommandLifecycle(message: unknown): CommandLifecycle | null {
+  const parsed = CommandLifecycleSchema.safeParse(message);
+  return parsed.success ? parsed.data : null;
+}
+
+/**
  * Whether a system message should be dropped entirely (never persisted or shown).
  * Operates on loosely-typed content so it can also filter rows stored before a
  * subtype was added to the ignore list (see {@link classifyMessage} for the typed
@@ -455,6 +482,11 @@ export function assertNeverFallback<T>(_unhandled: never, fallback: T): T {
  * unknown ones default to being persisted as a generic system message.
  */
 export function classifyMessage(message: SDKMessage): MessageHandling {
+  // `command_lifecycle` is emitted by the CLI but missing from `SDKMessage`, so it
+  // would otherwise fall through to the `default` branch and be persisted as a
+  // system bubble. It is pure delivery bookkeeping — never transcript content.
+  if (parseCommandLifecycle(message)) return { kind: 'skip' };
+
   switch (message.type) {
     case 'assistant':
       return { kind: 'persist', dbType: 'assistant' };

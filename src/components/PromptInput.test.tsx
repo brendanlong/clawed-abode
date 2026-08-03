@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { PromptInput } from './PromptInput';
-import { MAX_QUEUED_MESSAGES } from '@/lib/queued-message';
 
 // Mock the upload hook so a file can be attached without hitting /api/upload.
 const { mockUpload } = vi.hoisted(() => ({ mockUpload: vi.fn() }));
@@ -45,12 +44,10 @@ describe('PromptInput', () => {
       ).toBeInTheDocument();
     });
 
-    it('shows a queueing placeholder when running', () => {
+    it('invites sending anyway while Claude is working', () => {
       render(<PromptInput {...defaultProps} isRunning={true} />);
 
-      expect(
-        screen.getByPlaceholderText(/claude is working.*sent when it finishes/i)
-      ).toBeInTheDocument();
+      expect(screen.getByPlaceholderText(/claude is working.*send anyway/i)).toBeInTheDocument();
     });
 
     it('shows "Session is not running" placeholder when disabled', () => {
@@ -61,12 +58,12 @@ describe('PromptInput', () => {
   });
 
   describe('send button behavior', () => {
-    it('shows both Stop and Queue buttons when Claude is running', () => {
+    it('shows both Stop and Send buttons when Claude is running', () => {
       render(<PromptInput {...defaultProps} isRunning={true} />);
 
-      // Stop interrupts the current turn; Queue sends a new message afterwards.
+      // Stop interrupts the current turn; Send delivers into it.
       expect(screen.getByRole('button', { name: /stop/i })).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: /queue/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^send$/i })).toBeInTheDocument();
     });
 
     it('shows "Stopping..." when isInterrupting is true', () => {
@@ -159,18 +156,18 @@ describe('PromptInput', () => {
       expect(screen.getByRole('button', { name: /send/i })).toBeDisabled();
     });
 
-    it('queues a message (calls onSubmit) while running', async () => {
+    it('sends while running (the message interleaves into the turn)', async () => {
       const onSubmit = vi.fn();
       const user = userEvent.setup();
       render(<PromptInput {...defaultProps} onSubmit={onSubmit} isRunning={true} />);
 
-      // The composer stays usable while running so messages can be queued.
+      // The composer stays usable while running — sends go straight to the agent.
       const textarea = screen.getByRole('textbox');
       expect(textarea).not.toBeDisabled();
-      await user.type(textarea, 'queued message');
-      await user.click(screen.getByRole('button', { name: /queue/i }));
+      await user.type(textarea, 'btw also do this');
+      await user.click(screen.getByRole('button', { name: /send/i }));
 
-      expect(onSubmit).toHaveBeenCalledWith('queued message', undefined);
+      expect(onSubmit).toHaveBeenCalledWith('btw also do this', undefined);
     });
   });
 
@@ -251,41 +248,29 @@ describe('PromptInput', () => {
     });
   });
 
-  describe('queue overflow', () => {
-    it('disables submit and explains when the queue is full while running', async () => {
-      const onSubmit = vi.fn();
+  describe('stop', () => {
+    it('restores prompts the server pulled back when the agent had not read them', async () => {
+      // Stop cancels an undelivered message server-side; its text must come back
+      // to the composer instead of vanishing.
+      const onInterrupt = vi.fn().mockResolvedValue(['unread message']);
       const user = userEvent.setup();
-      render(
-        <PromptInput
-          {...defaultProps}
-          onSubmit={onSubmit}
-          isRunning={true}
-          queuedCount={MAX_QUEUED_MESSAGES}
-        />
-      );
+      render(<PromptInput {...defaultProps} onInterrupt={onInterrupt} isRunning={true} />);
 
-      await user.type(screen.getByRole('textbox'), 'one more');
+      await user.click(screen.getByRole('button', { name: /stop/i }));
 
-      const queueButton = screen.getByRole('button', { name: /queue/i });
-      expect(queueButton).toBeDisabled();
-      expect(screen.getByText(/messages already queued/i)).toBeInTheDocument();
-
-      await user.click(queueButton);
-      expect(onSubmit).not.toHaveBeenCalled();
+      await waitFor(() => expect(screen.getByRole('textbox')).toHaveValue('unread message'));
     });
 
-    it('does not block submit when the queue is full but no turn is running', async () => {
-      // Idle sends start a turn rather than queueing, so the cap does not apply.
-      const onSubmit = vi.fn();
+    it('leaves text the user has already started typing alone', async () => {
+      const onInterrupt = vi.fn().mockResolvedValue(['unread message']);
       const user = userEvent.setup();
-      render(
-        <PromptInput {...defaultProps} onSubmit={onSubmit} queuedCount={MAX_QUEUED_MESSAGES} />
-      );
+      render(<PromptInput {...defaultProps} onInterrupt={onInterrupt} isRunning={true} />);
 
-      await user.type(screen.getByRole('textbox'), 'hello');
-      await user.click(screen.getByRole('button', { name: /send/i }));
+      await user.type(screen.getByRole('textbox'), 'something new');
+      await user.click(screen.getByRole('button', { name: /stop/i }));
 
-      expect(onSubmit).toHaveBeenCalledWith('hello', undefined);
+      await waitFor(() => expect(onInterrupt).toHaveBeenCalled());
+      expect(screen.getByRole('textbox')).toHaveValue('something new');
     });
   });
 

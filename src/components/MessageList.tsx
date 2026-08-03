@@ -13,10 +13,9 @@ import type {
   DisplayMessage,
 } from './messages/types';
 import { MessageListProvider } from './messages/MessageListContext';
+import { Clock } from 'lucide-react';
 import { Spinner } from '@/components/ui/spinner';
 import { ContextUsageIndicator } from '@/components/ContextUsageIndicator';
-import { QueuedMessageList } from '@/components/QueuedMessageList';
-import type { QueuedMessage } from '@/lib/queued-message';
 import type { TokenUsageStats } from '@/lib/token-estimation';
 import { useNotification } from '@/hooks/useNotification';
 import { useVoicePlaybackContext } from '@/hooks/useVoicePlayback';
@@ -299,9 +298,12 @@ interface MessageListProps {
   onSendResponse?: (response: string) => void;
   onAnswerQuestion?: (toolUseId: string, answers: Record<string, string>) => void;
   onRespondToPlan?: (toolUseId: string, approve: boolean, feedback?: string) => void;
-  /** Server-owned queued messages, pinned below the transcript (async "btw mode"). */
-  queuedMessages?: QueuedMessage[];
-  onCancelQueued?: (id: string) => void;
+  /**
+   * Ids of user messages already handed to the SDK that the agent hasn't read
+   * yet — rendered with a "Sending…" marker so a message that lands mid-tool
+   * isn't mistaken for one Claude has already ignored.
+   */
+  pendingMessageIds?: string[];
   /**
    * Whether the session's query is live. Gates pinning a still-running subagent's
    * box to the bottom (a subagent whose result was lost to a dead query would
@@ -319,8 +321,7 @@ export function MessageList({
   onSendResponse,
   onAnswerQuestion,
   onRespondToPlan,
-  queuedMessages = [],
-  onCancelQueued,
+  pendingMessageIds = [],
   isSessionRunning = false,
 }: MessageListProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -514,8 +515,7 @@ export function MessageList({
     if (hasInitialScrolled.current && isAtBottomRef.current && !voiceIsTrackingMessage) {
       scrollToBottom();
     }
-    // queuedMessages.length so queuing a message scrolls it into view too.
-  }, [messages, queuedMessages.length, scrollToBottom, voiceIsPlaying, voiceCurrentMessageId]);
+  }, [messages, scrollToBottom, voiceIsPlaying, voiceCurrentMessageId]);
 
   // Track if user is at bottom using IntersectionObserver (for auto-scroll on new messages)
   // This is more reliable than scroll-position math because layout changes (textarea resize,
@@ -665,6 +665,8 @@ export function MessageList({
     [subagentMessagesByToolUseId, resultMap, pairedMessageIds]
   );
 
+  const pendingIds = useMemo(() => new Set(pendingMessageIds), [pendingMessageIds]);
+
   const contextValue = useMemo(
     () => ({
       latestTodoWriteId,
@@ -750,8 +752,8 @@ export function MessageList({
                 key={message.id}
                 data-message-id={message.id}
                 className={cn(
-                  'flex',
-                  isUserMessage ? 'justify-end' : 'justify-start',
+                  'flex flex-col',
+                  isUserMessage ? 'items-end' : 'items-start',
                   spacingClass
                 )}
               >
@@ -763,6 +765,12 @@ export function MessageList({
                   }}
                   toolResults={resultMap}
                 />
+                {pendingIds.has(message.id) && (
+                  <span className="mt-1 inline-flex items-center gap-1 text-xs text-muted-foreground">
+                    <Clock className="h-3 w-3" />
+                    Sending…
+                  </span>
+                )}
               </div>
             );
           })}
@@ -792,10 +800,6 @@ export function MessageList({
             </div>
           )}
         </MessageListProvider>
-
-        {onCancelQueued && (
-          <QueuedMessageList messages={queuedMessages} onCancel={onCancelQueued} />
-        )}
 
         <div ref={bottomRef} style={{ overflowAnchor: 'none' }} />
       </div>

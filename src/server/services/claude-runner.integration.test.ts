@@ -20,7 +20,8 @@ const mockSseEvents = vi.hoisted(() => ({
   emitClaudeFinished: vi.fn(),
   emitClaudeRetry: vi.fn(),
   emitBackgroundTasks: vi.fn(),
-  emitQueuedMessages: vi.fn(),
+  emitPendingMessages: vi.fn(),
+  emitMessageRemoved: vi.fn(),
   emitCommands: vi.fn(),
   emitSessionUpdate: vi.fn(),
   emitPrUpdate: vi.fn(),
@@ -107,8 +108,7 @@ import { sessionScopeUnitName } from '@/lib/session-scope';
 // Imported dynamically in beforeAll (after setupTestDb sets DATABASE_URL), since
 // claude-runner pulls in @/lib/prisma at module load.
 let sendUserMessage: typeof import('./claude-runner').sendUserMessage;
-let cancelQueuedMessage: typeof import('./claude-runner').cancelQueuedMessage;
-let getQueuedMessages: typeof import('./claude-runner').getQueuedMessages;
+let getPendingMessageIds: typeof import('./claude-runner').getPendingMessageIds;
 let interruptClaude: typeof import('./claude-runner').interruptClaude;
 let stopSession: typeof import('./claude-runner').stopSession;
 let isClaudeRunning: typeof import('./claude-runner').isClaudeRunning;
@@ -128,6 +128,9 @@ function makeFakeQuery() {
   const setModel = vi.fn(async () => {});
   const setMcpServers = vi.fn(async () => {});
   const stopTask = vi.fn(async (_taskId: string) => {});
+  // Default: every still-queued command can be pulled back. A test overrides it
+  // to model a command the CLI had already dequeued.
+  const cancelAsyncMessage = vi.fn(async (_uuid: string) => true);
 
   const factory = (params: { prompt: AsyncIterable<SDKUserMessage>; options: unknown }): Query => {
     // Record pushed user messages so we can assert sendUserMessage reached the SDK.
@@ -142,6 +145,7 @@ function makeFakeQuery() {
       stopTask,
       setModel,
       setMcpServers,
+      cancelAsyncMessage,
     } as unknown as Query;
   };
 
@@ -153,6 +157,7 @@ function makeFakeQuery() {
     setModel,
     setMcpServers,
     stopTask,
+    cancelAsyncMessage,
   };
 }
 
@@ -217,6 +222,17 @@ function messageDelta(stopReason: string | null, parent: string | null = null): 
     uuid: nextUuid(),
   } as unknown as SDKMessage;
 }
+// The CLI's per-message delivery report. Not in the SDK's SDKMessage union, so
+// it is built (and parsed) structurally — see parseCommandLifecycle.
+function commandLifecycle(commandUuid: string, state: string): SDKMessage {
+  return {
+    type: 'command_lifecycle',
+    command_uuid: commandUuid,
+    state,
+    session_id: 's',
+    uuid: nextUuid(),
+  } as unknown as SDKMessage;
+}
 function taskStarted(taskId: string): SDKMessage {
   return {
     type: 'system',
@@ -275,8 +291,7 @@ describe('claude-runner persistent streaming loop', () => {
     await setupTestDb();
     const mod = await import('./claude-runner');
     sendUserMessage = mod.sendUserMessage;
-    cancelQueuedMessage = mod.cancelQueuedMessage;
-    getQueuedMessages = mod.getQueuedMessages;
+    getPendingMessageIds = mod.getPendingMessageIds;
     interruptClaude = mod.interruptClaude;
     stopSession = mod.stopSession;
     isClaudeRunning = mod.isClaudeRunning;
@@ -826,277 +841,187 @@ describe('claude-runner persistent streaming loop', () => {
     stopSession(sessionId);
   });
 
-  it('queues messages sent during a turn (unpersisted, surfaced) and flushes them at turn end', async () => {
+  it('pushes a message sent mid-turn straight to the SDK, stamped for delivery tracking', async () => {
     const fake = makeFakeQuery();
     _setQueryFactory(fake.factory);
     const sessionId = await createRunningSession();
 
-    // Turn 1 starts and pushes immediately (the fake reads input asynchronously).
     await sendUserMessage(sessionId, 'first');
-    expect(isClaudeRunning(sessionId)).toBe(true);
-    await waitFor(() => fake.inputs.length >= 1);
+    fake.emit(messageStart());
+    await waitFor(() => isClaudeRunning(sessionId));
 
-    // Two more sends while the turn is active are queued, not pushed — and unlike
-    // before, NOT persisted: only the first message is in the transcript so far.
+    // A send while the turn is active is NOT held back — it goes to the SDK
+    // immediately as its own message, so the CLI can fold it into the running
+    // turn at the next tool-result boundary.
     await sendUserMessage(sessionId, 'second');
-    await sendUserMessage(sessionId, 'third');
-    expect(getQueuedMessages(sessionId).map((m) => m.text)).toEqual(['second', 'third']);
-    expect(mockSseEvents.emitQueuedMessages).toHaveBeenCalled();
-    const duringTurn = await messagesFor(sessionId);
-    expect(duringTurn).toHaveLength(1);
-    // Still only the first prompt reached the SDK; the rest are queued.
-    expect(fake.inputs).toHaveLength(1);
-
-    // The turn ends → queued messages persist (as their own bubbles) and flush
-    // together as one combined push.
-    fake.emit(result());
     await waitFor(() => fake.inputs.length >= 2);
-    expect(fake.inputs[1].message.content).toBe('second\n\nthird');
-    await waitFor(
-      async () => (await messagesFor(sessionId)).filter((m) => m.type === 'user').length >= 3
-    );
+    expect(fake.inputs.map((m) => m.message.content)).toEqual(['first', 'second']);
+    // Each carries a uuid so the CLI reports its delivery over command_lifecycle.
+    expect(fake.inputs.every((m) => typeof m.uuid === 'string' && m.uuid.length > 0)).toBe(true);
+    expect(new Set(fake.inputs.map((m) => m.uuid)).size).toBe(2);
+
+    // Both are persisted as their own bubbles right away — nothing waits for a flush.
     const userMsgs = (await messagesFor(sessionId)).filter((m) => m.type === 'user');
-    expect(userMsgs).toHaveLength(3);
-    // The queue is emptied and the empty list emitted.
-    expect(getQueuedMessages(sessionId)).toHaveLength(0);
-    expect(mockSseEvents.emitQueuedMessages).toHaveBeenCalledWith(sessionId, []);
-
-    // turnActive stays continuously true across the handoff (no idle blip that
-    // would trip work-complete notifications / voice auto-read between turns).
-    expect(isClaudeRunning(sessionId)).toBe(true);
-    expect(mockSseEvents.emitClaudeRunning).not.toHaveBeenCalledWith(sessionId, false);
+    expect(userMsgs).toHaveLength(2);
 
     stopSession(sessionId);
   });
 
-  it('leaves queued messages queued on interrupt (does not flush them as a new turn)', async () => {
+  it('marks a message pending until the CLI reports it started, and never persists the lifecycle events', async () => {
     const fake = makeFakeQuery();
     _setQueryFactory(fake.factory);
     const sessionId = await createRunningSession();
 
-    await sendUserMessage(sessionId, 'first');
-    fake.emit(messageStart());
-    await waitFor(() => isClaudeRunning(sessionId));
-
-    // Queue a message mid-turn, then Stop.
-    await sendUserMessage(sessionId, 'queued while working');
-    expect(getQueuedMessages(sessionId).map((m) => m.text)).toEqual(['queued while working']);
-
-    mockSseEvents.emitClaudeFinished.mockClear();
-    expect(await interruptClaude(sessionId)).toBe(true);
-    // The interrupt's terminal result ends the turn WITHOUT flushing the queue.
-    fake.emit(result('error_during_execution'));
-    await waitFor(() => !isClaudeRunning(sessionId));
-
-    // An interrupt is NOT a natural completion — no work-complete signal fires.
-    expect(mockSseEvents.emitClaudeFinished).not.toHaveBeenCalled();
-
-    // The queued message is still queued (never pushed to the SDK, never persisted).
-    expect(fake.inputs).toHaveLength(1);
-    expect(getQueuedMessages(sessionId).map((m) => m.text)).toEqual(['queued while working']);
-    expect((await messagesFor(sessionId)).filter((m) => m.type === 'user')).toHaveLength(1);
-
-    stopSession(sessionId);
-  });
-
-  it('cancelQueuedMessage removes a queued message and emits the update', async () => {
-    const fake = makeFakeQuery();
-    _setQueryFactory(fake.factory);
-    const sessionId = await createRunningSession();
-
-    await sendUserMessage(sessionId, 'first');
-    fake.emit(messageStart());
-    await waitFor(() => isClaudeRunning(sessionId));
-    await sendUserMessage(sessionId, 'remove me');
-
-    const [queued] = getQueuedMessages(sessionId);
-    expect(queued.text).toBe('remove me');
-
-    expect(cancelQueuedMessage(sessionId, queued.id)).toBe(true);
-    expect(getQueuedMessages(sessionId)).toHaveLength(0);
-    expect(mockSseEvents.emitQueuedMessages).toHaveBeenLastCalledWith(sessionId, []);
-
-    // Removing an absent id is an idempotent no-op that still reports success.
-    expect(cancelQueuedMessage(sessionId, 'nope')).toBe(true);
-
-    stopSession(sessionId);
-  });
-
-  it('flushes leftover queued messages ahead of an idle send, combined in order', async () => {
-    const fake = makeFakeQuery();
-    _setQueryFactory(fake.factory);
-    const sessionId = await createRunningSession();
-
-    // Queue a message mid-turn, then interrupt so it's left sitting (idle).
-    await sendUserMessage(sessionId, 'first');
-    fake.emit(messageStart());
-    await waitFor(() => isClaudeRunning(sessionId));
-    await sendUserMessage(sessionId, 'leftover');
-    await interruptClaude(sessionId);
-    fake.emit(result('error_during_execution'));
-    await waitFor(() => !isClaudeRunning(sessionId));
-    expect(getQueuedMessages(sessionId).map((m) => m.text)).toEqual(['leftover']);
-
-    // A fresh idle send drains the leftover ahead of the new message, as one turn.
-    await sendUserMessage(sessionId, 'new');
-    await waitFor(() => fake.inputs.length >= 2);
-    expect(fake.inputs[1].message.content).toBe('leftover\n\nnew');
-    expect(getQueuedMessages(sessionId)).toHaveLength(0);
-    expect(isClaudeRunning(sessionId)).toBe(true);
-
-    stopSession(sessionId);
-  });
-
-  it('re-queues (does not lose) messages when a flush fails to persist', async () => {
-    // Non-destructive flush: if preparing/persisting a queued message throws at
-    // turn end, the messages must be handed back to the queue (not silently lost)
-    // and the session must go idle rather than pin the composer "working".
-    const fake = makeFakeQuery();
-    _setQueryFactory(fake.factory);
-    const sessionId = await createRunningSession();
-
-    await sendUserMessage(sessionId, 'first');
-    fake.emit(messageStart());
-    await waitFor(() => isClaudeRunning(sessionId));
-
-    // Queue a message with an attachment; resolving it will blow up during flush.
-    await sendUserMessage(sessionId, 'has attachment', ['aaaa1111-doc.md']);
-    expect(getQueuedMessages(sessionId).map((m) => m.text)).toEqual(['has attachment']);
-    mockResolveUploadPaths.mockRejectedValueOnce(new Error('fs boom'));
-
-    // Turn ends naturally → flush fires → prepare throws → non-destructive recovery.
-    fake.emit(messageDelta('end_turn'));
-    fake.emit(result());
-    await waitFor(() => !isClaudeRunning(sessionId));
-
-    // The message is back in the queue (with its attachment), nothing was pushed to
-    // the SDK, and the composer is idle.
-    const requeued = getQueuedMessages(sessionId);
-    expect(requeued.map((m) => m.text)).toEqual(['has attachment']);
-    expect(requeued[0].attachments).toEqual(['aaaa1111-doc.md']);
-    expect(fake.inputs).toHaveLength(1);
-    expect(mockSseEvents.emitClaudeRunning).toHaveBeenLastCalledWith(sessionId, false);
-
-    stopSession(sessionId);
-  });
-
-  it('leaves the queue intact when interrupted during the flush window (before the push)', async () => {
-    // The interrupt-vs-flush race: the turn ends naturally and the flush starts,
-    // but the user hits Stop while the flush is still preparing (before it pushes).
-    // The flush must abort — re-queue and go idle — NOT fire the queue as a turn.
-    const fake = makeFakeQuery();
-    _setQueryFactory(fake.factory);
-    const sessionId = await createRunningSession();
-
-    await sendUserMessage(sessionId, 'first');
-    fake.emit(messageStart());
-    await waitFor(() => isClaudeRunning(sessionId));
-    await sendUserMessage(sessionId, 'queued', ['aaaa1111-doc.md']);
-
-    // Make attachment resolution hang so we can interrupt mid-flush.
-    let release!: () => void;
-    mockResolveUploadPaths.mockReturnValueOnce(
-      new Promise((res) => {
-        release = () => res(['/p/doc.md']);
-      })
-    );
-
-    // Turn ends → the flush starts and blocks in prepare.
-    fake.emit(messageDelta('end_turn'));
-    fake.emit(result());
-    await waitFor(() => mockResolveUploadPaths.mock.calls.length >= 1);
-
-    // User hits Stop during the flush window.
-    expect(await interruptClaude(sessionId)).toBe(true);
-
-    // Let prepare finish; the flush detects the interrupt, re-queues, goes idle.
-    release();
-    await waitFor(() => !isClaudeRunning(sessionId));
-
-    expect(fake.inputs).toHaveLength(1); // the queue was NOT pushed as a new turn
-    expect(getQueuedMessages(sessionId).map((m) => m.text)).toEqual(['queued']);
-
-    stopSession(sessionId);
-  });
-
-  it('holds turnActive continuously across the flush handoff (stream events + interleaved task)', async () => {
-    // Reproduces the real message ordering: the turn ends via a terminal
-    // message_delta, a task_notification lands before the trailing result, then
-    // the flushed turn opens with its own message_start. turnActive must never
-    // dip to false across the whole handoff (which would trip work-complete
-    // notifications / voice auto-read on the client).
-    const fake = makeFakeQuery();
-    _setQueryFactory(fake.factory);
-    const sessionId = await createRunningSession();
-
-    await sendUserMessage(sessionId, 'first');
+    await sendUserMessage(sessionId, 'hello');
     await waitFor(() => fake.inputs.length >= 1);
+    const commandUuid = fake.inputs[0].uuid!;
 
-    // Turn 1 streams and the user queues a follow-up mid-turn.
+    // Pending from the moment we push: the bubble exists but the agent hasn't read it.
+    const [messageId] = getPendingMessageIds(sessionId);
+    expect(messageId).toBeDefined();
+    expect(mockSseEvents.emitPendingMessages).toHaveBeenLastCalledWith(sessionId, [messageId]);
+    const [persisted] = (await messagesFor(sessionId)).filter((m) => m.type === 'user');
+    expect(persisted.id).toBe(messageId);
+
+    // `queued` is just the CLI acknowledging receipt — still pending.
+    fake.emit(commandLifecycle(commandUuid, 'queued'));
     fake.emit(messageStart());
     await waitFor(() => isClaudeRunning(sessionId));
+    expect(getPendingMessageIds(sessionId)).toEqual([messageId]);
+
+    // `started` means the agent is reading it now.
+    fake.emit(commandLifecycle(commandUuid, 'started'));
+    await waitFor(() => getPendingMessageIds(sessionId).length === 0);
+    expect(mockSseEvents.emitPendingMessages).toHaveBeenLastCalledWith(sessionId, []);
+
+    fake.emit(commandLifecycle(commandUuid, 'completed'));
+    fake.emit(messageDelta('end_turn'));
+    await waitFor(() => !isClaudeRunning(sessionId));
+
+    // Lifecycle events are bookkeeping, never transcript content.
+    const stored = await messagesFor(sessionId);
+    expect(stored.some((m) => JSON.stringify(m.content).includes('command_lifecycle'))).toBe(false);
+
+    stopSession(sessionId);
+  });
+
+  it('holds the running indicator across a turn end while a pushed message is still undelivered', async () => {
+    // The CLI usually folds a mid-turn message into the running turn, but if the
+    // turn ends first it starts a fresh one for it. The result/message_start gap
+    // in between must not blip the composer idle or fire "Claude finished".
+    const fake = makeFakeQuery();
+    _setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+
+    await sendUserMessage(sessionId, 'first');
+    fake.emit(messageStart());
+    await waitFor(() => isClaudeRunning(sessionId));
+    await waitFor(() => fake.inputs.length >= 1);
+    fake.emit(commandLifecycle(fake.inputs[0].uuid!, 'started'));
+
     await sendUserMessage(sessionId, 'follow up');
+    await waitFor(() => fake.inputs.length >= 2);
+    const followUpUuid = fake.inputs[1].uuid!;
 
     mockSseEvents.emitClaudeRunning.mockClear();
     mockSseEvents.emitClaudeFinished.mockClear();
 
-    // Turn 1 ends; a task notification lands before the trailing result.
+    // Turn 1 ends while the follow-up is still queued in the CLI.
     fake.emit(messageDelta('end_turn'));
-    fake.emit(taskNotification('task-x'));
     fake.emit(result());
-
-    // The queued prompt flushed as a new turn.
-    await waitFor(() => fake.inputs.length >= 2);
-    expect(fake.inputs[1].message.content).toBe('follow up');
-
-    // The flushed turn opens; then ends normally.
-    fake.emit(messageStart());
-    // Across the entire handoff, turnActive never dropped to false.
-    expect(mockSseEvents.emitClaudeRunning).not.toHaveBeenCalledWith(sessionId, false);
     expect(isClaudeRunning(sessionId)).toBe(true);
-    // The intermediate (flushed-over) turn end is NOT a completion — no work-complete
-    // signal fires until the final turn ends.
+    expect(mockSseEvents.emitClaudeRunning).not.toHaveBeenCalledWith(sessionId, false);
     expect(mockSseEvents.emitClaudeFinished).not.toHaveBeenCalled();
 
-    // The final turn ending (no more queued prompts) clears turnActive exactly once.
+    // The follow-up's own turn runs and ends: now the session is genuinely idle.
+    fake.emit(commandLifecycle(followUpUuid, 'started'));
+    fake.emit(messageStart());
     fake.emit(messageDelta('end_turn'));
     await waitFor(() => !isClaudeRunning(sessionId));
-    expect(mockSseEvents.emitClaudeRunning).toHaveBeenCalledWith(sessionId, false);
-    // Exactly one work-complete signal, for the whole handoff.
     expect(mockSseEvents.emitClaudeFinished).toHaveBeenCalledTimes(1);
 
     stopSession(sessionId);
   });
 
-  it('recovers turnActive when interrupted during the flush handoff (no message_start)', async () => {
-    // Regression: interrupting after queued prompts flushed but before the
-    // flushed turn's message_start must not strand awaitingFlushTurn/turnActive
-    // true. The interrupt's terminal result has no preceding message_start, so
-    // without the interrupt-time flag reset the composer would be silently dead.
+  it('cancels undelivered messages on interrupt, deleting their bubbles and handing the text back', async () => {
     const fake = makeFakeQuery();
     _setQueryFactory(fake.factory);
     const sessionId = await createRunningSession();
 
     await sendUserMessage(sessionId, 'first');
+    await waitFor(() => fake.inputs.length >= 1);
+    fake.emit(commandLifecycle(fake.inputs[0].uuid!, 'started'));
     fake.emit(messageStart());
     await waitFor(() => isClaudeRunning(sessionId));
-    await sendUserMessage(sessionId, 'queued');
 
-    // Turn 1 ends → 'queued' flushes; turnActive is held true awaiting the
-    // flushed turn's message_start.
-    fake.emit(messageDelta('end_turn'));
+    await sendUserMessage(sessionId, 'never read');
     await waitFor(() => fake.inputs.length >= 2);
-    expect(isClaudeRunning(sessionId)).toBe(true);
+    const [pendingId] = getPendingMessageIds(sessionId);
 
-    // User hits Stop during the handoff, then the interrupt's terminal result
-    // lands with no top-level message_start for the flushed turn.
-    expect(await interruptClaude(sessionId)).toBe(true);
+    mockSseEvents.emitClaudeFinished.mockClear();
+    // Stop means stop: the SDK would otherwise run the still-queued message as
+    // its own turn the instant the interrupt lands.
+    const { interrupted, cancelled } = await interruptClaude(sessionId);
+    expect(interrupted).toBe(true);
+    expect(cancelled).toEqual(['never read']);
+    expect(fake.cancelAsyncMessage).toHaveBeenCalledWith(fake.inputs[1].uuid);
+
+    // Its bubble describes something that never happened, so it is deleted.
+    expect(getPendingMessageIds(sessionId)).toEqual([]);
+    expect(mockSseEvents.emitMessageRemoved).toHaveBeenCalledWith(sessionId, pendingId);
+    const userMsgs = (await messagesFor(sessionId)).filter((m) => m.type === 'user');
+    expect(userMsgs.map((m) => m.id)).not.toContain(pendingId);
+
+    // An interrupt is NOT a natural completion — no work-complete signal fires.
     fake.emit(result('error_during_execution'));
-
-    // turnActive recovers instead of being pinned true forever.
     await waitFor(() => !isClaudeRunning(sessionId));
+    expect(mockSseEvents.emitClaudeFinished).not.toHaveBeenCalled();
 
     stopSession(sessionId);
+  });
+
+  it('leaves a message alone on interrupt once the CLI has already dequeued it', async () => {
+    const fake = makeFakeQuery();
+    _setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+
+    await sendUserMessage(sessionId, 'first');
+    await waitFor(() => fake.inputs.length >= 1);
+    fake.emit(commandLifecycle(fake.inputs[0].uuid!, 'started'));
+    fake.emit(messageStart());
+    await waitFor(() => isClaudeRunning(sessionId));
+
+    await sendUserMessage(sessionId, 'already reading this');
+    await waitFor(() => fake.inputs.length >= 2);
+    const [pendingId] = getPendingMessageIds(sessionId);
+    expect(pendingId).toBeDefined();
+
+    // The CLI reports it could not be pulled back — the agent has it.
+    fake.cancelAsyncMessage.mockResolvedValueOnce(false);
+    const { cancelled } = await interruptClaude(sessionId);
+
+    expect(cancelled).toEqual([]);
+    // The bubble stays: the agent did read it, so the transcript is truthful.
+    expect(mockSseEvents.emitMessageRemoved).not.toHaveBeenCalled();
+    const userMsgs = (await messagesFor(sessionId)).filter((m) => m.type === 'user');
+    expect(userMsgs.map((m) => m.id)).toContain(pendingId);
+
+    stopSession(sessionId);
+  });
+
+  it('clears the pending set when the query tears down', async () => {
+    const fake = makeFakeQuery();
+    _setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+
+    await sendUserMessage(sessionId, 'in flight');
+    await waitFor(() => getPendingMessageIds(sessionId).length === 1);
+
+    // A delivery in flight dies with the query; the marker must not hang forever.
+    stopSession(sessionId);
+    await waitFor(() => getPendingMessageIds(sessionId).length === 0);
+    expect(mockSseEvents.emitPendingMessages).toHaveBeenLastCalledWith(sessionId, []);
+    expect(isClaudeRunning(sessionId)).toBe(false);
   });
 
   it('applies a model change live on the next send', async () => {

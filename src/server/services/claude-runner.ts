@@ -25,7 +25,12 @@ import {
   type SDKMessage,
 } from '@anthropic-ai/claude-agent-sdk';
 import { prisma } from '@/lib/prisma';
-import { classifyMessage, SystemInitContentSchema, type RetryState } from '@/lib/claude-messages';
+import {
+  classifyMessage,
+  parseCommandLifecycle,
+  SystemInitContentSchema,
+  type RetryState,
+} from '@/lib/claude-messages';
 import {
   reduceSessionMessage,
   removeBackgroundTask,
@@ -63,7 +68,6 @@ import { PARTIAL_MESSAGE_ID_PREFIX } from '@/lib/message-cache';
 import type { ContainerEnvVar } from './repo-settings';
 import { resolveUploadPaths } from './uploads';
 import { writeSessionMcpConfig, removeSessionMcpConfig } from './mcp-config-file';
-import { MAX_QUEUED_MESSAGES, type QueuedMessage } from '@/lib/queued-message';
 
 const execFileAsync = promisify(execFile);
 
@@ -174,20 +178,38 @@ interface SessionState {
    */
   toolSanitizations: Map<string, SanitizationInfo>;
   /**
-   * User messages sent while a main-agent turn was active (async "btw mode"),
-   * awaiting flush into a single combined turn when the turn ends. Unlike the
-   * old design these are NOT persisted while queued — they live only here and are
-   * surfaced to the client over the `queued` SSE channel, so the user can ✕-remove
-   * one before it sends (see {@link cancelQueuedMessage}). Persisted (as separate
-   * transcript bubbles) only when they flush. In-memory only — lost on stop/restart
-   * before flush (nothing lingers in the transcript because nothing was persisted).
+   * Messages already pushed into the SDK that the CLI has accepted into its
+   * command queue but not yet handed to the model, keyed by the `uuid` we stamped
+   * on the pushed message. Tracked from the push until `command_lifecycle` reports
+   * the command left the queue (see {@link handleCommandLifecycle}).
+   *
+   * Two jobs: the ids feed the `pending` SSE channel so the transcript can mark a
+   * bubble "not delivered yet", and the text lets {@link interruptClaude} hand a
+   * cancelled prompt back to the composer instead of losing it.
    */
-  queuedMessages: QueuedMessage[];
+  pendingCommands: Map<string, PendingCommand>;
   /**
-   * Set by {@link interruptClaude} so the turn-end it triggers does NOT flush the
-   * queue: an interrupt must leave queued messages sitting (removable), never fire
-   * them as a fresh turn the instant the user hit Stop. Consumed (cleared) by the
-   * turn-end in {@link applyStatus}.
+   * Last value emitted on the `claude_running` channel. The composer's "working"
+   * state is `turnActive || pendingCommands.size > 0` ({@link effectiveRunning}),
+   * derived from two independently-changing inputs, so the last emitted value is
+   * kept here rather than inferred from a status diff.
+   */
+  emittedRunning: boolean;
+  /**
+   * Whether this session's CLI has ever emitted a `command_lifecycle` message.
+   * That type is undocumented and absent from the SDK's `SDKMessage` union, so a
+   * CLI that never emits it would leave {@link pendingCommands} full forever and
+   * pin the composer "working". A supporting CLI reports `queued` within
+   * milliseconds of the push — long before any turn boundary — which makes "no
+   * lifecycle seen by the first boundary" a reliable feature check, and arms the
+   * boundary backstop in {@link applyStatus} only for the CLIs that need it.
+   */
+  commandLifecycleSeen: boolean;
+  /**
+   * Set by {@link interruptClaude} so the turn-end it triggers is not reported as
+   * Claude *finishing* — the user stopped it, and a "Claude is done" notification
+   * for cancelled work is a lie. Consumed (cleared) by the turn-end in
+   * {@link applyStatus}.
    */
   interruptRequested: boolean;
   /**
@@ -196,14 +218,14 @@ interface SessionState {
    * teardown to cgroup-kill the whole session process tree. See session-cgroup.
    */
   sessionScope: string | null;
-  /**
-   * True between flushing queued messages and the flushed turn's `message_start`.
-   * While set, `applyStatus` suppresses the just-ended turn's `turnActive` clear
-   * (and its trailing `result`) so the flag stays continuously true across the
-   * handoff — no idle blip, no spurious "turn ended" side effects (work-complete
-   * notification, voice auto-read reset) between back-to-back queued turns.
-   */
-  awaitingFlushTurn: boolean;
+}
+
+/** A user message handed to the SDK but not yet read by the agent. */
+interface PendingCommand {
+  /** Id of the persisted transcript bubble for this message. */
+  messageId: string;
+  /** The user's typed text (original, un-sanitized), for restore-on-cancel. */
+  text: string;
 }
 
 /** Active sessions tracked in memory. */
@@ -346,10 +368,11 @@ function getSessionState(sessionId: string, workingDir: string): SessionState {
       boundSettings: null,
       settingsKey: '',
       toolSanitizations: new Map(),
-      queuedMessages: [],
+      pendingCommands: new Map(),
+      emittedRunning: false,
+      commandLifecycleSeen: false,
       interruptRequested: false,
       sessionScope: null,
-      awaitingFlushTurn: false,
     };
     sessions.set(sessionId, state);
   } else if (workingDir) {
@@ -678,19 +701,18 @@ async function persistSessionScope(sessionId: string, unit: string | null): Prom
  * a stale "running"/"background"/"retrying" indicator.
  */
 function clearLiveStatus(sessionId: string, state: SessionState): void {
-  // A pending flush is abandoned when the query tears down; drop any queued
-  // messages and the handoff flag so a revived query starts clean. Emit the empty
-  // queue so the client's indicator clears too (they were never persisted).
-  state.awaitingFlushTurn = false;
   state.interruptRequested = false;
-  if (state.queuedMessages.length > 0) {
-    state.queuedMessages = [];
-    sseEvents.emitQueuedMessages(sessionId, []);
+  // Deliveries in flight die with the query. Their bubbles stay in the transcript
+  // (they may well have been read before the teardown — we can't know), but the
+  // "not delivered yet" marker must clear or it would hang there forever.
+  if (state.pendingCommands.size > 0) {
+    state.pendingCommands.clear();
+    sseEvents.emitPendingMessages(sessionId, []);
   }
   if (state.status.turnActive) {
     state.status = { ...state.status, turnActive: false };
-    sseEvents.emitClaudeRunning(sessionId, false);
   }
+  syncRunning(sessionId, state);
   if (state.status.backgroundTasks.size > 0) {
     state.status = { ...state.status, backgroundTasks: new Map() };
     sseEvents.emitBackgroundTasks(sessionId, []);
@@ -716,18 +738,67 @@ function dropBackgroundTask(sessionId: string, state: SessionState, taskId: stri
 }
 
 /**
- * Whether a message is the main agent's (top-level) `message_start` — the
- * definitive signal that a new turn has begun. Used to close the flush-handoff
- * suppression window (see {@link applyStatus}); it can't be inferred from the
- * reducer's `changed.turnActive` there, because the flag is being held true
- * across the handoff so the reducer sees no transition.
+ * What the composer shows as "Claude is working": a live main-agent turn, **or** a
+ * message we have handed to the SDK that the agent hasn't read yet.
+ *
+ * The second clause covers the gap between turns. A message pushed mid-turn is
+ * usually folded into the running turn, but if the turn ends first the CLI starts
+ * a fresh turn for it — and the `result`/`message_start` pair in between would
+ * otherwise blip the composer idle and fire a "Claude finished" notification for
+ * work that is about to continue.
  */
-function isTopLevelMessageStart(message: SDKMessage): boolean {
+function effectiveRunning(state: SessionState): boolean {
+  return state.status.turnActive || state.pendingCommands.size > 0;
+}
+
+/**
+ * Emit `claude_running` if the effective value changed since the last emit. Called
+ * after anything that can move either input (a status fold, a push, a delivery),
+ * so the two can't produce a spurious or missing edge between them.
+ */
+function syncRunning(sessionId: string, state: SessionState): boolean {
+  const running = effectiveRunning(state);
+  if (running === state.emittedRunning) return false;
+  state.emittedRunning = running;
+  sseEvents.emitClaudeRunning(sessionId, running);
+  return true;
+}
+
+/**
+ * Fold a `command_lifecycle` message into the pending set. Anything other than
+ * `queued` means the command has left the CLI's queue — `started` (the agent is
+ * reading it now) is the normal case, with `completed`/`cancelled` as backstops in
+ * case `started` is ever missed. Returns true if the message was a lifecycle event
+ * (and so must not be persisted).
+ */
+function handleCommandLifecycle(sessionId: string, state: SessionState, message: unknown): boolean {
+  const lifecycle = parseCommandLifecycle(message);
+  if (!lifecycle) return false;
+  state.commandLifecycleSeen = true;
+  if (lifecycle.state === 'queued') return true;
+  if (!state.pendingCommands.delete(lifecycle.command_uuid)) return true;
+  sseEvents.emitPendingMessages(sessionId, pendingMessageIds(state));
+  syncRunning(sessionId, state);
+  return true;
+}
+
+/**
+ * A point at which the CLI has necessarily dequeued whatever it was going to run:
+ * a new top-level assistant message beginning, or a turn's terminal `result`.
+ * Used only by the delivery backstop in {@link applyStatus}.
+ */
+function isDeliveryBoundary(message: SDKMessage): boolean {
+  if (message.type === 'result') return true;
   if (message.type !== 'stream_event') return false;
   const parent = (message as { parent_tool_use_id?: string | null }).parent_tool_use_id;
   if (parent !== null && parent !== undefined) return false;
   const event = (message as { event?: { type?: string } }).event;
   return event?.type === 'message_start';
+}
+
+/** Transcript ids of the messages still awaiting delivery, in push order. */
+function pendingMessageIds(state: SessionState): string[] {
+  return [...state.pendingCommands.values()].map((c) => c.messageId);
 }
 
 /** A user message that has been resolved + sanitized but not yet persisted. */
@@ -738,11 +809,9 @@ interface PreparedMessage {
 
 /**
  * Resolve attachments, build the attachment prefix, and sanitize — with **no DB
- * writes or other side effects**, so a prepared message can be safely discarded if
- * the delivery is aborted (an interrupt or teardown landing during the async
- * window). This separation is what keeps the flush/idle-send paths non-destructive:
- * the expensive/failure-prone work (fs, sanitizer) happens before anything is
- * committed, so on abort the queued messages can just be handed back untouched.
+ * writes or other side effects**, so a send that fails here leaves nothing behind
+ * and the composer can restore the user's text. All the failure-prone work (fs,
+ * sanitizer) happens before anything is committed.
  */
 async function prepareUserMessage(
   sessionId: string,
@@ -761,11 +830,11 @@ async function prepareUserMessage(
   return { content: cleaned, ...(info ? { sanitization: info } : {}) };
 }
 
-/** Persist a prepared message as its own transcript bubble. */
-function insertPreparedMessage(sessionId: string, prepared: PreparedMessage) {
+/** Persist a prepared message as its own transcript bubble under a caller-chosen id. */
+function insertPreparedMessage(sessionId: string, messageId: string, prepared: PreparedMessage) {
   return insertMessage({
     sessionId,
-    id: uuid(),
+    id: messageId,
     type: 'user',
     content: {
       type: 'user',
@@ -776,89 +845,6 @@ function insertPreparedMessage(sessionId: string, prepared: PreparedMessage) {
 }
 
 /**
- * Put messages back at the front of the queue (order preserved) and re-emit, so an
- * aborted flush/idle-send (interrupt, teardown, or a persist error) never silently
- * loses the user's queued messages. No-op for an empty list.
- */
-function requeueMessages(sessionId: string, state: SessionState, messages: QueuedMessage[]): void {
-  if (messages.length === 0) return;
-  state.queuedMessages = [...messages, ...state.queuedMessages];
-  sseEvents.emitQueuedMessages(sessionId, state.queuedMessages);
-}
-
-/**
- * End a flush handoff without a flushed turn: clear the handoff/interrupt flags and
- * drop `turnActive` to idle, emitting the change. Used when a flush is aborted
- * (interrupt landed, query torn down, or a persist error) so the composer isn't
- * left pinned "working".
- */
-function endFlushHandoff(sessionId: string, state: SessionState): void {
-  state.awaitingFlushTurn = false;
-  state.interruptRequested = false;
-  if (state.status.turnActive) {
-    state.status = { ...state.status, turnActive: false };
-    sseEvents.emitClaudeRunning(sessionId, false);
-  }
-}
-
-/**
- * Flush messages queued while the main agent was busy into a single new turn.
- * Called (fire-and-forget) when the turn ends naturally — the caller captures and
- * clears the queue synchronously; this delivers them ("btw mode": Claude addresses
- * them together). The SDK picking up the push drives `turnActive` back to true via
- * the next `message_start`; we deliberately do NOT toggle it here, and
- * `awaitingFlushTurn` bridges the gap so there's no idle blip.
- *
- * Robustness: sanitizing/resolving (the failure-prone, side-effect-free work) runs
- * BEFORE any bubble is persisted, so if an interrupt lands in the flush window, or
- * the query is torn down, or preparation throws, the messages are handed back to
- * the queue (never silently lost) and the session goes idle. In particular an
- * interrupt during the window must NOT let the queue fire as a fresh turn — the
- * whole point of leaving queued messages queued on Stop.
- */
-async function flushQueuedMessages(
-  sessionId: string,
-  state: SessionState,
-  messages: QueuedMessage[]
-): Promise<void> {
-  if (messages.length === 0) return;
-  log.info('Flushing queued messages into a new turn', { sessionId, count: messages.length });
-  try {
-    const prepared: PreparedMessage[] = [];
-    for (const m of messages) {
-      prepared.push(await prepareUserMessage(sessionId, m.text, m.attachments));
-    }
-
-    // An interrupt landed during preparation (user hit Stop in the flush window),
-    // or the query was torn down: abort — hand the messages back and go idle rather
-    // than firing them as a new turn.
-    if (state.interruptRequested || !state.input) {
-      requeueMessages(sessionId, state, messages);
-      endFlushHandoff(sessionId, state);
-      return;
-    }
-
-    for (const p of prepared) await insertPreparedMessage(sessionId, p);
-    if (!state.input) {
-      endFlushHandoff(sessionId, state);
-      return;
-    }
-    state.input.push({
-      type: 'user',
-      message: { role: 'user', content: prepared.map((p) => p.content).join('\n\n') },
-      parent_tool_use_id: null,
-    });
-  } catch (err) {
-    log.error('flushQueuedMessages: failed to flush queue', toError(err), { sessionId });
-    // Non-destructive: sanitizing has no side effects, so hand the messages back to
-    // the queue and go idle. (A DB error mid-persist is rare enough that a possible
-    // duplicate bubble on the next flush is preferable to silently losing them.)
-    requeueMessages(sessionId, state, messages);
-    endFlushHandoff(sessionId, state);
-  }
-}
-
-/**
  * Fold one message into the session's live status and emit changed channels.
  * Runs for EVERY message (including ones that are skipped for persistence, since
  * `api_retry`/`task_*` drive status). Fires per-turn branch/PR detection when a
@@ -866,53 +852,36 @@ async function flushQueuedMessages(
  */
 function applyStatus(sessionId: string, state: SessionState, message: SDKMessage): void {
   const reduced = reduceSessionMessage(state.status, message);
-  let status = reduced.status;
-  const changed = { ...reduced.changed };
-  // The raw turn-end signal (before flush suppression), used for PR/branch detection.
-  const rawTurnEnded = changed.turnActive && !status.turnActive;
+  const status = reduced.status;
+  const changed = reduced.changed;
+  const turnEnded = changed.turnActive && !status.turnActive;
 
-  // An interrupt's turn-end must NOT flush the queue — queued messages stay put
-  // (removable) instead of firing as a fresh turn the instant the user hit Stop.
+  // An interrupt's turn-end is not Claude finishing — the user stopped it.
   // `interruptRequested` is a one-shot flag set by interruptClaude; consume it here.
-  const interrupted = rawTurnEnded && state.interruptRequested;
-  if (rawTurnEnded) state.interruptRequested = false;
-
-  // Flush queued messages when the main turn ends naturally (see
-  // flushQueuedMessages). Decided before emitting so we can suppress the
-  // intervening turnActive clear entirely. `!awaitingFlushTurn` guards against a
-  // second flush from the just-ended turn's trailing `result` (which also reports
-  // rawTurnEnded while a flush is already in flight) — messages queued during the
-  // handoff instead flush at the flushed turn's own natural end.
-  const willFlush =
-    rawTurnEnded &&
-    !interrupted &&
-    !state.awaitingFlushTurn &&
-    state.queuedMessages.length > 0 &&
-    state.input != null;
-
-  // The flushed turn actually beginning (its own top-level message_start) closes
-  // the suppression window opened by the flush below.
-  if (state.awaitingFlushTurn && isTopLevelMessageStart(message)) {
-    state.awaitingFlushTurn = false;
-  }
-
-  // Keep turnActive continuously true across a queued-flush handoff: while the
-  // flush is pending, ignore the ended turn's clear (and its trailing `result`,
-  // plus any interleaved task events) until the flushed turn starts. `changed` is
-  // recomputed against the previous status so no spurious SSE toggle is emitted.
-  if ((willFlush || state.awaitingFlushTurn) && !status.turnActive) {
-    status = { ...status, turnActive: true };
-    changed.turnActive = status.turnActive !== state.status.turnActive;
-  }
+  const interrupted = turnEnded && state.interruptRequested;
+  if (turnEnded) state.interruptRequested = false;
 
   state.status = status;
 
-  if (changed.turnActive) sseEvents.emitClaudeRunning(sessionId, status.turnActive);
+  // Delivery backstop for a CLI that doesn't report `command_lifecycle` at all
+  // (see SessionState.commandLifecycleSeen): at a turn boundary, anything we
+  // pushed has been dequeued, so retire it rather than pin the composer forever.
+  if (
+    !state.commandLifecycleSeen &&
+    state.pendingCommands.size > 0 &&
+    isDeliveryBoundary(message)
+  ) {
+    state.pendingCommands.clear();
+    sseEvents.emitPendingMessages(sessionId, []);
+  }
+
+  syncRunning(sessionId, state);
+
   // "Claude finished" fires when a main-agent turn ends NATURALLY *and* the session
   // is now fully idle — no background tasks (subagents / Monitor / backgrounded
-  // Bash) remain running. It excludes interrupts (`interrupted`), flush handoffs
-  // (which force `status.turnActive` true above), and stop/delete/error teardown
-  // (which goes through clearLiveStatus and never routes here). Distinct from a bare
+  // Bash) still running, and nothing we pushed still waiting to be read. It
+  // excludes interrupts (`interrupted`) and stop/delete/error teardown (which goes
+  // through clearLiveStatus and never routes here). Distinct from a bare
   // running:false edge, which also fires on interrupt/stop.
   //
   // We deliberately fire only on a turn-end (not when a background task drains):
@@ -922,7 +891,7 @@ function applyStatus(sessionId: string, state: SessionState, message: SDKMessage
   // continuation's end. The residual case — a background task settling with no
   // continuation — leaves no "finished" signal, an accepted tradeoff (favoring no
   // spurious notification over no missed one).
-  if (changed.turnActive && !status.turnActive && !interrupted && !backgroundActive(status)) {
+  if (turnEnded && !interrupted && !backgroundActive(status) && state.pendingCommands.size === 0) {
     sseEvents.emitClaudeFinished(sessionId);
   }
   if (changed.background) {
@@ -930,21 +899,9 @@ function applyStatus(sessionId: string, state: SessionState, message: SDKMessage
   }
   if (changed.retry) sseEvents.emitClaudeRetry(sessionId, status.retry);
 
-  // PR/branch can change within a turn; refresh at the genuine turn end only
-  // (skip the ended turn's trailing `result`, which also reports rawTurnEnded
-  // while a flush handoff is in progress).
-  if (rawTurnEnded && !state.awaitingFlushTurn) {
+  // PR/branch can change within a turn; refresh at the genuine turn end only.
+  if (turnEnded) {
     void detectBranchAndPr(sessionId, state.workingDir);
-  }
-  if (willFlush) {
-    // Capture and clear the queue synchronously (emit the empty list so the
-    // client drops its queued bubbles), then flush asynchronously — persisting
-    // each message as its own bubble and pushing them as one turn.
-    const toFlush = state.queuedMessages;
-    state.queuedMessages = [];
-    sseEvents.emitQueuedMessages(sessionId, []);
-    state.awaitingFlushTurn = true;
-    void flushQueuedMessages(sessionId, state, toFlush);
   }
 }
 
@@ -1007,6 +964,10 @@ async function runSessionLoop(sessionId: string, state: SessionState, q: Query):
 
   try {
     for await (const message of q) {
+      // Delivery bookkeeping first: `command_lifecycle` can retire a pending
+      // message, which feeds the running state applyStatus is about to emit.
+      if (handleCommandLifecycle(sessionId, state, message)) continue;
+
       // Status derives from EVERY message (including skipped api_retry/task_*).
       applyStatus(sessionId, state, message);
 
@@ -1225,39 +1186,18 @@ async function applyLiveSettings(sessionId: string, state: SessionState): Promis
 }
 
 /**
- * Add a message to the session's queue (a main-agent turn is active) and emit the
- * updated list so the client can render it as a removable queued bubble. NOT
- * persisted — see {@link QueuedMessage}. Throws if the queue is already at
- * {@link MAX_QUEUED_MESSAGES} (pathological), so the send surfaces an error rather
- * than growing an unbounded batch.
- */
-function enqueueMessage(
-  sessionId: string,
-  state: SessionState,
-  text: string,
-  attachments: string[]
-): void {
-  if (state.queuedMessages.length >= MAX_QUEUED_MESSAGES) {
-    throw new Error(`Too many queued messages (max ${MAX_QUEUED_MESSAGES})`);
-  }
-  const message: QueuedMessage = { id: uuid(), text, attachments };
-  state.queuedMessages = [...state.queuedMessages, message];
-  sseEvents.emitQueuedMessages(sessionId, state.queuedMessages);
-}
-
-/**
- * Send a single user prompt. The server owns the queue decision (the client never
- * routes based on its own view of the turn state):
+ * Send a single user prompt. It is persisted and pushed into the session's
+ * streaming query **immediately**, whatever the agent is doing — the CLI folds a
+ * mid-turn message into the running turn at the next tool-result boundary, so a
+ * "btw, also…" lands in seconds instead of waiting for the agent to go idle. The
+ * server never holds messages back.
  *
- *  - **A main-agent turn is active** → hold the message in the session queue,
- *    surfaced to the client as a removable "queued" bubble; NOT persisted until it
- *    flushes at turn end (see {@link flushQueuedMessages}).
- *  - **Idle** → start a turn now. Any messages still queued (e.g. left sitting
- *    after an interrupt) are flushed ahead of this one, combined into one turn, in
- *    order — so nothing is silently stranded.
+ * The push is stamped with a `uuid` so the CLI reports its delivery over
+ * `command_lifecycle`; until it reports the command started, the message sits in
+ * {@link SessionState.pendingCommands} (marked undelivered in the transcript, and
+ * cancellable by Stop).
  *
- * `attachments` are stored names (see /api/upload), resolved to paths lazily at
- * persist time.
+ * `attachments` are stored names (see /api/upload), resolved to paths here.
  */
 export async function sendUserMessage(
   sessionId: string,
@@ -1273,82 +1213,37 @@ export async function sendUserMessage(
   await applyLiveSettings(sessionId, state);
   await bumpSessionActivity(sessionId);
 
-  if (state.status.turnActive) {
-    enqueueMessage(sessionId, state, prompt, attachments);
-    return;
-  }
-
-  // Idle: deliver now, draining any leftover queue (e.g. left after an interrupt)
-  // ahead of this message so ordering/intent are preserved (queued-then-typed). The
-  // queue is cleared before the (awaited) prepare so a concurrent send can't
-  // double-drain it; on any failure the leftover is handed back (see below).
-  const leftover = state.queuedMessages;
-  if (leftover.length > 0) {
-    state.queuedMessages = [];
-    sseEvents.emitQueuedMessages(sessionId, []);
-  }
-  const items: QueuedMessage[] = [...leftover, { id: uuid(), text: prompt, attachments }];
-
-  // Sanitize/resolve up front (no side effects) so a failure or a racing turn can
-  // abort cleanly before anything is persisted.
-  let prepared: PreparedMessage[];
-  try {
-    prepared = [];
-    for (const it of items) {
-      prepared.push(await prepareUserMessage(sessionId, it.text, it.attachments));
-    }
-  } catch (err) {
-    // Nothing persisted — hand the leftover back to the queue and surface the error
-    // to the caller (the client keeps the just-typed message to retry).
-    requeueMessages(sessionId, state, leftover);
-    throw err;
-  }
-
-  // A turn racing in during prepare (a concurrent send, or a background subagent
-  // autonomously continuing the turn) means we must NOT start a second turn — queue
-  // these as pending instead, so the SDK isn't handed a new turn mid-generation.
-  if (state.status.turnActive || !state.input) {
-    requeueMessages(sessionId, state, items);
-    if (!state.input) throw new Error('Session query is not available');
-    return;
-  }
-
-  try {
-    for (const p of prepared) await insertPreparedMessage(sessionId, p);
-  } catch (err) {
-    requeueMessages(sessionId, state, leftover);
-    throw err;
-  }
+  // Sanitize/resolve up front (no side effects) so a failure aborts cleanly before
+  // anything is persisted and the client keeps the just-typed text to retry.
+  const prepared = await prepareUserMessage(sessionId, prompt, attachments);
   if (!state.input) throw new Error('Session query is not available');
-  state.status = { ...state.status, turnActive: true };
-  sseEvents.emitClaudeRunning(sessionId, true);
+
+  const messageId = uuid();
+  const commandUuid = uuid();
+  await insertPreparedMessage(sessionId, messageId, prepared);
+  state.pendingCommands.set(commandUuid, { messageId, text: prompt });
+  sseEvents.emitPendingMessages(sessionId, pendingMessageIds(state));
+  // Optimistically mark the turn active. The SDK's own top-level `message_start`
+  // confirms it, but setting it here keeps the reducer's true→false edge — and so
+  // the work-complete signal — intact for a turn that somehow reaches its
+  // terminal `result` without one.
+  if (!state.status.turnActive) {
+    state.status = { ...state.status, turnActive: true };
+  }
+  syncRunning(sessionId, state);
+
   state.input.push({
     type: 'user',
-    message: { role: 'user', content: prepared.map((p) => p.content).join('\n\n') },
+    message: { role: 'user', content: prepared.content },
     parent_tool_use_id: null,
+    uuid: commandUuid as SDKUserMessage['uuid'],
   });
 }
 
-/**
- * Remove a single queued message before it flushes (the ✕ on a queued bubble).
- * Emits the updated list. Idempotent: removing an absent id (already flushed or
- * cancelled) is a no-op that still reports success — the post-condition (that id
- * is not queued) holds. Returns false only when there is no live session state.
- */
-export function cancelQueuedMessage(sessionId: string, queuedId: string): boolean {
+/** Transcript ids of a session's not-yet-delivered messages (seeds the client). */
+export function getPendingMessageIds(sessionId: string): string[] {
   const state = sessions.get(sessionId);
-  if (!state) return false;
-  const next = state.queuedMessages.filter((m) => m.id !== queuedId);
-  if (next.length !== state.queuedMessages.length) {
-    state.queuedMessages = next;
-    sseEvents.emitQueuedMessages(sessionId, next);
-  }
-  return true;
-}
-
-/** The messages currently queued for a session (seeds the client; empty if none). */
-export function getQueuedMessages(sessionId: string): QueuedMessage[] {
-  return sessions.get(sessionId)?.queuedMessages ?? [];
+  return state ? pendingMessageIds(state) : [];
 }
 
 /**
@@ -1433,47 +1328,114 @@ export function getSessionBackgroundTasks(sessionId: string): BackgroundTask[] {
   return state ? [...state.status.backgroundTasks.values()] : [];
 }
 
+export interface InterruptResult {
+  interrupted: boolean;
+  /** Text of the prompts Stop pulled back before the agent ever read them. */
+  cancelled: string[];
+}
+
 /**
- * Interrupt the active turn (streaming-only). The query stays alive; the SDK
- * emits a terminal `result` (confirmed by the spike + e2e) which the loop maps to
+ * `Query.cancelAsyncMessage` drops a pushed user message from the CLI's command
+ * queue by uuid, resolving false if it had already been dequeued for execution.
+ * It exists at runtime but is missing from the SDK's `Query` type
+ * (`@anthropic-ai/claude-agent-sdk` 0.3.219), so it is reached through this
+ * narrowing — feature-detected, so an SDK release without it degrades to "Stop
+ * doesn't cancel" rather than throwing.
+ */
+interface CancelCapableQuery {
+  cancelAsyncMessage(messageUuid: string): Promise<boolean>;
+}
+
+function asCancelCapable(query: Query): CancelCapableQuery | null {
+  const candidate = query as Partial<CancelCapableQuery>;
+  return typeof candidate.cancelAsyncMessage === 'function'
+    ? (candidate as CancelCapableQuery)
+    : null;
+}
+
+/** Delete a persisted message and tell connected clients to drop it. */
+async function removeMessage(sessionId: string, messageId: string): Promise<void> {
+  const { count } = await prisma.message.deleteMany({ where: { id: messageId, sessionId } });
+  if (count > 0) sseEvents.emitMessageRemoved(sessionId, messageId);
+}
+
+/**
+ * Pull back every message we pushed that the agent hasn't read yet.
+ *
+ * Stop has to mean stop: the SDK otherwise runs a still-queued message as its own
+ * turn the instant the interrupt lands (verified: `scripts/spike-interrupt-queued.ts`).
+ * A command the CLI has already dequeued can't be recalled — `cancelAsyncMessage`
+ * reports false and we leave it alone, bubble included, because the agent did read
+ * it. A cancelled one is deleted from the transcript (it describes something that
+ * never happened) and handed back so the composer can restore the user's text.
+ */
+async function cancelPendingCommands(
+  sessionId: string,
+  state: SessionState,
+  query: Query
+): Promise<string[]> {
+  const canceller = state.pendingCommands.size > 0 ? asCancelCapable(query) : null;
+  if (!canceller) return [];
+
+  const cancelled: string[] = [];
+  for (const [commandUuid, pending] of [...state.pendingCommands]) {
+    let dropped = false;
+    try {
+      dropped = await canceller.cancelAsyncMessage(commandUuid);
+    } catch (err) {
+      log.warn('interruptClaude: cancelAsyncMessage failed', {
+        sessionId,
+        error: toError(err).message,
+      });
+    }
+    if (!dropped) continue;
+    state.pendingCommands.delete(commandUuid);
+    cancelled.push(pending.text);
+    await removeMessage(sessionId, pending.messageId);
+  }
+
+  if (cancelled.length > 0) {
+    sseEvents.emitPendingMessages(sessionId, pendingMessageIds(state));
+    syncRunning(sessionId, state);
+  }
+  return cancelled;
+}
+
+/**
+ * Interrupt the active turn (streaming-only) and pull back anything the user sent
+ * that the agent hasn't read yet. The query stays alive; the SDK emits a terminal
+ * `result` (confirmed by the spike + e2e) which the loop maps to
  * `turnActive = false` — no timer involved.
  *
  * If a (hypothetical) interrupt never yielded a result, `turnActive` is cleared by
  * the deterministic, user-driven escape instead of a timer: the header Stop
  * (`sessions.stop`) closes the query → the loop `finally` forces the flag off.
  */
-export async function interruptClaude(sessionId: string): Promise<boolean> {
+export async function interruptClaude(sessionId: string): Promise<InterruptResult> {
   const state = sessions.get(sessionId);
-  if (!state?.query || !state.status.turnActive) {
-    log.info('interruptClaude: no active turn', { sessionId });
-    return false;
+  if (!state?.query || !effectiveRunning(state)) {
+    log.info('interruptClaude: nothing to interrupt', { sessionId });
+    return { interrupted: false, cancelled: [] };
   }
 
-  // Close any open flush-handoff suppression window first. An interrupt during
-  // the handoff (after queued messages were flushed but before the flushed turn's
-  // top-level `message_start`) produces a terminal `result` with no preceding
-  // `message_start` — which would never close the window, pinning `turnActive`
-  // true and silently killing the composer. Clearing the flag lets that terminal
-  // result flow through `applyStatus` and clear `turnActive` normally. Any queued
-  // messages already pushed to the SDK are unaffected (they run as their own turn).
-  state.awaitingFlushTurn = false;
-
-  // Mark this turn-end as an interrupt so `applyStatus` does NOT flush the queue:
-  // stopping Claude must leave queued messages sitting (removable), never fire
-  // them as a fresh turn the instant the user hit Stop.
+  // Mark this turn-end as an interrupt so `applyStatus` doesn't report it as
+  // Claude *finishing* — the user stopped it.
   state.interruptRequested = true;
 
   try {
     await state.query.interrupt();
   } catch (err) {
     // The interrupt didn't take, so no interrupt-driven turn-end is coming; clear
-    // the flag so it can't suppress the flush of a later, natural turn-end.
+    // the flag so it can't suppress a later, natural turn-end's notification.
     state.interruptRequested = false;
     log.warn('interruptClaude: failed', { sessionId, error: toError(err).message });
-    return false;
+    return { interrupted: false, cancelled: [] };
   }
 
-  return true;
+  return {
+    interrupted: true,
+    cancelled: await cancelPendingCommands(sessionId, state, state.query),
+  };
 }
 
 /**
@@ -1519,9 +1481,13 @@ export async function stopBackgroundTask(sessionId: string, taskId: string): Pro
   return true;
 }
 
-/** Whether a main-agent turn is active for a session (in-memory check). */
+/**
+ * Whether the session is working from the composer's point of view — a live turn,
+ * or a message the agent hasn't picked up yet ({@link effectiveRunning}).
+ */
 export function isClaudeRunning(sessionId: string): boolean {
-  return sessions.get(sessionId)?.status.turnActive ?? false;
+  const state = sessions.get(sessionId);
+  return state ? effectiveRunning(state) : false;
 }
 
 /**

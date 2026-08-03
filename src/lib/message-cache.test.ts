@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   mergeMessageIntoCache,
+  removeMessageFromCache,
   isPartialMessageId,
   PARTIAL_MESSAGE_ID_PREFIX,
   type MessageInfiniteCache,
@@ -76,5 +77,25 @@ describe('mergeMessageIntoCache', () => {
     const existing = cache([[complete('a', 0)], [complete('b', 1)]]);
     const result = mergeMessageIntoCache(existing, complete('b', 1));
     expect(result).toBe(existing);
+  });
+});
+
+describe('removeMessageFromCache', () => {
+  it('drops the message from whichever page holds it', () => {
+    const result = removeMessageFromCache(
+      cache([[complete('b', 1), complete('c', 2)], [complete('a', 0)]]),
+      'c'
+    );
+    expect(result!.pages[0].messages).toEqual([complete('b', 1)]);
+    expect(result!.pages[1].messages).toEqual([complete('a', 0)]);
+  });
+
+  it('returns the same reference when the id is absent', () => {
+    const existing = cache([[complete('a', 0)]]);
+    expect(removeMessageFromCache(existing, 'nope')).toBe(existing);
+  });
+
+  it('handles an empty cache', () => {
+    expect(removeMessageFromCache(undefined, 'a')).toBeUndefined();
   });
 });

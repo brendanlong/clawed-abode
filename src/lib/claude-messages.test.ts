@@ -10,6 +10,7 @@ import {
   SystemInitContentSchema,
   ResultContentSchema,
   classifyMessage,
+  parseCommandLifecycle,
   isIgnoredSystemMessage,
   parseRetryState,
   formatRetryReason,
@@ -311,6 +312,43 @@ describe('claude-messages', () => {
 
     it('degrades unknown future types to system persistence at runtime', () => {
       expect(msg({ type: 'some_future_type' })).toEqual({ kind: 'persist', dbType: 'system' });
+    });
+
+    it('skips command_lifecycle, which is delivery bookkeeping and not transcript content', () => {
+      // It is missing from SDKMessage, so without an explicit skip it would fall
+      // through to the unknown-type default above and render as a system bubble.
+      expect(msg({ type: 'command_lifecycle', command_uuid: 'c1', state: 'started' })).toEqual({
+        kind: 'skip',
+      });
+    });
+  });
+
+  describe('parseCommandLifecycle', () => {
+    it('parses a lifecycle report', () => {
+      expect(
+        parseCommandLifecycle({ type: 'command_lifecycle', command_uuid: 'c1', state: 'queued' })
+      ).toEqual({ type: 'command_lifecycle', command_uuid: 'c1', state: 'queued' });
+    });
+
+    it('accepts states beyond the ones we have observed', () => {
+      // `state` is deliberately open: only 'queued' is load-bearing, and a new
+      // terminal state must retire the pending message rather than be dropped.
+      expect(
+        parseCommandLifecycle({
+          type: 'command_lifecycle',
+          command_uuid: 'c1',
+          state: 'superseded',
+        })
+      ).toMatchObject({ state: 'superseded' });
+    });
+
+    it('returns null for other messages and malformed payloads', () => {
+      expect(parseCommandLifecycle({ type: 'assistant' })).toBeNull();
+      expect(parseCommandLifecycle({ type: 'command_lifecycle', state: 'started' })).toBeNull();
+      expect(
+        parseCommandLifecycle({ type: 'command_lifecycle', command_uuid: '', state: 'x' })
+      ).toBeNull();
+      expect(parseCommandLifecycle(null)).toBeNull();
     });
   });
 

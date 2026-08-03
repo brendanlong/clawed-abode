@@ -225,7 +225,7 @@ describe('claudeRouter integration', () => {
       });
     });
 
-    it('accepts a send while Claude is running (message is queued)', async () => {
+    it('accepts a send while Claude is running (it interleaves into the turn)', async () => {
       const session = await testPrisma.session.create({
         data: {
           name: 'Running Session',
@@ -236,8 +236,8 @@ describe('claudeRouter integration', () => {
         },
       });
 
-      // A turn being active no longer blocks a send — sendUserMessage queues it
-      // and flushes at turn end (async "btw mode").
+      // A turn being active never blocks a send — sendUserMessage pushes it into
+      // the SDK immediately and the CLI folds it into the running turn.
       mockIsClaudeRunning.mockReturnValue(true);
       mockSendUserMessage.mockResolvedValue(undefined);
 
@@ -274,28 +274,6 @@ describe('claudeRouter integration', () => {
           prompt: '',
         })
       ).rejects.toThrow();
-    });
-  });
-
-  describe('cancelQueued', () => {
-    it('forwards the queued id to cancelQueuedMessage and reports its result', async () => {
-      const caller = createCaller('auth-session-id');
-      const result = await caller.claude.cancelQueued({
-        sessionId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',
-        queuedId: 'queued-1',
-      });
-      // No live session state in this test process, so the runner reports false.
-      expect(result).toEqual({ success: false });
-    });
-
-    it('requires authentication', async () => {
-      const caller = createCaller(null);
-      await expect(
-        caller.claude.cancelQueued({
-          sessionId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',
-          queuedId: 'queued-1',
-        })
-      ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
     });
   });
 
@@ -482,13 +460,13 @@ describe('claudeRouter integration', () => {
         },
       });
 
-      mockInterruptClaude.mockResolvedValue(true);
+      mockInterruptClaude.mockResolvedValue({ interrupted: true, cancelled: [] });
       mockMarkLastMessageAsInterrupted.mockResolvedValue(undefined);
 
       const caller = createCaller('auth-session-id');
       const result = await caller.claude.interrupt({ sessionId: session.id });
 
-      expect(result).toEqual({ success: true });
+      expect(result).toEqual({ success: true, cancelled: [] });
       expect(mockInterruptClaude).toHaveBeenCalledWith(session.id);
       expect(mockMarkLastMessageAsInterrupted).toHaveBeenCalledWith(session.id);
     });
@@ -504,12 +482,12 @@ describe('claudeRouter integration', () => {
         },
       });
 
-      mockInterruptClaude.mockResolvedValue(false);
+      mockInterruptClaude.mockResolvedValue({ interrupted: false, cancelled: [] });
 
       const caller = createCaller('auth-session-id');
       const result = await caller.claude.interrupt({ sessionId: session.id });
 
-      expect(result).toEqual({ success: false });
+      expect(result).toEqual({ success: false, cancelled: [] });
       expect(mockMarkLastMessageAsInterrupted).not.toHaveBeenCalled();
     });
 
