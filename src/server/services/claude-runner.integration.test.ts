@@ -963,7 +963,7 @@ describe('claude-runner persistent streaming loop', () => {
     // its own turn the instant the interrupt lands.
     const { interrupted, cancelled } = await interruptClaude(sessionId);
     expect(interrupted).toBe(true);
-    expect(cancelled).toEqual(['never read']);
+    expect(cancelled).toEqual([{ text: 'never read', attachments: [] }]);
     expect(fake.cancelAsyncMessage).toHaveBeenCalledWith(fake.inputs[1].uuid);
 
     // Its bubble describes something that never happened, so it is deleted.
@@ -1022,6 +1022,143 @@ describe('claude-runner persistent streaming loop', () => {
     await waitFor(() => getPendingMessageIds(sessionId).length === 0);
     expect(mockSseEvents.emitPendingMessages).toHaveBeenLastCalledWith(sessionId, []);
     expect(isClaudeRunning(sessionId)).toBe(false);
+  });
+
+  it('undoes the bubble and reports failure when the query dies mid-send', async () => {
+    // The insert is awaited, so the query loop can exit inside it. Tracking a
+    // command we never managed to push would strand it in flight — nothing retires
+    // it, so the composer would read "working" forever.
+    const fake = makeFakeQuery();
+    _setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+
+    // Establish the query, then kill it while the next send is preparing.
+    await sendUserMessage(sessionId, 'first');
+    await waitFor(() => fake.inputs.length >= 1);
+    fake.emit(result());
+    await waitFor(() => !isClaudeRunning(sessionId));
+
+    mockResolveUploadPaths.mockImplementationOnce(async (_id: string, names: string[]) => {
+      stopSession(sessionId);
+      return names;
+    });
+
+    await expect(sendUserMessage(sessionId, 'lost', ['aaaa1111-doc.md'])).rejects.toThrow(
+      'Session query is not available'
+    );
+
+    // No half-written state: no bubble claiming the agent saw it, nothing in flight,
+    // and the session is idle rather than pinned "working".
+    const userMsgs = (await messagesFor(sessionId)).filter((m) => m.type === 'user');
+    expect(userMsgs.map((m) => JSON.parse(m.content as string).content)).toEqual(['first']);
+    expect(getPendingMessageIds(sessionId)).toEqual([]);
+    expect(isClaudeRunning(sessionId)).toBe(false);
+  });
+
+  it('retires an in-flight command the CLI never reports on, after one turn boundary', async () => {
+    // A dropped `command_lifecycle` must not pin the composer "working" forever —
+    // but an entry still has to survive the single boundary that the
+    // fold-after-turn-end case needs (see the test above).
+    const fake = makeFakeQuery();
+    _setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+
+    await sendUserMessage(sessionId, 'first');
+    await waitFor(() => fake.inputs.length >= 1);
+    // Prove this CLI *does* report lifecycle, so the lenient budget applies.
+    fake.emit(commandLifecycle(fake.inputs[0].uuid!, 'started'));
+    fake.emit(messageStart());
+    await waitFor(() => isClaudeRunning(sessionId));
+
+    // A second send whose lifecycle report never arrives.
+    await sendUserMessage(sessionId, 'never reported');
+    await waitFor(() => getPendingMessageIds(sessionId).length === 1);
+
+    // One boundary: still held (this is the legitimate cross-turn-gap case).
+    fake.emit(messageDelta('end_turn'));
+    fake.emit(result());
+    expect(isClaudeRunning(sessionId)).toBe(true);
+
+    // A second boundary means it is never coming — release rather than strand.
+    fake.emit(messageStart());
+    fake.emit(messageDelta('end_turn'));
+    fake.emit(result());
+    await waitFor(() => !isClaudeRunning(sessionId));
+    expect(getPendingMessageIds(sessionId)).toEqual([]);
+
+    stopSession(sessionId);
+  });
+
+  it('does not report Claude finished for a turn that ends while Stop is cancelling', async () => {
+    // cancelAsyncMessage is a control round-trip, so a turn can end naturally in the
+    // middle of it. That end belongs to the interrupt, not to Claude finishing.
+    const fake = makeFakeQuery();
+    _setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+
+    await sendUserMessage(sessionId, 'first');
+    await waitFor(() => fake.inputs.length >= 1);
+    fake.emit(commandLifecycle(fake.inputs[0].uuid!, 'started'));
+    fake.emit(messageStart());
+    await waitFor(() => isClaudeRunning(sessionId));
+    await sendUserMessage(sessionId, 'never read');
+    await waitFor(() => fake.inputs.length >= 2);
+
+    // The turn wraps up naturally while the cancel is still in flight.
+    fake.cancelAsyncMessage.mockImplementationOnce(async () => {
+      fake.emit(messageDelta('end_turn'));
+      fake.emit(result());
+      await new Promise((r) => setTimeout(r, 20));
+      return true;
+    });
+
+    mockSseEvents.emitClaudeFinished.mockClear();
+    await interruptClaude(sessionId);
+    await waitFor(() => !isClaudeRunning(sessionId));
+
+    expect(mockSseEvents.emitClaudeFinished).not.toHaveBeenCalled();
+
+    // And the flag was consumed by that end, so the NEXT genuine turn still reports.
+    await sendUserMessage(sessionId, 'next');
+    await waitFor(() => fake.inputs.length >= 3);
+    fake.emit(commandLifecycle(fake.inputs[2].uuid!, 'started'));
+    fake.emit(messageStart());
+    await waitFor(() => isClaudeRunning(sessionId));
+    fake.emit(messageDelta('end_turn'));
+    fake.emit(result());
+    await waitFor(() => !isClaudeRunning(sessionId));
+    expect(mockSseEvents.emitClaudeFinished).toHaveBeenCalledTimes(1);
+
+    stopSession(sessionId);
+  });
+
+  it('reports interrupted:false when Stop only recalled a message (no turn to abort)', async () => {
+    // The caller stamps "Interrupted" on the last message when this is true — doing
+    // that for a turn that had already completed would corrupt the transcript.
+    const fake = makeFakeQuery();
+    _setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+
+    await sendUserMessage(sessionId, 'first');
+    await waitFor(() => fake.inputs.length >= 1);
+    fake.emit(commandLifecycle(fake.inputs[0].uuid!, 'started'));
+    fake.emit(messageStart());
+    await waitFor(() => isClaudeRunning(sessionId));
+    await sendUserMessage(sessionId, 'not read yet');
+    await waitFor(() => fake.inputs.length >= 2);
+
+    // The turn ends; only the un-picked-up message keeps the session "running".
+    fake.emit(messageDelta('end_turn'));
+    fake.emit(result());
+    await waitFor(async () => (await messagesFor(sessionId)).some((m) => m.type === 'result'));
+    expect(isClaudeRunning(sessionId)).toBe(true);
+
+    const { interrupted, cancelled } = await interruptClaude(sessionId);
+    expect(interrupted).toBe(false);
+    expect(cancelled).toEqual([{ text: 'not read yet', attachments: [] }]);
+    await waitFor(() => !isClaudeRunning(sessionId));
+
+    stopSession(sessionId);
   });
 
   it('applies a model change live on the next send', async () => {

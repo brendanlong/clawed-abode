@@ -6,10 +6,11 @@
  * - **Partial** messages (id prefixed with {@link PARTIAL_MESSAGE_ID_PREFIX}) are
  *   transient streaming snapshots of the in-progress assistant turn. At most one
  *   lives in the cache at a time; each new one replaces it.
- * - **Complete** messages are persisted and immutable. When one arrives it removes
- *   any lingering partials and is appended (deduped by id). A complete message is
- *   never edited in place — the one way it leaves the cache is
- *   {@link removeMessageFromCache}, when the server deletes the row outright.
+ * - **Complete** messages are persisted. When one arrives it removes any lingering
+ *   partials and is appended, deduped by id — a re-delivered id is ignored rather
+ *   than merged, so the cache never reconciles an edit. The one way a complete
+ *   message leaves is {@link removeMessageFromCache}, when the server deletes the
+ *   row outright.
  *
  * Pages are ordered newest-page-last is NOT the case here: page[0] holds the
  * newest messages (matching `getHistory`'s backward pagination), so live messages

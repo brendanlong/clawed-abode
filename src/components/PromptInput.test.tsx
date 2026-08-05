@@ -249,10 +249,12 @@ describe('PromptInput', () => {
   });
 
   describe('stop', () => {
+    const cancelled = (text: string) => [{ text, attachments: [] }];
+
     it('restores prompts the server pulled back when the agent had not read them', async () => {
-      // Stop cancels an undelivered message server-side; its text must come back
-      // to the composer instead of vanishing.
-      const onInterrupt = vi.fn().mockResolvedValue(['unread message']);
+      // Stop deletes the transcript bubble of a message the agent never read, so
+      // the composer is the only copy left — it must not be dropped.
+      const onInterrupt = vi.fn().mockResolvedValue(cancelled('unread message'));
       const user = userEvent.setup();
       render(<PromptInput {...defaultProps} onInterrupt={onInterrupt} isRunning={true} />);
 
@@ -261,16 +263,42 @@ describe('PromptInput', () => {
       await waitFor(() => expect(screen.getByRole('textbox')).toHaveValue('unread message'));
     });
 
-    it('leaves text the user has already started typing alone', async () => {
-      const onInterrupt = vi.fn().mockResolvedValue(['unread message']);
+    it('keeps both the recalled prompt and text typed since, oldest first', async () => {
+      const onInterrupt = vi.fn().mockResolvedValue(cancelled('unread message'));
       const user = userEvent.setup();
       render(<PromptInput {...defaultProps} onInterrupt={onInterrupt} isRunning={true} />);
 
       await user.type(screen.getByRole('textbox'), 'something new');
       await user.click(screen.getByRole('button', { name: /stop/i }));
 
-      await waitFor(() => expect(onInterrupt).toHaveBeenCalled());
-      expect(screen.getByRole('textbox')).toHaveValue('something new');
+      await waitFor(() =>
+        expect(screen.getByRole('textbox')).toHaveValue('unread message\n\nsomething new')
+      );
+    });
+
+    it('restores the recalled attachments as composer chips', async () => {
+      const onInterrupt = vi.fn().mockResolvedValue([
+        {
+          text: 'with a file',
+          attachments: [{ name: 'notes.md', storedName: 'abcd1234-notes.md', path: '/w/notes.md' }],
+        },
+      ]);
+      const user = userEvent.setup();
+      render(<PromptInput {...defaultProps} onInterrupt={onInterrupt} isRunning={true} />);
+
+      await user.click(screen.getByRole('button', { name: /stop/i }));
+
+      await waitFor(() => expect(screen.getByText('notes.md')).toBeInTheDocument());
+    });
+
+    it('surfaces an error when the stop itself fails', async () => {
+      const onInterrupt = vi.fn().mockRejectedValue(new Error('Stop failed'));
+      const user = userEvent.setup();
+      render(<PromptInput {...defaultProps} onInterrupt={onInterrupt} isRunning={true} />);
+
+      await user.click(screen.getByRole('button', { name: /stop/i }));
+
+      await waitFor(() => expect(screen.getByText('Stop failed')).toBeInTheDocument());
     });
   });
 

@@ -7,6 +7,7 @@ import { useVoicePlaybackContext } from '@/hooks/useVoicePlayback';
 import { useVoiceRecording } from '@/hooks/useVoiceRecording';
 import { useVoiceConfig } from '@/hooks/useVoiceConfig';
 import { extractAssistantText } from '@/lib/auto-read-helpers';
+import { mergeCancelledText, type CancelledPrompt } from '@/lib/cancelled-prompt';
 import { cn } from '@/lib/utils';
 
 /** Minimal message shape passed into the panel */
@@ -28,7 +29,14 @@ interface VoiceControlPanelProps {
    */
   onSendPrompt: (prompt: string) => void | Promise<unknown>;
   onClose: () => void;
-  onInterrupt: () => void;
+  /**
+   * Stop the current turn. Resolves with any prompts the server pulled back
+   * because the agent hadn't read them yet — their transcript bubbles are already
+   * deleted, so they are restored into the review area rather than dropped.
+   * Typed to return them (not `void`) so a caller's result can't be silently
+   * swallowed by void-return assignability.
+   */
+  onInterrupt: () => void | Promise<CancelledPrompt[] | void>;
 }
 
 /** An assistant message with extractable text, for prev/next navigation */
@@ -188,6 +196,20 @@ export function VoiceControlPanel({
     [onSendPrompt]
   );
 
+  // Stop can pull back prompts the agent never read. The panel has no attachment
+  // UI, so only the text is restorable here — it lands in the review area, where
+  // the user can send it again or discard it deliberately.
+  const handleInterrupt = useCallback(() => {
+    Promise.resolve(onInterrupt())
+      .then((cancelled) => {
+        if (!cancelled?.length) return;
+        setPendingTranscript((current) => mergeCancelledText(current ?? '', cancelled));
+      })
+      .catch((err: unknown) => {
+        setSendError(err instanceof Error ? err.message : 'Failed to stop');
+      });
+  }, [onInterrupt]);
+
   // Recording: start or stop
   const handleMicPress = () => {
     if (isRecording) {
@@ -327,7 +349,7 @@ export function VoiceControlPanel({
               variant="destructive"
               size="icon"
               className="h-14 w-14 rounded-full"
-              onClick={onInterrupt}
+              onClick={handleInterrupt}
               title="Interrupt Claude"
             >
               <Square className="h-6 w-6" />

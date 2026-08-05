@@ -18,7 +18,7 @@ Messages carry a per-session monotone `sequence`. **Every insert goes through `i
 
 A duplicate `id` (e.g. an idempotent synthetic `tool_result`) fails the primary key and is treated as a no-op; the reserved sequence is skipped, leaving a gap — pagination orders by `sequence` and never assumes contiguity. All history queries are cursor-based on `sequence` (`claude.getHistory`, direction before/after).
 
-Stored messages are immutable — never edited in place. The single exception is deletion: a prompt Stop pulled back before the agent read it is removed outright and a `message_removed` event tells clients to drop it (see [`claude-sessions.md`](claude-sessions.md)).
+A stored message is only ever rewritten by `markLastMessageAsInterrupted`, and only ever deleted for a prompt Stop pulled back before the agent read it (`message_removed` tells clients to drop it — see [`claude-sessions.md`](claude-sessions.md)). Everything else is append-only, which is what lets the client cache dedupe live messages by id instead of reconciling them.
 
 ## SSE
 

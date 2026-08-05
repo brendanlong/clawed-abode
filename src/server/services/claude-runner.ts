@@ -12,6 +12,7 @@
  *   - background tasks: an indicator only; never gates input.
  */
 
+import { basename } from 'path';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import {
@@ -41,7 +42,12 @@ import {
 } from '@/lib/session-status';
 import { createPushable, type Pushable } from '@/lib/pushable';
 import { type ToolResponse, buildSyntheticToolResultContent } from '@/lib/tool-response';
-import { buildPromptWithAttachments } from '@/lib/attachments';
+import {
+  buildPromptWithAttachments,
+  displayFileName,
+  type UploadedAttachment,
+} from '@/lib/attachments';
+import type { CancelledPrompt } from '@/lib/cancelled-prompt';
 import { extractRepoFullName } from '@/lib/utils';
 import { v4 as uuid, v5 as uuidv5 } from 'uuid';
 import { sseEvents } from './events';
@@ -178,19 +184,14 @@ interface SessionState {
    */
   toolSanitizations: Map<string, SanitizationInfo>;
   /**
-   * Messages already pushed into the SDK that the CLI has accepted into its
-   * command queue but not yet handed to the model, keyed by the `uuid` we stamped
-   * on the pushed message. Tracked from the push until `command_lifecycle` reports
-   * the command left the queue (see {@link handleCommandLifecycle}).
-   *
-   * Two jobs: the ids feed the `pending` SSE channel so the transcript can mark a
-   * bubble "not delivered yet", and the text lets {@link interruptClaude} hand a
-   * cancelled prompt back to the composer instead of losing it.
+   * Messages pushed into the SDK whose work hasn't visibly begun yet, keyed by the
+   * `uuid` we stamped on the pushed message. Retired in {@link applyStatus}; see
+   * {@link InFlightCommand} for the two stages and why they're tracked separately.
    */
-  pendingCommands: Map<string, PendingCommand>;
+  inFlightCommands: Map<string, InFlightCommand>;
   /**
    * Last value emitted on the `claude_running` channel. The composer's "working"
-   * state is `turnActive || pendingCommands.size > 0` ({@link effectiveRunning}),
+   * state is `turnActive || inFlightCommands.size > 0` ({@link effectiveRunning}),
    * derived from two independently-changing inputs, so the last emitted value is
    * kept here rather than inferred from a status diff.
    */
@@ -198,11 +199,11 @@ interface SessionState {
   /**
    * Whether this session's CLI has ever emitted a `command_lifecycle` message.
    * That type is undocumented and absent from the SDK's `SDKMessage` union, so a
-   * CLI that never emits it would leave {@link pendingCommands} full forever and
+   * CLI that never emits it would leave {@link inFlightCommands} full forever and
    * pin the composer "working". A supporting CLI reports `queued` within
-   * milliseconds of the push — long before any turn boundary — which makes "no
-   * lifecycle seen by the first boundary" a reliable feature check, and arms the
-   * boundary backstop in {@link applyStatus} only for the CLIs that need it.
+   * milliseconds of the push — long before any turn boundary — so this doubles as
+   * a feature check: it decides how many turns an entry may survive without a
+   * lifecycle report (see {@link retireInFlightCommands}).
    */
   commandLifecycleSeen: boolean;
   /**
@@ -220,12 +221,29 @@ interface SessionState {
   sessionScope: string | null;
 }
 
-/** A user message handed to the SDK but not yet read by the agent. */
-interface PendingCommand {
+/**
+ * A user message handed to the SDK whose work hasn't visibly begun yet. It passes
+ * through two stages, tracked separately because they answer different questions:
+ *
+ * - **Not `started`** — the CLI has it queued but the agent hasn't read it. This is
+ *   what the transcript marks "Sending…", and the only stage Stop can cancel.
+ * - **`started`, no turn open yet** — the agent is reading it, but the turn it
+ *   feeds hasn't produced a `message_start`. Nothing to show the user, yet the
+ *   entry must survive: `turnActive` is false across that gap (full model latency
+ *   when the previous turn ended before the CLI folded this message in), and
+ *   dropping it here would blink the composer idle mid-work.
+ */
+interface InFlightCommand {
   /** Id of the persisted transcript bubble for this message. */
   messageId: string;
   /** The user's typed text (original, un-sanitized), for restore-on-cancel. */
   text: string;
+  /** Stored names of files attached to it (see /api/upload), likewise. */
+  attachments: string[];
+  /** The CLI reported the agent has read it (`command_lifecycle` left `queued`). */
+  started: boolean;
+  /** Top-level `result`s seen since the push — see {@link retireInFlightCommands}. */
+  resultsSeen: number;
 }
 
 /** Active sessions tracked in memory. */
@@ -368,7 +386,7 @@ function getSessionState(sessionId: string, workingDir: string): SessionState {
       boundSettings: null,
       settingsKey: '',
       toolSanitizations: new Map(),
-      pendingCommands: new Map(),
+      inFlightCommands: new Map(),
       emittedRunning: false,
       commandLifecycleSeen: false,
       interruptRequested: false,
@@ -705,8 +723,8 @@ function clearLiveStatus(sessionId: string, state: SessionState): void {
   // Deliveries in flight die with the query. Their bubbles stay in the transcript
   // (they may well have been read before the teardown — we can't know), but the
   // "not delivered yet" marker must clear or it would hang there forever.
-  if (state.pendingCommands.size > 0) {
-    state.pendingCommands.clear();
+  if (state.inFlightCommands.size > 0) {
+    state.inFlightCommands.clear();
     sseEvents.emitPendingMessages(sessionId, []);
   }
   if (state.status.turnActive) {
@@ -739,16 +757,16 @@ function dropBackgroundTask(sessionId: string, state: SessionState, taskId: stri
 
 /**
  * What the composer shows as "Claude is working": a live main-agent turn, **or** a
- * message we have handed to the SDK that the agent hasn't read yet.
+ * message we handed to the SDK whose work hasn't visibly begun yet.
  *
  * The second clause covers the gap between turns. A message pushed mid-turn is
- * usually folded into the running turn, but if the turn ends first the CLI starts
- * a fresh turn for it — and the `result`/`message_start` pair in between would
- * otherwise blip the composer idle and fire a "Claude finished" notification for
- * work that is about to continue.
+ * usually folded into the running turn, but if the turn ends first the CLI starts a
+ * fresh turn for it — and everything between that `result` and the new turn's
+ * `message_start` would otherwise blip the composer idle and fire a "Claude
+ * finished" notification for work that is about to continue.
  */
 function effectiveRunning(state: SessionState): boolean {
-  return state.status.turnActive || state.pendingCommands.size > 0;
+  return state.status.turnActive || state.inFlightCommands.size > 0;
 }
 
 /**
@@ -765,30 +783,69 @@ function syncRunning(sessionId: string, state: SessionState): boolean {
 }
 
 /**
- * Fold a `command_lifecycle` message into the pending set. Anything other than
- * `queued` means the command has left the CLI's queue — `started` (the agent is
- * reading it now) is the normal case, with `completed`/`cancelled` as backstops in
- * case `started` is ever missed. Returns true if the message was a lifecycle event
- * (and so must not be persisted).
+ * Fold a `command_lifecycle` message into the in-flight set. Returns true if the
+ * message was a lifecycle event (and so must not be persisted).
+ *
+ * `queued` is just the CLI acknowledging receipt. Anything else means the agent has
+ * the message: `started` is the normal report and only clears the "Sending…" marker
+ * — the entry itself lives on until the turn it feeds opens (see
+ * {@link InFlightCommand}) — while a terminal `completed`/`cancelled` retires it
+ * outright, covering a `started` that never arrived.
  */
 function handleCommandLifecycle(sessionId: string, state: SessionState, message: unknown): boolean {
   const lifecycle = parseCommandLifecycle(message);
   if (!lifecycle) return false;
   state.commandLifecycleSeen = true;
   if (lifecycle.state === 'queued') return true;
-  if (!state.pendingCommands.delete(lifecycle.command_uuid)) return true;
+
+  const command = state.inFlightCommands.get(lifecycle.command_uuid);
+  if (!command) return true;
+  if (lifecycle.state === 'started') {
+    if (command.started) return true;
+    command.started = true;
+  } else {
+    state.inFlightCommands.delete(lifecycle.command_uuid);
+  }
   sseEvents.emitPendingMessages(sessionId, pendingMessageIds(state));
   syncRunning(sessionId, state);
   return true;
 }
 
 /**
- * A point at which the CLI has necessarily dequeued whatever it was going to run:
- * a new top-level assistant message beginning, or a turn's terminal `result`.
- * Used only by the delivery backstop in {@link applyStatus}.
+ * Retire in-flight commands that have visibly become ordinary turn work, and
+ * guarantee none can linger forever.
+ *
+ * - A **top-level `message_start`** retires every entry the agent has already read:
+ *   a turn is now open, so `turnActive` carries the running state from here.
+ * - A **top-level `result`** is the strand safety valve. An entry the CLI never
+ *   reported on would otherwise pin the composer "working" for good — so one is
+ *   allowed to survive a single turn boundary (the fold-after-turn-end case above),
+ *   and no more. On a CLI that reports no lifecycle at all, there is nothing to wait
+ *   for and the first boundary retires it.
+ *
+ * Deliberately not time-based: this file has no status timers (see CLAUDE.md).
  */
-function isDeliveryBoundary(message: SDKMessage): boolean {
-  if (message.type === 'result') return true;
+function retireInFlightCommands(sessionId: string, state: SessionState, message: SDKMessage): void {
+  if (state.inFlightCommands.size === 0) return;
+  const isResult = message.type === 'result';
+  if (!isResult && !isTopLevelMessageStart(message)) return;
+
+  const maxTurnsWithoutReport = state.commandLifecycleSeen ? 2 : 1;
+  let changed = false;
+  for (const [commandUuid, command] of state.inFlightCommands) {
+    // On a CLI that reports no lifecycle at all, `started` never arrives, so the
+    // boundary itself stands in for it.
+    const readByAgent = command.started || !state.commandLifecycleSeen;
+    const retire = isResult ? ++command.resultsSeen >= maxTurnsWithoutReport : readByAgent;
+    if (!retire) continue;
+    state.inFlightCommands.delete(commandUuid);
+    changed = true;
+  }
+  if (changed) sseEvents.emitPendingMessages(sessionId, pendingMessageIds(state));
+}
+
+/** Whether a message is the main agent's (top-level) `message_start`. */
+function isTopLevelMessageStart(message: SDKMessage): boolean {
   if (message.type !== 'stream_event') return false;
   const parent = (message as { parent_tool_use_id?: string | null }).parent_tool_use_id;
   if (parent !== null && parent !== undefined) return false;
@@ -796,9 +853,13 @@ function isDeliveryBoundary(message: SDKMessage): boolean {
   return event?.type === 'message_start';
 }
 
-/** Transcript ids of the messages still awaiting delivery, in push order. */
+/**
+ * Transcript ids of the messages the agent hasn't read yet, in push order — the
+ * ones the client marks "Sending…". Commands past `started` are excluded even
+ * though they are still tracked.
+ */
 function pendingMessageIds(state: SessionState): string[] {
-  return [...state.pendingCommands.values()].map((c) => c.messageId);
+  return [...state.inFlightCommands.values()].filter((c) => !c.started).map((c) => c.messageId);
 }
 
 /** A user message that has been resolved + sanitized but not yet persisted. */
@@ -863,18 +924,7 @@ function applyStatus(sessionId: string, state: SessionState, message: SDKMessage
 
   state.status = status;
 
-  // Delivery backstop for a CLI that doesn't report `command_lifecycle` at all
-  // (see SessionState.commandLifecycleSeen): at a turn boundary, anything we
-  // pushed has been dequeued, so retire it rather than pin the composer forever.
-  if (
-    !state.commandLifecycleSeen &&
-    state.pendingCommands.size > 0 &&
-    isDeliveryBoundary(message)
-  ) {
-    state.pendingCommands.clear();
-    sseEvents.emitPendingMessages(sessionId, []);
-  }
-
+  retireInFlightCommands(sessionId, state, message);
   syncRunning(sessionId, state);
 
   // "Claude finished" fires when a main-agent turn ends NATURALLY *and* the session
@@ -891,7 +941,7 @@ function applyStatus(sessionId: string, state: SessionState, message: SDKMessage
   // continuation's end. The residual case — a background task settling with no
   // continuation — leaves no "finished" signal, an accepted tradeoff (favoring no
   // spurious notification over no missed one).
-  if (turnEnded && !interrupted && !backgroundActive(status) && state.pendingCommands.size === 0) {
+  if (turnEnded && !interrupted && !backgroundActive(status) && state.inFlightCommands.size === 0) {
     sseEvents.emitClaudeFinished(sessionId);
   }
   if (changed.background) {
@@ -1194,7 +1244,7 @@ async function applyLiveSettings(sessionId: string, state: SessionState): Promis
  *
  * The push is stamped with a `uuid` so the CLI reports its delivery over
  * `command_lifecycle`; until it reports the command started, the message sits in
- * {@link SessionState.pendingCommands} (marked undelivered in the transcript, and
+ * {@link SessionState.inFlightCommands} (marked undelivered in the transcript, and
  * cancellable by Stop).
  *
  * `attachments` are stored names (see /api/upload), resolved to paths here.
@@ -1216,12 +1266,28 @@ export async function sendUserMessage(
   // Sanitize/resolve up front (no side effects) so a failure aborts cleanly before
   // anything is persisted and the client keeps the just-typed text to retry.
   const prepared = await prepareUserMessage(sessionId, prompt, attachments);
-  if (!state.input) throw new Error('Session query is not available');
 
   const messageId = uuid();
   const commandUuid = uuid();
   await insertPreparedMessage(sessionId, messageId, prepared);
-  state.pendingCommands.set(commandUuid, { messageId, text: prompt });
+
+  // Re-read `state.input` *after* the insert: the query loop can exit mid-await
+  // (CLI crash, stop) and null it. Tracking a command we never pushed would strand
+  // it in-flight — nothing retires it, so the composer would read "working"
+  // forever — so undo the bubble and surface the failure to the composer instead.
+  const input = state.input;
+  if (!input) {
+    await removeMessages(sessionId, [messageId]);
+    throw new Error('Session query is not available');
+  }
+
+  state.inFlightCommands.set(commandUuid, {
+    messageId,
+    text: prompt,
+    attachments,
+    started: false,
+    resultsSeen: 0,
+  });
   sseEvents.emitPendingMessages(sessionId, pendingMessageIds(state));
   // Optimistically mark the turn active. The SDK's own top-level `message_start`
   // confirms it, but setting it here keeps the reducer's true→false edge — and so
@@ -1232,7 +1298,7 @@ export async function sendUserMessage(
   }
   syncRunning(sessionId, state);
 
-  state.input.push({
+  input.push({
     type: 'user',
     message: { role: 'user', content: prepared.content },
     parent_tool_use_id: null,
@@ -1329,9 +1395,14 @@ export function getSessionBackgroundTasks(sessionId: string): BackgroundTask[] {
 }
 
 export interface InterruptResult {
+  /**
+   * A live main-agent turn was aborted. False when Stop had nothing to abort but
+   * still recalled queued messages — the caller must not then mark an
+   * already-completed message as interrupted.
+   */
   interrupted: boolean;
-  /** Text of the prompts Stop pulled back before the agent ever read them. */
-  cancelled: string[];
+  /** Prompts Stop pulled back before the agent ever read them. */
+  cancelled: CancelledPrompt[];
 }
 
 /**
@@ -1353,10 +1424,17 @@ function asCancelCapable(query: Query): CancelCapableQuery | null {
     : null;
 }
 
-/** Delete a persisted message and tell connected clients to drop it. */
-async function removeMessage(sessionId: string, messageId: string): Promise<void> {
-  const { count } = await prisma.message.deleteMany({ where: { id: messageId, sessionId } });
-  if (count > 0) sseEvents.emitMessageRemoved(sessionId, messageId);
+/**
+ * Delete persisted messages and tell connected clients to drop them. One statement
+ * for the whole batch; the per-id events are what the clients actually key on.
+ */
+async function removeMessages(sessionId: string, messageIds: string[]): Promise<void> {
+  if (messageIds.length === 0) return;
+  const { count } = await prisma.message.deleteMany({
+    where: { sessionId, id: { in: messageIds } },
+  });
+  if (count === 0) return;
+  for (const messageId of messageIds) sseEvents.emitMessageRemoved(sessionId, messageId);
 }
 
 /**
@@ -1375,16 +1453,20 @@ async function removeMessage(sessionId: string, messageId: string): Promise<void
  * `still_queued` docs say a post-interrupt probe "always loses the race against the
  * drain loop"). Cancelling first leaves the drain nothing to start.
  */
-async function cancelPendingCommands(
+async function cancelInFlightCommands(
   sessionId: string,
   state: SessionState,
   query: Query
-): Promise<string[]> {
-  const canceller = state.pendingCommands.size > 0 ? asCancelCapable(query) : null;
+): Promise<CancelledPrompt[]> {
+  // Only commands the agent hasn't read are recallable; a `started` one is already
+  // being answered, and its bubble is truthful.
+  const recallable = [...state.inFlightCommands].filter(([, c]) => !c.started);
+  const canceller = recallable.length > 0 ? asCancelCapable(query) : null;
   if (!canceller) return [];
 
-  const cancelled: string[] = [];
-  for (const [commandUuid, pending] of [...state.pendingCommands]) {
+  const recalled: InFlightCommand[] = [];
+  const removedMessageIds: string[] = [];
+  for (const [commandUuid, command] of recallable) {
     let dropped = false;
     try {
       dropped = await canceller.cancelAsyncMessage(commandUuid);
@@ -1395,16 +1477,40 @@ async function cancelPendingCommands(
       });
     }
     if (!dropped) continue;
-    state.pendingCommands.delete(commandUuid);
-    cancelled.push(pending.text);
-    await removeMessage(sessionId, pending.messageId);
+    state.inFlightCommands.delete(commandUuid);
+    recalled.push(command);
+    removedMessageIds.push(command.messageId);
   }
 
-  if (cancelled.length > 0) {
-    sseEvents.emitPendingMessages(sessionId, pendingMessageIds(state));
-    syncRunning(sessionId, state);
-  }
-  return cancelled;
+  if (removedMessageIds.length === 0) return [];
+  await removeMessages(sessionId, removedMessageIds);
+  sseEvents.emitPendingMessages(sessionId, pendingMessageIds(state));
+  syncRunning(sessionId, state);
+
+  // Hand back the uploads too, so re-sending is one click rather than a re-upload.
+  return Promise.all(
+    recalled.map(async (command) => ({
+      text: command.text,
+      attachments: await describeAttachments(sessionId, command.attachments),
+    }))
+  );
+}
+
+/**
+ * Rebuild composer-ready attachment records from stored names. The original upload
+ * response isn't kept anywhere, so the display name is recovered the same way the
+ * chips do it (`displayFileName`); files already gone from disk are dropped.
+ */
+async function describeAttachments(
+  sessionId: string,
+  storedNames: string[]
+): Promise<UploadedAttachment[]> {
+  if (storedNames.length === 0) return [];
+  const paths = await resolveUploadPaths(sessionId, storedNames);
+  return paths.map((filePath) => {
+    const storedName = basename(filePath);
+    return { name: displayFileName(storedName), storedName, path: filePath };
+  });
 }
 
 /**
@@ -1424,13 +1530,22 @@ export async function interruptClaude(sessionId: string): Promise<InterruptResul
     return { interrupted: false, cancelled: [] };
   }
 
-  // Empty the CLI's command queue first — see cancelPendingCommands: the abort
-  // below wakes the drain loop, so anything left queued at that moment runs.
-  const cancelled = await cancelPendingCommands(sessionId, state, state.query);
+  // Whether there is a turn to abort at all — Stop is also reachable when the only
+  // thing "running" is a message the CLI hasn't picked up yet. Read before any
+  // await, and reported back so the caller doesn't stamp "Interrupted" on a turn
+  // that had already finished.
+  const hadActiveTurn = state.status.turnActive;
 
-  // Mark this turn-end as an interrupt so `applyStatus` doesn't report it as
-  // Claude *finishing* — the user stopped it.
-  state.interruptRequested = true;
+  // Mark the coming turn-end as an interrupt so `applyStatus` doesn't report it as
+  // Claude *finishing* — the user stopped it. Set before the awaits below: a turn
+  // ending naturally while we cancel would otherwise fire a work-complete
+  // notification for work the user just cancelled, and leave the flag armed to
+  // swallow the *next* turn's genuine one.
+  state.interruptRequested = hadActiveTurn;
+
+  // Empty the CLI's command queue first — see cancelInFlightCommands: the abort
+  // below wakes the drain loop, so anything left queued at that moment runs.
+  const cancelled = await cancelInFlightCommands(sessionId, state, state.query);
 
   try {
     await state.query.interrupt();
@@ -1444,7 +1559,7 @@ export async function interruptClaude(sessionId: string): Promise<InterruptResul
     return { interrupted: false, cancelled };
   }
 
-  return { interrupted: true, cancelled };
+  return { interrupted: hadActiveTurn, cancelled };
 }
 
 /**

@@ -8,6 +8,11 @@ import { VoiceMicButton } from '@/components/voice/VoiceMicButton';
 import { useVoiceRecording } from '@/hooks/useVoiceRecording';
 import { useFileUpload } from '@/hooks/useFileUpload';
 import type { UploadedAttachment } from '@/lib/attachments';
+import {
+  mergeCancelledText,
+  mergeCancelledAttachments,
+  type CancelledPrompt,
+} from '@/lib/cancelled-prompt';
 
 export interface SlashCommand {
   name: string;
@@ -24,11 +29,11 @@ interface PromptInputProps {
    */
   onSubmit: (prompt: string, attachments?: UploadedAttachment[]) => void | Promise<unknown>;
   /**
-   * Stop the current turn. Resolves with the text of any prompts the server
-   * pulled back because the agent hadn't read them yet; those are restored into
-   * the composer so Stop never eats a message the user typed.
+   * Stop the current turn. Resolves with any prompts the server pulled back
+   * because the agent hadn't read them yet — the server has already deleted their
+   * transcript bubbles, so the composer must take them back.
    */
-  onInterrupt: () => void | Promise<string[] | void>;
+  onInterrupt: () => void | Promise<CancelledPrompt[] | void>;
   isRunning: boolean;
   isInterrupting: boolean;
   disabled: boolean;
@@ -134,17 +139,18 @@ export function PromptInput({
     [onSubmit]
   );
 
-  // Stop can pull back prompts the agent never read; put their text back in the
-  // composer (unless the user has already started typing something else) so
-  // stopping never silently discards a message.
+  // Stop can pull back prompts the agent never read. Their bubbles are already
+  // gone from the transcript, so the composer is the last copy — merge them in
+  // ahead of anything typed since rather than dropping either.
   const handleInterrupt = useCallback(() => {
     Promise.resolve(onInterrupt())
       .then((cancelled) => {
         if (!cancelled?.length) return;
-        setPrompt((current) => (current.length === 0 ? cancelled.join('\n\n') : current));
+        setPrompt((current) => mergeCancelledText(current, cancelled));
+        setAttachments((current) => mergeCancelledAttachments(current, cancelled));
       })
-      .catch(() => {
-        // The interrupt itself failed; the Stop button's error state covers it.
+      .catch((err: unknown) => {
+        setSendError(err instanceof Error ? err.message : 'Failed to stop');
       });
   }, [onInterrupt]);
 

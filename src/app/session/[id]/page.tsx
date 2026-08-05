@@ -70,8 +70,8 @@ function SessionView({ sessionId }: { sessionId: string }) {
   } = useClaudeState(sessionId);
 
   // Something is happening if a turn is active or background tasks run. The server
-  // holds turnActive continuously across a natural-flush handoff, so there's no
-  // client-side flush bridge to account for here.
+  // holds the running flag continuously across a message handoff between turns, so
+  // there's nothing for the client to bridge here.
   const isWorking = isClaudeRunning || backgroundActive;
 
   // Working indicator: page title and favicon
