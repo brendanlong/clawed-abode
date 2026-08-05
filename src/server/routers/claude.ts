@@ -13,8 +13,7 @@ import {
   getSessionRetry,
   getSessionBackgroundTasks,
   stopBackgroundTask,
-  cancelQueuedMessage,
-  getQueuedMessages,
+  getPendingMessageIds,
 } from '../services/claude-runner';
 import { MAX_ATTACHMENTS } from '@/lib/attachments';
 import { estimateTokenUsage } from '@/lib/token-estimation';
@@ -116,23 +115,12 @@ export const claudeRouter = router({
         });
       }
 
-      // A send is always accepted while the session is running: the server owns
-      // the queue decision — if a main-agent turn is active, sendUserMessage holds
-      // the message in the session queue (surfaced to the client, removable) and
-      // flushes it as one combined turn when the turn ends naturally (async "btw
-      // mode"). Background tasks never gate input.
+      // A send is always accepted while the session is running and goes straight
+      // into the SDK, whatever the agent is doing — the CLI interleaves it into
+      // the running turn. Neither a live turn nor background tasks gate input.
       await sendUserMessage(input.sessionId, input.prompt, input.attachments ?? []);
 
       return { success: true };
-    }),
-
-  // Remove a queued message before it flushes (the ✕ on a queued bubble). The
-  // queue is server-side and in-memory; idempotent (a no-op if already flushed).
-  cancelQueued: protectedProcedure
-    .input(z.object({ sessionId: z.string().uuid(), queuedId: z.string().min(1) }))
-    .mutation(({ input }) => {
-      const ok = cancelQueuedMessage(input.sessionId, input.queuedId);
-      return { success: ok };
     }),
 
   answerQuestion: protectedProcedure
@@ -183,13 +171,15 @@ export const claudeRouter = router({
         });
       }
 
-      const interrupted = await interruptClaude(input.sessionId);
+      const { interrupted, cancelled } = await interruptClaude(input.sessionId);
 
       if (interrupted) {
         await markLastMessageAsInterrupted(input.sessionId);
       }
 
-      return { success: interrupted };
+      // Prompts Stop pulled back before the agent read them. Returned so the
+      // composer can restore them rather than silently dropping the user's text.
+      return { success: interrupted, cancelled };
     }),
 
   getHistory: protectedProcedure
@@ -337,13 +327,13 @@ export const claudeRouter = router({
       return { tasks: getSessionBackgroundTasks(input.sessionId) };
     }),
 
-  // Messages queued while a turn is active (async "btw mode"). Updates stream live
-  // over the `queued` SSE channel; this seeds the initial value and resyncs on
-  // reconnect. In-memory only, never persisted until they flush (lost on restart).
-  getQueuedMessages: protectedProcedure
+  // Transcript ids of messages the SDK has accepted but not yet handed to the
+  // agent. Updates stream live over the `pending` SSE channel; this seeds the
+  // initial value and resyncs on reconnect. In-memory only (lost on restart).
+  getPendingMessageIds: protectedProcedure
     .input(z.object({ sessionId: z.string().uuid() }))
     .query(({ input }) => {
-      return { messages: getQueuedMessages(input.sessionId) };
+      return { messageIds: getPendingMessageIds(input.sessionId) };
     }),
 
   // Stop a single running background task.

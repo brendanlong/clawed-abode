@@ -30,10 +30,10 @@ export function useClaudeState(sessionId: string) {
   const { data: backgroundData, refetch: refetchBackground } =
     trpc.claude.getBackgroundTasks.useQuery({ sessionId }, { staleTime: Infinity });
 
-  // Fetch messages queued while a turn is active (server-owned). Seeded once and
-  // kept current by the SSE `queued` channel (staleTime Infinity so a focus
-  // refetch can't clobber the live value).
-  const { data: queuedData, refetch: refetchQueued } = trpc.claude.getQueuedMessages.useQuery(
+  // Fetch the ids of messages the SDK has accepted but not yet handed to the
+  // agent. Seeded once and kept current by the SSE `pending` channel (staleTime
+  // Infinity so a focus refetch can't clobber the live value).
+  const { data: pendingData, refetch: refetchPending } = trpc.claude.getPendingMessageIds.useQuery(
     { sessionId },
     { staleTime: Infinity }
   );
@@ -44,23 +44,22 @@ export function useClaudeState(sessionId: string) {
     refetchCommands();
     refetchRetry();
     refetchBackground();
-    refetchQueued();
-  }, [refetch, refetchCommands, refetchRetry, refetchBackground, refetchQueued]);
+    refetchPending();
+  }, [refetch, refetchCommands, refetchRetry, refetchBackground, refetchPending]);
   useRefetchOnReconnect(refetchAll);
 
   // Live running-state and command updates arrive via the multiplexed SSE stream
   // (useSessionStream), which writes directly into these query caches.
 
   const sendMutation = trpc.claude.send.useMutation();
-  const cancelQueuedMutation = trpc.claude.cancelQueued.useMutation();
   const interruptMutation = trpc.claude.interrupt.useMutation();
   const answerMutation = trpc.claude.answerQuestion.useMutation();
   const respondToPlanMutation = trpc.claude.respondToPlan.useMutation();
   const stopBackgroundTaskMutation = trpc.claude.stopBackgroundTask.useMutation();
 
-  // Returns a promise that rejects if the send fails (e.g. queue overflow,
-  // network blip, session no longer running), so the composer can restore the
-  // just-typed text instead of losing it to the optimistic clear.
+  // Returns a promise that rejects if the send fails (e.g. a network blip, or the
+  // session no longer running), so the composer can restore the just-typed text
+  // instead of losing it to the optimistic clear.
   const send = useCallback(
     (prompt: string, attachments?: string[]) => {
       return sendMutation.mutateAsync({ sessionId, prompt, attachments });
@@ -68,17 +67,10 @@ export function useClaudeState(sessionId: string) {
     [sessionId, sendMutation]
   );
 
-  // Remove a queued message before it flushes (the ✕ on a queued bubble). The
-  // queue is server-owned; the live `queued` SSE event drives the actual removal.
-  const cancelQueued = useCallback(
-    (queuedId: string) => {
-      cancelQueuedMutation.mutate({ sessionId, queuedId });
-    },
-    [sessionId, cancelQueuedMutation]
-  );
-
+  // Stop the current turn. Resolves with any prompts the server pulled back
+  // because the agent hadn't read them yet, so the caller can restore them.
   const interrupt = useCallback(() => {
-    interruptMutation.mutate({ sessionId });
+    return interruptMutation.mutateAsync({ sessionId });
   }, [sessionId, interruptMutation]);
 
   const answerQuestion = useCallback(
@@ -108,7 +100,7 @@ export function useClaudeState(sessionId: string) {
   const commands = commandsData?.commands ?? [];
   const retry = retryData?.retry ?? null;
   const backgroundTasks = backgroundData?.tasks ?? [];
-  const queuedMessages = queuedData?.messages ?? [];
+  const pendingMessageIds = pendingData?.messageIds ?? [];
 
   return {
     isRunning,
@@ -117,9 +109,8 @@ export function useClaudeState(sessionId: string) {
     // Only tasks with a knowable end state gate the background-vs-waiting status;
     // a permanently-backgrounded Bash daemon (dev server) shouldn't read as "busy".
     backgroundActive: backgroundTasks.some(taskHasEndState),
-    queuedMessages,
+    pendingMessageIds,
     send,
-    cancelQueued,
     interrupt,
     isInterrupting: interruptMutation.isPending,
     answerQuestion,

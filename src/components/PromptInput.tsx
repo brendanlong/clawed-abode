@@ -8,7 +8,11 @@ import { VoiceMicButton } from '@/components/voice/VoiceMicButton';
 import { useVoiceRecording } from '@/hooks/useVoiceRecording';
 import { useFileUpload } from '@/hooks/useFileUpload';
 import type { UploadedAttachment } from '@/lib/attachments';
-import { MAX_QUEUED_MESSAGES } from '@/lib/queued-message';
+import {
+  mergeCancelledText,
+  mergeCancelledAttachments,
+  type CancelledPrompt,
+} from '@/lib/cancelled-prompt';
 
 export interface SlashCommand {
   name: string;
@@ -24,12 +28,15 @@ interface PromptInputProps {
    * shows an inline error.
    */
   onSubmit: (prompt: string, attachments?: UploadedAttachment[]) => void | Promise<unknown>;
-  onInterrupt: () => void;
+  /**
+   * Stop the current turn. Resolves with any prompts the server pulled back
+   * because the agent hadn't read them yet — the server has already deleted their
+   * transcript bubbles, so the composer must take them back.
+   */
+  onInterrupt: () => void | Promise<CancelledPrompt[] | void>;
   isRunning: boolean;
   isInterrupting: boolean;
   disabled: boolean;
-  /** Number of messages currently queued server-side (async "btw mode"). */
-  queuedCount?: number;
   commands?: SlashCommand[];
   voiceEnabled?: boolean;
   voiceAutoSend?: boolean;
@@ -42,7 +49,6 @@ export function PromptInput({
   isRunning,
   isInterrupting,
   disabled,
-  queuedCount = 0,
   commands = [],
   voiceEnabled = false,
   voiceAutoSend = true,
@@ -54,8 +60,8 @@ export function PromptInput({
   // Files uploaded and pending until the next message is sent. Not shown in the
   // transcript until submit — only as chips on the composer.
   const [attachments, setAttachments] = useState<UploadedAttachment[]>([]);
-  // Error surfaced when a send fails (e.g. queue overflow, network blip). The
-  // failed text/attachments are restored into the composer so they aren't lost.
+  // Error surfaced when a send fails (e.g. a network blip). The failed
+  // text/attachments are restored into the composer so they aren't lost.
   const [sendError, setSendError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const commandsRef = useRef<HTMLDivElement>(null);
@@ -98,7 +104,7 @@ export function PromptInput({
   const isDismissed = dismissedForPrompt === prompt;
 
   // Derive showCommands directly from state. The composer stays usable while a
-  // turn is running (messages queue), so the command menu shows then too.
+  // turn is running (sends interleave), so the command menu shows then too.
   const showCommands = filteredCommands.length > 0 && !disabled && !isDismissed;
 
   const insertCommand = useCallback((command: SlashCommand) => {
@@ -111,15 +117,10 @@ export function PromptInput({
     textareaRef.current?.focus();
   }, []);
 
-  // The server-owned queue is bounded: a send while a turn runs is rejected once
-  // MAX_QUEUED_MESSAGES are already queued. Block submit proactively so overflow
-  // surfaces as a disabled button rather than a lost message + error.
-  const queueFull = isRunning && queuedCount >= MAX_QUEUED_MESSAGES;
-
-  // Submit is allowed with typed text OR at least one attachment. It stays allowed
-  // while a turn is running — the message is queued server-side and sent as soon
-  // as Claude finishes (async "btw mode") — unless the queue is already full.
-  const canSubmit = (prompt.trim().length > 0 || attachments.length > 0) && !disabled && !queueFull;
+  // Submit is allowed with typed text OR at least one attachment, and stays
+  // allowed while a turn is running — the message goes straight to the agent,
+  // which reads it mid-turn.
+  const canSubmit = (prompt.trim().length > 0 || attachments.length > 0) && !disabled;
 
   // Clear the composer optimistically for snappy input, then send. If the send
   // fails, restore the just-typed text/attachments (unless the user already began
@@ -137,6 +138,21 @@ export function PromptInput({
     },
     [onSubmit]
   );
+
+  // Stop can pull back prompts the agent never read. Their bubbles are already
+  // gone from the transcript, so the composer is the last copy — merge them in
+  // ahead of anything typed since rather than dropping either.
+  const handleInterrupt = useCallback(() => {
+    Promise.resolve(onInterrupt())
+      .then((cancelled) => {
+        if (!cancelled?.length) return;
+        setPrompt((current) => mergeCancelledText(current, cancelled));
+        setAttachments((current) => mergeCancelledAttachments(current, cancelled));
+      })
+      .catch((err: unknown) => {
+        setSendError(err instanceof Error ? err.message : 'Failed to stop');
+      });
+  }, [onInterrupt]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -209,7 +225,7 @@ export function PromptInput({
       const fullPrompt = (prompt + transcript).trim();
       setPrompt(fullPrompt);
 
-      if (voiceAutoSend && fullPrompt && !disabled && !queueFull) {
+      if (voiceAutoSend && fullPrompt && !disabled) {
         submit(fullPrompt, attachments);
       } else {
         textareaRef.current?.focus();
@@ -275,7 +291,7 @@ export function PromptInput({
           }}
         />
 
-        {(attachments.length > 0 || uploadError || sendError || queueFull) && (
+        {(attachments.length > 0 || uploadError || sendError) && (
           <div className="mb-2 flex flex-wrap items-center gap-2">
             {attachments.map((att) => (
               <span
@@ -322,12 +338,6 @@ export function PromptInput({
                 </button>
               </span>
             )}
-            {queueFull && (
-              <span className="text-xs text-muted-foreground">
-                {MAX_QUEUED_MESSAGES} messages already queued — wait for Claude to catch up before
-                sending more.
-              </span>
-            )}
           </div>
         )}
 
@@ -360,7 +370,7 @@ export function PromptInput({
                   : isRecording
                     ? 'Listening...'
                     : isRunning
-                      ? 'Claude is working — your message will be sent when it finishes'
+                      ? "Claude is working — send anyway, it'll read it as it goes"
                       : 'Type your message... (Enter to send, Shift+Enter for new line)'
               }
               disabled={disabled}
@@ -379,20 +389,20 @@ export function PromptInput({
             />
           )}
 
-          {/* While a turn runs, Stop interrupts it and Send queues a new message
-              to be sent when the turn ends. */}
+          {/* While a turn runs, Stop interrupts it; Send still delivers straight
+              to the agent, which reads it mid-turn. */}
           {isRunning && (
             <Button
               type="button"
               variant="destructive"
-              onClick={onInterrupt}
+              onClick={handleInterrupt}
               disabled={isInterrupting}
             >
               {isInterrupting ? 'Stopping...' : 'Stop'}
             </Button>
           )}
           <Button type="submit" disabled={!canSubmit}>
-            {isRunning ? 'Queue' : 'Send'}
+            Send
           </Button>
         </div>
       </div>

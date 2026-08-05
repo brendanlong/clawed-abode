@@ -6,7 +6,7 @@ A self-hosted web application providing mobile-friendly access to Claude Code ru
 
 This file is the high-level map and is auto-loaded into every agent session — keep it short. Details live in reference docs, loaded on demand:
 
-- [`claude-sessions.md`](claude-sessions.md) — the persistent SDK query, turn/background status, queued messages, interactive tools, process reaping, cost estimation
+- [`claude-sessions.md`](claude-sessions.md) — the persistent SDK query, turn/background status, message delivery, interactive tools, process reaping, cost estimation
 - [`messages-and-sse.md`](messages-and-sse.md) — message classification, storage/pagination, SSE streaming/resume
 - [`settings.md`](settings.md) — settings layers, model resolution, secrets, MCP servers
 - [`security.md`](security.md) — auth and input sanitization
@@ -62,7 +62,7 @@ The schema ([`prisma/schema.prisma`](../prisma/schema.prisma)) is the source of 
 ## Session Lifecycle
 
 - **Create** (`sessions.create`) returns immediately with status `creating`; cloning happens in the background and the UI polls `statusMessage`. An optional initial prompt is sent server-side once the session is running, so it works even if the client disconnects.
-- **Interact**: prompts go through the session's persistent streaming query ([`claude-sessions.md`](claude-sessions.md)). The composer is never disabled — a mid-turn send is queued server-side and flushed at turn end.
+- **Interact**: prompts go through the session's persistent streaming query ([`claude-sessions.md`](claude-sessions.md)). The composer is never disabled and nothing is held back — a mid-turn send goes straight to the SDK and the agent reads it mid-turn.
 - **Interrupt** stops only the current turn; the query stays alive. **Stop** closes the query; the worktree stays on disk. **Delete** stops the query, removes the workspace, and archives.
 - **Restart recovery**: a server restart loses in-memory state but not intent — a session in DB status `running` is revived lazily with `resume` on the next interaction. In-flight background work is not resurrected (its subprocess is gone); recovery restores the conversation.
 

@@ -4,7 +4,6 @@ import type { SlashCommand } from '@anthropic-ai/claude-agent-sdk';
 import type { PullRequestInfo } from './github';
 import type { RetryState } from '@/lib/claude-messages';
 import { taskHasEndState, type BackgroundTask } from '@/lib/session-status';
-import type { QueuedMessage } from '@/lib/queued-message';
 
 // Message with parsed content (for SSE events)
 export type ParsedMessage = Omit<Message, 'content'> & { content: unknown };
@@ -29,8 +28,8 @@ export interface ClaudeRunningEvent {
 }
 
 /**
- * A main-agent turn ended **naturally** (not interrupted, not stopped/torn down,
- * not a queued-flush handoff). Distinct from `claude_running: false`, which also
+ * A main-agent turn ended **naturally** (not interrupted, not stopped/torn down)
+ * and left nothing pending. Distinct from `claude_running: false`, which also
  * fires on interrupt/stop/error — this is the genuine "Claude finished" signal the
  * app-level work-complete notifier keys off of. Global-channel only.
  */
@@ -77,27 +76,44 @@ export interface ClaudeBackgroundEvent {
   active: boolean;
 }
 
-export interface QueuedMessagesEvent {
-  type: 'queued_messages';
+/**
+ * Ids of persisted user messages the SDK has accepted but not yet handed to the
+ * model. The full set every time (not a delta), so a reconnecting client can't
+ * drift. See `inFlightCommands` in claude-runner.
+ */
+export interface PendingMessagesEvent {
+  type: 'pending_messages';
   sessionId: string;
-  messages: QueuedMessage[];
+  messageIds: string[];
+}
+
+/**
+ * A persisted message was deleted server-side and must disappear from the
+ * transcript. Only used for a prompt cancelled by Stop before the agent read it —
+ * messages are otherwise immutable once written.
+ */
+export interface MessageRemovedEvent {
+  type: 'message_removed';
+  sessionId: string;
+  messageId: string;
 }
 
 /**
  * Normalized union delivered over the single multiplexed per-session SSE stream.
- * The five per-channel events above are folded into this discriminated union by
+ * The per-channel events above are folded into this discriminated union by
  * {@link SSEEventEmitter.onSessionEvents}. A `message`'s id distinguishes partial
  * (transient streaming) from complete (persisted) messages.
  */
 export type SessionStreamEvent =
   | { kind: 'message'; message: ParsedMessage }
+  | { kind: 'message_removed'; messageId: string }
   | { kind: 'running'; running: boolean }
   | { kind: 'commands'; commands: SlashCommand[] }
   | { kind: 'pr'; pullRequest: PullRequestInfo | null }
   | { kind: 'session'; session: Session }
   | { kind: 'retry'; retry: RetryState | null }
   | { kind: 'background'; tasks: BackgroundTask[] }
-  | { kind: 'queued'; messages: QueuedMessage[] };
+  | { kind: 'pending'; messageIds: string[] };
 
 // Global channel name for cross-session list updates (not session-scoped).
 const SESSION_LIST_EVENT = 'session-list';
@@ -204,12 +220,20 @@ class SSEEventEmitter extends EventEmitter {
     } satisfies ClaudeBackgroundEvent);
   }
 
-  emitQueuedMessages(sessionId: string, messages: QueuedMessage[]): void {
-    this.emit(`queued:${sessionId}`, {
-      type: 'queued_messages',
+  emitPendingMessages(sessionId: string, messageIds: string[]): void {
+    this.emit(`pending:${sessionId}`, {
+      type: 'pending_messages',
       sessionId,
-      messages,
-    } satisfies QueuedMessagesEvent);
+      messageIds,
+    } satisfies PendingMessagesEvent);
+  }
+
+  emitMessageRemoved(sessionId: string, messageId: string): void {
+    this.emit(`messages:${sessionId}`, {
+      type: 'message_removed',
+      sessionId,
+      messageId,
+    } satisfies MessageRemovedEvent);
   }
 
   /**
@@ -228,8 +252,14 @@ class SSEEventEmitter extends EventEmitter {
    */
   onSessionEvents(sessionId: string, callback: (event: SessionStreamEvent) => void): () => void {
     const unsubscribes = [
-      this.onChannel<MessageEvent>(`messages:${sessionId}`, (e) =>
-        callback({ kind: 'message', message: e.message })
+      // New and removed messages share one channel so a removal can never be
+      // delivered ahead of the insert it undoes.
+      this.onChannel<MessageEvent | MessageRemovedEvent>(`messages:${sessionId}`, (e) =>
+        callback(
+          e.type === 'new_message'
+            ? { kind: 'message', message: e.message }
+            : { kind: 'message_removed', messageId: e.messageId }
+        )
       ),
       this.onChannel<ClaudeRunningEvent>(`claude:${sessionId}`, (e) =>
         callback({ kind: 'running', running: e.running })
@@ -249,8 +279,8 @@ class SSEEventEmitter extends EventEmitter {
       this.onChannel<BackgroundTasksEvent>(`background:${sessionId}`, (e) =>
         callback({ kind: 'background', tasks: e.tasks })
       ),
-      this.onChannel<QueuedMessagesEvent>(`queued:${sessionId}`, (e) =>
-        callback({ kind: 'queued', messages: e.messages })
+      this.onChannel<PendingMessagesEvent>(`pending:${sessionId}`, (e) =>
+        callback({ kind: 'pending', messageIds: e.messageIds })
       ),
     ];
     return () => unsubscribes.forEach((unsubscribe) => unsubscribe());

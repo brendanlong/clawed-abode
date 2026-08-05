@@ -59,9 +59,8 @@ function SessionView({ sessionId }: { sessionId: string }) {
     retry: claudeRetry,
     backgroundTasks,
     backgroundActive,
-    queuedMessages,
+    pendingMessageIds,
     send: sendPrompt,
-    cancelQueued,
     interrupt,
     isInterrupting,
     answerQuestion,
@@ -70,15 +69,9 @@ function SessionView({ sessionId }: { sessionId: string }) {
     commands,
   } = useClaudeState(sessionId);
 
-  // Server-owned queue: messages sent while a turn was active (async "btw mode").
-  // The server holds them (unpersisted) and streams them here over the `queued`
-  // SSE channel; they're shown pinned below the transcript, each removable via ✕
-  // (claude.cancelQueued). The server flushes them as one combined turn when the
-  // turn ends naturally — an interrupt leaves them queued (see interruptClaude).
-
   // Something is happening if a turn is active or background tasks run. The server
-  // holds turnActive continuously across a natural-flush handoff, so there's no
-  // client-side flush bridge to account for here.
+  // holds the running flag continuously across a message handoff between turns, so
+  // there's nothing for the client to bridge here.
   const isWorking = isClaudeRunning || backgroundActive;
 
   // Working indicator: page title and favicon
@@ -113,9 +106,9 @@ function SessionView({ sessionId }: { sessionId: string }) {
     voicePlayback.stop();
   }, [voicePlayback]);
 
-  // Send a prompt (also stops any playback). The server decides whether it starts
-  // a turn or is queued (async "btw mode") — the client always just sends. A
-  // running session is required. Attachments are passed as their stored names.
+  // Send a prompt (also stops any playback). It goes straight to the agent
+  // whatever the turn state, so the client just sends. A running session is
+  // required. Attachments are passed as their stored names.
   // Returns the send promise so the composer can restore text on failure.
   const handleSendPrompt = useCallback(
     (prompt: string, attachments: UploadedAttachment[] = []) => {
@@ -141,13 +134,12 @@ function SessionView({ sessionId }: { sessionId: string }) {
     [handleSendPrompt]
   );
 
-  // Remove a queued message before it flushes (server-owned; ✕ on a queued bubble).
-  const handleCancelQueued = useCallback((id: string) => cancelQueued(id), [cancelQueued]);
-
-  // Interrupt the current turn. Queued messages are deliberately left queued on
-  // the server (never fired as a fresh turn by the interrupt); the user can ✕
-  // remove any they no longer want.
-  const handleInterrupt = useCallback(() => interrupt(), [interrupt]);
+  // Interrupt the current turn. Resolves with the text of any prompts the agent
+  // hadn't read yet, which the server cancelled — the composer restores them.
+  const handleInterrupt = useCallback(
+    () => interrupt().then((result) => result.cancelled),
+    [interrupt]
+  );
 
   // During a turn: enqueue new assistant text messages as they arrive
   useEffect(() => {
@@ -293,8 +285,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
           onSendResponse={handleSendText}
           onAnswerQuestion={answerQuestion}
           onRespondToPlan={respondToPlan}
-          queuedMessages={queuedMessages}
-          onCancelQueued={handleCancelQueued}
+          pendingMessageIds={pendingMessageIds}
           isSessionRunning={isClaudeRunning}
         />
 
@@ -326,7 +317,6 @@ function SessionView({ sessionId }: { sessionId: string }) {
               isRunning={isClaudeRunning}
               isInterrupting={isInterrupting}
               disabled={session.status !== 'running'}
-              queuedCount={queuedMessages.length}
               commands={commands}
               voiceEnabled={voiceConfig.enabled}
               voiceAutoSend={voiceConfig.autoSend}

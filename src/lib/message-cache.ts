@@ -6,8 +6,11 @@
  * - **Partial** messages (id prefixed with {@link PARTIAL_MESSAGE_ID_PREFIX}) are
  *   transient streaming snapshots of the in-progress assistant turn. At most one
  *   lives in the cache at a time; each new one replaces it.
- * - **Complete** messages are persisted and immutable. When one arrives it removes
- *   any lingering partials and is appended (deduped by id).
+ * - **Complete** messages are persisted. When one arrives it removes any lingering
+ *   partials and is appended, deduped by id — a re-delivered id is ignored rather
+ *   than merged, so the cache never reconciles an edit. The one way a complete
+ *   message leaves is {@link removeMessageFromCache}, when the server deletes the
+ *   row outright.
  *
  * Pages are ordered newest-page-last is NOT the case here: page[0] holds the
  * newest messages (matching `getHistory`'s backward pagination), so live messages
@@ -84,4 +87,24 @@ export function mergeMessageIntoCache<M extends MessageLike, P = unknown>(
     messages: [...firstPageMessages, message],
   };
   return { ...old, pages: newPages };
+}
+
+/**
+ * Drop a message from the cache by id. Used when the server deletes a row the
+ * transcript should no longer claim happened — a prompt cancelled by Stop before
+ * the agent ever read it. Pure: returns the same reference when the id is absent.
+ */
+export function removeMessageFromCache<M extends MessageLike, P = unknown>(
+  old: MessageInfiniteCache<M, P> | undefined,
+  messageId: string
+): MessageInfiniteCache<M, P> | undefined {
+  if (!old) return old;
+  if (!old.pages.some((page) => page.messages.some((m) => m.id === messageId))) return old;
+  return {
+    ...old,
+    pages: old.pages.map((page) => ({
+      ...page,
+      messages: page.messages.filter((m) => m.id !== messageId),
+    })),
+  };
 }

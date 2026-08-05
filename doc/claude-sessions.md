@@ -1,6 +1,6 @@
 # Claude Sessions (SDK Integration)
 
-Implementation: [`src/server/services/claude-runner.ts`](../src/server/services/claude-runner.ts). Pure logic (unit-tested): [`src/lib/session-status.ts`](../src/lib/session-status.ts), [`src/lib/queued-message.ts`](../src/lib/queued-message.ts), [`src/lib/session-scope.ts`](../src/lib/session-scope.ts), [`src/lib/token-estimation.ts`](../src/lib/token-estimation.ts).
+Implementation: [`src/server/services/claude-runner.ts`](../src/server/services/claude-runner.ts). Pure logic (unit-tested): [`src/lib/session-status.ts`](../src/lib/session-status.ts), [`src/lib/session-scope.ts`](../src/lib/session-scope.ts), [`src/lib/token-estimation.ts`](../src/lib/token-estimation.ts).
 
 ## Persistent Streaming Query
 
@@ -25,18 +25,23 @@ There is deliberately **no idle reaper and no status timers**: the server cannot
 
 Known limitation: a task lingers in the map if neither a `task_notification` nor a user ✕ happens (notably `killed` tasks emit no notification); it clears on query teardown. Accepted — indicator-only, so the cost is a stale count, never a stuck composer.
 
-## Queued Sends ("btw mode")
+## Sends Are Immediate
 
-The composer is never disabled. **The server owns the queue decision** — the client always calls `claude.send` and never routes on its own view of turn state, because a replicated client copy can lag or seed stale (the earlier client-side queue silently mis-sent when the two disagreed). `sendUserMessage` decides atomically against the in-memory `turnActive`:
+The composer is never disabled and the server never holds a message back. Every prompt is persisted and pushed into the streaming query the instant it arrives, whatever the agent is doing — **the CLI folds a mid-turn message into the running turn at the next tool-result boundary**, so a "btw, also…" lands in seconds instead of waiting for the agent to go idle (verified: `scripts/spike-midturn-send.ts`).
 
-- **Idle** → persist and push into the query (a turn starts), draining any leftover queued messages ahead of it in order, combined into one turn.
-- **Turn active** → hold in the in-memory queue, surfaced over the `queued` SSE channel as removable bubbles. **Not persisted until flush** — that deferral is exactly what makes ✕-removal (`claude.cancelQueued`, idempotent) possible.
+The only wait left is the CLI's own, and it reports it: each pushed message carries a `uuid`, and the CLI answers with `command_lifecycle` messages, where **`started` is the moment the agent reads it**. Until then the message id rides the `pending` SSE channel and the transcript marks that bubble "Sending…". The type is absent from the SDK's `SDKMessage` union, so it is Zod-parsed rather than typed, and `classifyMessage` skips it explicitly — otherwise it falls through the exhaustive switch's unknown-type default and renders as a system bubble.
 
-Flush happens only on a **natural** turn end: queued messages are persisted as individual bubbles and pushed combined into one turn. `awaitingFlushTurn` holds `turnActive` continuously true across the handoff — a false→true blip would fire the "Claude finished" notification / voice auto-read mid-flush. **Interrupt skips the flush** (`interruptRequested`) so hitting Stop doesn't instantly fire the queue as a fresh turn; it also clears `awaitingFlushTurn` up front, because an interrupt during a flush handoff produces a `result` with no preceding `message_start`, which would otherwise pin the composer "working".
+`claude_running` is `turnActive || inFlightCommands.size > 0` (`effectiveRunning`). The second clause exists because a message the CLI _can't_ fold into the running turn gets a fresh turn instead, and the whole `result` → `started` → `message_start` stretch in between — full model latency — would otherwise blip the composer idle and fire a "Claude finished" notification for work about to continue. That is also why an entry outlives `started`: it is retired at the turn's `message_start`, once `turnActive` can carry the state (`retireInFlightCommands`).
 
-The queue is bounded (`MAX_QUEUED_MESSAGES`; the Queue button disables when full). A failed send must never lose composer text: `PromptInput` and `VoiceControlPanel` both use the promise-returning send path and restore the text/attachments (or transcript) on rejection unless the user already started a new message.
+**No in-flight entry may linger forever** — one that does pins the composer "working" with no way back. Retirement is therefore never conditional on the CLI reporting anything: a top-level `result` retires an entry that has already survived one turn boundary, and on a CLI that reports no lifecycle at all (`commandLifecycleSeen`) the first boundary retires it, since there is nothing to wait for. Deliberately not time-based — this file has no status timers.
 
-Known limitation: the queue is in-memory; a stop/restart before flush drops it (like other ephemeral session state).
+**Stop cancels what the agent hasn't read.** `interrupt()` alone is not enough: the SDK runs a still-queued message as its own turn the instant the interrupt lands (verified: `scripts/spike-interrupt-queued.ts`). `interruptClaude` therefore calls `query.cancelAsyncMessage` per un-started uuid **before** interrupting — the abort is what wakes the CLI's drain loop, so cancelling afterwards loses the race every time (observed end-to-end; the SDK's own `still_queued` docs say a post-interrupt probe "always loses the race against the drain loop"). A command the CLI already dequeued reports `cancelled: false` and is left alone, bubble included, because the agent did read it.
+
+A recalled message's bubble is **deleted** (`message_removed`) — it describes something that never happened. That makes the composer the only surviving copy, so the recalled text and attachments are returned to the caller and merged into it ahead of anything typed since (`mergeCancelledText`); both `PromptInput` and `VoiceControlPanel` must do this. Contrast the send-_failure_ path, which leaves a newer draft alone — there the message is still in the transcript, so skipping the restore loses nothing.
+
+`cancelAsyncMessage` exists at runtime but is missing from the SDK's `Query` type, so it is feature-detected; an SDK without it degrades to "Stop doesn't cancel".
+
+Known limitation: `message_removed` is live-only — it carries no sequence, so it isn't replayed on SSE resume and the client doesn't refetch history on reconnect. A client that is disconnected while a _different_ tab hits Stop keeps showing the deleted bubble until it reloads. The DB stays correct; only that client's cache is stale.
 
 ## Interactive Tools (AskUserQuestion / ExitPlanMode)
 
@@ -52,7 +57,7 @@ Known limitation: only one `pendingInput` parks at a time; a second interactive 
 
 ## "Claude Finished" Notification
 
-`emitClaudeFinished` fires only on a **natural turn end that leaves the session fully idle**: `turnActive` flipped off, not interrupted, and no end-state background task running. Why not the `running: false` edge: that also fires on interrupt/stop/delete and would notify for work the user cancelled. Why turn-end rather than background-drain: a settling task autonomously continues the main agent, and _that_ turn's end is the real "done" (firing on the drain would notify twice). Residual edge, accepted: a task settling with no continuation leaves no finished signal — no spurious notification beats no missed one.
+`emitClaudeFinished` fires only on a **natural turn end that leaves the session fully idle**: `turnActive` flipped off, not interrupted, no end-state background task running, and nothing still pending delivery. Why not the `running: false` edge: that also fires on interrupt/stop/delete and would notify for work the user cancelled. Why turn-end rather than background-drain: a settling task autonomously continues the main agent, and _that_ turn's end is the real "done" (firing on the drain would notify twice). Residual edge, accepted: a task settling with no continuation leaves no finished signal — no spurious notification beats no missed one.
 
 Client side, `WorkCompleteNotifier` (mounted once in `Providers`, fed by the global SSE stream) notifies for **any** session except the one actively watched — its page open _and_ the tab visible (pure helpers in [`src/lib/work-complete-notification.ts`](../src/lib/work-complete-notification.ts)).
 
