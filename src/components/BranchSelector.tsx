@@ -21,7 +21,7 @@ export function BranchSelector({
   selectedBranch: string;
   onSelect: (branch: string) => void;
 }) {
-  const { data, isLoading } = trpc.github.listBranches.useQuery(
+  const { data, isLoading, error } = trpc.github.listBranches.useQuery(
     { repoFullName },
     { enabled: !!repoFullName }
   );
@@ -50,6 +50,18 @@ export function BranchSelector({
       <div className="flex items-center gap-2 text-muted-foreground">
         <Spinner size="sm" />
         <span>Loading branches...</span>
+      </div>
+    );
+  }
+
+  // A failed query leaves `data` undefined, which is indistinguishable from an
+  // empty repo unless we check the error first — reporting "no branches" for a
+  // token that lacks Contents access sent debugging down the wrong path.
+  if (error) {
+    return (
+      <div className="space-y-2">
+        <Label>Branch</Label>
+        <p className="text-sm text-destructive">Could not load branches: {error.message}</p>
       </div>
     );
   }

@@ -83,9 +83,14 @@ Use a **Fine-grained Personal Access Token** for security:
 2. Select "Fine-grained personal access token"
 3. Under "Repository access", select "Only select repositories" and choose the repos you want to use
 4. Under "Permissions" > "Repository permissions", set:
-   - **Contents**: Read and write (for push/pull)
+   - **Contents**: Read and write (for push/pull, and to list branches)
    - **Metadata**: Read-only (automatically included)
+   - **Issues**: Read-only (to browse issues when starting a session)
+   - **Pull requests**: Read-only (for the session PR status indicator)
 5. Generate the token and add it to your `.env` file
+
+Public repos work even without these permissions, so a token missing **Contents**
+only fails on private repos — where branch listing and cloning break.
 
 ### Generate Password Hash
 

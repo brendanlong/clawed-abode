@@ -60,6 +60,31 @@ describe('github service', () => {
 
       await expect(githubFetch('/repos/owner/repo', 'token')).rejects.toThrow(GitHubApiError);
     });
+
+    it("should carry GitHub's error message on the thrown error", async () => {
+      mockFetch.mockResolvedValue(
+        createMockResponse({ message: 'Resource not accessible by personal access token' }, 403)
+      );
+
+      await expect(githubFetch('/repos/owner/repo/branches', 'token')).rejects.toMatchObject({
+        status: 403,
+        apiMessage: 'Resource not accessible by personal access token',
+      });
+    });
+
+    it('should tolerate a non-JSON error body', async () => {
+      mockFetch.mockResolvedValue({
+        ok: false,
+        status: 502,
+        json: vi.fn().mockRejectedValue(new Error('not json')),
+        headers: { get: () => null },
+      });
+
+      await expect(githubFetch('/repos/owner/repo', 'token')).rejects.toMatchObject({
+        status: 502,
+        apiMessage: undefined,
+      });
+    });
   });
 
   describe('parseLinkHeader', () => {
