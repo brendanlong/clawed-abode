@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { createLogger } from '@/lib/logger';
 import { env } from '@/lib/env';
 
@@ -51,10 +52,28 @@ export async function githubFetchResponse(path: string, token?: string): Promise
   const response = await fetch(`${GITHUB_API}${path}`, { headers });
 
   if (!response.ok) {
-    throw new GitHubApiError(response.status, path);
+    throw new GitHubApiError(response.status, path, await readApiMessage(response));
   }
 
   return response;
+}
+
+/**
+ * GitHub puts the actionable reason for a failure in the response body's
+ * `message` (e.g. "Resource not accessible by personal access token" when a
+ * fine-grained PAT is missing a permission). The status alone can't distinguish
+ * that from a rate limit, so carry the message through to the user.
+ */
+const errorBodySchema = z.object({ message: z.string() });
+
+async function readApiMessage(response: Response): Promise<string | undefined> {
+  try {
+    const parsed = errorBodySchema.safeParse(await response.json());
+    return parsed.success ? parsed.data.message : undefined;
+  } catch {
+    // Non-JSON error body — the status is all we have.
+    return undefined;
+  }
 }
 
 export async function githubFetch<T>(path: string, token?: string): Promise<T> {
@@ -65,9 +84,10 @@ export async function githubFetch<T>(path: string, token?: string): Promise<T> {
 export class GitHubApiError extends Error {
   constructor(
     public readonly status: number,
-    public readonly path: string
+    public readonly path: string,
+    public readonly apiMessage?: string
   ) {
-    super(`GitHub API error: ${status} for ${path}`);
+    super(`GitHub API error: ${status} for ${path}${apiMessage ? `: ${apiMessage}` : ''}`);
     this.name = 'GitHubApiError';
   }
 }

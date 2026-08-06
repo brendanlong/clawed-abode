@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { trpc } from '@/lib/trpc';
+import { resolveListQueryState } from '@/lib/list-query-state';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Spinner } from '@/components/ui/spinner';
@@ -23,7 +24,7 @@ export function IssueSelector({
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebounce(search, 300);
 
-  const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
+  const { data, isLoading, error, fetchNextPage, hasNextPage, isFetchingNextPage } =
     trpc.github.listIssues.useInfiniteQuery(
       { repoFullName, search: debouncedSearch || undefined, perPage: 15 },
       {
@@ -33,6 +34,7 @@ export function IssueSelector({
     );
 
   const issues = data?.pages.flatMap((p) => p.issues) || [];
+  const state = resolveListQueryState({ isLoading, hasError: !!error, itemCount: issues.length });
 
   const { scrollRef, sentinelRef } = useInfiniteScroll({
     hasNextPage: hasNextPage ?? false,
@@ -53,11 +55,15 @@ export function IssueSelector({
       </div>
 
       <div ref={scrollRef} className="border rounded-lg max-h-48 overflow-y-auto">
-        {isLoading ? (
+        {state === 'loading' ? (
           <div className="flex justify-center py-6">
             <Spinner />
           </div>
-        ) : issues.length === 0 ? (
+        ) : state === 'error' ? (
+          <div className="text-center py-6 text-destructive text-sm px-4">
+            Could not load issues: {error?.message}
+          </div>
+        ) : state === 'empty' ? (
           <div className="text-center py-6 text-muted-foreground text-sm">
             {search ? 'No issues found' : 'No open issues'}
           </div>

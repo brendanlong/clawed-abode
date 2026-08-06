@@ -58,7 +58,7 @@ function mapGitHubError(err: unknown): never {
     if (err.status === 403) {
       throw new TRPCError({
         code: 'FORBIDDEN',
-        message: 'GitHub rate limit exceeded or access denied',
+        message: err.apiMessage ?? 'GitHub rate limit exceeded or access denied',
       });
     }
     if (err.status === 404) {
@@ -69,7 +69,9 @@ function mapGitHubError(err: unknown): never {
     }
     throw new TRPCError({
       code: 'INTERNAL_SERVER_ERROR',
-      message: `GitHub API error: ${err.status}`,
+      message: err.apiMessage
+        ? `GitHub API error ${err.status}: ${err.apiMessage}`
+        : `GitHub API error: ${err.status}`,
     });
   }
   throw err;

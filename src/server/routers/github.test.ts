@@ -254,6 +254,23 @@ describe('githubRouter', () => {
       });
     });
 
+    it("should surface GitHub's reason for a 403 instead of guessing rate limit", async () => {
+      mockFetch
+        .mockResolvedValueOnce(createMockResponse({ default_branch: 'main' }))
+        .mockResolvedValueOnce(
+          createMockResponse({ message: 'Resource not accessible by personal access token' }, 403)
+        );
+
+      const caller = createCaller('auth-session-id');
+
+      await expect(
+        caller.github.listBranches({ repoFullName: 'owner/repo' })
+      ).rejects.toMatchObject({
+        code: 'FORBIDDEN',
+        message: 'Resource not accessible by personal access token',
+      });
+    });
+
     it('should validate repoFullName format', async () => {
       const caller = createCaller('auth-session-id');
 

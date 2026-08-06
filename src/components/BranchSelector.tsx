@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect } from 'react';
 import { trpc } from '@/lib/trpc';
+import { resolveListQueryState } from '@/lib/list-query-state';
 import { Label } from '@/components/ui/label';
 import { Spinner } from '@/components/ui/spinner';
 import {
@@ -21,7 +22,7 @@ export function BranchSelector({
   selectedBranch: string;
   onSelect: (branch: string) => void;
 }) {
-  const { data, isLoading } = trpc.github.listBranches.useQuery(
+  const { data, isLoading, error } = trpc.github.listBranches.useQuery(
     { repoFullName },
     { enabled: !!repoFullName }
   );
@@ -34,6 +35,11 @@ export function BranchSelector({
   );
 
   const branches = data?.branches ?? [];
+  const state = resolveListQueryState({
+    isLoading,
+    hasError: !!error,
+    itemCount: branches.length,
+  });
 
   useEffect(() => {
     if (
@@ -45,7 +51,7 @@ export function BranchSelector({
     }
   }, [data, selectedBranch, handleSelect]);
 
-  if (isLoading) {
+  if (state === 'loading') {
     return (
       <div className="flex items-center gap-2 text-muted-foreground">
         <Spinner size="sm" />
@@ -54,7 +60,16 @@ export function BranchSelector({
     );
   }
 
-  if (branches.length === 0) {
+  if (state === 'error') {
+    return (
+      <div className="space-y-2">
+        <Label>Branch</Label>
+        <p className="text-sm text-destructive">Could not load branches: {error?.message}</p>
+      </div>
+    );
+  }
+
+  if (state === 'empty') {
     return (
       <div className="space-y-2">
         <Label>Branch</Label>
