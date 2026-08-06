@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { trpc } from '@/lib/trpc';
+import { resolveListQueryState } from '@/lib/list-query-state';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Spinner } from '@/components/ui/spinner';
@@ -43,7 +44,7 @@ export function RepoSelector({
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebounce(search, 300);
 
-  const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
+  const { data, isLoading, error, fetchNextPage, hasNextPage, isFetchingNextPage } =
     trpc.github.listRepos.useInfiniteQuery(
       { search: debouncedSearch || undefined, perPage: 20 },
       {
@@ -72,6 +73,10 @@ export function RepoSelector({
   };
 
   const rawRepos = data?.pages.flatMap((p) => p.repos) || [];
+
+  // Counted on the GitHub repos alone: the synthetic "No Repository" entry is
+  // always present, so including it would mask a failed query as a populated list.
+  const state = resolveListQueryState({ isLoading, hasError: !!error, itemCount: rawRepos.length });
 
   const isNoRepoFavorite = favorites.has(NO_REPO_SENTINEL);
 
@@ -135,8 +140,15 @@ export function RepoSelector({
         />
       </div>
 
+      {/* A banner rather than a replacement for the list: when GitHub is
+          unreachable the synthetic "No Repository" entry is still a valid
+          choice, so the user keeps a way forward. */}
+      {state === 'error' && (
+        <p className="text-sm text-destructive">Could not load repositories: {error?.message}</p>
+      )}
+
       <div ref={scrollRef} className="border rounded-lg max-h-64 overflow-y-auto">
-        {isLoading ? (
+        {state === 'loading' ? (
           <div className="flex justify-center py-8">
             <Spinner />
           </div>

@@ -2,7 +2,7 @@
 
 Layers: Tailscale Serve/Funnel (HTTPS, no exposed ports) in front of single-user password auth — Argon2 hash in `PASSWORD_HASH` (base64), DB-backed sessions with 256-bit tokens, 7-day expiry, IP/user-agent audit, per-session revocation.
 
-**GitHub token**: use a fine-grained PAT scoped to only the exposed repos with just "Contents: Read and write"; it's wired into each clone via a git credential helper.
+**GitHub token**: use a fine-grained PAT scoped to only the exposed repos, granting no more than the permissions the README lists; it's wired into each clone via a git credential helper.
 
 Session isolation is convention-only and `bypassPermissions` is used — the machine must be dedicated to this app (see DESIGN.md).
 

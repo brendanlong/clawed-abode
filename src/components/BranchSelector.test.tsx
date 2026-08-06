@@ -51,6 +51,19 @@ describe('BranchSelector', () => {
     expect(screen.getByText(/repository may be empty/)).toBeInTheDocument();
   });
 
+  it('keeps the branch list usable when a refetch fails', () => {
+    listBranchesResult.current = {
+      isLoading: false,
+      error: { message: 'GitHub rate limit exceeded' },
+      data: { branches: [{ name: 'main', protected: true }], defaultBranch: 'main' },
+    };
+
+    render(<BranchSelector repoFullName="owner/repo" selectedBranch="main" onSelect={vi.fn()} />);
+
+    expect(screen.getByRole('combobox')).toBeInTheDocument();
+    expect(screen.queryByText(/Could not load branches/)).not.toBeInTheDocument();
+  });
+
   it('auto-selects the default branch once branches load', () => {
     const onSelect = vi.fn();
     listBranchesResult.current = {

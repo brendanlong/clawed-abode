@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { createLogger } from '@/lib/logger';
 import { env } from '@/lib/env';
 
@@ -63,16 +64,16 @@ export async function githubFetchResponse(path: string, token?: string): Promise
  * fine-grained PAT is missing a permission). The status alone can't distinguish
  * that from a rate limit, so carry the message through to the user.
  */
+const errorBodySchema = z.object({ message: z.string() });
+
 async function readApiMessage(response: Response): Promise<string | undefined> {
   try {
-    const body = await response.json();
-    if (typeof body === 'object' && body !== null && typeof body.message === 'string') {
-      return body.message;
-    }
+    const parsed = errorBodySchema.safeParse(await response.json());
+    return parsed.success ? parsed.data.message : undefined;
   } catch {
     // Non-JSON error body — the status is all we have.
+    return undefined;
   }
-  return undefined;
 }
 
 export async function githubFetch<T>(path: string, token?: string): Promise<T> {
