@@ -174,8 +174,7 @@ function retryEquals(a: RetryState | null, b: RetryState | null): boolean {
 const CONTINUATION_STOP_REASONS = new Set(['tool_use', 'pause_turn']);
 
 type BackgroundEvent =
-  | { kind: 'started'; task: BackgroundTask }
-  | { kind: 'settled'; taskId: string };
+  { kind: 'started'; task: BackgroundTask } | { kind: 'settled'; taskId: string };
 
 /**
  * Extract a background-task lifecycle event, or `null`. `task_started` adds and
