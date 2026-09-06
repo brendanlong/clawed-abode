@@ -72,7 +72,7 @@ import { CLAUDE_BIN_ENV, SESSION_SCOPE_ENV, sessionScopeUnitName } from '@/lib/s
 import { type SanitizationInfo } from '@/lib/sanitization';
 import { attachToolResultSanitizations } from '@/lib/message-sanitization';
 import { PARTIAL_MESSAGE_ID_PREFIX } from '@/lib/message-cache';
-import type { ContainerEnvVar } from './repo-settings';
+import type { ResolvedEnvVar } from '@/lib/settings-types';
 import { resolveUploadPaths } from './uploads';
 import { writeSessionMcpConfig, removeSessionMcpConfig } from './mcp-config-file';
 
@@ -497,7 +497,7 @@ export function _clearPersistedCommands(sessionId: string): void {
  */
 export function mergeAgentEnv(
   baseEnv: Record<string, string>,
-  userEnvVars: ContainerEnvVar[],
+  userEnvVars: ResolvedEnvVar[],
   claudeApiKey?: string | null
 ): Record<string, string | undefined> {
   const agentEnv: Record<string, string | undefined> = { ...baseEnv };
@@ -518,7 +518,7 @@ export function mergeAgentEnv(
  * shell's environment merged with the configured overrides (see mergeAgentEnv).
  */
 async function buildAgentEnv(
-  userEnvVars: ContainerEnvVar[],
+  userEnvVars: ResolvedEnvVar[],
   claudeApiKey?: string | null
 ): Promise<Record<string, string | undefined>> {
   return mergeAgentEnv(await getBaseEnv(), userEnvVars, claudeApiKey);

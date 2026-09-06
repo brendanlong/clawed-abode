@@ -1,6 +1,8 @@
 # Settings
 
-Layers and merging: [`src/server/services/settings-merger.ts`](../src/server/services/settings-merger.ts); shared schemas/encryption in [`settings-helpers.ts`](../src/server/services/settings-helpers.ts); routers in [`globalSettings.ts`](../src/server/routers/globalSettings.ts) / [`repoSettings.ts`](../src/server/routers/repoSettings.ts).
+Loading and merging: [`src/server/services/settings-merger.ts`](../src/server/services/settings-merger.ts); shared schemas/encryption in [`settings-helpers.ts`](../src/server/services/settings-helpers.ts); routers in [`globalSettings.ts`](../src/server/routers/globalSettings.ts) / [`repoSettings.ts`](../src/server/routers/repoSettings.ts).
+
+Env vars and MCP servers are **scope-generic**: one table each, `repoSettingsId` null for global and a RepoSettings id for per-repo. [`settings-scope.ts`](../src/server/services/settings-scope.ts) implements every operation once over a `SettingsScope`, and [`scoped-settings.ts`](../src/server/routers/scoped-settings.ts) produces the identical set-/delete-/reveal-/validate- procedures for both routers. Writes are single `INSERT … ON CONFLICT` statements (the global uniqueness is a partial index Prisma's `upsert` can't target), with "empty secret means unchanged" decided inside the statement — never read-then-branch.
 
 ## Resolution Rules
 
@@ -12,6 +14,10 @@ Layers and merging: [`src/server/services/settings-merger.ts`](../src/server/ser
 ## Advisor Model
 
 Global-only and **opt-in**: null means the advisor tool isn't wired into requests at all; setting a model enables it. `SUGGESTED_ADVISOR_MODEL` ([`src/lib/advisor.ts`](../src/lib/advisor.ts), dependency-free so server and client share it) is what an empty Enable→Save adopts — it is _not_ a resolution fallback; only the Disable button reaches the disabled state. There's no dedicated SDK option, so it's passed as an ad-hoc `--settings` source via `Options.extraArgs` (omitted entirely when disabled). SDK versions before 0.3.196 silently ignore `advisorModel`; to re-verify after a bump, capture the CLI's outgoing `/v1/messages` request and check the `tools` array for `advisor_20260301`.
+
+## MCP Validation
+
+The Validate button connects with the MCP SDK and lists tools. HTTP/SSE servers are contacted directly; stdio servers are spawned on the host with their decrypted env, exactly as a session would run them, and killed after the check (15s timeout).
 
 ## Secrets
 

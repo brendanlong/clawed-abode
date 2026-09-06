@@ -1,21 +1,9 @@
 import { z } from 'zod';
 import { router, protectedProcedure } from '../trpc';
 import { prisma } from '@/lib/prisma';
-import { encrypt, decrypt } from '@/lib/crypto';
-import { TRPCError } from '@trpc/server';
 import { createLogger } from '@/lib/logger';
-import {
-  envVarNameSchema,
-  envVarSchema,
-  mcpServerSchema,
-  requireEncryptionForSecrets,
-  formatEnvVarsForDisplay,
-  formatMcpServersForDisplay,
-  buildMcpServerData,
-  mcpServerHasSecrets,
-  decryptMcpServersForContainer,
-} from '../services/settings-helpers';
-import { validateMcpServer } from '../services/mcp-validator';
+import { formatEnvVarsForDisplay, formatMcpServersForDisplay } from '../services/settings-helpers';
+import { scopedSettingsProcedures, type ResolveScope } from './scoped-settings';
 
 const log = createLogger('repoSettings');
 
@@ -23,143 +11,109 @@ const repoFullNameSchema = z.string().regex(/^(?:__no_repo__|[\w.-]+\/[\w.-]+)$/
   message: 'Invalid repository name format. Expected "owner/repo" or "__no_repo__"',
 });
 
+const repoScopeInput = z.object({ repoFullName: repoFullNameSchema });
+
+/** Writes create the RepoSettings row on first use; reads leave a missing repo missing. */
+const resolveRepoScope: ResolveScope<z.infer<typeof repoScopeInput>> = async (input, mode) => {
+  const settings =
+    mode === 'write'
+      ? await prisma.repoSettings.upsert({
+          where: { repoFullName: input.repoFullName },
+          create: { repoFullName: input.repoFullName },
+          update: {},
+          select: { id: true },
+        })
+      : await prisma.repoSettings.findUnique({
+          where: { repoFullName: input.repoFullName },
+          select: { id: true },
+        });
+  return settings ? { repoSettingsId: settings.id } : null;
+};
+
+/** Trim free-text settings; blank clears them. */
+const nullableText = (max: number) =>
+  z
+    .string()
+    .max(max)
+    .nullable()
+    .transform((value) => value?.trim() || null);
+
 export const repoSettingsRouter = router({
-  /**
-   * Get settings for a specific repository
-   * Returns null if no settings exist
-   */
-  get: protectedProcedure
-    .input(z.object({ repoFullName: repoFullNameSchema }))
-    .query(async ({ input }) => {
-      const settings = await prisma.repoSettings.findUnique({
-        where: { repoFullName: input.repoFullName },
-        include: { envVars: true, mcpServers: true },
-      });
+  /** Settings for one repository with secrets masked, or null if none exist. */
+  get: protectedProcedure.input(repoScopeInput).query(async ({ input }) => {
+    const settings = await prisma.repoSettings.findUnique({
+      where: { repoFullName: input.repoFullName },
+      include: { envVars: true, mcpServers: true },
+    });
+    if (!settings) return null;
 
-      if (!settings) {
-        return null;
-      }
+    return {
+      id: settings.id,
+      repoFullName: settings.repoFullName,
+      isFavorite: settings.isFavorite,
+      customSystemPrompt: settings.customSystemPrompt,
+      claudeModel: settings.claudeModel,
+      createdAt: settings.createdAt,
+      updatedAt: settings.updatedAt,
+      envVars: formatEnvVarsForDisplay(settings.envVars),
+      mcpServers: formatMcpServersForDisplay(settings.mcpServers),
+    };
+  }),
 
-      // Mask secret values for display
-      return {
-        id: settings.id,
-        repoFullName: settings.repoFullName,
-        isFavorite: settings.isFavorite,
-        customSystemPrompt: settings.customSystemPrompt,
-        claudeModel: settings.claudeModel,
-        createdAt: settings.createdAt,
-        updatedAt: settings.updatedAt,
-        envVars: formatEnvVarsForDisplay(settings.envVars),
-        mcpServers: formatMcpServersForDisplay(settings.mcpServers),
-      };
-    }),
-
-  /**
-   * Toggle favorite status for a repository
-   */
   toggleFavorite: protectedProcedure
-    .input(
-      z.object({
-        repoFullName: repoFullNameSchema,
-        isFavorite: z.boolean(),
-      })
-    )
+    .input(repoScopeInput.extend({ isFavorite: z.boolean() }))
     .mutation(async ({ input }) => {
       const settings = await prisma.repoSettings.upsert({
         where: { repoFullName: input.repoFullName },
-        create: {
-          repoFullName: input.repoFullName,
-          isFavorite: input.isFavorite,
-        },
+        create: { repoFullName: input.repoFullName, isFavorite: input.isFavorite },
         update: { isFavorite: input.isFavorite },
       });
-
-      log.info('Toggled favorite', {
-        repoFullName: input.repoFullName,
-        isFavorite: input.isFavorite,
-      });
-
+      log.info('Toggled favorite', input);
       return { isFavorite: settings.isFavorite };
     }),
 
-  /**
-   * Set custom system prompt for a repository
-   * Pass null or empty string to clear
-   */
+  /** Per-repo prompt appended to the system prompt; null/blank clears it. */
   setCustomSystemPrompt: protectedProcedure
-    .input(
-      z.object({
-        repoFullName: repoFullNameSchema,
-        customSystemPrompt: z.string().max(10000).nullable(),
-      })
-    )
+    .input(repoScopeInput.extend({ customSystemPrompt: nullableText(10000) }))
     .mutation(async ({ input }) => {
-      const prompt = input.customSystemPrompt?.trim() || null;
-
       await prisma.repoSettings.upsert({
         where: { repoFullName: input.repoFullName },
-        create: {
-          repoFullName: input.repoFullName,
-          customSystemPrompt: prompt,
-        },
-        update: { customSystemPrompt: prompt },
+        create: input,
+        update: { customSystemPrompt: input.customSystemPrompt },
       });
-
       log.info('Set custom system prompt', {
         repoFullName: input.repoFullName,
-        hasPrompt: prompt !== null,
+        hasPrompt: input.customSystemPrompt !== null,
       });
-
       return { success: true };
     }),
 
-  /**
-   * Set the Claude model override for a repository.
-   * Pass null or empty string to clear (reverts to global/env model).
-   */
+  /** Per-repo Claude model override; null/blank reverts to global/env. */
   setClaudeModel: protectedProcedure
-    .input(
-      z.object({
-        repoFullName: repoFullNameSchema,
-        claudeModel: z.string().max(200).nullable(),
-      })
-    )
+    .input(repoScopeInput.extend({ claudeModel: nullableText(200) }))
     .mutation(async ({ input }) => {
-      const model = input.claudeModel?.trim() || null;
-
       await prisma.repoSettings.upsert({
         where: { repoFullName: input.repoFullName },
-        create: {
-          repoFullName: input.repoFullName,
-          claudeModel: model,
-        },
-        update: { claudeModel: model },
+        create: input,
+        update: { claudeModel: input.claudeModel },
       });
-
       log.info('Set repo Claude model', {
         repoFullName: input.repoFullName,
-        hasModel: model !== null,
+        hasModel: input.claudeModel !== null,
       });
-
       return { success: true };
     }),
 
-  /**
-   * List all favorite repository names
-   */
   listFavorites: protectedProcedure.query(async () => {
     const favorites = await prisma.repoSettings.findMany({
       where: { isFavorite: true },
       select: { repoFullName: true },
       orderBy: { repoFullName: 'asc' },
     });
-
     return { favorites: favorites.map((f) => f.repoFullName) };
   }),
 
-  /**
-   * List all repositories with settings (for settings page)
-   */
+  /** Every repository with settings, summarized for the settings page. */
   listWithSettings: protectedProcedure.query(async () => {
     const settings = await prisma.repoSettings.findMany({
       include: {
@@ -185,270 +139,12 @@ export const repoSettingsRouter = router({
     };
   }),
 
-  /**
-   * Set (create or update) an environment variable
-   */
-  setEnvVar: protectedProcedure
-    .input(
-      z.object({
-        repoFullName: repoFullNameSchema,
-        envVar: envVarSchema,
-      })
-    )
-    .mutation(async ({ input }) => {
-      requireEncryptionForSecrets(input.envVar.isSecret);
+  ...scopedSettingsProcedures(repoScopeInput, resolveRepoScope),
 
-      // Ensure RepoSettings exists
-      const settings = await prisma.repoSettings.upsert({
-        where: { repoFullName: input.repoFullName },
-        create: { repoFullName: input.repoFullName },
-        update: {},
-      });
-
-      // Check if existing value should be preserved (secret unchanged)
-      const existing = await prisma.envVar.findUnique({
-        where: {
-          repoSettingsId_name: {
-            repoSettingsId: settings.id,
-            name: input.envVar.name,
-          },
-        },
-      });
-
-      let value: string;
-      if (input.envVar.isSecret && !input.envVar.value && existing?.isSecret) {
-        value = existing.value;
-      } else {
-        value = input.envVar.isSecret ? encrypt(input.envVar.value) : input.envVar.value;
-      }
-
-      await prisma.envVar.upsert({
-        where: {
-          repoSettingsId_name: {
-            repoSettingsId: settings.id,
-            name: input.envVar.name,
-          },
-        },
-        create: {
-          repoSettingsId: settings.id,
-          name: input.envVar.name,
-          value,
-          isSecret: input.envVar.isSecret,
-        },
-        update: {
-          value,
-          isSecret: input.envVar.isSecret,
-        },
-      });
-
-      log.info('Set env var', {
-        repoFullName: input.repoFullName,
-        name: input.envVar.name,
-        isSecret: input.envVar.isSecret,
-      });
-
-      return { success: true };
-    }),
-
-  /**
-   * Delete an environment variable
-   */
-  deleteEnvVar: protectedProcedure
-    .input(
-      z.object({
-        repoFullName: repoFullNameSchema,
-        name: envVarNameSchema,
-      })
-    )
-    .mutation(async ({ input }) => {
-      const settings = await prisma.repoSettings.findUnique({
-        where: { repoFullName: input.repoFullName },
-      });
-
-      if (settings) {
-        await prisma.envVar.deleteMany({
-          where: {
-            repoSettingsId: settings.id,
-            name: input.name,
-          },
-        });
-
-        log.info('Deleted env var', { repoFullName: input.repoFullName, name: input.name });
-      }
-
-      return { success: true };
-    }),
-
-  /**
-   * Set (create or update) an MCP server configuration
-   */
-  setMcpServer: protectedProcedure
-    .input(
-      z.object({
-        repoFullName: repoFullNameSchema,
-        mcpServer: mcpServerSchema,
-      })
-    )
-    .mutation(async ({ input }) => {
-      const server = input.mcpServer;
-      requireEncryptionForSecrets(mcpServerHasSecrets(server));
-
-      // Ensure RepoSettings exists
-      const settings = await prisma.repoSettings.upsert({
-        where: { repoFullName: input.repoFullName },
-        create: { repoFullName: input.repoFullName },
-        update: {},
-      });
-
-      // Find existing to preserve unchanged secrets
-      const existing = await prisma.mcpServer.findUnique({
-        where: {
-          repoSettingsId_name: {
-            repoSettingsId: settings.id,
-            name: server.name,
-          },
-        },
-      });
-
-      const data = buildMcpServerData(server, existing);
-
-      await prisma.mcpServer.upsert({
-        where: {
-          repoSettingsId_name: {
-            repoSettingsId: settings.id,
-            name: server.name,
-          },
-        },
-        create: {
-          repoSettingsId: settings.id,
-          name: server.name,
-          ...data,
-        },
-        update: data,
-      });
-
-      log.info('Set MCP server', {
-        repoFullName: input.repoFullName,
-        name: server.name,
-        type: server.type,
-      });
-
-      return { success: true };
-    }),
-
-  /**
-   * Delete an MCP server configuration
-   */
-  deleteMcpServer: protectedProcedure
-    .input(
-      z.object({
-        repoFullName: repoFullNameSchema,
-        name: z.string().min(1),
-      })
-    )
-    .mutation(async ({ input }) => {
-      const settings = await prisma.repoSettings.findUnique({
-        where: { repoFullName: input.repoFullName },
-      });
-
-      if (settings) {
-        await prisma.mcpServer.deleteMany({
-          where: {
-            repoSettingsId: settings.id,
-            name: input.name,
-          },
-        });
-
-        log.info('Deleted MCP server', { repoFullName: input.repoFullName, name: input.name });
-      }
-
-      return { success: true };
-    }),
-
-  /**
-   * Get the decrypted value of a secret environment variable
-   * Used when user clicks "reveal" button in UI
-   */
-  getEnvVarValue: protectedProcedure
-    .input(
-      z.object({
-        repoFullName: repoFullNameSchema,
-        name: envVarNameSchema,
-      })
-    )
-    .query(async ({ input }) => {
-      const settings = await prisma.repoSettings.findUnique({
-        where: { repoFullName: input.repoFullName },
-        include: { envVars: true },
-      });
-
-      if (!settings) {
-        throw new TRPCError({
-          code: 'NOT_FOUND',
-          message: 'Repository settings not found',
-        });
-      }
-
-      const envVar = settings.envVars.find((ev) => ev.name === input.name);
-      if (!envVar) {
-        throw new TRPCError({
-          code: 'NOT_FOUND',
-          message: 'Environment variable not found',
-        });
-      }
-
-      const value = envVar.isSecret ? decrypt(envVar.value) : envVar.value;
-      return { value };
-    }),
-
-  /**
-   * Delete all settings for a repository
-   */
-  delete: protectedProcedure
-    .input(z.object({ repoFullName: repoFullNameSchema }))
-    .mutation(async ({ input }) => {
-      await prisma.repoSettings.deleteMany({
-        where: { repoFullName: input.repoFullName },
-      });
-
-      log.info('Deleted repo settings', { repoFullName: input.repoFullName });
-
-      return { success: true };
-    }),
-
-  /**
-   * Validate an MCP server connection by connecting with the MCP SDK
-   * Only works for HTTP/SSE servers (stdio servers run inside containers)
-   */
-  validateMcpServer: protectedProcedure
-    .input(
-      z.object({
-        repoFullName: repoFullNameSchema,
-        name: z.string().min(1),
-      })
-    )
-    .mutation(async ({ input }) => {
-      const settings = await prisma.repoSettings.findUnique({
-        where: { repoFullName: input.repoFullName },
-        include: { mcpServers: true },
-      });
-
-      if (!settings) {
-        throw new TRPCError({
-          code: 'NOT_FOUND',
-          message: 'Repository settings not found',
-        });
-      }
-
-      const dbServer = settings.mcpServers.find((s) => s.name === input.name);
-      if (!dbServer) {
-        throw new TRPCError({
-          code: 'NOT_FOUND',
-          message: `MCP server "${input.name}" not found`,
-        });
-      }
-
-      const [decrypted] = decryptMcpServersForContainer([dbServer]);
-      return validateMcpServer(decrypted);
-    }),
+  /** Delete all settings for a repository (env vars and MCP servers cascade). */
+  delete: protectedProcedure.input(repoScopeInput).mutation(async ({ input }) => {
+    await prisma.repoSettings.deleteMany({ where: { repoFullName: input.repoFullName } });
+    log.info('Deleted repo settings', input);
+    return { success: true };
+  }),
 });
