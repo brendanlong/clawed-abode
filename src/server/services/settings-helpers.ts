@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { encrypt, decrypt, isEncryptionConfigured } from '@/lib/crypto';
 import { TRPCError } from '@trpc/server';
-import type { ContainerEnvVar, ContainerMcpServer, McpServerType } from './repo-settings';
+import type { McpServerType, ResolvedEnvVar, ResolvedMcpServer } from '@/lib/settings-types';
 
 // ─── Validation Schemas ──────────────────────────────────────────────
 
@@ -48,6 +48,17 @@ export const mcpServerSchema = z.discriminatedUnion('type', [
   mcpServerStdioSchema,
   mcpServerHttpSchema,
 ]);
+
+/** Free-text setting input: trimmed, with blank/null meaning "clear". */
+export const nullableTextSchema = (max: number) =>
+  z
+    .string()
+    .max(max)
+    .nullable()
+    .transform((value) => value?.trim() || null);
+
+export type EnvVarInput = z.infer<typeof envVarSchema>;
+export type McpServerInput = z.infer<typeof mcpServerSchema>;
 
 // ─── Secret Helpers ──────────────────────────────────────────────────
 
@@ -126,12 +137,7 @@ export interface DisplayMcpServer {
  */
 export function formatEnvVarsForDisplay(envVars: DbEnvVar[]) {
   return maskSecrets(
-    envVars.map((ev) => ({
-      id: ev.id,
-      name: ev.name,
-      value: ev.value,
-      isSecret: ev.isSecret,
-    }))
+    envVars.map(({ id, name, value, isSecret }) => ({ id, name, value, isSecret }))
   );
 }
 
@@ -153,24 +159,18 @@ export function formatMcpServersForDisplay(mcpServers: DbMcpServer[]): DisplayMc
   }));
 }
 
-// ─── Container Decrypt Functions ─────────────────────────────────────
+// ─── Decrypt for the session runner ──────────────────────────────────
 
-/**
- * Decrypt env var DB rows for container creation
- */
-export function decryptEnvVarsForContainer(
+export function decryptEnvVars(
   envVars: Array<{ name: string; value: string; isSecret: boolean }>
-): ContainerEnvVar[] {
+): ResolvedEnvVar[] {
   return envVars.map((ev) => ({
     name: ev.name,
     value: ev.isSecret ? decrypt(ev.value) : ev.value,
   }));
 }
 
-/**
- * Decrypt MCP server DB rows for container creation
- */
-export function decryptMcpServersForContainer(mcpServers: DbMcpServer[]): ContainerMcpServer[] {
+export function decryptMcpServers(mcpServers: DbMcpServer[]): ResolvedMcpServer[] {
   return mcpServers.map((mcp) => {
     const serverType = (mcp.type || 'stdio') as McpServerType;
 
@@ -190,7 +190,7 @@ export function decryptMcpServersForContainer(mcpServers: DbMcpServer[]): Contai
         type: serverType,
         url: mcp.url!,
         headers: Object.keys(headers).length > 0 ? headers : undefined,
-      } as ContainerMcpServer;
+      };
     }
 
     // Stdio servers: decrypt env vars

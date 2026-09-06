@@ -72,7 +72,7 @@ import { CLAUDE_BIN_ENV, SESSION_SCOPE_ENV, sessionScopeUnitName } from '@/lib/s
 import { type SanitizationInfo } from '@/lib/sanitization';
 import { attachToolResultSanitizations } from '@/lib/message-sanitization';
 import { PARTIAL_MESSAGE_ID_PREFIX } from '@/lib/message-cache';
-import type { ContainerEnvVar } from './repo-settings';
+import type { ResolvedEnvVar } from '@/lib/settings-types';
 import { resolveUploadPaths } from './uploads';
 import { writeSessionMcpConfig, removeSessionMcpConfig } from './mcp-config-file';
 
@@ -497,7 +497,7 @@ export function _clearPersistedCommands(sessionId: string): void {
  */
 export function mergeAgentEnv(
   baseEnv: Record<string, string>,
-  userEnvVars: ContainerEnvVar[],
+  userEnvVars: ResolvedEnvVar[],
   claudeApiKey?: string | null
 ): Record<string, string | undefined> {
   const agentEnv: Record<string, string | undefined> = { ...baseEnv };
@@ -518,7 +518,7 @@ export function mergeAgentEnv(
  * shell's environment merged with the configured overrides (see mergeAgentEnv).
  */
 async function buildAgentEnv(
-  userEnvVars: ContainerEnvVar[],
+  userEnvVars: ResolvedEnvVar[],
   claudeApiKey?: string | null
 ): Promise<Record<string, string | undefined>> {
   return mergeAgentEnv(await getBaseEnv(), userEnvVars, claudeApiKey);
@@ -531,17 +531,17 @@ function buildMcpServersRecord(
   if (!mcpServers.length) return undefined;
   return Object.fromEntries(
     mcpServers.map((server) => {
-      if (server.type === 'http' || server.type === 'sse') {
-        const config: McpServerConfig = { type: server.type, url: server.url };
-        if (server.headers && Object.keys(server.headers).length > 0) {
-          (config as { headers?: Record<string, string> }).headers = server.headers;
-        }
+      if (server.type === 'stdio') {
+        const config: McpServerConfig = { command: server.command };
+        if (server.args?.length) (config as { args?: string[] }).args = server.args;
+        if (server.env && Object.keys(server.env).length > 0)
+          (config as { env?: Record<string, string> }).env = server.env;
         return [server.name, config];
       }
-      const config: McpServerConfig = { command: server.command };
-      if (server.args?.length) (config as { args?: string[] }).args = server.args;
-      if (server.env && Object.keys(server.env).length > 0)
-        (config as { env?: Record<string, string> }).env = server.env;
+      const config: McpServerConfig = { type: server.type, url: server.url };
+      if (server.headers && Object.keys(server.headers).length > 0) {
+        (config as { headers?: Record<string, string> }).headers = server.headers;
+      }
       return [server.name, config];
     })
   );

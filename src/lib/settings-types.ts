@@ -23,3 +23,27 @@ export interface ValidationResult {
   error?: string;
   tools?: string[];
 }
+
+// ─── Resolved (decrypted, merged) settings handed to the session runner ────
+
+export interface ResolvedEnvVar {
+  name: string;
+  value: string;
+}
+
+export interface ResolvedStdioMcpServer {
+  name: string;
+  type: 'stdio';
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+}
+
+export interface ResolvedHttpMcpServer {
+  name: string;
+  type: 'http' | 'sse';
+  url: string;
+  headers?: Record<string, string>;
+}
+
+export type ResolvedMcpServer = ResolvedStdioMcpServer | ResolvedHttpMcpServer;

@@ -6,7 +6,7 @@ import {
   resolveClaudeModel,
   resolveAdvisorModel,
 } from './settings-merger';
-import type { ContainerEnvVar, ContainerMcpServer } from './repo-settings';
+import type { ResolvedEnvVar, ResolvedMcpServer } from '@/lib/settings-types';
 
 describe('resolveClaudeModel', () => {
   it('prefers the per-session model over repo, global, and env', () => {
@@ -58,7 +58,7 @@ describe('mergeEnvVars', () => {
   });
 
   it('should return global env vars when no repo vars exist', () => {
-    const global: ContainerEnvVar[] = [
+    const global: ResolvedEnvVar[] = [
       { name: 'API_KEY', value: 'global-key' },
       { name: 'DEBUG', value: 'true' },
     ];
@@ -67,14 +67,14 @@ describe('mergeEnvVars', () => {
   });
 
   it('should return repo env vars when no global vars exist', () => {
-    const repo: ContainerEnvVar[] = [{ name: 'REPO_VAR', value: 'repo-value' }];
+    const repo: ResolvedEnvVar[] = [{ name: 'REPO_VAR', value: 'repo-value' }];
     const result = mergeEnvVars([], repo);
     expect(result).toEqual(repo);
   });
 
   it('should merge global and repo env vars', () => {
-    const global: ContainerEnvVar[] = [{ name: 'GLOBAL_VAR', value: 'global' }];
-    const repo: ContainerEnvVar[] = [{ name: 'REPO_VAR', value: 'repo' }];
+    const global: ResolvedEnvVar[] = [{ name: 'GLOBAL_VAR', value: 'global' }];
+    const repo: ResolvedEnvVar[] = [{ name: 'REPO_VAR', value: 'repo' }];
     const result = mergeEnvVars(global, repo);
     expect(result).toHaveLength(2);
     expect(result).toContainEqual({ name: 'GLOBAL_VAR', value: 'global' });
@@ -82,11 +82,11 @@ describe('mergeEnvVars', () => {
   });
 
   it('should let per-repo env vars override global ones with the same name', () => {
-    const global: ContainerEnvVar[] = [
+    const global: ResolvedEnvVar[] = [
       { name: 'API_KEY', value: 'global-key' },
       { name: 'SHARED', value: 'global-shared' },
     ];
-    const repo: ContainerEnvVar[] = [
+    const repo: ResolvedEnvVar[] = [
       { name: 'SHARED', value: 'repo-shared' },
       { name: 'REPO_ONLY', value: 'repo' },
     ];
@@ -104,7 +104,7 @@ describe('mergeMcpServers', () => {
   });
 
   it('should return global servers when no repo servers exist', () => {
-    const global: ContainerMcpServer[] = [
+    const global: ResolvedMcpServer[] = [
       { name: 'memory', type: 'stdio', command: 'npx', args: ['@anthropic/mcp-server-memory'] },
     ];
     const result = mergeMcpServers(global, []);
@@ -112,7 +112,7 @@ describe('mergeMcpServers', () => {
   });
 
   it('should return repo servers when no global servers exist', () => {
-    const repo: ContainerMcpServer[] = [
+    const repo: ResolvedMcpServer[] = [
       { name: 'repo-server', type: 'http', url: 'https://example.com' },
     ];
     const result = mergeMcpServers([], repo);
@@ -120,10 +120,10 @@ describe('mergeMcpServers', () => {
   });
 
   it('should merge global and repo MCP servers', () => {
-    const global: ContainerMcpServer[] = [
+    const global: ResolvedMcpServer[] = [
       { name: 'memory', type: 'stdio', command: 'npx', args: ['@anthropic/mcp-server-memory'] },
     ];
-    const repo: ContainerMcpServer[] = [
+    const repo: ResolvedMcpServer[] = [
       { name: 'repo-server', type: 'http', url: 'https://example.com' },
     ];
     const result = mergeMcpServers(global, repo);
@@ -133,11 +133,11 @@ describe('mergeMcpServers', () => {
   });
 
   it('should let per-repo servers override global ones with the same name', () => {
-    const global: ContainerMcpServer[] = [
+    const global: ResolvedMcpServer[] = [
       { name: 'shared', type: 'stdio', command: 'global-cmd' },
       { name: 'global-only', type: 'http', url: 'https://global.com' },
     ];
-    const repo: ContainerMcpServer[] = [
+    const repo: ResolvedMcpServer[] = [
       { name: 'shared', type: 'http', url: 'https://repo.com' },
       { name: 'repo-only', type: 'sse', url: 'https://repo-sse.com' },
     ];
@@ -156,7 +156,7 @@ describe('mergeMcpServers', () => {
 });
 
 describe('mcpServersEqual', () => {
-  const stdio = (name: string, command: string): ContainerMcpServer => ({
+  const stdio = (name: string, command: string): ResolvedMcpServer => ({
     name,
     type: 'stdio',
     command,

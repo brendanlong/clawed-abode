@@ -1,17 +1,80 @@
-import type { ContainerEnvVar, ContainerMcpServer } from './repo-settings';
-import { getRepoSettingsForContainer } from './repo-settings';
-import { getGlobalSettingsForContainer, type GlobalContainerSettings } from './global-settings';
+import { prisma } from '@/lib/prisma';
+import { decrypt } from '@/lib/crypto';
 import { buildSystemPrompt } from '@/lib/system-prompt';
-import { resolveSettingSources, type SettingSource } from '@/lib/setting-sources';
+import {
+  resolveSettingSources,
+  settingSourceFlagsFromRow,
+  type SettingSource,
+  type SettingSourceFlags,
+} from '@/lib/setting-sources';
 import { env } from '@/lib/env';
+import type { ResolvedEnvVar, ResolvedMcpServer } from '@/lib/settings-types';
+import { decryptEnvVars, decryptMcpServers } from './settings-helpers';
+import { GLOBAL_SCOPE, GLOBAL_SETTINGS_ID } from './settings-scope';
+
+/** Per-repo settings with secrets decrypted, ready to merge. */
+export interface ResolvedRepoSettings {
+  customSystemPrompt: string | null;
+  claudeModel: string | null;
+  envVars: ResolvedEnvVar[];
+  mcpServers: ResolvedMcpServer[];
+}
+
+/** Global settings with secrets decrypted, ready to merge. */
+export interface ResolvedGlobalSettings {
+  systemPromptOverride: string | null;
+  systemPromptOverrideEnabled: boolean;
+  systemPromptAppend: string | null;
+  claudeModel: string | null;
+  advisorModel: string | null;
+  claudeApiKey: string | null;
+  settingSources: SettingSourceFlags;
+  envVars: ResolvedEnvVar[];
+  mcpServers: ResolvedMcpServer[];
+}
+
+export async function loadResolvedRepoSettings(
+  repoFullName: string
+): Promise<ResolvedRepoSettings | null> {
+  const settings = await prisma.repoSettings.findUnique({
+    where: { repoFullName },
+    include: { envVars: true, mcpServers: true },
+  });
+  if (!settings) return null;
+  return {
+    customSystemPrompt: settings.customSystemPrompt,
+    claudeModel: settings.claudeModel,
+    envVars: decryptEnvVars(settings.envVars),
+    mcpServers: decryptMcpServers(settings.mcpServers),
+  };
+}
+
+export async function loadResolvedGlobalSettings(): Promise<ResolvedGlobalSettings> {
+  const [settings, envVarRows, mcpServerRows] = await Promise.all([
+    prisma.globalSettings.findUnique({ where: { id: GLOBAL_SETTINGS_ID } }),
+    prisma.envVar.findMany({ where: GLOBAL_SCOPE }),
+    prisma.mcpServer.findMany({ where: GLOBAL_SCOPE }),
+  ]);
+  return {
+    systemPromptOverride: settings?.systemPromptOverride ?? null,
+    systemPromptOverrideEnabled: settings?.systemPromptOverrideEnabled ?? false,
+    systemPromptAppend: settings?.systemPromptAppend ?? null,
+    claudeModel: settings?.claudeModel ?? null,
+    advisorModel: settings?.advisorModel ?? null,
+    claudeApiKey: settings?.claudeApiKey ? decrypt(settings.claudeApiKey) : null,
+    settingSources: settingSourceFlagsFromRow(settings),
+    envVars: decryptEnvVars(envVarRows),
+    mcpServers: decryptMcpServers(mcpServerRows),
+  };
+}
 
 /**
- * Fully merged session settings ready for container creation and Claude queries.
+ * Fully merged session settings for establishing a Claude query.
  */
 export interface MergedSessionSettings {
   systemPrompt: string;
-  envVars: ContainerEnvVar[];
-  mcpServers: ContainerMcpServer[];
+  envVars: ResolvedEnvVar[];
+  mcpServers: ResolvedMcpServer[];
   claudeModel: string | undefined;
   /** Effective advisor model, or null when the advisor tool is disabled — see {@link resolveAdvisorModel}. */
   advisorModel: string | null;
@@ -19,7 +82,7 @@ export interface MergedSessionSettings {
   /** Claude Code scopes the SDK loads filesystem config from — see {@link resolveSettingSources}. */
   settingSources: SettingSource[];
   customSystemPrompt: string | null | undefined;
-  globalSettings: GlobalContainerSettings;
+  globalSettings: ResolvedGlobalSettings;
 }
 
 /**
@@ -32,8 +95,8 @@ export async function loadMergedSessionSettings(
   sessionModel?: string | null | undefined
 ): Promise<MergedSessionSettings> {
   const [repoSettings, globalSettings] = await Promise.all([
-    repoFullName ? getRepoSettingsForContainer(repoFullName) : null,
-    getGlobalSettingsForContainer(),
+    repoFullName ? loadResolvedRepoSettings(repoFullName) : null,
+    loadResolvedGlobalSettings(),
   ]);
 
   const systemPrompt = buildSystemPrompt({
@@ -91,10 +154,10 @@ export function resolveAdvisorModel(globalModel: string | null | undefined): str
  * Per-repo env vars take precedence over global ones with the same name.
  */
 export function mergeEnvVars(
-  globalEnvVars: ContainerEnvVar[],
-  repoEnvVars: ContainerEnvVar[]
-): ContainerEnvVar[] {
-  const merged = new Map<string, ContainerEnvVar>();
+  globalEnvVars: ResolvedEnvVar[],
+  repoEnvVars: ResolvedEnvVar[]
+): ResolvedEnvVar[] {
+  const merged = new Map<string, ResolvedEnvVar>();
 
   // Add global env vars first
   for (const envVar of globalEnvVars) {
@@ -114,10 +177,10 @@ export function mergeEnvVars(
  * Per-repo MCP servers take precedence over global ones with the same name.
  */
 export function mergeMcpServers(
-  globalMcpServers: ContainerMcpServer[],
-  repoMcpServers: ContainerMcpServer[]
-): ContainerMcpServer[] {
-  const merged = new Map<string, ContainerMcpServer>();
+  globalMcpServers: ResolvedMcpServer[],
+  repoMcpServers: ResolvedMcpServer[]
+): ResolvedMcpServer[] {
+  const merged = new Map<string, ResolvedMcpServer>();
 
   // Add global MCP servers first
   for (const server of globalMcpServers) {
@@ -137,9 +200,9 @@ export function mergeMcpServers(
  * decide whether to apply a live `setMcpServers` to a running query when settings
  * change between turns.
  */
-export function mcpServersEqual(a: ContainerMcpServer[], b: ContainerMcpServer[]): boolean {
+export function mcpServersEqual(a: ResolvedMcpServer[], b: ResolvedMcpServer[]): boolean {
   if (a.length !== b.length) return false;
-  const key = (servers: ContainerMcpServer[]) =>
+  const key = (servers: ResolvedMcpServer[]) =>
     [...servers]
       .sort((x, y) => x.name.localeCompare(y.name))
       .map((s) => JSON.stringify(s))

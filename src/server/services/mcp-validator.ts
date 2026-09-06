@@ -1,9 +1,13 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
+import {
+  StdioClientTransport,
+  getDefaultEnvironment,
+} from '@modelcontextprotocol/sdk/client/stdio.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { createLogger } from '@/lib/logger';
-import type { ContainerMcpServer } from './repo-settings';
+import type { ResolvedMcpServer } from '@/lib/settings-types';
 
 const log = createLogger('mcp-validator');
 
@@ -102,6 +106,39 @@ async function validateHttpServer(
   }
 }
 
+/**
+ * Spawn the stdio server on the host and list its tools, bounded by the validation
+ * timeout. The child gets the SDK's minimal safe environment (HOME, PATH, ...)
+ * plus the server's own decrypted env — never the app server's process.env,
+ * which holds ENCRYPTION_KEY, PASSWORD_HASH and the API tokens.
+ */
+async function validateStdioServer(
+  command: string,
+  args: string[] | undefined,
+  env: Record<string, string> | undefined
+): Promise<McpValidationResult> {
+  const transport = new StdioClientTransport({
+    command,
+    args,
+    env: { ...getDefaultEnvironment(), ...env },
+    stderr: 'ignore',
+  });
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      const err = new Error('timed out');
+      err.name = 'TimeoutError';
+      reject(err);
+    }, VALIDATION_TIMEOUT_MS);
+  });
+  try {
+    return await Promise.race([connectAndListTools(transport), timeout]);
+  } finally {
+    clearTimeout(timer);
+    await transport.close().catch(() => {});
+  }
+}
+
 async function validateSseServer(
   url: string,
   headers: Record<string, string>
@@ -117,6 +154,9 @@ function formatError(error: unknown): string {
     }
     // Check the full message chain (SSE SDK wraps errors with prefixes)
     const msg = error.message;
+    if (msg.includes('ENOENT')) {
+      return 'Command not found - check the command and PATH';
+    }
     if (msg.includes('ECONNREFUSED')) {
       return 'Connection refused - is the server running?';
     }
@@ -148,29 +188,21 @@ function formatError(error: unknown): string {
   return String(error);
 }
 
-export async function validateMcpServer(server: ContainerMcpServer): Promise<McpValidationResult> {
-  if (server.type === 'stdio') {
-    return {
-      success: false,
-      error:
-        'Stdio servers run inside session containers and cannot be validated from the host. They will be tested when a session starts.',
-    };
-  }
-
-  const headers = buildHeaders(server.headers);
-
+export async function validateMcpServer(server: ResolvedMcpServer): Promise<McpValidationResult> {
   try {
+    if (server.type === 'stdio') {
+      return await validateStdioServer(server.command, server.args, server.env);
+    }
+    const headers = buildHeaders(server.headers);
     if (server.type === 'http') {
       return await validateHttpServer(server.url, headers);
     }
-
-    // SSE
     return await validateSseServer(server.url, headers);
   } catch (error) {
     log.warn('MCP server validation failed', {
       name: server.name,
       type: server.type,
-      url: server.url,
+      ...(server.type === 'stdio' ? { command: server.command } : { url: server.url }),
       error: error instanceof Error ? error.message : String(error),
     });
 
