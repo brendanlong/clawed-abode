@@ -106,6 +106,27 @@ describe('settings-scope', () => {
       expect(await testPrisma.mcpServer.count({ where: scope })).toBe(0);
     });
 
+    it('upserts the same name concurrently without a unique violation or duplicate rows', async () => {
+      const scope = await makeScope();
+      await Promise.all(
+        ['a', 'b', 'c'].map((value) =>
+          scopeModule.upsertEnvVar(scope, { name: 'RACE', value, isSecret: false })
+        )
+      );
+      expect(await testPrisma.envVar.count({ where: { ...scope, name: 'RACE' } })).toBe(1);
+    });
+
+    it('keeps createdAt and bumps updatedAt on conflict', async () => {
+      const scope = await makeScope();
+      await scopeModule.upsertEnvVar(scope, { name: 'T', value: '1', isSecret: false });
+      const first = await testPrisma.envVar.findFirstOrThrow({ where: { ...scope, name: 'T' } });
+      await new Promise((r) => setTimeout(r, 5));
+      await scopeModule.upsertEnvVar(scope, { name: 'T', value: '2', isSecret: false });
+      const second = await testPrisma.envVar.findFirstOrThrow({ where: { ...scope, name: 'T' } });
+      expect(second.createdAt.getTime()).toBe(first.createdAt.getTime());
+      expect(second.updatedAt.getTime()).toBeGreaterThan(first.updatedAt.getTime());
+    });
+
     it('refuses to store secrets without an encryption key', async () => {
       const scope = await makeScope();
       const saved = process.env.ENCRYPTION_KEY;

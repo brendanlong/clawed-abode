@@ -49,6 +49,14 @@ export const mcpServerSchema = z.discriminatedUnion('type', [
   mcpServerHttpSchema,
 ]);
 
+/** Free-text setting input: trimmed, with blank/null meaning "clear". */
+export const nullableTextSchema = (max: number) =>
+  z
+    .string()
+    .max(max)
+    .nullable()
+    .transform((value) => value?.trim() || null);
+
 export type EnvVarInput = z.infer<typeof envVarSchema>;
 export type McpServerInput = z.infer<typeof mcpServerSchema>;
 

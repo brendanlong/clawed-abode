@@ -5,9 +5,8 @@ import { encrypt } from '@/lib/crypto';
 import { createLogger } from '@/lib/logger';
 import { env } from '@/lib/env';
 import { DEFAULT_SYSTEM_PROMPT } from '@/lib/system-prompt';
-import { requireEncryptionForSecrets } from '../services/settings-helpers';
-import { GLOBAL_SCOPE, listScopeSettings } from '../services/settings-scope';
-import { GLOBAL_SETTINGS_ID } from '../services/settings-merger';
+import { nullableTextSchema, requireEncryptionForSecrets } from '../services/settings-helpers';
+import { GLOBAL_SCOPE, GLOBAL_SETTINGS_ID, listScopeSettings } from '../services/settings-scope';
 import { scopedSettingsProcedures } from './scoped-settings';
 import { getModelSuggestions } from '../services/anthropic-models';
 import { SUGGESTED_ADVISOR_MODEL } from '@/lib/advisor';
@@ -32,14 +31,6 @@ async function patchGlobalSettings(patch: GlobalSettingsPatch): Promise<void> {
 // Typed as `object` (not z.object({})'s Record<string, never>) so the shared
 // procedures' inputs intersect cleanly with their own fields.
 const noScopeInput: z.ZodType<object, object> = z.object({});
-
-/** Trim free-text settings; blank clears them. */
-const nullableText = (max: number) =>
-  z
-    .string()
-    .max(max)
-    .nullable()
-    .transform((value) => value?.trim() || null);
 
 export const globalSettingsRouter = router({
   /** The built-in default system prompt, to pre-populate the override field. */
@@ -78,7 +69,7 @@ export const globalSettingsRouter = router({
   setSystemPromptOverride: protectedProcedure
     .input(
       z.object({
-        systemPromptOverride: nullableText(50000),
+        systemPromptOverride: nullableTextSchema(50000),
         systemPromptOverrideEnabled: z.boolean(),
       })
     )
@@ -92,7 +83,7 @@ export const globalSettingsRouter = router({
     }),
 
   setSystemPromptAppend: protectedProcedure
-    .input(z.object({ systemPromptAppend: nullableText(50000) }))
+    .input(z.object({ systemPromptAppend: nullableTextSchema(50000) }))
     .mutation(async ({ input }) => {
       await patchGlobalSettings(input);
       log.info('Set system prompt append', { hasAppend: input.systemPromptAppend !== null });
@@ -114,7 +105,7 @@ export const globalSettingsRouter = router({
 
   /** Global Claude model override; null/blank reverts to CLAUDE_MODEL. */
   setClaudeModel: protectedProcedure
-    .input(z.object({ claudeModel: nullableText(200) }))
+    .input(z.object({ claudeModel: nullableTextSchema(200) }))
     .mutation(async ({ input }) => {
       await patchGlobalSettings(input);
       log.info('Set Claude model', input);
@@ -123,7 +114,7 @@ export const globalSettingsRouter = router({
 
   /** Advisor model for the server-side advisor tool; null/blank disables it (the default). */
   setAdvisorModel: protectedProcedure
-    .input(z.object({ advisorModel: nullableText(200) }))
+    .input(z.object({ advisorModel: nullableTextSchema(200) }))
     .mutation(async ({ input }) => {
       await patchGlobalSettings(input);
       log.info('Set advisor model', input);

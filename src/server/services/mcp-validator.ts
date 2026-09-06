@@ -1,7 +1,10 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import {
+  StdioClientTransport,
+  getDefaultEnvironment,
+} from '@modelcontextprotocol/sdk/client/stdio.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { createLogger } from '@/lib/logger';
 import type { ResolvedMcpServer } from '@/lib/settings-types';
@@ -104,21 +107,20 @@ async function validateHttpServer(
 }
 
 /**
- * Spawn the stdio server the same way a session would (host process, decrypted
- * env layered over the app's) and list its tools, bounded by the validation timeout.
+ * Spawn the stdio server on the host and list its tools, bounded by the validation
+ * timeout. The child gets the SDK's minimal safe environment (HOME, PATH, ...)
+ * plus the server's own decrypted env — never the app server's process.env,
+ * which holds ENCRYPTION_KEY, PASSWORD_HASH and the API tokens.
  */
 async function validateStdioServer(
   command: string,
   args: string[] | undefined,
   env: Record<string, string> | undefined
 ): Promise<McpValidationResult> {
-  const inherited = Object.fromEntries(
-    Object.entries(process.env).filter((e): e is [string, string] => e[1] !== undefined)
-  );
   const transport = new StdioClientTransport({
     command,
     args,
-    env: { ...inherited, ...env },
+    env: { ...getDefaultEnvironment(), ...env },
     stderr: 'ignore',
   });
   let timer: NodeJS.Timeout | undefined;

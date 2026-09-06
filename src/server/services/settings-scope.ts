@@ -32,7 +32,10 @@ export interface SettingsScope {
   repoSettingsId: string | null;
 }
 
-export const GLOBAL_SCOPE: SettingsScope = { repoSettingsId: null };
+export const GLOBAL_SCOPE: Readonly<SettingsScope> = Object.freeze({ repoSettingsId: null });
+
+/** Id of the GlobalSettings singleton row. */
+export const GLOBAL_SETTINGS_ID = 'global';
 
 function conflictTarget(scope: SettingsScope): Prisma.Sql {
   return scope.repoSettingsId === null

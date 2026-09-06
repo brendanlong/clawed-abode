@@ -10,9 +10,7 @@ import {
 import { env } from '@/lib/env';
 import type { ResolvedEnvVar, ResolvedMcpServer } from '@/lib/settings-types';
 import { decryptEnvVars, decryptMcpServers } from './settings-helpers';
-import { GLOBAL_SCOPE } from './settings-scope';
-
-export const GLOBAL_SETTINGS_ID = 'global';
+import { GLOBAL_SCOPE, GLOBAL_SETTINGS_ID } from './settings-scope';
 
 /** Per-repo settings with secrets decrypted, ready to merge. */
 export interface ResolvedRepoSettings {

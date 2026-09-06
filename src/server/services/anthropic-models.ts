@@ -3,6 +3,7 @@ import { env } from '@/lib/env';
 import { decrypt } from '@/lib/crypto';
 import { prisma } from '@/lib/prisma';
 import { createLogger, toError } from '@/lib/logger';
+import { GLOBAL_SETTINGS_ID } from './settings-scope';
 
 const log = createLogger('anthropic-models');
 
@@ -45,7 +46,7 @@ async function getAuthCredentials(): Promise<{
 } | null> {
   // Check DB for stored API key
   const settings = await prisma.globalSettings.findUnique({
-    where: { id: 'global' },
+    where: { id: GLOBAL_SETTINGS_ID },
     select: { claudeApiKey: true },
   });
 

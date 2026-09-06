@@ -17,7 +17,7 @@ Global-only and **opt-in**: null means the advisor tool isn't wired into request
 
 ## MCP Validation
 
-The Validate button connects with the MCP SDK and lists tools. HTTP/SSE servers are contacted directly; stdio servers are spawned on the host with their decrypted env, exactly as a session would run them, and killed after the check (15s timeout).
+The Validate button connects with the MCP SDK and lists tools. HTTP/SSE servers are contacted directly; stdio servers are spawned on the host with the MCP SDK's minimal default environment plus their own decrypted env (never the app's `process.env`, which holds the encryption key and tokens) and killed after the check (15s timeout).
 
 ## Secrets
 

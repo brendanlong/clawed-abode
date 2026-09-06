@@ -2,7 +2,11 @@ import { z } from 'zod';
 import { router, protectedProcedure } from '../trpc';
 import { prisma } from '@/lib/prisma';
 import { createLogger } from '@/lib/logger';
-import { formatEnvVarsForDisplay, formatMcpServersForDisplay } from '../services/settings-helpers';
+import {
+  formatEnvVarsForDisplay,
+  formatMcpServersForDisplay,
+  nullableTextSchema,
+} from '../services/settings-helpers';
 import { scopedSettingsProcedures, type ResolveScope } from './scoped-settings';
 
 const log = createLogger('repoSettings');
@@ -30,20 +34,15 @@ const resolveRepoScope: ResolveScope<z.infer<typeof repoScopeInput>> = async (in
   return settings ? { repoSettingsId: settings.id } : null;
 };
 
-/** Trim free-text settings; blank clears them. */
-const nullableText = (max: number) =>
-  z
-    .string()
-    .max(max)
-    .nullable()
-    .transform((value) => value?.trim() || null);
-
 export const repoSettingsRouter = router({
   /** Settings for one repository with secrets masked, or null if none exist. */
   get: protectedProcedure.input(repoScopeInput).query(async ({ input }) => {
     const settings = await prisma.repoSettings.findUnique({
       where: { repoFullName: input.repoFullName },
-      include: { envVars: true, mcpServers: true },
+      include: {
+        envVars: { orderBy: { name: 'asc' } },
+        mcpServers: { orderBy: { name: 'asc' } },
+      },
     });
     if (!settings) return null;
 
@@ -74,7 +73,7 @@ export const repoSettingsRouter = router({
 
   /** Per-repo prompt appended to the system prompt; null/blank clears it. */
   setCustomSystemPrompt: protectedProcedure
-    .input(repoScopeInput.extend({ customSystemPrompt: nullableText(10000) }))
+    .input(repoScopeInput.extend({ customSystemPrompt: nullableTextSchema(10000) }))
     .mutation(async ({ input }) => {
       await prisma.repoSettings.upsert({
         where: { repoFullName: input.repoFullName },
@@ -90,7 +89,7 @@ export const repoSettingsRouter = router({
 
   /** Per-repo Claude model override; null/blank reverts to global/env. */
   setClaudeModel: protectedProcedure
-    .input(repoScopeInput.extend({ claudeModel: nullableText(200) }))
+    .input(repoScopeInput.extend({ claudeModel: nullableTextSchema(200) }))
     .mutation(async ({ input }) => {
       await prisma.repoSettings.upsert({
         where: { repoFullName: input.repoFullName },
