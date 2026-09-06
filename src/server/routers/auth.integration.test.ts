@@ -27,11 +27,14 @@ vi.mock('@/lib/logger', () => ({
 let authRouter: Awaited<typeof import('./auth')>['authRouter'];
 let router: Awaited<typeof import('../trpc')>['router'];
 
-const createCaller = (sessionId: string | null) => {
+const createCaller = (
+  sessionId: string | null,
+  client?: { ipAddress: string; userAgent: string }
+) => {
   const testRouter = router({
     auth: authRouter,
   });
-  return testRouter.createCaller({ sessionId });
+  return testRouter.createCaller({ sessionId, ...client });
 };
 
 const TEST_PASSWORD = 'test-password-123';
@@ -63,13 +66,9 @@ describe('authRouter integration', () => {
 
   describe('login', () => {
     it('should login successfully with correct password and create a session in the database', async () => {
-      const caller = createCaller(null);
+      const caller = createCaller(null, { ipAddress: '127.0.0.1', userAgent: 'test-agent' });
       const beforeLogin = Date.now();
-      const result = await caller.auth.login({
-        password: TEST_PASSWORD,
-        ipAddress: '127.0.0.1',
-        userAgent: 'test-agent',
-      });
+      const result = await caller.auth.login({ password: TEST_PASSWORD });
 
       // Should return a token
       expect(result.token).toBeDefined();
@@ -202,66 +201,21 @@ describe('authRouter integration', () => {
     });
   });
 
-  describe('logoutAll', () => {
-    it('should mark all sessions as revoked', async () => {
-      const loginCaller = createCaller(null);
-
-      // Create multiple sessions
-      const session1 = await loginCaller.auth.login({ password: TEST_PASSWORD });
-      await loginCaller.auth.login({ password: TEST_PASSWORD });
-      await loginCaller.auth.login({ password: TEST_PASSWORD });
-
-      const currentSession = await testPrisma.authSession.findFirst({
-        where: { token: session1.token },
-      });
-
-      // Logout all
-      const caller = createCaller(currentSession!.id);
-      const beforeLogout = Date.now();
-      const result = await caller.auth.logoutAll();
-
-      expect(result).toEqual({ success: true });
-
-      // All sessions should still exist but be revoked
-      const remaining = await testPrisma.authSession.findMany();
-      expect(remaining).toHaveLength(3);
-      expect(remaining.every((s) => s.revokedAt !== null)).toBe(true);
-      expect(
-        remaining.every(
-          (s) => s.revokedAt!.getTime() >= beforeLogout && s.revokedAt!.getTime() <= Date.now()
-        )
-      ).toBe(true);
-    });
-
-    it('should require authentication', async () => {
-      const caller = createCaller(null);
-
-      await expect(caller.auth.logoutAll()).rejects.toMatchObject({
-        code: 'UNAUTHORIZED',
-      });
-    });
-  });
-
   describe('listSessions', () => {
     it('should list all sessions including revoked ones with isCurrent flag and lastActivityAt', async () => {
-      const loginCaller = createCaller(null);
       const beforeLogin = Date.now();
 
       // Create sessions with different metadata
-      const session1 = await loginCaller.auth.login({
-        password: TEST_PASSWORD,
+      const session1 = await createCaller(null, {
         ipAddress: '192.168.1.1',
         userAgent: 'Chrome',
-      });
-      const session2 = await loginCaller.auth.login({
-        password: TEST_PASSWORD,
+      }).auth.login({ password: TEST_PASSWORD });
+      const session2 = await createCaller(null, {
         ipAddress: '192.168.1.2',
         userAgent: 'Firefox',
-      });
-      await loginCaller.auth.login({
+      }).auth.login({ password: TEST_PASSWORD });
+      await createCaller(null, { ipAddress: '192.168.1.3', userAgent: 'Safari' }).auth.login({
         password: TEST_PASSWORD,
-        ipAddress: '192.168.1.3',
-        userAgent: 'Safari',
       });
 
       // Revoke one session

@@ -59,6 +59,23 @@ describe('createContext - activity tracking', () => {
     return { session, token };
   }
 
+  describe('client info', () => {
+    it('prefers the first X-Forwarded-For hop, then X-Real-IP, and passes through the user agent', async () => {
+      const headers = createHeaders(null);
+      headers.set('x-forwarded-for', '100.64.0.7, 10.0.0.1');
+      headers.set('x-real-ip', '10.0.0.2');
+      headers.set('user-agent', 'test-agent');
+      const ctx = await createContext({ headers });
+      expect(ctx).toEqual({ sessionId: null, ipAddress: '100.64.0.7', userAgent: 'test-agent' });
+
+      headers.delete('x-forwarded-for');
+      expect((await createContext({ headers })).ipAddress).toBe('10.0.0.2');
+
+      headers.delete('x-real-ip');
+      expect((await createContext({ headers })).ipAddress).toBeUndefined();
+    });
+  });
+
   describe('session validation', () => {
     it('should return null sessionId for missing token', async () => {
       const ctx = await createContext({ headers: createHeaders(null) });

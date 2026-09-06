@@ -3,6 +3,7 @@
 import type { ReactNode } from 'react';
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { getAuthToken, setAuthToken, clearAuthToken } from '@/lib/auth-token';
+import { trpc } from '@/lib/trpc';
 
 interface AuthContextType {
   isAuthenticated: boolean;
@@ -43,10 +44,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setAuthState({ token: newToken, isLoading: false });
   }, []);
 
+  const { mutate: revokeServerSession } = trpc.auth.logout.useMutation();
   const logout = useCallback(() => {
-    clearAuthToken();
-    setAuthState({ token: null, isLoading: false });
-  }, []);
+    // Revoke server-side first (the request needs the token), then clear locally
+    // regardless of the outcome so the user is signed out even if the server is unreachable.
+    revokeServerSession(undefined, {
+      onSettled: () => {
+        clearAuthToken();
+        setAuthState({ token: null, isLoading: false });
+      },
+    });
+  }, [revokeServerSession]);
 
   return (
     <AuthContext.Provider

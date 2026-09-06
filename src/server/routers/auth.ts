@@ -32,81 +32,65 @@ async function createAuthSession(ipAddress?: string, userAgent?: string): Promis
 }
 
 export const authRouter = router({
-  login: publicProcedure
-    .input(
-      loginSchema.extend({
-        ipAddress: z.string().optional(),
-        userAgent: z.string().optional(),
-      })
-    )
-    .mutation(async ({ input }) => {
-      // Rate limit by IP address (use 'unknown' if IP not provided)
-      const rateLimitKey = input.ipAddress ?? 'unknown';
-      const rateLimitCheck = loginRateLimiter.check(rateLimitKey);
+  login: publicProcedure.input(loginSchema).mutation(async ({ input, ctx }) => {
+    // IP and user agent come from request headers (never from client input, which
+    // an attacker could vary to dodge the rate limiter).
+    const rateLimitKey = ctx.ipAddress ?? 'unknown';
+    const rateLimitCheck = loginRateLimiter.check(rateLimitKey);
 
-      if (!rateLimitCheck.allowed) {
-        const retryAfterMinutes = Math.ceil((rateLimitCheck.retryAfterMs ?? 0) / 60000);
-        log.warn('Login rate limited', { ip: input.ipAddress, retryAfterMinutes });
-        throw new TRPCError({
-          code: 'TOO_MANY_REQUESTS',
-          message: `Too many login attempts. Please try again in ${retryAfterMinutes} minute${retryAfterMinutes === 1 ? '' : 's'}.`,
-        });
-      }
+    if (!rateLimitCheck.allowed) {
+      const retryAfterMinutes = Math.ceil((rateLimitCheck.retryAfterMs ?? 0) / 60000);
+      log.warn('Login rate limited', { ip: ctx.ipAddress, retryAfterMinutes });
+      throw new TRPCError({
+        code: 'TOO_MANY_REQUESTS',
+        message: `Too many login attempts. Please try again in ${retryAfterMinutes} minute${retryAfterMinutes === 1 ? '' : 's'}.`,
+      });
+    }
 
-      // Check if password hash is configured
-      if (!env.PASSWORD_HASH) {
-        throw new TRPCError({
-          code: 'INTERNAL_SERVER_ERROR',
-          message: 'Authentication not configured. Set PASSWORD_HASH environment variable.',
-        });
-      }
+    // Check if password hash is configured
+    if (!env.PASSWORD_HASH) {
+      throw new TRPCError({
+        code: 'INTERNAL_SERVER_ERROR',
+        message: 'Authentication not configured. Set PASSWORD_HASH environment variable.',
+      });
+    }
 
-      let valid: boolean;
-      try {
-        valid = await verifyPassword(input.password, env.PASSWORD_HASH);
-      } catch (error) {
-        log.error('Password verification error', toError(error));
-        throw new TRPCError({
-          code: 'INTERNAL_SERVER_ERROR',
-          message: 'Invalid PASSWORD_HASH format. Generate with: pnpm hash-password <yourpassword>',
-        });
-      }
+    let valid: boolean;
+    try {
+      valid = await verifyPassword(input.password, env.PASSWORD_HASH);
+    } catch (error) {
+      log.error('Password verification error', toError(error));
+      throw new TRPCError({
+        code: 'INTERNAL_SERVER_ERROR',
+        message: 'Invalid PASSWORD_HASH format. Generate with: pnpm hash-password <yourpassword>',
+      });
+    }
 
-      if (!valid) {
-        // Record failed attempt for rate limiting
-        const failureResult = loginRateLimiter.recordFailure(rateLimitKey);
-        log.warn('Failed login attempt', {
-          ip: input.ipAddress,
-          remainingAttempts: failureResult.remainingAttempts,
-        });
-        throw new TRPCError({
-          code: 'UNAUTHORIZED',
-          message: 'Invalid password',
-        });
-      }
+    if (!valid) {
+      // Record failed attempt for rate limiting
+      const failureResult = loginRateLimiter.recordFailure(rateLimitKey);
+      log.warn('Failed login attempt', {
+        ip: ctx.ipAddress,
+        remainingAttempts: failureResult.remainingAttempts,
+      });
+      throw new TRPCError({
+        code: 'UNAUTHORIZED',
+        message: 'Invalid password',
+      });
+    }
 
-      // Record successful login (resets attempt counter)
-      loginRateLimiter.recordSuccess(rateLimitKey);
+    // Record successful login (resets attempt counter)
+    loginRateLimiter.recordSuccess(rateLimitKey);
 
-      const token = await createAuthSession(input.ipAddress, input.userAgent);
+    const token = await createAuthSession(ctx.ipAddress, ctx.userAgent);
 
-      return { token };
-    }),
+    return { token };
+  }),
 
   logout: protectedProcedure.mutation(async ({ ctx }) => {
     // Revoke the current session instead of deleting
     await prisma.authSession.update({
       where: { id: ctx.sessionId },
-      data: { revokedAt: new Date() },
-    });
-
-    return { success: true };
-  }),
-
-  logoutAll: protectedProcedure.mutation(async () => {
-    // Revoke all non-revoked sessions
-    await prisma.authSession.updateMany({
-      where: { revokedAt: null },
       data: { revokedAt: new Date() },
     });
 

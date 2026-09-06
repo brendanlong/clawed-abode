@@ -8,14 +8,28 @@ const log = createLogger('trpc');
 
 export interface Context {
   sessionId: string | null;
+  /** Client IP and user agent, derived from request headers for login rate limiting and the auth-session audit list. */
+  ipAddress?: string;
+  userAgent?: string;
+}
+
+/** Tailscale Serve/Funnel and other reverse proxies put the real client IP first in X-Forwarded-For. */
+export function getClientIp(headers: Headers): string | undefined {
+  const forwarded = headers.get('x-forwarded-for');
+  const first = forwarded?.split(',')[0]?.trim();
+  return first || headers.get('x-real-ip')?.trim() || undefined;
 }
 
 export async function createContext(opts: { headers: Headers }): Promise<Context> {
+  const clientInfo = {
+    ipAddress: getClientIp(opts.headers),
+    userAgent: opts.headers.get('user-agent') ?? undefined,
+  };
   const authHeader = opts.headers.get('authorization');
   const token = parseAuthHeader(authHeader);
 
   if (!token) {
-    return { sessionId: null };
+    return { sessionId: null, ...clientInfo };
   }
 
   const session = await prisma.authSession.findUnique({
@@ -24,19 +38,19 @@ export async function createContext(opts: { headers: Headers }): Promise<Context
   });
 
   if (!session) {
-    return { sessionId: null };
+    return { sessionId: null, ...clientInfo };
   }
 
   const now = new Date();
 
   // Check if session has been revoked
   if (session.revokedAt) {
-    return { sessionId: null };
+    return { sessionId: null, ...clientInfo };
   }
 
   // Check if session has expired
   if (session.expiresAt < now) {
-    return { sessionId: null };
+    return { sessionId: null, ...clientInfo };
   }
 
   // Check for idle timeout
@@ -44,7 +58,7 @@ export async function createContext(opts: { headers: Headers }): Promise<Context
   if (idleTime > IDLE_TIMEOUT_MS) {
     // Session is idle, reject it (but don't delete - keep for audit/display)
     log.info('Session rejected due to idle timeout', { sessionId: session.id });
-    return { sessionId: null };
+    return { sessionId: null, ...clientInfo };
   }
 
   // Update last activity (throttled to avoid excessive DB writes)
@@ -59,7 +73,7 @@ export async function createContext(opts: { headers: Headers }): Promise<Context
       });
   }
 
-  return { sessionId: session.id };
+  return { sessionId: session.id, ...clientInfo };
 }
 
 const t = initTRPC.context<Context>().create({
