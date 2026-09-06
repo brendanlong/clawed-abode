@@ -30,10 +30,8 @@ See [Setup](#setup) below.
 
 ## Prerequisites
 
-- Node.js 22 (20.19+ works) and pnpm
-- Git
-- Claude Code CLI installed and authenticated (`claude setup-token`)
-- A GitHub Fine-grained Personal Access Token
+- A Linux host with systemd user services (for the session process scopes and the service unit), `sudo` for creating the user, and Git
+- Node.js 22 (20.19+ works); the setup below installs it via nvm
 
 ## Setup
 
@@ -77,11 +75,7 @@ Edit `.env` and set `PASSWORD_HASH`, `GITHUB_TOKEN` and `CLAUDE_CODE_OAUTH_TOKEN
 
 #### Generate Claude OAuth Token
 
-```bash
-claude setup-token
-```
-
-Copy the token and add it to your `.env` file as `CLAUDE_CODE_OAUTH_TOKEN`.
+Copy the token printed by `claude setup-token` in step 2 (run it again if you need to) into `.env` as `CLAUDE_CODE_OAUTH_TOKEN`. It can also be set later in the Settings UI.
 
 #### Generate GitHub Token
 
@@ -127,9 +121,11 @@ pnpm run build
 pnpm start
 ```
 
-Visit `http://localhost:3000`. For development use `pnpm run dev` instead.
+Visit `http://localhost:3000` from the server itself (see [Remote Access](#remote-access-with-tailscale) for the URL to use from other devices). For development use `pnpm run dev` instead.
 
 ### 6. Run as a systemd service
+
+Stop the foreground server from step 5 first (Ctrl-C); the service binds the same port.
 
 First, find the full path to your Node.js binary:
 
@@ -220,7 +216,7 @@ The schema in [`src/lib/env.ts`](src/lib/env.ts) is authoritative.
 
 ## Development
 
-`pnpm run dev` starts the dev server with hot reload; `pnpm test:run` runs every test suite (what CI runs). Contributor rules and the design docs are in [`CLAUDE.md`](CLAUDE.md) and [`doc/DESIGN.md`](doc/DESIGN.md).
+`pnpm run dev` starts the dev server with hot reload; `pnpm test:run` runs every test suite (what CI runs). After editing `prisma/schema.prisma`, `pnpm run db:migrate` creates and applies a migration (production applies them with `prisma migrate deploy` via `scripts/update.sh`). Contributor rules and the design docs are in [`CLAUDE.md`](CLAUDE.md) and [`doc/DESIGN.md`](doc/DESIGN.md).
 
 ## Troubleshooting
 

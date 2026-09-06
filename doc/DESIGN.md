@@ -63,7 +63,7 @@ The schema ([`prisma/schema.prisma`](../prisma/schema.prisma)) is the source of 
 
 - **Create** (`sessions.create`) returns immediately with status `creating`; cloning happens in the background and the UI polls `statusMessage`. An optional initial prompt is sent server-side once the session is running, so it works even if the client disconnects.
 - **Interact**: prompts go through the session's persistent streaming query ([`claude-sessions.md`](claude-sessions.md)). The composer is never disabled and nothing is held back — a mid-turn send goes straight to the SDK and the agent reads it mid-turn.
-- **Interrupt** stops only the current turn; the query stays alive. **Stop** closes the query; the worktree stays on disk. **Delete** stops the query, removes the workspace, and archives.
+- **Interrupt** stops only the current turn; the query stays alive. **Stop** closes the query; the worktree stays on disk and **Start** revives it. **Delete** stops the query, removes the workspace, and archives.
 - **Restart recovery**: a server restart loses in-memory state but not intent — a session in DB status `running` is revived lazily with `resume` on the next interaction. In-flight background work is not resurrected (its subprocess is gone); recovery restores the conversation.
 
 ### File Uploads
@@ -79,7 +79,7 @@ The schema ([`prisma/schema.prisma`](../prisma/schema.prisma)) is the source of 
 
 ## Voice
 
-Speech input/output uses the browser's Web Speech APIs only (no keys, no server audio). Hooks: [`useVoiceRecording`](../src/hooks/useVoiceRecording.ts), [`useVoicePlayback`](../src/hooks/useVoicePlayback.ts) (which documents the browser quirks the playback code works around), [`useVoiceConfig`](../src/hooks/useVoiceConfig.ts); UI in [`src/components/voice/`](../src/components/voice/).
+Speech input/output uses the browser's Web Speech APIs only (no keys, no server audio). Auto-read (speak replies aloud) is a per-session, per-device preference in `localStorage`; Voice Auto-Send (send a transcript immediately vs. land it in the composer for editing) and TTS speed are global server settings. Hooks: [`useVoiceRecording`](../src/hooks/useVoiceRecording.ts), [`useVoicePlayback`](../src/hooks/useVoicePlayback.ts) (which documents the browser quirks the playback code works around), [`useVoiceConfig`](../src/hooks/useVoiceConfig.ts); UI in [`src/components/voice/`](../src/components/voice/).
 
 ## Remote File Editing
 
