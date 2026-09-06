@@ -15,6 +15,8 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+const LOGOUT_LOCAL_CLEAR_TIMEOUT_MS = 2000;
+
 interface AuthState {
   token: string | null;
   isLoading: boolean;
@@ -46,12 +48,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const { mutate: revokeServerSession } = trpc.auth.logout.useMutation();
   const logout = useCallback(() => {
-    // Revoke server-side first (the request needs the token), then clear locally
-    // regardless of the outcome so the user is signed out even if the server is unreachable.
+    // Revoke server-side first (the request needs the token), then clear locally once
+    // the request settles or after a short grace period, so the user is signed out
+    // even if the server is unreachable or hangs.
+    const clearLocally = () => {
+      clearAuthToken();
+      setAuthState({ token: null, isLoading: false });
+    };
+    const fallback = setTimeout(clearLocally, LOGOUT_LOCAL_CLEAR_TIMEOUT_MS);
     revokeServerSession(undefined, {
       onSettled: () => {
-        clearAuthToken();
-        setAuthState({ token: null, isLoading: false });
+        clearTimeout(fallback);
+        clearLocally();
       },
     });
   }, [revokeServerSession]);

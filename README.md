@@ -195,6 +195,9 @@ ExecStart=%h/.nvm/versions/node/v22.22.1/bin/node node_modules/next/dist/bin/nex
 Restart=always
 RestartSec=5
 Environment=NODE_ENV=production
+# Listen on loopback only: Tailscale Serve is the sole ingress, so the
+# X-Forwarded-For header used for login rate limiting is always the one it sets.
+Environment=HOSTNAME=127.0.0.1
 
 [Install]
 WantedBy=default.target

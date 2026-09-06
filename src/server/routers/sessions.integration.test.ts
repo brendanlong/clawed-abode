@@ -15,9 +15,10 @@ vi.mock('../services/worktree-manager', () => ({
 
 // Mock claude-runner
 const mockRefreshSessionSettings = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+const mockSendUserMessage = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 
 vi.mock('../services/claude-runner', () => ({
-  sendUserMessage: vi.fn().mockResolvedValue(undefined),
+  sendUserMessage: mockSendUserMessage,
   stopSession: vi.fn(),
   cleanupSession: vi.fn(),
   isClaudeRunning: vi.fn().mockReturnValue(false),
@@ -116,6 +117,26 @@ describe('sessionsRouter integration', () => {
       });
       expect(dbSession).toBeDefined();
       expect(dbSession!.name).toBe('Test Session');
+    });
+
+    it('should send the initial prompt once the clone finishes', async () => {
+      mockCloneRepo.mockResolvedValueOnce({ repoPath: 'repo' });
+      const caller = createCaller('auth-session-id');
+      const result = await caller.sessions.create({
+        name: 'Issue Session',
+        repoFullName: 'owner/repo',
+        branch: 'main',
+        initialPrompt: '  Fix the bug in issue #123  ',
+      });
+
+      await vi.waitFor(() => {
+        expect(mockSendUserMessage).toHaveBeenCalledWith(
+          result.session.id,
+          'Fix the bug in issue #123'
+        );
+      });
+      const dbSession = await testPrisma.session.findUnique({ where: { id: result.session.id } });
+      expect(dbSession?.status).toBe('running');
     });
 
     it('should store a per-session model override, trimmed', async () => {

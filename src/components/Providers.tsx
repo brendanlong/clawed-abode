@@ -16,6 +16,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
     <trpc.Provider client={trpcClient} queryClient={queryClient}>
       <QueryClientProvider client={queryClient}>
         <ThemeProvider>
+          {/* AuthProvider calls auth.logout, so it must sit inside the tRPC and QueryClient providers */}
           <AuthProvider>
             <WorkingProvider>
               <WorkCompleteNotifier />

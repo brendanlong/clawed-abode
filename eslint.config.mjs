@@ -21,10 +21,13 @@ export default tseslint.config(
         'error',
         { prefer: 'type-imports', disallowTypeAnnotations: false },
       ],
-      // Backend code must use createLogger from @/lib/logger; console.warn/error stay
-      // allowed for client code and the logger's own sink.
       'no-console': ['error', { allow: ['warn', 'error'] }],
     },
+  },
+  {
+    // Backend code must use createLogger from @/lib/logger, even for errors.
+    files: ['src/server/**', 'src/instrumentation.ts'],
+    rules: { 'no-console': 'error' },
   },
   {
     // Scripts and tests talk to a human on stdout; the logger's sink is console by design.

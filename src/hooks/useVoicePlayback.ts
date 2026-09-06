@@ -269,8 +269,6 @@ export function useVoicePlayback(
       // Store in ref to prevent Chrome from garbage-collecting the utterance
       utteranceRef.current = utterance;
 
-      utterance.onstart = () => {};
-
       utterance.onend = () => {
         currentChunk++;
         speakNextChunk();

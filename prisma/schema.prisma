@@ -75,8 +75,9 @@ model RepoSettings {
 // When repoSettingsId is null, the env var is global (applies to all sessions).
 // Global name uniqueness is enforced by a partial unique index
 // (EnvVar_global_name_key ... WHERE repoSettingsId IS NULL) written by hand in
-// migration 20260208044452 because Prisma can't express partial indexes. Never
-// use `prisma db push`: it diffs against this schema and would drop it.
+// migration 20260208044452 because Prisma can't express partial indexes. Prisma's
+// differ doesn't know it exists, so any generated migration that rebuilds this
+// table (SQLite drops indexes with the table) must recreate it by hand.
 model EnvVar {
   id             String        @id @default(uuid())
   repoSettingsId String?

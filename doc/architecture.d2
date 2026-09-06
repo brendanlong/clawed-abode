@@ -20,8 +20,8 @@ server: Home Server {
 
     auth: Auth
     session_mgmt: Session Management
-    sdk: Claude Agent SDK (in-process, one streaming query per session)
-    sse: SSE to Browser (multiplexed per-session + global list streams)
+    sdk: "Claude Agent SDK (in-process, one streaming query per session)"
+    sse: "SSE to Browser (multiplexed per-session + global list streams)"
     upload: POST /api/upload
   }
 
@@ -31,7 +31,7 @@ server: Home Server {
     scope1: "clawed-session-{sessionId1}.scope: claude CLI + everything it spawns"
   }
 
-  workspaces: ~/worktrees/{sessionId}/ {
+  workspaces: "~/worktrees/{sessionId}/" {
     style.fill: "#48BB78"
     style.font-color: white
 
@@ -46,7 +46,7 @@ server: Home Server {
     }
   }
 
-  code_server: code-server (optional, CODE_SERVER_URL) {
+  code_server: "code-server (optional, CODE_SERVER_URL)" {
     style.fill: "#2B6CB0"
     style.font-color: white
   }
