@@ -113,7 +113,7 @@ let stopSession: typeof import('./claude-runner').stopSession;
 let isClaudeRunning: typeof import('./claude-runner').isClaudeRunning;
 let getSessionBackgroundTasks: typeof import('./claude-runner').getSessionBackgroundTasks;
 let stopBackgroundTask: typeof import('./claude-runner').stopBackgroundTask;
-let insertMessage: typeof import('./claude-runner').insertMessage;
+let insertMessage: typeof import('./message-store').insertMessage;
 let reapOrphanedSessionScopes: typeof import('./claude-runner').reapOrphanedSessionScopes;
 let _setQueryFactory: typeof import('./claude-runner')._setQueryFactory;
 let mockLoadSettings: ReturnType<
@@ -296,7 +296,7 @@ describe('claude-runner persistent streaming loop', () => {
     isClaudeRunning = mod.isClaudeRunning;
     getSessionBackgroundTasks = mod.getSessionBackgroundTasks;
     stopBackgroundTask = mod.stopBackgroundTask;
-    insertMessage = mod.insertMessage;
+    insertMessage = (await import('./message-store')).insertMessage;
     reapOrphanedSessionScopes = mod.reapOrphanedSessionScopes;
     _setQueryFactory = mod._setQueryFactory;
     const sm = await import('./settings-merger');

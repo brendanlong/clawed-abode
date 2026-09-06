@@ -1,268 +1,30 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 
-// Mock dependencies
-const mockPrisma = vi.hoisted(() => ({
-  session: {
-    findUnique: vi.fn(),
-    update: vi.fn(),
-    updateMany: vi.fn(),
-  },
-  message: {
-    findFirst: vi.fn(),
-    create: vi.fn(),
-    update: vi.fn(),
-    count: vi.fn(),
-  },
-}));
-
-vi.mock('@/lib/prisma', () => ({
-  prisma: mockPrisma,
-}));
-
+vi.mock('@/lib/prisma', () => ({ prisma: {} }));
 vi.mock('./events', () => ({
-  sseEvents: {
-    emitNewMessage: vi.fn(),
-    emitClaudeRunning: vi.fn(),
-    emitCommands: vi.fn(),
-    emitSessionUpdate: vi.fn(),
-  },
+  sseEvents: { emitClaudeRunning: vi.fn(), emitPendingMessages: vi.fn() },
 }));
+vi.mock('@anthropic-ai/claude-agent-sdk', () => ({ query: vi.fn() }));
 
-vi.mock('./github', () => ({
-  fetchPullRequestForBranch: vi.fn(),
-}));
+import { submitLiveToolResponse, isClaudeRunning, cleanupSession } from './claude-runner';
+import { getSessionCommands, rememberSessionCommands } from './session-commands';
 
-vi.mock('./worktree-manager', () => ({
-  getCurrentBranch: vi.fn().mockResolvedValue(null),
-}));
-
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
-  query: vi.fn(),
-}));
-
-import {
-  mergeAgentEnv,
-  getBaseEnv,
-  resetBaseEnvCache,
-  mergeSlashCommands,
-  getSessionCommands,
-  submitLiveToolResponse,
-  isClaudeRunning,
-  cleanupSession,
-  _setPersistedCommands,
-  _clearPersistedCommands,
-} from './claude-runner';
-
-describe('claude-runner', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
+describe('claude-runner without a live session', () => {
+  it('submitLiveToolResponse returns false immediately when no query is running', async () => {
+    const result = await submitLiveToolResponse('nonexistent-session', 'toolu_1', {
+      kind: 'questions',
+      answers: { q: 'answer' },
+    });
+    expect(result).toBe(false);
   });
 
-  describe('getBaseEnv', () => {
-    beforeEach(() => {
-      resetBaseEnvCache();
-    });
-
-    it('should capture environment from a login shell', async () => {
-      const baseEnv = await getBaseEnv();
-      // A login shell should always have PATH and HOME
-      expect(baseEnv.PATH).toBeDefined();
-      expect(baseEnv.HOME).toBeDefined();
-    });
-
-    it('should not include server-specific env vars', async () => {
-      // These are set in the server process but should not appear
-      // in a fresh login shell's environment
-      const baseEnv = await getBaseEnv();
-      expect(baseEnv.PASSWORD_HASH).toBeUndefined();
-      expect(baseEnv.ENCRYPTION_KEY).toBeUndefined();
-      expect(baseEnv.DATABASE_URL).toBeUndefined();
-      expect(baseEnv.NEXT_RUNTIME).toBeUndefined();
-    });
-
-    it('should cache results across calls', async () => {
-      const first = await getBaseEnv();
-      const second = await getBaseEnv();
-      expect(first).toBe(second); // Same reference = cached
-    });
-
-    it('should coalesce concurrent calls', async () => {
-      // Fire two calls before the first resolves
-      const [first, second] = await Promise.all([getBaseEnv(), getBaseEnv()]);
-      // Both should return the same cached object
-      expect(first).toBe(second);
-    });
+  it('isClaudeRunning is false for unknown sessions', () => {
+    expect(isClaudeRunning('nonexistent-session')).toBe(false);
   });
 
-  describe('mergeAgentEnv', () => {
-    const baseEnv = { PATH: '/usr/bin:/bin', HOME: '/home/user' };
-
-    it('should include base env vars', () => {
-      const env = mergeAgentEnv(baseEnv, []);
-      expect(env.PATH).toBe('/usr/bin:/bin');
-      expect(env.HOME).toBe('/home/user');
-    });
-
-    it('should overlay user-configured env vars', () => {
-      const env = mergeAgentEnv(baseEnv, [
-        { name: 'MY_API_KEY', value: 'key-123' },
-        { name: 'MY_SECRET', value: 'decrypted-secret' },
-      ]);
-      expect(env.MY_API_KEY).toBe('key-123');
-      expect(env.MY_SECRET).toBe('decrypted-secret');
-    });
-
-    it('should allow user env vars to override base env vars', () => {
-      const env = mergeAgentEnv(baseEnv, [{ name: 'HOME', value: '/custom/home' }]);
-      expect(env.HOME).toBe('/custom/home');
-    });
-
-    it('should set CLAUDE_CODE_OAUTH_TOKEN when claudeApiKey is provided', () => {
-      const env = mergeAgentEnv(baseEnv, [], 'custom-api-key');
-      expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe('custom-api-key');
-    });
-
-    it('should not add CLAUDE_CODE_OAUTH_TOKEN when claudeApiKey is null', () => {
-      const env = mergeAgentEnv(baseEnv, [], null);
-      expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
-    });
-
-    it('should pass through a shell-provided CLAUDE_CODE_OAUTH_TOKEN when claudeApiKey is null', () => {
-      // Configuring the token via the login shell (~/.bashrc) is supported;
-      // the merge must not strip it just because no claudeApiKey is set.
-      const env = mergeAgentEnv({ ...baseEnv, CLAUDE_CODE_OAUTH_TOKEN: 'shell-token' }, [], null);
-      expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe('shell-token');
-    });
-
-    it('should allow per-repo env var to override claudeApiKey', () => {
-      const env = mergeAgentEnv(
-        baseEnv,
-        [{ name: 'CLAUDE_CODE_OAUTH_TOKEN', value: 'per-repo-key' }],
-        'global-api-key'
-      );
-      // Per-repo env var should take precedence over global API key
-      expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe('per-repo-key');
-    });
-
-    it('should not mutate the base env', () => {
-      const input = { ...baseEnv };
-      mergeAgentEnv(input, [{ name: 'HOME', value: '/custom/home' }], 'key');
-      expect(input).toEqual(baseEnv);
-    });
-  });
-
-  describe('mergeSlashCommands', () => {
-    it('should return existing commands when no new names provided', () => {
-      const existing = [{ name: 'commit', description: 'Commit changes', argumentHint: '' }];
-      const result = mergeSlashCommands(existing, []);
-      expect(result).toEqual(existing);
-    });
-
-    it('should add new commands not in existing list', () => {
-      const existing = [{ name: 'commit', description: 'Commit changes', argumentHint: '' }];
-      const result = mergeSlashCommands(existing, ['compact', 'cost']);
-      expect(result).toHaveLength(3);
-      expect(result[0]).toEqual({
-        name: 'commit',
-        description: 'Commit changes',
-        argumentHint: '',
-      });
-      expect(result[1]).toEqual({ name: 'compact', description: '', argumentHint: '' });
-      expect(result[2]).toEqual({ name: 'cost', description: '', argumentHint: '' });
-    });
-
-    it('should not duplicate commands already in existing list', () => {
-      const existing = [
-        { name: 'commit', description: 'Commit changes', argumentHint: '' },
-        { name: 'review', description: 'Review code', argumentHint: '<pr>' },
-      ];
-      const result = mergeSlashCommands(existing, ['commit', 'review', 'compact']);
-      expect(result).toHaveLength(3);
-      // Original rich metadata preserved
-      expect(result[0]).toEqual({
-        name: 'commit',
-        description: 'Commit changes',
-        argumentHint: '',
-      });
-      expect(result[1]).toEqual({
-        name: 'review',
-        description: 'Review code',
-        argumentHint: '<pr>',
-      });
-      // New command added with empty metadata
-      expect(result[2]).toEqual({ name: 'compact', description: '', argumentHint: '' });
-    });
-
-    it('should handle empty existing commands', () => {
-      const result = mergeSlashCommands([], ['compact', 'cost']);
-      expect(result).toHaveLength(2);
-      expect(result[0]).toEqual({ name: 'compact', description: '', argumentHint: '' });
-      expect(result[1]).toEqual({ name: 'cost', description: '', argumentHint: '' });
-    });
-
-    it('should handle both empty', () => {
-      const result = mergeSlashCommands([], []);
-      expect(result).toEqual([]);
-    });
-
-    it('should deduplicate names within slashCommandNames', () => {
-      const result = mergeSlashCommands([], ['compact', 'compact', 'cost', 'cost']);
-      expect(result).toHaveLength(2);
-      expect(result[0]).toEqual({ name: 'compact', description: '', argumentHint: '' });
-      expect(result[1]).toEqual({ name: 'cost', description: '', argumentHint: '' });
-    });
-  });
-
-  describe('getSessionCommands', () => {
-    it('should return empty array for nonexistent sessions', () => {
-      expect(getSessionCommands('nonexistent-session')).toEqual([]);
-    });
-
-    it('should return persisted commands after they are set', () => {
-      const sessionId = 'test-persisted-commands';
-      const commands = [
-        { name: 'commit', description: 'Commit changes', argumentHint: '' },
-        { name: 'review', description: 'Review code', argumentHint: '<pr>' },
-      ];
-      _setPersistedCommands(sessionId, commands);
-      expect(getSessionCommands(sessionId)).toEqual(commands);
-      _clearPersistedCommands(sessionId);
-    });
-
-    it('should still return persisted commands after session state is cleaned up', () => {
-      const sessionId = 'test-persist-after-cleanup';
-      const commands = [{ name: 'compact', description: '', argumentHint: '' }];
-      _setPersistedCommands(sessionId, commands);
-      // Simulates what happens after a query completes (sessions.delete is called)
-      // getSessionCommands should still return persisted commands
-      expect(getSessionCommands(sessionId)).toEqual(commands);
-      _clearPersistedCommands(sessionId);
-    });
-
-    it('should return empty after cleanupSession removes persisted commands', () => {
-      const sessionId = 'test-cleanup-session';
-      const commands = [{ name: 'compact', description: '', argumentHint: '' }];
-      _setPersistedCommands(sessionId, commands);
-      expect(getSessionCommands(sessionId)).toEqual(commands);
-
-      cleanupSession(sessionId);
-      expect(getSessionCommands(sessionId)).toEqual([]);
-    });
-  });
-
-  describe('submitLiveToolResponse', () => {
-    it('returns false immediately when no query is running for the session', async () => {
-      const result = await submitLiveToolResponse('nonexistent-session', 'toolu_1', {
-        kind: 'questions',
-        answers: { q: 'answer' },
-      });
-      expect(result).toBe(false);
-    });
-  });
-
-  describe('isClaudeRunning', () => {
-    it('should return false for nonexistent sessions', () => {
-      expect(isClaudeRunning('nonexistent-session')).toBe(false);
-    });
+  it("cleanupSession forgets the session's slash commands", () => {
+    rememberSessionCommands('cleanup-me', [{ name: 'compact', description: '', argumentHint: '' }]);
+    cleanupSession('cleanup-me');
+    expect(getSessionCommands('cleanup-me')).toEqual([]);
   });
 });

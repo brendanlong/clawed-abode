@@ -6,15 +6,17 @@ import {
   sendUserMessage,
   interruptClaude,
   isClaudeRunning,
-  markLastMessageAsInterrupted,
   submitLiveToolResponse,
-  persistSyntheticToolResult,
-  getSessionCommands,
   getSessionRetry,
   getSessionBackgroundTasks,
   stopBackgroundTask,
   getPendingMessageIds,
 } from '../services/claude-runner';
+import {
+  markLastMessageAsInterrupted,
+  persistSyntheticToolResult,
+} from '../services/message-store';
+import { getSessionCommands } from '../services/session-commands';
 import { MAX_ATTACHMENTS } from '@/lib/attachments';
 import { estimateTokenUsage } from '@/lib/token-estimation';
 import {

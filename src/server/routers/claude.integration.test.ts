@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { setupTestDb, teardownTestDb, testPrisma, clearTestDb } from '@/test/setup-test-db';
 
-// Mock claude-runner service (has real Docker dependencies)
+// Mock the runner's live-query entry points (no real SDK)
 const mockSendUserMessage = vi.hoisted(() => vi.fn());
 const mockInterruptClaude = vi.hoisted(() => vi.fn());
 const mockIsClaudeRunning = vi.hoisted(() => vi.fn());
@@ -14,11 +14,15 @@ vi.mock('../services/claude-runner', async (importOriginal) => {
     sendUserMessage: mockSendUserMessage,
     interruptClaude: mockInterruptClaude,
     isClaudeRunning: mockIsClaudeRunning,
-    markLastMessageAsInterrupted: mockMarkLastMessageAsInterrupted,
   };
 });
 
 // Use real token estimation (pure function)
+vi.mock('../services/message-store', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../services/message-store')>();
+  return { ...actual, markLastMessageAsInterrupted: mockMarkLastMessageAsInterrupted };
+});
+
 // vi.mock('@/lib/token-estimation') - not mocked
 
 // Mock worktree-manager
