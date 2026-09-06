@@ -2,10 +2,7 @@ import { z } from 'zod';
 import { router, protectedProcedure } from '../trpc';
 import { TRPCError } from '@trpc/server';
 import { env } from '@/lib/env';
-import { prisma } from '@/lib/prisma';
-import { extractRepoFullName } from '@/lib/utils';
 import {
-  fetchPullRequestForBranch,
   githubFetch as serviceGithubFetch,
   githubFetchResponse as serviceGithubFetchResponse,
   parseLinkHeader,
@@ -247,33 +244,5 @@ export const githubRouter = router({
         })),
         nextCursor: links.next,
       };
-    }),
-
-  getSessionPrStatus: protectedProcedure
-    .input(
-      z.object({
-        sessionId: z.string().uuid(),
-      })
-    )
-    .query(async ({ input }) => {
-      const session = await prisma.session.findUnique({
-        where: { id: input.sessionId },
-        select: { repoUrl: true, currentBranch: true },
-      });
-
-      if (!session) {
-        throw new TRPCError({
-          code: 'NOT_FOUND',
-          message: 'Session not found',
-        });
-      }
-
-      if (!session.currentBranch || !session.repoUrl) {
-        return { pullRequest: null };
-      }
-
-      const repoFullName = extractRepoFullName(session.repoUrl);
-      const pullRequest = await fetchPullRequestForBranch(repoFullName, session.currentBranch);
-      return { pullRequest: pullRequest ?? null };
     }),
 });

@@ -1,3 +1,4 @@
+import { toSessionView } from '@/lib/session-view';
 import { describe, it, expect, vi } from 'vitest';
 import type { Session } from '@/generated/prisma/client';
 import { sseEvents, type SessionListEvent, type SessionStreamEvent } from './events';
@@ -11,10 +12,11 @@ describe('sseEvents session-list fan-out', () => {
 
     sseEvents.emitSessionUpdate('session-1', fakeSession);
 
+    // The row goes out as the API view: the pullRequest JSON column is decoded.
     expect(listener).toHaveBeenCalledWith({
       type: 'session_update',
       sessionId: 'session-1',
-      session: fakeSession,
+      session: toSessionView(fakeSession),
     });
     unsubscribe();
   });

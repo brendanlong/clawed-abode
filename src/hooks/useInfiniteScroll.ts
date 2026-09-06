@@ -11,7 +11,8 @@ interface UseInfiniteScrollOptions {
  * Hook that uses IntersectionObserver to trigger infinite scroll pagination
  * when a sentinel element becomes visible within a scroll container.
  *
- * Returns refs to attach to the scroll container and the sentinel element.
+ * Returns refs to attach to the scroll container and the sentinel element. Leave
+ * `scrollRef` unattached when the page itself scrolls (the viewport is the root).
  */
 export function useInfiniteScroll({
   hasNextPage,
@@ -24,8 +25,7 @@ export function useInfiniteScroll({
 
   useEffect(() => {
     const sentinel = sentinelRef.current;
-    const scrollContainer = scrollRef.current;
-    if (!sentinel || !scrollContainer) return;
+    if (!sentinel) return;
 
     const observer = new IntersectionObserver(
       (entries) => {
@@ -33,7 +33,7 @@ export function useInfiniteScroll({
           fetchNextPage();
         }
       },
-      { root: scrollContainer, rootMargin }
+      { root: scrollRef.current, rootMargin }
     );
 
     observer.observe(sentinel);

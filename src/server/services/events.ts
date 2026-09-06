@@ -1,8 +1,8 @@
 import { EventEmitter } from 'events';
 import type { Message, Session } from '@/generated/prisma/client';
 import type { SlashCommand } from '@anthropic-ai/claude-agent-sdk';
-import type { PullRequestInfo } from './github';
 import type { RetryState } from '@/lib/claude-messages';
+import { toSessionView, type SessionView } from '@/lib/session-view';
 import { taskHasEndState, type BackgroundTask } from '@/lib/session-status';
 
 // Message with parsed content (for SSE events)
@@ -12,7 +12,7 @@ type ParsedMessage = Omit<Message, 'content'> & { content: unknown };
 interface SessionUpdateEvent {
   type: 'session_update';
   sessionId: string;
-  session: Session;
+  session: SessionView<Session>;
 }
 
 interface MessageEvent {
@@ -42,12 +42,6 @@ interface CommandsEvent {
   type: 'commands';
   sessionId: string;
   commands: SlashCommand[];
-}
-
-interface PrUpdateEvent {
-  type: 'pr_update';
-  sessionId: string;
-  pullRequest: PullRequestInfo | null;
 }
 
 interface ClaudeRetryEvent {
@@ -109,8 +103,7 @@ export type SessionStreamEvent =
   | { kind: 'message_removed'; messageId: string }
   | { kind: 'running'; running: boolean }
   | { kind: 'commands'; commands: SlashCommand[] }
-  | { kind: 'pr'; pullRequest: PullRequestInfo | null }
-  | { kind: 'session'; session: Session }
+  | { kind: 'session'; session: SessionView<Session> }
   | { kind: 'retry'; retry: RetryState | null }
   | { kind: 'background'; tasks: BackgroundTask[] }
   | { kind: 'pending'; messageIds: string[] };
@@ -128,19 +121,16 @@ export type SessionListEvent =
 
 // Create a typed event emitter
 class SSEEventEmitter extends EventEmitter {
-  emitSessionUpdate(sessionId: string, session: Session): void {
-    this.emit(`session:${sessionId}`, {
+  emitSessionUpdate(sessionId: string, row: Session): void {
+    const event: SessionUpdateEvent = {
       type: 'session_update',
       sessionId,
-      session,
-    } satisfies SessionUpdateEvent);
+      session: toSessionView(row),
+    };
+    this.emit(`session:${sessionId}`, event);
     // Fan out to the global list channel so the home page updates live for any
     // session, without each row needing its own subscription.
-    this.emit(SESSION_LIST_EVENT, {
-      type: 'session_update',
-      sessionId,
-      session,
-    } satisfies SessionUpdateEvent);
+    this.emit(SESSION_LIST_EVENT, event);
   }
 
   emitNewMessage(sessionId: string, message: ParsedMessage): void {
@@ -180,14 +170,6 @@ class SSEEventEmitter extends EventEmitter {
       sessionId,
       commands,
     } satisfies CommandsEvent);
-  }
-
-  emitPrUpdate(sessionId: string, pullRequest: PullRequestInfo | null): void {
-    this.emit(`pr:${sessionId}`, {
-      type: 'pr_update',
-      sessionId,
-      pullRequest,
-    } satisfies PrUpdateEvent);
   }
 
   emitClaudeRetry(sessionId: string, retry: RetryState | null): void {
@@ -263,9 +245,6 @@ class SSEEventEmitter extends EventEmitter {
       ),
       this.onChannel<CommandsEvent>(`commands:${sessionId}`, (e) =>
         callback({ kind: 'commands', commands: e.commands })
-      ),
-      this.onChannel<PrUpdateEvent>(`pr:${sessionId}`, (e) =>
-        callback({ kind: 'pr', pullRequest: e.pullRequest })
       ),
       this.onChannel<SessionUpdateEvent>(`session:${sessionId}`, (e) =>
         callback({ kind: 'session', session: e.session })

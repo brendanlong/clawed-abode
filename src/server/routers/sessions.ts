@@ -21,10 +21,31 @@ import { sseEvents } from '../services/events';
 import { createLogger, toError } from '@/lib/logger';
 import { env } from '@/lib/env';
 import { SESSION_NAME_MAX_LENGTH } from '@/lib/types';
+import { toSessionView } from '@/lib/session-view';
+import type { Prisma } from '@/generated/prisma/client';
+import {
+  SESSION_PAGE_SIZE,
+  buildSessionCursorWhere,
+  sessionCursorSchema,
+  sliceSessionPage,
+} from '@/lib/session-list-page';
 
 const log = createLogger('sessions');
 
 const sessionStatusSchema = z.enum(['creating', 'running', 'stopped', 'error', 'archived']);
+
+const sessionListSelect = {
+  id: true,
+  name: true,
+  repoUrl: true,
+  branch: true,
+  status: true,
+  statusMessage: true,
+  currentBranch: true,
+  pullRequest: true,
+  lastActivityAt: true,
+  createdAt: true,
+} satisfies Prisma.SessionSelect;
 
 // Background session setup - runs after create mutation returns
 async function setupSessionBackground(
@@ -140,38 +161,42 @@ export const sessionsRouter = router({
         log.error('Unhandled error in session setup', toError(error), { sessionId: session.id });
       });
 
-      return { session };
+      return { session: toSessionView(session) };
     }),
 
+  // Keyset-paginated by (lastActivityAt desc, id desc). Archived sessions are
+  // excluded unless `status: 'archived'` is requested explicitly, so the home page
+  // fetches the active and archived lists as two independent paginated queries.
   list: protectedProcedure
     .input(
-      z
-        .object({
-          status: sessionStatusSchema.optional(),
-          includeArchived: z.boolean().optional(),
-        })
-        .optional()
+      z.object({
+        status: sessionStatusSchema.optional(),
+        cursor: sessionCursorSchema.optional(),
+        limit: z.number().int().min(1).max(100).default(SESSION_PAGE_SIZE),
+      })
     )
     .query(async ({ input }) => {
-      const includeArchived = input?.includeArchived ?? false;
-
-      const sessions = await prisma.session.findMany({
+      const rows = await prisma.session.findMany({
         where: {
-          ...(input?.status ? { status: input.status } : {}),
-          ...(!includeArchived && !input?.status ? { status: { not: 'archived' } } : {}),
+          ...(input.status ? { status: input.status } : { status: { not: 'archived' } }),
+          ...buildSessionCursorWhere(input.cursor),
         },
-        orderBy: { lastActivityAt: 'desc' },
+        orderBy: [{ lastActivityAt: 'desc' }, { id: 'desc' }],
+        take: input.limit + 1,
+        select: sessionListSelect,
       });
+      const { items, nextCursor } = sliceSessionPage(rows, input.limit);
 
       // Attach the live status axes (in-memory lookups, no extra query) so the
       // list can distinguish "running" (main agent generating) from "background"
       // (only a subagent/background task running) from "waiting" (fully idle).
       return {
-        sessions: sessions.map((session) => ({
-          ...session,
+        sessions: items.map((session) => ({
+          ...toSessionView(session),
           turnActive: isClaudeRunning(session.id),
           backgroundActive: isSessionBackgroundActive(session.id),
         })),
+        nextCursor,
       };
     }),
 
@@ -189,7 +214,7 @@ export const sessionsRouter = router({
         });
       }
 
-      return { session };
+      return { session: toSessionView(session) };
     }),
 
   // Deep link into a self-hosted code-server (browser VS Code) instance opened
@@ -237,7 +262,7 @@ export const sessionsRouter = router({
       }
 
       if (session.status === 'running') {
-        return { session };
+        return { session: toSessionView(session) };
       }
 
       // Only stopped or error sessions can be started.
@@ -258,7 +283,7 @@ export const sessionsRouter = router({
       });
 
       sseEvents.emitSessionUpdate(input.sessionId, updatedSession);
-      return { session: updatedSession };
+      return { session: toSessionView(updatedSession) };
     }),
 
   rename: protectedProcedure
@@ -289,7 +314,7 @@ export const sessionsRouter = router({
       });
 
       sseEvents.emitSessionUpdate(input.sessionId, updatedSession);
-      return { session: updatedSession };
+      return { session: toSessionView(updatedSession) };
     }),
 
   // Set the per-session Claude model override (highest precedence — see
@@ -334,7 +359,7 @@ export const sessionsRouter = router({
       await refreshSessionSettings(input.sessionId);
 
       sseEvents.emitSessionUpdate(input.sessionId, updatedSession);
-      return { session: updatedSession };
+      return { session: toSessionView(updatedSession) };
     }),
 
   stop: protectedProcedure
@@ -360,7 +385,7 @@ export const sessionsRouter = router({
       });
 
       sseEvents.emitSessionUpdate(input.sessionId, updatedSession);
-      return { session: updatedSession };
+      return { session: toSessionView(updatedSession) };
     }),
 
   delete: protectedProcedure

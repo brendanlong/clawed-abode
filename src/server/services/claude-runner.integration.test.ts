@@ -24,7 +24,6 @@ const mockSseEvents = vi.hoisted(() => ({
   emitMessageRemoved: vi.fn(),
   emitCommands: vi.fn(),
   emitSessionUpdate: vi.fn(),
-  emitPrUpdate: vi.fn(),
 }));
 vi.mock('./events', () => ({ sseEvents: mockSseEvents }));
 

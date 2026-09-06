@@ -8,7 +8,6 @@ import {
   isPartialMessageId,
 } from '@/lib/message-cache';
 import { assertNeverFallback } from '@/lib/claude-messages';
-import type { PullRequestInfo } from './usePullRequestStatus';
 import type { inferRouterOutputs } from '@trpc/server';
 import type { AppRouter } from '@/server/routers';
 
@@ -100,13 +99,6 @@ export function useSessionStream(sessionId: string, options: UseSessionStreamOpt
           }
           case 'commands': {
             utils.claude.getCommands.setData({ sessionId }, { commands: event.commands });
-            break;
-          }
-          case 'pr': {
-            utils.github.getSessionPrStatus.setData(
-              { sessionId },
-              { pullRequest: event.pullRequest as PullRequestInfo | null }
-            );
             break;
           }
           case 'session': {

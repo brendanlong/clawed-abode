@@ -233,7 +233,7 @@ describe('sessionsRouter integration', () => {
       });
 
       const caller = createCaller('auth-session-id');
-      const result = await caller.sessions.list();
+      const result = await caller.sessions.list({});
 
       expect(result.sessions).toHaveLength(2);
       expect(result.sessions.map((s) => s.name).sort()).toEqual(['Session 1', 'Session 2']);
@@ -263,7 +263,7 @@ describe('sessionsRouter integration', () => {
       });
 
       const caller = createCaller('auth-session-id');
-      const result = await caller.sessions.list();
+      const result = await caller.sessions.list({});
 
       expect(result.sessions.map((s) => s.name)).toEqual([
         'Newest activity',
@@ -322,38 +322,81 @@ describe('sessionsRouter integration', () => {
       });
 
       const caller = createCaller('auth-session-id');
-      const result = await caller.sessions.list();
+      const result = await caller.sessions.list({});
 
       expect(result.sessions).toHaveLength(1);
       expect(result.sessions[0].name).toBe('Active Session');
     });
 
-    it('should include archived sessions when includeArchived is true', async () => {
+    it('returns only archived sessions when status is archived, none otherwise', async () => {
       await testPrisma.session.createMany({
         data: [
-          {
-            name: 'Active Session',
-            repoUrl: 'https://github.com/owner/repo.git',
-            branch: 'main',
-            status: 'running',
-          },
-          {
-            name: 'Archived Session',
-            repoUrl: 'https://github.com/owner/repo.git',
-            branch: 'main',
-            status: 'archived',
-          },
+          { name: 'Active', status: 'running' },
+          { name: 'Archived', status: 'archived' },
         ],
       });
 
       const caller = createCaller('auth-session-id');
-      const result = await caller.sessions.list({ includeArchived: true });
+      expect((await caller.sessions.list({})).sessions.map((s) => s.name)).toEqual(['Active']);
+      expect(
+        (await caller.sessions.list({ status: 'archived' })).sessions.map((s) => s.name)
+      ).toEqual(['Archived']);
+    });
 
-      expect(result.sessions).toHaveLength(2);
-      expect(result.sessions.map((s) => s.name).sort()).toEqual([
-        'Active Session',
-        'Archived Session',
-      ]);
+    it('paginates by (lastActivityAt, id) cursor without skipping ties', async () => {
+      const sameInstant = new Date('2024-02-01T00:00:00Z');
+      await testPrisma.session.createMany({
+        data: [
+          { name: 'Newest', status: 'stopped', lastActivityAt: new Date('2024-03-01T00:00:00Z') },
+          { name: 'Tie A', status: 'stopped', lastActivityAt: sameInstant },
+          { name: 'Tie B', status: 'stopped', lastActivityAt: sameInstant },
+          { name: 'Tie C', status: 'stopped', lastActivityAt: sameInstant },
+          { name: 'Oldest', status: 'stopped', lastActivityAt: new Date('2024-01-01T00:00:00Z') },
+        ],
+      });
+
+      const caller = createCaller('auth-session-id');
+      const seen: string[] = [];
+      let cursor: { lastActivityAt: string; id: string } | undefined;
+      let pages = 0;
+      do {
+        const page = await caller.sessions.list({ limit: 2, cursor });
+        expect(page.sessions.length).toBeLessThanOrEqual(2);
+        seen.push(...page.sessions.map((s) => s.name));
+        cursor = page.nextCursor;
+        pages++;
+      } while (cursor);
+
+      expect(pages).toBe(3);
+      expect(seen).toHaveLength(5);
+      expect(new Set(seen).size).toBe(5);
+      expect(seen[0]).toBe('Newest');
+      expect(seen[4]).toBe('Oldest');
+    });
+
+    it('decodes the persisted pull request and omits heavy columns', async () => {
+      const pr = {
+        number: 7,
+        title: 'Add thing',
+        state: 'open',
+        draft: false,
+        url: 'https://github.com/owner/repo/pull/7',
+        author: 'octocat',
+        updatedAt: '2024-01-01T00:00:00Z',
+      };
+      await testPrisma.session.createMany({
+        data: [
+          { name: 'With PR', status: 'running', pullRequest: JSON.stringify(pr) },
+          { name: 'Bad JSON', status: 'running', pullRequest: '{not json' },
+        ],
+      });
+
+      const caller = createCaller('auth-session-id');
+      const { sessions } = await caller.sessions.list({});
+      expect(sessions.find((s) => s.name === 'With PR')?.pullRequest).toEqual(pr);
+      expect(sessions.find((s) => s.name === 'Bad JSON')?.pullRequest).toBeNull();
+      expect(sessions[0]).not.toHaveProperty('sessionScope');
+      expect(sessions[0]).not.toHaveProperty('messageSequence');
     });
 
     it('should return only archived sessions when filtering by archived status', async () => {
@@ -383,7 +426,7 @@ describe('sessionsRouter integration', () => {
 
     it('should require authentication', async () => {
       const caller = createCaller(null);
-      await expect(caller.sessions.list()).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+      await expect(caller.sessions.list({})).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
     });
   });
 

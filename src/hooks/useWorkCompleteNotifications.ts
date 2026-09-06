@@ -3,7 +3,7 @@
 import { useEffect, useRef } from 'react';
 import { usePathname } from 'next/navigation';
 import { trpc } from '@/lib/trpc';
-import { useAuth } from '@/lib/auth-context';
+import { useSessionListEvent } from '@/lib/session-list-stream-context';
 import { useNotification } from './useNotification';
 import { parseViewedSessionId, isActivelyWatching } from '@/lib/work-complete-notification';
 
@@ -20,12 +20,12 @@ import { parseViewedSessionId, isActivelyWatching } from '@/lib/work-complete-no
  * the session whose page is on screen while the tab is visible — i.e. the one
  * you're actively watching.
  *
- * Meant to be mounted exactly once, app-wide. It is inert until authenticated.
+ * Meant to be mounted exactly once, app-wide, inside SessionListStreamProvider.
  */
 export function useWorkCompleteNotifications() {
-  const { isAuthenticated } = useAuth();
   const pathname = usePathname();
   const { showNotification } = useNotification();
+  const utils = trpc.useUtils();
 
   // Latest viewed session id, in a ref so the subscription callback (a stable
   // closure) always reads the current value without re-subscribing.
@@ -35,48 +35,42 @@ export function useWorkCompleteNotifications() {
     viewedSessionIdRef.current = viewedSessionId;
   }, [viewedSessionId]);
 
-  // Per-session display name for the notification body. Seeded from the list
-  // snapshot and kept current from `session` events (a `finished` event carries
-  // only the id).
+  // Per-session display name for the notification body, learned from `session`
+  // events (a `finished` event carries only the id) and looked up on demand
+  // otherwise — no list snapshot needed.
   const namesRef = useRef<Map<string, string>>(new Map());
-  const { data: listData } = trpc.sessions.list.useQuery(
-    { includeArchived: false },
-    { enabled: isAuthenticated }
-  );
-  useEffect(() => {
-    for (const session of listData?.sessions ?? []) {
-      namesRef.current.set(session.id, session.name);
-    }
-  }, [listData]);
 
-  trpc.sse.onSessionListEvents.useSubscription(undefined, {
-    enabled: isAuthenticated,
-    onData: (tracked) => {
-      const event = tracked.data;
-      // Keep names current even for sessions off the home page (a session update
-      // carries the full record).
-      if (event.kind === 'session') {
-        namesRef.current.set(event.session.id, event.session.name);
-        return;
+  const notifyFinished = async (sessionId: string) => {
+    let name = namesRef.current.get(sessionId);
+    if (!name) {
+      try {
+        name = (await utils.sessions.get.fetch({ sessionId })).session.name;
+        namesRef.current.set(sessionId, name);
+      } catch {
+        // Notify without a name rather than not at all.
       }
-      if (event.kind !== 'finished') return;
+    }
+    await showNotification('Claude finished', {
+      body: name ? `Work complete on ${name}` : 'Work complete',
+      // Per-session tag so several sessions finishing don't collapse into one.
+      tag: `work-complete-${sessionId}`,
+    });
+  };
 
-      const watching = isActivelyWatching({
-        finishedSessionId: event.sessionId,
-        viewedSessionId: viewedSessionIdRef.current,
-        tabHidden: typeof document !== 'undefined' && document.hidden,
-      });
-      if (watching) return;
+  useSessionListEvent((event) => {
+    if (event.kind === 'session') {
+      namesRef.current.set(event.session.id, event.session.name);
+      return;
+    }
+    if (event.kind !== 'finished') return;
 
-      const name = namesRef.current.get(event.sessionId);
-      void showNotification('Claude finished', {
-        body: name ? `Work complete on ${name}` : 'Work complete',
-        // Per-session tag so several sessions finishing don't collapse into one.
-        tag: `work-complete-${event.sessionId}`,
-      });
-    },
-    onError: (err) => {
-      console.error('Work-complete notifier SSE error:', err);
-    },
+    const watching = isActivelyWatching({
+      finishedSessionId: event.sessionId,
+      viewedSessionId: viewedSessionIdRef.current,
+      tabHidden: typeof document !== 'undefined' && document.hidden,
+    });
+    if (watching) return;
+
+    void notifyFinished(event.sessionId);
   });
 }

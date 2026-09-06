@@ -1,47 +1,47 @@
 'use client';
 
+import { useCallback } from 'react';
 import { trpc } from '@/lib/trpc';
+import type { inferRouterOutputs } from '@trpc/server';
+import type { AppRouter } from '@/server/routers';
 
-export interface Session {
-  id: string;
-  name: string;
-  repoUrl: string | null;
-  branch: string | null;
-  status: string;
-  /** Whether the main agent is mid-turn (live, in-memory; false when stopped). */
-  turnActive: boolean;
-  /** Whether a background task/subagent is running (live, in-memory; false when stopped). */
-  backgroundActive: boolean;
-  /** Time of the user's last interaction with the session (drives list ordering). */
-  lastActivityAt: Date;
+export type Session = inferRouterOutputs<AppRouter>['sessions']['list']['sessions'][number];
+
+export interface PagedSessions {
+  sessions: Session[];
+  isLoading: boolean;
+  hasMore: boolean;
+  isFetchingMore: boolean;
+  fetchMore: () => void;
 }
 
 export interface UseSessionListOptions {
-  includeArchived?: boolean;
-}
-
-export interface UseSessionListResult {
-  sessions: Session[];
-  isLoading: boolean;
-  refetch: () => void;
+  /** Omit for the active (non-archived) list. */
+  status?: 'archived';
+  enabled?: boolean;
 }
 
 /**
- * Hook for fetching the list of sessions.
- * Separates data fetching logic from presentation.
- *
- * @param options.includeArchived - Whether to include archived sessions in the result
+ * One keyset-paginated session list (active or archived). Pages are flattened
+ * for rendering; `refetch` refreshes every loaded page (the list stream calls it
+ * on any session event).
  */
-export function useSessionList(options: UseSessionListOptions = {}): UseSessionListResult {
-  const { includeArchived = false } = options;
-
-  const { data, isLoading, refetch } = trpc.sessions.list.useQuery({
-    includeArchived,
-  });
+export function useSessionList({
+  status,
+  enabled = true,
+}: UseSessionListOptions = {}): PagedSessions & { refetch: () => void } {
+  const query = trpc.sessions.list.useInfiniteQuery(
+    { status },
+    { getNextPageParam: (lastPage) => lastPage.nextCursor, enabled }
+  );
+  const { fetchNextPage, refetch } = query;
 
   return {
-    sessions: data?.sessions ?? [],
-    isLoading,
-    refetch,
+    sessions: query.data?.pages.flatMap((page) => page.sessions) ?? [],
+    isLoading: query.isLoading,
+    hasMore: query.hasNextPage,
+    isFetchingMore: query.isFetchingNextPage,
+    fetchMore: useCallback(() => void fetchNextPage(), [fetchNextPage]),
+    refetch: useCallback(() => void refetch(), [refetch]),
   };
 }

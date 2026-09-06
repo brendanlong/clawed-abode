@@ -3,7 +3,7 @@
 import { GitPullRequest, GitPullRequestClosed, GitPullRequestDraft, GitMerge } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
-import type { PullRequestInfo, PrState } from '@/hooks/usePullRequestStatus';
+import type { PullRequestInfo, PrState } from '@/lib/pull-request';
 
 type EffectivePrState = PrState | 'draft';
 

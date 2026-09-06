@@ -1,26 +1,16 @@
 'use client';
 
-import { trpc } from '@/lib/trpc';
+import { useSessionListEvent } from '@/lib/session-list-stream-context';
 import { useRefetchOnReconnect } from './useRefetchOnReconnect';
 
 /**
- * Subscribes to the global session-list SSE stream so the home page updates live
- * when any session changes (created, started, finished, archived) or Claude's
- * turn state flips between running and waiting — including changes driven from
- * another tab or by background work.
- *
- * The list is small, so on each event we simply refetch rather than surgically
- * patching the cache. We also refetch on tab-visibility / network reconnect as a
- * resync fallback if the stream was dropped.
+ * Keeps the home page live: refetch on any session-list stream event (a session
+ * changed, or Claude's turn/background state flipped, in any tab) and on
+ * tab-visibility / network reconnect as a resync fallback if the stream dropped.
+ * Refetching beats patching the cache: a page is one query and the event may
+ * reorder the list.
  */
 export function useSessionListStream(refetch: () => void) {
   useRefetchOnReconnect(refetch);
-
-  trpc.sse.onSessionListEvents.useSubscription(undefined, {
-    onData: () => refetch(),
-    onError: (err) => {
-      console.error('Session list stream SSE error:', err);
-      refetch();
-    },
-  });
+  useSessionListEvent(refetch);
 }

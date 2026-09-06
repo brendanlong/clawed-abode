@@ -6,6 +6,7 @@ import { trpc, createTRPCClient } from '@/lib/trpc';
 import { AuthProvider } from '@/lib/auth-context';
 import { WorkingProvider } from '@/lib/working-context';
 import { ThemeProvider } from '@/lib/theme-context';
+import { SessionListStreamProvider } from '@/lib/session-list-stream-context';
 import { WorkCompleteNotifier } from '@/components/WorkCompleteNotifier';
 
 export function Providers({ children }: { children: React.ReactNode }) {
@@ -18,10 +19,12 @@ export function Providers({ children }: { children: React.ReactNode }) {
         <ThemeProvider>
           {/* AuthProvider calls auth.logout, so it must sit inside the tRPC and QueryClient providers */}
           <AuthProvider>
-            <WorkingProvider>
-              <WorkCompleteNotifier />
-              {children}
-            </WorkingProvider>
+            <SessionListStreamProvider>
+              <WorkingProvider>
+                <WorkCompleteNotifier />
+                {children}
+              </WorkingProvider>
+            </SessionListStreamProvider>
           </AuthProvider>
         </ThemeProvider>
       </QueryClientProvider>
