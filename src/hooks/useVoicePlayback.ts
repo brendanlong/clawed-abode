@@ -47,9 +47,8 @@ export function useVoicePlaybackContext() {
 }
 
 /**
- * Chrome has a bug where utterances over ~15 seconds stop abruptly.
- * Workaround: split text into chunks at sentence boundaries.
- * https://issues.chromium.org/issues/41294170
+ * Chrome kills utterances over ~15 seconds (https://issues.chromium.org/issues/41294170),
+ * so text is split into chunks at sentence boundaries and spoken in sequence.
  */
 const CHUNK_MAX_LENGTH = 200;
 
@@ -102,10 +101,6 @@ function splitTextIntoChunks(text: string): string[] {
 }
 
 /**
- * Hook that manages audio playback state for voice TTS using the browser's
- * SpeechSynthesis API. No server calls or API keys needed.
- */
-/**
  * Returns a promise that resolves once speechSynthesis voices are available.
  * Chrome loads voices asynchronously; calling speak() before they're ready
  * causes "synthesis-failed". This waits for the voiceschanged event with a timeout.
@@ -132,6 +127,15 @@ function waitForVoices(synth: SpeechSynthesis): Promise<SpeechSynthesisVoice[]> 
   });
 }
 
+/**
+ * TTS playback state via the browser's SpeechSynthesis API (no server calls or keys).
+ *
+ * SpeechSynthesis is uneven across engines. Quirks handled below: Chrome's utterance
+ * length limit (chunking), async voice loading (waitForVoices), broken pause/resume on
+ * Firefox and Android (supportsPause), and platforms that fail with an explicit voice
+ * (one retry with the default). Known and not worked around: backgrounded tabs may
+ * silence or cancel synthesis, and iOS needs a user activation before speak() sounds.
+ */
 export function useVoicePlayback(
   ttsSpeed: number = 1.0,
   preferredVoiceURI: string | null = null

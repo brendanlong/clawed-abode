@@ -27,6 +27,7 @@ export function useVoiceConfig(sessionId?: string) {
     staleTime: 60 * 1000,
   });
 
+  // Firefox ships no SpeechRecognition (behind a flag), so the mic is hidden there.
   const sttEnabled = useMemo(() => {
     if (typeof window === 'undefined') return false;
     return 'SpeechRecognition' in window || 'webkitSpeechRecognition' in window;

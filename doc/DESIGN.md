@@ -10,9 +10,8 @@ This file is the high-level map and is auto-loaded into every agent session — 
 - [`messages-and-sse.md`](messages-and-sse.md) — message classification, storage/pagination, SSE streaming/resume
 - [`settings.md`](settings.md) — settings layers, model resolution, secrets, MCP servers
 - [`security.md`](security.md) — auth and input sanitization
-- [`voice.md`](voice.md) — browser speech input/output
 
-Keep this doc, the reference docs, and [`architecture.d2`](architecture.d2) up to date when changing behavior (see the documentation rules in the root `CLAUDE.md`).
+Keep this doc and the reference docs up to date when changing behavior (see the documentation rules in the root `CLAUDE.md`).
 
 ## Goals
 
@@ -64,7 +63,7 @@ The schema ([`prisma/schema.prisma`](../prisma/schema.prisma)) is the source of 
 
 - **Create** (`sessions.create`) returns immediately with status `creating`; cloning happens in the background and the UI polls `statusMessage`. An optional initial prompt is sent server-side once the session is running, so it works even if the client disconnects.
 - **Interact**: prompts go through the session's persistent streaming query ([`claude-sessions.md`](claude-sessions.md)). The composer is never disabled and nothing is held back — a mid-turn send goes straight to the SDK and the agent reads it mid-turn.
-- **Interrupt** stops only the current turn; the query stays alive. **Stop** closes the query; the worktree stays on disk. **Delete** stops the query, removes the workspace, and archives.
+- **Interrupt** stops only the current turn; the query stays alive. **Stop** closes the query; the worktree stays on disk and **Start** revives it. **Delete** stops the query, removes the workspace, and archives.
 - **Restart recovery**: a server restart loses in-memory state but not intent — a session in DB status `running` is revived lazily with `resume` on the next interaction. In-flight background work is not resurrected (its subprocess is gone); recovery restores the conversation.
 
 ### File Uploads
@@ -77,6 +76,10 @@ The schema ([`prisma/schema.prisma`](../prisma/schema.prisma)) is the source of 
 
 - Users interact through the web UI with no local file access, so work is only visible once committed, pushed, and PR'd — the prompt requires that workflow.
 - All sessions run as one host user alongside the app server, so a bare `pkill`/`killall` by name can kill other sessions or the server; the prompt steers agents to PID-kill or a `--cgroup`-scoped kill.
+
+## Voice
+
+Speech input/output uses the browser's Web Speech APIs only (no keys, no server audio). Auto-read (speak replies aloud) is a per-session, per-device preference in `localStorage`; Voice Auto-Send (send a transcript immediately vs. land it in the composer for editing) and TTS speed are global server settings. Hooks: [`useVoiceRecording`](../src/hooks/useVoiceRecording.ts), [`useVoicePlayback`](../src/hooks/useVoicePlayback.ts) (which documents the browser quirks the playback code works around), [`useVoiceConfig`](../src/hooks/useVoiceConfig.ts); UI in [`src/components/voice/`](../src/components/voice/).
 
 ## Remote File Editing
 

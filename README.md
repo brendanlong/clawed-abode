@@ -26,56 +26,58 @@ Read more: [Clawed Abode: Claude Code is Too Cloudy](https://www.brendanlong.com
 - **Use a fine-grained GitHub token** scoped to only the repositories you want to expose
 - **Use Tailscale** or similar for remote access - never expose port 3000 directly to the internet
 
-See [Dedicated User Setup](#dedicated-user-setup-recommended) below.
+See [Setup](#setup) below.
 
 ## Prerequisites
 
-- Node.js 22 (20.19+ works) and pnpm
-- Git
-- Claude Code CLI installed and authenticated (`claude setup-token`)
-- A GitHub Fine-grained Personal Access Token
+- A Linux host with systemd user services (for the session process scopes and the service unit), `sudo` for creating the user, and Git
+- Node.js 22 (20.19+ works); the setup below installs it via nvm
 
-## Quick Start
+## Setup
 
-### 1. Create a Dedicated User (Recommended)
+Claude Code agents can execute arbitrary code, so run the app as a dedicated unprivileged user — not your personal account.
+
+### 1. Create the user
 
 ```bash
-# Create the user
 sudo useradd -m -s /bin/bash clawedabode
-
-# Switch to it
+# Let the user's systemd services run without a login session
+sudo loginctl enable-linger clawedabode
 sudo -u clawedabode -i
 ```
 
-### 2. Clone and Install
+### 2. Install Node.js, pnpm and Claude Code
+
+```bash
+# Install Node.js (e.g., via nvm)
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
+source ~/.bashrc
+nvm install 22
+
+# Install pnpm
+corepack enable && corepack prepare pnpm@latest --activate
+
+# Install and authenticate Claude Code
+npm install -g @anthropic-ai/claude-code
+claude setup-token
+```
+
+### 3. Clone and configure
 
 ```bash
 git clone https://github.com/brendanlong/clawed-abode.git
 cd clawed-abode
 pnpm install
-```
-
-### 3. Configure Environment
-
-```bash
 cp .env.example .env
 ```
 
-Edit `.env` and set:
+Edit `.env` and set `PASSWORD_HASH`, `GITHUB_TOKEN` and `CLAUDE_CODE_OAUTH_TOKEN` as described below. The full variable list is under [Configuration](#configuration).
 
-- `PASSWORD_HASH`: Base64-encoded Argon2 hash for authentication (see below)
-- `GITHUB_TOKEN`: Your GitHub Fine-grained Personal Access Token (see below)
-- `CLAUDE_CODE_OAUTH_TOKEN`: OAuth token for Claude Code (see below)
+#### Generate Claude OAuth Token
 
-### Generate Claude OAuth Token
+Copy the token printed by `claude setup-token` in step 2 (run it again if you need to) into `.env` as `CLAUDE_CODE_OAUTH_TOKEN`. It can also be set later in the Settings UI.
 
-```bash
-claude setup-token
-```
-
-Copy the token and add it to your `.env` file as `CLAUDE_CODE_OAUTH_TOKEN`.
-
-### Generate GitHub Token
+#### Generate GitHub Token
 
 Use a **Fine-grained Personal Access Token** for security:
 
@@ -92,7 +94,7 @@ Use a **Fine-grained Personal Access Token** for security:
 Public repos work even without these permissions, so a token missing **Contents**
 only fails on private repos — where branch listing and cloning break.
 
-### Generate Password Hash
+#### Generate Password Hash
 
 ```bash
 pnpm hash-password your-secure-password
@@ -106,73 +108,24 @@ PASSWORD_HASH="JGFyZ29uMmlkJHY9MTkkbT02NTUzNix0PTMscD00JC4uLg=="
 
 **Note:** Logins will fail if `PASSWORD_HASH` is not set.
 
-### 4. Initialize Database
+### 4. Initialize the database
 
 ```bash
 pnpm prisma migrate deploy
 ```
 
-### 5. Start the Application
+### 5. Build and start
 
 ```bash
-# Development
-pnpm run dev
-
-# Production
 pnpm run build
 pnpm start
 ```
 
-Visit `http://localhost:3000` to access the application.
+Visit `http://localhost:3000` from the server itself (see [Remote Access](#remote-access-with-tailscale) for the URL to use from other devices). For development use `pnpm run dev` instead.
 
-## Architecture
+### 6. Run as a systemd service
 
-Sessions run directly on the host machine - no containers. Each session gets its own git clone for isolation. See [`doc/DESIGN.md`](doc/DESIGN.md) for the design and the reference docs it links to.
-
-## Dedicated User Setup (Recommended)
-
-Since Claude Code agents can execute arbitrary code, you should run this as a dedicated unprivileged user - not your personal account.
-
-### 1. Create the user
-
-```bash
-sudo useradd -m -s /bin/bash clawedabode
-sudo loginctl enable-linger clawedabode
-```
-
-### 2. Install Node.js and Claude Code
-
-```bash
-sudo -u clawedabode -i
-
-# Install Node.js (e.g., via nvm)
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
-source ~/.bashrc
-nvm install 22
-
-# Install pnpm
-corepack enable && corepack prepare pnpm@latest --activate
-
-# Install and authenticate Claude Code
-npm install -g @anthropic-ai/claude-code
-claude setup-token
-```
-
-### 3. Clone, configure, and start
-
-```bash
-# As the clawedabode user:
-git clone https://github.com/brendanlong/clawed-abode.git
-cd clawed-abode
-pnpm install
-cp .env.example .env
-# Edit .env with your tokens and password hash
-pnpm prisma migrate deploy
-pnpm run build
-pnpm start
-```
-
-### 4. Run as a systemd service
+Stop the foreground server from step 5 first (Ctrl-C); the service binds the same port.
 
 First, find the full path to your Node.js binary:
 
@@ -222,6 +175,10 @@ journalctl --user -u clawed-abode.service -f
 
 This pulls the latest code, installs dependencies, applies database migrations, rebuilds, and restarts the service. A plain `git pull` + restart is **not** enough — `next start` serves the prebuilt `.next` bundle, so without a rebuild you keep running the old code. If your service isn't named `clawed-abode.service`, set `CLAWED_ABODE_SERVICE`.
 
+## Architecture
+
+Sessions run directly on the host machine - no containers. Each session gets its own git clone for isolation. See [`doc/DESIGN.md`](doc/DESIGN.md) for the design and the reference docs it links to.
+
 ## Remote Access with Tailscale
 
 ### Tailscale Serve (within your Tailnet)
@@ -259,15 +216,7 @@ The schema in [`src/lib/env.ts`](src/lib/env.ts) is authoritative.
 
 ## Development
 
-```bash
-pnpm run dev          # Development mode
-pnpm run build        # Production build
-pnpm start            # Production server
-pnpm run db:migrate   # Create/apply migrations in development (production: scripts/update.sh runs migrate deploy)
-pnpm run db:generate  # Generate Prisma client
-pnpm test             # Run tests (watch mode)
-pnpm test:run         # Run all test suites once (unit + component + integration)
-```
+`pnpm run dev` starts the dev server with hot reload; `pnpm test:run` runs every test suite (what CI runs). After editing `prisma/schema.prisma`, `pnpm run db:migrate` creates and applies a migration (production applies them with `prisma migrate deploy` via `scripts/update.sh`). Contributor rules and the design docs are in [`CLAUDE.md`](CLAUDE.md) and [`doc/DESIGN.md`](doc/DESIGN.md).
 
 ## Troubleshooting
 
