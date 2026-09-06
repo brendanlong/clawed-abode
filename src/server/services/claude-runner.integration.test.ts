@@ -277,7 +277,7 @@ async function waitFor(fn: () => boolean | Promise<boolean>, timeout = 2000): Pr
 
 async function createRunningSession(): Promise<string> {
   const session = await testPrisma.session.create({
-    data: { name: 'Test', workspacePath: '/tmp/ws', repoPath: '', status: 'running' },
+    data: { name: 'Test', repoPath: '', status: 'running' },
   });
   return session.id;
 }
@@ -397,7 +397,6 @@ describe('claude-runner persistent streaming loop', () => {
     const orphaned = await testPrisma.session.create({
       data: {
         name: 'Orphan',
-        workspacePath: '/tmp/ws',
         repoPath: '',
         status: 'running',
         sessionScope: 'clawed-session-orphan-abc123.scope',

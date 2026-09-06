@@ -104,7 +104,6 @@ describe('claudeRouter integration', () => {
           name: 'Test Session',
           repoUrl: 'https://github.com/owner/repo.git',
           branch: 'main',
-          workspacePath: '/workspace/test',
           status: 'running',
         },
       });
@@ -124,7 +123,7 @@ describe('claudeRouter integration', () => {
 
     it('passes attachment stored names through to sendUserMessage', async () => {
       const session = await testPrisma.session.create({
-        data: { name: 'Attach Session', workspacePath: '/workspace/test', status: 'running' },
+        data: { name: 'Attach Session', status: 'running' },
       });
 
       mockIsClaudeRunning.mockReturnValue(false);
@@ -149,7 +148,7 @@ describe('claudeRouter integration', () => {
 
     it('passes an empty attachment list when none are provided', async () => {
       const session = await testPrisma.session.create({
-        data: { name: 'No Attach', workspacePath: '/workspace/test', status: 'running' },
+        data: { name: 'No Attach', status: 'running' },
       });
 
       mockIsClaudeRunning.mockReturnValue(false);
@@ -163,7 +162,7 @@ describe('claudeRouter integration', () => {
 
     it('allows a send with attachments and no prompt text', async () => {
       const session = await testPrisma.session.create({
-        data: { name: 'Attach Only', workspacePath: '/workspace/test', status: 'running' },
+        data: { name: 'Attach Only', status: 'running' },
       });
 
       mockIsClaudeRunning.mockReturnValue(false);
@@ -181,7 +180,7 @@ describe('claudeRouter integration', () => {
 
     it('rejects an empty prompt with no attachments', async () => {
       const session = await testPrisma.session.create({
-        data: { name: 'Empty', workspacePath: '/workspace/test', status: 'running' },
+        data: { name: 'Empty', status: 'running' },
       });
       const caller = createCaller('auth-session-id');
       await expect(caller.claude.send({ sessionId: session.id, prompt: '   ' })).rejects.toThrow();
@@ -207,7 +206,6 @@ describe('claudeRouter integration', () => {
           name: 'Stopped Session',
           repoUrl: 'https://github.com/owner/repo.git',
           branch: 'main',
-          workspacePath: '/workspace/test',
           status: 'stopped',
         },
       });
@@ -231,7 +229,6 @@ describe('claudeRouter integration', () => {
           name: 'Running Session',
           repoUrl: 'https://github.com/owner/repo.git',
           branch: 'main',
-          workspacePath: '/workspace/test',
           status: 'running',
         },
       });
@@ -287,7 +284,6 @@ describe('claudeRouter integration', () => {
           name: 'Q Session',
           repoUrl: 'https://github.com/owner/repo.git',
           branch: 'main',
-          workspacePath: '/workspace/test',
           status: 'running',
         },
       });
@@ -401,7 +397,6 @@ describe('claudeRouter integration', () => {
           name: 'Stopped Q Session',
           repoUrl: 'https://github.com/owner/repo.git',
           branch: 'main',
-          workspacePath: '/workspace/test',
           status: 'stopped',
         },
       });
@@ -425,7 +420,6 @@ describe('claudeRouter integration', () => {
           name: 'Plan Session',
           repoUrl: 'https://github.com/owner/repo.git',
           branch: 'main',
-          workspacePath: '/workspace/test',
           status: 'running',
         },
       });
@@ -455,7 +449,6 @@ describe('claudeRouter integration', () => {
           name: 'Running Session',
           repoUrl: 'https://github.com/owner/repo.git',
           branch: 'main',
-          workspacePath: '/workspace/test',
           status: 'running',
         },
       });
@@ -477,7 +470,6 @@ describe('claudeRouter integration', () => {
           name: 'Idle Session',
           repoUrl: 'https://github.com/owner/repo.git',
           branch: 'main',
-          workspacePath: '/workspace/test',
           status: 'running',
         },
       });
@@ -519,7 +511,6 @@ describe('claudeRouter integration', () => {
           name: 'Session with history',
           repoUrl: 'https://github.com/owner/repo.git',
           branch: 'main',
-          workspacePath: '/workspace/test',
           status: 'running',
         },
       });
@@ -567,7 +558,6 @@ describe('claudeRouter integration', () => {
           name: 'Session with many messages',
           repoUrl: 'https://github.com/owner/repo.git',
           branch: 'main',
-          workspacePath: '/workspace/test',
           status: 'running',
         },
       });
@@ -603,7 +593,6 @@ describe('claudeRouter integration', () => {
           name: 'Session with messages',
           repoUrl: 'https://github.com/owner/repo.git',
           branch: 'main',
-          workspacePath: '/workspace/test',
           status: 'running',
         },
       });
@@ -694,7 +683,6 @@ describe('claudeRouter integration', () => {
           name: 'Session with usage',
           repoUrl: 'https://github.com/owner/repo.git',
           branch: 'main',
-          workspacePath: '/workspace/test',
           status: 'running',
         },
       });
@@ -734,7 +722,6 @@ describe('claudeRouter integration', () => {
           name: 'Session with multiple turns',
           repoUrl: 'https://github.com/owner/repo.git',
           branch: 'main',
-          workspacePath: '/workspace/test',
           status: 'running',
         },
       });

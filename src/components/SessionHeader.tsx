@@ -18,7 +18,6 @@ interface SessionHeaderProps {
     branch: string | null;
     status: string;
     statusMessage?: string | null;
-    initialPrompt?: string | null;
     claudeModel?: string | null;
   };
   onStart: () => void;

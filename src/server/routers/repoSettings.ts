@@ -45,7 +45,6 @@ export const repoSettingsRouter = router({
         id: settings.id,
         repoFullName: settings.repoFullName,
         isFavorite: settings.isFavorite,
-        displayOrder: settings.displayOrder,
         customSystemPrompt: settings.customSystemPrompt,
         claudeModel: settings.claudeModel,
         createdAt: settings.createdAt,
@@ -152,7 +151,7 @@ export const repoSettingsRouter = router({
     const favorites = await prisma.repoSettings.findMany({
       where: { isFavorite: true },
       select: { repoFullName: true },
-      orderBy: [{ displayOrder: 'asc' }, { repoFullName: 'asc' }],
+      orderBy: { repoFullName: 'asc' },
     });
 
     return { favorites: favorites.map((f) => f.repoFullName) };

@@ -118,23 +118,6 @@ describe('sessionsRouter integration', () => {
       expect(dbSession!.name).toBe('Test Session');
     });
 
-    it('should store initial prompt if provided', async () => {
-      const caller = createCaller('auth-session-id');
-      const result = await caller.sessions.create({
-        name: 'Issue Session',
-        repoFullName: 'owner/repo',
-        branch: 'main',
-        initialPrompt: 'Fix the bug in issue #123',
-      });
-
-      expect(result.session.initialPrompt).toBe('Fix the bug in issue #123');
-
-      const dbSession = await testPrisma.session.findUnique({
-        where: { id: result.session.id },
-      });
-      expect(dbSession!.initialPrompt).toBe('Fix the bug in issue #123');
-    });
-
     it('should store a per-session model override, trimmed', async () => {
       const caller = createCaller('auth-session-id');
       const result = await caller.sessions.create({
@@ -217,14 +200,12 @@ describe('sessionsRouter integration', () => {
             name: 'Session 1',
             repoUrl: 'https://github.com/owner/repo1.git',
             branch: 'main',
-            workspacePath: '/workspace/1',
             status: 'running',
           },
           {
             name: 'Session 2',
             repoUrl: 'https://github.com/owner/repo2.git',
             branch: 'develop',
-            workspacePath: '/workspace/2',
             status: 'stopped',
           },
         ],
@@ -244,19 +225,16 @@ describe('sessionsRouter integration', () => {
         data: [
           {
             name: 'Oldest activity',
-            workspacePath: '/w/1',
             status: 'stopped',
             lastActivityAt: new Date('2024-01-01T00:00:00Z'),
           },
           {
             name: 'Newest activity',
-            workspacePath: '/w/2',
             status: 'stopped',
             lastActivityAt: new Date('2024-03-01T00:00:00Z'),
           },
           {
             name: 'Middle activity',
-            workspacePath: '/w/3',
             status: 'running',
             lastActivityAt: new Date('2024-02-01T00:00:00Z'),
           },
@@ -280,21 +258,18 @@ describe('sessionsRouter integration', () => {
             name: 'Running 1',
             repoUrl: 'https://github.com/owner/repo.git',
             branch: 'main',
-            workspacePath: '/w/1',
             status: 'running',
           },
           {
             name: 'Running 2',
             repoUrl: 'https://github.com/owner/repo.git',
             branch: 'main',
-            workspacePath: '/w/2',
             status: 'running',
           },
           {
             name: 'Stopped 1',
             repoUrl: 'https://github.com/owner/repo.git',
             branch: 'main',
-            workspacePath: '/w/3',
             status: 'stopped',
           },
         ],
@@ -314,16 +289,13 @@ describe('sessionsRouter integration', () => {
             name: 'Active Session',
             repoUrl: 'https://github.com/owner/repo.git',
             branch: 'main',
-            workspacePath: '/w/1',
             status: 'running',
           },
           {
             name: 'Archived Session',
             repoUrl: 'https://github.com/owner/repo.git',
             branch: 'main',
-            workspacePath: '/w/2',
             status: 'archived',
-            archivedAt: new Date(),
           },
         ],
       });
@@ -342,16 +314,13 @@ describe('sessionsRouter integration', () => {
             name: 'Active Session',
             repoUrl: 'https://github.com/owner/repo.git',
             branch: 'main',
-            workspacePath: '/w/1',
             status: 'running',
           },
           {
             name: 'Archived Session',
             repoUrl: 'https://github.com/owner/repo.git',
             branch: 'main',
-            workspacePath: '/w/2',
             status: 'archived',
-            archivedAt: new Date(),
           },
         ],
       });
@@ -373,16 +342,13 @@ describe('sessionsRouter integration', () => {
             name: 'Active Session',
             repoUrl: 'https://github.com/owner/repo.git',
             branch: 'main',
-            workspacePath: '/w/1',
             status: 'running',
           },
           {
             name: 'Archived Session',
             repoUrl: 'https://github.com/owner/repo.git',
             branch: 'main',
-            workspacePath: '/w/2',
             status: 'archived',
-            archivedAt: new Date(),
           },
         ],
       });
@@ -407,7 +373,6 @@ describe('sessionsRouter integration', () => {
           name: 'Test Session',
           repoUrl: 'https://github.com/owner/repo.git',
           branch: 'main',
-          workspacePath: '/workspace/test',
           status: 'running',
         },
       });
@@ -451,7 +416,6 @@ describe('sessionsRouter integration', () => {
           name: 'Test Session',
           repoUrl: 'https://github.com/owner/repo.git',
           branch: 'main',
-          workspacePath: '/workspace/test',
           repoPath: 'repo',
           status: 'running',
         },
@@ -471,7 +435,6 @@ describe('sessionsRouter integration', () => {
       const session = await testPrisma.session.create({
         data: {
           name: 'Test Session',
-          workspacePath: '/workspace/test',
           repoPath: 'repo',
           status: 'running',
         },
@@ -488,7 +451,6 @@ describe('sessionsRouter integration', () => {
       const session = await testPrisma.session.create({
         data: {
           name: 'Archived Session',
-          workspacePath: '/workspace/test',
           repoPath: 'repo',
           status: 'archived',
         },
@@ -522,7 +484,6 @@ describe('sessionsRouter integration', () => {
           name: 'Stopped Session',
           repoUrl: 'https://github.com/owner/repo.git',
           branch: 'main',
-          workspacePath: '/workspace/test',
           status: 'stopped',
         },
       });
@@ -543,7 +504,6 @@ describe('sessionsRouter integration', () => {
           name: 'Running Session',
           repoUrl: 'https://github.com/owner/repo.git',
           branch: 'main',
-          workspacePath: '/workspace/test',
           status: 'running',
         },
       });
@@ -560,9 +520,7 @@ describe('sessionsRouter integration', () => {
           name: 'Archived Session',
           repoUrl: 'https://github.com/owner/repo.git',
           branch: 'main',
-          workspacePath: '/workspace/test',
           status: 'archived',
-          archivedAt: new Date(),
         },
       });
 
@@ -588,7 +546,6 @@ describe('sessionsRouter integration', () => {
           name: 'Running Session',
           repoUrl: 'https://github.com/owner/repo.git',
           branch: 'main',
-          workspacePath: '/workspace/test',
           status: 'running',
         },
       });
@@ -619,7 +576,6 @@ describe('sessionsRouter integration', () => {
           name: 'Old Name',
           repoUrl: 'https://github.com/owner/repo.git',
           branch: 'main',
-          workspacePath: '/workspace/test',
           status: 'running',
         },
       });
@@ -639,7 +595,6 @@ describe('sessionsRouter integration', () => {
       const session = await testPrisma.session.create({
         data: {
           name: 'Old Name',
-          workspacePath: '/workspace/test',
           status: 'running',
         },
       });
@@ -657,7 +612,6 @@ describe('sessionsRouter integration', () => {
       const session = await testPrisma.session.create({
         data: {
           name: 'Old Name',
-          workspacePath: '/workspace/test',
           status: 'running',
         },
       });
@@ -672,7 +626,6 @@ describe('sessionsRouter integration', () => {
       const session = await testPrisma.session.create({
         data: {
           name: 'Old Name',
-          workspacePath: '/workspace/test',
           status: 'running',
         },
       });
@@ -715,7 +668,6 @@ describe('sessionsRouter integration', () => {
       testPrisma.session.create({
         data: {
           name: 'Model Session',
-          workspacePath: '/workspace/test',
           status: 'running',
           claudeModel,
         },
@@ -792,9 +744,7 @@ describe('sessionsRouter integration', () => {
       const session = await testPrisma.session.create({
         data: {
           name: 'Archived',
-          workspacePath: '/workspace/test',
           status: 'archived',
-          archivedAt: new Date(),
         },
       });
 
@@ -834,7 +784,6 @@ describe('sessionsRouter integration', () => {
           name: 'Session to archive',
           repoUrl: 'https://github.com/owner/repo.git',
           branch: 'main',
-          workspacePath: '/workspace/test',
           status: 'running',
         },
       });
@@ -861,7 +810,6 @@ describe('sessionsRouter integration', () => {
       const dbSession = await testPrisma.session.findUnique({ where: { id: session.id } });
       expect(dbSession).not.toBeNull();
       expect(dbSession!.status).toBe('archived');
-      expect(dbSession!.archivedAt).not.toBeNull();
       // Verify messages were preserved
       const messages = await testPrisma.message.findMany({ where: { sessionId: session.id } });
       expect(messages).toHaveLength(1);
@@ -873,9 +821,7 @@ describe('sessionsRouter integration', () => {
           name: 'Already archived session',
           repoUrl: 'https://github.com/owner/repo.git',
           branch: 'main',
-          workspacePath: '/workspace/test',
           status: 'archived',
-          archivedAt: new Date(),
         },
       });
 

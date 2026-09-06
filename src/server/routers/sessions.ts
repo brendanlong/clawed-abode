@@ -123,10 +123,8 @@ export const sessionsRouter = router({
           name: input.name,
           repoUrl: hasRepo ? `https://github.com/${input.repoFullName}.git` : null,
           branch: hasRepo ? input.branch! : null,
-          workspacePath: '',
           status: 'creating',
           statusMessage: hasRepo ? 'Cloning repository...' : 'Creating workspace...',
-          initialPrompt: input.initialPrompt,
           claudeModel: input.claudeModel?.trim() || null,
         },
       });
@@ -392,10 +390,7 @@ export const sessionsRouter = router({
       // Archive session (keep messages for viewing)
       const updatedSession = await prisma.session.update({
         where: { id: session.id },
-        data: {
-          status: 'archived',
-          archivedAt: new Date(),
-        },
+        data: { status: 'archived' },
       });
 
       sseEvents.emitSessionUpdate(input.sessionId, updatedSession);
