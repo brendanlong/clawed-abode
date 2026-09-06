@@ -401,16 +401,4 @@ export const sessionsRouter = router({
       sseEvents.emitSessionUpdate(input.sessionId, updatedSession);
       return { success: true };
     }),
-
-  syncStatus: protectedProcedure
-    .input(z.object({ sessionId: z.string().uuid() }))
-    .mutation(async ({ input }) => {
-      // In the new architecture, session status is authoritative in the DB.
-      // No external process/container to sync with.
-      const session = await prisma.session.findUnique({
-        where: { id: input.sessionId },
-      });
-
-      return { session };
-    }),
 });

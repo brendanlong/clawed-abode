@@ -13,7 +13,6 @@ import {
   formatMcpServersForDisplay,
   buildMcpServerData,
   mcpServerHasSecrets,
-  decryptEnvVarsForContainer,
   decryptMcpServersForContainer,
 } from '../services/settings-helpers';
 import { validateMcpServer } from '../services/mcp-validator';
@@ -452,29 +451,5 @@ export const repoSettingsRouter = router({
 
       const [decrypted] = decryptMcpServersForContainer([dbServer]);
       return validateMcpServer(decrypted);
-    }),
-
-  /**
-   * Get decrypted settings for container creation (internal use)
-   * This is exported separately for use by the container creation service
-   */
-  getForContainer: protectedProcedure
-    .input(z.object({ repoFullName: repoFullNameSchema }))
-    .query(async ({ input }) => {
-      const settings = await prisma.repoSettings.findUnique({
-        where: { repoFullName: input.repoFullName },
-        include: { envVars: true, mcpServers: true },
-      });
-
-      if (!settings) {
-        return null;
-      }
-
-      return {
-        customSystemPrompt: settings.customSystemPrompt,
-        claudeModel: settings.claudeModel,
-        envVars: decryptEnvVarsForContainer(settings.envVars),
-        mcpServers: decryptMcpServersForContainer(settings.mcpServers),
-      };
     }),
 });

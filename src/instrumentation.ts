@@ -3,12 +3,14 @@
  * See: https://nextjs.org/docs/app/building-your-application/optimizing/instrumentation
  */
 
+import { createLogger, toError } from '@/lib/logger';
+
+const log = createLogger('startup');
+
 export async function register() {
   // Only run on the server (not during build or in edge runtime)
   if (process.env.NEXT_RUNTIME === 'nodejs') {
-    const { reconcileSessions } = await import('@/server/services/session-reconciler');
-
-    console.log('Starting server - reconciling sessions...');
+    log.info('Starting server');
 
     // Reap session cgroup scopes orphaned by a previous crash (which never ran
     // teardown) before sessions revive into fresh scopes. Best-effort. Reaps
@@ -27,23 +29,19 @@ export async function register() {
       const { reapOrphanedSessionScopes } = await import('@/server/services/claude-runner');
       await reapOrphanedSessionScopes();
     } catch (err) {
-      console.error('Error reaping orphaned session scopes:', err);
+      log.error('Error reaping orphaned session scopes', toError(err));
     }
 
+    // Sessions left `running` by a previous process are revived lazily with
+    // `resume` on their next interaction, so startup only reports how many there are.
     try {
-      const result = await reconcileSessions();
-      if (result.runningSessionsToRevive > 0) {
-        console.log(
-          `Session reconciliation complete: ${result.runningSessionsToRevive} running session(s) will be revived on next interaction`
-        );
-      } else {
-        console.log('Session reconciliation complete: no running sessions');
-      }
+      const { prisma } = await import('@/lib/prisma');
+      const runningSessionsToRevive = await prisma.session.count({ where: { status: 'running' } });
+      log.info('Startup complete', { runningSessionsToRevive });
     } catch (err) {
-      console.error('Error reconciling sessions:', err);
+      log.error('Error counting running sessions', toError(err));
     }
 
-    // Register graceful shutdown handler
     registerShutdownHandler();
   }
 }
@@ -57,33 +55,31 @@ function registerShutdownHandler() {
 
   const shutdown = async (signal: string) => {
     if (shuttingDown) {
-      console.log(`Received ${signal} again, forcing exit`);
+      log.warn('Received signal again, forcing exit', { signal });
       process.exit(1);
     }
     shuttingDown = true;
-    console.log(`Received ${signal}, shutting down gracefully...`);
+    log.info('Shutting down gracefully', { signal });
 
     // Force exit after 10s if graceful shutdown hangs
     // (important for SIGTERM from systemd where there's no second signal)
     setTimeout(() => {
-      console.error('Graceful shutdown timed out, forcing exit');
+      log.error('Graceful shutdown timed out, forcing exit');
       process.exit(1);
     }, 10_000).unref();
 
     try {
-      // Stop all active Claude queries
       const { stopAllSessions } = await import('@/server/services/claude-runner');
       await stopAllSessions();
     } catch (err) {
-      console.error('Error stopping sessions during shutdown:', err);
+      log.error('Error stopping sessions during shutdown', toError(err));
     }
 
     try {
-      // Disconnect Prisma
       const { prisma } = await import('@/lib/prisma');
       await prisma.$disconnect();
     } catch (err) {
-      console.error('Error disconnecting Prisma during shutdown:', err);
+      log.error('Error disconnecting Prisma during shutdown', toError(err));
     }
 
     process.exit(0);

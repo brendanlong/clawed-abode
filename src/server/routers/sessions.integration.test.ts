@@ -894,23 +894,4 @@ describe('sessionsRouter integration', () => {
       ).rejects.toMatchObject({ code: 'NOT_FOUND' });
     });
   });
-
-  describe('syncStatus', () => {
-    it('should return session status as-is (no external state to sync)', async () => {
-      const session = await testPrisma.session.create({
-        data: {
-          name: 'Session to sync',
-          repoUrl: 'https://github.com/owner/repo.git',
-          branch: 'main',
-          workspacePath: '/workspace/test',
-          status: 'running',
-        },
-      });
-
-      const caller = createCaller('auth-session-id');
-      const result = await caller.sessions.syncStatus({ sessionId: session.id });
-
-      expect(result.session?.status).toBe('running');
-    });
-  });
 });

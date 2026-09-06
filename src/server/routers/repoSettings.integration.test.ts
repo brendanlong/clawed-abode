@@ -15,6 +15,9 @@ vi.mock('@/lib/logger', () => ({
 // These will be set in beforeAll after the test DB is set up
 let repoSettingsRouter: Awaited<typeof import('./repoSettings')>['repoSettingsRouter'];
 let router: Awaited<typeof import('../trpc')>['router'];
+let getRepoSettingsForContainer: Awaited<
+  typeof import('../services/repo-settings')
+>['getRepoSettingsForContainer'];
 
 const createCaller = () => {
   const testRouter = router({
@@ -35,6 +38,8 @@ describe('repoSettings router', () => {
     const trpcModule = await import('../trpc');
     repoSettingsRouter = repoSettingsModule.repoSettingsRouter;
     router = trpcModule.router;
+    getRepoSettingsForContainer = (await import('../services/repo-settings'))
+      .getRepoSettingsForContainer;
   });
 
   afterAll(async () => {
@@ -394,10 +399,8 @@ describe('repoSettings router', () => {
       const settings = await caller.repoSettings.get({ repoFullName: testRepoName });
       expect(settings?.mcpServers[0].url).toBe('https://mcp.example.com/api-v2');
 
-      // Verify the secret header was preserved via getForContainer
-      const containerSettings = await caller.repoSettings.getForContainer({
-        repoFullName: testRepoName,
-      });
+      // Verify the secret header was preserved in the decrypted settings the runner receives
+      const containerSettings = await getRepoSettingsForContainer(testRepoName);
       const server = containerSettings?.mcpServers[0];
       expect(server && 'headers' in server ? server.headers?.Authorization : undefined).toBe(
         'Bearer secret-token'
@@ -442,15 +445,13 @@ describe('repoSettings router', () => {
       expect(settings?.mcpServers[0].command).toBe('npx');
       expect(settings?.mcpServers[0].env.DEBUG.value).toBe('false');
 
-      // Verify the secret env var was preserved via getForContainer
-      const containerSettings = await caller.repoSettings.getForContainer({
-        repoFullName: testRepoName,
-      });
+      // Verify the secret env var was preserved in the decrypted settings the runner receives
+      const containerSettings = await getRepoSettingsForContainer(testRepoName);
       const server = containerSettings?.mcpServers[0];
       expect(server && 'env' in server ? server.env?.API_KEY : undefined).toBe('secret-api-key');
     });
 
-    it('should return decrypted HTTP MCP server headers in getForContainer', async () => {
+    it('should decrypt HTTP MCP server headers for the runner', async () => {
       const caller = createCaller();
 
       await caller.repoSettings.setMcpServer({
@@ -465,7 +466,7 @@ describe('repoSettings router', () => {
         },
       });
 
-      const result = await caller.repoSettings.getForContainer({ repoFullName: testRepoName });
+      const result = await getRepoSettingsForContainer(testRepoName);
       const server = result?.mcpServers[0];
       expect(server?.name).toBe('container-http-server');
       expect(server?.type).toBe('http');
@@ -508,7 +509,7 @@ describe('repoSettings router', () => {
     });
   });
 
-  describe('getForContainer', () => {
+  describe('getRepoSettingsForContainer', () => {
     it('should return decrypted env vars', async () => {
       const caller = createCaller();
 
@@ -521,7 +522,7 @@ describe('repoSettings router', () => {
         },
       });
 
-      const result = await caller.repoSettings.getForContainer({ repoFullName: testRepoName });
+      const result = await getRepoSettingsForContainer(testRepoName);
       expect(result?.envVars[0].name).toBe('SECRET');
       expect(result?.envVars[0].value).toBe('my-secret-value'); // Decrypted!
     });
@@ -541,7 +542,7 @@ describe('repoSettings router', () => {
         },
       });
 
-      const result = await caller.repoSettings.getForContainer({ repoFullName: testRepoName });
+      const result = await getRepoSettingsForContainer(testRepoName);
       const server = result?.mcpServers[0];
       expect(server?.type).toBe('stdio');
       expect(server && 'env' in server ? server.env?.API_KEY : undefined).toBe('secret-key'); // Decrypted!
@@ -755,7 +756,7 @@ describe('repoSettings router', () => {
       expect(settings?.customSystemPrompt).toBeNull();
     });
 
-    it('should include customSystemPrompt in getForContainer', async () => {
+    it('should include customSystemPrompt in the decrypted settings', async () => {
       const caller = createCaller();
       const customPrompt = 'Custom prompt for container';
 
@@ -764,7 +765,7 @@ describe('repoSettings router', () => {
         customSystemPrompt: customPrompt,
       });
 
-      const result = await caller.repoSettings.getForContainer({ repoFullName: testRepoName });
+      const result = await getRepoSettingsForContainer(testRepoName);
       expect(result?.customSystemPrompt).toBe(customPrompt);
     });
 
