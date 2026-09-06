@@ -83,7 +83,7 @@ The "Open in VS Code" button deep-links into a self-hosted [code-server](https:/
 
 ## Where Things Live
 
-- [`src/server/routers/`](../src/server/routers/) — tRPC API (auth, github, sessions, claude, sse, settings)
+- [`src/server/routers/`](../src/server/routers/) — tRPC API (auth, github, sessions, claude, sse, globalSettings, repoSettings)
 - [`src/server/services/`](../src/server/services/) — session/query/workspace management; [`claude-runner.ts`](../src/server/services/claude-runner.ts) is the core (see [`src/server/services/CLAUDE.md`](../src/server/services/CLAUDE.md))
 - [`src/lib/`](../src/lib/) — pure, unit-testable logic shared by server and client
 - [`src/hooks/`](../src/hooks/) — React Query + SSE wiring

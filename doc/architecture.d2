@@ -20,20 +20,35 @@ server: Home Server {
 
     auth: Auth
     session_mgmt: Session Management
-    sdk: Claude Agent SDK (in-process)
+    sdk: Claude Agent SDK (in-process, one streaming query per session)
     sse: SSE to Browser (multiplexed per-session + global list streams)
+    upload: POST /api/upload
   }
 
-  workspaces: ~/worktrees/ {
+  scopes: systemd user scopes {
+    style.fill: "#805AD5"
+    style.font-color: white
+    scope1: "clawed-session-{sessionId1}.scope: claude CLI + everything it spawns"
+  }
+
+  workspaces: ~/worktrees/{sessionId}/ {
     style.fill: "#48BB78"
     style.font-color: white
 
-    session1: "{sessionId1}/{repo}" {
+    clone: "{repo}/ (git clone, session branch)" {
       style.fill: "#38A169"
     }
-    session2: "{sessionId2}/{repo}" {
+    uploads: "uploads/ (attachments, sibling of the clone)" {
       style.fill: "#38A169"
     }
+    mcp: "mcp-config.json (mode 0600, decrypted MCP secrets)" {
+      style.fill: "#38A169"
+    }
+  }
+
+  code_server: code-server (optional, CODE_SERVER_URL) {
+    style.fill: "#2B6CB0"
+    style.font-color: white
   }
 
   db: SQLite {
@@ -49,35 +64,17 @@ server: Home Server {
 mobile -> tailscale: HTTPS
 tailscale -> server.app: HTTP
 
-server.app.sdk -> server.workspaces: "cwd"
+server.app.sdk -> server.scopes: "systemd-run --user --scope"
+server.scopes -> server.workspaces.clone: "cwd"
+server.app.sdk -> server.workspaces.mcp: "--mcp-config"
+server.app.upload -> server.workspaces.uploads: "write"
 server.app.session_mgmt -> server.db: "read/write"
 server.app.sdk -> server.db.messages: "persist"
 server.app.sse -> mobile: "stream events (resume via lastEventId)"
+mobile -> server.code_server: "Open in VS Code (tailnet only)"
+server.code_server -> server.workspaces: "edit"
 
-# Data Model
-data: Data Model {
-  style.fill: "#FFF5F5"
-
-  session: Session {
-    shape: class
-    id: string
-    name: string
-    repoUrl: string?
-    branch: string?
-    status: creating | running | stopped | error | archived
-    repoPath: string
-  }
-
-  message: Message {
-    shape: class
-    sessionId: string
-    sequence: int
-    type: system | user | assistant | result
-    content: JSON
-  }
-
-  session -> message: "has many"
-}
+# Data model: prisma/schema.prisma is the source of truth (see DESIGN.md).
 
 # Session Lifecycle
 lifecycle: Session Lifecycle {
@@ -86,8 +83,8 @@ lifecycle: Session Lifecycle {
   create: Create {
     style.fill: "#C6F6D5"
     1: "User selects repo + branch"
-    2: "Server clones to ~/worktrees/{id}/{repo}"
-    3: "Session status → running"
+    2: "Server clones to ~/worktrees/{id}/{repo} in the background"
+    3: "Session status → running; optional initial prompt sent server-side"
   }
 
   interact: Interact {
