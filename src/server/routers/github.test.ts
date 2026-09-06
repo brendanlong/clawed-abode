@@ -4,16 +4,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
 
-// Create hoisted mock objects that will be accessible in vi.mock factories
-const { mockFetchPullRequestForBranch, mockPrisma } = vi.hoisted(() => ({
-  mockFetchPullRequestForBranch: vi.fn(),
-  mockPrisma: {
-    session: {
-      findUnique: vi.fn(),
-    },
-  },
-}));
-
 // Mock logger
 vi.mock('@/lib/logger', () => ({
   createLogger: () => ({
@@ -25,21 +15,8 @@ vi.mock('@/lib/logger', () => ({
   toError: (e: unknown) => (e instanceof Error ? e : new Error(String(e))),
 }));
 
-// Mock the github service: stub fetchPullRequestForBranch (used by the
-// getSessionPrStatus endpoint) but keep the real fetch/link-header helpers and
-// GitHubApiError so the router exercises them against the mocked global.fetch.
-vi.mock('../services/github', async (importActual) => {
-  const actual = await importActual<typeof import('../services/github')>();
-  return {
-    ...actual,
-    fetchPullRequestForBranch: (...args: unknown[]) => mockFetchPullRequestForBranch(...args),
-  };
-});
-
-// Mock prisma (used by getSessionPrStatus endpoint)
-vi.mock('@/lib/prisma', () => ({
-  prisma: mockPrisma,
-}));
+// ../trpc imports prisma for createContext; this router never touches the DB.
+vi.mock('@/lib/prisma', () => ({ prisma: {} }));
 
 // Import the router after mocks are set up
 import { githubRouter } from './github';
@@ -459,116 +436,6 @@ describe('githubRouter', () => {
       await expect(caller.github.listIssues({ repoFullName: 'owner/repo' })).rejects.toMatchObject({
         code: 'UNAUTHORIZED',
       });
-    });
-  });
-
-  describe('getSessionPrStatus', () => {
-    it('should return PR info when session has a currentBranch with a PR', async () => {
-      mockPrisma.session.findUnique.mockResolvedValue({
-        repoUrl: 'https://github.com/owner/repo.git',
-        currentBranch: 'feature',
-      });
-
-      const mockPr = {
-        number: 42,
-        title: 'Add feature',
-        state: 'open' as const,
-        draft: false,
-        url: 'https://github.com/owner/repo/pull/42',
-        author: 'user',
-        updatedAt: '2024-01-01T00:00:00Z',
-      };
-      mockFetchPullRequestForBranch.mockResolvedValue(mockPr);
-
-      const caller = createCaller('auth-session-id');
-      const result = await caller.github.getSessionPrStatus({
-        sessionId: 'a0000000-0000-4000-8000-000000000001',
-      });
-
-      expect(result.pullRequest).toEqual(mockPr);
-      expect(mockFetchPullRequestForBranch).toHaveBeenCalledWith('owner/repo', 'feature');
-    });
-
-    it('should return null when session has no currentBranch', async () => {
-      mockPrisma.session.findUnique.mockResolvedValue({
-        repoUrl: 'https://github.com/owner/repo.git',
-        currentBranch: null,
-      });
-
-      const caller = createCaller('auth-session-id');
-      const result = await caller.github.getSessionPrStatus({
-        sessionId: 'a0000000-0000-4000-8000-000000000001',
-      });
-
-      expect(result.pullRequest).toBeNull();
-      expect(mockFetchPullRequestForBranch).not.toHaveBeenCalled();
-    });
-
-    it('should return null when no PR exists for the branch', async () => {
-      mockPrisma.session.findUnique.mockResolvedValue({
-        repoUrl: 'https://github.com/owner/repo.git',
-        currentBranch: 'no-pr-branch',
-      });
-      mockFetchPullRequestForBranch.mockResolvedValue(null);
-
-      const caller = createCaller('auth-session-id');
-      const result = await caller.github.getSessionPrStatus({
-        sessionId: 'a0000000-0000-4000-8000-000000000001',
-      });
-
-      expect(result.pullRequest).toBeNull();
-    });
-
-    it('should return null when service returns undefined', async () => {
-      mockPrisma.session.findUnique.mockResolvedValue({
-        repoUrl: 'https://github.com/owner/repo.git',
-        currentBranch: 'branch',
-      });
-      mockFetchPullRequestForBranch.mockResolvedValue(undefined);
-
-      const caller = createCaller('auth-session-id');
-      const result = await caller.github.getSessionPrStatus({
-        sessionId: 'a0000000-0000-4000-8000-000000000001',
-      });
-
-      expect(result.pullRequest).toBeNull();
-    });
-
-    it('should throw NOT_FOUND when session does not exist', async () => {
-      mockPrisma.session.findUnique.mockResolvedValue(null);
-
-      const caller = createCaller('auth-session-id');
-
-      await expect(
-        caller.github.getSessionPrStatus({
-          sessionId: 'a0000000-0000-4000-8000-000000000001',
-        })
-      ).rejects.toMatchObject({
-        code: 'NOT_FOUND',
-        message: 'Session not found',
-      });
-    });
-
-    it('should require authentication', async () => {
-      const caller = createCaller(null);
-
-      await expect(
-        caller.github.getSessionPrStatus({
-          sessionId: 'a0000000-0000-4000-8000-000000000001',
-        })
-      ).rejects.toMatchObject({
-        code: 'UNAUTHORIZED',
-      });
-    });
-
-    it('should validate sessionId is a UUID', async () => {
-      const caller = createCaller('auth-session-id');
-
-      await expect(
-        caller.github.getSessionPrStatus({
-          sessionId: 'not-a-uuid',
-        })
-      ).rejects.toThrow();
     });
   });
 });

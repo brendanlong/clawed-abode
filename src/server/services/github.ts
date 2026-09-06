@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { createLogger } from '@/lib/logger';
 import { env } from '@/lib/env';
+import type { PullRequestInfo } from '@/lib/pull-request';
 
 const log = createLogger('github');
 
@@ -9,18 +10,6 @@ const GITHUB_API = 'https://api.github.com';
 // =============================================================================
 // Shared types
 // =============================================================================
-
-type PrState = 'open' | 'closed' | 'merged';
-
-export interface PullRequestInfo {
-  number: number;
-  title: string;
-  state: PrState;
-  draft: boolean;
-  url: string;
-  author: string;
-  updatedAt: string;
-}
 
 interface GitHubPullRequest {
   id: number;

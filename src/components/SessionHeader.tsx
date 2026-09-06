@@ -9,6 +9,8 @@ import { EditableSessionName } from '@/components/EditableSessionName';
 import { VoiceAutoReadToggle } from '@/components/voice/VoiceAutoReadToggle';
 import { OpenInEditorButton } from '@/components/OpenInEditorButton';
 import { SessionModelButton } from '@/components/SessionModelButton';
+import { PrStatusIndicator } from '@/components/PrStatusIndicator';
+import type { PullRequestInfo } from '@/lib/pull-request';
 
 interface SessionHeaderProps {
   session: {
@@ -19,6 +21,7 @@ interface SessionHeaderProps {
     status: string;
     statusMessage?: string | null;
     claudeModel?: string | null;
+    pullRequest?: PullRequestInfo | null;
   };
   onStart: () => void;
   onStop: () => void;
@@ -77,7 +80,12 @@ export function SessionHeader({
                 {session.name}
               </h1>
             )}
-            {repoName && <p className="text-sm text-muted-foreground truncate">{repoName}</p>}
+            {repoName && (
+              <p className="text-sm text-muted-foreground truncate flex items-center gap-2">
+                {repoName}
+                {session.pullRequest && <PrStatusIndicator pullRequest={session.pullRequest} />}
+              </p>
+            )}
           </div>
         </div>
 

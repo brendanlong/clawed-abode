@@ -25,7 +25,6 @@ vi.mock('./events', () => ({
     emitClaudeRunning: vi.fn(),
     emitCommands: vi.fn(),
     emitSessionUpdate: vi.fn(),
-    emitPrUpdate: vi.fn(),
   },
 }));
 

@@ -10,7 +10,7 @@
  * covered by scripts/spike-streaming-resume.ts.
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi, afterEach } from 'vitest';
 import type { Query, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { setupTestDb, teardownTestDb, testPrisma, clearTestDb } from '@/test/setup-test-db';
 
@@ -24,7 +24,6 @@ const mockSseEvents = vi.hoisted(() => ({
   emitMessageRemoved: vi.fn(),
   emitCommands: vi.fn(),
   emitSessionUpdate: vi.fn(),
-  emitPrUpdate: vi.fn(),
 }));
 vi.mock('./events', () => ({ sseEvents: mockSseEvents }));
 
@@ -341,6 +340,120 @@ describe('claude-runner persistent streaming loop', () => {
     expect(mockSseEvents.emitClaudeFinished).toHaveBeenCalledWith(sessionId);
 
     stopSession(sessionId);
+  });
+
+  describe('branch and PR detection at turn end', () => {
+    const pr = {
+      number: 5,
+      title: 'Feat A',
+      state: 'open' as const,
+      draft: false,
+      url: 'https://github.com/o/r/pull/5',
+      author: 'me',
+      updatedAt: '2024-01-01T00:00:00Z',
+    };
+
+    afterEach(async () => {
+      const { getCurrentBranch } = await import('./worktree-manager');
+      const { fetchPullRequestForBranch } = await import('./github');
+      vi.mocked(getCurrentBranch).mockResolvedValue(null);
+      vi.mocked(fetchPullRequestForBranch).mockResolvedValue(undefined);
+    });
+
+    async function runOneTurn(sessionId: string) {
+      const fake = makeFakeQuery();
+      _setQueryFactory(fake.factory);
+      await sendUserMessage(sessionId, 'go');
+      fake.emit(result());
+      await waitFor(() => !isClaudeRunning(sessionId));
+      return fake;
+    }
+
+    it('persists the PR for the current branch and announces it as a session update', async () => {
+      const { getCurrentBranch } = await import('./worktree-manager');
+      const { fetchPullRequestForBranch } = await import('./github');
+      vi.mocked(getCurrentBranch).mockResolvedValue('feat-a');
+      vi.mocked(fetchPullRequestForBranch).mockResolvedValue(pr);
+      const { id } = await testPrisma.session.create({
+        data: {
+          name: 'T',
+          repoPath: 'r',
+          status: 'running',
+          repoUrl: 'https://github.com/o/r.git',
+        },
+      });
+
+      await runOneTurn(id);
+
+      await waitFor(
+        async () => (await testPrisma.session.findUnique({ where: { id } }))?.pullRequest !== null
+      );
+      const row = await testPrisma.session.findUnique({ where: { id } });
+      expect(row?.currentBranch).toBe('feat-a');
+      expect(JSON.parse(row!.pullRequest!)).toEqual(pr);
+      expect(fetchPullRequestForBranch).toHaveBeenCalledWith('o/r', 'feat-a');
+      expect(mockSseEvents.emitSessionUpdate).toHaveBeenCalledWith(
+        id,
+        expect.objectContaining({ currentBranch: 'feat-a' })
+      );
+      stopSession(id);
+    });
+
+    it('drops the old PR snapshot when the branch changes and the lookup is unavailable', async () => {
+      const { getCurrentBranch } = await import('./worktree-manager');
+      const { fetchPullRequestForBranch } = await import('./github');
+      vi.mocked(getCurrentBranch).mockResolvedValue('feat-b');
+      vi.mocked(fetchPullRequestForBranch).mockResolvedValue(undefined);
+      const { id } = await testPrisma.session.create({
+        data: {
+          name: 'T',
+          repoPath: 'r',
+          status: 'running',
+          repoUrl: 'https://github.com/o/r.git',
+          currentBranch: 'feat-a',
+          pullRequest: JSON.stringify(pr),
+        },
+      });
+
+      await runOneTurn(id);
+
+      await waitFor(
+        async () =>
+          (await testPrisma.session.findUnique({ where: { id } }))?.currentBranch === 'feat-b'
+      );
+      const row = await testPrisma.session.findUnique({ where: { id } });
+      expect(row?.pullRequest).toBeNull();
+      stopSession(id);
+    });
+
+    it('writes nothing when neither branch nor PR changed', async () => {
+      const { getCurrentBranch } = await import('./worktree-manager');
+      const { fetchPullRequestForBranch } = await import('./github');
+      vi.mocked(getCurrentBranch).mockResolvedValue('feat-a');
+      vi.mocked(fetchPullRequestForBranch).mockResolvedValue(pr);
+      const { id } = await testPrisma.session.create({
+        data: {
+          name: 'T',
+          repoPath: 'r',
+          status: 'running',
+          repoUrl: 'https://github.com/o/r.git',
+          currentBranch: 'feat-a',
+          pullRequest: JSON.stringify(pr),
+        },
+      });
+
+      await runOneTurn(id);
+      await waitFor(() => vi.mocked(fetchPullRequestForBranch).mock.calls.length > 0);
+      // Give the fire-and-forget detection a moment to (not) write.
+      await new Promise((r) => setTimeout(r, 50));
+
+      const row = await testPrisma.session.findUnique({ where: { id } });
+      expect(row?.currentBranch).toBe('feat-a');
+      expect(JSON.parse(row!.pullRequest!)).toEqual(pr);
+      // No session_update means no needless list refetch on every turn end.
+      expect(mockSseEvents.emitSessionUpdate).not.toHaveBeenCalled();
+      stopSession(id);
+    });
   });
 
   it('stops the session cgroup scope on stopSession', async () => {

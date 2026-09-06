@@ -29,7 +29,8 @@ model Session {
   repoPath        String    @default("") // Path to repo relative to workspace (e.g., "my-repo")
   status          String    @default("creating") // creating, running, stopped, error, archived
   statusMessage   String? // Human-readable progress message during creation
-  currentBranch   String? // Current git branch (detected after each query)
+  currentBranch   String? // Current git branch (detected after each turn)
+  pullRequest     String? // JSON PullRequestInfo for currentBranch, refreshed after each turn; null = none/unknown (see src/lib/pull-request.ts)
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
   lastActivityAt  DateTime  @default(now()) // Bumped only on user interactions (prompt, answer); drives session-list ordering
@@ -39,6 +40,7 @@ model Session {
   messages        Message[]
 
   @@index([status])
+  @@index([status, lastActivityAt, id]) // sessions.list keyset order
 }
 
 model Message {

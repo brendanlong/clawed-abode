@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { PrStatusIndicator } from './PrStatusIndicator';
-import type { PullRequestInfo } from '@/hooks/usePullRequestStatus';
+import type { PullRequestInfo } from '@/lib/pull-request';
 
 const basePr: PullRequestInfo = {
   number: 42,

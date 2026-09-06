@@ -14,6 +14,8 @@ import { formatResumeToken, parseResumeToken, EMPTY_WATERMARK } from '@/lib/sse-
  * here until it is handled (at runtime an unknown event is skipped — `null` —
  * which is safe because the client refetches on reconnect anyway).
  */
+export type SessionListStreamEvent = NonNullable<ReturnType<typeof toSessionListStreamEvent>>;
+
 function toSessionListStreamEvent(event: SessionListEvent) {
   switch (event.type) {
     case 'session_update':

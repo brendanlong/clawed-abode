@@ -7,7 +7,6 @@ import { deriveSessionDisplayStatus } from '@/lib/session-display-status';
 import { SessionStatusBadge } from '@/components/SessionStatusBadge';
 import { SessionActionButton } from '@/components/SessionActionButton';
 import { PrStatusIndicator } from '@/components/PrStatusIndicator';
-import { usePullRequestStatus } from '@/hooks/usePullRequestStatus';
 import type { Session } from '@/hooks/useSessionList';
 
 export interface SessionListItemProps {
@@ -25,8 +24,6 @@ export function SessionListItem({ session }: SessionListItemProps) {
   const startMutation = trpc.sessions.start.useMutation();
   const stopMutation = trpc.sessions.stop.useMutation();
   const archiveMutation = trpc.sessions.delete.useMutation();
-
-  const { pullRequest } = usePullRequestStatus(session.id, !isArchived);
 
   return (
     <li
@@ -53,7 +50,7 @@ export function SessionListItem({ session }: SessionListItemProps) {
         </div>
 
         <div className="flex items-center gap-4">
-          {pullRequest && <PrStatusIndicator pullRequest={pullRequest} />}
+          {session.pullRequest && <PrStatusIndicator pullRequest={session.pullRequest} />}
           <SessionStatusBadge
             status={deriveSessionDisplayStatus(
               session.status,
