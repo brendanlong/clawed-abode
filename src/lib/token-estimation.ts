@@ -335,11 +335,12 @@ export function estimateTokenUsage(messages: Message[]): TokenUsageStats {
  * Format token count for display (e.g., "150K" instead of "150000")
  */
 export function formatTokenCount(tokens: number): string {
-  if (tokens >= 1_000_000) {
+  const thousands = Math.round(tokens / 1_000);
+  if (thousands >= 1_000) {
     return `${(tokens / 1_000_000).toFixed(1)}M`;
   }
   if (tokens >= 1_000) {
-    return `${(tokens / 1_000).toFixed(0)}K`;
+    return `${thousands}K`;
   }
   return tokens.toString();
 }
@@ -351,5 +352,7 @@ export function formatPercentage(percent: number): string {
   if (percent < 1) {
     return '<1%';
   }
-  return `${Math.round(percent)}%`;
+  // Never round a not-yet-full window up to 100%
+  const rounded = percent < 100 ? Math.min(Math.round(percent), 99) : Math.round(percent);
+  return `${rounded}%`;
 }

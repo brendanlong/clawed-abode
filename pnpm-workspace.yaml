@@ -10,13 +10,19 @@ minimumReleaseAgeExclude:
 packages:
   - '.'
 
+# Single home for pnpm settings (package.json "pnpm" and .npmrc are not used).
+overrides:
+  '@typescript-eslint/eslint-plugin': $typescript-eslint
+  '@typescript-eslint/parser': $typescript-eslint
+  '@typescript-eslint/utils': $typescript-eslint
+  '@typescript-eslint/type-utils': $typescript-eslint
+
 onlyBuiltDependencies:
   - '@prisma/client'
   - '@prisma/engines'
-  - bcrypt
+  - argon2
   - better-sqlite3
-  - cpu-features
+  - esbuild
   - prisma
-  - protobufjs
-  - ssh2
+  - sharp
   - unrs-resolver

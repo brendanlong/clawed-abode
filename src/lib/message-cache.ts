@@ -28,7 +28,7 @@ export interface MessageLike {
   id: string;
 }
 
-export interface MessagePage<M extends MessageLike> {
+interface MessagePage<M extends MessageLike> {
   messages: M[];
   hasMore: boolean;
 }

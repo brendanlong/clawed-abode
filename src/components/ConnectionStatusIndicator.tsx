@@ -4,7 +4,7 @@ import { Spinner } from '@/components/ui/spinner';
  * Status reported by tRPC's `useSubscription`. While the stream is live the value
  * is `pending`; `connecting`/`error` indicate the live feed is (temporarily) down.
  */
-export type StreamStatus = 'idle' | 'connecting' | 'pending' | 'error';
+type StreamStatus = 'idle' | 'connecting' | 'pending' | 'error';
 
 interface ConnectionStatusIndicatorProps {
   status: StreamStatus;

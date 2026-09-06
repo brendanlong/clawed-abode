@@ -1,9 +1,5 @@
-import {
-  SettingsListState,
-  SettingsListAction,
-  initialSettingsListState,
-  reduceSettingsListAction,
-} from './settings-list-reducer';
+import type { SettingsListState, SettingsListAction } from './settings-list-reducer';
+import { initialSettingsListState, reduceSettingsListAction } from './settings-list-reducer';
 
 // -- EnvVarSection (list management) reducer --
 

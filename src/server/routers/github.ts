@@ -249,44 +249,6 @@ export const githubRouter = router({
       };
     }),
 
-  getIssue: protectedProcedure
-    .input(
-      z.object({
-        repoFullName: z.string().regex(/^[\w-]+\/[\w.-]+$/),
-        issueNumber: z.number().int().positive(),
-      })
-    )
-    .query(async ({ input }) => {
-      const token = env.GITHUB_TOKEN;
-
-      if (!token) {
-        throw new TRPCError({
-          code: 'PRECONDITION_FAILED',
-          message: 'GitHub token is not configured',
-        });
-      }
-
-      const issue = await githubFetch<GitHubIssue>(
-        `/repos/${input.repoFullName}/issues/${input.issueNumber}`,
-        token
-      );
-
-      return {
-        issue: {
-          id: issue.id,
-          number: issue.number,
-          title: issue.title,
-          body: issue.body,
-          state: issue.state,
-          author: issue.user?.login || 'unknown',
-          labels: issue.labels.map((l) => ({ name: l.name, color: l.color })),
-          comments: issue.comments,
-          createdAt: issue.created_at,
-          updatedAt: issue.updated_at,
-        },
-      };
-    }),
-
   getSessionPrStatus: protectedProcedure
     .input(
       z.object({

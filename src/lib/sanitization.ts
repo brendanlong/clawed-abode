@@ -16,7 +16,7 @@ import { z } from 'zod';
  * Kept dependency-free (schema + pure helpers) so the server writer and the client
  * renderer share one source of truth.
  */
-export const SanitizationInfoSchema = z.object({
+const SanitizationInfoSchema = z.object({
   found: z.array(z.string()),
   warnings: z.array(z.string()),
   removed: z.boolean(),

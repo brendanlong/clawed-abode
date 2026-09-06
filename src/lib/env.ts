@@ -8,14 +8,6 @@ const envSchema = z.object({
   CLAUDE_CODE_OAUTH_TOKEN: z.string().optional().default(''),
   // Claude model to use (e.g., "opus", "sonnet", "claude-opus-4-5-20251101")
   CLAUDE_MODEL: z.string().default('opus[1m]'),
-  NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
-  // Server port for HTTP server
-  PORT: z
-    .string()
-    .optional()
-    .transform((val) => (val ? parseInt(val, 10) : 3000)),
-  // Next.js runtime environment (set by Next.js framework)
-  NEXT_RUNTIME: z.enum(['nodejs', 'edge']).optional(),
   // Prefix for session branches (e.g., "claude/" creates branches like "claude/{sessionId}")
   SESSION_BRANCH_PREFIX: z.string().default('claude/'),
   // Base64-encoded Argon2 hash for authentication (generate with: pnpm hash-password <yourpassword>)

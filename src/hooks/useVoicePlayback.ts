@@ -11,7 +11,7 @@ import {
 } from 'react';
 
 /** Item in the sequential playback queue */
-export interface PlaybackQueueItem {
+interface PlaybackQueueItem {
   messageId: string;
   text: string;
 }
@@ -28,7 +28,7 @@ export interface VoicePlaybackState {
   restart: () => Promise<void>;
 }
 
-const defaultPlaybackState: VoicePlaybackState = {
+export const defaultPlaybackState: VoicePlaybackState = {
   enabled: false,
   isPlaying: false,
   currentMessageId: null,
@@ -188,7 +188,6 @@ export function useVoicePlayback(
       if (available.length === 0) return;
       synth.removeEventListener('voiceschanged', loadVoices);
       voicesRef.current = available;
-      console.debug('[TTS] voices loaded:', voicesRef.current.length);
     };
 
     loadVoices();
@@ -218,7 +217,6 @@ export function useVoicePlayback(
     // Ensure voices are loaded — Chrome loads them asynchronously and
     // speak() fails with "synthesis-failed" if called before they're ready
     if (voicesRef.current.length === 0) {
-      console.debug('[TTS] waiting for voices to load...');
       voicesRef.current = await waitForVoices(synth);
     }
 
@@ -242,17 +240,6 @@ export function useVoicePlayback(
       // 5. First available (may be undefined if no voices loaded)
       voices[0] ??
       null;
-
-    if (selectedVoice) {
-      console.debug(
-        '[TTS] using voice:',
-        selectedVoice.name,
-        selectedVoice.lang,
-        selectedVoice.localService ? '(local)' : '(network)'
-      );
-    } else {
-      console.debug('[TTS] no voice selected, using browser default');
-    }
 
     const chunks = splitTextIntoChunks(text);
     let currentChunk = 0;
@@ -282,18 +269,12 @@ export function useVoicePlayback(
       // Store in ref to prevent Chrome from garbage-collecting the utterance
       utteranceRef.current = utterance;
 
-      utterance.onstart = () => {
-        console.debug('[TTS] chunk started', currentChunk, '/', chunks.length);
-      };
-
       utterance.onend = () => {
-        console.debug('[TTS] chunk ended', currentChunk, '/', chunks.length);
         currentChunk++;
         speakNextChunk();
       };
 
       utterance.onerror = (event) => {
-        console.debug('[TTS] error', event.error, 'chunk', currentChunk);
         if (event.error === 'interrupted' || event.error === 'canceled') {
           // Expected when stopping/switching — don't reset state here,
           // the stop() function handles that.
@@ -302,7 +283,6 @@ export function useVoicePlayback(
         // On synthesis-failed, retry once without setting an explicit voice.
         // Some platforms (especially Android) fail when a voice is explicitly set.
         if (event.error === 'synthesis-failed' && selectedVoice && !retriedWithoutVoice) {
-          console.debug('[TTS] retrying without explicit voice...');
           retriedWithoutVoice = true;
           speakNextChunk();
           return;
@@ -316,13 +296,6 @@ export function useVoicePlayback(
         currentTextRef.current = null;
       };
 
-      console.debug(
-        '[TTS] speaking chunk',
-        currentChunk,
-        '/',
-        chunks.length,
-        JSON.stringify(chunks[currentChunk].slice(0, 50))
-      );
       synth.speak(utterance);
     };
 

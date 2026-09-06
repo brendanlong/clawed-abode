@@ -19,7 +19,7 @@ Read more: [Clawed Abode: Claude Code is Too Cloudy](https://www.brendanlong.com
 
 ## Security Warning
 
-**This application runs Claude Code with `--dangerously-skip-permissions`**, which means Claude can execute arbitrary code, install packages, and modify files without confirmation. You should:
+**This application runs Claude Code in `bypassPermissions` mode**, which means Claude can execute arbitrary code, install packages, and modify files without confirmation. You should:
 
 - **Run this on a dedicated machine or dedicated user account** - not your personal workstation
 - **Never run as root** - always use a dedicated unprivileged user
@@ -30,7 +30,7 @@ See [Dedicated User Setup](#dedicated-user-setup-recommended) below.
 
 ## Prerequisites
 
-- Node.js 20+ and pnpm
+- Node.js 22 (20.19+ works) and pnpm
 - Git
 - Claude Code CLI installed and authenticated (`claude setup-token`)
 - A GitHub Fine-grained Personal Access Token
@@ -109,7 +109,7 @@ PASSWORD_HASH="JGFyZ29uMmlkJHY9MTkkbT02NTUzNix0PTMscD00JC4uLg=="
 ### 4. Initialize Database
 
 ```bash
-npx prisma migrate dev
+pnpm prisma migrate deploy
 ```
 
 ### 5. Start the Application
@@ -127,18 +127,7 @@ Visit `http://localhost:3000` to access the application.
 
 ## Architecture
 
-Sessions run directly on the host machine - no containers. Each session gets its own git clone for isolation.
-
-```
-Browser --> Tailscale --> Next.js + tRPC + Claude Agent SDK
-                              |
-                         ~/worktrees/{sessionId}/{repo}
-```
-
-- **Claude Agent SDK** runs in-process in the Next.js server
-- **Git clones** at `~/worktrees/{sessionId}/` provide session isolation
-- **SQLite** database for session/message persistence
-- **SSE** for real-time message streaming to the browser
+Sessions run directly on the host machine - no containers. Each session gets its own git clone for isolation. See [`doc/DESIGN.md`](doc/DESIGN.md) for the design and the reference docs it links to.
 
 ## Dedicated User Setup (Recommended)
 
@@ -159,7 +148,7 @@ sudo -u clawedabode -i
 # Install Node.js (e.g., via nvm)
 curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
 source ~/.bashrc
-nvm install 20
+nvm install 22
 
 # Install pnpm
 corepack enable && corepack prepare pnpm@latest --activate
@@ -178,7 +167,7 @@ cd clawed-abode
 pnpm install
 cp .env.example .env
 # Edit .env with your tokens and password hash
-npx prisma migrate dev
+pnpm prisma migrate deploy
 pnpm run build
 pnpm start
 ```
@@ -188,11 +177,11 @@ pnpm start
 First, find the full path to your Node.js binary:
 
 ```bash
-nvm which 20
-# Example output: /home/clawedabode/.nvm/versions/node/v20.19.0/bin/node
+nvm which 22
+# Example output: /home/clawedabode/.nvm/versions/node/v22.22.1/bin/node
 ```
 
-Create `~/.config/systemd/user/clawed-abode.service`, replacing the node path with the output of `nvm which 20`:
+Create `~/.config/systemd/user/clawed-abode.service`, replacing the node path with the output of `nvm which 22`:
 
 ```ini
 [Unit]
@@ -202,10 +191,13 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=%h/clawed-abode
-ExecStart=%h/.nvm/versions/node/v20.19.0/bin/node node_modules/next/dist/bin/next start
+ExecStart=%h/.nvm/versions/node/v22.22.1/bin/node node_modules/next/dist/bin/next start
 Restart=always
 RestartSec=5
 Environment=NODE_ENV=production
+# Listen on loopback only: Tailscale Serve is the sole ingress, so the
+# X-Forwarded-For header used for login rate limiting is always the one it sets.
+Environment=HOSTNAME=127.0.0.1
 
 [Install]
 WantedBy=default.target
@@ -252,15 +244,18 @@ tailscale funnel 3000
 
 ### Environment Variables
 
-| Variable                  | Description                                     | Default              |
-| ------------------------- | ----------------------------------------------- | -------------------- |
-| `PASSWORD_HASH`           | Base64-encoded Argon2 hash for auth             | None (required)      |
-| `DATABASE_URL`            | SQLite database path                            | `file:./data/dev.db` |
-| `GITHUB_TOKEN`            | GitHub Fine-grained PAT for repo access         | Required             |
-| `CLAUDE_CODE_OAUTH_TOKEN` | Claude Code OAuth token (`claude setup-token`)  | Required             |
-| `CLAUDE_MODEL`            | Claude model to use                             | `opus[1m]`           |
-| `SESSION_BRANCH_PREFIX`   | Prefix for session git branches                 | `claude/`            |
-| `ENCRYPTION_KEY`          | 32+ char key for encrypting secrets in settings | None (optional)      |
+The schema in [`src/lib/env.ts`](src/lib/env.ts) is authoritative.
+
+| Variable                  | Description                                                                                                   | Default              |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------- | -------------------- |
+| `PASSWORD_HASH`           | Base64-encoded Argon2 hash for auth; logins fail without it                                                   | None                 |
+| `DATABASE_URL`            | SQLite database path                                                                                          | `file:./data/dev.db` |
+| `GITHUB_TOKEN`            | GitHub Fine-grained PAT; without it repo/branch/issue pickers and PR status are unavailable                   | None                 |
+| `CLAUDE_CODE_OAUTH_TOKEN` | Claude Code OAuth token (`claude setup-token`); can instead be set in the Settings UI                         | None                 |
+| `CLAUDE_MODEL`            | Default Claude model (overridable per repo/session in Settings)                                               | `opus[1m]`           |
+| `SESSION_BRANCH_PREFIX`   | Prefix for session git branches                                                                               | `claude/`            |
+| `ENCRYPTION_KEY`          | 32+ char key for encrypting secrets; required before any secret env var or MCP header can be saved            | None                 |
+| `CODE_SERVER_URL`         | Base URL of a code-server instance; enables the "Open in VS Code" button (see `scripts/setup-code-server.sh`) | None                 |
 
 ## Development
 
@@ -268,7 +263,7 @@ tailscale funnel 3000
 pnpm run dev          # Development mode
 pnpm run build        # Production build
 pnpm start            # Production server
-pnpm run db:migrate   # Run database migrations
+pnpm run db:migrate   # Create/apply migrations in development (production: scripts/update.sh runs migrate deploy)
 pnpm run db:generate  # Generate Prisma client
 pnpm test             # Run tests (watch mode)
 pnpm test:run         # Run all test suites once (unit + component + integration)
@@ -292,11 +287,11 @@ claude setup-token
 
 ### Database errors
 
-Reset the database:
+Reset the database (this deletes all sessions and messages):
 
 ```bash
-rm -rf prisma/data
-npx prisma migrate dev
+rm -rf data
+pnpm prisma migrate deploy
 ```
 
 ## License

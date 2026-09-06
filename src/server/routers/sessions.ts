@@ -123,10 +123,8 @@ export const sessionsRouter = router({
           name: input.name,
           repoUrl: hasRepo ? `https://github.com/${input.repoFullName}.git` : null,
           branch: hasRepo ? input.branch! : null,
-          workspacePath: '',
           status: 'creating',
           statusMessage: hasRepo ? 'Cloning repository...' : 'Creating workspace...',
-          initialPrompt: input.initialPrompt,
           claudeModel: input.claudeModel?.trim() || null,
         },
       });
@@ -392,25 +390,10 @@ export const sessionsRouter = router({
       // Archive session (keep messages for viewing)
       const updatedSession = await prisma.session.update({
         where: { id: session.id },
-        data: {
-          status: 'archived',
-          archivedAt: new Date(),
-        },
+        data: { status: 'archived' },
       });
 
       sseEvents.emitSessionUpdate(input.sessionId, updatedSession);
       return { success: true };
-    }),
-
-  syncStatus: protectedProcedure
-    .input(z.object({ sessionId: z.string().uuid() }))
-    .mutation(async ({ input }) => {
-      // In the new architecture, session status is authoritative in the DB.
-      // No external process/container to sync with.
-      const session = await prisma.session.findUnique({
-        where: { id: input.sessionId },
-      });
-
-      return { session };
     }),
 });

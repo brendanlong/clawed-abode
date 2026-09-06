@@ -13,7 +13,8 @@ describe('token-estimation', () => {
       expect(formatTokenCount(1_000)).toBe('1K');
       expect(formatTokenCount(1_500)).toBe('2K'); // Rounds to nearest integer
       expect(formatTokenCount(50_000)).toBe('50K');
-      expect(formatTokenCount(999_999)).toBe('1000K');
+      expect(formatTokenCount(999_499)).toBe('999K');
+      expect(formatTokenCount(999_999)).toBe('1.0M');
     });
 
     it('should show raw number below 1000', () => {
@@ -36,7 +37,9 @@ describe('token-estimation', () => {
       expect(formatPercentage(1.4)).toBe('1%');
       expect(formatPercentage(1.5)).toBe('2%');
       expect(formatPercentage(50)).toBe('50%');
-      expect(formatPercentage(99.9)).toBe('100%');
+      expect(formatPercentage(99.9)).toBe('99%');
+      expect(formatPercentage(100)).toBe('100%');
+      expect(formatPercentage(120.4)).toBe('120%');
     });
   });
 

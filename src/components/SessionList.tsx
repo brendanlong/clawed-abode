@@ -10,7 +10,6 @@ import type { Session } from '@/hooks/useSessionList';
 export interface SessionListProps {
   sessions: Session[];
   isLoading: boolean;
-  onMutationSuccess?: () => void;
   showArchived: boolean;
   onToggleArchived: () => void;
 }
@@ -22,7 +21,6 @@ export interface SessionListProps {
 export function SessionList({
   sessions,
   isLoading,
-  onMutationSuccess,
   showArchived,
   onToggleArchived,
 }: SessionListProps) {
@@ -64,11 +62,7 @@ export function SessionList({
           {activeSessions.length > 0 ? (
             <ul className="divide-y divide-border">
               {activeSessions.map((session) => (
-                <SessionListItem
-                  key={session.id}
-                  session={session}
-                  onMutationSuccess={onMutationSuccess}
-                />
+                <SessionListItem key={session.id} session={session} />
               ))}
             </ul>
           ) : (
@@ -100,11 +94,7 @@ export function SessionList({
           <CardContent className="p-0">
             <ul className="divide-y divide-border">
               {archivedSessions.map((session) => (
-                <SessionListItem
-                  key={session.id}
-                  session={session}
-                  onMutationSuccess={onMutationSuccess}
-                />
+                <SessionListItem key={session.id} session={session} />
               ))}
             </ul>
           </CardContent>

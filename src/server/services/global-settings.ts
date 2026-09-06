@@ -10,7 +10,7 @@ const GLOBAL_SETTINGS_ID = 'global';
 /**
  * Global settings for use in Claude sessions (prompt building)
  */
-export interface GlobalSystemPromptSettings {
+interface GlobalSystemPromptSettings {
   systemPromptOverride: string | null;
   systemPromptOverrideEnabled: boolean;
   systemPromptAppend: string | null;

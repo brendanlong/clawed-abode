@@ -91,7 +91,7 @@ export function processTerminalOutput(text: string): string {
 /**
  * Check if text contains ANSI escape codes.
  */
-export function hasAnsiCodes(text: string): boolean {
+function hasAnsiCodes(text: string): boolean {
   return /\x1b\[[0-9;]*m/.test(text);
 }
 

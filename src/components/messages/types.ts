@@ -38,7 +38,7 @@ export interface ContentBlock {
   sanitization?: SanitizationInfo;
 }
 
-export interface AssistantMessage {
+interface AssistantMessage {
   id?: string;
   model?: string;
   role?: string;

@@ -12,20 +12,19 @@ import type { Session } from '@/hooks/useSessionList';
 
 export interface SessionListItemProps {
   session: Session;
-  onMutationSuccess?: () => void;
 }
 
 /**
  * Session list item that owns its own mutation state.
  * Each instance tracks its own pending start/stop/archive independently.
  */
-export function SessionListItem({ session, onMutationSuccess }: SessionListItemProps) {
+export function SessionListItem({ session }: SessionListItemProps) {
   const repoName = session.repoUrl ? extractRepoFullName(session.repoUrl) : null;
   const isArchived = session.status === 'archived';
 
-  const startMutation = trpc.sessions.start.useMutation({ onSuccess: onMutationSuccess });
-  const stopMutation = trpc.sessions.stop.useMutation({ onSuccess: onMutationSuccess });
-  const archiveMutation = trpc.sessions.delete.useMutation({ onSuccess: onMutationSuccess });
+  const startMutation = trpc.sessions.start.useMutation();
+  const stopMutation = trpc.sessions.stop.useMutation();
+  const archiveMutation = trpc.sessions.delete.useMutation();
 
   const { pullRequest } = usePullRequestStatus(session.id, !isArchived);
 

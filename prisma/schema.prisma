@@ -26,16 +26,13 @@ model Session {
   name            String
   repoUrl         String? // null for no-repo sessions
   branch          String? // null for no-repo sessions
-  workspacePath   String    @default("") // Path to workspace directory (e.g., ~/worktrees/{sessionId})
   repoPath        String    @default("") // Path to repo relative to workspace (e.g., "my-repo")
   status          String    @default("creating") // creating, running, stopped, error, archived
   statusMessage   String? // Human-readable progress message during creation
-  initialPrompt   String? // Optional prompt to send when session starts (e.g., from GitHub issue)
   currentBranch   String? // Current git branch (detected after each query)
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
-  lastActivityAt  DateTime  @default(now()) // Bumped when a message is persisted; drives session-list ordering
-  archivedAt      DateTime? // When the session was archived (null if not archived)
+  lastActivityAt  DateTime  @default(now()) // Bumped only on user interactions (prompt, answer); drives session-list ordering
   messageSequence Int       @default(0) // Monotonic counter for atomic message sequence assignment (next sequence to assign)
   sessionScope    String? // systemd user scope unit this session's CLI runs in; recorded so a crash-restart can reap the exact orphaned scope (null when not scoped / after clean teardown)
   claudeModel     String? // If set, overrides the repo/global/env Claude model for this session only (highest precedence)
@@ -63,7 +60,6 @@ model RepoSettings {
   id                 String   @id @default(uuid())
   repoFullName       String   @unique // e.g., "owner/repo"
   isFavorite         Boolean  @default(false)
-  displayOrder       Int      @default(0) // For custom ordering within favorites
   customSystemPrompt String? // Optional prompt appended to the default system prompt
   claudeModel        String? // If set, overrides the global/env Claude model for this repo's sessions
   createdAt          DateTime @default(now())
@@ -76,7 +72,12 @@ model RepoSettings {
 }
 
 // Environment variables for a repository or global (some may be encrypted secrets)
-// When repoSettingsId is null, the env var is global (applies to all sessions)
+// When repoSettingsId is null, the env var is global (applies to all sessions).
+// Global name uniqueness is enforced by a partial unique index
+// (EnvVar_global_name_key ... WHERE repoSettingsId IS NULL) written by hand in
+// migration 20260208044452 because Prisma can't express partial indexes. Prisma's
+// differ doesn't know it exists, so any generated migration that rebuilds this
+// table (SQLite drops indexes with the table) must recreate it by hand.
 model EnvVar {
   id             String        @id @default(uuid())
   repoSettingsId String?
@@ -92,7 +93,8 @@ model EnvVar {
 }
 
 // MCP server configurations for a repository or global
-// When repoSettingsId is null, the MCP server is global (applies to all sessions)
+// When repoSettingsId is null, the MCP server is global (applies to all sessions).
+// Same hand-written partial unique index as EnvVar (McpServer_global_name_key).
 model McpServer {
   id             String        @id @default(uuid())
   repoSettingsId String?

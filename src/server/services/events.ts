@@ -6,22 +6,22 @@ import type { RetryState } from '@/lib/claude-messages';
 import { taskHasEndState, type BackgroundTask } from '@/lib/session-status';
 
 // Message with parsed content (for SSE events)
-export type ParsedMessage = Omit<Message, 'content'> & { content: unknown };
+type ParsedMessage = Omit<Message, 'content'> & { content: unknown };
 
 // Event types for type-safe event handling
-export interface SessionUpdateEvent {
+interface SessionUpdateEvent {
   type: 'session_update';
   sessionId: string;
   session: Session;
 }
 
-export interface MessageEvent {
+interface MessageEvent {
   type: 'new_message';
   sessionId: string;
   message: ParsedMessage;
 }
 
-export interface ClaudeRunningEvent {
+interface ClaudeRunningEvent {
   type: 'claude_running';
   sessionId: string;
   running: boolean;
@@ -33,30 +33,30 @@ export interface ClaudeRunningEvent {
  * fires on interrupt/stop/error — this is the genuine "Claude finished" signal the
  * app-level work-complete notifier keys off of. Global-channel only.
  */
-export interface ClaudeFinishedEvent {
+interface ClaudeFinishedEvent {
   type: 'claude_finished';
   sessionId: string;
 }
 
-export interface CommandsEvent {
+interface CommandsEvent {
   type: 'commands';
   sessionId: string;
   commands: SlashCommand[];
 }
 
-export interface PrUpdateEvent {
+interface PrUpdateEvent {
   type: 'pr_update';
   sessionId: string;
   pullRequest: PullRequestInfo | null;
 }
 
-export interface ClaudeRetryEvent {
+interface ClaudeRetryEvent {
   type: 'claude_retry';
   sessionId: string;
   retry: RetryState | null;
 }
 
-export interface BackgroundTasksEvent {
+interface BackgroundTasksEvent {
   type: 'background_tasks';
   sessionId: string;
   tasks: BackgroundTask[];
@@ -70,7 +70,7 @@ export interface BackgroundTasksEvent {
  * no main-agent continuation, or a user ✕-stopping it. The list refetches `sessions.list`
  * on any global event, which carries the authoritative `backgroundActive`.
  */
-export interface ClaudeBackgroundEvent {
+interface ClaudeBackgroundEvent {
   type: 'claude_background';
   sessionId: string;
   active: boolean;
@@ -81,7 +81,7 @@ export interface ClaudeBackgroundEvent {
  * model. The full set every time (not a delta), so a reconnecting client can't
  * drift. See `inFlightCommands` in claude-runner.
  */
-export interface PendingMessagesEvent {
+interface PendingMessagesEvent {
   type: 'pending_messages';
   sessionId: string;
   messageIds: string[];
@@ -92,7 +92,7 @@ export interface PendingMessagesEvent {
  * transcript. Only used for a prompt cancelled by Stop before the agent read it —
  * messages are otherwise immutable once written.
  */
-export interface MessageRemovedEvent {
+interface MessageRemovedEvent {
   type: 'message_removed';
   sessionId: string;
   messageId: string;

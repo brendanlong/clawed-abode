@@ -9,7 +9,7 @@ import { processTerminalOutput, isTerminalOutput } from '@/lib/terminal-output';
  * else is pretty-printed JSON. Shared by every tool-output `<pre>` so the
  * behavior can't drift between displays.
  */
-export function stringifyToolOutput(output: unknown): string {
+function stringifyToolOutput(output: unknown): string {
   return typeof output === 'string' ? output : JSON.stringify(output, null, 2);
 }
 

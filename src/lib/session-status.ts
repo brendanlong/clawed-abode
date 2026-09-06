@@ -63,7 +63,7 @@ export const INITIAL_LIVE_STATUS: LiveStatus = {
 };
 
 /** Which status axes changed in a {@link reduceSessionMessage} step. */
-export interface LiveStatusChange {
+interface LiveStatusChange {
   turnActive: boolean;
   background: boolean;
   retry: boolean;
