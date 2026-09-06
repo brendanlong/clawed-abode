@@ -965,9 +965,11 @@ async function detectBranchAndPr(sessionId: string, workingDir: string): Promise
     if (!session) return;
 
     const detectedBranch = await getCurrentBranch(workingDir);
+    const branchChanged = detectedBranch !== null && detectedBranch !== session.currentBranch;
     const branchForPr = detectedBranch ?? session.currentBranch;
 
-    let pullRequest = session.pullRequest;
+    // A snapshot belongs to one branch: never carry it over to a new one.
+    let pullRequest = branchChanged ? null : session.pullRequest;
     if (session.repoUrl && branchForPr) {
       const pr = await fetchPullRequestForBranch(extractRepoFullName(session.repoUrl), branchForPr);
       // undefined = lookup unavailable (no token / API error): keep what we had.
@@ -975,9 +977,7 @@ async function detectBranchAndPr(sessionId: string, workingDir: string): Promise
     }
 
     const data = {
-      ...(detectedBranch && detectedBranch !== session.currentBranch
-        ? { currentBranch: detectedBranch }
-        : {}),
+      ...(branchChanged ? { currentBranch: detectedBranch } : {}),
       ...(pullRequest !== session.pullRequest ? { pullRequest } : {}),
     };
     if (Object.keys(data).length === 0) return;

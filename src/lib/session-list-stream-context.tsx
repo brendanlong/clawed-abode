@@ -7,7 +7,9 @@ import { useAuth } from '@/lib/auth-context';
 import type { SessionListStreamEvent } from '@/server/routers/sse';
 
 type Handler = (event: SessionListStreamEvent) => void;
-type Subscribe = (handler: Handler) => () => void;
+/** Called when the stream errors, so consumers can resync (tRPC reconnects on its own). */
+type ErrorHandler = () => void;
+type Subscribe = (handler: Handler, onError?: ErrorHandler) => () => void;
 
 const SessionListStreamContext = createContext<Subscribe | undefined>(undefined);
 
@@ -20,6 +22,7 @@ const SessionListStreamContext = createContext<Subscribe | undefined>(undefined)
 export function SessionListStreamProvider({ children }: { children: ReactNode }) {
   const { isAuthenticated } = useAuth();
   const handlersRef = useRef(new Set<Handler>());
+  const errorHandlersRef = useRef(new Set<ErrorHandler>());
 
   trpc.sse.onSessionListEvents.useSubscription(undefined, {
     enabled: isAuthenticated,
@@ -27,15 +30,17 @@ export function SessionListStreamProvider({ children }: { children: ReactNode })
       for (const handler of handlersRef.current) handler(tracked.data);
     },
     onError: (err) => {
-      // tRPC reconnects on its own; consumers resync via useRefetchOnReconnect.
       console.error('Session list stream SSE error:', err);
+      for (const handler of errorHandlersRef.current) handler();
     },
   });
 
-  const subscribe = useCallback<Subscribe>((handler) => {
+  const subscribe = useCallback<Subscribe>((handler, onError) => {
     handlersRef.current.add(handler);
+    if (onError) errorHandlersRef.current.add(onError);
     return () => {
       handlersRef.current.delete(handler);
+      if (onError) errorHandlersRef.current.delete(onError);
     };
   }, []);
 
@@ -46,15 +51,27 @@ export function SessionListStreamProvider({ children }: { children: ReactNode })
   );
 }
 
-/** Run `handler` for every session-list stream event while the caller is mounted. */
-export function useSessionListEvent(handler: Handler): void {
+/**
+ * Run `handler` for every session-list stream event while the caller is mounted,
+ * and `onError` whenever the stream errors (events may have been missed).
+ */
+export function useSessionListEvent(handler: Handler, onError?: ErrorHandler): void {
   const subscribe = useContext(SessionListStreamContext);
   if (!subscribe) {
     throw new Error('useSessionListEvent must be used within a SessionListStreamProvider');
   }
   const handlerRef = useRef(handler);
+  const onErrorRef = useRef(onError);
   useEffect(() => {
     handlerRef.current = handler;
-  }, [handler]);
-  useEffect(() => subscribe((event) => handlerRef.current(event)), [subscribe]);
+    onErrorRef.current = onError;
+  }, [handler, onError]);
+  useEffect(
+    () =>
+      subscribe(
+        (event) => handlerRef.current(event),
+        () => onErrorRef.current?.()
+      ),
+    [subscribe]
+  );
 }

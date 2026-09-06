@@ -8,7 +8,7 @@ export const SESSION_PAGE_SIZE = 50;
  * activity timestamp can never be skipped or repeated across pages.
  */
 export const sessionCursorSchema = z.object({
-  lastActivityAt: z.string(),
+  lastActivityAt: z.iso.datetime(),
   id: z.string(),
 });
 

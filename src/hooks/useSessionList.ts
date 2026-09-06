@@ -38,7 +38,8 @@ export function useSessionList({
 
   return {
     sessions: query.data?.pages.flatMap((page) => page.sessions) ?? [],
-    isLoading: query.isLoading,
+    // isPending (not isLoading) so a list that was disabled until now reads as loading, not empty.
+    isLoading: query.isPending,
     hasMore: query.hasNextPage,
     isFetchingMore: query.isFetchingNextPage,
     fetchMore: useCallback(() => void fetchNextPage(), [fetchNextPage]),
