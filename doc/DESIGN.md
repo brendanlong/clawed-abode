@@ -10,9 +10,8 @@ This file is the high-level map and is auto-loaded into every agent session — 
 - [`messages-and-sse.md`](messages-and-sse.md) — message classification, storage/pagination, SSE streaming/resume
 - [`settings.md`](settings.md) — settings layers, model resolution, secrets, MCP servers
 - [`security.md`](security.md) — auth and input sanitization
-- [`voice.md`](voice.md) — browser speech input/output
 
-Keep this doc, the reference docs, and [`architecture.d2`](architecture.d2) up to date when changing behavior (see the documentation rules in the root `CLAUDE.md`).
+Keep this doc and the reference docs up to date when changing behavior (see the documentation rules in the root `CLAUDE.md`).
 
 ## Goals
 
@@ -77,6 +76,10 @@ The schema ([`prisma/schema.prisma`](../prisma/schema.prisma)) is the source of 
 
 - Users interact through the web UI with no local file access, so work is only visible once committed, pushed, and PR'd — the prompt requires that workflow.
 - All sessions run as one host user alongside the app server, so a bare `pkill`/`killall` by name can kill other sessions or the server; the prompt steers agents to PID-kill or a `--cgroup`-scoped kill.
+
+## Voice
+
+Speech input/output uses the browser's Web Speech APIs only (no keys, no server audio). Hooks: [`useVoiceRecording`](../src/hooks/useVoiceRecording.ts), [`useVoicePlayback`](../src/hooks/useVoicePlayback.ts) (which documents the browser quirks the playback code works around), [`useVoiceConfig`](../src/hooks/useVoiceConfig.ts); UI in [`src/components/voice/`](../src/components/voice/).
 
 ## Remote File Editing
 

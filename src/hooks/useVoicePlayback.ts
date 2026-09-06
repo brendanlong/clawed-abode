@@ -46,10 +46,16 @@ export function useVoicePlaybackContext() {
   return useContext(VoicePlaybackContext);
 }
 
-/**
- * Chrome has a bug where utterances over ~15 seconds stop abruptly.
- * Workaround: split text into chunks at sentence boundaries.
- * https://issues.chromium.org/issues/41294170
+/*
+ * Browser quirks this hook works around (SpeechSynthesis is uneven across engines):
+ * - Chrome kills utterances over ~15s (https://issues.chromium.org/issues/41294170),
+ *   so text is chunked at sentence boundaries (CHUNK_MAX_LENGTH) and spoken in sequence.
+ * - Android: speechSynthesis.pause() behaves like cancel(), so pause/resume is disabled there.
+ * - Backgrounded tabs may silence or cancel synthesis mid-utterance.
+ * - iOS requires a user activation before speak() will produce sound.
+ * - Some platforms (notably Android) fail with an explicit voice set; a synthesis-failed
+ *   error retries once with the browser default.
+ * STT lives in useVoiceRecording; Firefox has no SpeechRecognition without a flag.
  */
 const CHUNK_MAX_LENGTH = 200;
 
