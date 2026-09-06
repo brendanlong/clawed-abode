@@ -1,7 +1,8 @@
 'use client';
 
 import { createTRPCReact, TRPCClientError } from '@trpc/react-query';
-import { httpBatchLink, httpSubscriptionLink, splitLink, TRPCLink } from '@trpc/client';
+import type { TRPCLink } from '@trpc/client';
+import { httpBatchLink, httpSubscriptionLink, splitLink } from '@trpc/client';
 import { observable } from '@trpc/server/observable';
 import { EventSourcePolyfill } from 'event-source-polyfill';
 import superjson from 'superjson';

@@ -1,6 +1,6 @@
 'use client';
 
-import { ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { Spinner } from '@/components/ui/spinner';
 import {
   AlertDialog,
