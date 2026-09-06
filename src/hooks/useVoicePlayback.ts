@@ -11,7 +11,7 @@ import {
 } from 'react';
 
 /** Item in the sequential playback queue */
-export interface PlaybackQueueItem {
+interface PlaybackQueueItem {
   messageId: string;
   text: string;
 }
@@ -28,7 +28,7 @@ export interface VoicePlaybackState {
   restart: () => Promise<void>;
 }
 
-const defaultPlaybackState: VoicePlaybackState = {
+export const defaultPlaybackState: VoicePlaybackState = {
   enabled: false,
   isPlaying: false,
   currentMessageId: null,

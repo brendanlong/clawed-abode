@@ -5,7 +5,7 @@ import { diffLines, diffWordsWithSpace, type Change } from 'diff';
  * portion that actually changed (word-level), so unchanged words on a modified
  * line can be rendered without emphasis.
  */
-export interface DiffSegment {
+interface DiffSegment {
   value: string;
   highlight: boolean;
 }

@@ -20,10 +20,9 @@ import markdown from 'highlight.js/lib/languages/markdown';
 import sql from 'highlight.js/lib/languages/sql';
 import bash from 'highlight.js/lib/languages/bash';
 import dockerfile from 'highlight.js/lib/languages/dockerfile';
-import { getFileType } from './file-types';
 
 /**
- * Map a {@link getFileType} result to a registered highlight.js language id.
+ * Map a `getFileType` result to a registered highlight.js language id.
  * File types with no corresponding grammar (e.g. `prisma`, `text`) are absent
  * and fall back to plain, escaped rendering.
  */
@@ -93,7 +92,7 @@ function escapeHtml(value: string): string {
 const MAX_HIGHLIGHT_CHARS = 100_000;
 
 /**
- * Highlight `code` for the given {@link getFileType} result, returning an HTML
+ * Highlight `code` for the given `getFileType` result, returning an HTML
  * string of `<span class="hljs-...">` tokens (themed via CSS). Languages without
  * a grammar, inputs over {@link MAX_HIGHLIGHT_CHARS}, or any highlighting error
  * fall back to escaped plain text, so the output is always safe to inject. Pure
@@ -109,9 +108,4 @@ export function highlightCode(code: string, fileType: string): string {
   } catch {
     return escapeHtml(code);
   }
-}
-
-/** Convenience: highlight by file path rather than a pre-computed file type. */
-export function highlightCodeForFile(code: string, filePath: string): string {
-  return highlightCode(code, getFileType(filePath));
 }

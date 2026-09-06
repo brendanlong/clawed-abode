@@ -334,14 +334,6 @@ export function MessageList({
   const { isPlaying: voiceIsPlaying, currentMessageId: voiceCurrentMessageId } =
     useVoicePlaybackContext();
 
-  // Whether the user has manually scrolled away from the currently-playing message.
-  // Reset each time playback advances to a new message (giving user a fresh chance to follow).
-  const userScrolledAwayFromPlaybackRef = useRef(false);
-
-  // Flag to distinguish programmatic scrolls (our scrollIntoView) from user-initiated scrolls.
-  // Set to true before scrollIntoView, cleared after a short timeout.
-  const programmaticScrollRef = useRef(false);
-
   // Track which TodoWrite components have been manually toggled by the user
   const [manuallyToggledTodoIds, setManuallyToggledTodoIds] = useState<Set<string>>(new Set());
 
@@ -597,38 +589,12 @@ export function MessageList({
     // Don't scroll on pause/resume (same ID) or when playback stops (null ID).
     if (!voiceIsPlaying || !voiceCurrentMessageId || voiceCurrentMessageId === prevId) return;
 
-    // New message started playing — reset the "user scrolled away" flag
-    // so user gets a fresh chance to follow along.
-    userScrolledAwayFromPlaybackRef.current = false;
-
-    const container = containerRef.current;
-    if (!container) return;
-
-    const messageEl = container.querySelector(`[data-message-id="${voiceCurrentMessageId}"]`);
-    if (!messageEl) return;
-
-    // Mark this scroll as programmatic so the scroll listener ignores it.
-    // Use instant scroll to avoid race conditions (same reason as scrollToBottom).
-    programmaticScrollRef.current = true;
-    messageEl.scrollIntoView({ behavior: 'instant', block: 'center' });
-    programmaticScrollRef.current = false;
+    const messageEl = containerRef.current?.querySelector(
+      `[data-message-id="${voiceCurrentMessageId}"]`
+    );
+    // Instant scroll to avoid race conditions (same reason as scrollToBottom).
+    messageEl?.scrollIntoView({ behavior: 'instant', block: 'center' });
   }, [voiceIsPlaying, voiceCurrentMessageId]);
-
-  // Detect user-initiated scrolls during playback.
-  // If the user scrolls while voice is playing, set userScrolledAwayFromPlaybackRef
-  // so we stop chasing the playing message (don't fight the user).
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container || !voiceIsPlaying) return;
-
-    const handleScroll = () => {
-      if (programmaticScrollRef.current) return; // Ignore our own scrollIntoView
-      userScrolledAwayFromPlaybackRef.current = true;
-    };
-
-    container.addEventListener('scroll', handleScroll, { passive: true });
-    return () => container.removeEventListener('scroll', handleScroll);
-  }, [voiceIsPlaying]);
 
   // When playback stops, transition back to normal auto-scroll behavior.
   // If the user is near the bottom, do a final scroll to bottom.
@@ -637,14 +603,9 @@ export function MessageList({
     const wasPlaying = prevVoiceIsPlayingRef.current;
     prevVoiceIsPlayingRef.current = voiceIsPlaying;
 
-    if (wasPlaying && !voiceIsPlaying) {
-      // Playback just stopped — reset the flag
-      userScrolledAwayFromPlaybackRef.current = false;
-
-      // If user is near the bottom, snap to bottom for normal behavior
-      if (isAtBottomRef.current) {
-        scrollToBottom();
-      }
+    // Playback just stopped: if the user is near the bottom, snap back to normal auto-scroll
+    if (wasPlaying && !voiceIsPlaying && isAtBottomRef.current) {
+      scrollToBottom();
     }
   }, [voiceIsPlaying, scrollToBottom]);
 

@@ -10,7 +10,7 @@ const GITHUB_API = 'https://api.github.com';
 // Shared types
 // =============================================================================
 
-export type PrState = 'open' | 'closed' | 'merged';
+type PrState = 'open' | 'closed' | 'merged';
 
 export interface PullRequestInfo {
   number: number;

@@ -20,16 +20,16 @@ export const envVarSchema = z.object({
   isSecret: z.boolean().default(false),
 });
 
-export const mcpServerEnvValueSchema = z.object({
+const mcpServerEnvValueSchema = z.object({
   value: z.string(),
   isSecret: z.boolean().default(false),
 });
 
 export type McpServerEnvValue = z.infer<typeof mcpServerEnvValueSchema>;
 
-export const mcpServerEnvSchema = z.record(z.string(), mcpServerEnvValueSchema);
+const mcpServerEnvSchema = z.record(z.string(), mcpServerEnvValueSchema);
 
-export const mcpServerStdioSchema = z.object({
+const mcpServerStdioSchema = z.object({
   name: z.string().min(1).max(100),
   type: z.literal('stdio').default('stdio'),
   command: z.string().min(1).max(1000),
@@ -37,7 +37,7 @@ export const mcpServerStdioSchema = z.object({
   env: mcpServerEnvSchema.optional(),
 });
 
-export const mcpServerHttpSchema = z.object({
+const mcpServerHttpSchema = z.object({
   name: z.string().min(1).max(100),
   type: z.enum(['http', 'sse']),
   url: z.string().url().max(2000),
@@ -68,7 +68,7 @@ export function requireEncryptionForSecrets(hasSecrets: boolean): void {
 /**
  * Mask secret values for display
  */
-export function maskSecrets<T extends { value: string; isSecret: boolean }>(items: T[]): T[] {
+function maskSecrets<T extends { value: string; isSecret: boolean }>(items: T[]): T[] {
   return items.map((item) => ({
     ...item,
     value: item.isSecret ? '••••••••' : item.value,
@@ -78,9 +78,7 @@ export function maskSecrets<T extends { value: string; isSecret: boolean }>(item
 /**
  * Mask MCP server env/header secrets for display
  */
-export function maskMcpEnv(
-  env: Record<string, McpServerEnvValue>
-): Record<string, McpServerEnvValue> {
+function maskMcpEnv(env: Record<string, McpServerEnvValue>): Record<string, McpServerEnvValue> {
   return Object.fromEntries(
     Object.entries(env).map(([key, { value, isSecret }]) => [
       key,

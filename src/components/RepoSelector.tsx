@@ -24,7 +24,7 @@ export interface Repo {
 }
 
 /** Synthetic Repo entry representing "No Repository" */
-export const NO_REPO_ENTRY: Repo = {
+const NO_REPO_ENTRY: Repo = {
   id: -1,
   fullName: NO_REPO_SENTINEL,
   name: 'No Repository',

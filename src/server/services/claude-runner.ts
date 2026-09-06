@@ -1176,7 +1176,7 @@ async function establishSessionQuery(
  * single establishment. This is the "resume as needed" recovery path after a
  * server restart or a fatal query error.
  */
-export function ensureSessionQuery(sessionId: string): Promise<SessionState> {
+function ensureSessionQuery(sessionId: string): Promise<SessionState> {
   const existing = sessions.get(sessionId);
   if (existing?.query) return Promise.resolve(existing);
   if (existing?.establishing) return existing.establishing;

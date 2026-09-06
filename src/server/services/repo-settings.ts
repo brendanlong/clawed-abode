@@ -17,7 +17,7 @@ export type McpServerType = 'stdio' | 'http' | 'sse';
 /**
  * Stdio MCP server configuration for container
  */
-export interface ContainerStdioMcpServer {
+interface ContainerStdioMcpServer {
   name: string;
   type: 'stdio';
   command: string;
@@ -28,7 +28,7 @@ export interface ContainerStdioMcpServer {
 /**
  * HTTP MCP server configuration for container
  */
-export interface ContainerHttpMcpServer {
+interface ContainerHttpMcpServer {
   name: string;
   type: 'http';
   url: string;
@@ -38,7 +38,7 @@ export interface ContainerHttpMcpServer {
 /**
  * SSE MCP server configuration for container
  */
-export interface ContainerSseMcpServer {
+interface ContainerSseMcpServer {
   name: string;
   type: 'sse';
   url: string;

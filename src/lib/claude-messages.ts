@@ -24,7 +24,7 @@ export const TextBlockSchema = z.object({
  * Thinking content block - represents Claude's extended-thinking reasoning.
  * `signature` is present on summarized thinking and absent while streaming.
  */
-export const ThinkingBlockSchema = z.object({
+const ThinkingBlockSchema = z.object({
   type: z.literal('thinking'),
   thinking: z.string(),
   signature: z.string().optional(),
@@ -34,7 +34,7 @@ export const ThinkingBlockSchema = z.object({
  * Redacted thinking block - thinking that the API encrypted rather than returning.
  * Carries no human-readable text, only opaque `data`.
  */
-export const RedactedThinkingBlockSchema = z.object({
+const RedactedThinkingBlockSchema = z.object({
   type: z.literal('redacted_thinking'),
   data: z.string(),
 });
@@ -65,7 +65,7 @@ export const ToolResultBlockSchema = z.object({
  * canUseTool, and its result arrives as a dedicated block type rather than a
  * `tool_result` in a user message.
  */
-export const ServerToolUseBlockSchema = z.object({
+const ServerToolUseBlockSchema = z.object({
   type: z.literal('server_tool_use'),
   id: z.string(),
   name: z.string(),
@@ -77,7 +77,7 @@ export const ServerToolUseBlockSchema = z.object({
  * advisor call. The content is encrypted (`advisor_redacted_result`) and only
  * readable by the model, so it carries nothing renderable.
  */
-export const AdvisorToolResultBlockSchema = z.object({
+const AdvisorToolResultBlockSchema = z.object({
   type: z.literal('advisor_tool_result'),
   tool_use_id: z.string(),
   content: z.unknown().optional(),
@@ -95,7 +95,6 @@ export const ContentBlockSchema = z.discriminatedUnion('type', [
   ServerToolUseBlockSchema,
   AdvisorToolResultBlockSchema,
 ]);
-export type ContentBlock = z.infer<typeof ContentBlockSchema>;
 
 // =============================================================================
 // Usage Schemas
@@ -104,7 +103,7 @@ export type ContentBlock = z.infer<typeof ContentBlockSchema>;
 /**
  * Cache creation info
  */
-export const CacheCreationSchema = z.object({
+const CacheCreationSchema = z.object({
   ephemeral_5m_input_tokens: z.number().optional(),
   ephemeral_1h_input_tokens: z.number().optional(),
 });
@@ -112,7 +111,7 @@ export const CacheCreationSchema = z.object({
 /**
  * Usage statistics for a single message
  */
-export const MessageUsageSchema = z.object({
+const MessageUsageSchema = z.object({
   input_tokens: z.number().optional(),
   output_tokens: z.number().optional(),
   cache_creation_input_tokens: z.number().optional(),
@@ -124,7 +123,7 @@ export const MessageUsageSchema = z.object({
 /**
  * Usage stats for a specific model in result messages
  */
-export const ModelUsageSchema = z.object({
+const ModelUsageSchema = z.object({
   inputTokens: z.number().optional(),
   outputTokens: z.number().optional(),
   cacheReadInputTokens: z.number().optional(),
@@ -138,7 +137,7 @@ export const ModelUsageSchema = z.object({
 /**
  * Server tool use stats
  */
-export const ServerToolUseSchema = z.object({
+const ServerToolUseSchema = z.object({
   web_search_requests: z.number().optional(),
   web_fetch_requests: z.number().optional(),
 });
@@ -149,7 +148,7 @@ export const ServerToolUseSchema = z.object({
  * all fields are required numbers. We keep them optional in our schema for
  * backwards compatibility with older stored messages.
  */
-export const ResultUsageSchema = z.object({
+const ResultUsageSchema = z.object({
   input_tokens: z.number().optional(),
   output_tokens: z.number().optional(),
   cache_creation_input_tokens: z.number().optional(),
@@ -168,7 +167,7 @@ export const ResultUsageSchema = z.object({
 /**
  * The inner message object from the API response
  */
-export const ApiMessageSchema = z.object({
+const ApiMessageSchema = z.object({
   model: z.string().optional(),
   id: z.string().optional(),
   type: z.literal('message').optional(),
@@ -236,12 +235,11 @@ export const SystemInitContentSchema = z.object({
 /**
  * Permission denial info from result messages
  */
-export const PermissionDenialSchema = z.object({
+const PermissionDenialSchema = z.object({
   tool_name: z.string().optional(),
   tool_use_id: z.string().optional(),
   tool_input: z.unknown().optional(),
 });
-export type PermissionDenial = z.infer<typeof PermissionDenialSchema>;
 
 /**
  * Result message content (session completion)
@@ -273,7 +271,6 @@ export const ResultContentSchema = z.object({
   structured_output: z.unknown().optional(),
   uuid: z.string().optional(),
 });
-export type ResultContent = z.infer<typeof ResultContentSchema>;
 
 // =============================================================================
 // Message Handling Types
@@ -282,7 +279,7 @@ export type ResultContent = z.infer<typeof ResultContentSchema>;
 /**
  * The four message types stored in the `Message.type` DB column.
  */
-export type DbMessageType = 'system' | 'user' | 'assistant' | 'result';
+type DbMessageType = 'system' | 'user' | 'assistant' | 'result';
 
 /**
  * How a streamed SDK message should be handled by the runner.
@@ -316,7 +313,7 @@ export type MessageHandling =
  *
  * Without this filter each would render as an empty "System" bubble.
  */
-export const IGNORED_SYSTEM_SUBTYPES = [
+const IGNORED_SYSTEM_SUBTYPES = [
   'thinking_tokens',
   'task_progress',
   'task_updated',
@@ -335,7 +332,7 @@ export const IGNORED_SYSTEM_SUBTYPES = [
  * latest attempt count is streamed live as ephemeral status (see
  * {@link parseRetryState}).
  */
-export const ApiRetryContentSchema = z.object({
+const ApiRetryContentSchema = z.object({
   type: z.literal('system'),
   subtype: z.literal('api_retry'),
   attempt: z.number(),
@@ -422,7 +419,7 @@ export function formatRetryReason(retry: RetryState): string | null {
  * command queue but not yet handed to the model — is load-bearing, and anything
  * else means the message has left the queue.
  */
-export const CommandLifecycleSchema = z.object({
+const CommandLifecycleSchema = z.object({
   type: z.literal('command_lifecycle'),
   command_uuid: z.string().min(1),
   state: z.string().min(1),

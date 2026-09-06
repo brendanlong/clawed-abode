@@ -12,7 +12,7 @@ const log = createLogger('mcp-config-file');
  * doesn't pollute git status). Cleaned up automatically when the session is
  * archived (the whole workspace is removed by `removeWorkspace`).
  */
-export const MCP_CONFIG_FILENAME = 'mcp-config.json';
+const MCP_CONFIG_FILENAME = 'mcp-config.json';
 
 /** Absolute path of a session's MCP config file. */
 export function getSessionMcpConfigPath(sessionId: string): string {

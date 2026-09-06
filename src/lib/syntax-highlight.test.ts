@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { highlightCode, highlightCodeForFile } from './syntax-highlight';
+import { highlightCode } from './syntax-highlight';
 
 describe('highlightCode', () => {
   it('wraps tokens in hljs spans for a known language', () => {
@@ -29,11 +29,6 @@ describe('highlightCode', () => {
   it('maps shell file type to the bash grammar', () => {
     const html = highlightCode('echo "hi"', 'shell');
     expect(html).toContain('hljs-');
-  });
-
-  it('highlightCodeForFile resolves the language from the path', () => {
-    const html = highlightCodeForFile('def f(): pass', '/tmp/foo.py');
-    expect(html).toContain('hljs-keyword');
   });
 
   it('returns empty string for empty input', () => {

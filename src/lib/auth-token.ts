@@ -2,7 +2,7 @@
  * Client-side auth token storage. Centralized so the tRPC client, auth context,
  * and plain `fetch` callers (e.g. the file-upload route) share one key.
  */
-export const AUTH_TOKEN_KEY = 'auth_token';
+const AUTH_TOKEN_KEY = 'auth_token';
 
 export function getAuthToken(): string | null {
   if (typeof window === 'undefined') return null;

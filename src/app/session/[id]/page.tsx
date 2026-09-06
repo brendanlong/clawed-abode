@@ -18,7 +18,11 @@ import { useSessionMessages } from '@/hooks/useSessionMessages';
 import { useClaudeState } from '@/hooks/useClaudeState';
 import { useSessionStream } from '@/hooks/useSessionStream';
 import { useVoiceConfig } from '@/hooks/useVoiceConfig';
-import { useVoicePlayback, VoicePlaybackContext } from '@/hooks/useVoicePlayback';
+import {
+  defaultPlaybackState,
+  useVoicePlayback,
+  VoicePlaybackContext,
+} from '@/hooks/useVoicePlayback';
 import { getNewAutoReadMessages } from '@/lib/auto-read-helpers';
 import { VoiceControlPanel } from '@/components/voice/VoiceControlPanel';
 import type { UploadedAttachment } from '@/lib/attachments';
@@ -246,17 +250,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
       value={
         voiceConfig.enabled
           ? { ...voicePlayback, stop: stopWithAutoReadFlag }
-          : {
-              enabled: false,
-              isPlaying: false,
-              currentMessageId: null,
-              supportsPause: false,
-              play: async () => {},
-              enqueue: () => {},
-              pause: () => {},
-              stop: () => {},
-              restart: async () => {},
-            }
+          : defaultPlaybackState
       }
     >
       <div className="flex-1 flex flex-col min-h-0">
@@ -318,7 +312,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
               isInterrupting={isInterrupting}
               disabled={session.status !== 'running'}
               commands={commands}
-              voiceEnabled={voiceConfig.enabled}
+              voiceEnabled={voiceConfig.sttEnabled}
               voiceAutoSend={voiceConfig.autoSend}
             />
           </>
