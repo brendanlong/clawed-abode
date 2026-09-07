@@ -26,7 +26,7 @@ export default tseslint.config(
   },
   {
     // Backend code must use createLogger from @/lib/logger, even for errors.
-    files: ['src/server/**', 'src/instrumentation.ts'],
+    files: ['src/server/**', 'src/instrumentation.ts', 'src/instrumentation-node.ts'],
     rules: { 'no-console': 'error' },
   },
   {
