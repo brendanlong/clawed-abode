@@ -1,7 +1,8 @@
 /**
  * Test database setup utilities.
  *
- * Sets up an in-memory SQLite database for integration tests.
+ * Gives each integration test file its own SQLite database, copied from the
+ * template that src/test/global-setup-integration.ts migrated once for the run.
  * Uses the real Prisma client and prisma module - no mocking needed.
  *
  * Usage in tests:
@@ -25,9 +26,9 @@
  * ```
  */
 
+import { inject } from 'vitest';
 import type { PrismaClient } from '@/generated/prisma/client';
-import { execSync } from 'child_process';
-import { mkdtempSync, rmSync } from 'fs';
+import { copyFileSync, mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
@@ -62,11 +63,7 @@ export async function setupTestDb(): Promise<void> {
     globalForPrisma.prisma = undefined;
   }
 
-  // Run migrations (using migrate deploy to catch missing migrations)
-  execSync('npx prisma migrate deploy', {
-    env: { ...process.env, DATABASE_URL: databaseUrl },
-    stdio: 'pipe',
-  });
+  copyFileSync(inject('testDbTemplate'), dbPath);
 
   // Now import the real prisma module - it will create a client with our test DATABASE_URL
   // We use dynamic import to ensure it happens after we set DATABASE_URL

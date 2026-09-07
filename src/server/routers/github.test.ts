@@ -4,16 +4,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
 
-// Mock logger
-vi.mock('@/lib/logger', () => ({
-  createLogger: () => ({
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-    debug: vi.fn(),
-  }),
-  toError: (e: unknown) => (e instanceof Error ? e : new Error(String(e))),
-}));
+vi.mock('@/lib/logger', async () => (await import('@/test/mock-logger')).mockLoggerModule());
 
 // ../trpc imports prisma for createContext; this router never touches the DB.
 vi.mock('@/lib/prisma', () => ({ prisma: {} }));

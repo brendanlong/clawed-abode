@@ -121,10 +121,10 @@ describe('VoiceControlPanel send-failure handling', () => {
     await user.click(screen.getByRole('button', { name: /start recording/i }));
     await user.click(screen.getByRole('button', { name: /stop recording/i }));
 
-    expect(onSendPrompt).toHaveBeenCalledWith('dictated message');
-    // Nothing restored, no error, no lingering transcript.
-    await waitFor(() => expect(onSendPrompt).toHaveBeenCalled());
+    await waitFor(() => expect(onSendPrompt).toHaveBeenCalledWith('dictated message'));
+    // Nothing restored, no error text, no lingering transcript.
     expect(screen.queryByText('dictated message')).not.toBeInTheDocument();
+    expect(document.querySelector('.text-destructive')).toBeNull();
   });
 
   it('cancel clears a send error', async () => {

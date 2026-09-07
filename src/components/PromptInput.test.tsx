@@ -151,9 +151,10 @@ describe('PromptInput', () => {
 
       // Try to type (won't work since disabled)
       await user.type(screen.getByRole('textbox'), 'Test');
+      await user.click(screen.getByRole('button', { name: /send/i }));
 
-      // Button should still be disabled
       expect(screen.getByRole('button', { name: /send/i })).toBeDisabled();
+      expect(onSubmit).not.toHaveBeenCalled();
     });
 
     it('sends while running (the message interleaves into the turn)', async () => {
@@ -338,6 +339,7 @@ describe('PromptInput', () => {
 
     it('does not call onInterrupt when button is disabled', async () => {
       const onInterrupt = vi.fn();
+      const user = userEvent.setup();
       render(
         <PromptInput
           {...defaultProps}
@@ -347,8 +349,10 @@ describe('PromptInput', () => {
         />
       );
 
-      // Button should be disabled
+      await user.click(screen.getByRole('button', { name: /stopping/i }));
+
       expect(screen.getByRole('button', { name: /stopping/i })).toBeDisabled();
+      expect(onInterrupt).not.toHaveBeenCalled();
     });
   });
 
