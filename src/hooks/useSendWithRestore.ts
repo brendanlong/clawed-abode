@@ -36,8 +36,8 @@ function errorMessage(err: unknown, fallback: string): string {
  * rejects (queue overflow, session not running, network blip) the draft is
  * restored via `restoreFailed` and the error surfaced as `sendError`. `stop`
  * interrupts the turn and merges any recalled prompts back via `restoreCancelled`.
- * Pass stable callbacks (module-level functions or `useCallback`) so the returned
- * handlers keep their identity across renders.
+ * Pass a stable `empty` value and stable callbacks (module-level constants or
+ * `useCallback`) so the returned handlers keep their identity across renders.
  */
 export function useSendWithRestore<D>({
   empty,

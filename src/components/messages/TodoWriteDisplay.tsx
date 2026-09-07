@@ -6,10 +6,10 @@ import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
 import { useMessageListContext } from './MessageListContext';
-import { parseToolInput } from './tool-input';
+import { lenient, parseToolInput } from './tool-input';
 import { todoItemSchema, type ToolCall } from './types';
 
-const todoWriteInputSchema = z.object({ todos: z.array(todoItemSchema).optional() });
+const todoWriteInputSchema = z.object({ todos: lenient(z.array(todoItemSchema)) });
 
 // Checkmark icon for completed items
 function CheckIcon() {

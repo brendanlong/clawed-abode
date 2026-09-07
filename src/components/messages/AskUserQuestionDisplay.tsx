@@ -6,21 +6,19 @@ import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
 import { useMessageListContext } from './MessageListContext';
-import { parseToolInput } from './tool-input';
+import { lenient, lenientString, parseToolInput } from './tool-input';
 import type { ToolCall } from './types';
 
 const questionSchema = z.object({
-  question: z.string(),
-  header: z.string().default(''),
-  options: z
-    .array(z.object({ label: z.string(), description: z.string().default('') }))
-    .default([]),
-  multiSelect: z.boolean().default(false),
+  question: lenientString,
+  header: lenientString,
+  options: z.array(z.object({ label: lenientString, description: lenientString })).catch([]),
+  multiSelect: z.boolean().catch(false),
 });
 type Question = z.infer<typeof questionSchema>;
 type QuestionOption = Question['options'][number];
 
-const askUserQuestionInputSchema = z.object({ questions: z.array(questionSchema).optional() });
+const askUserQuestionInputSchema = z.object({ questions: lenient(z.array(questionSchema)) });
 
 // Question mark icon
 function QuestionIcon() {

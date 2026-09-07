@@ -7,10 +7,10 @@ import { Badge } from '@/components/ui/badge';
 import { FileIcon } from './FileIcon';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
 import { ToolOutputBlock } from './ToolOutputBlock';
-import { parseToolInput } from './tool-input';
+import { lenient, parseToolInput } from './tool-input';
 import type { ToolCall } from './types';
 
-const globInputSchema = z.object({ pattern: z.string().optional(), path: z.string().optional() });
+const globInputSchema = z.object({ pattern: lenient(z.string()), path: lenient(z.string()) });
 
 interface FileEntry {
   path: string;

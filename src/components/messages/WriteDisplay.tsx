@@ -8,12 +8,12 @@ import { FileIcon } from './FileIcon';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
 import { ToolOutputBlock } from './ToolOutputBlock';
 import { CodeBlock } from './CodeBlock';
-import { parseToolInput } from './tool-input';
+import { lenient, parseToolInput } from './tool-input';
 import type { ToolCall } from './types';
 
 const writeInputSchema = z.object({
-  file_path: z.string().optional(),
-  content: z.string().optional(),
+  file_path: lenient(z.string()),
+  content: lenient(z.string()),
 });
 
 /**

@@ -105,9 +105,9 @@ export interface DisplayMessage {
 }
 
 export const todoItemSchema = z.object({
-  content: z.string(),
-  status: z.enum(['pending', 'in_progress', 'completed']),
-  activeForm: z.string(),
+  content: z.string().catch(''),
+  status: z.enum(['pending', 'in_progress', 'completed']).catch('pending'),
+  activeForm: z.string().catch(''),
 });
 export type TodoItem = z.infer<typeof todoItemSchema>;
 

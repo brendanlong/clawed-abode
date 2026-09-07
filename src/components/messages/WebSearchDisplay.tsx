@@ -5,10 +5,10 @@ import { useMemo } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
 import { ToolOutputBlock } from './ToolOutputBlock';
-import { parseToolInput } from './tool-input';
+import { lenient, parseToolInput } from './tool-input';
 import type { ToolCall } from './types';
 
-const webSearchInputSchema = z.object({ query: z.string().optional() });
+const webSearchInputSchema = z.object({ query: lenient(z.string()) });
 
 interface SearchLink {
   title: string;

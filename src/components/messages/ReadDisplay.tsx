@@ -9,13 +9,13 @@ import { ToolDisplayWrapper } from './ToolDisplayWrapper';
 import { ToolOutputBlock } from './ToolOutputBlock';
 import { CodeBlock } from './CodeBlock';
 import { parseReadOutput } from './read-output';
-import { parseToolInput } from './tool-input';
+import { lenient, parseToolInput } from './tool-input';
 import type { ToolCall } from './types';
 
 const readInputSchema = z.object({
-  file_path: z.string().optional(),
-  offset: z.number().optional(),
-  limit: z.number().optional(),
+  file_path: lenient(z.string()),
+  offset: lenient(z.number()),
+  limit: lenient(z.number()),
 });
 
 /**

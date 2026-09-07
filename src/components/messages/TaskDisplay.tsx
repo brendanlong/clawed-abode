@@ -7,14 +7,14 @@ import { Badge } from '@/components/ui/badge';
 import { MarkdownContent } from '@/components/MarkdownContent';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
 import { useMessageListContext } from './MessageListContext';
-import { parseToolInput } from './tool-input';
+import { lenient, parseToolInput } from './tool-input';
 import type { ToolCall } from './types';
 
 /** Shared with SubagentToolDisplay, which renders the same call as a breadcrumb. */
 export const taskInputSchema = z.object({
-  subagent_type: z.string().optional(),
-  description: z.string().optional(),
-  prompt: z.string().optional(),
+  subagent_type: lenient(z.string()),
+  description: lenient(z.string()),
+  prompt: lenient(z.string()),
 });
 
 interface TaskOutputContent {

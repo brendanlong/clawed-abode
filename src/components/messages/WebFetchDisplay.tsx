@@ -5,10 +5,10 @@ import { Badge } from '@/components/ui/badge';
 import { MarkdownContent } from '@/components/MarkdownContent';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
 import { ToolOutputBlock } from './ToolOutputBlock';
-import { parseToolInput } from './tool-input';
+import { lenient, parseToolInput } from './tool-input';
 import type { ToolCall } from './types';
 
-const webFetchInputSchema = z.object({ url: z.string().optional(), prompt: z.string().optional() });
+const webFetchInputSchema = z.object({ url: lenient(z.string()), prompt: lenient(z.string()) });
 
 function GlobeIcon() {
   return (

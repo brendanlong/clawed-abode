@@ -6,13 +6,13 @@ import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { processTerminalOutput, isTerminalOutput } from '@/lib/terminal-output';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
-import { parseToolInput } from './tool-input';
+import { lenient, parseToolInput } from './tool-input';
 import type { ToolCall } from './types';
 
 const bashInputSchema = z.object({
-  command: z.string().optional(),
-  description: z.string().optional(),
-  run_in_background: z.boolean().optional(),
+  command: lenient(z.string()),
+  description: lenient(z.string()),
+  run_in_background: lenient(z.boolean()),
 });
 
 function TerminalIcon() {

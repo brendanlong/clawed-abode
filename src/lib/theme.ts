@@ -4,8 +4,13 @@
  * page doesn't flash light on a dark device.
  */
 
+import { z } from 'zod';
+
 export type Theme = 'light' | 'dark';
-export type ThemePreference = 'auto' | Theme;
+
+/** Stored preference; anything unrecognized in localStorage reads as 'auto'. */
+export const themePreferenceSchema = z.enum(['auto', 'light', 'dark']).catch('auto');
+export type ThemePreference = z.infer<typeof themePreferenceSchema>;
 
 export const THEME_STORAGE_KEY = 'theme_preference';
 export const DARK_CLASS = 'dark';

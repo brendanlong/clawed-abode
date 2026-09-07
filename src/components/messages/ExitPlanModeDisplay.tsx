@@ -8,14 +8,14 @@ import { Textarea } from '@/components/ui/textarea';
 import { MarkdownContent } from '@/components/MarkdownContent';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
 import { useMessageListContext } from './MessageListContext';
-import { parseToolInput } from './tool-input';
+import { lenient, lenientString, parseToolInput } from './tool-input';
 import type { ToolCall } from './types';
 
 const exitPlanModeInputSchema = z.object({
-  allowedPrompts: z.array(z.object({ tool: z.string(), prompt: z.string() })).optional(),
-  pushToRemote: z.boolean().optional(),
-  remoteSessionTitle: z.string().optional(),
-  remoteSessionUrl: z.string().optional(),
+  allowedPrompts: lenient(z.array(z.object({ tool: lenientString, prompt: lenientString }))),
+  pushToRemote: lenient(z.boolean()),
+  remoteSessionTitle: lenient(z.string()),
+  remoteSessionUrl: lenient(z.string()),
 });
 
 // Clipboard/plan icon component

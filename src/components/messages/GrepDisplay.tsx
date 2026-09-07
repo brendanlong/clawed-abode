@@ -5,22 +5,22 @@ import { useMemo } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
 import { ToolOutputBlock } from './ToolOutputBlock';
-import { parseToolInput } from './tool-input';
+import { lenient, parseToolInput } from './tool-input';
 import type { ToolCall } from './types';
 
 const grepInputSchema = z.object({
-  pattern: z.string().optional(),
-  path: z.string().optional(),
-  glob: z.string().optional(),
-  type: z.string().optional(),
-  output_mode: z.enum(['content', 'files_with_matches', 'count']).optional(),
-  '-i': z.boolean().optional(),
-  '-n': z.boolean().optional(),
-  '-B': z.number().optional(),
-  '-A': z.number().optional(),
-  '-C': z.number().optional(),
-  head_limit: z.number().optional(),
-  multiline: z.boolean().optional(),
+  pattern: lenient(z.string()),
+  path: lenient(z.string()),
+  glob: lenient(z.string()),
+  type: lenient(z.string()),
+  output_mode: lenient(z.enum(['content', 'files_with_matches', 'count'])),
+  '-i': lenient(z.boolean()),
+  '-n': lenient(z.boolean()),
+  '-B': lenient(z.number()),
+  '-A': lenient(z.number()),
+  '-C': lenient(z.number()),
+  head_limit: lenient(z.number()),
+  multiline: lenient(z.boolean()),
 });
 type GrepInput = z.infer<typeof grepInputSchema>;
 

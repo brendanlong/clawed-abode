@@ -5,15 +5,15 @@ import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
 import { ToolOutputBlock } from './ToolOutputBlock';
-import { parseToolInput } from './tool-input';
+import { lenient, parseToolInput } from './tool-input';
 import type { ToolCall } from './types';
 
 const notebookEditInputSchema = z.object({
-  notebook_path: z.string().optional(),
-  cell_id: z.string().optional(),
-  new_source: z.string().optional(),
-  cell_type: z.enum(['code', 'markdown']).optional(),
-  edit_mode: z.enum(['replace', 'insert', 'delete']).optional(),
+  notebook_path: lenient(z.string()),
+  cell_id: lenient(z.string()),
+  new_source: lenient(z.string()),
+  cell_type: lenient(z.enum(['code', 'markdown'])),
+  edit_mode: lenient(z.enum(['replace', 'insert', 'delete'])),
 });
 
 function NotebookIcon() {

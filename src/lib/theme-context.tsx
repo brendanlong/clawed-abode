@@ -6,6 +6,7 @@ import {
   DARK_CLASS,
   THEME_STORAGE_KEY,
   resolveTheme,
+  themePreferenceSchema,
   type Theme,
   type ThemePreference,
 } from './theme';
@@ -37,8 +38,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     // Using queueMicrotask to avoid synchronous setState in effect (React 19 lint rule)
     queueMicrotask(() => {
-      const stored = localStorage.getItem(THEME_STORAGE_KEY) as ThemePreference | null;
-      const preference = stored || 'auto';
+      const preference = themePreferenceSchema.parse(localStorage.getItem(THEME_STORAGE_KEY));
       setThemePreferenceState(preference);
 
       const resolvedTheme = resolveTheme(preference, systemPrefersDark());

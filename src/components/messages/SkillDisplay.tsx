@@ -5,10 +5,10 @@ import { Badge } from '@/components/ui/badge';
 import { MarkdownContent } from '@/components/MarkdownContent';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
 import { ToolOutputBlock } from './ToolOutputBlock';
-import { parseToolInput } from './tool-input';
+import { lenient, parseToolInput } from './tool-input';
 import type { ToolCall } from './types';
 
-const skillInputSchema = z.object({ skill: z.string().optional(), args: z.string().optional() });
+const skillInputSchema = z.object({ skill: lenient(z.string()), args: lenient(z.string()) });
 
 function SkillIcon() {
   return (

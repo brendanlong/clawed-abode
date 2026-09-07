@@ -5,14 +5,14 @@ import { Badge } from '@/components/ui/badge';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
 import { ToolOutputBlock } from './ToolOutputBlock';
 import { InlineDiff } from './InlineDiff';
-import { parseToolInput } from './tool-input';
+import { lenient, parseToolInput } from './tool-input';
 import type { ToolCall } from './types';
 
 const editInputSchema = z.object({
-  file_path: z.string().optional(),
-  old_string: z.string().optional(),
-  new_string: z.string().optional(),
-  replace_all: z.boolean().optional(),
+  file_path: lenient(z.string()),
+  old_string: lenient(z.string()),
+  new_string: lenient(z.string()),
+  replace_all: lenient(z.boolean()),
 });
 
 /**
