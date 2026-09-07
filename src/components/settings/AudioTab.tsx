@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
@@ -16,6 +16,8 @@ import {
 } from '@/components/ui/select';
 import { trpc } from '@/lib/trpc';
 import { useVoiceConfig } from '@/hooks/useVoiceConfig';
+import { useSpeechSynthesisVoices } from '@/hooks/useSpeechSynthesisVoices';
+import { dedupeAndSortVoices } from '@/lib/tts';
 
 export function AudioTab() {
   const { data: settings, isLoading, refetch } = trpc.globalSettings.get.useQuery();
@@ -78,36 +80,8 @@ const AUTO_DETECT_VALUE = '__auto__';
 
 function TtsVoiceSection() {
   const { voiceURI, setVoiceURI } = useVoiceConfig();
-  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
-
-    const synth = window.speechSynthesis;
-    const loadVoices = () => {
-      const available = synth.getVoices();
-      // In Firefox, voiceschanged can fire repeatedly as getVoices() is called,
-      // causing a near-infinite loop. Stop listening once voices are loaded.
-      if (available.length === 0) return;
-      synth.removeEventListener('voiceschanged', loadVoices);
-      // Deduplicate by voiceURI (some platforms report duplicates)
-      const seen = new Set<string>();
-      const unique = available.filter((v) => {
-        if (seen.has(v.voiceURI)) return false;
-        seen.add(v.voiceURI);
-        return true;
-      });
-      // Sort by language then name
-      unique.sort((a, b) => a.lang.localeCompare(b.lang) || a.name.localeCompare(b.name));
-      setVoices(unique);
-    };
-
-    loadVoices();
-    synth.addEventListener('voiceschanged', loadVoices);
-    return () => {
-      synth.removeEventListener('voiceschanged', loadVoices);
-    };
-  }, []);
+  const availableVoices = useSpeechSynthesisVoices();
+  const voices = useMemo(() => dedupeAndSortVoices(availableVoices), [availableVoices]);
 
   const handleChange = (value: string) => {
     setVoiceURI(value === AUTO_DETECT_VALUE ? null : value);

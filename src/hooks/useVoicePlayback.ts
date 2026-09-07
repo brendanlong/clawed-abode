@@ -9,6 +9,8 @@ import {
   createContext,
   useContext,
 } from 'react';
+import { splitTextIntoChunks, selectVoice } from '@/lib/tts';
+import { useSpeechSynthesisVoices } from './useSpeechSynthesisVoices';
 
 /** Item in the sequential playback queue */
 interface PlaybackQueueItem {
@@ -44,60 +46,6 @@ export const VoicePlaybackContext = createContext<VoicePlaybackState>(defaultPla
 
 export function useVoicePlaybackContext() {
   return useContext(VoicePlaybackContext);
-}
-
-/**
- * Chrome kills utterances over ~15 seconds (https://issues.chromium.org/issues/41294170),
- * so text is split into chunks at sentence boundaries and spoken in sequence.
- */
-const CHUNK_MAX_LENGTH = 200;
-
-function splitTextIntoChunks(text: string): string[] {
-  if (text.length <= CHUNK_MAX_LENGTH) return [text];
-
-  const chunks: string[] = [];
-  let remaining = text;
-
-  while (remaining.length > 0) {
-    if (remaining.length <= CHUNK_MAX_LENGTH) {
-      chunks.push(remaining);
-      break;
-    }
-
-    // Try to split at sentence boundary
-    let splitIndex = -1;
-    const sentenceEnders = ['. ', '! ', '? ', '.\n', '!\n', '?\n'];
-    for (const ender of sentenceEnders) {
-      const idx = remaining.lastIndexOf(ender, CHUNK_MAX_LENGTH);
-      if (idx > 0 && idx > splitIndex) {
-        splitIndex = idx + ender.length;
-      }
-    }
-
-    // Fall back to comma/semicolon
-    if (splitIndex <= 0) {
-      const commaIdx = remaining.lastIndexOf(', ', CHUNK_MAX_LENGTH);
-      const semiIdx = remaining.lastIndexOf('; ', CHUNK_MAX_LENGTH);
-      splitIndex = Math.max(commaIdx, semiIdx);
-      if (splitIndex > 0) splitIndex += 2;
-    }
-
-    // Fall back to space
-    if (splitIndex <= 0) {
-      splitIndex = remaining.lastIndexOf(' ', CHUNK_MAX_LENGTH);
-      if (splitIndex > 0) splitIndex += 1;
-    }
-
-    // Last resort: hard split
-    if (splitIndex <= 0) {
-      splitIndex = CHUNK_MAX_LENGTH;
-    }
-
-    chunks.push(remaining.slice(0, splitIndex));
-    remaining = remaining.slice(splitIndex);
-  }
-
-  return chunks;
 }
 
 /**
@@ -151,8 +99,12 @@ export function useVoicePlayback(
   // See https://bugs.chromium.org/p/chromium/issues/detail?id=509488
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
 
-  // Cached voices list — Chrome loads these asynchronously
-  const voicesRef = useRef<SpeechSynthesisVoice[]>([]);
+  // Voices load asynchronously; mirrored into a ref so speakText's closure stays fresh.
+  const voices = useSpeechSynthesisVoices();
+  const voicesRef = useRef<SpeechSynthesisVoice[]>(voices);
+  useEffect(() => {
+    voicesRef.current = voices;
+  }, [voices]);
 
   // Sequential playback queue
   const queueRef = useRef<PlaybackQueueItem[]>([]);
@@ -180,27 +132,6 @@ export function useVoicePlayback(
     preferredVoiceURIRef.current = preferredVoiceURI;
   }, [preferredVoiceURI]);
 
-  // Pre-load voices on mount so they're ready when user clicks play
-  useEffect(() => {
-    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
-
-    const synth = window.speechSynthesis;
-    const loadVoices = () => {
-      const available = synth.getVoices();
-      // In Firefox, voiceschanged can fire repeatedly as getVoices() is called.
-      // Stop listening once voices are loaded to avoid unnecessary repeated calls.
-      if (available.length === 0) return;
-      synth.removeEventListener('voiceschanged', loadVoices);
-      voicesRef.current = available;
-    };
-
-    loadVoices();
-    synth.addEventListener('voiceschanged', loadVoices);
-    return () => {
-      synth.removeEventListener('voiceschanged', loadVoices);
-    };
-  }, []);
-
   // --- Core speak function ---
 
   const speakText = useCallback(async (messageId: string, text: string) => {
@@ -224,26 +155,12 @@ export function useVoicePlayback(
       voicesRef.current = await waitForVoices(synth);
     }
 
-    // Pick a voice: user preference > language match > first available
-    // May be null if no voices loaded (let the browser use its default)
-    const voices = voicesRef.current;
-    const prefURI = preferredVoiceURIRef.current;
-    const primaryLang = navigator.language.split('-')[0]; // e.g. 'en' from 'en-US'
-
-    const selectedVoice =
-      // 1. User's explicit preference
-      (prefURI ? voices.find((v) => v.voiceURI === prefURI) : null) ??
-      // 2. Local voice matching full locale (e.g. en-US)
-      voices.find(
-        (v) => v.localService && v.lang.replace('_', '-').startsWith(navigator.language)
-      ) ??
-      // 3. Local voice matching primary language (e.g. en)
-      voices.find((v) => v.localService && v.lang.split(/[-_]/)[0] === primaryLang) ??
-      // 4. Any voice matching primary language
-      voices.find((v) => v.lang.split(/[-_]/)[0] === primaryLang) ??
-      // 5. First available (may be undefined if no voices loaded)
-      voices[0] ??
-      null;
+    // Null when no voices loaded, in which case the browser picks its default.
+    const selectedVoice = selectVoice(
+      voicesRef.current,
+      preferredVoiceURIRef.current,
+      navigator.language
+    );
 
     const chunks = splitTextIntoChunks(text);
     let currentChunk = 0;
