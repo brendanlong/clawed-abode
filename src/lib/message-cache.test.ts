@@ -73,6 +73,19 @@ describe('mergeMessageIntoCache', () => {
     expect(result.pages[0].messages).toEqual([complete('a', 0), complete('b', 1)]);
   });
 
+  it('inserts a complete message that arrives out of sequence order at its position', () => {
+    const result = mergeMessageIntoCache(
+      cache([[complete('a', 4), complete('c', 6)], [complete('z', 1)]]),
+      complete('b', 5)
+    );
+    expect(result.pages[0].messages).toEqual([
+      complete('a', 4),
+      complete('b', 5),
+      complete('c', 6),
+    ]);
+    expect(result.pages[1].messages).toEqual([complete('z', 1)]);
+  });
+
   it('dedupes a complete message that is already present', () => {
     const existing = cache([[complete('a', 0)], [complete('b', 1)]]);
     const result = mergeMessageIntoCache(existing, complete('b', 1));

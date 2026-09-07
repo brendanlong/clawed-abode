@@ -65,8 +65,8 @@ export function useSessionMessages(sessionId: string) {
   );
 
   // Flatten the pages into chronological order. pages[0] is the newest (it is
-  // also where the SSE stream appends live messages, in order); each later page
-  // is an older backward fetch. Each page's messages are already chronological.
+  // also where the SSE stream inserts live messages, by sequence); each later
+  // page is an older backward fetch. Each page's messages are already chronological.
   const messages = useMemo(() => {
     if (!historyData?.pages) return [];
     const result: Message[] = [];

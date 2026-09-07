@@ -880,6 +880,15 @@ describe('buildToolResultMap', () => {
     expect(pairedMessageIds.has('m2')).toBe(true);
   });
 
+  it('pairs a result whose tool_use appears later in the transcript', () => {
+    const { resultMap, pairedMessageIds } = buildToolResultMap([
+      toolResultMessage(1, [toolResult('late', 'x')]),
+      assistant(2, [toolUse('late', 'Read')]),
+    ]);
+    expect(resultMap.has('late')).toBe(true);
+    expect(pairedMessageIds.has('m1')).toBe(true);
+  });
+
   it('leaves a message unpaired when any of its results has no matching call', () => {
     const { resultMap, pairedMessageIds } = buildToolResultMap([
       assistant(1, [toolUse('a', 'Read')]),
@@ -916,8 +925,9 @@ describe('collectSubagentLifecycles', () => {
     assistant(seq, [toolUse(id, 'Agent', { description: 'x' })], parent);
 
   it('records the spawn, background marker, notification, result, and last child', () => {
+    // Children deliberately out of order: lastChildSequence must not assume it.
     const children = new Map([
-      ['agent-1', [assistant(4, [], 'agent-1'), assistant(6, [], 'agent-1')]],
+      ['agent-1', [assistant(6, [], 'agent-1'), assistant(4, [], 'agent-1')]],
     ]);
     const { lifecycles, agentBlockById } = collectSubagentLifecycles(
       [
@@ -998,6 +1008,9 @@ describe('getLatestTodoWriteId', () => {
 
   it('returns null when there is no TodoWrite', () => {
     expect(getLatestTodoWriteId([assistant(1, [toolUse('read', 'Read')])])).toBeNull();
+    expect(
+      getLatestTodoWriteId([assistant(1, [{ type: 'tool_use', name: 'TodoWrite' }])])
+    ).toBeNull();
     expect(getLatestTodoWriteId([])).toBeNull();
   });
 });
