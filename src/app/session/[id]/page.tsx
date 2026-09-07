@@ -301,6 +301,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
               isRunning={isClaudeRunning}
               retry={claudeRetry}
               backgroundTasks={backgroundTasks}
+              backgroundActive={backgroundActive}
               onStopBackgroundTask={stopBackgroundTask}
               containerStatus={session.status}
             />

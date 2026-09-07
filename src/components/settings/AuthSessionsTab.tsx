@@ -4,7 +4,6 @@ import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
-import { useAuthSessions } from '@/hooks/useAuthSessions';
 import { AuthSessionListItem } from './AuthSessionListItem';
 import { trpc } from '@/lib/trpc';
 
@@ -14,7 +13,8 @@ import { trpc } from '@/lib/trpc';
  */
 export function AuthSessionsTab() {
   const [showInactive, setShowInactive] = useState(false);
-  const { sessions, isLoading, refetch } = useAuthSessions();
+  const { data, isLoading, refetch } = trpc.auth.listSessions.useQuery();
+  const sessions = data?.sessions ?? [];
 
   const deleteMutation = trpc.auth.deleteSession.useMutation({
     onSuccess: () => {

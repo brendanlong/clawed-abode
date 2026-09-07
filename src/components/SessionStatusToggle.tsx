@@ -1,7 +1,6 @@
 'use client';
 
-import { Button } from '@/components/ui/button';
-import { Spinner } from '@/components/ui/spinner';
+import { SessionActionButton } from '@/components/SessionActionButton';
 import { SessionStatusBadge } from '@/components/SessionStatusBadge';
 
 interface SessionStatusToggleProps {
@@ -13,10 +12,9 @@ interface SessionStatusToggleProps {
 }
 
 /**
- * Combined status display and toggle button.
- * When the container is running or stopped, renders as a clickable button
- * that shows the status and toggles it on click.
- * For other statuses (creating, error, archived), renders a static badge.
+ * Status display that doubles as a toggle: a running or stopped session renders
+ * as a button labelled with its status that flips it on click. Other statuses
+ * (creating, error, archived) render a static badge.
  */
 export function SessionStatusToggle({
   status,
@@ -27,34 +25,19 @@ export function SessionStatusToggle({
 }: SessionStatusToggleProps) {
   if (status === 'running') {
     return (
-      <Button size="sm" variant="default" onClick={onStop} disabled={isStopping}>
-        {isStopping ? (
-          <>
-            <Spinner size="sm" className="mr-2" />
-            Stopping...
-          </>
-        ) : (
-          'Running'
-        )}
-      </Button>
+      <SessionActionButton action="stop" label="Running" onClick={onStop} isPending={isStopping} />
     );
   }
-
   if (status === 'stopped') {
     return (
-      <Button size="sm" variant="secondary" onClick={onStart} disabled={isStarting}>
-        {isStarting ? (
-          <>
-            <Spinner size="sm" className="mr-2" />
-            Starting...
-          </>
-        ) : (
-          'Stopped'
-        )}
-      </Button>
+      <SessionActionButton
+        action="start"
+        label="Stopped"
+        variant="secondary"
+        onClick={onStart}
+        isPending={isStarting}
+      />
     );
   }
-
-  // For non-toggleable statuses (creating, error, archived), show a static badge
   return <SessionStatusBadge status={status} />;
 }
