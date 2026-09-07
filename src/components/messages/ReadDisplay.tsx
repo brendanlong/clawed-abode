@@ -2,7 +2,7 @@
 
 import { useMemo } from 'react';
 import { Badge } from '@/components/ui/badge';
-import { getFileType } from '@/lib/file-types';
+import { getFileType } from '@/lib/syntax-highlight';
 import { FileIcon } from './FileIcon';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
 import { ToolOutputBlock } from './ToolOutputBlock';
