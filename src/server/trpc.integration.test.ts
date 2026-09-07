@@ -2,16 +2,7 @@ import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vites
 import { setupTestDb, teardownTestDb, testPrisma, clearTestDb } from '@/test/setup-test-db';
 import { IDLE_TIMEOUT_MS, ACTIVITY_UPDATE_THROTTLE_MS, generateSessionToken } from '@/lib/auth';
 
-// Mock logger (just to reduce noise)
-vi.mock('@/lib/logger', () => ({
-  createLogger: () => ({
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-    debug: vi.fn(),
-  }),
-  toError: (e: unknown) => (e instanceof Error ? e : new Error(String(e))),
-}));
+vi.mock('@/lib/logger', async () => (await import('@/test/mock-logger')).mockLoggerModule());
 
 // Will be set in beforeAll after test DB is set up
 let createContext: Awaited<typeof import('./trpc')>['createContext'];

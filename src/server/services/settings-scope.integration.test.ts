@@ -1,10 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { setupTestDb, teardownTestDb, testPrisma, clearTestDb } from '@/test/setup-test-db';
 
-vi.mock('@/lib/logger', () => ({
-  createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
-  toError: (e: unknown) => (e instanceof Error ? e : new Error(String(e))),
-}));
+vi.mock('@/lib/logger', async () => (await import('@/test/mock-logger')).mockLoggerModule());
 
 let scopeModule: typeof import('./settings-scope');
 let crypto: typeof import('@/lib/crypto');

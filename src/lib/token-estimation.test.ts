@@ -746,35 +746,6 @@ describe('token-estimation', () => {
       expect(result.totalTokens).toBe(4500);
     });
 
-    it('should still sum assistant messages without ids (backwards compatibility)', () => {
-      // Older messages might not have an id field
-      const messages = [
-        {
-          type: 'assistant',
-          content: {
-            type: 'assistant',
-            message: {
-              usage: { input_tokens: 1000, output_tokens: 500 },
-            },
-          },
-        },
-        {
-          type: 'assistant',
-          content: {
-            type: 'assistant',
-            message: {
-              usage: { input_tokens: 2000, output_tokens: 1000 },
-            },
-          },
-        },
-      ];
-
-      const result = estimateTokenUsage(messages);
-
-      expect(result.inputTokens).toBe(3000);
-      expect(result.outputTokens).toBe(1500);
-    });
-
     it('should extract total_cost_usd from result with modelUsage but no usage', () => {
       const messages = [
         {

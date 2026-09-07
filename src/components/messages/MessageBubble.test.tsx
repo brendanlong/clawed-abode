@@ -328,6 +328,30 @@ describe('MessageBubble', () => {
   });
 
   describe('tool result messages', () => {
+    it('renders tool result display for tool_result content', () => {
+      const message = {
+        type: 'user',
+        content: {
+          message: {
+            content: [
+              {
+                type: 'tool_result',
+                tool_use_id: 'tool-1',
+                content: 'Tool execution output',
+              },
+            ],
+          },
+        } as MessageContent,
+      };
+
+      render(<MessageBubble message={message} />);
+
+      // Routed to the collapsed tool-result card, not rendered as a user bubble.
+      expect(screen.getByText('Tool Result')).toBeInTheDocument();
+      expect(screen.getByText('1 result')).toBeInTheDocument();
+      expect(screen.queryByText('Tool execution output')).not.toBeInTheDocument();
+    });
+
     it('shows a sanitization badge on a filtered tool result', () => {
       const message = {
         type: 'user',
@@ -494,30 +518,6 @@ describe('MessageBubble', () => {
       render(<MessageBubble message={message} />);
 
       expect(screen.getByText('Error')).toBeInTheDocument();
-    });
-  });
-
-  describe('tool result messages', () => {
-    it('renders tool result display for tool_result content', () => {
-      const message = {
-        type: 'user',
-        content: {
-          message: {
-            content: [
-              {
-                type: 'tool_result',
-                tool_use_id: 'tool-1',
-                content: 'Tool execution output',
-              },
-            ],
-          },
-        } as MessageContent,
-      };
-
-      render(<MessageBubble message={message} />);
-
-      // Should render as tool result, not user message
-      expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
     });
   });
 

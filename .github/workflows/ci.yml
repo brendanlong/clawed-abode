@@ -82,11 +82,6 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Configure git for tests
-        run: |
-          git config --global user.email "test@example.com"
-          git config --global user.name "Test User"
-
       - name: Run integration tests
         run: pnpm run test:integration
 

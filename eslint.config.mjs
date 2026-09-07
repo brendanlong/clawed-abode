@@ -7,7 +7,7 @@ export default tseslint.config(
   ...tseslint.configs.recommended,
   eslintConfigPrettier,
   {
-    ignores: ['node_modules/', '.next/', 'prisma/', 'data/', 'src/generated/'],
+    ignores: ['node_modules/', '.next/', 'coverage/', 'prisma/', 'data/', 'src/generated/'],
   },
   {
     rules: {

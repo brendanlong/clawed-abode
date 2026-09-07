@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { setupTestDb, teardownTestDb, testPrisma, clearTestDb } from '@/test/setup-test-db';
+import { createNoRepoSession, createTestSession } from '@/test/fixtures';
 
 // Mock external services that have real dependencies (git clone)
 const mockCloneRepo = vi.hoisted(() => vi.fn());
@@ -51,16 +52,7 @@ vi.mock('../services/events', () => ({
   sseEvents: mockSseEvents,
 }));
 
-// Mock logger
-vi.mock('@/lib/logger', () => ({
-  createLogger: () => ({
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-    debug: vi.fn(),
-  }),
-  toError: (e: unknown) => (e instanceof Error ? e : new Error(String(e))),
-}));
+vi.mock('@/lib/logger', async () => (await import('@/test/mock-logger')).mockLoggerModule());
 
 // These will be set in beforeAll after the test DB is set up
 let sessionsRouter: Awaited<typeof import('./sessions')>['sessionsRouter'];
@@ -432,13 +424,8 @@ describe('sessionsRouter integration', () => {
 
   describe('get', () => {
     it('should get a session by ID from the database', async () => {
-      const session = await testPrisma.session.create({
-        data: {
-          name: 'Test Session',
-          repoUrl: 'https://github.com/owner/repo.git',
-          branch: 'main',
-          status: 'running',
-        },
+      const session = await createNoRepoSession({
+        name: 'Test Session',
       });
 
       const caller = createCaller('auth-session-id');
@@ -475,14 +462,9 @@ describe('sessionsRouter integration', () => {
 
     it('returns a deep link into the session worktree when configured', async () => {
       process.env.CODE_SERVER_URL = 'https://host.ts.net:8443';
-      const session = await testPrisma.session.create({
-        data: {
-          name: 'Test Session',
-          repoUrl: 'https://github.com/owner/repo.git',
-          branch: 'main',
-          repoPath: 'repo',
-          status: 'running',
-        },
+      const session = await createNoRepoSession({
+        name: 'Test Session',
+        repoPath: 'repo',
       });
 
       const caller = createCaller('auth-session-id');
@@ -496,12 +478,9 @@ describe('sessionsRouter integration', () => {
     });
 
     it('returns null when CODE_SERVER_URL is not configured', async () => {
-      const session = await testPrisma.session.create({
-        data: {
-          name: 'Test Session',
-          repoPath: 'repo',
-          status: 'running',
-        },
+      const session = await createNoRepoSession({
+        name: 'Test Session',
+        repoPath: 'repo',
       });
 
       const caller = createCaller('auth-session-id');
@@ -512,12 +491,10 @@ describe('sessionsRouter integration', () => {
 
     it('returns null for an archived session even when configured', async () => {
       process.env.CODE_SERVER_URL = 'https://host.ts.net:8443';
-      const session = await testPrisma.session.create({
-        data: {
-          name: 'Archived Session',
-          repoPath: 'repo',
-          status: 'archived',
-        },
+      const session = await createNoRepoSession({
+        name: 'Archived Session',
+        repoPath: 'repo',
+        status: 'archived',
       });
 
       const caller = createCaller('auth-session-id');
@@ -543,13 +520,9 @@ describe('sessionsRouter integration', () => {
 
   describe('start', () => {
     it('should start a stopped session and update the database', async () => {
-      const session = await testPrisma.session.create({
-        data: {
-          name: 'Stopped Session',
-          repoUrl: 'https://github.com/owner/repo.git',
-          branch: 'main',
-          status: 'stopped',
-        },
+      const session = await createTestSession({
+        name: 'Stopped Session',
+        status: 'stopped',
       });
 
       const caller = createCaller('auth-session-id');
@@ -563,13 +536,8 @@ describe('sessionsRouter integration', () => {
     });
 
     it('should not start an already running session', async () => {
-      const session = await testPrisma.session.create({
-        data: {
-          name: 'Running Session',
-          repoUrl: 'https://github.com/owner/repo.git',
-          branch: 'main',
-          status: 'running',
-        },
+      const session = await createTestSession({
+        name: 'Running Session',
       });
 
       const caller = createCaller('auth-session-id');
@@ -579,13 +547,9 @@ describe('sessionsRouter integration', () => {
     });
 
     it('should reject starting an archived session', async () => {
-      const session = await testPrisma.session.create({
-        data: {
-          name: 'Archived Session',
-          repoUrl: 'https://github.com/owner/repo.git',
-          branch: 'main',
-          status: 'archived',
-        },
+      const session = await createNoRepoSession({
+        name: 'Archived Session',
+        status: 'archived',
       });
 
       const caller = createCaller('auth-session-id');
@@ -605,13 +569,8 @@ describe('sessionsRouter integration', () => {
 
   describe('stop', () => {
     it('should stop a running session and update the database', async () => {
-      const session = await testPrisma.session.create({
-        data: {
-          name: 'Running Session',
-          repoUrl: 'https://github.com/owner/repo.git',
-          branch: 'main',
-          status: 'running',
-        },
+      const session = await createTestSession({
+        name: 'Running Session',
       });
 
       const caller = createCaller('auth-session-id');
@@ -635,13 +594,8 @@ describe('sessionsRouter integration', () => {
 
   describe('rename', () => {
     it('should update the session name without changing the id', async () => {
-      const session = await testPrisma.session.create({
-        data: {
-          name: 'Old Name',
-          repoUrl: 'https://github.com/owner/repo.git',
-          branch: 'main',
-          status: 'running',
-        },
+      const session = await createNoRepoSession({
+        name: 'Old Name',
       });
 
       const caller = createCaller('auth-session-id');
@@ -656,11 +610,8 @@ describe('sessionsRouter integration', () => {
     });
 
     it('should trim whitespace from the new name', async () => {
-      const session = await testPrisma.session.create({
-        data: {
-          name: 'Old Name',
-          status: 'running',
-        },
+      const session = await createNoRepoSession({
+        name: 'Old Name',
       });
 
       const caller = createCaller('auth-session-id');
@@ -673,11 +624,8 @@ describe('sessionsRouter integration', () => {
     });
 
     it('should reject an empty name', async () => {
-      const session = await testPrisma.session.create({
-        data: {
-          name: 'Old Name',
-          status: 'running',
-        },
+      const session = await createNoRepoSession({
+        name: 'Old Name',
       });
 
       const caller = createCaller('auth-session-id');
@@ -687,11 +635,8 @@ describe('sessionsRouter integration', () => {
     });
 
     it('should emit a session update event', async () => {
-      const session = await testPrisma.session.create({
-        data: {
-          name: 'Old Name',
-          status: 'running',
-        },
+      const session = await createNoRepoSession({
+        name: 'Old Name',
       });
 
       mockSseEvents.emitSessionUpdate.mockClear();
@@ -729,12 +674,9 @@ describe('sessionsRouter integration', () => {
 
   describe('setModel', () => {
     const createRunningSession = (claudeModel: string | null = null) =>
-      testPrisma.session.create({
-        data: {
-          name: 'Model Session',
-          status: 'running',
-          claudeModel,
-        },
+      createNoRepoSession({
+        name: 'Model Session',
+        claudeModel,
       });
 
     it('should set the per-session model override', async () => {
@@ -805,11 +747,9 @@ describe('sessionsRouter integration', () => {
     });
 
     it('should reject changing the model of an archived session', async () => {
-      const session = await testPrisma.session.create({
-        data: {
-          name: 'Archived',
-          status: 'archived',
-        },
+      const session = await createNoRepoSession({
+        name: 'Archived',
+        status: 'archived',
       });
 
       const caller = createCaller('auth-session-id');
@@ -843,13 +783,8 @@ describe('sessionsRouter integration', () => {
 
   describe('delete (archive)', () => {
     it('should archive a session and clean up resources but keep messages', async () => {
-      const session = await testPrisma.session.create({
-        data: {
-          name: 'Session to archive',
-          repoUrl: 'https://github.com/owner/repo.git',
-          branch: 'main',
-          status: 'running',
-        },
+      const session = await createTestSession({
+        name: 'Session to archive',
       });
 
       // Add some messages
@@ -880,13 +815,9 @@ describe('sessionsRouter integration', () => {
     });
 
     it('should be idempotent for already archived sessions', async () => {
-      const session = await testPrisma.session.create({
-        data: {
-          name: 'Already archived session',
-          repoUrl: 'https://github.com/owner/repo.git',
-          branch: 'main',
-          status: 'archived',
-        },
+      const session = await createTestSession({
+        name: 'Already archived session',
+        status: 'archived',
       });
 
       const caller = createCaller('auth-session-id');
