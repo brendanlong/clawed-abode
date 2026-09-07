@@ -23,7 +23,7 @@ import {
   useVoicePlayback,
   VoicePlaybackContext,
 } from '@/hooks/useVoicePlayback';
-import { getNewAutoReadMessages } from '@/lib/auto-read-helpers';
+import { getNewAutoReadMessages } from '@/components/voice/playable-messages';
 import { VoiceControlPanel } from '@/components/voice/VoiceControlPanel';
 import type { UploadedAttachment } from '@/lib/attachments';
 

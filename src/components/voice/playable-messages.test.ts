@@ -1,12 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import {
   extractAssistantText,
+  getAssistantTextMessages,
   getNewAutoReadMessages,
-  type AutoReadMessage,
-} from './auto-read-helpers';
+} from './playable-messages';
+import type { DisplayMessage } from '@/components/messages/types';
 
 /** Helper to create an assistant message with text blocks */
-function makeAssistantText(id: string, sequence: number, text: string): AutoReadMessage {
+function makeAssistantText(id: string, sequence: number, text: string): DisplayMessage {
   return {
     id,
     type: 'assistant',
@@ -20,7 +21,7 @@ function makeAssistantText(id: string, sequence: number, text: string): AutoRead
 }
 
 /** Helper to create an assistant message with only tool_use blocks */
-function makeAssistantToolUse(id: string, sequence: number): AutoReadMessage {
+function makeAssistantToolUse(id: string, sequence: number): DisplayMessage {
   return {
     id,
     type: 'assistant',
@@ -34,7 +35,7 @@ function makeAssistantToolUse(id: string, sequence: number): AutoReadMessage {
 }
 
 /** Helper to create an assistant message with both text and tool_use blocks */
-function makeAssistantMixed(id: string, sequence: number, text: string): AutoReadMessage {
+function makeAssistantMixed(id: string, sequence: number, text: string): DisplayMessage {
   return {
     id,
     type: 'assistant',
@@ -51,7 +52,7 @@ function makeAssistantMixed(id: string, sequence: number, text: string): AutoRea
 }
 
 /** Helper to create a user-sent prompt message */
-function makeUserPrompt(id: string, sequence: number, text: string): AutoReadMessage {
+function makeUserPrompt(id: string, sequence: number, text: string): DisplayMessage {
   return {
     id,
     type: 'user',
@@ -65,7 +66,7 @@ function makeUserPrompt(id: string, sequence: number, text: string): AutoReadMes
 }
 
 /** Helper to create a tool result message (type: user, but with tool_result blocks) */
-function makeToolResult(id: string, sequence: number): AutoReadMessage {
+function makeToolResult(id: string, sequence: number): DisplayMessage {
   return {
     id,
     type: 'user',
@@ -85,7 +86,7 @@ function makeToolResult(id: string, sequence: number): AutoReadMessage {
 }
 
 /** Helper to create a partial (streaming) assistant message */
-function makePartialAssistant(text: string, sequence: number): AutoReadMessage {
+function makePartialAssistant(text: string, sequence: number): DisplayMessage {
   return {
     id: `partial-${crypto.randomUUID()}`,
     type: 'assistant',
@@ -99,7 +100,7 @@ function makePartialAssistant(text: string, sequence: number): AutoReadMessage {
 }
 
 /** Helper to create a result message */
-function makeResult(id: string, sequence: number): AutoReadMessage {
+function makeResult(id: string, sequence: number): DisplayMessage {
   return {
     id,
     type: 'result',
@@ -115,7 +116,7 @@ describe('extractAssistantText', () => {
   });
 
   it('concatenates multiple text blocks', () => {
-    const msg: AutoReadMessage = {
+    const msg: DisplayMessage = {
       id: 'a1',
       type: 'assistant',
       sequence: 1,
@@ -143,7 +144,7 @@ describe('extractAssistantText', () => {
   });
 
   it('returns null for messages with no content blocks', () => {
-    const msg: AutoReadMessage = {
+    const msg: DisplayMessage = {
       id: 'a1',
       type: 'assistant',
       sequence: 1,
@@ -153,7 +154,7 @@ describe('extractAssistantText', () => {
   });
 
   it('returns null for malformed content', () => {
-    const msg: AutoReadMessage = {
+    const msg: DisplayMessage = {
       id: 'a1',
       type: 'assistant',
       sequence: 1,
@@ -163,13 +164,41 @@ describe('extractAssistantText', () => {
   });
 });
 
+describe('getAssistantTextMessages', () => {
+  it('lists every complete assistant message with text, across turns', () => {
+    const messages: DisplayMessage[] = [
+      makeUserPrompt('u1', 1, 'First'),
+      makeAssistantText('a1', 2, 'Answer one.'),
+      makeAssistantToolUse('a2', 3),
+      makeToolResult('tr1', 4),
+      makeUserPrompt('u2', 5, 'Second'),
+      makeAssistantMixed('a3', 6, 'Answer two.'),
+      makePartialAssistant('typing', 7),
+      makeResult('r1', 8),
+    ];
+    expect(getAssistantTextMessages(messages)).toEqual([
+      { id: 'a1', text: 'Answer one.' },
+      { id: 'a3', text: 'Answer two.' },
+    ]);
+  });
+
+  it('skips null or non-object content without throwing', () => {
+    const messages: DisplayMessage[] = [
+      { id: 'a1', type: 'assistant', sequence: 1, content: null },
+      { id: 'a2', type: 'assistant', sequence: 2, content: 'plain string' },
+      makeAssistantText('a3', 3, 'Real text.'),
+    ];
+    expect(getAssistantTextMessages(messages)).toEqual([{ id: 'a3', text: 'Real text.' }]);
+  });
+});
+
 describe('getNewAutoReadMessages', () => {
   it('returns empty array when no messages exist', () => {
     expect(getNewAutoReadMessages([], new Set())).toEqual([]);
   });
 
   it('returns new assistant text messages from the current turn', () => {
-    const messages: AutoReadMessage[] = [
+    const messages: DisplayMessage[] = [
       makeUserPrompt('u1', 1, 'Fix the bug'),
       makeAssistantText('a1', 2, 'I fixed the bug.'),
       makeResult('r1', 3),
@@ -180,7 +209,7 @@ describe('getNewAutoReadMessages', () => {
   });
 
   it('returns all text messages from the current turn (not just first and last)', () => {
-    const messages: AutoReadMessage[] = [
+    const messages: DisplayMessage[] = [
       makeUserPrompt('u1', 1, 'Do work'),
       makeAssistantText('a1', 2, 'Step 1.'),
       makeAssistantText('a2', 3, 'Step 2.'),
@@ -198,7 +227,7 @@ describe('getNewAutoReadMessages', () => {
   });
 
   it('skips messages that are already queued', () => {
-    const messages: AutoReadMessage[] = [
+    const messages: DisplayMessage[] = [
       makeUserPrompt('u1', 1, 'Fix the bug'),
       makeAssistantText('a1', 2, 'Let me look at the code.'),
       makeAssistantToolUse('a2', 3),
@@ -216,7 +245,7 @@ describe('getNewAutoReadMessages', () => {
   });
 
   it('returns empty array when all messages are already queued', () => {
-    const messages: AutoReadMessage[] = [
+    const messages: DisplayMessage[] = [
       makeUserPrompt('u1', 1, 'Hello'),
       makeAssistantText('a1', 2, 'Hi there!'),
     ];
@@ -226,7 +255,7 @@ describe('getNewAutoReadMessages', () => {
   });
 
   it('skips tool-use-only messages', () => {
-    const messages: AutoReadMessage[] = [
+    const messages: DisplayMessage[] = [
       makeUserPrompt('u1', 1, 'Run the tests'),
       makeAssistantToolUse('a1', 2),
       makeToolResult('tr1', 3),
@@ -240,7 +269,7 @@ describe('getNewAutoReadMessages', () => {
   });
 
   it('skips partial messages', () => {
-    const messages: AutoReadMessage[] = [
+    const messages: DisplayMessage[] = [
       makeUserPrompt('u1', 1, 'Fix it'),
       makeAssistantText('a1', 2, 'Working on it.'),
       makePartialAssistant('Still typing...', 3),
@@ -251,7 +280,7 @@ describe('getNewAutoReadMessages', () => {
   });
 
   it('only considers messages from the current turn (after last user prompt)', () => {
-    const messages: AutoReadMessage[] = [
+    const messages: DisplayMessage[] = [
       // Previous turn
       makeUserPrompt('u1', 1, 'First question'),
       makeAssistantText('a1', 2, 'First answer.'),
@@ -272,7 +301,7 @@ describe('getNewAutoReadMessages', () => {
   });
 
   it('treats tool result user messages as non-turn-boundary', () => {
-    const messages: AutoReadMessage[] = [
+    const messages: DisplayMessage[] = [
       makeUserPrompt('u1', 1, 'Do something'),
       makeAssistantText('a1', 2, 'Starting.'),
       makeAssistantToolUse('a2', 3),
@@ -289,7 +318,7 @@ describe('getNewAutoReadMessages', () => {
   });
 
   it('handles mixed text and tool_use blocks (assistant message with both)', () => {
-    const messages: AutoReadMessage[] = [
+    const messages: DisplayMessage[] = [
       makeUserPrompt('u1', 1, 'Fix it'),
       makeAssistantMixed('a1', 2, 'Let me run a command.'),
       makeToolResult('tr1', 3),
@@ -304,7 +333,7 @@ describe('getNewAutoReadMessages', () => {
   });
 
   it('handles messages with no user prompt at all (edge case)', () => {
-    const messages: AutoReadMessage[] = [
+    const messages: DisplayMessage[] = [
       makeAssistantText('a1', 1, 'Hello!'),
       makeAssistantToolUse('a2', 2),
       makeToolResult('tr1', 3),
@@ -322,7 +351,7 @@ describe('getNewAutoReadMessages', () => {
     const queuedIds = new Set<string>();
 
     // First message arrives
-    const messages1: AutoReadMessage[] = [
+    const messages1: DisplayMessage[] = [
       makeUserPrompt('u1', 1, 'Fix the bug'),
       makeAssistantText('a1', 2, 'Let me look at the code.'),
     ];
@@ -332,7 +361,7 @@ describe('getNewAutoReadMessages', () => {
     for (const msg of result1) queuedIds.add(msg.id);
 
     // Tool use happens, no new text
-    const messages2: AutoReadMessage[] = [
+    const messages2: DisplayMessage[] = [
       ...messages1,
       makeAssistantToolUse('a2', 3),
       makeToolResult('tr1', 4),
@@ -341,7 +370,7 @@ describe('getNewAutoReadMessages', () => {
     expect(result2).toEqual([]);
 
     // New text message arrives
-    const messages3: AutoReadMessage[] = [
+    const messages3: DisplayMessage[] = [
       ...messages2,
       makeAssistantMixed('a3', 5, 'I see the issue, let me fix it.'),
     ];
@@ -350,7 +379,7 @@ describe('getNewAutoReadMessages', () => {
     for (const msg of result3) queuedIds.add(msg.id);
 
     // More tool use, then final message
-    const messages4: AutoReadMessage[] = [
+    const messages4: DisplayMessage[] = [
       ...messages3,
       makeAssistantToolUse('a4', 6),
       makeToolResult('tr2', 7),
@@ -362,7 +391,7 @@ describe('getNewAutoReadMessages', () => {
   });
 
   it('returns empty when all current-turn messages already queued', () => {
-    const messages: AutoReadMessage[] = [
+    const messages: DisplayMessage[] = [
       makeUserPrompt('u1', 1, 'Fix it'),
       makeAssistantText('a1', 2, 'Working on it.'),
       makeAssistantText('a2', 3, 'Done.'),
@@ -375,7 +404,7 @@ describe('getNewAutoReadMessages', () => {
   it('ignores queued IDs from previous turns', () => {
     // If queuedIds contains IDs from a previous turn, they should be
     // irrelevant since those messages are before the turn boundary
-    const messages: AutoReadMessage[] = [
+    const messages: DisplayMessage[] = [
       makeUserPrompt('u1', 1, 'First'),
       makeAssistantText('a1', 2, 'Response to first.'),
       makeUserPrompt('u2', 3, 'Second'),

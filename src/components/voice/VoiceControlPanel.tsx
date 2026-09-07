@@ -6,21 +6,14 @@ import { X, Mic, Square, Play, Pause, SkipBack, SkipForward, Send } from 'lucide
 import { useVoicePlaybackContext } from '@/hooks/useVoicePlayback';
 import { useVoiceRecording } from '@/hooks/useVoiceRecording';
 import { useVoiceConfig } from '@/hooks/useVoiceConfig';
-import { extractAssistantText } from '@/lib/auto-read-helpers';
+import { getAssistantTextMessages } from '@/components/voice/playable-messages';
+import type { DisplayMessage } from '@/components/messages/types';
 import { mergeCancelledText, type CancelledPrompt } from '@/lib/cancelled-prompt';
 import { cn } from '@/lib/utils';
 
-/** Minimal message shape passed into the panel */
-interface PanelMessage {
-  id: string;
-  type: string;
-  content: unknown;
-  sequence: number;
-}
-
 interface VoiceControlPanelProps {
   sessionId: string;
-  messages: PanelMessage[];
+  messages: DisplayMessage[];
   isRunning: boolean;
   /**
    * Send the transcript. May return a promise; if it rejects, the panel restores
@@ -37,29 +30,6 @@ interface VoiceControlPanelProps {
    * swallowed by void-return assignability.
    */
   onInterrupt: () => void | Promise<CancelledPrompt[] | void>;
-}
-
-/** An assistant message with extractable text, for prev/next navigation */
-interface AssistantTextEntry {
-  id: string;
-  text: string;
-}
-
-/**
- * Build a list of assistant messages that have meaningful text content.
- * Used for prev/next navigation in the panel.
- */
-function getAssistantTextMessages(messages: PanelMessage[]): AssistantTextEntry[] {
-  const results: AssistantTextEntry[] = [];
-  for (const msg of messages) {
-    if (msg.type !== 'assistant') continue;
-    if (msg.id.startsWith('partial-')) continue;
-    const text = extractAssistantText(msg);
-    if (text !== null) {
-      results.push({ id: msg.id, text });
-    }
-  }
-  return results;
 }
 
 /**
