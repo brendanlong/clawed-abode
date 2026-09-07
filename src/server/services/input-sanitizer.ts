@@ -141,7 +141,7 @@ function buildSanitizationNote(warnings: string[]): string {
 
 /**
  * `PostToolUse` hook handler wired into the session query (see `buildSdkOptions`
- * in claude-runner). Neutralizes hidden content in a tool result and returns the
+ * in sdk-options). Neutralizes hidden content in a tool result and returns the
  * SDK's `updatedToolOutput` substitution — but only when a string actually
  * changed, so a normal tool result passes through untouched (returns `{}`,
  * leaving the SDK to use the original output). Fails open: any error is logged

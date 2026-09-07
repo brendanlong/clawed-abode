@@ -149,7 +149,7 @@ describe('sanitizeToolOutput', () => {
 
 /**
  * Exercises the exact PostToolUse handler wired into the session query
- * (`buildSdkOptions` in claude-runner) against the SDK's real hook-input shapes.
+ * (`buildSdkOptions` in sdk-options) against the SDK's real hook-input shapes.
  * The model never runs here — these assert the handler's contract with the SDK:
  * returning `{}` means "use the tool's original output unchanged", and returning
  * `updatedToolOutput` is what the SDK substitutes before the model sees it. The

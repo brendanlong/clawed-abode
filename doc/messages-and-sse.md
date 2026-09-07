@@ -14,7 +14,7 @@ Other rendering-relevant classification: `server_tool_use` (e.g. the advisor, wh
 
 ## Storage & Pagination
 
-Messages carry a per-session monotone `sequence`. **Every insert goes through `insertMessage`** ([`claude-runner.ts`](../src/server/services/claude-runner.ts)), which reserves a sequence with a single autocommit `UPDATE "Session" SET "messageSequence" = "messageSequence" + 1 … RETURNING` — one statement, so SQLite serializes it on the write lock and concurrent inserts can't collide. No read-then-insert, no retry loop, and no interactive transaction (those contend and deadlock under SQLite's single-writer model).
+Messages carry a per-session monotone `sequence`. **Every insert goes through `insertMessage`** ([`message-store.ts`](../src/server/services/message-store.ts)), which reserves a sequence with a single autocommit `UPDATE "Session" SET "messageSequence" = "messageSequence" + 1 … RETURNING` — one statement, so SQLite serializes it on the write lock and concurrent inserts can't collide. No read-then-insert, no retry loop, and no interactive transaction (those contend and deadlock under SQLite's single-writer model).
 
 A duplicate `id` (e.g. an idempotent synthetic `tool_result`) fails the primary key and is treated as a no-op; the reserved sequence is skipped, leaving a gap — pagination orders by `sequence` and never assumes contiguity. All history queries are cursor-based on `sequence` (`claude.getHistory`, direction before/after).
 

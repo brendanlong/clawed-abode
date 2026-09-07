@@ -1,6 +1,6 @@
 # Claude Sessions (SDK Integration)
 
-Implementation: [`src/server/services/claude-runner.ts`](../src/server/services/claude-runner.ts). Pure logic (unit-tested): [`src/lib/session-status.ts`](../src/lib/session-status.ts), [`src/lib/session-scope.ts`](../src/lib/session-scope.ts), [`src/lib/token-estimation.ts`](../src/lib/token-estimation.ts).
+Implementation: [`src/server/services/claude-runner.ts`](../src/server/services/claude-runner.ts) orchestrates; its seams are separate modules in the same directory — `agent-env` (login-shell env), `sdk-options` (query construction), `in-flight-commands` (delivery tracking), `message-store` (persistence), `session-commands` (slash commands), `session-branch-pr` (turn-end branch/PR refresh), `session-state` (the in-memory record). Pure logic (unit-tested): [`src/lib/session-status.ts`](../src/lib/session-status.ts), [`src/lib/session-scope.ts`](../src/lib/session-scope.ts), [`src/lib/token-estimation.ts`](../src/lib/token-estimation.ts).
 
 ## Persistent Streaming Query
 
