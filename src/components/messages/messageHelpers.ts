@@ -6,6 +6,7 @@ import type {
   ToolResultMap,
 } from './types';
 import { formatAsJson, buildToolMessages } from './types';
+import { isPlanFile, reconstructPlansByToolUseId, type PlanEvent } from './plan-utils';
 
 /**
  * Strip XML wrapper tags from Claude Code local command output.
@@ -489,4 +490,213 @@ export function getDisplayContent(
     return stripXmlTags(content.message.content);
   }
   return content.content;
+}
+
+type ToolUseBlock = ContentBlock & { id: string };
+
+function assistantContentBlocks(message: DisplayMessage): ContentBlock[] {
+  if (message.type !== 'assistant') return [];
+  const blocks = (message.content as MessageContent | undefined)?.message?.content;
+  return Array.isArray(blocks) ? blocks : [];
+}
+
+/**
+ * Every identified `tool_use` block across the assistant messages (top-level and
+ * subagent alike), paired with the message carrying it, in transcript order. The
+ * single traversal behind every tool-call scan below — add new scans on top of
+ * it rather than re-walking `content.message.content`.
+ */
+export function* toolUseBlocks(
+  messages: DisplayMessage[]
+): Generator<{ block: ToolUseBlock; message: DisplayMessage }> {
+  for (const message of messages) {
+    for (const block of assistantContentBlocks(message)) {
+      if (block.type === 'tool_use' && block.id) yield { block: block as ToolUseBlock, message };
+    }
+  }
+}
+
+/**
+ * Pair every `tool_result` with its `tool_use`. Also reports which tool-result
+ * messages are fully paired (every result matched a known call) so the list can
+ * hide them — they render inline on the call instead — and where each result
+ * landed, which is a foreground subagent's finish point.
+ */
+export function buildToolResultMap(messages: DisplayMessage[]): {
+  resultMap: ToolResultMap;
+  pairedMessageIds: Set<string>;
+  resultSequenceByToolUseId: Map<string, number>;
+} {
+  const resultMap: ToolResultMap = new Map();
+  const pairedMessageIds = new Set<string>();
+  const resultSequenceByToolUseId = new Map<string, number>();
+
+  const toolUseIds = new Set<string>();
+  for (const { block } of toolUseBlocks(messages)) {
+    toolUseIds.add(block.id);
+  }
+
+  for (const msg of messages) {
+    if (msg.type !== 'user') continue;
+    const resultBlocks = getToolResults(msg.content as MessageContent);
+    if (resultBlocks.length === 0) continue;
+
+    let allPaired = true;
+    for (const block of resultBlocks) {
+      if (block.tool_use_id && toolUseIds.has(block.tool_use_id)) {
+        resultMap.set(block.tool_use_id, {
+          content: typeof block.content === 'string' ? block.content : undefined,
+          is_error: block.is_error,
+        });
+        resultSequenceByToolUseId.set(block.tool_use_id, msg.sequence);
+      } else {
+        allPaired = false;
+      }
+    }
+    if (allPaired) pairedMessageIds.add(msg.id);
+  }
+
+  return { resultMap, pairedMessageIds, resultSequenceByToolUseId };
+}
+
+/**
+ * Collect the lifecycle of each top-level (main-agent) subagent `Agent`/`Task`
+ * call, and index those call blocks by id so a relocated box can be rebuilt from
+ * its call. Background subagents are identified by a `task_started` system
+ * message and finished by a `task_notification`; both carry the subagent's
+ * `tool_use_id`. Lifecycles come back in spawn order.
+ */
+export function collectSubagentLifecycles(
+  messages: DisplayMessage[],
+  subagentMessagesByToolUseId: Map<string, DisplayMessage[]>,
+  resultSequenceByToolUseId: Map<string, number>
+): { lifecycles: SubagentLifecycle[]; agentBlockById: Map<string, ContentBlock> } {
+  const agentBlockById = new Map<string, ContentBlock>();
+  const spawnSequenceByToolUseId = new Map<string, number>();
+  const backgroundToolUseIds = new Set<string>();
+  const notificationSequenceByToolUseId = new Map<string, number>();
+
+  for (const { block, message } of toolUseBlocks(messages)) {
+    if (block.name !== 'Agent' && block.name !== 'Task') continue;
+    if (getParentToolUseId(message.content) !== null) continue;
+    agentBlockById.set(block.id, block);
+    spawnSequenceByToolUseId.set(block.id, message.sequence);
+  }
+
+  for (const msg of messages) {
+    if (msg.type !== 'system') continue;
+    const content = msg.content as { subtype?: string; tool_use_id?: string } | undefined;
+    const toolUseId = content?.tool_use_id;
+    if (!toolUseId) continue;
+    if (content.subtype === 'task_started') {
+      backgroundToolUseIds.add(toolUseId);
+    } else if (
+      content.subtype === 'task_notification' &&
+      !notificationSequenceByToolUseId.has(toolUseId)
+    ) {
+      // First terminal notification wins as the finish point.
+      notificationSequenceByToolUseId.set(toolUseId, msg.sequence);
+    }
+  }
+
+  const lifecycles: SubagentLifecycle[] = [];
+  for (const [toolUseId, spawnSequence] of spawnSequenceByToolUseId) {
+    const children = subagentMessagesByToolUseId.get(toolUseId);
+    // reduce (not Math.max(...spread)) to avoid an argument-count limit on a
+    // chatty subagent's large child array, and without assuming child order.
+    const lastChildSequence = children?.length
+      ? children.reduce((max, c) => Math.max(max, c.sequence), -Infinity)
+      : null;
+    lifecycles.push({
+      toolUseId,
+      spawnSequence,
+      isBackground: backgroundToolUseIds.has(toolUseId),
+      notificationSequence: notificationSequenceByToolUseId.get(toolUseId) ?? null,
+      lastChildSequence,
+      resultSequence: resultSequenceByToolUseId.get(toolUseId) ?? null,
+    });
+  }
+  return { lifecycles, agentBlockById };
+}
+
+/**
+ * The id of the most recent `TodoWrite` call — the one list that renders
+ * expanded. Scans backwards, so on a long transcript it stops at the newest
+ * assistant message that has one. Assumes `messages` is chronological.
+ */
+export function getLatestTodoWriteId(messages: DisplayMessage[]): string | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const blocks = assistantContentBlocks(messages[i]);
+    for (let j = blocks.length - 1; j >= 0; j--) {
+      const block = blocks[j];
+      if (block.type === 'tool_use' && block.name === 'TodoWrite' && block.id) return block.id;
+    }
+  }
+  return null;
+}
+
+export interface AskUserQuestionInfo {
+  id: string;
+  header: string;
+  question: string;
+}
+
+/**
+ * `AskUserQuestion` calls that have no result yet, i.e. are still waiting on the
+ * user, in transcript order. Drives the browser notification.
+ */
+export function getPendingAskUserQuestions(
+  messages: DisplayMessage[],
+  resultMap: ToolResultMap
+): AskUserQuestionInfo[] {
+  const pending: AskUserQuestionInfo[] = [];
+  for (const { block } of toolUseBlocks(messages)) {
+    if (block.name !== 'AskUserQuestion' || resultMap.has(block.id)) continue;
+    const input = block.input as
+      { questions?: Array<{ header?: string; question?: string }> } | undefined;
+    const firstQuestion = input?.questions?.[0];
+    pending.push({
+      id: block.id,
+      header: firstQuestion?.header || 'Question',
+      question: firstQuestion?.question || 'Claude needs your input',
+    });
+  }
+  return pending;
+}
+
+/**
+ * Reconstruct the plan content shown by each `ExitPlanMode` call (keyed by its
+ * tool_use id) from the plan-file `Write`/`Edit` calls that preceded it. See
+ * {@link reconstructPlansByToolUseId} for the multi-plan semantics.
+ */
+export function getPlanContentByToolUseId(messages: DisplayMessage[]): Map<string, string> {
+  const events: PlanEvent[] = [];
+  for (const { block, message } of toolUseBlocks(messages)) {
+    if (block.name === 'ExitPlanMode') {
+      events.push({ kind: 'exit', sequence: message.sequence, toolUseId: block.id });
+      continue;
+    }
+    if (block.name !== 'Write' && block.name !== 'Edit') continue;
+    const input = (block.input ?? {}) as Record<string, unknown>;
+    const filePath = input.file_path;
+    if (typeof filePath !== 'string' || !isPlanFile(filePath)) continue;
+
+    if (block.name === 'Write') {
+      events.push({
+        kind: 'write',
+        sequence: message.sequence,
+        filePath,
+        content: (input.content as string) ?? '',
+      });
+    } else {
+      events.push({
+        kind: 'edit',
+        sequence: message.sequence,
+        filePath,
+        oldString: (input.old_string as string) ?? '',
+        newString: (input.new_string as string) ?? '',
+      });
+    }
+  }
+  return reconstructPlansByToolUseId(events);
 }

@@ -64,43 +64,23 @@ export function useSessionMessages(sessionId: string) {
     { refetchOnWindowFocus: false, meta: STREAM_ERROR_RESYNC_META }
   );
 
-  // Newest sequence currently in the cache. Used once by useSessionStream as the
-  // initial SSE catch-up anchor (it is NOT fed reactively into the subscription).
-  const newestSequence = useMemo(() => {
-    if (!historyData?.pages) return undefined;
-    let newest: number | undefined;
-    for (const page of historyData.pages) {
-      for (const msg of page.messages) {
-        if (newest === undefined || msg.sequence > newest) {
-          newest = msg.sequence;
-        }
-      }
-    }
-    return newest;
-  }, [historyData]);
-
-  // Flatten bidirectional pages into chronological order
-  // Pages array structure:
-  // - pages[0] = newest (from fetchPreviousPage, or initial if no previous fetched)
-  // - pages[n-1] = oldest (from fetchNextPage)
-  // Each page's messages are already in chronological order
+  // Flatten the pages into chronological order. pages[0] is the newest (it is
+  // also where the SSE stream appends live messages, in order); each later page
+  // is an older backward fetch. Each page's messages are already chronological.
   const messages = useMemo(() => {
     if (!historyData?.pages) return [];
-
     const result: Message[] = [];
-    // Reverse pages to get oldest-first, then flatten
-    for (const page of [...historyData.pages].reverse()) {
-      for (const msg of page.messages) {
-        result.push({
-          id: msg.id,
-          type: msg.type,
-          content: msg.content,
-          sequence: msg.sequence,
-        });
+    for (let i = historyData.pages.length - 1; i >= 0; i--) {
+      for (const msg of historyData.pages[i].messages) {
+        result.push(msg);
       }
     }
     return result;
   }, [historyData]);
+
+  // Because `messages` is chronological, the newest cached sequence is the last
+  // one. useSessionStream reads this once as its SSE catch-up anchor.
+  const newestSequence = messages.length > 0 ? messages[messages.length - 1].sequence : undefined;
 
   return {
     messages,

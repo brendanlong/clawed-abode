@@ -5,13 +5,7 @@ import { cn } from '@/lib/utils';
 import { MessageBubble } from './messages/MessageBubble';
 import { SubagentTranscript } from './messages/SubagentTranscript';
 import { TaskDisplay } from './messages/TaskDisplay';
-import type {
-  ToolResultMap,
-  ToolCall,
-  ContentBlock,
-  MessageContent,
-  DisplayMessage,
-} from './messages/types';
+import type { ToolCall, MessageContent, DisplayMessage } from './messages/types';
 import { MessageListProvider } from './messages/MessageListContext';
 import { Clock } from 'lucide-react';
 import { Spinner } from '@/components/ui/spinner';
@@ -19,7 +13,6 @@ import { ContextUsageIndicator } from '@/components/ContextUsageIndicator';
 import type { TokenUsageStats } from '@/lib/token-estimation';
 import { useNotification } from '@/hooks/useNotification';
 import { useVoicePlaybackContext } from '@/hooks/useVoicePlayback';
-import { isPlanFile, reconstructPlansByToolUseId, type PlanEvent } from './messages/plan-utils';
 import {
   isToolCallOnlyMessage,
   isToolResultMessage,
@@ -28,266 +21,14 @@ import {
   groupSubagentMessages,
   computeSubagentPlacements,
   buildToolCallFromBlock,
-  type SubagentLifecycle,
+  buildToolResultMap,
+  collectSubagentLifecycles,
+  getLatestTodoWriteId,
+  getPendingAskUserQuestions,
+  getPlanContentByToolUseId,
 } from './messages/messageHelpers';
 
 type Message = DisplayMessage;
-
-// Extract tool_use IDs from an assistant message
-function getToolUseIds(message: Message): string[] {
-  const content = message.content as MessageContent | undefined;
-  const blocks = content?.message?.content;
-  if (!Array.isArray(blocks)) return [];
-  return blocks.filter((b) => b.type === 'tool_use' && b.id).map((b) => b.id!);
-}
-
-// Extract tool_result blocks from a tool result message
-function getToolResultBlocks(message: Message): ContentBlock[] {
-  const content = message.content as MessageContent | undefined;
-  const blocks = content?.message?.content;
-  if (!Array.isArray(blocks)) return [];
-  return blocks.filter((b) => b.type === 'tool_result');
-}
-
-// Build a map of tool_use_id -> tool_result content, and track which messages are fully paired
-function buildToolResultMap(messages: Message[]): {
-  resultMap: ToolResultMap;
-  pairedMessageIds: Set<string>;
-  /** Sequence of the message carrying each tool_use's result (its finish point). */
-  resultSequenceByToolUseId: Map<string, number>;
-} {
-  const resultMap: ToolResultMap = new Map();
-  const pairedMessageIds = new Set<string>();
-  const resultSequenceByToolUseId = new Map<string, number>();
-
-  // First pass: collect all tool_use IDs from assistant messages
-  const toolUseIds = new Set<string>();
-  for (const msg of messages) {
-    if (msg.type === 'assistant') {
-      for (const id of getToolUseIds(msg)) {
-        toolUseIds.add(id);
-      }
-    }
-  }
-
-  // Second pass: map tool results to their tool_use IDs
-  for (const msg of messages) {
-    if (msg.type === 'user' && isToolResultMessage(msg.content as MessageContent)) {
-      const resultBlocks = getToolResultBlocks(msg);
-      let allPaired = true;
-
-      for (const block of resultBlocks) {
-        if (block.tool_use_id && toolUseIds.has(block.tool_use_id)) {
-          resultMap.set(block.tool_use_id, {
-            content: typeof block.content === 'string' ? block.content : undefined,
-            is_error: block.is_error,
-          });
-          resultSequenceByToolUseId.set(block.tool_use_id, msg.sequence);
-        } else {
-          // This result doesn't have a matching tool_use
-          allPaired = false;
-        }
-      }
-
-      // Only mark message as paired if ALL its results were paired
-      if (allPaired && resultBlocks.length > 0) {
-        pairedMessageIds.add(msg.id);
-      }
-    }
-  }
-
-  return { resultMap, pairedMessageIds, resultSequenceByToolUseId };
-}
-
-// Read a `system` message's subtype + tool_use_id (task lifecycle messages carry
-// the tool_use_id of the subagent/backgrounded tool they describe).
-function systemTaskInfo(msg: Message): { subtype?: string; toolUseId?: string } {
-  const content = msg.content as { subtype?: string; tool_use_id?: string } | undefined;
-  return { subtype: content?.subtype, toolUseId: content?.tool_use_id };
-}
-
-// Collect the lifecycle of each top-level (main-agent) subagent Task, and index
-// the Agent/Task tool_use blocks by id so a relocated box can be reconstructed
-// from its call. Background subagents are identified by a `task_started`, and
-// their finish by a `task_notification` (both carry the subagent's tool_use_id).
-function collectSubagentLifecycles(
-  messages: Message[],
-  subagentMessagesByToolUseId: Map<string, DisplayMessage[]>,
-  resultSequenceByToolUseId: Map<string, number>
-): { lifecycles: SubagentLifecycle[]; agentBlockById: Map<string, ContentBlock> } {
-  const agentBlockById = new Map<string, ContentBlock>();
-  const spawnSequenceByToolUseId = new Map<string, number>();
-  const backgroundToolUseIds = new Set<string>();
-  const notificationSequenceByToolUseId = new Map<string, number>();
-
-  for (const msg of messages) {
-    if (msg.type === 'assistant' && getParentToolUseId(msg.content) === null) {
-      const blocks = (msg.content as MessageContent | undefined)?.message?.content;
-      if (Array.isArray(blocks)) {
-        for (const block of blocks) {
-          if (
-            block.type === 'tool_use' &&
-            block.id &&
-            (block.name === 'Agent' || block.name === 'Task')
-          ) {
-            agentBlockById.set(block.id, block);
-            spawnSequenceByToolUseId.set(block.id, msg.sequence);
-          }
-        }
-      }
-    } else if (msg.type === 'system') {
-      const { subtype, toolUseId } = systemTaskInfo(msg);
-      if (!toolUseId) continue;
-      if (subtype === 'task_started') {
-        backgroundToolUseIds.add(toolUseId);
-      } else if (subtype === 'task_notification') {
-        // First terminal notification wins as the finish point.
-        if (!notificationSequenceByToolUseId.has(toolUseId)) {
-          notificationSequenceByToolUseId.set(toolUseId, msg.sequence);
-        }
-      }
-    }
-  }
-
-  const lifecycles: SubagentLifecycle[] = [];
-  for (const [toolUseId, spawnSequence] of spawnSequenceByToolUseId) {
-    const children = subagentMessagesByToolUseId.get(toolUseId);
-    // reduce (not Math.max(...spread)) to avoid an argument-count limit on a
-    // chatty subagent's large child array, and without assuming child order.
-    const lastChildSequence = children?.length
-      ? children.reduce((max, c) => Math.max(max, c.sequence), -Infinity)
-      : null;
-    lifecycles.push({
-      toolUseId,
-      spawnSequence,
-      isBackground: backgroundToolUseIds.has(toolUseId),
-      notificationSequence: notificationSequenceByToolUseId.get(toolUseId) ?? null,
-      lastChildSequence,
-      resultSequence: resultSequenceByToolUseId.get(toolUseId) ?? null,
-    });
-  }
-  // Preserve spawn order (Map iteration is insertion order = document order).
-  return { lifecycles, agentBlockById };
-}
-
-// Extract TodoWrite tool call IDs from messages, ordered by sequence
-function getTodoWriteIds(messages: Message[]): string[] {
-  const ids: string[] = [];
-  // Sort by sequence to ensure correct ordering
-  const sortedMessages = [...messages].sort((a, b) => a.sequence - b.sequence);
-  for (const msg of sortedMessages) {
-    if (msg.type === 'assistant') {
-      const content = msg.content as MessageContent | undefined;
-      const blocks = content?.message?.content;
-      if (Array.isArray(blocks)) {
-        for (const block of blocks) {
-          if (block.type === 'tool_use' && block.name === 'TodoWrite' && block.id) {
-            ids.push(block.id);
-          }
-        }
-      }
-    }
-  }
-  return ids;
-}
-
-interface AskUserQuestionInfo {
-  id: string;
-  header: string;
-  question: string;
-}
-
-// Extract pending AskUserQuestion tool calls (those without a result yet)
-function getPendingAskUserQuestions(
-  messages: Message[],
-  resultMap: ToolResultMap
-): AskUserQuestionInfo[] {
-  const pending: AskUserQuestionInfo[] = [];
-  const sortedMessages = [...messages].sort((a, b) => a.sequence - b.sequence);
-
-  for (const msg of sortedMessages) {
-    if (msg.type === 'assistant') {
-      const content = msg.content as MessageContent | undefined;
-      const blocks = content?.message?.content;
-      if (Array.isArray(blocks)) {
-        for (const block of blocks) {
-          if (
-            block.type === 'tool_use' &&
-            block.name === 'AskUserQuestion' &&
-            block.id &&
-            !resultMap.has(block.id) // No result yet = pending
-          ) {
-            const input = block.input as
-              | {
-                  questions?: Array<{ header?: string; question?: string }>;
-                }
-              | undefined;
-            const firstQuestion = input?.questions?.[0];
-            pending.push({
-              id: block.id,
-              header: firstQuestion?.header || 'Question',
-              question: firstQuestion?.question || 'Claude needs your input',
-            });
-          }
-        }
-      }
-    }
-  }
-  return pending;
-}
-
-/**
- * Extract plan Write/Edit tool calls and ExitPlanMode calls from the messages,
- * then reconstruct the plan content for each ExitPlanMode (keyed by its tool_use
- * id). Handles multiple plans per session — see {@link reconstructPlansByToolUseId}.
- */
-function getPlanContentByToolUseId(messages: Message[]): Map<string, string> {
-  const events: PlanEvent[] = [];
-
-  for (const msg of messages) {
-    if (msg.type !== 'assistant') continue;
-    const content = msg.content as MessageContent | undefined;
-    const blocks = content?.message?.content;
-    if (!Array.isArray(blocks)) continue;
-
-    for (const block of blocks) {
-      if (block.type !== 'tool_use') continue;
-
-      if (block.name === 'ExitPlanMode' && block.id) {
-        events.push({ kind: 'exit', sequence: msg.sequence, toolUseId: block.id });
-        continue;
-      }
-
-      if (!block.input) continue;
-      const input = block.input as Record<string, unknown>;
-      const filePath = input.file_path as string | undefined;
-      if (!filePath || !isPlanFile(filePath)) continue;
-
-      if (block.name === 'Write') {
-        events.push({
-          kind: 'write',
-          sequence: msg.sequence,
-          filePath,
-          content: (input.content as string) ?? '',
-        });
-      } else if (block.name === 'Edit') {
-        events.push({
-          kind: 'edit',
-          sequence: msg.sequence,
-          filePath,
-          oldString: (input.old_string as string) ?? '',
-          newString: (input.new_string as string) ?? '',
-        });
-      }
-    }
-  }
-
-  return reconstructPlansByToolUseId(events);
-}
-
-// Total cost is now provided by tokenUsage.totalCostUsd from the server-side
-// estimateTokenUsage function, which uses the authoritative total_cost_usd
-// from result messages per Anthropic's cost tracking docs.
 
 interface MessageListProps {
   messages: Message[];
@@ -386,13 +127,7 @@ export function MessageList({
     [messages, subagentMessagesByToolUseId, resultSequenceByToolUseId]
   );
 
-  // Find the latest TodoWrite ID (last one by sequence)
-  const latestTodoWriteId = useMemo(() => {
-    const todoIds = getTodoWriteIds(messages);
-    return todoIds.length > 0 ? todoIds[todoIds.length - 1] : null;
-  }, [messages]);
-
-  // Total cost comes from tokenUsage (server-computed from authoritative result messages)
+  const latestTodoWriteId = useMemo(() => getLatestTodoWriteId(messages), [messages]);
 
   // Reconstruct plan content per ExitPlanMode call (keyed by tool_use id)
   const planContentByToolUseId = useMemo(() => getPlanContentByToolUseId(messages), [messages]);

@@ -15,9 +15,15 @@ import {
   getParentToolUseId,
   groupSubagentMessages,
   computeSubagentPlacements,
+  toolUseBlocks,
+  buildToolResultMap,
+  collectSubagentLifecycles,
+  getLatestTodoWriteId,
+  getPendingAskUserQuestions,
+  getPlanContentByToolUseId,
   type SubagentLifecycle,
 } from './messageHelpers';
-import type { DisplayMessage } from './types';
+import type { ContentBlock, DisplayMessage, ToolResultMap } from './types';
 
 describe('extractTextContent', () => {
   it('extracts text from assistant message content array', () => {
@@ -774,5 +780,279 @@ describe('computeSubagentPlacements', () => {
     expect(finished.map((f) => f.toolUseId)).toEqual(['b', 'a']);
     // c is background with no notification and the session is live → pinned
     expect(running).toEqual(['c']);
+  });
+});
+
+// Fixtures for the transcript-scanning helpers. Ids double as sequences so the
+// expectations read naturally.
+function assistant(
+  sequence: number,
+  blocks: ContentBlock[],
+  parentToolUseId: string | null = null
+): DisplayMessage {
+  return {
+    id: `m${sequence}`,
+    type: 'assistant',
+    sequence,
+    content: { parent_tool_use_id: parentToolUseId, message: { content: blocks } },
+  };
+}
+
+function toolUse(id: string, name: string, input: unknown = {}): ContentBlock {
+  return { type: 'tool_use', id, name, input };
+}
+
+function toolResultMessage(sequence: number, results: ContentBlock[]): DisplayMessage {
+  return {
+    id: `m${sequence}`,
+    type: 'user',
+    sequence,
+    content: { message: { content: results } },
+  };
+}
+
+function toolResult(toolUseId: string, content?: string, isError?: boolean): ContentBlock {
+  return { type: 'tool_result', tool_use_id: toolUseId, content, is_error: isError };
+}
+
+function system(sequence: number, subtype: string, toolUseId?: string): DisplayMessage {
+  return {
+    id: `m${sequence}`,
+    type: 'system',
+    sequence,
+    content: { subtype, tool_use_id: toolUseId },
+  };
+}
+
+describe('toolUseBlocks', () => {
+  it('yields every identified tool_use block with its message, in transcript order', () => {
+    const messages = [
+      assistant(1, [{ type: 'text', text: 'hi' }, toolUse('a', 'Read')]),
+      {
+        id: 'u',
+        type: 'user',
+        sequence: 2,
+        content: { message: { content: [toolUse('x', 'Nope')] } },
+      },
+      assistant(3, [toolUse('b', 'Bash'), toolUse('c', 'Grep')], 'parent-1'),
+    ];
+    const seen = [...toolUseBlocks(messages)].map(({ block, message }) => [
+      block.id,
+      message.sequence,
+    ]);
+    expect(seen).toEqual([
+      ['a', 1],
+      ['b', 3],
+      ['c', 3],
+    ]);
+  });
+
+  it('skips tool_use blocks without an id and assistant messages with non-array content', () => {
+    const messages: DisplayMessage[] = [
+      assistant(1, [{ type: 'tool_use', name: 'Read' }]),
+      { id: 'm2', type: 'assistant', sequence: 2, content: { message: { content: 'text' } } },
+      { id: 'm3', type: 'assistant', sequence: 3, content: undefined },
+    ];
+    expect([...toolUseBlocks(messages)]).toEqual([]);
+  });
+});
+
+describe('buildToolResultMap', () => {
+  it('pairs results with their calls and records the result sequence', () => {
+    const { resultMap, pairedMessageIds, resultSequenceByToolUseId } = buildToolResultMap([
+      assistant(1, [toolUse('a', 'Read'), toolUse('b', 'Bash')]),
+      toolResultMessage(2, [toolResult('a', 'file contents')]),
+      toolResultMessage(3, [toolResult('b', 'boom', true)]),
+    ]);
+    expect(resultMap.get('a')).toEqual({ content: 'file contents', is_error: undefined });
+    expect(resultMap.get('b')).toEqual({ content: 'boom', is_error: true });
+    expect([...pairedMessageIds]).toEqual(['m2', 'm3']);
+    expect(resultSequenceByToolUseId.get('a')).toBe(2);
+    expect(resultSequenceByToolUseId.get('b')).toBe(3);
+  });
+
+  it('pairs results from subagent calls too', () => {
+    const { resultMap, pairedMessageIds } = buildToolResultMap([
+      assistant(1, [toolUse('child', 'Read')], 'parent-1'),
+      toolResultMessage(2, [toolResult('child', 'x')]),
+    ]);
+    expect(resultMap.has('child')).toBe(true);
+    expect(pairedMessageIds.has('m2')).toBe(true);
+  });
+
+  it('leaves a message unpaired when any of its results has no matching call', () => {
+    const { resultMap, pairedMessageIds } = buildToolResultMap([
+      assistant(1, [toolUse('a', 'Read')]),
+      toolResultMessage(2, [toolResult('a', 'ok'), toolResult('orphan', 'lost')]),
+    ]);
+    expect(resultMap.has('a')).toBe(true);
+    expect(resultMap.has('orphan')).toBe(false);
+    expect(pairedMessageIds.size).toBe(0);
+  });
+
+  it('stores undefined content for non-string result content', () => {
+    const { resultMap } = buildToolResultMap([
+      assistant(1, [toolUse('a', 'Agent')]),
+      toolResultMessage(2, [{ type: 'tool_result', tool_use_id: 'a', content: { type: 'text' } }]),
+    ]);
+    expect(resultMap.get('a')).toEqual({ content: undefined, is_error: undefined });
+  });
+
+  it('ignores user messages that are not tool results', () => {
+    const { pairedMessageIds } = buildToolResultMap([
+      {
+        id: 'p',
+        type: 'user',
+        sequence: 1,
+        content: { message: { content: [{ type: 'text', text: 'hi' }] } },
+      },
+    ]);
+    expect(pairedMessageIds.size).toBe(0);
+  });
+});
+
+describe('collectSubagentLifecycles', () => {
+  const agentCall = (seq: number, id: string, parent: string | null = null) =>
+    assistant(seq, [toolUse(id, 'Agent', { description: 'x' })], parent);
+
+  it('records the spawn, background marker, notification, result, and last child', () => {
+    const children = new Map([
+      ['agent-1', [assistant(4, [], 'agent-1'), assistant(6, [], 'agent-1')]],
+    ]);
+    const { lifecycles, agentBlockById } = collectSubagentLifecycles(
+      [
+        agentCall(1, 'agent-1'),
+        system(2, 'task_started', 'agent-1'),
+        system(7, 'task_notification', 'agent-1'),
+        system(8, 'task_notification', 'agent-1'),
+      ],
+      children,
+      new Map([['agent-1', 3]])
+    );
+    expect(lifecycles).toEqual([
+      {
+        toolUseId: 'agent-1',
+        spawnSequence: 1,
+        isBackground: true,
+        notificationSequence: 7,
+        lastChildSequence: 6,
+        resultSequence: 3,
+      },
+    ]);
+    expect(agentBlockById.get('agent-1')?.name).toBe('Agent');
+  });
+
+  it('treats a foreground subagent with no children as unresolved lifecycle fields', () => {
+    const { lifecycles } = collectSubagentLifecycles(
+      [assistant(1, [toolUse('task-1', 'Task')])],
+      new Map(),
+      new Map()
+    );
+    expect(lifecycles).toEqual([
+      {
+        toolUseId: 'task-1',
+        spawnSequence: 1,
+        isBackground: false,
+        notificationSequence: null,
+        lastChildSequence: null,
+        resultSequence: null,
+      },
+    ]);
+  });
+
+  it('ignores nested subagent calls and non-Agent tools, preserving spawn order', () => {
+    const { lifecycles, agentBlockById } = collectSubagentLifecycles(
+      [
+        agentCall(5, 'agent-b'),
+        assistant(6, [toolUse('read', 'Read')]),
+        agentCall(7, 'nested', 'agent-b'),
+        agentCall(9, 'agent-a'),
+      ],
+      new Map(),
+      new Map()
+    );
+    expect(lifecycles.map((l) => l.toolUseId)).toEqual(['agent-b', 'agent-a']);
+    expect([...agentBlockById.keys()]).toEqual(['agent-b', 'agent-a']);
+  });
+
+  it('ignores system task messages without a tool_use_id', () => {
+    const { lifecycles } = collectSubagentLifecycles(
+      [agentCall(1, 'agent-1'), system(2, 'task_started')],
+      new Map(),
+      new Map()
+    );
+    expect(lifecycles[0].isBackground).toBe(false);
+  });
+});
+
+describe('getLatestTodoWriteId', () => {
+  it('returns the last TodoWrite id, including when several sit in one message', () => {
+    expect(
+      getLatestTodoWriteId([
+        assistant(1, [toolUse('todo-1', 'TodoWrite')]),
+        assistant(2, [toolUse('todo-2', 'TodoWrite'), toolUse('todo-3', 'TodoWrite')]),
+        assistant(3, [toolUse('read', 'Read')]),
+      ])
+    ).toBe('todo-3');
+  });
+
+  it('returns null when there is no TodoWrite', () => {
+    expect(getLatestTodoWriteId([assistant(1, [toolUse('read', 'Read')])])).toBeNull();
+    expect(getLatestTodoWriteId([])).toBeNull();
+  });
+});
+
+describe('getPendingAskUserQuestions', () => {
+  const ask = (id: string, questions?: unknown) => toolUse(id, 'AskUserQuestion', { questions });
+
+  it('returns questions without a result, in order, with the first question summarized', () => {
+    const resultMap: ToolResultMap = new Map([['q-answered', { content: 'yes' }]]);
+    expect(
+      getPendingAskUserQuestions(
+        [
+          assistant(1, [ask('q-answered', [{ header: 'Old', question: 'Done?' }])]),
+          assistant(2, [
+            ask('q-1', [
+              { header: 'Approach', question: 'Which one?' },
+              { header: 'Ignored', question: 'Second' },
+            ]),
+          ]),
+          assistant(3, [ask('q-2'), toolUse('read', 'Read')]),
+        ],
+        resultMap
+      )
+    ).toEqual([
+      { id: 'q-1', header: 'Approach', question: 'Which one?' },
+      { id: 'q-2', header: 'Question', question: 'Claude needs your input' },
+    ]);
+  });
+});
+
+describe('getPlanContentByToolUseId', () => {
+  const PLAN = '/home/u/.claude/plans/feature.md';
+
+  it('replays plan-file writes and edits into each ExitPlanMode', () => {
+    const plans = getPlanContentByToolUseId([
+      assistant(1, [toolUse('w', 'Write', { file_path: PLAN, content: '# Plan\nstep one' })]),
+      assistant(2, [
+        toolUse('e', 'Edit', { file_path: PLAN, old_string: 'step one', new_string: 'step two' }),
+      ]),
+      assistant(3, [toolUse('exit-1', 'ExitPlanMode', {})]),
+      assistant(4, [toolUse('w2', 'Write', { file_path: '/repo/src/index.ts', content: 'code' })]),
+      assistant(5, [toolUse('w3', 'Write', { file_path: PLAN, content: 'rewritten' })]),
+      assistant(6, [toolUse('exit-2', 'ExitPlanMode', {})]),
+    ]);
+    expect(plans.get('exit-1')).toBe('# Plan\nstep two');
+    expect(plans.get('exit-2')).toBe('rewritten');
+  });
+
+  it('tolerates missing or malformed tool input', () => {
+    const plans = getPlanContentByToolUseId([
+      assistant(1, [{ type: 'tool_use', id: 'w', name: 'Write' }]),
+      assistant(2, [toolUse('e', 'Edit', { file_path: 42 })]),
+      assistant(3, [toolUse('w2', 'Write', { file_path: PLAN, content: 'ok' })]),
+      assistant(4, [toolUse('exit-1', 'ExitPlanMode', {})]),
+    ]);
+    expect([...plans]).toEqual([['exit-1', 'ok']]);
   });
 });
