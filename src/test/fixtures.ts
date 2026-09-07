@@ -13,3 +13,8 @@ export function createTestSession(overrides: Partial<Prisma.SessionCreateInput> 
     },
   });
 }
+
+/** A running session with no repository (the `__no_repo__` product state). */
+export function createNoRepoSession(overrides: Partial<Prisma.SessionCreateInput> = {}) {
+  return createTestSession({ repoUrl: null, branch: null, ...overrides });
+}

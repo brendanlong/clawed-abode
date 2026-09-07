@@ -315,6 +315,19 @@ describe('MessageBubble', () => {
       expect(screen.getByText('Hidden content removed')).toBeInTheDocument();
     });
 
+    it('does not show a sanitization badge on a clean prompt', () => {
+      const message = {
+        type: 'user',
+        content: { content: 'Please review this' } as MessageContent,
+      };
+
+      render(<MessageBubble message={message} />);
+
+      expect(screen.queryByText('Hidden content removed')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('tool result messages', () => {
     it('renders tool result display for tool_result content', () => {
       const message = {
         type: 'user',
@@ -339,19 +352,6 @@ describe('MessageBubble', () => {
       expect(screen.queryByText('Tool execution output')).not.toBeInTheDocument();
     });
 
-    it('does not show a sanitization badge on a clean prompt', () => {
-      const message = {
-        type: 'user',
-        content: { content: 'Please review this' } as MessageContent,
-      };
-
-      render(<MessageBubble message={message} />);
-
-      expect(screen.queryByText('Hidden content removed')).not.toBeInTheDocument();
-    });
-  });
-
-  describe('tool result messages', () => {
     it('shows a sanitization badge on a filtered tool result', () => {
       const message = {
         type: 'user',

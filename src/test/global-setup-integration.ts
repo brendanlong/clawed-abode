@@ -21,7 +21,7 @@ export default function setup(project: TestProject) {
   const template = join(dir, 'template.db');
   execSync('pnpm exec prisma migrate deploy', {
     env: { ...process.env, DATABASE_URL: `file:${template}` },
-    stdio: 'pipe',
+    stdio: 'inherit',
   });
   project.provide('testDbTemplate', template);
   return () => rmSync(dir, { recursive: true, force: true });

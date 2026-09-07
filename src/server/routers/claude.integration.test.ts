@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { setupTestDb, teardownTestDb, testPrisma, clearTestDb } from '@/test/setup-test-db';
-import { createTestSession } from '@/test/fixtures';
+import { createNoRepoSession, createTestSession } from '@/test/fixtures';
 
 // Mock the runner's live-query entry points (no real SDK)
 const mockSendUserMessage = vi.hoisted(() => vi.fn());
@@ -97,9 +97,6 @@ describe('claudeRouter integration', () => {
     it('should send a prompt to Claude for a running session', async () => {
       const session = await createTestSession({
         name: 'Test Session',
-        repoUrl: 'https://github.com/owner/repo.git',
-        branch: 'main',
-        status: 'running',
       });
 
       mockIsClaudeRunning.mockReturnValue(false);
@@ -116,7 +113,7 @@ describe('claudeRouter integration', () => {
     });
 
     it('passes attachment stored names through to sendUserMessage', async () => {
-      const session = await createTestSession({ name: 'Attach Session', status: 'running' });
+      const session = await createNoRepoSession({ name: 'Attach Session', status: 'running' });
 
       mockIsClaudeRunning.mockReturnValue(false);
       mockSendUserMessage.mockResolvedValue(undefined);
@@ -139,7 +136,7 @@ describe('claudeRouter integration', () => {
     });
 
     it('passes an empty attachment list when none are provided', async () => {
-      const session = await createTestSession({ name: 'No Attach', status: 'running' });
+      const session = await createNoRepoSession({ name: 'No Attach', status: 'running' });
 
       mockIsClaudeRunning.mockReturnValue(false);
       mockSendUserMessage.mockResolvedValue(undefined);
@@ -151,7 +148,7 @@ describe('claudeRouter integration', () => {
     });
 
     it('allows a send with attachments and no prompt text', async () => {
-      const session = await createTestSession({ name: 'Attach Only', status: 'running' });
+      const session = await createNoRepoSession({ name: 'Attach Only', status: 'running' });
 
       mockIsClaudeRunning.mockReturnValue(false);
       mockSendUserMessage.mockResolvedValue(undefined);
@@ -167,7 +164,7 @@ describe('claudeRouter integration', () => {
     });
 
     it('rejects an empty prompt with no attachments', async () => {
-      const session = await createTestSession({ name: 'Empty', status: 'running' });
+      const session = await createNoRepoSession({ name: 'Empty', status: 'running' });
       const caller = createCaller('auth-session-id');
       await expect(caller.claude.send({ sessionId: session.id, prompt: '   ' })).rejects.toThrow();
     });
@@ -189,8 +186,6 @@ describe('claudeRouter integration', () => {
     it('should throw PRECONDITION_FAILED if session is not running', async () => {
       const session = await createTestSession({
         name: 'Stopped Session',
-        repoUrl: 'https://github.com/owner/repo.git',
-        branch: 'main',
         status: 'stopped',
       });
 
@@ -210,9 +205,6 @@ describe('claudeRouter integration', () => {
     it('accepts a send while Claude is running (it interleaves into the turn)', async () => {
       const session = await createTestSession({
         name: 'Running Session',
-        repoUrl: 'https://github.com/owner/repo.git',
-        branch: 'main',
-        status: 'running',
       });
 
       // A turn being active never blocks a send — sendUserMessage pushes it into
@@ -263,9 +255,6 @@ describe('claudeRouter integration', () => {
     const createRunningSession = () =>
       createTestSession({
         name: 'Q Session',
-        repoUrl: 'https://github.com/owner/repo.git',
-        branch: 'main',
-        status: 'running',
       });
 
     it('marks the question answered and resumes with a new turn', async () => {
@@ -374,8 +363,6 @@ describe('claudeRouter integration', () => {
     it('throws PRECONDITION_FAILED when the session is not running', async () => {
       const session = await createTestSession({
         name: 'Stopped Q Session',
-        repoUrl: 'https://github.com/owner/repo.git',
-        branch: 'main',
         status: 'stopped',
       });
 
@@ -395,9 +382,6 @@ describe('claudeRouter integration', () => {
     it('resumes with a revise prompt when changes are requested', async () => {
       const session = await createTestSession({
         name: 'Plan Session',
-        repoUrl: 'https://github.com/owner/repo.git',
-        branch: 'main',
-        status: 'running',
       });
       mockIsClaudeRunning.mockReturnValue(false);
       mockSendUserMessage.mockResolvedValue(undefined);
@@ -422,9 +406,6 @@ describe('claudeRouter integration', () => {
     it('should interrupt Claude successfully', async () => {
       const session = await createTestSession({
         name: 'Running Session',
-        repoUrl: 'https://github.com/owner/repo.git',
-        branch: 'main',
-        status: 'running',
       });
 
       mockInterruptClaude.mockResolvedValue({ interrupted: true, cancelled: [] });
@@ -441,9 +422,6 @@ describe('claudeRouter integration', () => {
     it('should return false if no process to interrupt', async () => {
       const session = await createTestSession({
         name: 'Idle Session',
-        repoUrl: 'https://github.com/owner/repo.git',
-        branch: 'main',
-        status: 'running',
       });
 
       mockInterruptClaude.mockResolvedValue({ interrupted: false, cancelled: [] });
@@ -480,9 +458,6 @@ describe('claudeRouter integration', () => {
     it('should get message history from the database', async () => {
       const session = await createTestSession({
         name: 'Session with history',
-        repoUrl: 'https://github.com/owner/repo.git',
-        branch: 'main',
-        status: 'running',
       });
 
       // Create messages in the database
@@ -525,9 +500,6 @@ describe('claudeRouter integration', () => {
     it('should support backward pagination', async () => {
       const session = await createTestSession({
         name: 'Session with many messages',
-        repoUrl: 'https://github.com/owner/repo.git',
-        branch: 'main',
-        status: 'running',
       });
 
       // Create 60 messages
@@ -558,9 +530,6 @@ describe('claudeRouter integration', () => {
     it('should support forward pagination', async () => {
       const session = await createTestSession({
         name: 'Session with messages',
-        repoUrl: 'https://github.com/owner/repo.git',
-        branch: 'main',
-        status: 'running',
       });
 
       // Create 20 messages
@@ -646,9 +615,6 @@ describe('claudeRouter integration', () => {
     it('should calculate token usage from messages in the database', async () => {
       const session = await createTestSession({
         name: 'Session with usage',
-        repoUrl: 'https://github.com/owner/repo.git',
-        branch: 'main',
-        status: 'running',
       });
 
       // Create a result message with usage data
@@ -683,9 +649,6 @@ describe('claudeRouter integration', () => {
     it('should aggregate usage from multiple result messages', async () => {
       const session = await createTestSession({
         name: 'Session with multiple turns',
-        repoUrl: 'https://github.com/owner/repo.git',
-        branch: 'main',
-        status: 'running',
       });
 
       // Create multiple result messages (each turn)
