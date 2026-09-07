@@ -7,14 +7,16 @@
  *   transient streaming snapshots of the in-progress assistant turn. At most one
  *   lives in the cache at a time; each new one replaces it.
  * - **Complete** messages are persisted. When one arrives it removes any lingering
- *   partials and is appended, deduped by id — a re-delivered id is ignored rather
- *   than merged, so the cache never reconciles an edit. The one way a complete
- *   message leaves is {@link removeMessageFromCache}, when the server deletes the
- *   row outright.
+ *   partials and is inserted by `sequence`, deduped by id — a re-delivered id is
+ *   ignored rather than merged, so the cache never reconciles an edit. The one way
+ *   a complete message leaves is {@link removeMessageFromCache}, when the server
+ *   deletes the row outright.
  *
- * Pages are ordered newest-page-last is NOT the case here: page[0] holds the
- * newest messages (matching `getHistory`'s backward pagination), so live messages
- * are appended to page[0].
+ * page[0] holds the newest messages (matching `getHistory`'s backward pagination),
+ * so live messages land in page[0]. Inserting by sequence (not arrival order)
+ * keeps every page chronological even if the server emits two concurrently
+ * persisted messages out of order; the message list relies on that ordering
+ * instead of re-sorting.
  */
 
 /** Prefix for transient streaming (partial) message ids. */
@@ -26,6 +28,7 @@ export function isPartialMessageId(id: string): boolean {
 
 export interface MessageLike {
   id: string;
+  sequence: number;
 }
 
 interface MessagePage<M extends MessageLike> {
@@ -79,13 +82,16 @@ export function mergeMessageIntoCache<M extends MessageLike, P = unknown>(
     }
   }
 
-  // Drop any partials from the newest page (they are now superseded) and append.
+  // Drop any partials from the newest page (they are now superseded) and insert
+  // at the sequence position. Scans from the end: the common case is an append.
   const newPages = [...old.pages];
   const firstPageMessages = newPages[0].messages.filter((m) => !isPartialMessageId(m.id));
-  newPages[0] = {
-    ...newPages[0],
-    messages: [...firstPageMessages, message],
-  };
+  let insertAt = firstPageMessages.length;
+  while (insertAt > 0 && firstPageMessages[insertAt - 1].sequence > message.sequence) {
+    insertAt--;
+  }
+  firstPageMessages.splice(insertAt, 0, message);
+  newPages[0] = { ...newPages[0], messages: firstPageMessages };
   return { ...old, pages: newPages };
 }
 
