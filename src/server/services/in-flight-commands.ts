@@ -76,7 +76,7 @@ export function handleCommandLifecycle(
 }
 
 /** Whether a message is the main agent's (top-level) `message_start`. */
-export function isTopLevelMessageStart(message: SDKMessage): boolean {
+function isTopLevelMessageStart(message: SDKMessage): boolean {
   if (message.type !== 'stream_event') return false;
   const parent = (message as { parent_tool_use_id?: string | null }).parent_tool_use_id;
   if (parent !== null && parent !== undefined) return false;
@@ -151,7 +151,10 @@ export async function cancelInFlightCommands(
     try {
       dropped = await canceller.cancelAsyncMessage(commandUuid);
     } catch (err) {
-      log.warn('cancelAsyncMessage failed', { sessionId, error: toError(err).message });
+      log.warn('cancelInFlightCommands: cancelAsyncMessage failed', {
+        sessionId,
+        error: toError(err).message,
+      });
     }
     // false = the CLI already dequeued it; the agent did read it, so its bubble stays.
     if (!dropped) continue;

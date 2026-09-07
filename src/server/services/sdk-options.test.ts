@@ -3,7 +3,6 @@ import type { MergedSessionSettings } from './settings-merger';
 import { buildMcpServersRecord, buildSdkOptions } from './sdk-options';
 import { createSessionState } from './session-state';
 
-vi.mock('@/lib/prisma', () => ({ prisma: {} }));
 vi.mock('./agent-env', () => ({
   buildAgentEnv: vi.fn(async (vars: { name: string; value: string }[]) => ({
     PATH: '/bin',
@@ -22,11 +21,6 @@ const mockScopeConfig = vi.hoisted(() =>
 vi.mock('./session-cgroup', () => ({
   getSessionScopeConfig: mockScopeConfig,
   sessionScopeNonce: () => 'nonce',
-}));
-const mockPersistScope = vi.hoisted(() => vi.fn(async () => {}));
-vi.mock('./session-state', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('./session-state')>()),
-  persistSessionScope: mockPersistScope,
 }));
 vi.mock('./input-sanitizer', () => ({ sanitizeToolOutputHook: vi.fn() }));
 
@@ -125,16 +119,21 @@ describe('buildSdkOptions', () => {
     });
   });
 
-  it('wires the systemd scope launcher and records the unit before the query exists', async () => {
+  it('wires the systemd scope launcher and puts the unit on state for the runner to record', async () => {
     mockScopeConfig.mockResolvedValueOnce({ launcherPath: '/l.sh', claudeBin: '/claude' });
     const { options, state } = await build(settings());
     expect(options.pathToClaudeCodeExecutable).toBe('/l.sh');
     expect(state.sessionScope).toMatch(/nonce/);
-    expect(mockPersistScope).toHaveBeenCalledWith('sid', state.sessionScope);
     expect(options.env).toMatchObject({
       CLAWED_SESSION_SCOPE: state.sessionScope,
       CLAWED_CLAUDE_BIN: '/claude',
     });
+  });
+
+  it('leaves the scope unset when cgroup scoping is unavailable', async () => {
+    const { options, state } = await build(settings());
+    expect(state.sessionScope).toBeNull();
+    expect(options.pathToClaudeCodeExecutable).toBeUndefined();
   });
 
   it('canUseTool parks interactive tools on state and allows everything else', async () => {

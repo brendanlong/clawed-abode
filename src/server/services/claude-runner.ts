@@ -43,7 +43,7 @@ import {
 } from './settings-merger';
 import { StreamAccumulator } from './stream-accumulator';
 import { stopSessionScope, reapSessionScopes } from './session-cgroup';
-import { createSessionState, persistSessionScope, type SessionState } from './session-state';
+import { createSessionState, type SessionState } from './session-state';
 import {
   createErrorMessage,
   bumpSessionActivity,
@@ -120,6 +120,24 @@ function getSessionState(sessionId: string, workingDir: string): SessionState {
     state.workingDir = workingDir;
   }
   return state;
+}
+
+/**
+ * Mirror a session's current systemd scope unit name onto its DB row (or clear it
+ * with null on teardown), so a crash — which never runs teardown — leaves the
+ * orphaned scope name behind for {@link reapOrphanedSessionScopes}. Best-effort: a
+ * failed write only risks a leaked scope after a crash, never correctness.
+ * `updateMany` so a deleted session is a silent no-op.
+ */
+async function persistSessionScope(sessionId: string, unit: string | null): Promise<void> {
+  try {
+    await prisma.session.updateMany({ where: { id: sessionId }, data: { sessionScope: unit } });
+  } catch (err) {
+    log.warn('Failed to persist session scope for crash reaping', {
+      sessionId,
+      error: toError(err).message,
+    });
+  }
 }
 
 /**
@@ -319,6 +337,11 @@ async function establishSessionQuery(
 
   const shouldResume = (await prisma.message.count({ where: { sessionId } })) > 0;
   const options = await buildSdkOptions({ sessionId, workingDir, settings, shouldResume, state });
+  // Record the scope name durably BEFORE the subprocess (and thus the scope) is
+  // spawned, so a crash between here and teardown can always reap it by exact
+  // name. Over-recording — a name written for a scope that ends up not created
+  // because establish aborts below — is harmless: the reap's stop is a no-op.
+  if (state.sessionScope) await persistSessionScope(sessionId, state.sessionScope);
 
   // If `stopSession` ran while we were loading (it deletes the map entry), abort
   // before creating the query — otherwise we'd resurrect a torn-down session with
@@ -734,6 +757,10 @@ export async function reapOrphanedSessionScopes(): Promise<void> {
   log.info('Reaping orphaned session scopes on startup', { count: scopes.length });
   await reapSessionScopes(scopes);
 
+  // Clear exactly the names just reaped, not a blanket `sessionScope != null`: if a
+  // session recorded a fresh live scope between the findMany and here, a blanket
+  // clear would null a name still in use and leak that scope on the next crash.
+  // Safe today given "runs once before any revive"; robust if that ever weakens.
   try {
     await prisma.session.updateMany({
       where: { sessionScope: { in: scopes } },

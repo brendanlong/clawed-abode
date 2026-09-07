@@ -8,10 +8,6 @@ import type { Pushable } from '@/lib/pushable';
 import { INITIAL_LIVE_STATUS, type LiveStatus } from '@/lib/session-status';
 import type { SanitizationInfo } from '@/lib/sanitization';
 import type { MergedSessionSettings } from './settings-merger';
-import { prisma } from '@/lib/prisma';
-import { createLogger, toError } from '@/lib/logger';
-
-const log = createLogger('session-state');
 
 /**
  * A pending interactive tool request (AskUserQuestion / ExitPlanMode): the
@@ -101,7 +97,8 @@ export interface SessionState {
   interruptRequested: boolean;
   /**
    * Transient systemd user scope this session's query runs in (null when cgroup
-   * reaping is unavailable). Stopped on teardown to kill the whole process tree.
+   * reaping is unavailable). Mirrored onto the DB row by the runner so a crash can
+   * reap it by exact name; stopped on teardown to kill the whole process tree.
    */
   sessionScope: string | null;
 }
@@ -124,21 +121,4 @@ export function createSessionState(workingDir: string, commands: SlashCommand[])
     interruptRequested: false,
     sessionScope: null,
   };
-}
-
-/**
- * Mirror a session's current systemd scope unit name onto its DB row (or clear it
- * with null on teardown), so a crash — which never runs teardown — leaves the
- * orphaned scope name behind for `reapOrphanedSessionScopes` to stop at startup.
- * Best-effort; `updateMany` so a deleted session is a silent no-op.
- */
-export async function persistSessionScope(sessionId: string, unit: string | null): Promise<void> {
-  try {
-    await prisma.session.updateMany({ where: { id: sessionId }, data: { sessionScope: unit } });
-  } catch (err) {
-    log.warn('Failed to persist session scope for crash reaping', {
-      sessionId,
-      error: toError(err).message,
-    });
-  }
 }

@@ -5,7 +5,7 @@ import { buildAgentEnv } from './agent-env';
 import { sanitizeToolOutputHook } from './input-sanitizer';
 import { writeSessionMcpConfig, removeSessionMcpConfig } from './mcp-config-file';
 import { getSessionScopeConfig, sessionScopeNonce } from './session-cgroup';
-import { persistSessionScope, type SessionState } from './session-state';
+import type { SessionState } from './session-state';
 import type { MergedSessionSettings } from './settings-merger';
 
 const log = createLogger('sdk-options');
@@ -130,13 +130,12 @@ export async function buildSdkOptions(params: {
 
   // Run the CLI (and everything it spawns) in a transient systemd user scope so the
   // whole tree is reaped on teardown (doc/claude-sessions.md "Process Reaping").
-  // The unit name is recorded on the DB row BEFORE the subprocess exists, so a
-  // crash between here and teardown can always reap it by exact name.
+  // The unit name goes on `state.sessionScope`; the runner records it on the DB row
+  // before the subprocess exists so a crash can always reap it by exact name.
   const scopeConfig = await getSessionScopeConfig();
   if (scopeConfig) {
     const unit = sessionScopeUnitName(sessionId, sessionScopeNonce());
     state.sessionScope = unit;
-    await persistSessionScope(sessionId, unit);
     options.pathToClaudeCodeExecutable = scopeConfig.launcherPath;
     agentEnv[SESSION_SCOPE_ENV] = unit;
     agentEnv[CLAUDE_BIN_ENV] = scopeConfig.claudeBin;

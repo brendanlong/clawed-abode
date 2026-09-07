@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import {
+  cancelInFlightCommands,
   effectiveRunning,
   handleCommandLifecycle,
   pendingMessageIds,
@@ -11,8 +13,14 @@ import { createSessionState } from './session-state';
 
 const mockSse = vi.hoisted(() => ({ emitClaudeRunning: vi.fn(), emitPendingMessages: vi.fn() }));
 vi.mock('./events', () => ({ sseEvents: mockSse }));
-vi.mock('@/lib/prisma', () => ({ prisma: {} }));
-vi.mock('./uploads', () => ({ resolveUploadPaths: vi.fn() }));
+const mockResolveUploadPaths = vi.hoisted(() =>
+  vi.fn(async (sessionId: string, names: string[]) =>
+    names.map((n) => `/ws/${sessionId}/uploads/${n}`)
+  )
+);
+vi.mock('./uploads', () => ({ resolveUploadPaths: mockResolveUploadPaths }));
+const mockRemoveMessages = vi.hoisted(() => vi.fn(async () => {}));
+vi.mock('./message-store', () => ({ removeMessages: mockRemoveMessages }));
 
 const lifecycle = (command_uuid: string, state: string) =>
   ({ type: 'command_lifecycle', command_uuid, state }) as unknown as SDKMessage;
@@ -103,5 +111,50 @@ describe('retireInFlightCommands', () => {
     const state2 = stateWith({ a: {} });
     retireInFlightCommands('s', state2, messageStart());
     expect(state2.inFlightCommands.size).toBe(0);
+  });
+});
+
+describe('cancelInFlightCommands', () => {
+  const queryThat = (cancel: (uuid: string) => Promise<boolean>) =>
+    ({ cancelAsyncMessage: cancel }) as unknown as Query;
+
+  it('recalls unread commands the CLI still has queued, deleting their bubbles and returning text + attachments', async () => {
+    const state = stateWith({ unread: {}, read: { started: true } });
+    state.inFlightCommands.get('unread')!.attachments = ['0123abcd-notes.txt'];
+
+    const cancelled = await cancelInFlightCommands(
+      's',
+      state,
+      queryThat(async () => true)
+    );
+
+    expect(cancelled).toEqual([
+      {
+        text: 'unread',
+        attachments: [
+          {
+            name: 'notes.txt',
+            storedName: '0123abcd-notes.txt',
+            path: '/ws/s/uploads/0123abcd-notes.txt',
+          },
+        ],
+      },
+    ]);
+    expect(mockRemoveMessages).toHaveBeenCalledWith('s', ['m-unread']);
+    expect([...state.inFlightCommands.keys()]).toEqual(['read']);
+  });
+
+  it('leaves a command alone when the CLI reports it already dequeued, and does nothing without cancel support', async () => {
+    const state = stateWith({ a: {} });
+    expect(
+      await cancelInFlightCommands(
+        's',
+        state,
+        queryThat(async () => false)
+      )
+    ).toEqual([]);
+    expect(state.inFlightCommands.size).toBe(1);
+    expect(await cancelInFlightCommands('s', state, {} as Query)).toEqual([]);
+    expect(mockRemoveMessages).not.toHaveBeenCalled();
   });
 });

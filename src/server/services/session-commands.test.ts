@@ -10,7 +10,6 @@ import { createSessionState } from './session-state';
 
 const mockEmitCommands = vi.hoisted(() => vi.fn());
 vi.mock('./events', () => ({ sseEvents: { emitCommands: mockEmitCommands } }));
-vi.mock('@/lib/prisma', () => ({ prisma: {} }));
 
 const rich = { name: 'commit', description: 'Commit changes', argumentHint: '' };
 const bare = (name: string) => ({ name, description: '', argumentHint: '' });

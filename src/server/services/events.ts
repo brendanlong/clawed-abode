@@ -73,7 +73,7 @@ interface ClaudeBackgroundEvent {
 /**
  * Ids of persisted user messages the SDK has accepted but not yet handed to the
  * model. The full set every time (not a delta), so a reconnecting client can't
- * drift. See `inFlightCommands` in claude-runner.
+ * drift. See `inFlightCommands` in session-state / in-flight-commands.
  */
 interface PendingMessagesEvent {
   type: 'pending_messages';
