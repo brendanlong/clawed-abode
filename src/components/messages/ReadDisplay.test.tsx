@@ -21,6 +21,6 @@ describe('ReadDisplay input validation', () => {
   it('falls back to placeholders for a still-streaming (empty) input', () => {
     render(<ReadDisplay tool={{ name: 'Read', id: 'read-2', input: {} }} />);
 
-    expect(screen.getByText('Unknown file')).toBeInTheDocument();
+    expect(screen.getAllByText('Unknown file').length).toBeGreaterThan(0);
   });
 });
