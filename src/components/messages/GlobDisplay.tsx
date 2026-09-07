@@ -1,17 +1,16 @@
 'use client';
 
+import { z } from 'zod';
 import { useMemo } from 'react';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { FileIcon } from './FileIcon';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
 import { ToolOutputBlock } from './ToolOutputBlock';
+import { parseToolInput } from './tool-input';
 import type { ToolCall } from './types';
 
-interface GlobInput {
-  pattern: string;
-  path?: string;
-}
+const globInputSchema = z.object({ pattern: z.string().optional(), path: z.string().optional() });
 
 interface FileEntry {
   path: string;
@@ -79,7 +78,7 @@ const FolderIcon = () => (
 export function GlobDisplay({ tool }: { tool: ToolCall }) {
   const hasOutput = tool.output !== undefined;
 
-  const inputObj = tool.input as GlobInput | undefined;
+  const inputObj = parseToolInput(tool.input, globInputSchema);
   const pattern = inputObj?.pattern ?? '';
   const searchPath = inputObj?.path;
 

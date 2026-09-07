@@ -14,8 +14,6 @@ const statusVariants: Record<
   archived: 'outline',
 };
 
-export function SessionStatusBadge({ status }: { status: string }) {
-  return (
-    <Badge variant={statusVariants[status as SessionDisplayStatus] || 'secondary'}>{status}</Badge>
-  );
+export function SessionStatusBadge({ status }: { status: SessionDisplayStatus }) {
+  return <Badge variant={statusVariants[status]}>{status}</Badge>;
 }

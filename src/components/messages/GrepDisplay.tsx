@@ -1,25 +1,28 @@
 'use client';
 
+import { z } from 'zod';
 import { useMemo } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
 import { ToolOutputBlock } from './ToolOutputBlock';
+import { parseToolInput } from './tool-input';
 import type { ToolCall } from './types';
 
-interface GrepInput {
-  pattern: string;
-  path?: string;
-  glob?: string;
-  type?: string;
-  output_mode?: 'content' | 'files_with_matches' | 'count';
-  '-i'?: boolean;
-  '-n'?: boolean;
-  '-B'?: number;
-  '-A'?: number;
-  '-C'?: number;
-  head_limit?: number;
-  multiline?: boolean;
-}
+const grepInputSchema = z.object({
+  pattern: z.string().optional(),
+  path: z.string().optional(),
+  glob: z.string().optional(),
+  type: z.string().optional(),
+  output_mode: z.enum(['content', 'files_with_matches', 'count']).optional(),
+  '-i': z.boolean().optional(),
+  '-n': z.boolean().optional(),
+  '-B': z.number().optional(),
+  '-A': z.number().optional(),
+  '-C': z.number().optional(),
+  head_limit: z.number().optional(),
+  multiline: z.boolean().optional(),
+});
+type GrepInput = z.infer<typeof grepInputSchema>;
 
 function SearchCodeIcon() {
   return (
@@ -77,7 +80,7 @@ function countResults(output: string, outputMode?: string): number {
 export function GrepDisplay({ tool }: { tool: ToolCall }) {
   const hasOutput = tool.output !== undefined;
 
-  const input = tool.input as GrepInput | undefined;
+  const input = parseToolInput(tool.input, grepInputSchema);
   const pattern = input?.pattern ?? '';
   const searchPath = input?.path;
   const outputMode = input?.output_mode ?? 'files_with_matches';

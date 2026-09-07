@@ -1,5 +1,6 @@
 // Shared types for message display components
 
+import { z } from 'zod';
 import type { SanitizationInfo } from '@/lib/sanitization';
 
 // Map of tool_use_id -> result content
@@ -82,7 +83,13 @@ export interface MessageContent {
   sanitization?: SanitizationInfo;
   // Set on subagent (Task) messages: the tool_use id of the Task that spawned them.
   parent_tool_use_id?: string | null;
-  [key: string]: unknown;
+  // Set on transient streaming snapshots of the in-progress assistant turn.
+  partial?: boolean;
+  // model_refusal_fallback fields
+  original_model?: string;
+  fallback_model?: string;
+  api_refusal_category?: string | null;
+  api_refusal_explanation?: string | null;
 }
 
 /**
@@ -97,11 +104,12 @@ export interface DisplayMessage {
   sequence: number;
 }
 
-export interface TodoItem {
-  content: string;
-  status: 'pending' | 'in_progress' | 'completed';
-  activeForm: string;
-}
+export const todoItemSchema = z.object({
+  content: z.string(),
+  status: z.enum(['pending', 'in_progress', 'completed']),
+  activeForm: z.string(),
+});
+export type TodoItem = z.infer<typeof todoItemSchema>;
 
 /**
  * Format content as JSON string for copying.

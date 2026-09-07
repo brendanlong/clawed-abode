@@ -1,18 +1,20 @@
 'use client';
 
+import { z } from 'zod';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
 import { ToolOutputBlock } from './ToolOutputBlock';
+import { parseToolInput } from './tool-input';
 import type { ToolCall } from './types';
 
-interface NotebookEditInput {
-  notebook_path: string;
-  cell_id?: string;
-  new_source: string;
-  cell_type?: 'code' | 'markdown';
-  edit_mode?: 'replace' | 'insert' | 'delete';
-}
+const notebookEditInputSchema = z.object({
+  notebook_path: z.string().optional(),
+  cell_id: z.string().optional(),
+  new_source: z.string().optional(),
+  cell_type: z.enum(['code', 'markdown']).optional(),
+  edit_mode: z.enum(['replace', 'insert', 'delete']).optional(),
+});
 
 function NotebookIcon() {
   return (
@@ -39,7 +41,7 @@ function NotebookIcon() {
 export function NotebookEditDisplay({ tool }: { tool: ToolCall }) {
   const hasOutput = tool.output !== undefined;
 
-  const input = tool.input as NotebookEditInput | undefined;
+  const input = parseToolInput(tool.input, notebookEditInputSchema);
   const notebookPath = input?.notebook_path ?? 'Unknown notebook';
   const cellId = input?.cell_id;
   const newSource = input?.new_source ?? '';

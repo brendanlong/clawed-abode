@@ -8,13 +8,6 @@ import { CopyButton } from './CopyButton';
 import { formatAsJson } from './types';
 import type { MessageContent } from './types';
 
-interface RefusalFallbackContent extends MessageContent {
-  original_model?: string;
-  fallback_model?: string;
-  api_refusal_category?: string | null;
-  api_refusal_explanation?: string | null;
-}
-
 /**
  * Display for `model_refusal_fallback` system messages: the API's safeguards
  * flagged a request on the primary model (e.g. Fable) and silently retried it on
@@ -25,7 +18,7 @@ interface RefusalFallbackContent extends MessageContent {
  * The human-readable `content` string is the API's own explanation; we show it
  * verbatim and add the concrete `from → to` transition and refusal category.
  */
-export function RefusalFallbackDisplay({ content }: { content: RefusalFallbackContent }) {
+export function RefusalFallbackDisplay({ content }: { content: MessageContent }) {
   const getJsonText = useCallback(() => formatAsJson(content), [content]);
 
   const from = content.original_model ?? 'primary model';

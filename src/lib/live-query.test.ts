@@ -1,9 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { QueryClient, QueryObserver } from '@tanstack/react-query';
+import { QueryClient, QueryObserver, type QueryKey } from '@tanstack/react-query';
 import { LIVE_QUERY_OPTIONS, STREAM_ERROR_RESYNC_META, resyncLiveQueries } from './live-query';
 
 /** Subscribe (mounting the query) and resolve once its first fetch succeeds. */
-function mount(observer: QueryObserver<number>): Promise<() => void> {
+function mount<K extends QueryKey>(
+  observer: QueryObserver<number, Error, number, number, K>
+): Promise<() => void> {
   return new Promise((resolve) => {
     const unsubscribe = observer.subscribe((result) => {
       if (result.isSuccess) resolve(unsubscribe);

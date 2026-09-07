@@ -2,6 +2,7 @@
 
 import { SessionActionButton } from '@/components/SessionActionButton';
 import { SessionStatusBadge } from '@/components/SessionStatusBadge';
+import { deriveSessionDisplayStatus } from '@/lib/session-display-status';
 
 interface SessionStatusToggleProps {
   status: string;
@@ -39,5 +40,5 @@ export function SessionStatusToggle({
       />
     );
   }
-  return <SessionStatusBadge status={status} />;
+  return <SessionStatusBadge status={deriveSessionDisplayStatus(status, false)} />;
 }

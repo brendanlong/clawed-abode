@@ -1,14 +1,14 @@
 'use client';
 
+import { z } from 'zod';
 import { useMemo } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
 import { ToolOutputBlock } from './ToolOutputBlock';
+import { parseToolInput } from './tool-input';
 import type { ToolCall } from './types';
 
-interface WebSearchInput {
-  query: string;
-}
+const webSearchInputSchema = z.object({ query: z.string().optional() });
 
 interface SearchLink {
   title: string;
@@ -124,7 +124,7 @@ const ExternalLinkIcon = () => (
 export function WebSearchDisplay({ tool }: { tool: ToolCall }) {
   const hasOutput = tool.output !== undefined;
 
-  const inputObj = tool.input as WebSearchInput | undefined;
+  const inputObj = parseToolInput(tool.input, webSearchInputSchema);
   const query = inputObj?.query ?? '';
 
   const parsed = useMemo(() => {

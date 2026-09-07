@@ -1,22 +1,21 @@
 'use client';
 
+import { z } from 'zod';
 import { useMemo } from 'react';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { MarkdownContent } from '@/components/MarkdownContent';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
 import { useMessageListContext } from './MessageListContext';
+import { parseToolInput } from './tool-input';
 import type { ToolCall } from './types';
 
-interface TaskInput {
-  subagent_type: string;
-  description: string;
-  prompt: string;
-  model?: string;
-  max_turns?: number;
-  resume?: string;
-  run_in_background?: boolean;
-}
+/** Shared with SubagentToolDisplay, which renders the same call as a breadcrumb. */
+export const taskInputSchema = z.object({
+  subagent_type: z.string().optional(),
+  description: z.string().optional(),
+  prompt: z.string().optional(),
+});
 
 interface TaskOutputContent {
   type: 'text';
@@ -128,7 +127,7 @@ export function TaskDisplay({
 }) {
   const hasOutput = tool.output !== undefined;
 
-  const inputObj = tool.input as TaskInput | undefined;
+  const inputObj = parseToolInput(tool.input, taskInputSchema);
   const subagentType = inputObj?.subagent_type ?? 'Unknown';
   const description = inputObj?.description ?? '';
   const prompt = inputObj?.prompt ?? '';

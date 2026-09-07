@@ -1,5 +1,6 @@
 'use client';
 
+import { z } from 'zod';
 import { useMemo } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { getFileType } from '@/lib/syntax-highlight';
@@ -8,13 +9,14 @@ import { ToolDisplayWrapper } from './ToolDisplayWrapper';
 import { ToolOutputBlock } from './ToolOutputBlock';
 import { CodeBlock } from './CodeBlock';
 import { parseReadOutput } from './read-output';
+import { parseToolInput } from './tool-input';
 import type { ToolCall } from './types';
 
-interface ReadInput {
-  file_path?: string;
-  offset?: number;
-  limit?: number;
-}
+const readInputSchema = z.object({
+  file_path: z.string().optional(),
+  offset: z.number().optional(),
+  limit: z.number().optional(),
+});
 
 /**
  * Specialized display for Read tool calls.
@@ -23,7 +25,7 @@ interface ReadInput {
 export function ReadDisplay({ tool }: { tool: ToolCall }) {
   const hasOutput = tool.output !== undefined;
 
-  const input = tool.input as ReadInput | undefined;
+  const input = parseToolInput(tool.input, readInputSchema);
   const filePath = input?.file_path ?? 'Unknown file';
   const offset = input?.offset;
   const limit = input?.limit;
