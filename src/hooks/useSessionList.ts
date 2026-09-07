@@ -2,6 +2,7 @@
 
 import { useCallback } from 'react';
 import { trpc } from '@/lib/trpc';
+import { LIVE_QUERY_OPTIONS } from '@/lib/live-query';
 import type { inferRouterOutputs } from '@trpc/server';
 import type { AppRouter } from '@/server/routers';
 
@@ -32,7 +33,7 @@ export function useSessionList({
 }: UseSessionListOptions = {}): PagedSessions & { refetch: () => void } {
   const query = trpc.sessions.list.useInfiniteQuery(
     { status },
-    { getNextPageParam: (lastPage) => lastPage.nextCursor, enabled }
+    { getNextPageParam: (lastPage) => lastPage.nextCursor, enabled, ...LIVE_QUERY_OPTIONS }
   );
   const { fetchNextPage, refetch } = query;
 

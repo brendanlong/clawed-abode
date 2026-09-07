@@ -67,6 +67,23 @@ function getResultLabel(subtype?: string): { label: string; isError: boolean } {
   }
 }
 
+function formatCost(cost?: number): string {
+  if (cost === undefined) return 'N/A';
+  return `$${cost.toFixed(4)}`;
+}
+
+function formatTokens(tokens?: number): string {
+  if (tokens === undefined) return 'N/A';
+  return tokens.toLocaleString();
+}
+
+function formatDuration(ms?: number): string {
+  if (ms === undefined) return 'N/A';
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+  return `${(ms / 60000).toFixed(1)}m`;
+}
+
 /**
  * Display for result messages (turn completion with cost/usage info).
  * Handles all result subtypes: success, error_max_turns, error_during_execution,
@@ -77,23 +94,6 @@ export function ResultDisplay({ content }: { content: ResultContent }) {
   const getJsonText = useCallback(() => formatAsJson(content), [content]);
 
   const { label, isError } = useMemo(() => getResultLabel(content.subtype), [content.subtype]);
-
-  const formatCost = (cost?: number) => {
-    if (cost === undefined) return 'N/A';
-    return `$${cost.toFixed(4)}`;
-  };
-
-  const formatTokens = (tokens?: number) => {
-    if (tokens === undefined) return 'N/A';
-    return tokens.toLocaleString();
-  };
-
-  const formatDuration = (ms?: number) => {
-    if (ms === undefined) return 'N/A';
-    if (ms < 1000) return `${ms}ms`;
-    if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
-    return `${(ms / 60000).toFixed(1)}m`;
-  };
 
   const modelUsageEntries = useMemo(() => {
     if (!content.modelUsage) return [];

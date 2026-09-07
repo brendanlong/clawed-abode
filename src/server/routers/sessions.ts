@@ -29,10 +29,9 @@ import {
   sessionCursorSchema,
   sliceSessionPage,
 } from '@/lib/session-list-page';
+import { sessionStatusSchema } from '@/lib/session-display-status';
 
 const log = createLogger('sessions');
-
-const sessionStatusSchema = z.enum(['creating', 'running', 'stopped', 'error', 'archived']);
 
 const sessionListSelect = {
   id: true,

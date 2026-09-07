@@ -1,55 +1,40 @@
 import { useCallback } from 'react';
 import { trpc } from '@/lib/trpc';
 import { taskHasEndState } from '@/lib/session-status';
-import { useRefetchOnReconnect } from './useRefetchOnReconnect';
+import { LIVE_QUERY_OPTIONS } from '@/lib/live-query';
 
 /**
  * Hook for managing Claude process state: running status, send prompts, interrupt, and commands.
+ *
+ * Every query here is seeded once and then kept current by the multiplexed SSE
+ * stream (useSessionStream), which writes into these caches directly; see
+ * LIVE_QUERY_OPTIONS for the focus/reconnect resync policy.
  */
 export function useClaudeState(sessionId: string) {
-  // Fetch Claude running state
-  const { data: runningData, refetch } = trpc.claude.isRunning.useQuery({ sessionId });
+  const { data: runningData } = trpc.claude.isRunning.useQuery({ sessionId }, LIVE_QUERY_OPTIONS);
 
-  // Fetch available slash commands
-  const { data: commandsData, refetch: refetchCommands } = trpc.claude.getCommands.useQuery(
+  const { data: commandsData } = trpc.claude.getCommands.useQuery(
     { sessionId },
-    { staleTime: Infinity }
+    { staleTime: Infinity, ...LIVE_QUERY_OPTIONS }
   );
 
-  // Fetch ephemeral API-retry status (rate limit / overload). Seeded once and
-  // then kept current by the SSE `retry` channel, so staleTime is Infinity to
-  // stop a window-focus refetch from clobbering the live value with a stale read.
-  const { data: retryData, refetch: refetchRetry } = trpc.claude.getRetryState.useQuery(
+  // Ephemeral API-retry status (rate limit / overload).
+  const { data: retryData } = trpc.claude.getRetryState.useQuery(
     { sessionId },
-    { staleTime: Infinity }
+    { staleTime: Infinity, ...LIVE_QUERY_OPTIONS }
   );
 
-  // Fetch running background tasks. Like retry: seeded once and kept current by
-  // the SSE `background` channel (staleTime Infinity so a focus refetch can't
-  // clobber the live value). These never gate input — indicator only.
-  const { data: backgroundData, refetch: refetchBackground } =
-    trpc.claude.getBackgroundTasks.useQuery({ sessionId }, { staleTime: Infinity });
-
-  // Fetch the ids of messages the SDK has accepted but not yet handed to the
-  // agent. Seeded once and kept current by the SSE `pending` channel (staleTime
-  // Infinity so a focus refetch can't clobber the live value).
-  const { data: pendingData, refetch: refetchPending } = trpc.claude.getPendingMessageIds.useQuery(
+  // Running background tasks. These never gate input — indicator only.
+  const { data: backgroundData } = trpc.claude.getBackgroundTasks.useQuery(
     { sessionId },
-    { staleTime: Infinity }
+    { staleTime: Infinity, ...LIVE_QUERY_OPTIONS }
   );
 
-  // Refetch when app regains visibility or network reconnects
-  const refetchAll = useCallback(() => {
-    refetch();
-    refetchCommands();
-    refetchRetry();
-    refetchBackground();
-    refetchPending();
-  }, [refetch, refetchCommands, refetchRetry, refetchBackground, refetchPending]);
-  useRefetchOnReconnect(refetchAll);
-
-  // Live running-state and command updates arrive via the multiplexed SSE stream
-  // (useSessionStream), which writes directly into these query caches.
+  // Ids of messages the SDK has accepted but not yet handed to the agent.
+  const { data: pendingData } = trpc.claude.getPendingMessageIds.useQuery(
+    { sessionId },
+    { staleTime: Infinity, ...LIVE_QUERY_OPTIONS }
+  );
 
   const sendMutation = trpc.claude.send.useMutation();
   const interruptMutation = trpc.claude.interrupt.useMutation();

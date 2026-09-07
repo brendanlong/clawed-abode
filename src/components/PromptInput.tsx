@@ -7,12 +7,38 @@ import { Textarea } from '@/components/ui/textarea';
 import { VoiceMicButton } from '@/components/voice/VoiceMicButton';
 import { useVoiceRecording } from '@/hooks/useVoiceRecording';
 import { useFileUpload } from '@/hooks/useFileUpload';
+import { useSendWithRestore } from '@/hooks/useSendWithRestore';
 import type { UploadedAttachment } from '@/lib/attachments';
 import {
   mergeCancelledText,
   mergeCancelledAttachments,
   type CancelledPrompt,
 } from '@/lib/cancelled-prompt';
+
+interface ComposerDraft {
+  text: string;
+  attachments: UploadedAttachment[];
+}
+
+const EMPTY_DRAFT: ComposerDraft = { text: '', attachments: [] };
+
+// Restore each part of a failed send only if the user hasn't started a new one.
+function restoreFailedDraft(current: ComposerDraft, failed: ComposerDraft): ComposerDraft {
+  return {
+    text: current.text.length === 0 ? failed.text : current.text,
+    attachments: current.attachments.length === 0 ? failed.attachments : current.attachments,
+  };
+}
+
+function restoreCancelledDraft(
+  current: ComposerDraft,
+  cancelled: readonly CancelledPrompt[]
+): ComposerDraft {
+  return {
+    text: mergeCancelledText(current.text, cancelled),
+    attachments: mergeCancelledAttachments(current.attachments, cancelled),
+  };
+}
 
 export interface SlashCommand {
   name: string;
@@ -53,16 +79,31 @@ export function PromptInput({
   voiceEnabled = false,
   voiceAutoSend = true,
 }: PromptInputProps) {
-  const [prompt, setPrompt] = useState('');
+  const send = useCallback(
+    (draft: ComposerDraft) =>
+      onSubmit(draft.text, draft.attachments.length > 0 ? draft.attachments : undefined),
+    [onSubmit]
+  );
+  // The draft is the typed text plus files uploaded for the next message (shown
+  // only as chips until submit). A failed send restores it and sets sendError.
+  const {
+    draft,
+    setDraft,
+    sendError,
+    clearSendError,
+    submit,
+    stop: handleInterrupt,
+  } = useSendWithRestore({
+    empty: EMPTY_DRAFT,
+    send,
+    interrupt: onInterrupt,
+    restoreFailed: restoreFailedDraft,
+    restoreCancelled: restoreCancelledDraft,
+  });
+  const { text: prompt, attachments } = draft;
   const [selectedIndex, setSelectedIndex] = useState(0);
   // Track the prompt value when user explicitly dismissed the dropdown
   const [dismissedForPrompt, setDismissedForPrompt] = useState<string | null>(null);
-  // Files uploaded and pending until the next message is sent. Not shown in the
-  // transcript until submit — only as chips on the composer.
-  const [attachments, setAttachments] = useState<UploadedAttachment[]>([]);
-  // Error surfaced when a send fails (e.g. a network blip). The failed
-  // text/attachments are restored into the composer so they aren't lost.
-  const [sendError, setSendError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const commandsRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -107,57 +148,28 @@ export function PromptInput({
   // turn is running (sends interleave), so the command menu shows then too.
   const showCommands = filteredCommands.length > 0 && !disabled && !isDismissed;
 
-  const insertCommand = useCallback((command: SlashCommand) => {
-    const newPrompt = `/${command.name} `;
-    setPrompt(newPrompt);
-    // Dismiss for the new prompt value (since it will have a space, filteredCommands
-    // won't match anyway, but this is defense-in-depth)
-    setDismissedForPrompt(newPrompt);
-    setSelectedIndex(0);
-    textareaRef.current?.focus();
-  }, []);
+  const insertCommand = useCallback(
+    (command: SlashCommand) => {
+      const newPrompt = `/${command.name} `;
+      setDraft((current) => ({ ...current, text: newPrompt }));
+      // Dismiss for the new prompt value (since it will have a space, filteredCommands
+      // won't match anyway, but this is defense-in-depth)
+      setDismissedForPrompt(newPrompt);
+      setSelectedIndex(0);
+      textareaRef.current?.focus();
+    },
+    [setDraft]
+  );
 
   // Submit is allowed with typed text OR at least one attachment, and stays
   // allowed while a turn is running — the message goes straight to the agent,
   // which reads it mid-turn.
   const canSubmit = (prompt.trim().length > 0 || attachments.length > 0) && !disabled;
 
-  // Clear the composer optimistically for snappy input, then send. If the send
-  // fails, restore the just-typed text/attachments (unless the user already began
-  // a new message) and surface the error so nothing is silently lost.
-  const submit = useCallback(
-    (text: string, atts: UploadedAttachment[]) => {
-      setPrompt('');
-      setAttachments([]);
-      setSendError(null);
-      Promise.resolve(onSubmit(text, atts.length > 0 ? atts : undefined)).catch((err: unknown) => {
-        setPrompt((current) => (current.length === 0 ? text : current));
-        setAttachments((current) => (current.length === 0 ? atts : current));
-        setSendError(err instanceof Error ? err.message : 'Failed to send message');
-      });
-    },
-    [onSubmit]
-  );
-
-  // Stop can pull back prompts the agent never read. Their bubbles are already
-  // gone from the transcript, so the composer is the last copy — merge them in
-  // ahead of anything typed since rather than dropping either.
-  const handleInterrupt = useCallback(() => {
-    Promise.resolve(onInterrupt())
-      .then((cancelled) => {
-        if (!cancelled?.length) return;
-        setPrompt((current) => mergeCancelledText(current, cancelled));
-        setAttachments((current) => mergeCancelledAttachments(current, cancelled));
-      })
-      .catch((err: unknown) => {
-        setSendError(err instanceof Error ? err.message : 'Failed to stop');
-      });
-  }, [onInterrupt]);
-
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (canSubmit) {
-      submit(prompt.trim(), attachments);
+      submit({ text: prompt.trim(), attachments });
     }
   };
 
@@ -167,17 +179,26 @@ export function PromptInput({
       const files = Array.from(fileList);
       try {
         const uploaded = await upload(files);
-        setAttachments((prev) => [...prev, ...uploaded]);
+        setDraft((current) => ({
+          ...current,
+          attachments: [...current.attachments, ...uploaded],
+        }));
       } catch {
         // Error is surfaced via uploadError; nothing else to do here.
       }
     },
-    [upload]
+    [upload, setDraft]
   );
 
-  const removeAttachment = useCallback((storedName: string) => {
-    setAttachments((prev) => prev.filter((a) => a.storedName !== storedName));
-  }, []);
+  const removeAttachment = useCallback(
+    (storedName: string) => {
+      setDraft((current) => ({
+        ...current,
+        attachments: current.attachments.filter((a) => a.storedName !== storedName),
+      }));
+    },
+    [setDraft]
+  );
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (showCommands && filteredCommands.length > 0) {
@@ -209,24 +230,27 @@ export function PromptInput({
     }
   };
 
-  const handleChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const newValue = e.target.value;
-    setPrompt(newValue);
-    // Reset selected index when prompt changes
-    setSelectedIndex(0);
-    // A fresh edit dismisses a stale send error.
-    setSendError(null);
-  }, []);
+  const handleChange = useCallback(
+    (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+      const text = e.target.value;
+      setDraft((current) => ({ ...current, text }));
+      // Reset selected index when prompt changes
+      setSelectedIndex(0);
+      // A fresh edit dismisses a stale send error.
+      clearSendError();
+    },
+    [setDraft, clearSendError]
+  );
 
   const handleMicClick = () => {
     if (isRecording) {
       const transcript = stopRecording();
       // Append voice transcript to any text typed before recording started
       const fullPrompt = (prompt + transcript).trim();
-      setPrompt(fullPrompt);
+      setDraft((current) => ({ ...current, text: fullPrompt }));
 
       if (voiceAutoSend && fullPrompt && !disabled) {
-        submit(fullPrompt, attachments);
+        submit({ text: fullPrompt, attachments });
       } else {
         textareaRef.current?.focus();
       }
@@ -330,7 +354,7 @@ export function PromptInput({
                 {sendError}
                 <button
                   type="button"
-                  onClick={() => setSendError(null)}
+                  onClick={clearSendError}
                   className="hover:text-foreground"
                   aria-label="Dismiss send error"
                 >

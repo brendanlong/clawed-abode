@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { highlightCode } from './syntax-highlight';
+import { getFileType, highlightCode } from './syntax-highlight';
 
 describe('highlightCode', () => {
   it('wraps tokens in hljs spans for a known language', () => {
@@ -42,5 +42,33 @@ describe('highlightCode', () => {
     expect(html).not.toContain('hljs-');
     expect(html).toContain('&lt;b&gt;');
     expect(html).not.toContain('<b>');
+  });
+});
+
+describe('getFileType', () => {
+  it.each([
+    ['src/app.tsx', 'typescript'],
+    ['lib/UTIL.JS', 'javascript'],
+    ['include/foo.h', 'c'],
+    ['index.html', 'html'],
+    ['deploy.yml', 'yaml'],
+    ['run.zsh', 'shell'],
+    ['schema.prisma', 'prisma'],
+  ])('maps %s to %s', (path, fileType) => {
+    expect(getFileType(path)).toBe(fileType);
+  });
+
+  it('returns text for unknown or missing extensions', () => {
+    expect(getFileType('LICENSE')).toBe('text');
+    expect(getFileType('archive.tar.zst')).toBe('text');
+  });
+
+  it.each([
+    ['html', '<div class="a">hi</div>'],
+    ['docker', 'FROM node:20\nRUN npm ci'],
+    ['yaml', 'key: "value"'],
+    ['markdown', '# Title'],
+  ])('%s is registered under its file type name', (fileType, code) => {
+    expect(highlightCode(code, fileType)).toContain('hljs-');
   });
 });

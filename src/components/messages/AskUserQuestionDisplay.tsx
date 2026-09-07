@@ -1,27 +1,24 @@
 'use client';
 
+import { z } from 'zod';
 import { useState, useMemo, useCallback } from 'react';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
 import { useMessageListContext } from './MessageListContext';
+import { lenient, lenientString, parseToolInput } from './tool-input';
 import type { ToolCall } from './types';
 
-interface QuestionOption {
-  label: string;
-  description: string;
-}
+const questionSchema = z.object({
+  question: lenientString,
+  header: lenientString,
+  options: z.array(z.object({ label: lenientString, description: lenientString })).catch([]),
+  multiSelect: z.boolean().catch(false),
+});
+type Question = z.infer<typeof questionSchema>;
+type QuestionOption = Question['options'][number];
 
-interface Question {
-  question: string;
-  header: string;
-  options: QuestionOption[];
-  multiSelect: boolean;
-}
-
-interface AskUserQuestionInput {
-  questions: Question[];
-}
+const askUserQuestionInputSchema = z.object({ questions: lenient(z.array(questionSchema)) });
 
 // Question mark icon
 function QuestionIcon() {
@@ -114,8 +111,7 @@ export function AskUserQuestionDisplay({ tool }: { tool: ToolCall }) {
   const isPending = isWaitingForInput;
 
   const questions = useMemo(() => {
-    const inputObj = tool.input as AskUserQuestionInput | undefined;
-    return inputObj?.questions ?? [];
+    return parseToolInput(tool.input, askUserQuestionInputSchema)?.questions ?? [];
   }, [tool.input]);
 
   const hasMultipleQuestions = questions.length > 1;

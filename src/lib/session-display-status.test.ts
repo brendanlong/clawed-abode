@@ -30,4 +30,8 @@ describe('deriveSessionDisplayStatus', () => {
       expect(deriveSessionDisplayStatus(status, true, true)).toBe(status);
     }
   );
+
+  it('reports an unrecognized stored status as error', () => {
+    expect(deriveSessionDisplayStatus('paused', false)).toBe('error');
+  });
 });

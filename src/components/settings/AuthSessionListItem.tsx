@@ -15,7 +15,10 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
 import { Spinner } from '@/components/ui/spinner';
-import type { AuthSession } from '@/hooks/useAuthSessions';
+import type { inferRouterOutputs } from '@trpc/server';
+import type { AppRouter } from '@/server/routers';
+
+type AuthSession = inferRouterOutputs<AppRouter>['auth']['listSessions']['sessions'][number];
 
 interface AuthSessionListItemProps {
   session: AuthSession;

@@ -1,0 +1,109 @@
+import { describe, it, expect } from 'vitest';
+import {
+  CHUNK_MAX_LENGTH,
+  splitTextIntoChunks,
+  selectVoice,
+  dedupeAndSortVoices,
+  type VoiceLike,
+} from './tts';
+
+describe('splitTextIntoChunks', () => {
+  it('returns short text as a single chunk', () => {
+    expect(splitTextIntoChunks('Hello world.')).toEqual(['Hello world.']);
+    expect(splitTextIntoChunks('')).toEqual(['']);
+  });
+
+  it('never produces a chunk over the limit and reassembles to the input', () => {
+    const text = Array.from({ length: 40 }, (_, i) => `Sentence number ${i} is here.`).join(' ');
+    const chunks = splitTextIntoChunks(text);
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const chunk of chunks) expect(chunk.length).toBeLessThanOrEqual(CHUNK_MAX_LENGTH);
+    expect(chunks.join('')).toBe(text);
+  });
+
+  it('prefers sentence boundaries', () => {
+    const first = 'A'.repeat(150) + '. ';
+    const second = 'B'.repeat(100) + '.';
+    const chunks = splitTextIntoChunks(first + second);
+    expect(chunks).toEqual([first, second]);
+  });
+
+  it('treats a newline after punctuation as a sentence boundary', () => {
+    const first = 'A'.repeat(150) + '?\n';
+    const second = 'B'.repeat(100);
+    expect(splitTextIntoChunks(first + second)).toEqual([first, second]);
+  });
+
+  it('falls back to a comma or semicolon when there is no sentence end', () => {
+    const first = 'a'.repeat(120) + ', ';
+    const second = 'b'.repeat(150);
+    expect(splitTextIntoChunks(first + second)).toEqual([first, second]);
+  });
+
+  it('falls back to a space when there is no punctuation', () => {
+    const words = Array.from({ length: 60 }, () => 'word').join(' ');
+    const chunks = splitTextIntoChunks(words);
+    for (const chunk of chunks.slice(0, -1)) expect(chunk.endsWith(' ')).toBe(true);
+    expect(chunks.join('')).toBe(words);
+  });
+
+  it('hard-splits a single unbroken token', () => {
+    const token = 'x'.repeat(CHUNK_MAX_LENGTH * 2 + 10);
+    const chunks = splitTextIntoChunks(token);
+    expect(chunks.map((c) => c.length)).toEqual([CHUNK_MAX_LENGTH, CHUNK_MAX_LENGTH, 10]);
+  });
+});
+
+function voice(voiceURI: string, lang: string, localService = true): VoiceLike & { name: string } {
+  return { voiceURI, lang, localService, name: voiceURI };
+}
+
+describe('selectVoice', () => {
+  const voices = [
+    voice('fr-remote', 'fr-FR', false),
+    voice('en-remote', 'en-US', false),
+    voice('en-gb-local', 'en_GB'),
+    voice('en-us-local', 'en-US'),
+    voice('de-local', 'de-DE'),
+  ];
+
+  it('returns null when no voices are loaded', () => {
+    expect(selectVoice([], 'anything', 'en-US')).toBeNull();
+  });
+
+  it('honours the user preference when it exists', () => {
+    expect(selectVoice(voices, 'de-local', 'en-US')?.voiceURI).toBe('de-local');
+  });
+
+  it('ignores a preference that no longer exists', () => {
+    expect(selectVoice(voices, 'gone', 'en-US')?.voiceURI).toBe('en-us-local');
+  });
+
+  it('prefers a local voice matching the full locale', () => {
+    expect(selectVoice(voices, null, 'en-US')?.voiceURI).toBe('en-us-local');
+  });
+
+  it('falls back to a local voice for the primary language, normalizing underscores', () => {
+    expect(selectVoice(voices, null, 'en-AU')?.voiceURI).toBe('en-gb-local');
+  });
+
+  it('falls back to a remote voice for the primary language when no local one exists', () => {
+    expect(selectVoice(voices, null, 'fr-CA')?.voiceURI).toBe('fr-remote');
+  });
+
+  it('falls back to the first voice when nothing matches the language', () => {
+    expect(selectVoice(voices, null, 'ja-JP')?.voiceURI).toBe('fr-remote');
+  });
+});
+
+describe('dedupeAndSortVoices', () => {
+  it('drops duplicate URIs and sorts by language then name', () => {
+    const result = dedupeAndSortVoices([
+      { ...voice('b', 'en-US'), name: 'Zed' },
+      { ...voice('a', 'de-DE'), name: 'Anna' },
+      { ...voice('b', 'en-US'), name: 'Zed' },
+      { ...voice('c', 'en-US'), name: 'Alex' },
+    ]);
+    expect(result.map((v) => v.voiceURI)).toEqual(['a', 'c', 'b']);
+  });
+});

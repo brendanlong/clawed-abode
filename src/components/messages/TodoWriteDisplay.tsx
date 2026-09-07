@@ -1,15 +1,15 @@
 'use client';
 
+import { z } from 'zod';
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
 import { useMessageListContext } from './MessageListContext';
-import type { ToolCall, TodoItem } from './types';
+import { lenient, parseToolInput } from './tool-input';
+import { todoItemSchema, type ToolCall } from './types';
 
-interface TodoWriteInput {
-  todos: TodoItem[];
-}
+const todoWriteInputSchema = z.object({ todos: lenient(z.array(todoItemSchema)) });
 
 // Checkmark icon for completed items
 function CheckIcon() {
@@ -103,7 +103,7 @@ export function TodoWriteDisplay({ tool }: { tool: ToolCall }) {
     setManualExpandedState(open);
   };
 
-  const input = tool.input as TodoWriteInput | undefined;
+  const input = parseToolInput(tool.input, todoWriteInputSchema);
   const todos = input?.todos ?? [];
 
   const completedCount = todos.filter((t) => t.status === 'completed').length;

@@ -1,17 +1,19 @@
 'use client';
 
+import { z } from 'zod';
 import { Badge } from '@/components/ui/badge';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
 import { ToolOutputBlock } from './ToolOutputBlock';
 import { InlineDiff } from './InlineDiff';
+import { lenient, parseToolInput } from './tool-input';
 import type { ToolCall } from './types';
 
-interface EditInput {
-  file_path?: string;
-  old_string?: string;
-  new_string?: string;
-  replace_all?: boolean;
-}
+const editInputSchema = z.object({
+  file_path: lenient(z.string()),
+  old_string: lenient(z.string()),
+  new_string: lenient(z.string()),
+  replace_all: lenient(z.boolean()),
+});
 
 /**
  * Specialized display for Edit tool calls.
@@ -24,7 +26,7 @@ interface EditInput {
 export function EditDisplay({ tool }: { tool: ToolCall }) {
   const hasOutput = tool.output !== undefined;
 
-  const input = tool.input as EditInput | undefined;
+  const input = parseToolInput(tool.input, editInputSchema);
   const filePath = input?.file_path ?? 'Unknown file';
   const oldString = input?.old_string ?? '';
   const newString = input?.new_string ?? '';

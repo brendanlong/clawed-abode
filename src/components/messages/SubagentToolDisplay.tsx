@@ -3,13 +3,9 @@
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { useMessageListContext } from './MessageListContext';
-import { TaskDisplay, AgentIcon, getSubagentLabel } from './TaskDisplay';
+import { TaskDisplay, AgentIcon, getSubagentLabel, taskInputSchema } from './TaskDisplay';
+import { parseToolInput } from './tool-input';
 import type { ToolCall } from './types';
-
-interface TaskInput {
-  subagent_type?: string;
-  description?: string;
-}
 
 /**
  * Compact "Subagent started" breadcrumb left at the spawn point when the full
@@ -19,7 +15,7 @@ interface TaskInput {
  * top of the timeline. See {@link computeSubagentPlacements}.
  */
 function SubagentStartedMarker({ tool }: { tool: ToolCall }) {
-  const input = tool.input as TaskInput | undefined;
+  const input = parseToolInput(tool.input, taskInputSchema);
   const { label, color } = getSubagentLabel(input?.subagent_type ?? 'Unknown');
   return (
     <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">

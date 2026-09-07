@@ -1,18 +1,20 @@
 'use client';
 
+import { z } from 'zod';
 import { useMemo } from 'react';
 import { Badge } from '@/components/ui/badge';
-import { getFileType } from '@/lib/file-types';
+import { getFileType } from '@/lib/syntax-highlight';
 import { FileIcon } from './FileIcon';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
 import { ToolOutputBlock } from './ToolOutputBlock';
 import { CodeBlock } from './CodeBlock';
+import { lenient, parseToolInput } from './tool-input';
 import type { ToolCall } from './types';
 
-interface WriteInput {
-  file_path?: string;
-  content?: string;
-}
+const writeInputSchema = z.object({
+  file_path: lenient(z.string()),
+  content: lenient(z.string()),
+});
 
 /**
  * Specialized display for Write tool calls.
@@ -25,7 +27,7 @@ interface WriteInput {
 export function WriteDisplay({ tool }: { tool: ToolCall }) {
   const hasOutput = tool.output !== undefined;
 
-  const input = tool.input as WriteInput | undefined;
+  const input = parseToolInput(tool.input, writeInputSchema);
   const filePath = input?.file_path ?? 'Unknown file';
   const content = input?.content ?? '';
 

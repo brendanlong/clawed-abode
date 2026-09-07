@@ -1,11 +1,17 @@
+import { z } from 'zod';
+
+/** Statuses stored on `Session.status`. */
+export const sessionStatusSchema = z.enum(['creating', 'running', 'stopped', 'error', 'archived']);
+export type SessionStatus = z.infer<typeof sessionStatusSchema>;
+
 /**
- * Pure derivation of the status label shown for a session in the session list.
+ * Status label shown for a session in the session list and header.
  *
  * A DB status of `running` only means the session is live (workspace exists,
  * query available). Whether Claude is actually busy is two independent live axes
  * (see `session-status.ts`): `turnActive` (the main agent is mid-turn) and
  * background tasks (subagents / Monitor / backgrounded Bash that outlive a turn).
- * The list splits a live `running` session into:
+ * A live `running` session splits into:
  *
  *   - `running`    — the main agent is mid-turn generating (regardless of any
  *                    background tasks)
@@ -13,20 +19,22 @@
  *                    still running
  *   - `waiting`    — the session is live and fully idle, waiting for user input
  *
- * All other statuses pass through unchanged.
+ * All other stored statuses pass through unchanged.
  */
-export type SessionDisplayStatus =
-  'running' | 'background' | 'waiting' | 'stopped' | 'creating' | 'error' | 'archived';
+export type SessionDisplayStatus = SessionStatus | 'background' | 'waiting';
 
 export function deriveSessionDisplayStatus(
   status: string,
   turnActive: boolean,
   backgroundActive = false
-): string {
-  if (status === 'running') {
+): SessionDisplayStatus {
+  const stored = sessionStatusSchema.safeParse(status);
+  // A stored status this client doesn't know is itself an error condition.
+  if (!stored.success) return 'error';
+  if (stored.data === 'running') {
     if (turnActive) return 'running';
     if (backgroundActive) return 'background';
     return 'waiting';
   }
-  return status;
+  return stored.data;
 }

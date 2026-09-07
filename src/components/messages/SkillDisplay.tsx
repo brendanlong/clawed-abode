@@ -1,15 +1,14 @@
 'use client';
 
+import { z } from 'zod';
 import { Badge } from '@/components/ui/badge';
 import { MarkdownContent } from '@/components/MarkdownContent';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
 import { ToolOutputBlock } from './ToolOutputBlock';
+import { lenient, parseToolInput } from './tool-input';
 import type { ToolCall } from './types';
 
-interface SkillInput {
-  skill: string;
-  args?: string;
-}
+const skillInputSchema = z.object({ skill: lenient(z.string()), args: lenient(z.string()) });
 
 function SkillIcon() {
   return (
@@ -36,7 +35,7 @@ function SkillIcon() {
 export function SkillDisplay({ tool }: { tool: ToolCall }) {
   const hasOutput = tool.output !== undefined;
 
-  const input = tool.input as SkillInput | undefined;
+  const input = parseToolInput(tool.input, skillInputSchema);
   const skillName = input?.skill ?? 'Unknown';
   const args = input?.args;
 

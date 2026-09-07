@@ -16,6 +16,7 @@ import {
   isHiddenSystemMessage,
 } from './messageHelpers';
 import { isIgnoredSystemMessage } from '@/lib/claude-messages';
+import { isPartialMessageId } from '@/lib/message-cache';
 import type { ToolResultMap, MessageContent } from './types';
 
 export function MessageBubble({
@@ -29,7 +30,7 @@ export function MessageBubble({
   const content = useMemo(() => (message.content || {}) as MessageContent, [message.content]);
 
   const isPartial = useMemo(() => {
-    return content.partial === true || (message.id?.startsWith('partial-') ?? false);
+    return content.partial === true || (message.id ? isPartialMessageId(message.id) : false);
   }, [content.partial, message.id]);
 
   const recognition = useMemo(() => isRecognizedMessage(type, content), [type, content]);

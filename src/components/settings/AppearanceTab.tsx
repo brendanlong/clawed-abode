@@ -1,6 +1,7 @@
 'use client';
 
 import { useTheme } from '@/lib/theme-context';
+import type { ThemePreference } from '@/lib/theme';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import {
@@ -11,8 +12,6 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Monitor, Sun, Moon } from 'lucide-react';
-
-type ThemePreference = 'auto' | 'light' | 'dark';
 
 const themeOptions: { value: ThemePreference; label: string; icon: React.ReactNode }[] = [
   { value: 'auto', label: 'Auto (System)', icon: <Monitor className="h-4 w-4" /> },

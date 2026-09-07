@@ -23,6 +23,8 @@ interface SessionActionButtonProps {
   isPending: boolean;
   variant?: ButtonVariant;
   sessionName?: string;
+  /** Idle label override (e.g. show the current status instead of the action). */
+  label?: string;
 }
 
 const actionLabels = {
@@ -45,9 +47,10 @@ export function SessionActionButton({
   isPending,
   variant = 'default',
   sessionName,
+  label = actionLabels[action].label,
 }: SessionActionButtonProps) {
   const [dialogOpen, setDialogOpen] = useState(false);
-  const { label, pendingLabel } = actionLabels[action];
+  const { pendingLabel } = actionLabels[action];
 
   // Archive requires confirmation dialog
   if (action === 'archive') {
@@ -93,7 +96,14 @@ export function SessionActionButton({
   // Start/Stop are simple buttons
   return (
     <Button size="sm" variant={variant} onClick={onClick} disabled={isPending}>
-      {isPending ? pendingLabel : label}
+      {isPending ? (
+        <>
+          <Spinner size="sm" className="mr-2" />
+          {pendingLabel}
+        </>
+      ) : (
+        label
+      )}
     </Button>
   );
 }

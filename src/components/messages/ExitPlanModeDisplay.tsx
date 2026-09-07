@@ -1,5 +1,6 @@
 'use client';
 
+import { z } from 'zod';
 import { useCallback, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -7,18 +8,15 @@ import { Textarea } from '@/components/ui/textarea';
 import { MarkdownContent } from '@/components/MarkdownContent';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
 import { useMessageListContext } from './MessageListContext';
+import { lenient, lenientString, parseToolInput } from './tool-input';
 import type { ToolCall } from './types';
 
-interface ExitPlanModeInput {
-  allowedPrompts?: Array<{
-    tool: string;
-    prompt: string;
-  }>;
-  pushToRemote?: boolean;
-  remoteSessionId?: string;
-  remoteSessionTitle?: string;
-  remoteSessionUrl?: string;
-}
+const exitPlanModeInputSchema = z.object({
+  allowedPrompts: lenient(z.array(z.object({ tool: lenientString, prompt: lenientString }))),
+  pushToRemote: lenient(z.boolean()),
+  remoteSessionTitle: lenient(z.string()),
+  remoteSessionUrl: lenient(z.string()),
+});
 
 // Clipboard/plan icon component
 function ClipboardIcon() {
@@ -93,7 +91,7 @@ export function ExitPlanModeDisplay({ tool }: { tool: ToolCall }) {
   // as a new turn), so the UI doesn't track whether Claude is "running".
   const canRespond = isPending && !!onRespondToPlan && !!toolUseId;
 
-  const inputObj = tool.input as ExitPlanModeInput | undefined;
+  const inputObj = parseToolInput(tool.input, exitPlanModeInputSchema);
   const allowedPrompts = inputObj?.allowedPrompts ?? [];
 
   const handleApprove = () => {

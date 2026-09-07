@@ -1,15 +1,14 @@
 'use client';
 
+import { z } from 'zod';
 import { Badge } from '@/components/ui/badge';
 import { MarkdownContent } from '@/components/MarkdownContent';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
 import { ToolOutputBlock } from './ToolOutputBlock';
+import { lenient, parseToolInput } from './tool-input';
 import type { ToolCall } from './types';
 
-interface WebFetchInput {
-  url: string;
-  prompt: string;
-}
+const webFetchInputSchema = z.object({ url: lenient(z.string()), prompt: lenient(z.string()) });
 
 function GlobeIcon() {
   return (
@@ -47,7 +46,7 @@ function getHostname(url: string): string {
 export function WebFetchDisplay({ tool }: { tool: ToolCall }) {
   const hasOutput = tool.output !== undefined;
 
-  const input = tool.input as WebFetchInput | undefined;
+  const input = parseToolInput(tool.input, webFetchInputSchema);
   const url = input?.url ?? '';
   const prompt = input?.prompt ?? '';
   const hostname = getHostname(url);

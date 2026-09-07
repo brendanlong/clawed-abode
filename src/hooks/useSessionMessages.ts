@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { trpc } from '@/lib/trpc';
+import { STREAM_ERROR_RESYNC_META } from '@/lib/live-query';
 
 interface Message {
   id: string;
@@ -60,9 +61,7 @@ export function useSessionMessages(sessionId: string) {
   // Refetched by useSessionStream when complete messages arrive.
   const { data: tokenUsageData } = trpc.claude.getTokenUsage.useQuery(
     { sessionId },
-    {
-      refetchOnWindowFocus: false,
-    }
+    { refetchOnWindowFocus: false, meta: STREAM_ERROR_RESYNC_META }
   );
 
   // Newest sequence currently in the cache. Used once by useSessionStream as the

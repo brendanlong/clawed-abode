@@ -1,7 +1,9 @@
 'use client';
 
-import { useCallback, useState } from 'react';
+import { useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { trpc } from '@/lib/trpc';
+import { resyncLiveQueries } from '@/lib/live-query';
 import {
   mergeMessageIntoCache,
   removeMessageFromCache,
@@ -42,11 +44,13 @@ interface UseSessionStreamOptions {
  * turn). That closes the gap between the `getHistory` snapshot and the stream
  * attaching. Subsequent reconnects use tRPC's native `lastEventId` resume instead.
  *
- * On a connection error we refetch the session queries as a belt-and-suspenders
- * resync. Returns the subscription connection status for a UI indicator.
+ * On a connection error we refetch every mounted live query (resyncLiveQueries)
+ * as a belt-and-suspenders resync. Returns the subscription connection status
+ * for a UI indicator.
  */
 export function useSessionStream(sessionId: string, options: UseSessionStreamOptions) {
   const utils = trpc.useUtils();
+  const queryClient = useQueryClient();
 
   // Freeze the catch-up anchor the first time history is loaded so the subscription
   // input stays stable across the rest of the session (feeding the live newest
@@ -60,16 +64,6 @@ export function useSessionStream(sessionId: string, options: UseSessionStreamOpt
   if (!anchor.captured && options.historyLoaded) {
     setAnchor({ captured: true, afterSequence: options.newestSequence });
   }
-
-  const resync = useCallback(() => {
-    void utils.claude.isRunning.refetch({ sessionId });
-    void utils.claude.getCommands.refetch({ sessionId });
-    void utils.sessions.get.refetch({ sessionId });
-    void utils.claude.getTokenUsage.refetch({ sessionId });
-    void utils.claude.getRetryState.refetch({ sessionId });
-    void utils.claude.getBackgroundTasks.refetch({ sessionId });
-    void utils.claude.getPendingMessageIds.refetch({ sessionId });
-  }, [utils, sessionId]);
 
   const subscription = trpc.sse.onSessionEvents.useSubscription(
     { sessionId, afterSequence: anchor.afterSequence },
@@ -138,7 +132,7 @@ export function useSessionStream(sessionId: string, options: UseSessionStreamOpt
       onError: (err) => {
         console.error('Session stream SSE error:', err);
         // The stream will auto-reconnect; refetch so the UI is correct meanwhile.
-        resync();
+        void resyncLiveQueries(queryClient);
       },
     }
   );

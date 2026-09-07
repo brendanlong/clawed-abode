@@ -2,7 +2,7 @@ import { Spinner } from '@/components/ui/spinner';
 import { Button } from '@/components/ui/button';
 import { X } from 'lucide-react';
 import { formatRetryReason, type RetryState } from '@/lib/claude-messages';
-import { taskHasEndState, type BackgroundTask } from '@/lib/session-status';
+import type { BackgroundTask } from '@/lib/session-status';
 
 interface ClaudeStatusIndicatorProps {
   /** A main-agent turn is active (gates the composer). */
@@ -12,6 +12,12 @@ interface ClaudeStatusIndicatorProps {
   retry?: RetryState | null;
   /** Running background tasks (indicator only; never gates input). */
   backgroundTasks?: BackgroundTask[];
+  /**
+   * Whether a background task with a knowable end state is running (see
+   * useClaudeState). The list below shows ALL running tasks so a daemon stays
+   * ✕-stoppable, but only this flag decides "background" vs "waiting".
+   */
+  backgroundActive?: boolean;
   /** Stop a single background task. */
   onStopBackgroundTask?: (taskId: string) => void;
 }
@@ -72,6 +78,7 @@ export function ClaudeStatusIndicator({
   containerStatus,
   retry,
   backgroundTasks,
+  backgroundActive = false,
   onStopBackgroundTask,
 }: ClaudeStatusIndicatorProps) {
   // Don't show anything if the container isn't running.
@@ -80,10 +87,6 @@ export function ClaudeStatusIndicator({
   }
 
   const tasks = backgroundTasks ?? [];
-  // The list below shows ALL running tasks (so a daemon stays ✕-stoppable), but the
-  // "background vs waiting" line only counts tasks with a knowable end state — a
-  // permanently-backgrounded Bash daemon shouldn't keep the agent looking busy.
-  const backgroundActive = tasks.some(taskHasEndState);
 
   return (
     <>

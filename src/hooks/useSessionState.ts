@@ -1,7 +1,7 @@
 import { useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { trpc } from '@/lib/trpc';
-import { useRefetchOnReconnect } from './useRefetchOnReconnect';
+import { LIVE_QUERY_OPTIONS } from '@/lib/live-query';
 
 /**
  * Hook for managing session state: fetching session data, SSE updates, and start/stop mutations.
@@ -10,13 +10,11 @@ export function useSessionState(sessionId: string) {
   const router = useRouter();
   const utils = trpc.useUtils();
 
-  // Fetch session details
-  const { data: sessionData, isLoading, refetch } = trpc.sessions.get.useQuery({ sessionId });
-
-  // Refetch session data when app regains visibility or network reconnects
-  useRefetchOnReconnect(refetch);
-
   // Live session updates arrive via the multiplexed SSE stream (useSessionStream).
+  const { data: sessionData, isLoading } = trpc.sessions.get.useQuery(
+    { sessionId },
+    LIVE_QUERY_OPTIONS
+  );
 
   // Mutations - update cache directly from returned data
   const startMutation = trpc.sessions.start.useMutation({

@@ -1,18 +1,19 @@
 'use client';
 
+import { z } from 'zod';
 import { useMemo } from 'react';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { processTerminalOutput, isTerminalOutput } from '@/lib/terminal-output';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
+import { lenient, parseToolInput } from './tool-input';
 import type { ToolCall } from './types';
 
-interface BashInput {
-  command: string;
-  description?: string;
-  timeout?: number;
-  run_in_background?: boolean;
-}
+const bashInputSchema = z.object({
+  command: lenient(z.string()),
+  description: lenient(z.string()),
+  run_in_background: lenient(z.boolean()),
+});
 
 function TerminalIcon() {
   return (
@@ -39,7 +40,7 @@ function TerminalIcon() {
 export function BashDisplay({ tool }: { tool: ToolCall }) {
   const hasOutput = tool.output !== undefined;
 
-  const input = tool.input as BashInput | undefined;
+  const input = parseToolInput(tool.input, bashInputSchema);
   const command = input?.command ?? '';
   const description = input?.description;
   const isBackground = input?.run_in_background ?? false;

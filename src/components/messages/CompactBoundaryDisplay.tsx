@@ -4,6 +4,7 @@ import { useCallback } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { CopyButton } from './CopyButton';
 import { formatAsJson } from './types';
+import { formatTokenCount } from '@/lib/token-estimation';
 import type { MessageContent } from './types';
 
 interface CompactBoundaryContent extends MessageContent {
@@ -23,12 +24,6 @@ export function CompactBoundaryDisplay({ content }: { content: CompactBoundaryCo
   const trigger = content.compact_metadata?.trigger ?? 'auto';
   const preTokens = content.compact_metadata?.pre_tokens;
 
-  const formatTokens = (tokens: number): string => {
-    if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`;
-    if (tokens >= 1_000) return `${(tokens / 1_000).toFixed(0)}K`;
-    return tokens.toString();
-  };
-
   return (
     <div className="group">
       <div className="flex items-center gap-2 text-sm p-2">
@@ -38,7 +33,7 @@ export function CompactBoundaryDisplay({ content }: { content: CompactBoundaryCo
         </Badge>
         <span className="text-muted-foreground text-xs shrink-0">
           {trigger === 'manual' ? 'manual' : 'auto'}
-          {preTokens !== undefined && ` · ${formatTokens(preTokens)} tokens before`}
+          {preTokens !== undefined && ` · ${formatTokenCount(preTokens)} tokens before`}
         </span>
         <div className="flex-1 border-t border-dashed border-border" />
       </div>
