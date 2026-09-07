@@ -31,7 +31,7 @@ All server→client updates flow over SSE via tRPC's `httpSubscriptionLink` (cli
 
 **Resume.** The subscription input is stable — `{ sessionId, afterSequence }` with `afterSequence` frozen when history first loads (feeding the live newest sequence would tear the `EventSource` down every turn). Each event is wrapped in `tracked()` with a `watermark:counter` id ([`src/lib/sse-resume.ts`](../src/lib/sse-resume.ts)):
 
-- `watermark` = highest **persisted** message sequence yielded; on (re)connect the server replays `sequence > floor` (the `lastEventId` watermark, or the initial `afterSequence`, which closes the gap between the history snapshot and the stream attaching). Partials and latest-value events never advance it — they're refetched on reconnect (`useRefetchOnReconnect`) instead of replayed.
+- `watermark` = highest **persisted** message sequence yielded; on (re)connect the server replays `sequence > floor` (the `lastEventId` watermark, or the initial `afterSequence`, which closes the gap between the history snapshot and the stream attaching). Partials and latest-value events never advance it — they're refetched instead of replayed (on stream error via `resyncLiveQueries`, and on tab focus / network reconnect via React Query's `'always'` options in [`src/lib/live-query.ts`](../src/lib/live-query.ts)).
 - `counter` = strictly increasing per connection, seeded from the previous `lastEventId`, so ids never repeat across reconnects (tRPC drops repeated tracked ids).
 
 `EventSource` auto-reconnects with `Last-Event-ID`; a `ConnectionStatusIndicator` banner shows while the stream is down. Ping/reconnect tuning lives in [`src/server/trpc.ts`](../src/server/trpc.ts).
