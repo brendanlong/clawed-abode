@@ -2,9 +2,13 @@
 
 import type { ReactNode } from 'react';
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
-
-type Theme = 'light' | 'dark';
-type ThemePreference = 'auto' | 'light' | 'dark';
+import {
+  DARK_CLASS,
+  THEME_STORAGE_KEY,
+  resolveTheme,
+  type Theme,
+  type ThemePreference,
+} from './theme';
 
 interface ThemeContextType {
   theme: Theme;
@@ -14,21 +18,14 @@ interface ThemeContextType {
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
-const THEME_KEY = 'theme_preference';
-
-function getSystemTheme(): Theme {
-  if (typeof window === 'undefined') return 'light';
-  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+function systemPrefersDark(): boolean {
+  if (typeof window === 'undefined') return false;
+  return window.matchMedia('(prefers-color-scheme: dark)').matches;
 }
 
 function applyTheme(theme: Theme) {
   if (typeof document === 'undefined') return;
-  const root = document.documentElement;
-  if (theme === 'dark') {
-    root.classList.add('dark');
-  } else {
-    root.classList.remove('dark');
-  }
+  document.documentElement.classList.toggle(DARK_CLASS, theme === 'dark');
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
@@ -40,11 +37,11 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     // Using queueMicrotask to avoid synchronous setState in effect (React 19 lint rule)
     queueMicrotask(() => {
-      const stored = localStorage.getItem(THEME_KEY) as ThemePreference | null;
+      const stored = localStorage.getItem(THEME_STORAGE_KEY) as ThemePreference | null;
       const preference = stored || 'auto';
       setThemePreferenceState(preference);
 
-      const resolvedTheme = preference === 'auto' ? getSystemTheme() : preference;
+      const resolvedTheme = resolveTheme(preference, systemPrefersDark());
       setTheme(resolvedTheme);
       applyTheme(resolvedTheme);
       setIsInitialized(true);
@@ -70,9 +67,9 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   const setThemePreference = useCallback((preference: ThemePreference) => {
     setThemePreferenceState(preference);
-    localStorage.setItem(THEME_KEY, preference);
+    localStorage.setItem(THEME_STORAGE_KEY, preference);
 
-    const resolvedTheme = preference === 'auto' ? getSystemTheme() : preference;
+    const resolvedTheme = resolveTheme(preference, systemPrefersDark());
     setTheme(resolvedTheme);
     applyTheme(resolvedTheme);
   }, []);
