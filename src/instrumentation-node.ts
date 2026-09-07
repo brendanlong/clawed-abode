@@ -6,10 +6,17 @@
  */
 
 import { createLogger, toError } from '@/lib/logger';
+import { prisma } from '@/lib/prisma';
+import { reapOrphanedSessionScopes, stopAllSessions } from '@/server/services/claude-runner';
 
 const log = createLogger('startup');
 
+let registered = false;
+
 export async function registerNode() {
+  // Idempotent: a second call would attach a second pair of signal handlers.
+  if (registered) return;
+  registered = true;
   log.info('Starting server');
 
   // Reap session cgroup scopes orphaned by a previous crash (which never ran
@@ -26,7 +33,6 @@ export async function registerNode() {
   // (in-memory-vs-DB session state, message-sequence counters), so "don't share
   // a DB across concurrent instances" is a pre-existing invariant, not a new one.
   try {
-    const { reapOrphanedSessionScopes } = await import('@/server/services/claude-runner');
     await reapOrphanedSessionScopes();
   } catch (err) {
     log.error('Error reaping orphaned session scopes', toError(err));
@@ -35,7 +41,6 @@ export async function registerNode() {
   // Sessions left `running` by a previous process are revived lazily with
   // `resume` on their next interaction, so startup only reports how many there are.
   try {
-    const { prisma } = await import('@/lib/prisma');
     const runningSessionsToRevive = await prisma.session.count({ where: { status: 'running' } });
     log.info('Startup complete', { runningSessionsToRevive });
   } catch (err) {
@@ -68,14 +73,12 @@ function registerShutdownHandler() {
     }, 10_000).unref();
 
     try {
-      const { stopAllSessions } = await import('@/server/services/claude-runner');
       await stopAllSessions();
     } catch (err) {
       log.error('Error stopping sessions during shutdown', toError(err));
     }
 
     try {
-      const { prisma } = await import('@/lib/prisma');
       await prisma.$disconnect();
     } catch (err) {
       log.error('Error disconnecting Prisma during shutdown', toError(err));
