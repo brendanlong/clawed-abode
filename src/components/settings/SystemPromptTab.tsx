@@ -10,6 +10,7 @@ import { Spinner } from '@/components/ui/spinner';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { trpc } from '@/lib/trpc';
+import { DEFAULT_CLAUDE_MODEL } from '@/lib/claude-model';
 import { SUGGESTED_ADVISOR_MODEL } from '@/lib/advisor';
 import {
   SETTING_SOURCES,
@@ -46,7 +47,7 @@ export function SystemPromptTab() {
         <CardContent>
           <ClaudeModelSection
             currentModel={settings?.claudeModel ?? null}
-            defaultModel={settings?.defaultClaudeModel ?? 'opus[1m]'}
+            defaultModel={settings?.defaultClaudeModel ?? DEFAULT_CLAUDE_MODEL}
             onUpdate={refetch}
           />
         </CardContent>

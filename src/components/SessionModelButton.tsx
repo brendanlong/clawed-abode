@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/sheet';
 import { ModelOverrideField } from '@/components/settings/shared/ModelOverrideField';
 import { trpc } from '@/lib/trpc';
+import { fallbackClaudeModel } from '@/lib/claude-model';
 
 interface SessionModelButtonProps {
   sessionId: string;
@@ -37,8 +38,7 @@ export function SessionModelButton({ sessionId, claudeModel }: SessionModelButto
     onError: (err) => setError(err.message),
   });
 
-  const fallbackModel =
-    globalSettings?.claudeModel ?? globalSettings?.defaultClaudeModel ?? 'opus[1m]';
+  const fallbackModel = fallbackClaudeModel(globalSettings);
 
   return (
     <>

@@ -15,6 +15,7 @@ import { Spinner } from '@/components/ui/spinner';
 import { Separator } from '@/components/ui/separator';
 import { Textarea } from '@/components/ui/textarea';
 import { trpc } from '@/lib/trpc';
+import { fallbackClaudeModel } from '@/lib/claude-model';
 import { Plus, Star, FileText, FolderOpen, Cpu } from 'lucide-react';
 import { NO_REPO_SENTINEL } from '@/components/RepoSelector';
 import { EnvVarSection } from './shared/EnvVarSection';
@@ -255,8 +256,7 @@ function ClaudeModelSection({
     onError: (err) => setError(err.message),
   });
 
-  const fallbackModel =
-    globalSettings?.claudeModel ?? globalSettings?.defaultClaudeModel ?? 'opus[1m]';
+  const fallbackModel = fallbackClaudeModel(globalSettings);
 
   return (
     <div className="space-y-4">

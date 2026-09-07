@@ -11,6 +11,7 @@ import { OpenInEditorButton } from '@/components/OpenInEditorButton';
 import { SessionModelButton } from '@/components/SessionModelButton';
 import { PrStatusIndicator } from '@/components/PrStatusIndicator';
 import type { PullRequestInfo } from '@/lib/pull-request';
+import { extractRepoFullName } from '@/lib/utils';
 
 interface SessionHeaderProps {
   session: {
@@ -52,9 +53,7 @@ export function SessionHeader({
   onToggleVoiceMode,
   voiceModeActive = false,
 }: SessionHeaderProps) {
-  const repoName = session.repoUrl
-    ? session.repoUrl.replace('https://github.com/', '').replace('.git', '')
-    : null;
+  const repoName = session.repoUrl ? extractRepoFullName(session.repoUrl) : null;
 
   return (
     <div className="border-b bg-background px-4 py-3">

@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { AuthGuard } from '@/components/AuthGuard';
 import { Header } from '@/components/Header';
 import { trpc } from '@/lib/trpc';
+import { fallbackClaudeModel } from '@/lib/claude-model';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -57,8 +58,7 @@ function NewSessionForm() {
   const hasRepo = form.selectedRepo && !isNoRepo;
 
   const { data: globalSettings } = trpc.globalSettings.get.useQuery();
-  const fallbackModel =
-    globalSettings?.claudeModel ?? globalSettings?.defaultClaudeModel ?? 'opus[1m]';
+  const fallbackModel = fallbackClaudeModel(globalSettings);
 
   const createMutation = trpc.sessions.create.useMutation({
     onSuccess: (data) => {

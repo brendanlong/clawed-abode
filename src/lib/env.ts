@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { DEFAULT_CLAUDE_MODEL } from './claude-model';
 
 const envSchema = z.object({
   DATABASE_URL: z.string().default('file:./data/dev.db'),
@@ -7,7 +8,7 @@ const envSchema = z.object({
   // Optional if configured via Settings UI instead
   CLAUDE_CODE_OAUTH_TOKEN: z.string().optional().default(''),
   // Claude model to use (e.g., "opus", "sonnet", "claude-opus-4-5-20251101")
-  CLAUDE_MODEL: z.string().default('opus[1m]'),
+  CLAUDE_MODEL: z.string().default(DEFAULT_CLAUDE_MODEL),
   // Prefix for session branches (e.g., "claude/" creates branches like "claude/{sessionId}")
   SESSION_BRANCH_PREFIX: z.string().default('claude/'),
   // Base64-encoded Argon2 hash for authentication (generate with: pnpm hash-password <yourpassword>)
