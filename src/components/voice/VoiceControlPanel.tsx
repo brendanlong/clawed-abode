@@ -1,15 +1,21 @@
 'use client';
 
-import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
+import { useCallback, useMemo, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { X, Mic, Square, Play, Pause, SkipBack, SkipForward, Send } from 'lucide-react';
 import { useVoicePlaybackContext } from '@/hooks/useVoicePlayback';
 import { useVoiceRecording } from '@/hooks/useVoiceRecording';
 import { useVoiceConfig } from '@/hooks/useVoiceConfig';
+import { useSendWithRestore } from '@/hooks/useSendWithRestore';
 import { getAssistantTextMessages } from '@/components/voice/playable-messages';
 import type { DisplayMessage } from '@/components/messages/types';
 import { mergeCancelledText, type CancelledPrompt } from '@/lib/cancelled-prompt';
 import { cn } from '@/lib/utils';
+
+// A newer pending transcript wins over a restored failed one.
+function restoreFailedTranscript(current: string, failed: string): string {
+  return current || failed;
+}
 
 interface VoiceControlPanelProps {
   sessionId: string;
@@ -56,11 +62,24 @@ export function VoiceControlPanel({
     error: recordingError,
   } = useVoiceRecording();
 
-  // Transcript from the last recording, before user decides to send or cancel
-  const [pendingTranscript, setPendingTranscript] = useState<string | null>(null);
-  // Error surfaced when a send fails (e.g. queue overflow, session not running).
-  // The failed transcript is restored so a voice message isn't silently lost.
-  const [sendError, setSendError] = useState<string | null>(null);
+  // The pending transcript from the last recording, awaiting send or cancel. A
+  // failed send restores it (so a dictated message isn't lost) and sets sendError;
+  // Stop merges recalled prompts into it, since the panel has no attachment UI
+  // the text is the only restorable part.
+  const {
+    draft: pendingTranscript,
+    setDraft: setPendingTranscript,
+    sendError,
+    clearSendError,
+    submit: sendTranscript,
+    stop: handleInterrupt,
+  } = useSendWithRestore({
+    empty: '',
+    send: onSendPrompt,
+    interrupt: onInterrupt,
+    restoreFailed: restoreFailedTranscript,
+    restoreCancelled: mergeCancelledText,
+  });
 
   // Wake Lock to keep screen awake while voice panel is open
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
@@ -150,36 +169,6 @@ export function VoiceControlPanel({
     }
   }, [playback, assistantTextMessages]);
 
-  // Send a transcript, clearing it optimistically. If the send rejects (queue
-  // overflow, session not running, network blip), restore it into the review
-  // area (unless a new transcript is already pending) and surface the error so
-  // the dictated message isn't silently lost — mirrors PromptInput's submit().
-  const sendTranscript = useCallback(
-    (text: string) => {
-      setPendingTranscript(null);
-      setSendError(null);
-      Promise.resolve(onSendPrompt(text)).catch((err: unknown) => {
-        setPendingTranscript((current) => current ?? text);
-        setSendError(err instanceof Error ? err.message : 'Failed to send message');
-      });
-    },
-    [onSendPrompt]
-  );
-
-  // Stop can pull back prompts the agent never read. The panel has no attachment
-  // UI, so only the text is restorable here — it lands in the review area, where
-  // the user can send it again or discard it deliberately.
-  const handleInterrupt = useCallback(() => {
-    Promise.resolve(onInterrupt())
-      .then((cancelled) => {
-        if (!cancelled?.length) return;
-        setPendingTranscript((current) => mergeCancelledText(current ?? '', cancelled));
-      })
-      .catch((err: unknown) => {
-        setSendError(err instanceof Error ? err.message : 'Failed to stop');
-      });
-  }, [onInterrupt]);
-
   // Recording: start or stop
   const handleMicPress = () => {
     if (isRecording) {
@@ -194,8 +183,8 @@ export function VoiceControlPanel({
         }
       }
     } else {
-      setPendingTranscript(null);
-      setSendError(null);
+      setPendingTranscript('');
+      clearSendError();
       startRecording();
     }
   };
@@ -209,9 +198,9 @@ export function VoiceControlPanel({
 
   // Cancel the transcript
   const handleCancel = useCallback(() => {
-    setPendingTranscript(null);
-    setSendError(null);
-  }, []);
+    setPendingTranscript('');
+    clearSendError();
+  }, [setPendingTranscript, clearSendError]);
 
   const hasPrev = assistantTextMessages.length > 0 && currentIndex > 0;
   const hasNext = currentIndex >= 0 && currentIndex < assistantTextMessages.length - 1;
