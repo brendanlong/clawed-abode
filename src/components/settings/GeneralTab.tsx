@@ -11,6 +11,7 @@ import {
   SystemPromptOverrideCard,
 } from './global/PromptCards';
 import { SettingSourcesCard } from './global/SettingSourcesCard';
+import { RateLimitPauseCard } from './global/RateLimitPauseCard';
 import { GlobalEnvVarsCard, GlobalMcpServersCard } from './global/ScopedSettingsCards';
 
 export function GeneralTab() {
@@ -51,6 +52,7 @@ export function GeneralTab() {
       />
       <SystemPromptAppendCard currentAppend={settings.systemPromptAppend} onUpdate={refetch} />
       <SettingSourcesCard current={settings.settingSources} onUpdate={refetch} />
+      <RateLimitPauseCard />
       <GlobalEnvVarsCard />
       <GlobalMcpServersCard />
       <DefaultPromptCard defaultPrompt={defaultPrompt} />

@@ -8,7 +8,7 @@ import { SessionActionButton } from '@/components/SessionActionButton';
 import { EditableSessionName } from '@/components/EditableSessionName';
 import { VoiceAutoReadToggle } from '@/components/voice/VoiceAutoReadToggle';
 import { OpenInEditorButton } from '@/components/OpenInEditorButton';
-import { SessionModelButton } from '@/components/SessionModelButton';
+import { SessionSettingsButton } from '@/components/SessionSettingsButton';
 import { PrStatusIndicator } from '@/components/PrStatusIndicator';
 import type { PullRequestInfo } from '@/lib/pull-request';
 import { extractRepoFullName } from '@/lib/utils';
@@ -22,6 +22,8 @@ interface SessionHeaderProps {
     status: string;
     statusMessage?: string | null;
     claudeModel?: string | null;
+    rateLimitPauseEnabled?: boolean | null;
+    rateLimitPauseThreshold?: number | null;
     pullRequest?: PullRequestInfo | null;
   };
   onStart: () => void;
@@ -84,9 +86,11 @@ export function SessionHeader({
         <div className="flex flex-col items-end gap-1 shrink-0">
           <div className="flex items-center gap-1">
             {session.status !== 'archived' && (
-              <SessionModelButton
+              <SessionSettingsButton
                 sessionId={session.id}
                 claudeModel={session.claudeModel ?? null}
+                rateLimitPauseEnabled={session.rateLimitPauseEnabled ?? null}
+                rateLimitPauseThreshold={session.rateLimitPauseThreshold ?? null}
               />
             )}
             <OpenInEditorButton sessionId={session.id} />

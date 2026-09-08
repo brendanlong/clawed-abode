@@ -41,6 +41,12 @@ export interface InFlightCommand {
   text: string;
   /** Stored names of files attached to it (see /api/upload), likewise. */
   attachments: string[];
+  /**
+   * The prepared text actually pushed into the SDK (attachment paths prefixed,
+   * sanitized). Kept so a recall can re-push the message verbatim instead of
+   * re-preparing it — a rate-limit pause re-queues rather than discards.
+   */
+  content: string;
   /** The CLI reported the agent has read it (`command_lifecycle` left `queued`). */
   started: boolean;
   /** Top-level `result`s seen since the push — see retireInFlightCommands. */
@@ -96,6 +102,14 @@ export interface SessionState {
    */
   interruptRequested: boolean;
   /**
+   * `turnActive` was set optimistically by a push and no real turn has been seen
+   * since. Normally the turn that push feeds arrives and clears it — but if the
+   * push is recalled before the CLI ever reads it (a rate-limit pause), nothing
+   * will ever arrive to flip `turnActive` back, and the composer would read
+   * "working" for the whole pause. See `clearOptimisticTurn`.
+   */
+  optimisticTurnActive: boolean;
+  /**
    * Transient systemd user scope this session's query runs in (null when cgroup
    * reaping is unavailable). Mirrored onto the DB row by the runner so a crash can
    * reap it by exact name; stopped on teardown to kill the whole process tree.
@@ -119,6 +133,7 @@ export function createSessionState(workingDir: string, commands: SlashCommand[])
     emittedRunning: false,
     commandLifecycleSeen: false,
     interruptRequested: false,
+    optimisticTurnActive: false,
     sessionScope: null,
   };
 }

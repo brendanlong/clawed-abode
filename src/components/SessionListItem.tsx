@@ -55,7 +55,8 @@ export function SessionListItem({ session }: SessionListItemProps) {
             status={deriveSessionDisplayStatus(
               session.status,
               session.turnActive,
-              session.backgroundActive
+              session.backgroundActive,
+              session.rateLimitPaused
             )}
           />
 

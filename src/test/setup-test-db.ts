@@ -100,6 +100,7 @@ export async function clearTestDb(): Promise<void> {
   // Delete in order to respect foreign key constraints
   await testPrisma.message.deleteMany();
   await testPrisma.session.deleteMany();
+  await testPrisma.rateLimitWindow.deleteMany();
   await testPrisma.authSession.deleteMany();
   // Settings tables (envVar/mcpServer cover both per-repo and global rows)
   await testPrisma.envVar.deleteMany();

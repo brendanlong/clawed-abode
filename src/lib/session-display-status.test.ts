@@ -32,6 +32,21 @@ describe('deriveSessionDisplayStatus', () => {
   );
 
   it('reports an unrecognized stored status as error', () => {
-    expect(deriveSessionDisplayStatus('paused', false)).toBe('error');
+    expect(deriveSessionDisplayStatus('hibernating', false)).toBe('error');
+  });
+});
+
+describe('rate-limit pause', () => {
+  it('reads as paused when live and idle', () => {
+    expect(deriveSessionDisplayStatus('running', false, false, true)).toBe('paused');
+  });
+
+  it('still reads as busy while a turn under a pause finishes', () => {
+    expect(deriveSessionDisplayStatus('running', true, false, true)).toBe('running');
+    expect(deriveSessionDisplayStatus('running', false, true, true)).toBe('background');
+  });
+
+  it('does not override a non-running stored status', () => {
+    expect(deriveSessionDisplayStatus('stopped', false, false, true)).toBe('stopped');
   });
 });

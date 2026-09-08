@@ -9,7 +9,11 @@ import { getEnv } from '@/lib/env';
 import { createLogger, toError } from '@/lib/logger';
 import { prisma } from '@/lib/prisma';
 import { purgeInactiveAuthSessions } from '@/server/services/auth-sessions';
-import { reapOrphanedSessionScopes, stopAllSessions } from '@/server/services/claude-runner';
+import {
+  initRateLimitPause,
+  reapOrphanedSessionScopes,
+  stopAllSessions,
+} from '@/server/services/claude-runner';
 
 const log = createLogger('startup');
 
@@ -52,6 +56,15 @@ export async function registerNode() {
     await reapOrphanedSessionScopes();
   } catch (err) {
     log.error('Error reaping orphaned session scopes', toError(err));
+  }
+
+  // Restore the subscription rate-limit pause before anything can revive: a
+  // restart mid-pause must not release queued prompts into a window that is still
+  // exhausted (see doc/rate-limit-pause.md).
+  try {
+    await initRateLimitPause();
+  } catch (err) {
+    log.error('Error restoring rate-limit pause state', toError(err));
   }
 
   // Sessions left `running` by a previous process are revived lazily with
