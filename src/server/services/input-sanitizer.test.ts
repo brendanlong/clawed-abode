@@ -5,6 +5,7 @@ import {
   sanitizeToolOutput,
   sanitizeToolOutputHook,
 } from './input-sanitizer';
+import type { SanitizationInfo } from '@/lib/sanitization';
 
 const ctx = { sessionId: 'test-session', source: 'user-message' };
 
@@ -411,13 +412,23 @@ describe('sanitizeToolOutputHook (PostToolUse wiring)', () => {
     const { messages } = await sanitizeToolOutput(response, toolCtx);
     expect(messages.join(' ').length).toBeGreaterThan(10_000);
 
-    const res = await sanitizeToolOutputHook(postToolUse('WebFetch', response), 'test-session');
+    const findings: SanitizationInfo[] = [];
+    const res = await sanitizeToolOutputHook(
+      postToolUse('WebFetch', response),
+      'test-session',
+      (_id, info) => findings.push(info)
+    );
     const note = hookOutput(res).additionalContext ?? '';
     expect(note.length).toBeLessThan(2500);
     // The library puts its "do not fetch these" clause after the enumeration, so
     // a tail-truncated note has to restate it or the warning loses its point.
     expect(note).toMatch(/truncated/);
     expect(note).toMatch(/do not fetch/);
+    // The same text also goes to a SQLite row and an SSE frame, so the bound has
+    // to hold on the persisted copy too — not just the one the model reads.
+    expect(findings).toHaveLength(1);
+    expect(findings[0].warnings.join(' ').length).toBeLessThan(2500);
+    expect(findings[0].found).toContain('confusable-host');
   });
 
   it('does not report findings for clean output', async () => {
