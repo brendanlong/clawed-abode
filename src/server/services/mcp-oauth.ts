@@ -287,7 +287,7 @@ export async function completeMcpOAuthFlow(params: {
     log.info('Completed MCP OAuth flow', { mcpServerId: row.mcpServerId });
     return { serverName: row.mcpServer.name };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = toError(error).message;
     await clearFlow(row.id, message);
     throw error;
   }
@@ -466,7 +466,7 @@ async function resolveAccessToken(oauthId: string): Promise<string | null> {
     });
     return tokens.access_token;
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = toError(error).message;
     // A rejected grant is dead: drop the tokens so the UI shows "needs re-auth"
     // instead of retrying a refresh that can never succeed. Anything else
     // (network, 5xx) is transient and keeps the tokens for the next attempt.

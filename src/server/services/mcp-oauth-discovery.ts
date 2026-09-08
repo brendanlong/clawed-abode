@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { createLogger } from '@/lib/logger';
+import { createLogger, toError } from '@/lib/logger';
 import {
   authorizationServerMetadataUrls,
   fallbackAuthorizationServerEndpoints,
@@ -73,7 +73,7 @@ async function fetchJson(url: string): Promise<unknown | null> {
   } catch (error) {
     log.debug('Metadata fetch failed', {
       url,
-      error: error instanceof Error ? error.message : String(error),
+      error: toError(error).message,
     });
     return null;
   }
@@ -113,7 +113,7 @@ async function probeResourceMetadataUrl(mcpUrl: string): Promise<string | null> 
   } catch (error) {
     log.info('Unauthenticated probe of MCP endpoint failed', {
       mcpUrl,
-      error: error instanceof Error ? error.message : String(error),
+      error: toError(error).message,
     });
     return null;
   }
