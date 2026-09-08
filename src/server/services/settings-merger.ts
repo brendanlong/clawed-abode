@@ -162,50 +162,27 @@ export function resolveAdvisorModel(globalModel: string | null | undefined): str
   return globalModel?.trim() || null;
 }
 
-/**
- * Merge global and per-repo environment variables.
- * Per-repo env vars take precedence over global ones with the same name.
- */
+/** Per-repo entries take precedence over global ones with the same name. */
+function mergeByName<T extends { name: string }>(globals: T[], repo: T[]): T[] {
+  const merged = new Map<string, T>();
+  for (const entry of [...globals, ...repo]) {
+    merged.set(entry.name, entry);
+  }
+  return Array.from(merged.values());
+}
+
 export function mergeEnvVars(
   globalEnvVars: ResolvedEnvVar[],
   repoEnvVars: ResolvedEnvVar[]
 ): ResolvedEnvVar[] {
-  const merged = new Map<string, ResolvedEnvVar>();
-
-  // Add global env vars first
-  for (const envVar of globalEnvVars) {
-    merged.set(envVar.name, envVar);
-  }
-
-  // Per-repo env vars override global ones
-  for (const envVar of repoEnvVars) {
-    merged.set(envVar.name, envVar);
-  }
-
-  return Array.from(merged.values());
+  return mergeByName(globalEnvVars, repoEnvVars);
 }
 
-/**
- * Merge global and per-repo MCP servers.
- * Per-repo MCP servers take precedence over global ones with the same name.
- */
 export function mergeMcpServers(
   globalMcpServers: ResolvedMcpServer[],
   repoMcpServers: ResolvedMcpServer[]
 ): ResolvedMcpServer[] {
-  const merged = new Map<string, ResolvedMcpServer>();
-
-  // Add global MCP servers first
-  for (const server of globalMcpServers) {
-    merged.set(server.name, server);
-  }
-
-  // Per-repo MCP servers override global ones
-  for (const server of repoMcpServers) {
-    merged.set(server.name, server);
-  }
-
-  return Array.from(merged.values());
+  return mergeByName(globalMcpServers, repoMcpServers);
 }
 
 /**

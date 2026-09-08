@@ -6,7 +6,7 @@ import {
   getDefaultEnvironment,
 } from '@modelcontextprotocol/sdk/client/stdio.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
-import { createLogger } from '@/lib/logger';
+import { createLogger, toError } from '@/lib/logger';
 import type { ResolvedMcpServer } from '@/lib/settings-types';
 
 const log = createLogger('mcp-validator');
@@ -17,10 +17,6 @@ export interface McpValidationResult {
   success: boolean;
   error?: string;
   tools?: string[];
-}
-
-function buildHeaders(headers?: Record<string, string>): Record<string, string> {
-  return headers && Object.keys(headers).length > 0 ? headers : {};
 }
 
 async function connectAndListTools(transport: Transport): Promise<McpValidationResult> {
@@ -93,16 +89,10 @@ async function validateHttpServer(
   } catch (httpError) {
     log.info('Streamable HTTP failed, falling back to SSE', {
       url,
-      error: httpError instanceof Error ? httpError.message : String(httpError),
+      error: toError(httpError).message,
     });
-
-    try {
-      const sseTransport = createSseTransport(url, headers);
-      return await connectAndListTools(sseTransport);
-    } catch (sseError) {
-      // Both failed - report the SSE error since HTTP already failed
-      throw sseError;
-    }
+    // Both failing reports the SSE error, since HTTP already failed.
+    return await validateSseServer(url, headers);
   }
 }
 
@@ -193,7 +183,7 @@ export async function validateMcpServer(server: ResolvedMcpServer): Promise<McpV
     if (server.type === 'stdio') {
       return await validateStdioServer(server.command, server.args, server.env);
     }
-    const headers = buildHeaders(server.headers);
+    const headers = server.headers ?? {};
     if (server.type === 'http') {
       return await validateHttpServer(server.url, headers);
     }
@@ -203,7 +193,7 @@ export async function validateMcpServer(server: ResolvedMcpServer): Promise<McpV
       name: server.name,
       type: server.type,
       ...(server.type === 'stdio' ? { command: server.command } : { url: server.url }),
-      error: error instanceof Error ? error.message : String(error),
+      error: toError(error).message,
     });
 
     return {

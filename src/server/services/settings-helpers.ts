@@ -170,46 +170,39 @@ export function decryptEnvVars(
   }));
 }
 
+/**
+ * Decrypt one stored `{ value, isSecret }` map (an MCP server's headers or env).
+ * Returns undefined rather than `{}` so an empty column omits the field entirely.
+ */
+function decryptSecretRecord(json: string | null): Record<string, string> | undefined {
+  if (!json) return undefined;
+  const stored = JSON.parse(json) as Record<string, { value: string; isSecret: boolean }>;
+  const entries = Object.entries(stored).map(([key, { value, isSecret }]): [string, string] => [
+    key,
+    isSecret ? decrypt(value) : value,
+  ]);
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
+
 export function decryptMcpServers(mcpServers: DbMcpServer[]): ResolvedMcpServer[] {
   return mcpServers.map((mcp) => {
     const serverType = (mcp.type || 'stdio') as McpServerType;
 
     if (serverType === 'http' || serverType === 'sse') {
-      const headersJson = mcp.headers
-        ? (JSON.parse(mcp.headers) as Record<string, { value: string; isSecret: boolean }>)
-        : {};
-      const headers = Object.fromEntries(
-        Object.entries(headersJson).map(([key, { value, isSecret }]) => [
-          key,
-          isSecret ? decrypt(value) : value,
-        ])
-      );
-
       return {
         name: mcp.name,
         type: serverType,
         url: mcp.url!,
-        headers: Object.keys(headers).length > 0 ? headers : undefined,
+        headers: decryptSecretRecord(mcp.headers),
       };
     }
-
-    // Stdio servers: decrypt env vars
-    const envJson = mcp.env
-      ? (JSON.parse(mcp.env) as Record<string, { value: string; isSecret: boolean }>)
-      : {};
-    const env = Object.fromEntries(
-      Object.entries(envJson).map(([key, { value, isSecret }]) => [
-        key,
-        isSecret ? decrypt(value) : value,
-      ])
-    );
 
     return {
       name: mcp.name,
       type: 'stdio' as const,
       command: mcp.command,
       args: mcp.args ? (JSON.parse(mcp.args) as string[]) : undefined,
-      env: Object.keys(env).length > 0 ? env : undefined,
+      env: decryptSecretRecord(mcp.env),
     };
   });
 }

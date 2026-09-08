@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { createLogger } from '@/lib/logger';
+import { createLogger, toError } from '@/lib/logger';
 import { env } from '@/lib/env';
 import type { PullRequestInfo } from '@/lib/pull-request';
 
@@ -145,7 +145,7 @@ export async function fetchPullRequestForBranch(
       updatedAt: pr.updated_at,
     };
   } catch (err) {
-    log.error('Failed to fetch PR for branch', err instanceof Error ? err : undefined, {
+    log.error('Failed to fetch PR for branch', toError(err), {
       repoFullName,
       branch,
     });
