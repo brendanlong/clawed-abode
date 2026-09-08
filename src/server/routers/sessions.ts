@@ -237,6 +237,9 @@ export const sessionsRouter = router({
     });
 
     sseEvents.emitSessionUpdate(input.sessionId, updatedSession);
+    // Only running sessions drain, so a session stopped while it held queued
+    // prompts would otherwise strand them until the next reading change.
+    await recomputeRateLimitHolds();
     return { session: toSessionView(updatedSession) };
   }),
 

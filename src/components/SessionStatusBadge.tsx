@@ -8,6 +8,7 @@ const statusVariants: Record<
   running: 'default',
   background: 'secondary',
   waiting: 'secondary',
+  paused: 'outline',
   stopped: 'outline',
   creating: 'outline',
   error: 'destructive',
