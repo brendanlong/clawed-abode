@@ -6,18 +6,12 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Spinner } from '@/components/ui/spinner';
 import { Slider } from '@/components/ui/slider';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { trpc } from '@/lib/trpc';
 import { useVoiceConfig } from '@/hooks/useVoiceConfig';
 import { useSpeechSynthesisVoices } from '@/hooks/useSpeechSynthesisVoices';
 import { dedupeAndSortVoices } from '@/lib/tts';
 import { SettingsCard } from './shared/SettingsCard';
+import { VoicePicker } from './VoicePicker';
 
 export function AudioTab() {
   const { data: settings, isLoading, refetch } = trpc.globalSettings.get.useQuery();
@@ -56,16 +50,10 @@ export function AudioTab() {
   );
 }
 
-const AUTO_DETECT_VALUE = '__auto__';
-
 function TtsVoiceSection() {
   const { voiceURI, setVoiceURI } = useVoiceConfig();
   const availableVoices = useSpeechSynthesisVoices();
   const voices = useMemo(() => dedupeAndSortVoices(availableVoices), [availableVoices]);
-
-  const handleChange = (value: string) => {
-    setVoiceURI(value === AUTO_DETECT_VALUE ? null : value);
-  };
 
   const handleTest = () => {
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
@@ -100,19 +88,12 @@ function TtsVoiceSection() {
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2">
-        <Select value={voiceURI ?? AUTO_DETECT_VALUE} onValueChange={handleChange}>
-          <SelectTrigger className="w-full">
-            <SelectValue placeholder="Auto-detect" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={AUTO_DETECT_VALUE}>Auto-detect (match browser language)</SelectItem>
-            {voices.map((v) => (
-              <SelectItem key={v.voiceURI} value={v.voiceURI}>
-                {v.name} ({v.lang}){v.localService ? '' : ' [network]'}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <VoicePicker
+          voices={voices}
+          value={voiceURI}
+          onChange={setVoiceURI}
+          locale={navigator.language}
+        />
         <Button variant="outline" size="sm" onClick={handleTest}>
           Test
         </Button>
