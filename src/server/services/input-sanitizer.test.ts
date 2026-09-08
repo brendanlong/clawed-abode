@@ -65,11 +65,7 @@ describe('sanitizeUntrustedInput', () => {
   it('fails open when the underlying sanitizer throws', async () => {
     // The library documents never-throws, but a send must not be blocked if that
     // contract is ever violated — the original text passes through instead.
-    const throwingSanitizer = async (): Promise<{
-      cleaned: string;
-      found: string[];
-      warnings: string[];
-    }> => {
+    const throwingSanitizer = async (): Promise<never> => {
       throw new Error('parser exploded');
     };
     const text = 'some prompt text';

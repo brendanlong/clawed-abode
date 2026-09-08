@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 /**
- * Findings from the input sanitizer (`agent-input-sanitizer`), persisted on the
+ * Findings from the input sanitizer (`agent-sanitizer`), persisted on the
  * affected message so the UI can surface a visible "hidden content was filtered"
  * indicator on the exact message/tool result it applied to.
  *

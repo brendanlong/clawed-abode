@@ -1,4 +1,4 @@
-import { sanitize } from 'agent-input-sanitizer';
+import { sanitize } from 'agent-sanitizer';
 import type { HookInput, HookJSONOutput } from '@anthropic-ai/claude-agent-sdk';
 import { createLogger, toError } from '@/lib/logger';
 import { buildSanitizationInfo, type SanitizationInfo } from '@/lib/sanitization';
