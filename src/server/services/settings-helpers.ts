@@ -1,7 +1,14 @@
 import { z } from 'zod';
 import { encrypt, decrypt, isEncryptionConfigured } from '@/lib/crypto';
 import { TRPCError } from '@trpc/server';
-import type { McpServerType, ResolvedEnvVar, ResolvedMcpServer } from '@/lib/settings-types';
+import type {
+  McpAuthType,
+  McpOAuthStatus,
+  McpServerType,
+  ResolvedEnvVar,
+  ResolvedMcpServer,
+} from '@/lib/settings-types';
+import { formatOAuthStatus, type McpOAuthTokenSnapshot, type OAuthStatusRow } from './mcp-oauth';
 
 // ─── Validation Schemas ──────────────────────────────────────────────
 
@@ -37,11 +44,27 @@ const mcpServerStdioSchema = z.object({
   env: mcpServerEnvSchema.optional(),
 });
 
+/**
+ * OAuth client configuration the user can supply by hand — the escape hatch for
+ * servers with no dynamic client registration (Google and Microsoft Entra have
+ * none at all). Blank fields mean "discover it"; a blank secret on an existing
+ * server means "unchanged", matching every other secret field.
+ */
+const mcpOAuthConfigSchema = z.object({
+  clientId: z.string().max(500).default(''),
+  clientSecret: z.string().max(2000).default(''),
+  scope: z.string().max(1000).default(''),
+});
+
+export type McpOAuthConfigInput = z.infer<typeof mcpOAuthConfigSchema>;
+
 const mcpServerHttpSchema = z.object({
   name: z.string().min(1).max(100),
   type: z.enum(['http', 'sse']),
   url: z.string().url().max(2000),
   headers: mcpServerEnvSchema.optional(),
+  authType: z.enum(['headers', 'oauth']).default('headers'),
+  oauth: mcpOAuthConfigSchema.optional(),
 });
 
 export const mcpServerSchema = z.discriminatedUnion('type', [
@@ -108,7 +131,7 @@ interface DbEnvVar {
   isSecret: boolean;
 }
 
-/** DB row shape for MCP servers */
+/** DB row shape for MCP servers, with the OAuth row joined when there is one. */
 interface DbMcpServer {
   id: string;
   name: string;
@@ -118,6 +141,13 @@ interface DbMcpServer {
   env: string | null;
   url: string | null;
   headers: string | null;
+  authType: string;
+  /**
+   * Required (not optional) so a query that forgets `include: { oauth: true }`
+   * fails to compile: a silently-absent grant reads as "not authorized" and would
+   * make the settings form clear the stored client on the next save.
+   */
+  oauth: (OAuthStatusRow & McpOAuthTokenSnapshot) | null;
 }
 
 /** MCP server formatted for API responses (masked secrets) */
@@ -130,6 +160,8 @@ export interface DisplayMcpServer {
   env: Record<string, McpServerEnvValue>;
   url?: string;
   headers: Record<string, McpServerEnvValue>;
+  authType: McpAuthType;
+  oauth?: McpOAuthStatus;
 }
 
 /**
@@ -145,18 +177,23 @@ export function formatEnvVarsForDisplay(envVars: DbEnvVar[]) {
  * Format MCP server DB rows for display (mask secrets, parse JSON)
  */
 export function formatMcpServersForDisplay(mcpServers: DbMcpServer[]): DisplayMcpServer[] {
-  return mcpServers.map((mcp) => ({
-    id: mcp.id,
-    name: mcp.name,
-    type: (mcp.type || 'stdio') as 'stdio' | 'http' | 'sse',
-    command: mcp.command,
-    args: mcp.args ? (JSON.parse(mcp.args) as string[]) : [],
-    env: mcp.env ? maskMcpEnv(JSON.parse(mcp.env) as Record<string, McpServerEnvValue>) : {},
-    url: mcp.url ?? undefined,
-    headers: mcp.headers
-      ? maskMcpEnv(JSON.parse(mcp.headers) as Record<string, McpServerEnvValue>)
-      : {},
-  }));
+  return mcpServers.map((mcp) => {
+    const authType = (mcp.authType || 'headers') as McpAuthType;
+    return {
+      id: mcp.id,
+      name: mcp.name,
+      type: (mcp.type || 'stdio') as 'stdio' | 'http' | 'sse',
+      command: mcp.command,
+      args: mcp.args ? (JSON.parse(mcp.args) as string[]) : [],
+      env: mcp.env ? maskMcpEnv(JSON.parse(mcp.env) as Record<string, McpServerEnvValue>) : {},
+      url: mcp.url ?? undefined,
+      headers: mcp.headers
+        ? maskMcpEnv(JSON.parse(mcp.headers) as Record<string, McpServerEnvValue>)
+        : {},
+      authType,
+      ...(authType === 'oauth' ? { oauth: formatOAuthStatus(mcp.oauth) } : {}),
+    };
+  });
 }
 
 // ─── Decrypt for the session runner ──────────────────────────────────
@@ -194,6 +231,15 @@ export function decryptMcpServers(mcpServers: DbMcpServer[]): ResolvedMcpServer[
         type: serverType,
         url: mcp.url!,
         headers: decryptSecretRecord(mcp.headers),
+        ...(mcp.authType === 'oauth' && mcp.oauth
+          ? {
+              oauth: {
+                id: mcp.oauth.id,
+                accessToken: mcp.oauth.accessToken,
+                expiresAt: mcp.oauth.expiresAt,
+              },
+            }
+          : {}),
       };
     }
 
@@ -267,6 +313,7 @@ export function buildMcpServerData(
     env: processedEnv ? JSON.stringify(processedEnv) : null,
     url: !isStdio ? server.url : null,
     headers: processedHeaders ? JSON.stringify(processedHeaders) : null,
+    authType: isStdio ? 'headers' : server.authType,
   };
 }
 
@@ -274,6 +321,7 @@ export function buildMcpServerData(
  * Check if an MCP server input has any secret values
  */
 export function mcpServerHasSecrets(server: z.infer<typeof mcpServerSchema>): boolean {
+  if (server.type !== 'stdio' && server.authType === 'oauth') return true;
   const secretEntries = server.type === 'stdio' ? (server.env ?? {}) : (server.headers ?? {});
   return Object.values(secretEntries).some((e) => e.isSecret);
 }

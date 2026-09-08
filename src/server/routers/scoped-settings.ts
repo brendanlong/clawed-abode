@@ -5,7 +5,9 @@ import { envVarNameSchema, envVarSchema, mcpServerSchema } from '../services/set
 import {
   deleteEnvVar,
   deleteMcpServer,
+  disconnectScopeMcpOAuth,
   getEnvVarValue,
+  startScopeMcpOAuth,
   upsertEnvVar,
   upsertMcpServer,
   validateScopeMcpServer,
@@ -87,5 +89,25 @@ export function scopedSettingsProcedures<ScopeInput extends object>(
     validateMcpServer: withScope({ name: mcpServerNameSchema }).mutation(async ({ input }) =>
       validateScopeMcpServer(await readScope(input), input.name)
     ),
+
+    /**
+     * Discover, register and return the URL the browser must visit to authorize
+     * an OAuth MCP server. The redirect URI is derived from the origin this
+     * request arrived on, so it is reachable from the same browser.
+     */
+    startMcpOAuth: withScope({ name: mcpServerNameSchema }).mutation(async ({ ctx, input }) => {
+      if (!ctx.appOrigin) {
+        throw new TRPCError({
+          code: 'PRECONDITION_FAILED',
+          message: "Cannot determine this app's public URL for the OAuth redirect. Set APP_URL.",
+        });
+      }
+      return startScopeMcpOAuth(await readScope(input), input.name, ctx.appOrigin);
+    }),
+
+    disconnectMcpOAuth: withScope({ name: mcpServerNameSchema }).mutation(async ({ input }) => {
+      await disconnectScopeMcpOAuth(await readScope(input), input.name);
+      return { success: true };
+    }),
   };
 }

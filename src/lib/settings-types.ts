@@ -7,6 +7,20 @@ export interface EnvVar {
 
 export type McpServerType = 'stdio' | 'http' | 'sse';
 
+/** How an http/sse server authenticates: static headers, or an OAuth grant. */
+export type McpAuthType = 'headers' | 'oauth';
+
+export interface McpOAuthStatus {
+  state: 'disconnected' | 'connected' | 'error';
+  clientId: string | null;
+  /** True when the user typed the client ID, so the settings form re-populates it. */
+  clientIdIsManual: boolean;
+  scope: string | null;
+  authorizedAt: Date | null;
+  /** Why the last connect or refresh failed; a connected server can still have one. */
+  error: string | null;
+}
+
 export interface McpServer {
   id: string;
   name: string;
@@ -16,6 +30,9 @@ export interface McpServer {
   env: Record<string, { value: string; isSecret: boolean }>;
   url?: string;
   headers: Record<string, { value: string; isSecret: boolean }>;
+  authType: McpAuthType;
+  /** Present only when authType is "oauth". */
+  oauth?: McpOAuthStatus;
 }
 
 export interface ValidationResult {
@@ -44,6 +61,13 @@ export interface ResolvedHttpMcpServer {
   type: 'http' | 'sse';
   url: string;
   headers?: Record<string, string>;
+  /**
+   * The stored grant to mint an `Authorization` header from, loaded with the
+   * server row so the common (unexpired) case needs no further query. Resolved
+   * and stripped by `applyMcpOAuthHeaders` after merging, so neither the id nor
+   * the ciphertext ever reaches the SDK config.
+   */
+  oauth?: { id: string; accessToken: string | null; expiresAt: Date | null };
 }
 
 export type ResolvedMcpServer = ResolvedStdioMcpServer | ResolvedHttpMcpServer;

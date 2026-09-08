@@ -66,6 +66,7 @@ describe('settings-scope', () => {
         name: 'srv',
         type: 'http',
         url: 'https://mcp.example.com/v1',
+        authType: 'headers',
         headers: { Authorization: { value: 'Bearer t', isSecret: true } },
       });
       const first = await testPrisma.mcpServer.findFirstOrThrow({
@@ -76,6 +77,7 @@ describe('settings-scope', () => {
         name: 'srv',
         type: 'http',
         url: 'https://mcp.example.com/v2',
+        authType: 'headers',
         headers: { Authorization: { value: '', isSecret: true } },
       });
       const second = await testPrisma.mcpServer.findFirstOrThrow({

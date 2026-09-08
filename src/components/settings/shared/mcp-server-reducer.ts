@@ -1,17 +1,24 @@
 import type { SettingsListState, SettingsListAction } from './settings-list-reducer';
 import { initialSettingsListState, reduceSettingsListAction } from './settings-list-reducer';
-import type { McpServerType, ValidationResult } from '@/lib/settings-types';
+import type { McpAuthType, McpServer, McpServerType, ValidationResult } from '@/lib/settings-types';
 
 // -- McpServerSection (list management) reducer --
 
 export interface McpServerSectionState extends SettingsListState {
   validationResults: Map<string, ValidationResult>;
   validatingServer: string | null;
+  /** Server whose OAuth flow is being prepared (discovery + registration happen server-side). */
+  connectingServer: string | null;
+  /** Why starting an OAuth flow failed, by server name. */
+  connectErrors: Map<string, string>;
 }
 
 type McpServerSpecificAction =
   | { type: 'startValidating'; name: string }
-  | { type: 'setValidationResult'; name: string; result: ValidationResult };
+  | { type: 'setValidationResult'; name: string; result: ValidationResult }
+  | { type: 'startConnecting'; name: string }
+  | { type: 'connectFinished'; name: string }
+  | { type: 'connectFailed'; name: string; error: string };
 
 export type McpServerSectionAction = SettingsListAction | McpServerSpecificAction;
 
@@ -19,6 +26,8 @@ export const initialMcpServerSectionState: McpServerSectionState = {
   ...initialSettingsListState,
   validationResults: new Map(),
   validatingServer: null,
+  connectingServer: null,
+  connectErrors: new Map(),
 };
 
 export function mcpServerSectionReducer(
@@ -35,6 +44,18 @@ export function mcpServerSectionReducer(
       const next = new Map(state.validationResults);
       next.set(action.name, action.result);
       return { ...state, validationResults: next, validatingServer: null };
+    }
+    case 'startConnecting': {
+      const next = new Map(state.connectErrors);
+      next.delete(action.name);
+      return { ...state, connectingServer: action.name, connectErrors: next };
+    }
+    case 'connectFinished':
+      return { ...state, connectingServer: null };
+    case 'connectFailed': {
+      const next = new Map(state.connectErrors);
+      next.set(action.name, action.error);
+      return { ...state, connectingServer: null, connectErrors: next };
     }
     default:
       return state;
@@ -57,6 +78,10 @@ export interface McpServerFormState {
   envVars: KeyValueEntry[];
   url: string;
   headers: KeyValueEntry[];
+  authType: McpAuthType;
+  oauthClientId: string;
+  oauthClientSecret: string;
+  oauthScope: string;
   error: string | null;
   isPending: boolean;
 }
@@ -69,19 +94,15 @@ export type McpServerFormAction =
   | { type: 'setEnvVars'; envVars: KeyValueEntry[] }
   | { type: 'setUrl'; url: string }
   | { type: 'setHeaders'; headers: KeyValueEntry[] }
+  | { type: 'setAuthType'; authType: McpAuthType }
+  | { type: 'setOauthClientId'; clientId: string }
+  | { type: 'setOauthClientSecret'; clientSecret: string }
+  | { type: 'setOauthScope'; scope: string }
   | { type: 'setError'; error: string | null }
   | { type: 'startSubmit' }
   | { type: 'submitError'; error: string };
 
-export function createInitialMcpServerFormState(existing?: {
-  name: string;
-  type: McpServerType;
-  command: string;
-  args: string[];
-  env: Record<string, { value: string; isSecret: boolean }>;
-  url?: string;
-  headers: Record<string, { value: string; isSecret: boolean }>;
-}): McpServerFormState {
+export function createInitialMcpServerFormState(existing?: McpServer): McpServerFormState {
   return {
     name: existing?.name ?? '',
     serverType: existing?.type ?? 'stdio',
@@ -102,6 +123,12 @@ export function createInitialMcpServerFormState(existing?: {
           isSecret,
         }))
       : [],
+    authType: existing?.authType ?? 'headers',
+    // A client ID we registered dynamically isn't the user's to edit; re-submitting
+    // it would pin it as manual and stop us re-registering when the issuer moves.
+    oauthClientId: existing?.oauth?.clientIdIsManual ? (existing.oauth.clientId ?? '') : '',
+    oauthClientSecret: '',
+    oauthScope: existing?.oauth?.scope ?? '',
     error: null,
     isPending: false,
   };
@@ -126,6 +153,14 @@ export function mcpServerFormReducer(
       return { ...state, url: action.url };
     case 'setHeaders':
       return { ...state, headers: action.headers };
+    case 'setAuthType':
+      return { ...state, authType: action.authType };
+    case 'setOauthClientId':
+      return { ...state, oauthClientId: action.clientId };
+    case 'setOauthClientSecret':
+      return { ...state, oauthClientSecret: action.clientSecret };
+    case 'setOauthScope':
+      return { ...state, oauthScope: action.scope };
     case 'setError':
       return { ...state, error: action.error };
     case 'startSubmit':

@@ -49,6 +49,8 @@ function useRepoMcpServerMutations(repoFullName: string): McpServerMutations {
   const deleteMutation = trpc.repoSettings.deleteMcpServer.useMutation();
   const setMutation = trpc.repoSettings.setMcpServer.useMutation();
   const validateMutation = trpc.repoSettings.validateMcpServer.useMutation();
+  const startOAuthMutation = trpc.repoSettings.startMcpOAuth.useMutation();
+  const disconnectOAuthMutation = trpc.repoSettings.disconnectMcpOAuth.useMutation();
 
   return {
     deleteMcpServer: async (name) => {
@@ -56,6 +58,12 @@ function useRepoMcpServerMutations(repoFullName: string): McpServerMutations {
     },
     setMcpServer: async (mcpServer) => {
       await setMutation.mutateAsync({ repoFullName, mcpServer });
+    },
+    startMcpOAuth: async (name) => {
+      return await startOAuthMutation.mutateAsync({ repoFullName, name });
+    },
+    disconnectMcpOAuth: async (name) => {
+      await disconnectOAuthMutation.mutateAsync({ repoFullName, name });
     },
     validateMcpServer: async (name) => {
       return await validateMutation.mutateAsync({ repoFullName, name });

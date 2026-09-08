@@ -58,7 +58,12 @@ describe('createContext - activity tracking', () => {
       headers.set('x-real-ip', '10.0.0.2');
       headers.set('user-agent', 'test-agent');
       const ctx = await createContext({ headers });
-      expect(ctx).toEqual({ sessionId: null, ipAddress: '100.64.0.7', userAgent: 'test-agent' });
+      expect(ctx).toEqual({
+        sessionId: null,
+        appOrigin: null,
+        ipAddress: '100.64.0.7',
+        userAgent: 'test-agent',
+      });
 
       headers.delete('x-forwarded-for');
       expect((await createContext({ headers })).ipAddress).toBe('10.0.0.2');

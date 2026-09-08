@@ -155,6 +155,10 @@ describe('mcpServerFormReducer', () => {
         envVars: [],
         url: '',
         headers: [],
+        authType: 'headers',
+        oauthClientId: '',
+        oauthClientSecret: '',
+        oauthScope: '',
         error: null,
         isPending: false,
       });
@@ -162,6 +166,8 @@ describe('mcpServerFormReducer', () => {
 
     it('populates from existing stdio server', () => {
       const state = createInitialMcpServerFormState({
+        id: '1',
+        authType: 'headers',
         name: 'memory',
         type: 'stdio',
         command: 'npx',
@@ -178,6 +184,8 @@ describe('mcpServerFormReducer', () => {
 
     it('populates from existing HTTP server', () => {
       const state = createInitialMcpServerFormState({
+        id: '2',
+        authType: 'headers',
         name: 'web-server',
         type: 'http',
         command: '',
@@ -194,6 +202,8 @@ describe('mcpServerFormReducer', () => {
 
     it('clears secret env var values', () => {
       const state = createInitialMcpServerFormState({
+        id: '3',
+        authType: 'headers',
         name: 'test',
         type: 'stdio',
         command: 'node',
@@ -206,6 +216,8 @@ describe('mcpServerFormReducer', () => {
 
     it('joins args with spaces', () => {
       const state = createInitialMcpServerFormState({
+        id: '3',
+        authType: 'headers',
         name: 'test',
         type: 'stdio',
         command: 'node',
@@ -214,6 +226,45 @@ describe('mcpServerFormReducer', () => {
         headers: {},
       });
       expect(state.args).toBe('--flag value --other');
+    });
+  });
+
+  describe('OAuth connect actions', () => {
+    it('clears a previous error when a new attempt starts', () => {
+      const failed = mcpServerSectionReducer(initialMcpServerSectionState, {
+        type: 'connectFailed',
+        name: 'remote',
+        error: 'discovery failed',
+      });
+      expect(failed.connectErrors.get('remote')).toBe('discovery failed');
+      expect(failed.connectingServer).toBeNull();
+
+      const retried = mcpServerSectionReducer(failed, { type: 'startConnecting', name: 'remote' });
+      expect(retried.connectingServer).toBe('remote');
+      expect(retried.connectErrors.has('remote')).toBe(false);
+    });
+
+    it('leaves other servers\u2019 errors alone', () => {
+      const withError = mcpServerSectionReducer(initialMcpServerSectionState, {
+        type: 'connectFailed',
+        name: 'other',
+        error: 'boom',
+      });
+      const started = mcpServerSectionReducer(withError, {
+        type: 'startConnecting',
+        name: 'remote',
+      });
+      expect(started.connectErrors.get('other')).toBe('boom');
+    });
+
+    it('stops the spinner on success without recording an error', () => {
+      const started = mcpServerSectionReducer(initialMcpServerSectionState, {
+        type: 'startConnecting',
+        name: 'remote',
+      });
+      const done = mcpServerSectionReducer(started, { type: 'connectFinished', name: 'remote' });
+      expect(done.connectingServer).toBeNull();
+      expect(done.connectErrors.size).toBe(0);
     });
   });
 

@@ -212,6 +212,7 @@ The schema in [`src/lib/env.ts`](src/lib/env.ts) is authoritative; it is validat
 | `CLAUDE_MODEL`            | Default Claude model (overridable per repo/session in Settings)                                               | `opus[1m]`           |
 | `SESSION_BRANCH_PREFIX`   | Prefix for session git branches                                                                               | `claude/`            |
 | `ENCRYPTION_KEY`          | 32+ char key for encrypting secrets; required before any secret env var or MCP header can be saved            | None                 |
+| `APP_URL`                 | Public URL the browser reaches this app on; only used to build the MCP OAuth redirect URI                     | Derived from request |
 | `CODE_SERVER_URL`         | Base URL of a code-server instance; enables the "Open in VS Code" button (see `scripts/setup-code-server.sh`) | None                 |
 | `LOG_LEVEL`               | Minimum server log level: `debug`, `info`, `warn`, or `error`                                                 | `info`               |
 
