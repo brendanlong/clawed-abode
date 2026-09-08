@@ -72,7 +72,7 @@ async function submitToolResponse(
 
 // One user message: typed text and/or previously-uploaded attachments (stored
 // names, see /api/upload). Either typed text or at least one attachment must be
-// present. Shared by `send` and each element of `sendBatch`.
+// present.
 const messageInputSchema = z
   .object({
     prompt: z.string().max(100000),

@@ -23,12 +23,7 @@ import { env } from '@/lib/env';
 import { SESSION_NAME_MAX_LENGTH } from '@/lib/types';
 import { toSessionView } from '@/lib/session-view';
 import type { Prisma } from '@/generated/prisma/client';
-import {
-  DEFAULT_PAGE_SIZE,
-  buildKeysetWhere,
-  keysetCursorSchema,
-  sliceKeysetPage,
-} from '@/lib/keyset-page';
+import { keysetPage, keysetPageInputSchema } from '@/lib/keyset-page';
 import { sessionStatusSchema } from '@/lib/session-display-status';
 
 const log = createLogger('sessions');
@@ -167,24 +162,19 @@ export const sessionsRouter = router({
   // excluded unless `status: 'archived'` is requested explicitly, so the home page
   // fetches the active and archived lists as two independent paginated queries.
   list: protectedProcedure
-    .input(
-      z.object({
-        status: sessionStatusSchema.optional(),
-        cursor: keysetCursorSchema.optional(),
-        limit: z.number().int().min(1).max(100).default(DEFAULT_PAGE_SIZE),
-      })
-    )
+    .input(keysetPageInputSchema.extend({ status: sessionStatusSchema.optional() }))
     .query(async ({ input }) => {
+      const page = keysetPage('lastActivityAt', input);
       const rows = await prisma.session.findMany({
         where: {
           ...(input.status ? { status: input.status } : { status: { not: 'archived' } }),
-          ...buildKeysetWhere('lastActivityAt', input.cursor),
+          ...page.where,
         },
-        orderBy: [{ lastActivityAt: 'desc' }, { id: 'desc' }],
-        take: input.limit + 1,
+        orderBy: page.orderBy,
+        take: page.take,
         select: sessionListSelect,
       });
-      const { items, nextCursor } = sliceKeysetPage(rows, input.limit, 'lastActivityAt');
+      const { items, nextCursor } = page.slice(rows);
 
       // Attach the live status axes (in-memory lookups, no extra query) so the
       // list can distinguish "running" (main agent generating) from "background"

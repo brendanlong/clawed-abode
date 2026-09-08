@@ -6,12 +6,7 @@ import { loginRateLimiter } from '@/lib/rate-limiter';
 import { env } from '@/lib/env';
 import { TRPCError } from '@trpc/server';
 import { createLogger, toError } from '@/lib/logger';
-import {
-  DEFAULT_PAGE_SIZE,
-  buildKeysetWhere,
-  keysetCursorSchema,
-  sliceKeysetPage,
-} from '@/lib/keyset-page';
+import { keysetPage, keysetPageInputSchema } from '@/lib/keyset-page';
 import { createAuthSession, purgeInactiveAuthSessions } from '../services/auth-sessions';
 
 const log = createLogger('auth');
@@ -90,43 +85,37 @@ export const authRouter = router({
 
   // Keyset-paginated by (createdAt desc, id desc); inactive sessions are included
   // for audit until purgeInactiveAuthSessions deletes them.
-  listSessions: protectedProcedure
-    .input(
-      z.object({
-        cursor: keysetCursorSchema.optional(),
-        limit: z.number().int().min(1).max(100).default(DEFAULT_PAGE_SIZE),
-      })
-    )
-    .query(async ({ input, ctx }) => {
-      const rows = await prisma.authSession.findMany({
-        where: buildKeysetWhere('createdAt', input.cursor),
-        select: {
-          id: true,
-          createdAt: true,
-          expiresAt: true,
-          lastActivityAt: true,
-          revokedAt: true,
-          ipAddress: true,
-          userAgent: true,
-        },
-        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-        take: input.limit + 1,
-      });
-      const { items, nextCursor } = sliceKeysetPage(rows, input.limit, 'createdAt');
+  listSessions: protectedProcedure.input(keysetPageInputSchema).query(async ({ input, ctx }) => {
+    const page = keysetPage('createdAt', input);
+    const rows = await prisma.authSession.findMany({
+      where: page.where,
+      select: {
+        id: true,
+        createdAt: true,
+        expiresAt: true,
+        lastActivityAt: true,
+        revokedAt: true,
+        ipAddress: true,
+        userAgent: true,
+      },
+      orderBy: page.orderBy,
+      take: page.take,
+    });
+    const { items, nextCursor } = page.slice(rows);
 
-      return {
-        sessions: items.map((s) => {
-          const idleExpiresAt = new Date(s.lastActivityAt.getTime() + IDLE_TIMEOUT_MS);
-          const effectiveExpiresAt = idleExpiresAt < s.expiresAt ? idleExpiresAt : s.expiresAt;
-          return {
-            ...s,
-            effectiveExpiresAt,
-            isCurrent: s.id === ctx.sessionId,
-          };
-        }),
-        nextCursor,
-      };
-    }),
+    return {
+      sessions: items.map((s) => {
+        const idleExpiresAt = new Date(s.lastActivityAt.getTime() + IDLE_TIMEOUT_MS);
+        const effectiveExpiresAt = idleExpiresAt < s.expiresAt ? idleExpiresAt : s.expiresAt;
+        return {
+          ...s,
+          effectiveExpiresAt,
+          isCurrent: s.id === ctx.sessionId,
+        };
+      }),
+      nextCursor,
+    };
+  }),
 
   deleteSession: protectedProcedure
     .input(z.object({ sessionId: z.string() }))

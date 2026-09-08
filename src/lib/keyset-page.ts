@@ -14,36 +14,49 @@ export const keysetCursorSchema = z.object({
 
 export type KeysetCursor = z.infer<typeof keysetCursorSchema>;
 
+export const keysetPageInputSchema = z.object({
+  cursor: keysetCursorSchema.optional(),
+  limit: z.number().int().min(1).max(100).default(DEFAULT_PAGE_SIZE),
+});
+
 type OlderThan<F extends string> = { [K in F]: { lt: Date } };
 type SameTimestampLowerId<F extends string> = { [K in F]: Date } & { id: { lt: string } };
 
-/** Prisma `where` fragment selecting rows strictly after the cursor in (field desc, id desc) order. */
-export function buildKeysetWhere<F extends string>(
-  field: F,
-  cursor: KeysetCursor | undefined
-): { OR: [OlderThan<F>, SameTimestampLowerId<F>] } | Record<never, never> {
-  if (!cursor) return {};
-  const at = new Date(cursor.at);
-  return {
-    OR: [
-      { [field]: { lt: at } } as OlderThan<F>,
-      { [field]: at, id: { lt: cursor.id } } as SameTimestampLowerId<F>,
-    ],
-  };
-}
-
 /**
- * Given `limit + 1` rows fetched in cursor order, return the page and the cursor
- * for the next one (undefined when this was the last page).
+ * One page of a (field desc, id desc) keyset list. Naming the field once ties
+ * the `where`, `orderBy`, and cursor extraction together so they can't page on
+ * one column and sort on another. Spread `where`/`orderBy`/`take` into the
+ * Prisma query, then pass the rows to `slice`.
  */
-export function sliceKeysetPage<F extends string, T extends { id: string } & Record<F, Date>>(
-  rows: T[],
-  limit: number,
-  field: F
-): { items: T[]; nextCursor: KeysetCursor | undefined } {
-  const items = rows.slice(0, limit);
-  const last = items[items.length - 1];
-  const nextCursor =
-    rows.length > limit && last ? { at: last[field].toISOString(), id: last.id } : undefined;
-  return { items, nextCursor };
+export function keysetPage<F extends string>(
+  field: F,
+  input: { cursor?: KeysetCursor; limit: number }
+) {
+  const at = input.cursor ? new Date(input.cursor.at) : undefined;
+  const where: { OR: [OlderThan<F>, SameTimestampLowerId<F>] } | Record<never, never> =
+    at && input.cursor
+      ? {
+          OR: [
+            { [field]: { lt: at } } as OlderThan<F>,
+            { [field]: at, id: { lt: input.cursor.id } } as SameTimestampLowerId<F>,
+          ],
+        }
+      : {};
+  return {
+    where,
+    orderBy: [{ [field]: 'desc' } as { [K in F]: 'desc' }, { id: 'desc' as const }],
+    // One extra row tells us whether a next page exists.
+    take: input.limit + 1,
+    slice<T extends { id: string } & Record<F, Date>>(
+      rows: T[]
+    ): { items: T[]; nextCursor: KeysetCursor | undefined } {
+      const items = rows.slice(0, input.limit);
+      const last = items[items.length - 1];
+      const nextCursor =
+        rows.length > input.limit && last
+          ? { at: last[field].toISOString(), id: last.id }
+          : undefined;
+      return { items, nextCursor };
+    },
+  };
 }

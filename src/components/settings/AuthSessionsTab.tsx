@@ -67,11 +67,13 @@ export function AuthSessionsTab() {
         </CardContent>
       </Card>
 
+      {/* Pages are ordered by creation, so later pages are mostly inactive;
+          only offer them once that section is visible. */}
       <div className="flex justify-center gap-2">
         <Button variant="ghost" size="sm" onClick={() => setShowInactive(!showInactive)}>
           {showInactive ? 'Hide inactive sessions' : 'Show inactive sessions'}
         </Button>
-        {hasNextPage && (
+        {showInactive && hasNextPage && (
           <Button
             variant="ghost"
             size="sm"
