@@ -26,6 +26,7 @@
  * ```
  */
 
+import { resetEnvCache } from '@/lib/env';
 import { inject } from 'vitest';
 import type { PrismaClient } from '@/generated/prisma/client';
 import { copyFileSync, mkdtempSync, rmSync } from 'fs';
@@ -55,6 +56,7 @@ export async function setupTestDb(): Promise<void> {
   // Set required env vars for tests
   process.env.CLAUDE_CODE_OAUTH_TOKEN = 'test-oauth-token-placeholder';
   process.env.ENCRYPTION_KEY = 'test-encryption-key-for-integration-tests';
+  resetEnvCache();
 
   // Clear any cached Prisma client from globalThis so it recreates with new URL
   const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };

@@ -1,3 +1,4 @@
+import { resetEnvCache } from '@/lib/env';
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { setupTestDb, teardownTestDb, testPrisma, clearTestDb } from '@/test/setup-test-db';
 import { createNoRepoSession, createTestSession } from '@/test/fixtures';
@@ -77,6 +78,7 @@ describe('sessionsRouter integration', () => {
     router = trpcModule.router;
 
     process.env.GITHUB_TOKEN = 'test-github-token';
+    resetEnvCache();
   });
 
   afterAll(async () => {
@@ -349,7 +351,7 @@ describe('sessionsRouter integration', () => {
 
       const caller = createCaller('auth-session-id');
       const seen: string[] = [];
-      let cursor: { lastActivityAt: string; id: string } | undefined;
+      let cursor: { at: string; id: string } | undefined;
       let pages = 0;
       do {
         const page = await caller.sessions.list({ limit: 2, cursor });
@@ -458,10 +460,12 @@ describe('sessionsRouter integration', () => {
   describe('getEditorUrl', () => {
     afterEach(() => {
       delete process.env.CODE_SERVER_URL;
+      resetEnvCache();
     });
 
     it('returns a deep link into the session worktree when configured', async () => {
       process.env.CODE_SERVER_URL = 'https://host.ts.net:8443';
+      resetEnvCache();
       const session = await createNoRepoSession({
         name: 'Test Session',
         repoPath: 'repo',
@@ -491,6 +495,7 @@ describe('sessionsRouter integration', () => {
 
     it('returns null for an archived session even when configured', async () => {
       process.env.CODE_SERVER_URL = 'https://host.ts.net:8443';
+      resetEnvCache();
       const session = await createNoRepoSession({
         name: 'Archived Session',
         repoPath: 'repo',

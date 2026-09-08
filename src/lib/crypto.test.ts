@@ -1,3 +1,4 @@
+import { resetEnvCache } from '@/lib/env';
 import { describe, it, expect } from 'vitest';
 import { encrypt, decrypt, isEncryptionConfigured } from './crypto';
 
@@ -119,10 +120,12 @@ describe('crypto', () => {
     it('should return false when no key provided and env var not set', () => {
       const originalKey = process.env.ENCRYPTION_KEY;
       delete process.env.ENCRYPTION_KEY;
+      resetEnvCache();
       try {
         expect(isEncryptionConfigured(undefined)).toBe(false);
       } finally {
         process.env.ENCRYPTION_KEY = originalKey;
+        resetEnvCache();
       }
     });
 

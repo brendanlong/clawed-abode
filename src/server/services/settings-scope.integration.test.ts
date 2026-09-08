@@ -1,3 +1,4 @@
+import { resetEnvCache } from '@/lib/env';
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { setupTestDb, teardownTestDb, testPrisma, clearTestDb } from '@/test/setup-test-db';
 
@@ -128,12 +129,14 @@ describe('settings-scope', () => {
       const scope = await makeScope();
       const saved = process.env.ENCRYPTION_KEY;
       delete process.env.ENCRYPTION_KEY;
+      resetEnvCache();
       try {
         await expect(
           scopeModule.upsertEnvVar(scope, { name: 'S', value: 'x', isSecret: true })
         ).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
       } finally {
         process.env.ENCRYPTION_KEY = saved;
+        resetEnvCache();
       }
     });
   });

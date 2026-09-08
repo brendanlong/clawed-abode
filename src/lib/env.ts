@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { DEFAULT_CLAUDE_MODEL } from './claude-model';
 
+export const LOG_LEVELS = ['debug', 'info', 'warn', 'error'] as const;
+
 const envSchema = z.object({
   DATABASE_URL: z.string().default('file:./data/dev.db'),
   GITHUB_TOKEN: z.string().optional(),
@@ -25,34 +27,40 @@ const envSchema = z.object({
   // Intentionally free-form (not z.string().url()): it is operator-controlled and
   // may legitimately be a relative reverse-proxy path like "/editor".
   CODE_SERVER_URL: z.string().optional(),
+  // Minimum level the server logger writes (see src/lib/logger.ts).
+  LOG_LEVEL: z.enum(LOG_LEVELS).default('info'),
 });
 
 export type Env = z.infer<typeof envSchema>;
 
+let cachedEnv: Env | null = null;
+
 /**
- * Parse and validate environment variables.
- * Called on each property access to support dynamic env changes (e.g., in tests).
+ * Validate `process.env` once and cache the result. Throws with every field
+ * error listed so a misconfigured deployment fails at boot (instrumentation
+ * calls this eagerly) rather than on the first request that happens to read a
+ * bad variable.
  */
-function getEnv(): Env {
-  const isBuildTime = process.env.NEXT_PHASE === 'phase-production-build';
-
+export function getEnv(): Env {
+  if (cachedEnv) return cachedEnv;
   const parsed = envSchema.safeParse(process.env);
-
   if (!parsed.success) {
-    if (isBuildTime) {
-      return envSchema.parse(process.env);
-    }
-    console.error('Invalid environment variables:', parsed.error.flatten().fieldErrors);
-    throw new Error('Invalid environment variables');
+    const fieldErrors = z.flattenError(parsed.error).fieldErrors;
+    const details = Object.entries(fieldErrors)
+      .map(([name, errors]) => `${name}: ${errors?.join('; ')}`)
+      .join('\n  ');
+    throw new Error(`Invalid environment variables:\n  ${details}`);
   }
-
-  return parsed.data;
+  cachedEnv = parsed.data;
+  return cachedEnv;
 }
 
-/**
- * Proxy that calls getEnv() on each property access.
- * This supports dynamic env changes in tests.
- */
+/** Drop the cached parse so the next read re-validates `process.env`. For tests that mutate env. */
+export function resetEnvCache(): void {
+  cachedEnv = null;
+}
+
+/** Validated env, parsed lazily on first access and cached for the process lifetime. */
 export const env: Env = new Proxy({} as Env, {
   get(_target, prop: keyof Env) {
     return getEnv()[prop];

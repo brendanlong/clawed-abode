@@ -1,3 +1,4 @@
+import { resetEnvCache } from '@/lib/env';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock global fetch
@@ -37,6 +38,7 @@ describe('githubRouter', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     process.env.GITHUB_TOKEN = 'test-github-token';
+    resetEnvCache();
   });
 
   afterEach(() => {
@@ -139,6 +141,7 @@ describe('githubRouter', () => {
 
     it('should throw PRECONDITION_FAILED if no GitHub token', async () => {
       delete process.env.GITHUB_TOKEN;
+      resetEnvCache();
 
       const caller = createCaller('auth-session-id');
 
@@ -199,6 +202,7 @@ describe('githubRouter', () => {
 
     it('should throw PRECONDITION_FAILED if no GitHub token', async () => {
       delete process.env.GITHUB_TOKEN;
+      resetEnvCache();
 
       const caller = createCaller('auth-session-id');
 
@@ -413,6 +417,7 @@ describe('githubRouter', () => {
 
     it('should throw PRECONDITION_FAILED if no GitHub token', async () => {
       delete process.env.GITHUB_TOKEN;
+      resetEnvCache();
 
       const caller = createCaller('auth-session-id');
 

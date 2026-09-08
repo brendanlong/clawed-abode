@@ -1,29 +1,30 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { z } from 'zod';
 import { setupTestDb, teardownTestDb, testPrisma, clearTestDb } from '@/test/setup-test-db';
+import { createTestSession } from '@/test/fixtures';
 import { IDLE_TIMEOUT_MS, ACTIVITY_UPDATE_THROTTLE_MS, generateSessionToken } from '@/lib/auth';
 
 vi.mock('@/lib/logger', async () => (await import('@/test/mock-logger')).mockLoggerModule());
 
-// Will be set in beforeAll after test DB is set up
-let createContext: Awaited<typeof import('./trpc')>['createContext'];
+// Set in beforeAll after the test DB is set up (the trpc module imports prisma)
+let trpc: typeof import('./trpc');
+let createContext: (typeof import('./trpc'))['createContext'];
+
+beforeAll(async () => {
+  await setupTestDb();
+  trpc = await import('./trpc');
+  createContext = trpc.createContext;
+});
+
+afterAll(async () => {
+  await teardownTestDb();
+});
+
+beforeEach(async () => {
+  await clearTestDb();
+});
 
 describe('createContext - activity tracking', () => {
-  beforeAll(async () => {
-    await setupTestDb();
-
-    // Now dynamically import the trpc module
-    const trpcModule = await import('./trpc');
-    createContext = trpcModule.createContext;
-  });
-
-  afterAll(async () => {
-    await teardownTestDb();
-  });
-
-  beforeEach(async () => {
-    await clearTestDb();
-  });
-
   function createHeaders(token: string | null): Headers {
     const headers = new Headers();
     if (token) {
@@ -181,5 +182,68 @@ describe('createContext - activity tracking', () => {
       });
       expect(updatedSession!.token).toBe(token);
     });
+  });
+});
+
+describe('sessionProcedure', () => {
+  const MISSING_ID = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11';
+
+  function createCaller() {
+    const testRouter = trpc.router({
+      probe: trpc.sessionProcedure.query(({ ctx }) => ({
+        id: ctx.session.id,
+        status: ctx.session.status,
+      })),
+      withExtraInput: trpc.sessionProcedure
+        .input(z.object({ extra: z.string() }))
+        .query(({ ctx, input }) => ({ id: ctx.session.id, extra: input.extra })),
+      requiresRunning: trpc.runningSessionProcedure.mutation(() => 'ok'),
+    });
+    return testRouter.createCaller({ sessionId: 'auth-session-id' });
+  }
+
+  it('loads the session into ctx and merges additional input', async () => {
+    const session = await createTestSession({ name: 'Probe', status: 'stopped' });
+    const caller = createCaller();
+
+    expect(await caller.probe({ sessionId: session.id })).toEqual({
+      id: session.id,
+      status: 'stopped',
+    });
+    expect(await caller.withExtraInput({ sessionId: session.id, extra: 'x' })).toEqual({
+      id: session.id,
+      extra: 'x',
+    });
+  });
+
+  it('throws NOT_FOUND for an unknown session and rejects non-uuid ids', async () => {
+    const caller = createCaller();
+    await expect(caller.probe({ sessionId: MISSING_ID })).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+      message: 'Session not found',
+    });
+    await expect(caller.probe({ sessionId: 'nope' })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    });
+  });
+
+  it('requires authentication before looking the session up', async () => {
+    const testRouter = trpc.router({ probe: trpc.sessionProcedure.query(() => 'ok') });
+    const caller = testRouter.createCaller({ sessionId: null });
+    await expect(caller.probe({ sessionId: MISSING_ID })).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+    });
+  });
+
+  it('runningSessionProcedure rejects sessions that are not running', async () => {
+    const stopped = await createTestSession({ name: 'Stopped', status: 'stopped' });
+    const running = await createTestSession({ name: 'Running', status: 'running' });
+    const caller = createCaller();
+
+    await expect(caller.requiresRunning({ sessionId: stopped.id })).rejects.toMatchObject({
+      code: 'PRECONDITION_FAILED',
+      message: 'Session is not running',
+    });
+    expect(await caller.requiresRunning({ sessionId: running.id })).toBe('ok');
   });
 });

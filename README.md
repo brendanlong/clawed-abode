@@ -201,7 +201,7 @@ tailscale funnel 3000
 
 ### Environment Variables
 
-The schema in [`src/lib/env.ts`](src/lib/env.ts) is authoritative.
+The schema in [`src/lib/env.ts`](src/lib/env.ts) is authoritative; it is validated once at startup and the server refuses to boot on an invalid value.
 
 | Variable                  | Description                                                                                                   | Default              |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------- | -------------------- |
@@ -213,6 +213,7 @@ The schema in [`src/lib/env.ts`](src/lib/env.ts) is authoritative.
 | `SESSION_BRANCH_PREFIX`   | Prefix for session git branches                                                                               | `claude/`            |
 | `ENCRYPTION_KEY`          | 32+ char key for encrypting secrets; required before any secret env var or MCP header can be saved            | None                 |
 | `CODE_SERVER_URL`         | Base URL of a code-server instance; enables the "Open in VS Code" button (see `scripts/setup-code-server.sh`) | None                 |
+| `LOG_LEVEL`               | Minimum server log level: `debug`, `info`, `warn`, or `error`                                                 | `info`               |
 
 ## Development
 
