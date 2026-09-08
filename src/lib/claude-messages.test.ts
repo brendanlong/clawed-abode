@@ -397,7 +397,7 @@ describe('claude-messages', () => {
       ).toEqual({ attempt: 2, maxRetries: 10, errorStatus: 529, error: 'overloaded' });
     });
 
-    it('omits optional fields when absent', () => {
+    it('leaves optional fields undefined when absent', () => {
       expect(
         parseRetryState({ type: 'system', subtype: 'api_retry', attempt: 1, max_retries: 5 })
       ).toEqual({ attempt: 1, maxRetries: 5, errorStatus: undefined, error: undefined });
