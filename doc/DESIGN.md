@@ -69,14 +69,11 @@ The schema ([`prisma/schema.prisma`](../prisma/schema.prisma)) is the source of 
 
 ### File Uploads
 
-`POST /api/upload` ([`src/app/api/upload/route.ts`](../src/app/api/upload/route.ts)) — a route rather than a tRPC mutation so binary bodies stream as `FormData` instead of being base64-inflated through superjson. Files land in `~/worktrees/{sessionId}/uploads/`, a **sibling of the clone**: readable by the agent, invisible to the checkout's git status, and cleaned up with the workspace on archive (no separate reaper). Stored names get a random prefix (re-uploads never overwrite; no check-then-set) and are sanitized to a safe basename to neutralize path traversal. Size/count caps are enforced up front so a batch never writes partially ([`src/server/services/uploads.ts`](../src/server/services/uploads.ts)). On send, attachment paths are prefixed onto the persisted message text, so the transcript shows exactly what the model saw.
+`POST /api/upload` ([`src/app/api/upload/route.ts`](../src/app/api/upload/route.ts)) — a route rather than a tRPC mutation so binary bodies stream as `FormData` instead of being base64-inflated through superjson. Files land in an `uploads/` **sibling of the clone**, so they are readable by the agent but invisible to git status and removed with the workspace on archive. Stored names get a random prefix (re-uploads never overwrite; no check-then-set) and a sanitized basename, and size/count caps are enforced up front so a batch never writes partially ([`src/server/services/uploads.ts`](../src/server/services/uploads.ts)). On send, attachment paths are prefixed onto the persisted message text, so the transcript shows exactly what the model saw.
 
 ### System Prompt
 
-`DEFAULT_SYSTEM_PROMPT` in [`src/lib/system-prompt.ts`](../src/lib/system-prompt.ts). Rationale for its two main themes:
-
-- Users interact through the web UI with no local file access, so work is only visible once committed, pushed, and PR'd — the prompt requires that workflow.
-- All sessions run as one host user alongside the app server, so a bare `pkill`/`killall` by name can kill other sessions or the server; the prompt steers agents to PID-kill or a `--cgroup`-scoped kill.
+`DEFAULT_SYSTEM_PROMPT` in [`src/lib/system-prompt.ts`](../src/lib/system-prompt.ts) — the prompt text states its own rationale: the user has no local file access (so commit/push/PR is mandatory), and every session shares one host user with the app server (so kill by PID or a `--cgroup`-scoped pattern, never by name).
 
 ## Voice
 
