@@ -68,7 +68,6 @@ export function WebFetchDisplay({ tool }: { tool: ToolCall }) {
         </Badge>
       }
     >
-      {/* URL section */}
       <div>
         <div className="text-muted-foreground mb-1">URL:</div>
         <a
@@ -81,7 +80,6 @@ export function WebFetchDisplay({ tool }: { tool: ToolCall }) {
         </a>
       </div>
 
-      {/* Prompt section */}
       <div>
         <div className="text-muted-foreground mb-1">Prompt:</div>
         <pre className="bg-muted p-2 rounded overflow-x-auto max-h-24 overflow-y-auto whitespace-pre-wrap text-xs">
@@ -89,7 +87,6 @@ export function WebFetchDisplay({ tool }: { tool: ToolCall }) {
         </pre>
       </div>
 
-      {/* Output section */}
       {hasOutput && (
         <div>
           <div className="text-muted-foreground mb-1">Response:</div>

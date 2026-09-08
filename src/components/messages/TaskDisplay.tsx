@@ -89,7 +89,6 @@ export function getSubagentLabel(subagentType: string): { label: string; color: 
   }
 }
 
-// Agent icon component - extracted outside of render
 export function AgentIcon() {
   return (
     <svg
@@ -165,7 +164,6 @@ export function TaskDisplay({
         ) : undefined
       }
     >
-      {/* Prompt section */}
       <div>
         <div className="text-muted-foreground mb-1">Prompt:</div>
         <pre className="bg-muted p-2 rounded overflow-x-auto max-h-32 overflow-y-auto whitespace-pre-wrap text-xs">
@@ -173,7 +171,6 @@ export function TaskDisplay({
         </pre>
       </div>
 
-      {/* Agent ID section */}
       {agentId && (
         <div>
           <div className="text-muted-foreground mb-1">Agent ID:</div>
@@ -185,7 +182,6 @@ export function TaskDisplay({
           "Subagent activity:" heading, or nothing when there's nothing to show). */}
       {subagentTranscript}
 
-      {/* Output section */}
       {hasOutput && (
         <div>
           <div className="text-muted-foreground mb-1">Output:</div>

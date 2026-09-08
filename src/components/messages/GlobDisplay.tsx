@@ -54,7 +54,6 @@ function groupByDirectory(files: FileEntry[]): Map<string, FileEntry[]> {
   return groups;
 }
 
-// Folder icon component
 const FolderIcon = () => (
   <svg
     className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0"
@@ -107,7 +106,6 @@ export function GlobDisplay({ tool }: { tool: ToolCall }) {
         </Badge>
       }
     >
-      {/* Input section */}
       <div>
         <div className="text-muted-foreground mb-1">Pattern:</div>
         <code className="bg-muted px-2 py-1 rounded text-sm">{pattern}</code>
@@ -118,7 +116,6 @@ export function GlobDisplay({ tool }: { tool: ToolCall }) {
         )}
       </div>
 
-      {/* Output section */}
       {hasOutput && (
         <div>
           <div className="text-muted-foreground mb-1">Matches:</div>

@@ -4,7 +4,6 @@ import { Badge } from '@/components/ui/badge';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
 import type { ToolCall } from './types';
 
-// Blueprint/planning icon
 function PlanIcon() {
   return (
     <svg

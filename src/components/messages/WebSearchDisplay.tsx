@@ -83,7 +83,6 @@ function parseWebSearchOutput(output: string): ParsedWebSearchOutput | null {
   return result;
 }
 
-// Search/globe icon component
 const SearchIcon = () => (
   <svg
     className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0"
@@ -100,7 +99,6 @@ const SearchIcon = () => (
   </svg>
 );
 
-// External link icon component
 const ExternalLinkIcon = () => (
   <svg
     className="w-3 h-3 text-muted-foreground shrink-0 opacity-0 group-hover/link:opacity-100 transition-opacity"
@@ -152,13 +150,11 @@ export function WebSearchDisplay({ tool }: { tool: ToolCall }) {
         ) : null
       }
     >
-      {/* Query section */}
       <div>
         <div className="text-muted-foreground text-xs mb-1">Query:</div>
         <code className="bg-muted px-2 py-1 rounded text-sm">{query}</code>
       </div>
 
-      {/* Error display */}
       {tool.is_error && hasOutput && (
         <ToolOutputBlock
           label="Error:"
@@ -170,7 +166,6 @@ export function WebSearchDisplay({ tool }: { tool: ToolCall }) {
         />
       )}
 
-      {/* Sources section */}
       {hasOutput && !tool.is_error && parsed && parsed.links.length > 0 && (
         <div>
           <div className="text-muted-foreground text-xs mb-1">Sources:</div>
@@ -197,7 +192,6 @@ export function WebSearchDisplay({ tool }: { tool: ToolCall }) {
         </div>
       )}
 
-      {/* Summary section */}
       {hasOutput && !tool.is_error && parsed && parsed.summary && (
         <div>
           <div className="text-muted-foreground text-xs mb-1">Summary:</div>

@@ -60,7 +60,6 @@ export function WriteDisplay({ tool }: { tool: ToolCall }) {
         </Badge>
       }
     >
-      {/* File type badge */}
       {fileType !== 'text' && (
         <div>
           <Badge variant="secondary" className="text-xs">
@@ -69,7 +68,6 @@ export function WriteDisplay({ tool }: { tool: ToolCall }) {
         </div>
       )}
 
-      {/* File content */}
       <div>
         <div className="flex items-center gap-2 mb-1">
           <span className="text-green-600 dark:text-green-400 font-medium">Content</span>
@@ -84,7 +82,6 @@ export function WriteDisplay({ tool }: { tool: ToolCall }) {
         )}
       </div>
 
-      {/* Output/Result if available */}
       {hasOutput && (
         <ToolOutputBlock
           label="Result:"

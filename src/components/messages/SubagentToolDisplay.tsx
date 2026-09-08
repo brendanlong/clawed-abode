@@ -8,11 +8,8 @@ import { parseToolInput } from './tool-input';
 import type { ToolCall } from './types';
 
 /**
- * Compact "Subagent started" breadcrumb left at the spawn point when the full
- * Task box has been relocated (pinned at the bottom while running, or moved to
- * its finish position once done). Keeps the chronological anchor for *when* the
- * subagent kicked off without dragging its whole collapsed transcript up to the
- * top of the timeline. See {@link computeSubagentPlacements}.
+ * Compact breadcrumb left at the spawn point when MessageList has relocated the
+ * subagent's box, so the timeline keeps an anchor for when it kicked off.
  */
 function SubagentStartedMarker({ tool }: { tool: ToolCall }) {
   const input = parseToolInput(tool.input, taskInputSchema);
@@ -30,12 +27,8 @@ function SubagentStartedMarker({ tool }: { tool: ToolCall }) {
 }
 
 /**
- * Renders an `Agent`/`Task` tool call. When MessageList has relocated this
- * subagent's box (running → pinned at bottom, or finished-with-interleaving →
- * moved to its finish position), the spawn-point render is a lightweight
- * breadcrumb; MessageList renders the full {@link TaskDisplay} in the relocated
- * spot. Otherwise (nested subagents, plain foreground waits, stopped/orphaned
- * subagents) it renders the full box inline here, unchanged.
+ * Renders an `Agent`/`Task` tool call: the full {@link TaskDisplay} inline, or a
+ * breadcrumb when MessageList is rendering the box somewhere else.
  */
 export function SubagentToolDisplay({ tool }: { tool: ToolCall }) {
   const context = useMessageListContext();

@@ -81,7 +81,6 @@ export function NotebookEditDisplay({ tool }: { tool: ToolCall }) {
       subtitle={<div className="text-muted-foreground text-xs mt-1 truncate">{notebookPath}</div>}
       doneBadge={null}
     >
-      {/* Cell info */}
       {cellId && (
         <div>
           <span className="text-muted-foreground">Cell ID: </span>
@@ -89,7 +88,6 @@ export function NotebookEditDisplay({ tool }: { tool: ToolCall }) {
         </div>
       )}
 
-      {/* Content section */}
       {editMode !== 'delete' && newSource && (
         <div>
           <div className="text-muted-foreground mb-1">
@@ -108,7 +106,6 @@ export function NotebookEditDisplay({ tool }: { tool: ToolCall }) {
         </div>
       )}
 
-      {/* Output/Result */}
       {hasOutput && (
         <ToolOutputBlock
           label="Result:"

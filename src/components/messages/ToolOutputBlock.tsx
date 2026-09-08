@@ -40,11 +40,9 @@ interface ToolOutputBlockProps {
 }
 
 /**
- * Shared tool-output block: a label plus a `<pre>` that switches between the
- * error style (`bg-red-50 dark:bg-red-950 text-red-800 dark:text-red-200`) and
- * the neutral `bg-muted` style. Optionally renders ANSI/terminal output as
- * sanitized HTML. Extracted from ~14 near-identical copies across the tool
- * display components so the styling stays in one place.
+ * Shared tool-output block: a label plus a `<pre>` styled for error or neutral
+ * output. Every tool display renders its output through this, so the styling
+ * can't drift.
  */
 export function ToolOutputBlock({
   label,

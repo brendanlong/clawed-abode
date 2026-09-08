@@ -61,7 +61,6 @@ export function BashDisplay({ tool }: { tool: ToolCall }) {
         ) : undefined
       }
     >
-      {/* Command section */}
       <div>
         <div className="text-muted-foreground mb-1">Command:</div>
         <pre className="bg-zinc-900 dark:bg-zinc-950 text-green-400 p-2 rounded overflow-x-auto whitespace-pre-wrap break-words text-sm font-mono">
@@ -70,7 +69,6 @@ export function BashDisplay({ tool }: { tool: ToolCall }) {
         </pre>
       </div>
 
-      {/* Output section */}
       {hasOutput && (
         <ToolOutputBlock
           label="Output:"

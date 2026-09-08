@@ -112,7 +112,6 @@ export function GrepDisplay({ tool }: { tool: ToolCall }) {
         </Badge>
       }
     >
-      {/* Pattern and options */}
       <div>
         <div className="text-muted-foreground mb-1">Pattern:</div>
         <code className="bg-muted px-2 py-1 rounded text-sm font-mono">{pattern}</code>
@@ -121,7 +120,6 @@ export function GrepDisplay({ tool }: { tool: ToolCall }) {
         )}
       </div>
 
-      {/* Output section */}
       {hasOutput && (
         <div>
           <div className="text-muted-foreground mb-1">Results:</div>

@@ -58,7 +58,6 @@ export function SkillDisplay({ tool }: { tool: ToolCall }) {
         ) : undefined
       }
     >
-      {/* Args section */}
       {args && (
         <div>
           <div className="text-muted-foreground mb-1">Arguments:</div>
@@ -66,7 +65,6 @@ export function SkillDisplay({ tool }: { tool: ToolCall }) {
         </div>
       )}
 
-      {/* Output section */}
       {hasOutput && (
         <div>
           <div className="text-muted-foreground mb-1">Output:</div>

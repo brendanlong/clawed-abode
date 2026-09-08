@@ -11,7 +11,6 @@ import { todoItemSchema, type ToolCall } from './types';
 
 const todoWriteInputSchema = z.object({ todos: lenient(z.array(todoItemSchema)) });
 
-// Checkmark icon for completed items
 function CheckIcon() {
   return (
     <svg
@@ -26,7 +25,6 @@ function CheckIcon() {
   );
 }
 
-// Spinner icon for in-progress items
 function SpinnerIcon() {
   return (
     <svg
@@ -45,7 +43,6 @@ function SpinnerIcon() {
   );
 }
 
-// Empty circle icon for pending items
 function CircleIcon() {
   return (
     <svg
@@ -60,7 +57,6 @@ function CircleIcon() {
   );
 }
 
-// Clipboard/checklist icon
 function ChecklistIcon() {
   return (
     <svg

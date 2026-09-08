@@ -18,7 +18,6 @@ const exitPlanModeInputSchema = z.object({
   remoteSessionUrl: lenient(z.string()),
 });
 
-// Clipboard/plan icon component
 function ClipboardIcon() {
   return (
     <svg
@@ -37,7 +36,6 @@ function ClipboardIcon() {
   );
 }
 
-// Copy icon
 function CopyIcon() {
   return (
     <svg
@@ -56,7 +54,6 @@ function CopyIcon() {
   );
 }
 
-// Check icon
 function CheckIcon() {
   return (
     <svg

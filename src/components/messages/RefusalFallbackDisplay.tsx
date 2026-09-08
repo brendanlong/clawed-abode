@@ -9,14 +9,10 @@ import { formatAsJson } from './types';
 import type { MessageContent } from './types';
 
 /**
- * Display for `model_refusal_fallback` system messages: the API's safeguards
- * flagged a request on the primary model (e.g. Fable) and silently retried it on
- * a fallback (e.g. Opus). Without this the downgrade is invisible — the reply
- * just comes back on a different model — so it's surfaced as an amber banner
- * (issue: restored after being swept into the hidden-system bucket by #312).
- *
- * The human-readable `content` string is the API's own explanation; we show it
- * verbatim and add the concrete `from → to` transition and refusal category.
+ * Display for `model_refusal_fallback` system messages: the API flagged a
+ * request on the primary model and silently retried it on a fallback. Without a
+ * banner the downgrade is invisible — the reply just comes back on a different
+ * model.
  */
 export function RefusalFallbackDisplay({ content }: { content: MessageContent }) {
   const getJsonText = useCallback(() => formatAsJson(content), [content]);
@@ -24,8 +20,7 @@ export function RefusalFallbackDisplay({ content }: { content: MessageContent })
   const from = content.original_model ?? 'primary model';
   const to = content.fallback_model ?? 'fallback model';
   const category = content.api_refusal_category ?? undefined;
-  // The `content` field carries the API's user-facing explanation. Fall back to
-  // the machine explanation, then a generic line, so the banner is never blank.
+  // The API's user-facing explanation, falling back to the machine one.
   const explanation =
     (typeof content.content === 'string' ? content.content : undefined) ??
     content.api_refusal_explanation ??
