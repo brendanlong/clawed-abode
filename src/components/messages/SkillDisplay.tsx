@@ -58,7 +58,6 @@ export function SkillDisplay({ tool }: { tool: ToolCall }) {
         ) : undefined
       }
     >
-      {/* Args section */}
       {args && (
         <div>
           <div className="text-muted-foreground mb-1">Arguments:</div>
@@ -66,7 +65,6 @@ export function SkillDisplay({ tool }: { tool: ToolCall }) {
         </div>
       )}
 
-      {/* Output section */}
       {hasOutput && (
         <div>
           <div className="text-muted-foreground mb-1">Output:</div>
@@ -77,9 +75,7 @@ export function SkillDisplay({ tool }: { tool: ToolCall }) {
               <MarkdownContent content={tool.output} />
             </div>
           ) : (
-            <pre className="bg-muted p-2 rounded overflow-x-auto max-h-96 overflow-y-auto whitespace-pre-wrap text-xs">
-              {JSON.stringify(tool.output, null, 2)}
-            </pre>
+            <ToolOutputBlock output={tool.output} wrap preClassName="text-xs" />
           )}
         </div>
       )}

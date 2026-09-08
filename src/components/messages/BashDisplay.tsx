@@ -1,11 +1,9 @@
 'use client';
 
 import { z } from 'zod';
-import { useMemo } from 'react';
-import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
-import { processTerminalOutput, isTerminalOutput } from '@/lib/terminal-output';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
+import { ToolOutputBlock } from './ToolOutputBlock';
 import { lenient, parseToolInput } from './tool-input';
 import type { ToolCall } from './types';
 
@@ -45,15 +43,6 @@ export function BashDisplay({ tool }: { tool: ToolCall }) {
   const description = input?.description;
   const isBackground = input?.run_in_background ?? false;
 
-  // Process terminal output (ANSI codes, progress bars)
-  const processedOutput = useMemo(() => {
-    if (typeof tool.output !== 'string') return null;
-    if (isTerminalOutput(tool.output)) {
-      return processTerminalOutput(tool.output);
-    }
-    return null;
-  }, [tool.output]);
-
   return (
     <ToolDisplayWrapper
       tool={tool}
@@ -72,7 +61,6 @@ export function BashDisplay({ tool }: { tool: ToolCall }) {
         ) : undefined
       }
     >
-      {/* Command section */}
       <div>
         <div className="text-muted-foreground mb-1">Command:</div>
         <pre className="bg-zinc-900 dark:bg-zinc-950 text-green-400 p-2 rounded overflow-x-auto whitespace-pre-wrap break-words text-sm font-mono">
@@ -81,33 +69,15 @@ export function BashDisplay({ tool }: { tool: ToolCall }) {
         </pre>
       </div>
 
-      {/* Output section */}
       {hasOutput && (
-        <div>
-          <div className="text-muted-foreground mb-1">Output:</div>
-          {processedOutput ? (
-            <pre
-              className={cn(
-                'p-2 rounded overflow-x-auto max-h-96 overflow-y-auto terminal-output font-mono text-sm',
-                tool.is_error ? 'bg-red-50 dark:bg-red-950' : 'bg-muted'
-              )}
-              dangerouslySetInnerHTML={{ __html: processedOutput }}
-            />
-          ) : (
-            <pre
-              className={cn(
-                'p-2 rounded overflow-x-auto max-h-96 overflow-y-auto whitespace-pre-wrap break-words font-mono text-sm',
-                tool.is_error
-                  ? 'bg-red-50 dark:bg-red-950 text-red-800 dark:text-red-200'
-                  : 'bg-muted'
-              )}
-            >
-              {typeof tool.output === 'string'
-                ? tool.output || '(no output)'
-                : JSON.stringify(tool.output, null, 2)}
-            </pre>
-          )}
-        </div>
+        <ToolOutputBlock
+          label="Output:"
+          output={tool.output === '' ? '(no output)' : tool.output}
+          isError={tool.is_error}
+          wrap
+          terminal
+          preClassName="font-mono text-sm"
+        />
       )}
     </ToolDisplayWrapper>
   );

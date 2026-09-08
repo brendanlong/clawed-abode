@@ -32,6 +32,22 @@ describe('ToolCallDisplay', () => {
       expect(screen.getByText('Run tests')).toBeInTheDocument();
     });
 
+    it('renders the rest of the display when description is not a string', () => {
+      // MCP tools can put anything under `description`; a non-primitive value
+      // must not reach React as a child and blank the whole display.
+      const tool: ToolCall = {
+        name: 'mcp__server__thing',
+        id: 'test-2b',
+        input: { description: { text: 'nested' } },
+        output: 'done',
+      };
+
+      render(<ToolCallDisplay tool={tool} />);
+
+      expect(screen.getByText('mcp__server__thing')).toBeInTheDocument();
+      expect(screen.queryByText('nested')).not.toBeInTheDocument();
+    });
+
     it('shows "Running..." badge when output is undefined', () => {
       const tool: ToolCall = {
         name: 'Bash',

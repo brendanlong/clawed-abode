@@ -15,13 +15,11 @@ import { MarkdownContent } from '@/components/MarkdownContent';
 export function ThinkingDisplay({
   thinking,
   redacted = false,
-  defaultExpanded = false,
 }: {
   thinking: string;
   redacted?: boolean;
-  defaultExpanded?: boolean;
 }) {
-  const [expanded, setExpanded] = useState(defaultExpanded);
+  const [expanded, setExpanded] = useState(false);
 
   return (
     <Collapsible open={expanded} onOpenChange={setExpanded} className="mt-2">

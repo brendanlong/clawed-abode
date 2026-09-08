@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { MarkdownContent } from '@/components/MarkdownContent';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
+import { ToolOutputBlock } from './ToolOutputBlock';
 import { useMessageListContext } from './MessageListContext';
 import { lenient, parseToolInput } from './tool-input';
 import type { ToolCall } from './types';
@@ -88,7 +89,6 @@ export function getSubagentLabel(subagentType: string): { label: string; color: 
   }
 }
 
-// Agent icon component - extracted outside of render
 export function AgentIcon() {
   return (
     <svg
@@ -164,7 +164,6 @@ export function TaskDisplay({
         ) : undefined
       }
     >
-      {/* Prompt section */}
       <div>
         <div className="text-muted-foreground mb-1">Prompt:</div>
         <pre className="bg-muted p-2 rounded overflow-x-auto max-h-32 overflow-y-auto whitespace-pre-wrap text-xs">
@@ -172,7 +171,6 @@ export function TaskDisplay({
         </pre>
       </div>
 
-      {/* Agent ID section */}
       {agentId && (
         <div>
           <div className="text-muted-foreground mb-1">Agent ID:</div>
@@ -184,14 +182,11 @@ export function TaskDisplay({
           "Subagent activity:" heading, or nothing when there's nothing to show). */}
       {subagentTranscript}
 
-      {/* Output section */}
       {hasOutput && (
         <div>
           <div className="text-muted-foreground mb-1">Output:</div>
           {tool.is_error ? (
-            <pre className="bg-red-50 dark:bg-red-950 text-red-800 dark:text-red-200 p-2 rounded overflow-x-auto max-h-96 overflow-y-auto whitespace-pre-wrap">
-              {outputText || JSON.stringify(tool.output, null, 2)}
-            </pre>
+            <ToolOutputBlock output={outputText || tool.output} isError wrap />
           ) : outputText ? (
             <div className="bg-muted rounded p-3 max-h-96 overflow-y-auto prose prose-sm dark:prose-invert max-w-none">
               <MarkdownContent content={outputText} />

@@ -55,7 +55,6 @@ export function ReadDisplay({ tool }: { tool: ToolCall }) {
         </Badge>
       }
     >
-      {/* Parameters section - only show if offset or limit are specified */}
       {(offset !== undefined || limit !== undefined) && (
         <div className="flex gap-4 text-muted-foreground">
           {offset !== undefined && (
@@ -71,7 +70,6 @@ export function ReadDisplay({ tool }: { tool: ToolCall }) {
         </div>
       )}
 
-      {/* File type badge */}
       {hasOutput && !tool.is_error && fileType !== 'text' && (
         <div>
           <Badge variant="secondary" className="text-xs">
@@ -80,7 +78,6 @@ export function ReadDisplay({ tool }: { tool: ToolCall }) {
         </div>
       )}
 
-      {/* File content section */}
       {hasOutput && (
         <div>
           {tool.is_error ? (

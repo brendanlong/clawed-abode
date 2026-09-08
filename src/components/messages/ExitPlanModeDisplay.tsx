@@ -1,7 +1,7 @@
 'use client';
 
 import { z } from 'zod';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -18,7 +18,6 @@ const exitPlanModeInputSchema = z.object({
   remoteSessionUrl: lenient(z.string()),
 });
 
-// Clipboard/plan icon component
 function ClipboardIcon() {
   return (
     <svg
@@ -37,7 +36,6 @@ function ClipboardIcon() {
   );
 }
 
-// Copy icon
 function CopyIcon() {
   return (
     <svg
@@ -56,7 +54,6 @@ function CopyIcon() {
   );
 }
 
-// Check icon
 function CheckIcon() {
   return (
     <svg
@@ -83,6 +80,7 @@ export function ExitPlanModeDisplay({ tool }: { tool: ToolCall }) {
   const toolUseId = tool.id;
   const planContent = toolUseId ? ctx?.planContentByToolUseId?.get(toolUseId) : undefined;
   const [copied, setCopied] = useState(false);
+  const copyResetTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const [showFeedback, setShowFeedback] = useState(false);
   const [feedback, setFeedback] = useState('');
 
@@ -103,12 +101,15 @@ export function ExitPlanModeDisplay({ tool }: { tool: ToolCall }) {
       onRespondToPlan(toolUseId, false, feedback.trim() || undefined);
   };
 
+  useEffect(() => () => clearTimeout(copyResetTimer.current), []);
+
   const handleCopyPlan = useCallback(async () => {
     if (!planContent) return;
     try {
       await navigator.clipboard.writeText(planContent);
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      clearTimeout(copyResetTimer.current);
+      copyResetTimer.current = setTimeout(() => setCopied(false), 2000);
     } catch {
       // Fallback for older browsers
     }

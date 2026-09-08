@@ -1,8 +1,12 @@
 'use client';
 
+import { z } from 'zod';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
 import { ToolOutputBlock } from './ToolOutputBlock';
+import { lenient, parseToolInput } from './tool-input';
 import type { ToolCall } from './types';
+
+const genericInputSchema = z.object({ description: lenient(z.string()) });
 
 /**
  * Generic display for tool calls.
@@ -11,9 +15,7 @@ import type { ToolCall } from './types';
 export function ToolCallDisplay({ tool }: { tool: ToolCall }) {
   const hasOutput = tool.output !== undefined;
 
-  // Extract description from input if present (e.g., Bash tool)
-  const inputObj = tool.input as Record<string, unknown> | undefined;
-  const description = inputObj?.description as string | undefined;
+  const description = parseToolInput(tool.input, genericInputSchema)?.description;
 
   return (
     <ToolDisplayWrapper
