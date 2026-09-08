@@ -26,17 +26,49 @@ const SanitizationInfoSchema = z.object({
 export type SanitizationInfo = z.infer<typeof SanitizationInfoSchema>;
 
 /**
+ * How much of the library's finding text we are willing to carry. Its messages
+ * name every string they flag, so length scales with a count whoever wrote the
+ * scanned text controls: 1000 look-alike host names on one page produce a single
+ * ~63k-character sentence enumerating all of them. Every consumer of that text
+ * is a place a hostile page could otherwise spend someone's budget — the model's
+ * context, a SQLite row, an SSE frame — so they share one bound. Generous enough
+ * that every realistic multi-finding message passes through whole.
+ */
+export const FINDING_TEXT_BUDGET = 2000;
+
+/**
+ * Cut the library's finding text down to {@link FINDING_TEXT_BUDGET}. Callers
+ * word their own truncation marker, because the two readers need different
+ * things said: the model has to be told the standing instruction it just lost
+ * (the library places its "do not fetch these" clause *after* the enumeration),
+ * while the operator only needs to know the list was cut.
+ */
+export function capFindingText(text: string): { text: string; truncated: boolean } {
+  if (text.length <= FINDING_TEXT_BUDGET) return { text, truncated: false };
+  return { text: text.slice(0, FINDING_TEXT_BUDGET), truncated: true };
+}
+
+/**
  * Build a {@link SanitizationInfo} from a sanitizer result, or `null` when there
  * is nothing to surface (no categories were detected). `removed` records whether
  * any string actually changed vs. an advisory-only detection.
+ *
+ * Over-budget text collapses to a single capped entry: past a couple of thousand
+ * characters the badge popover is unreadable anyway, so the only thing lost is
+ * an enumeration nobody was going to finish.
  */
 export function buildSanitizationInfo(
   found: string[],
-  warnings: string[],
+  messages: string[],
   removed: boolean
 ): SanitizationInfo | null {
   if (found.length === 0) return null;
-  return { found, warnings, removed };
+  const capped = capFindingText(messages.join(' '));
+  return {
+    found,
+    warnings: capped.truncated ? [`${capped.text}… [truncated]`] : messages,
+    removed,
+  };
 }
 
 /**
