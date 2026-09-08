@@ -34,6 +34,39 @@ describe('splitTextIntoChunks', () => {
     expect(splitTextIntoChunks(first + second)).toEqual([first, second]);
   });
 
+  it('breaks at the last sentence end that fits, not an earlier one', () => {
+    const first = 'A'.repeat(100) + '. ? ';
+    const second = 'B'.repeat(150);
+    expect(splitTextIntoChunks(first + second)).toEqual([first, second]);
+  });
+
+  it('keeps a sentence end inside the chunk rather than overflowing the limit', () => {
+    const fits = 'A'.repeat(CHUNK_MAX_LENGTH - 2) + '. ';
+    expect(splitTextIntoChunks(fits + 'B'.repeat(100))).toEqual([fits, 'B'.repeat(100)]);
+
+    // The '. ' starts exactly at CHUNK_MAX_LENGTH, so it cannot fit in this chunk.
+    const overflowing = 'A'.repeat(CHUNK_MAX_LENGTH) + '. ' + 'B'.repeat(100);
+    const chunks = splitTextIntoChunks(overflowing);
+    for (const chunk of chunks) expect(chunk.length).toBeLessThanOrEqual(CHUNK_MAX_LENGTH);
+    expect(chunks.join('')).toBe(overflowing);
+  });
+
+  it('keeps a comma or semicolon inside the chunk rather than overflowing the limit', () => {
+    for (const delimiter of [', ', '; ']) {
+      const text = 'A'.repeat(CHUNK_MAX_LENGTH) + delimiter + 'B'.repeat(100);
+      const chunks = splitTextIntoChunks(text);
+      for (const chunk of chunks) expect(chunk.length).toBeLessThanOrEqual(CHUNK_MAX_LENGTH);
+      expect(chunks.join('')).toBe(text);
+    }
+  });
+
+  it('keeps a space inside the chunk rather than overflowing the limit', () => {
+    const text = 'A'.repeat(CHUNK_MAX_LENGTH) + ' ' + 'B'.repeat(100);
+    const chunks = splitTextIntoChunks(text);
+    for (const chunk of chunks) expect(chunk.length).toBeLessThanOrEqual(CHUNK_MAX_LENGTH);
+    expect(chunks.join('')).toBe(text);
+  });
+
   it('falls back to a comma or semicolon when there is no sentence end', () => {
     const first = 'a'.repeat(120) + ', ';
     const second = 'b'.repeat(150);

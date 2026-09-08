@@ -28,23 +28,26 @@ export function splitTextIntoChunks(text: string): string[] {
       break;
     }
 
-    let splitIndex = -1;
+    // Every search starts at `CHUNK_MAX_LENGTH - delimiter.length` so the whole
+    // delimiter lands inside the chunk; starting at CHUNK_MAX_LENGTH lets a match
+    // begin at the cap and pushes the chunk past it.
+    let bestEnder = { index: -1, length: 0 };
     for (const ender of SENTENCE_ENDERS) {
-      const idx = remaining.lastIndexOf(ender, CHUNK_MAX_LENGTH);
-      if (idx > 0 && idx > splitIndex) {
-        splitIndex = idx + ender.length;
-      }
+      // Compare raw indices; the offset is applied once, after the best one is known.
+      const idx = remaining.lastIndexOf(ender, CHUNK_MAX_LENGTH - ender.length);
+      if (idx > 0 && idx > bestEnder.index) bestEnder = { index: idx, length: ender.length };
     }
+    let splitIndex = bestEnder.index > 0 ? bestEnder.index + bestEnder.length : -1;
 
     if (splitIndex <= 0) {
-      const commaIdx = remaining.lastIndexOf(', ', CHUNK_MAX_LENGTH);
-      const semiIdx = remaining.lastIndexOf('; ', CHUNK_MAX_LENGTH);
+      const commaIdx = remaining.lastIndexOf(', ', CHUNK_MAX_LENGTH - 2);
+      const semiIdx = remaining.lastIndexOf('; ', CHUNK_MAX_LENGTH - 2);
       splitIndex = Math.max(commaIdx, semiIdx);
       if (splitIndex > 0) splitIndex += 2;
     }
 
     if (splitIndex <= 0) {
-      splitIndex = remaining.lastIndexOf(' ', CHUNK_MAX_LENGTH);
+      splitIndex = remaining.lastIndexOf(' ', CHUNK_MAX_LENGTH - 1);
       if (splitIndex > 0) splitIndex += 1;
     }
 
