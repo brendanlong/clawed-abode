@@ -54,8 +54,8 @@ export function mergeInitCommands(
   if (!initParsed.success || !initParsed.data.slash_commands) return;
 
   const merged = mergeSlashCommands(state.commands, initParsed.data.slash_commands);
-  const oldNames = new Set(state.commands.map((c) => c.name));
-  if (!merged.some((c) => !oldNames.has(c.name))) return;
+  // mergeSlashCommands only ever appends, so a same-length result means nothing new.
+  if (merged.length === state.commands.length) return;
   state.commands = merged;
   rememberSessionCommands(sessionId, merged);
   sseEvents.emitCommands(sessionId, merged);

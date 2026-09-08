@@ -16,9 +16,6 @@ const log = createLogger('worktree-manager');
 /** Base directory for session workspaces */
 const WORKTREES_DIR = join(homedir(), 'worktrees');
 
-/**
- * Run a command and return stdout.
- */
 function run(command: string, args: string[], options: { cwd?: string } = {}): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile(command, args, { ...options, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
@@ -32,9 +29,6 @@ function run(command: string, args: string[], options: { cwd?: string } = {}): P
   });
 }
 
-/**
- * Get the workspace directory for a session.
- */
 export function getSessionWorkspacePath(sessionId: string): string {
   return join(WORKTREES_DIR, sessionId);
 }
@@ -127,9 +121,6 @@ export async function cloneRepo(config: CloneConfig): Promise<CloneResult> {
   };
 }
 
-/**
- * Create an empty workspace directory for a no-repo session.
- */
 export async function createEmptyWorkspace(sessionId: string): Promise<string> {
   const workspacePath = getSessionWorkspacePath(sessionId);
   log.info('Creating empty workspace', { sessionId, workspacePath });
@@ -137,9 +128,6 @@ export async function createEmptyWorkspace(sessionId: string): Promise<string> {
   return workspacePath;
 }
 
-/**
- * Remove a session's workspace directory.
- */
 export async function removeWorkspace(sessionId: string): Promise<void> {
   const workspacePath = getSessionWorkspacePath(sessionId);
   log.info('Removing workspace', { sessionId, workspacePath });

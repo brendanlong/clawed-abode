@@ -81,18 +81,6 @@ interface StreamEvent {
   [key: string]: unknown;
 }
 
-/**
- * Accumulates stream_event deltas into partial assistant messages.
- *
- * Usage:
- *   const acc = new StreamAccumulator();
- *   // For each stream_event from the SDK:
- *   const partial = acc.accumulate(streamEventMessage);
- *   if (partial) {
- *     // Emit this partial to connected clients
- *   }
- *   // When a full assistant message arrives, call reset()
- */
 export class StreamAccumulator {
   private contentBlocks: AccumulatingContentBlock[] = [];
   private model: string | undefined;
@@ -184,8 +172,10 @@ export class StreamAccumulator {
         return null;
       }
 
-      case 'content_block_stop': {
-        // Block finished - emit current state
+      // message_stop emits the final partial; the caller resets once the full
+      // AssistantMessage follows.
+      case 'content_block_stop':
+      case 'message_stop': {
         if (!this.active) return null;
         return this.buildPartial();
       }
@@ -196,14 +186,6 @@ export class StreamAccumulator {
           this.stopReason = event.delta.stop_reason;
         }
         return this.buildPartial();
-      }
-
-      case 'message_stop': {
-        // Message complete - the full AssistantMessage will follow
-        // Emit final partial state, then caller should reset
-        if (!this.active) return null;
-        const final = this.buildPartial();
-        return final;
       }
 
       default:
@@ -262,9 +244,7 @@ export class StreamAccumulator {
     };
   }
 
-  /**
-   * Reset the accumulator state. Call this when a full AssistantMessage arrives.
-   */
+  /** Call when the full AssistantMessage arrives — it supersedes the partial. */
   reset(): void {
     this.contentBlocks = [];
     this.model = undefined;
@@ -273,20 +253,5 @@ export class StreamAccumulator {
     this.uuid = '';
     this.sessionId = '';
     this.active = false;
-  }
-
-  /**
-   * Whether the accumulator is currently building a partial message.
-   */
-  get isActive(): boolean {
-    return this.active;
-  }
-
-  /**
-   * The UUID of the current partial message being accumulated.
-   * Returns empty string if not active.
-   */
-  get currentUuid(): string {
-    return this.uuid;
   }
 }

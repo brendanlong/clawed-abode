@@ -3,11 +3,6 @@
  * establishment with resume, the output loop that persists messages and derives
  * live status, sends, interrupts and teardown. Design and rationale live in
  * doc/claude-sessions.md; invariants in src/server/services/CLAUDE.md.
- *
- * Seams (each independently testable): agent-env (login-shell env), sdk-options
- * (query construction), in-flight-commands (delivery tracking), message-store
- * (persistence), session-commands (slash commands), session-branch-pr (turn-end
- * branch/PR refresh), session-state (the in-memory record).
  */
 
 import {
@@ -291,6 +286,13 @@ async function runSessionLoop(sessionId: string, state: SessionState, q: Query):
     await createErrorMessage(sessionId, `Claude query failed: ${toError(err).message}`);
   } finally {
     clearLiveStatus(sessionId, state);
+    // A finding is retired when its tool_result is persisted, so one whose result
+    // never streamed back (query killed mid-tool, CLI crash) is stranded — and
+    // unreachable, since a revive re-emits neither the message nor its uuid. This
+    // is the only safe place to drop them: the loop above has drained, whereas
+    // stopSession runs synchronously while messages may still be queued (it drops
+    // the whole state record anyway, so it needs no clear of its own).
+    state.toolSanitizations.clear();
     if (state.pendingInput) {
       state.pendingInput.reject(new Error('Query ended'));
       state.pendingInput = null;
