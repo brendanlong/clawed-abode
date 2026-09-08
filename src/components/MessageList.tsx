@@ -501,11 +501,7 @@ export function MessageList({
       </div>
 
       {/* Context usage indicator - positioned in bottom right */}
-      <ContextUsageIndicator
-        stats={tokenUsage}
-        totalCostUsd={tokenUsage?.totalCostUsd}
-        className="absolute bottom-3 right-3 shadow-xs"
-      />
+      <ContextUsageIndicator stats={tokenUsage} className="absolute bottom-3 right-3 shadow-xs" />
     </div>
   );
 }

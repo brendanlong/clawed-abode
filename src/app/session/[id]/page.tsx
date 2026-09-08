@@ -285,9 +285,9 @@ function SessionView({ sessionId }: { sessionId: string }) {
 
         {voiceOverlayOpen && voiceConfig.enabled ? (
           <VoiceControlPanel
-            sessionId={sessionId}
             messages={messages}
             isRunning={isClaudeRunning}
+            voiceAutoSend={voiceConfig.autoSend}
             // Pass the promise-returning send so the panel can restore the
             // transcript and show an error if the send fails (issue #408).
             onSendPrompt={handleSendPrompt}

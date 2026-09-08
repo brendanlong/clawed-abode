@@ -5,7 +5,6 @@ import { Button } from '@/components/ui/button';
 import { X, Mic, Square, Play, Pause, SkipBack, SkipForward, Send } from 'lucide-react';
 import { useVoicePlaybackContext } from '@/hooks/useVoicePlayback';
 import { useVoiceRecording } from '@/hooks/useVoiceRecording';
-import { useVoiceConfig } from '@/hooks/useVoiceConfig';
 import { useSendWithRestore } from '@/hooks/useSendWithRestore';
 import { getAssistantTextMessages } from '@/components/voice/playable-messages';
 import type { DisplayMessage } from '@/components/messages/types';
@@ -18,7 +17,6 @@ function restoreFailedTranscript(current: string, failed: string): string {
 }
 
 interface VoiceControlPanelProps {
-  sessionId: string;
   messages: DisplayMessage[];
   isRunning: boolean;
   /**
@@ -36,6 +34,8 @@ interface VoiceControlPanelProps {
    * swallowed by void-return assignability.
    */
   onInterrupt: () => void | Promise<CancelledPrompt[] | void>;
+  /** Send a finished transcript immediately instead of parking it for review. */
+  voiceAutoSend: boolean;
 }
 
 /**
@@ -44,15 +44,14 @@ interface VoiceControlPanelProps {
  * Provides playback navigation, a large mic button, and send/cancel for transcripts.
  */
 export function VoiceControlPanel({
-  sessionId,
   messages,
   isRunning,
+  voiceAutoSend,
   onSendPrompt,
   onClose,
   onInterrupt,
 }: VoiceControlPanelProps) {
   const playback = useVoicePlaybackContext();
-  const voiceConfig = useVoiceConfig(sessionId);
 
   const {
     isRecording,
@@ -176,7 +175,7 @@ export function VoiceControlPanel({
       const fullText = transcript.trim();
 
       if (fullText) {
-        if (voiceConfig.autoSend) {
+        if (voiceAutoSend) {
           sendTranscript(fullText);
         } else {
           setPendingTranscript(fullText);

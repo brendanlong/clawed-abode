@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect } from 'react';
+import { useEffect } from 'react';
 import { trpc } from '@/lib/trpc';
 import { resolveListQueryState } from '@/lib/list-query-state';
 import { Label } from '@/components/ui/label';
@@ -27,13 +27,6 @@ export function BranchSelector({
     { enabled: !!repoFullName }
   );
 
-  const handleSelect = useCallback(
-    (branch: string) => {
-      onSelect(branch);
-    },
-    [onSelect]
-  );
-
   const branches = data?.branches ?? [];
   const state = resolveListQueryState({
     isLoading,
@@ -47,9 +40,9 @@ export function BranchSelector({
       !selectedBranch &&
       data.branches.some((b) => b.name === data.defaultBranch)
     ) {
-      handleSelect(data.defaultBranch);
+      onSelect(data.defaultBranch);
     }
-  }, [data, selectedBranch, handleSelect]);
+  }, [data, selectedBranch, onSelect]);
 
   if (state === 'loading') {
     return (
