@@ -26,12 +26,12 @@ export function isLogLevelEnabled(level: LogLevel, threshold: LogLevel): boolean
 }
 
 function formatLogEntry(entry: LogEntry): string {
-  const { timestamp, level, context, message, data, error } = entry;
+  const { timestamp, level, context, message, error } = entry;
   const levelUpper = level.toUpperCase().padEnd(5);
   let output = `[${timestamp}] [${levelUpper}] [${context}] ${message}`;
 
-  if (data && Object.keys(data).length > 0) {
-    output += ` ${JSON.stringify(data)}`;
+  if (entry.data) {
+    output += ` ${JSON.stringify(entry.data)}`;
   }
 
   if (error) {

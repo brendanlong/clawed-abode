@@ -34,7 +34,7 @@ export type SanitizationInfo = z.infer<typeof SanitizationInfoSchema>;
  * context, a SQLite row, an SSE frame — so they share one bound. Generous enough
  * that every realistic multi-finding message passes through whole.
  */
-export const FINDING_TEXT_BUDGET = 2000;
+const FINDING_TEXT_BUDGET = 2000;
 
 /**
  * Cut the library's finding text down to {@link FINDING_TEXT_BUDGET}. Callers

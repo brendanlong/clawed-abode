@@ -1,13 +1,13 @@
 import { z } from 'zod';
 
-export const DEFAULT_PAGE_SIZE = 50;
+const DEFAULT_PAGE_SIZE = 50;
 
 /**
  * Keyset cursor for lists ordered by (<timestamp field> desc, id desc). The id
  * tiebreaker keeps the order total, so rows sharing a timestamp can never be
  * skipped or repeated across pages.
  */
-export const keysetCursorSchema = z.object({
+const keysetCursorSchema = z.object({
   at: z.iso.datetime(),
   id: z.string(),
 });
@@ -33,15 +33,14 @@ export function keysetPage<F extends string>(
   input: { cursor?: KeysetCursor; limit: number }
 ) {
   const at = input.cursor ? new Date(input.cursor.at) : undefined;
-  const where: { OR: [OlderThan<F>, SameTimestampLowerId<F>] } | Record<never, never> =
-    at && input.cursor
-      ? {
-          OR: [
-            { [field]: { lt: at } } as OlderThan<F>,
-            { [field]: at, id: { lt: input.cursor.id } } as SameTimestampLowerId<F>,
-          ],
-        }
-      : {};
+  const where: { OR: [OlderThan<F>, SameTimestampLowerId<F>] } | Record<never, never> = input.cursor
+    ? {
+        OR: [
+          { [field]: { lt: at } } as OlderThan<F>,
+          { [field]: at, id: { lt: input.cursor.id } } as SameTimestampLowerId<F>,
+        ],
+      }
+    : {};
   return {
     where,
     orderBy: [{ [field]: 'desc' } as { [K in F]: 'desc' }, { id: 'desc' as const }],
