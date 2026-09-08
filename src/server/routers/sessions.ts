@@ -226,9 +226,7 @@ export const sessionsRouter = router({
       });
     }
 
-    // For the new architecture, "starting" just means marking as running.
-    // The workspace (worktree) already exists on disk.
-    // Claude queries run in-process when the user sends a prompt.
+    // Queries run in-process and are established lazily on the next prompt.
     const updatedSession = await prisma.session.update({
       where: { id: session.id },
       data: { status: 'running' },

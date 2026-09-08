@@ -120,7 +120,6 @@ export const githubRouter = router({
       let response: Response;
 
       if (input.search) {
-        // Search repositories
         const query = encodeURIComponent(`${input.search} in:name user:@me`);
         const url = `/search/repositories?q=${query}&per_page=${input.perPage}&page=${page}`;
 
@@ -128,7 +127,6 @@ export const githubRouter = router({
         const data = await response.json();
         repos = data.items;
       } else {
-        // List user's repositories
         const url = `/user/repos?sort=updated&per_page=${input.perPage}&page=${page}`;
 
         response = await githubFetchResponse(url, token);
@@ -161,10 +159,8 @@ export const githubRouter = router({
     .query(async ({ input }) => {
       const token = requireGitHubToken();
 
-      // Get repo info for default branch
       const repo = await githubFetch<GitHubRepo>(`/repos/${input.repoFullName}`, token);
 
-      // Get branches
       const branches = await githubFetch<GitHubBranch[]>(
         `/repos/${input.repoFullName}/branches?per_page=100`,
         token
@@ -198,7 +194,6 @@ export const githubRouter = router({
       let response: Response;
 
       if (input.search) {
-        // Search issues in the specific repository
         const query = encodeURIComponent(
           `${input.search} repo:${input.repoFullName} is:issue state:${input.state}`
         );
@@ -208,7 +203,6 @@ export const githubRouter = router({
         const data = await response.json();
         issues = data.items;
       } else {
-        // List issues for the repository
         const url = `/repos/${input.repoFullName}/issues?state=${input.state}&per_page=${input.perPage}&page=${page}&sort=updated&direction=desc`;
 
         response = await githubFetchResponse(url, token);

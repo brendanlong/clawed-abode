@@ -28,8 +28,10 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  // Reject oversized requests before buffering the whole body into memory.
-  // (App Router route handlers have no built-in body-size limit.)
+  // A cheap early-out for oversized requests (App Router route handlers have no
+  // built-in body-size limit). It only fires when the client sent a
+  // content-length, so it is not the bound — the per-file/total check below
+  // runs before anything is written to disk.
   const contentLength = Number(request.headers.get('content-length'));
   if (Number.isFinite(contentLength) && contentLength > MAX_TOTAL_UPLOAD_BYTES) {
     return Response.json(
