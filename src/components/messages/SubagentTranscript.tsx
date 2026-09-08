@@ -27,10 +27,7 @@ export function SubagentTranscript({
   pairedMessageIds,
 }: SubagentTranscriptProps) {
   const visibleMessages = useMemo(
-    () =>
-      [...messages]
-        .sort((a, b) => a.sequence - b.sequence)
-        .filter((msg) => isVisibleTranscriptMessage(msg, pairedMessageIds)),
+    () => messages.filter((msg) => isVisibleTranscriptMessage(msg, pairedMessageIds)),
     [messages, pairedMessageIds]
   );
 
