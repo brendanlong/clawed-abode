@@ -1354,6 +1354,64 @@ describe('claude-runner persistent streaming loop', () => {
     stopSession(sessionId);
   });
 
+  it('drops sanitizer findings whose tool_result never arrived when the query ends', async () => {
+    // A finding is retired only when its tool_result is persisted, so one whose
+    // result never streams back (killed mid-tool, CLI crash) would otherwise be
+    // held by the session state forever — it survives teardown. Query teardown
+    // must clear the map, which is observable as: the revived query's identically
+    // keyed tool_result carries no badge.
+    const first = makeFakeQuery();
+    let options: unknown;
+    _setQueryFactory((p) => {
+      options = p.options;
+      return first.factory(p);
+    });
+    const sessionId = await createRunningSession();
+
+    await sendUserMessage(sessionId, 'run a command');
+    const hook = extractPostToolUseHook(options);
+    await hook({
+      hook_event_name: 'PostToolUse',
+      session_id: 's',
+      transcript_path: '/tmp/t.jsonl',
+      cwd: '/tmp/spike-runner-test',
+      tool_name: 'Bash',
+      tool_input: {},
+      tool_response: {
+        stdout: `value${ZWSP}hidden`,
+        stderr: '',
+        interrupted: false,
+        isImage: false,
+      },
+      tool_use_id: 'toolu_orphan',
+    });
+
+    first.end(); // stream ends before the tool_result — the finding is stranded
+    await waitFor(() => !isClaudeRunning(sessionId));
+
+    const second = makeFakeQuery();
+    _setQueryFactory(second.factory);
+    await sendUserMessage(sessionId, 'again');
+    second.emit(toolResultMsg('toolu_orphan', 'value hidden'));
+    second.emit(result());
+
+    await waitFor(async () =>
+      (await messagesFor(sessionId)).some(
+        (m) => m.type === 'user' && m.content.includes('toolu_orphan')
+      )
+    );
+    const row = (await messagesFor(sessionId)).find(
+      (m) => m.type === 'user' && m.content.includes('toolu_orphan')
+    );
+    const content = JSON.parse(row!.content) as {
+      message: { content: Array<{ sanitization?: unknown }> };
+    };
+    expect(content.message.content[0].sanitization).toBeUndefined();
+
+    await waitFor(() => !isClaudeRunning(sessionId));
+    stopSession(sessionId);
+  });
+
   it('does not attach a sanitization field to a clean tool_result', async () => {
     const fake = makeFakeQuery();
     let options: unknown;

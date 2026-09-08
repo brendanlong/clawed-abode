@@ -147,6 +147,11 @@ async function persistSessionScope(sessionId: string, unit: string | null): Prom
  */
 function clearLiveStatus(sessionId: string, state: SessionState): void {
   state.interruptRequested = false;
+  // Findings whose tool_result never streamed back are unreachable once the query
+  // is gone (a revive re-emits neither the message nor its uuid), and the state
+  // record outlives teardown — so without this they accumulate for the session's
+  // whole life. Safe here: the output loop has already drained.
+  state.toolSanitizations.clear();
   // Deliveries in flight die with the query. Their bubbles stay (they may well
   // have been read), but the "not delivered yet" marker must clear.
   if (state.inFlightCommands.size > 0) {
