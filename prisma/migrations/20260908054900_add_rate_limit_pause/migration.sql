@@ -20,62 +20,28 @@ CREATE TABLE "RateLimitWindow" (
     "observedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- RedefineTables
-PRAGMA defer_foreign_keys=ON;
-PRAGMA foreign_keys=OFF;
-CREATE TABLE "new_GlobalSettings" (
-    "id" TEXT NOT NULL PRIMARY KEY DEFAULT 'global',
-    "systemPromptOverride" TEXT,
-    "systemPromptOverrideEnabled" BOOLEAN NOT NULL DEFAULT false,
-    "systemPromptAppend" TEXT,
-    "claudeModel" TEXT,
-    "advisorModel" TEXT,
-    "claudeApiKey" TEXT,
-    "ttsSpeed" REAL,
-    "voiceAutoSend" BOOLEAN NOT NULL DEFAULT true,
-    "settingSourceUser" BOOLEAN NOT NULL DEFAULT false,
-    "settingSourceProject" BOOLEAN NOT NULL DEFAULT true,
-    "settingSourceLocal" BOOLEAN NOT NULL DEFAULT false,
-    "rateLimitPauseEnabled" BOOLEAN NOT NULL DEFAULT false,
-    "rateLimitPauseThreshold" INTEGER NOT NULL DEFAULT 95,
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" DATETIME NOT NULL
-);
-INSERT INTO "new_GlobalSettings" ("advisorModel", "claudeApiKey", "claudeModel", "createdAt", "id", "settingSourceLocal", "settingSourceProject", "settingSourceUser", "systemPromptAppend", "systemPromptOverride", "systemPromptOverrideEnabled", "ttsSpeed", "updatedAt", "voiceAutoSend") SELECT "advisorModel", "claudeApiKey", "claudeModel", "createdAt", "id", "settingSourceLocal", "settingSourceProject", "settingSourceUser", "systemPromptAppend", "systemPromptOverride", "systemPromptOverrideEnabled", "ttsSpeed", "updatedAt", "voiceAutoSend" FROM "GlobalSettings";
-DROP TABLE "GlobalSettings";
-ALTER TABLE "new_GlobalSettings" RENAME TO "GlobalSettings";
-CREATE TABLE "new_Session" (
-    "id" TEXT NOT NULL PRIMARY KEY,
-    "name" TEXT NOT NULL,
-    "repoUrl" TEXT,
-    "branch" TEXT,
-    "repoPath" TEXT NOT NULL DEFAULT '',
-    "status" TEXT NOT NULL DEFAULT 'creating',
-    "statusMessage" TEXT,
-    "currentBranch" TEXT,
-    "pullRequest" TEXT,
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" DATETIME NOT NULL,
-    "lastActivityAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "messageSequence" INTEGER NOT NULL DEFAULT 0,
-    "sessionScope" TEXT,
-    "claudeModel" TEXT,
-    "rateLimitPauseEnabled" BOOLEAN,
-    "rateLimitPauseThreshold" INTEGER,
-    "resumeAfterRateLimit" BOOLEAN NOT NULL DEFAULT false,
-    "queuedPromptSequence" INTEGER NOT NULL DEFAULT 0
-);
-INSERT INTO "new_Session" ("branch", "claudeModel", "createdAt", "currentBranch", "id", "lastActivityAt", "messageSequence", "name", "pullRequest", "repoPath", "repoUrl", "sessionScope", "status", "statusMessage", "updatedAt") SELECT "branch", "claudeModel", "createdAt", "currentBranch", "id", "lastActivityAt", "messageSequence", "name", "pullRequest", "repoPath", "repoUrl", "sessionScope", "status", "statusMessage", "updatedAt" FROM "Session";
-DROP TABLE "Session";
-ALTER TABLE "new_Session" RENAME TO "Session";
--- SQLite drops a table's indexes with the table, so this rebuild must recreate
--- exactly the set schema.prisma declares TODAY. Regenerating this file before
--- 20260907190000 landed would resurrect the Session_status_idx that migration
--- dropped and lose the Session_lastActivityAt_id_idx it added.
-CREATE INDEX "Session_lastActivityAt_id_idx" ON "Session"("lastActivityAt", "id");
-CREATE INDEX "Session_status_lastActivityAt_id_idx" ON "Session"("status", "lastActivityAt", "id");
-PRAGMA foreign_keys=ON;
-PRAGMA defer_foreign_keys=OFF;
+-- AlterTable
+--
+-- Hand-written. Prisma's SQLite generator emits a full table rebuild
+-- (RedefineTables) for these, which works but is needlessly hazardous here:
+-- SQLite drops a table's indexes with the table, so the rebuild has to reprint
+-- the index set, and a generated file captures whatever that set was the day it
+-- was written — a later migration that adds or drops a Session index leaves this
+-- one silently reinstating the old set. It also drops a table that Message
+-- cascades from, which only stays safe because of the PRAGMA dance around it.
+--
+-- None of that is needed: SQLite's ADD COLUMN handles a nullable column, and a
+-- NOT NULL column with a constant default, which is all six of these. Verified
+-- equivalent to the generated rebuild with `prisma migrate dev --create-only`
+-- (empty diff). Regenerating this file would quietly reintroduce the rebuild.
+ALTER TABLE "Session" ADD COLUMN "rateLimitPauseEnabled" BOOLEAN;
+ALTER TABLE "Session" ADD COLUMN "rateLimitPauseThreshold" INTEGER;
+ALTER TABLE "Session" ADD COLUMN "resumeAfterRateLimit" BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE "Session" ADD COLUMN "queuedPromptSequence" INTEGER NOT NULL DEFAULT 0;
+
+-- AlterTable
+ALTER TABLE "GlobalSettings" ADD COLUMN "rateLimitPauseEnabled" BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE "GlobalSettings" ADD COLUMN "rateLimitPauseThreshold" INTEGER NOT NULL DEFAULT 95;
 
 -- CreateIndex
 CREATE UNIQUE INDEX "QueuedPrompt_sessionId_position_key" ON "QueuedPrompt"("sessionId", "position");

@@ -120,6 +120,15 @@ model RepoSettings {
 // migration 20260208044452 because Prisma can't express partial indexes. Prisma's
 // differ doesn't know it exists, so any generated migration that rebuilds this
 // table (SQLite drops indexes with the table) must recreate it by hand.
+//
+// More generally: prefer hand-writing ALTER TABLE ADD COLUMN over the table
+// rebuild Prisma's SQLite generator emits by default. A rebuild reprints the
+// table's whole index set as of the day it was generated, so a later migration
+// that adds or drops an index leaves the older file silently reinstating the old
+// set (this happened to 20260908054900). ADD COLUMN covers any nullable column
+// and any NOT NULL column with a constant default; check the result with
+// `prisma migrate dev --create-only`, which yields an empty migration when the
+// hand-written SQL matches the schema.
 model EnvVar {
   id             String        @id @default(uuid())
   repoSettingsId String?
