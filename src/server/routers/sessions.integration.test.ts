@@ -18,10 +18,11 @@ vi.mock('../services/worktree-manager', () => ({
 // Mock claude-runner
 const mockRefreshSessionSettings = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const mockSendUserMessage = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+const mockStopSession = vi.hoisted(() => vi.fn());
 
 vi.mock('../services/claude-runner', () => ({
   sendUserMessage: mockSendUserMessage,
-  stopSession: vi.fn(),
+  stopSession: mockStopSession,
   cleanupSession: vi.fn(),
   isClaudeRunning: vi.fn().mockReturnValue(false),
   isSessionBackgroundActive: vi.fn().mockReturnValue(false),
@@ -588,7 +589,7 @@ describe('sessionsRouter integration', () => {
       expect(dbSession!.status).toBe('stopped');
     });
 
-    it('should leave an archived session archived', async () => {
+    it('should tear down the query but leave an archived session archived', async () => {
       const session = await createNoRepoSession({
         name: 'Archived Session',
         status: 'archived',
@@ -598,6 +599,10 @@ describe('sessionsRouter integration', () => {
       const result = await caller.sessions.stop({ sessionId: session.id });
 
       expect(result.session.status).toBe('archived');
+
+      // A query can be re-established on an archived session by a concurrent
+      // send, so stop still has to kill it — it just must not un-archive.
+      expect(mockStopSession).toHaveBeenCalledWith(session.id);
 
       const dbSession = await testPrisma.session.findUnique({ where: { id: session.id } });
       expect(dbSession!.status).toBe('archived');

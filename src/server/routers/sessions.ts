@@ -287,15 +287,17 @@ export const sessionsRouter = router({
   stop: sessionProcedure.mutation(async ({ ctx, input }) => {
     const { session } = ctx;
 
-    // Archived sessions have no workspace or live query; stopping one would
-    // move it back to 'stopped', from which start() would revive it with
-    // nothing on disk.
+    // Stop any running Claude query (synchronous: closes input + query). This
+    // runs even for an archived session: a concurrent send can re-establish a
+    // query in the window between delete's cleanupSession and its archive
+    // write, and stop has to stay the way out of that. No-op when idle.
+    stopSession(input.sessionId);
+
+    // Archived sessions keep their status — the workspace is already gone, and
+    // 'stopped' would let start() revive the session with nothing on disk.
     if (session.status === 'archived') {
       return { session: toSessionView(session) };
     }
-
-    // Stop any running Claude query (synchronous: closes input + query).
-    stopSession(input.sessionId);
 
     const updatedSession = await prisma.session.update({
       where: { id: session.id },
