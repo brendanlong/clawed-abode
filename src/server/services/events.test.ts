@@ -58,12 +58,22 @@ describe('sseEvents', () => {
   it('delivers per-session-only kinds on the session channel alone', () => {
     const l = listen('session-1');
 
+    const message = {
+      id: 'm1',
+      sessionId: 'session-1',
+      sequence: 0,
+      type: 'user',
+      content: {},
+      createdAt: new Date(),
+    };
+    sseEvents.emitNewMessage('session-1', message);
     sseEvents.emitCommands('session-1', []);
     sseEvents.emitClaudeRetry('session-1', null);
     sseEvents.emitPendingMessages('session-1', ['m1']);
     sseEvents.emitMessageRemoved('session-1', 'm1');
 
     expect(l.session.mock.calls.map(([e]) => e)).toEqual([
+      { kind: 'message', message },
       { kind: 'commands', commands: [] },
       { kind: 'retry', retry: null },
       { kind: 'pending', messageIds: ['m1'] },

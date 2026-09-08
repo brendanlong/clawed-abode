@@ -9,9 +9,9 @@ import { formatResumeToken, parseResumeToken, EMPTY_WATERMARK } from '@/lib/sse-
 
 /**
  * Yielded on either stream after the server dropped buffered events (see
- * {@link createEventQueue}). Clients must refetch every live query; on the
- * per-session stream the server has already replayed the persisted messages it
- * dropped, so only latest-value state is stale.
+ * {@link createEventQueue}). The client refetches every live query, and that
+ * includes `getHistory`: a dropped `message_removed` can't be replayed from the
+ * DB (the row is gone), so the transcript refetch is what heals it.
  */
 type ResyncEvent = { kind: 'resync' };
 
@@ -25,6 +25,17 @@ export type SessionListStreamEvent = SessionListEvent | ResyncEvent;
  */
 export const MAX_QUEUED_EVENTS = 1000;
 
+interface EventQueueOptions<T> {
+  maxQueued?: number;
+  /**
+   * Events with the same key supersede each other: a new one replaces the buffered
+   * one in place instead of appending. Used for partial-message snapshots, which
+   * each carry the whole accumulated message, so a stalled consumer holds one
+   * snapshot per streaming message rather than one per delta.
+   */
+  coalesceKey?: (event: T) => string | undefined;
+}
+
 /**
  * Eagerly subscribe to an event source and buffer events into a queue. Subscribing
  * synchronously (rather than on the first generator `next()`) ensures events that
@@ -36,20 +47,25 @@ export const MAX_QUEUED_EVENTS = 1000;
  */
 export function createEventQueue<T>(
   subscribe: (push: (event: T) => void) => () => void,
-  maxQueued = MAX_QUEUED_EVENTS
+  { maxQueued = MAX_QUEUED_EVENTS, coalesceKey }: EventQueueOptions<T> = {}
 ) {
   const queue: T[] = [];
   let overflowed = false;
   let resolveWait: (() => void) | null = null;
-  const unsubscribe = subscribe((event) => {
-    if (!overflowed) {
-      if (queue.length < maxQueued) {
-        queue.push(event);
-      } else {
-        queue.length = 0;
-        overflowed = true;
-      }
+  const enqueue = (event: T) => {
+    const key = coalesceKey?.(event);
+    const existing = key === undefined ? -1 : queue.findIndex((e) => coalesceKey?.(e) === key);
+    if (existing !== -1) {
+      queue[existing] = event;
+    } else if (queue.length < maxQueued) {
+      queue.push(event);
+    } else {
+      queue.length = 0;
+      overflowed = true;
     }
+  };
+  const unsubscribe = subscribe((event) => {
+    if (!overflowed) enqueue(event);
     resolveWait?.();
   });
   const takeOverflow = (): boolean => {
@@ -74,6 +90,11 @@ export function createEventQueue<T>(
     });
   return { queue, takeOverflow, waitForEvent, unsubscribe };
 }
+
+const RESYNC: ResyncEvent = { kind: 'resync' };
+
+const partialMessageKey = (event: SessionStreamEvent) =>
+  event.kind === 'message' && isPartialMessageId(event.message.id) ? event.message.id : undefined;
 
 async function loadMessagesAfter(sessionId: string, floor: number) {
   const missed = await prisma.message.findMany({
@@ -116,17 +137,20 @@ export const sseRouter = router({
       let watermark = replayFloor ?? EMPTY_WATERMARK;
 
       const track = (event: SessionStreamEvent | ResyncEvent) => {
-        // Only persisted (complete) messages advance the resume watermark.
+        // Only persisted (complete) messages advance the resume watermark. Max, not
+        // assign: a rewritten row (markLastMessageAsInterrupted) re-emits its
+        // original, older sequence.
         if (event.kind === 'message' && !isPartialMessageId(event.message.id)) {
-          watermark = event.message.sequence;
+          watermark = Math.max(watermark, event.message.sequence);
         }
         return tracked(formatResumeToken(watermark, ++counter), event);
       };
 
       // Subscribe before any awaits so we don't miss live events during replay.
       const { queue, takeOverflow, waitForEvent, unsubscribe } =
-        createEventQueue<SessionStreamEvent>((push) =>
-          sseEvents.onSessionEvents(input.sessionId, push)
+        createEventQueue<SessionStreamEvent>(
+          (push) => sseEvents.onSessionEvents(input.sessionId, push),
+          { coalesceKey: partialMessageKey }
         );
 
       try {
@@ -147,13 +171,10 @@ export const sseRouter = router({
 
         while (!signal?.aborted) {
           if (takeOverflow()) {
-            // The dropped events may have included persisted messages: replay them
-            // from the watermark (the client dedupes by id), then tell the client
-            // to refetch the latest-value state that can't be replayed.
-            for (const message of await loadMessagesAfter(input.sessionId, watermark)) {
-              yield track({ kind: 'message', message });
-            }
-            yield track({ kind: 'resync' });
+            // Dropped persisted messages are not replayed here: the client's
+            // history refetch covers them, and a later reconnect replays from the
+            // (now lagging) watermark, which the client dedupes by id.
+            yield track(RESYNC);
           } else if (queue.length > 0) {
             yield track(queue.shift()!);
           } else {
@@ -185,7 +206,7 @@ export const sseRouter = router({
       try {
         while (!signal?.aborted) {
           if (takeOverflow()) {
-            yield track({ kind: 'resync' });
+            yield track(RESYNC);
           } else if (queue.length > 0) {
             yield track(queue.shift()!);
           } else {

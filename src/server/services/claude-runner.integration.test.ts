@@ -450,7 +450,7 @@ describe('claude-runner persistent streaming loop', () => {
       const row = await testPrisma.session.findUnique({ where: { id } });
       expect(row?.currentBranch).toBe('feat-a');
       expect(JSON.parse(row!.pullRequest!)).toEqual(pr);
-      // No session_update means no needless list refetch on every turn end.
+      // No session event means no needless list refetch on every turn end.
       expect(mockSseEvents.emitSessionUpdate).not.toHaveBeenCalled();
       stopSession(id);
     });

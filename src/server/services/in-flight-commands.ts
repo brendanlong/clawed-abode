@@ -14,7 +14,7 @@ const log = createLogger('in-flight-commands');
 /**
  * Delivery tracking for user messages pushed into the SDK but not yet visibly
  * worked on — see {@link InFlightCommand} for the two stages. Rationale for the
- * design (why `claude_running` includes undelivered messages, why retirement is
+ * design (why `running` includes undelivered messages, why retirement is
  * never time-based, why Stop cancels before interrupting) is in
  * doc/claude-sessions.md under "Sends Are Immediate".
  */
@@ -25,7 +25,7 @@ export function effectiveRunning(state: SessionState): boolean {
 }
 
 /**
- * Emit `claude_running` if the effective value changed since the last emit. Called
+ * Emit `running` if the effective value changed since the last emit. Called
  * after anything that can move either input (a status fold, a push, a delivery).
  */
 export function syncRunning(sessionId: string, state: SessionState): boolean {

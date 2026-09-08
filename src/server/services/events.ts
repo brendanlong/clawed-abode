@@ -42,7 +42,9 @@ export type SessionStreamEvent =
  * - `finished`: a main-agent turn ended **naturally** (not interrupted, not
  *   stopped/torn down) and left nothing pending. Distinct from `running: false`,
  *   which also fires on interrupt/stop/error — this is the genuine "Claude
- *   finished" signal the work-complete notifier keys off of.
+ *   finished" signal the work-complete notifier keys off of. It is the one list
+ *   event a refetch can't reconstruct, so a stream `resync` (buffer overflow)
+ *   can lose a notification.
  * - `background`: the session's background-task set flipped between empty and
  *   non-empty, so the badge can flip live even when the change produces no
  *   `running`/`finished` edge (the last background task settling with no

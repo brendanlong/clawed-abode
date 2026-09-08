@@ -34,9 +34,8 @@ interface UseSessionStreamOptions {
 }
 
 /**
- * Single multiplexed SSE subscription for a session. Replaces the previous five
- * per-channel subscriptions: it opens one `EventSource` and fans each event kind
- * out to the relevant React Query cache.
+ * Single multiplexed SSE subscription for a session: one `EventSource`, fanning
+ * each event kind out to the relevant React Query cache.
  *
  * Catch-up: the subscription is gated until history has loaded, then started with
  * a one-time `afterSequence` anchor (the client's newest cached sequence, frozen in
@@ -44,8 +43,8 @@ interface UseSessionStreamOptions {
  * turn). That closes the gap between the `getHistory` snapshot and the stream
  * attaching. Subsequent reconnects use tRPC's native `lastEventId` resume instead.
  *
- * On a connection error we refetch every mounted live query (resyncLiveQueries)
- * as a belt-and-suspenders resync. Returns the subscription connection status
+ * On a connection error, or a server `resync` (its event buffer overflowed), we
+ * refetch every mounted live query (resyncLiveQueries). Returns the subscription connection status
  * for a UI indicator.
  */
 export function useSessionStream(sessionId: string, options: UseSessionStreamOptions) {
@@ -125,8 +124,6 @@ export function useSessionStream(sessionId: string, options: UseSessionStreamOpt
             break;
           }
           case 'resync': {
-            // The server dropped buffered events (a stalled consumer); latest-value
-            // state may be stale.
             void resyncLiveQueries(queryClient);
             break;
           }

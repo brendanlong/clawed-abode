@@ -11,7 +11,7 @@ const log = createLogger('session-branch-pr');
 /**
  * Detect a branch change and refresh the persisted PR status for the session
  * (fire-and-forget, called at each turn end). PR status lives on the Session row
- * so the list never has to ask GitHub; one `session_update` carries both fields.
+ * so the list never has to ask GitHub; one `session` event carries both fields.
  */
 export async function detectBranchAndPr(sessionId: string, workingDir: string): Promise<void> {
   try {
