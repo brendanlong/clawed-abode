@@ -36,6 +36,17 @@ export function useClaudeState(sessionId: string) {
     { staleTime: Infinity, ...LIVE_QUERY_OPTIONS }
   );
 
+  // Prompts held back by a subscription rate-limit pause, and the pause itself.
+  const { data: queuedData } = trpc.claude.getQueuedMessageIds.useQuery(
+    { sessionId },
+    { staleTime: Infinity, ...LIVE_QUERY_OPTIONS }
+  );
+
+  const { data: rateLimitData } = trpc.claude.getRateLimitHold.useQuery(
+    { sessionId },
+    { staleTime: Infinity, ...LIVE_QUERY_OPTIONS }
+  );
+
   const sendMutation = trpc.claude.send.useMutation();
   const interruptMutation = trpc.claude.interrupt.useMutation();
   const answerMutation = trpc.claude.answerQuestion.useMutation();
@@ -86,6 +97,8 @@ export function useClaudeState(sessionId: string) {
   const retry = retryData?.retry ?? null;
   const backgroundTasks = backgroundData?.tasks ?? [];
   const pendingMessageIds = pendingData?.messageIds ?? [];
+  const queuedMessageIds = queuedData?.messageIds ?? [];
+  const rateLimitHold = rateLimitData?.hold ?? null;
 
   return {
     isRunning,
@@ -95,6 +108,10 @@ export function useClaudeState(sessionId: string) {
     // a permanently-backgrounded Bash daemon (dev server) shouldn't read as "busy".
     backgroundActive: backgroundTasks.some(taskHasEndState),
     pendingMessageIds,
+    queuedMessageIds,
+    // The session's subscription rate-limit pause, or null. Sends still succeed
+    // while paused — the server queues them — so this never gates the composer.
+    rateLimitHold,
     send,
     interrupt,
     isInterrupting: interruptMutation.isPending,

@@ -26,6 +26,8 @@ vi.mock('../services/claude-runner', () => ({
   cleanupSession: vi.fn(),
   isClaudeRunning: vi.fn().mockReturnValue(false),
   isSessionBackgroundActive: vi.fn().mockReturnValue(false),
+  isSessionRateLimitPaused: vi.fn().mockReturnValue(false),
+  recomputeRateLimitHolds: vi.fn().mockResolvedValue(undefined),
   refreshSessionSettings: mockRefreshSessionSettings,
 }));
 

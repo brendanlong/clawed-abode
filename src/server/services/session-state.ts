@@ -41,6 +41,12 @@ export interface InFlightCommand {
   text: string;
   /** Stored names of files attached to it (see /api/upload), likewise. */
   attachments: string[];
+  /**
+   * The prepared text actually pushed into the SDK (attachment paths prefixed,
+   * sanitized). Kept so a recall can re-push the message verbatim instead of
+   * re-preparing it — a rate-limit pause re-queues rather than discards.
+   */
+  content: string;
   /** The CLI reported the agent has read it (`command_lifecycle` left `queued`). */
   started: boolean;
   /** Top-level `result`s seen since the push — see retireInFlightCommands. */

@@ -38,10 +38,50 @@ model Session {
   messageSequence Int       @default(0) // Monotonic counter for atomic message sequence assignment (next sequence to assign)
   sessionScope    String? // systemd user scope unit this session's CLI runs in; recorded so a crash-restart can reap the exact orphaned scope (null when not scoped / after clean teardown)
   claudeModel     String? // If set, overrides the repo/global/env Claude model for this session only (highest precedence)
-  messages        Message[]
+
+  // Rate-limit pause overrides; null means "inherit the global setting" (see src/lib/rate-limit.ts).
+  rateLimitPauseEnabled   Boolean? // If set, overrides whether this session pauses when the subscription window fills
+  rateLimitPauseThreshold Int? // If set, overrides the 5-hour-window utilization percent at which it pauses
+  // Set when a turn was cut short by a rate-limit rejection, so the session is
+  // nudged to continue once the window resets. Cleared when the nudge is sent.
+  resumeAfterRateLimit    Boolean  @default(false)
+  // Monotonic counter for atomic queued-prompt position assignment (next position to assign)
+  queuedPromptSequence    Int      @default(0)
+
+  messages      Message[]
+  queuedPrompts QueuedPrompt[]
 
   @@index([lastActivityAt, id]) // sessions.list default keyset order (status != 'archived')
   @@index([status, lastActivityAt, id]) // sessions.list keyset order filtered by status
+}
+
+// A user prompt held back while the session is paused for a subscription rate
+// limit. The transcript bubble is already persisted (messageId); this row is what
+// is pushed into the SDK once the window resets. See doc/rate-limit-pause.md.
+model QueuedPrompt {
+  id          String   @id @default(uuid())
+  sessionId   String
+  position    Int // Per-session queue order, assigned from Session.queuedPromptSequence
+  messageId   String // The persisted transcript bubble this prompt already wrote
+  content     String // Prepared (attachment-prefixed, sanitized) text to push into the SDK
+  text        String // The user's original typed text, for restore-on-cancel
+  attachments String // JSON array of stored upload names
+  createdAt   DateTime @default(now())
+
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, position])
+}
+
+// Latest known state of each subscription usage window, account-wide. Persisted
+// so a server restart doesn't release paused work into a still-exhausted window;
+// rows whose resetsAt has passed are ignored and swept.
+model RateLimitWindow {
+  limitType   String   @id // "five_hour", "seven_day", ... (see HOLDABLE_LIMIT_TYPES)
+  rejected    Boolean // The API was refusing requests against this window when observed
+  utilization Float? // Percent of the window consumed, when reported
+  resetsAt    DateTime
+  observedAt  DateTime @default(now())
 }
 
 model Message {
@@ -129,6 +169,8 @@ model GlobalSettings {
   settingSourceUser           Boolean  @default(false) // Load Claude settings from the user scope (~/.claude): skills, CLAUDE.md, hooks
   settingSourceProject        Boolean  @default(true) // Load Claude settings from the project scope (<cwd>/.claude)
   settingSourceLocal          Boolean  @default(false) // Load Claude settings from the local scope (<cwd>/.claude/settings.local.json)
+  rateLimitPauseEnabled       Boolean  @default(false) // Default for whether sessions pause when a subscription window fills
+  rateLimitPauseThreshold     Int      @default(95) // Default 5-hour-window utilization percent at which sessions pause
   createdAt                   DateTime @default(now())
   updatedAt                   DateTime @updatedAt
 }

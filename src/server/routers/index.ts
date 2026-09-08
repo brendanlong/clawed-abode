@@ -6,6 +6,7 @@ import { githubRouter } from './github';
 import { sseRouter } from './sse';
 import { repoSettingsRouter } from './repoSettings';
 import { globalSettingsRouter } from './globalSettings';
+import { rateLimitRouter } from './rateLimit';
 
 export const appRouter = router({
   auth: authRouter,
@@ -15,6 +16,7 @@ export const appRouter = router({
   sse: sseRouter,
   repoSettings: repoSettingsRouter,
   globalSettings: globalSettingsRouter,
+  rateLimit: rateLimitRouter,
 });
 
 export type AppRouter = typeof appRouter;

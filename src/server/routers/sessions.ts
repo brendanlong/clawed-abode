@@ -15,6 +15,8 @@ import {
   cleanupSession,
   isClaudeRunning,
   isSessionBackgroundActive,
+  isSessionRateLimitPaused,
+  recomputeRateLimitHolds,
   refreshSessionSettings,
 } from '../services/claude-runner';
 import { sseEvents } from '../services/events';
@@ -25,6 +27,7 @@ import { toSessionView } from '@/lib/session-view';
 import type { Prisma } from '@/generated/prisma/client';
 import { keysetPage, keysetPageInputSchema } from '@/lib/keyset-page';
 import { sessionStatusSchema } from '@/lib/session-display-status';
+import { thresholdSchema } from './rateLimit';
 
 const log = createLogger('sessions');
 
@@ -184,6 +187,7 @@ export const sessionsRouter = router({
           ...toSessionView(session),
           turnActive: isClaudeRunning(session.id),
           backgroundActive: isSessionBackgroundActive(session.id),
+          rateLimitPaused: isSessionRateLimitPaused(session.id),
         })),
         nextCursor,
       };
@@ -257,6 +261,31 @@ export const sessionsRouter = router({
   // resolveClaudeModel). Pass null/empty to clear (reverts to repo/global/env
   // model). Persisted, so it survives restarts; applied live to a running query
   // on the next turn (refreshSessionSettings applies it now if idle).
+  /**
+   * Per-session rate-limit pause overrides; null on either field inherits the
+   * global default (see resolvePausePolicy). Recomputes holds immediately so a
+   * lowered threshold parks work now rather than at the next reading.
+   */
+  setRateLimitPause: sessionProcedure
+    .input(
+      z.object({
+        enabled: z.boolean().nullable(),
+        threshold: thresholdSchema.nullable(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const updatedSession = await prisma.session.update({
+        where: { id: ctx.session.id },
+        data: {
+          rateLimitPauseEnabled: input.enabled,
+          rateLimitPauseThreshold: input.threshold,
+        },
+      });
+      await recomputeRateLimitHolds();
+      sseEvents.emitSessionUpdate(input.sessionId, updatedSession);
+      return { session: toSessionView(updatedSession) };
+    }),
+
   setModel: sessionProcedure
     .input(z.object({ claudeModel: z.string().max(200).nullable() }))
     .mutation(async ({ ctx, input }) => {

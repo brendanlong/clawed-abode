@@ -5,6 +5,7 @@ import { Paperclip, X, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { VoiceMicButton } from '@/components/voice/VoiceMicButton';
+import { RateLimitPauseBanner } from '@/components/RateLimitPauseBanner';
 import { useVoiceRecording } from '@/hooks/useVoiceRecording';
 import { useFileUpload } from '@/hooks/useFileUpload';
 import { useSendWithRestore } from '@/hooks/useSendWithRestore';
@@ -14,6 +15,7 @@ import {
   mergeCancelledAttachments,
   type CancelledPrompt,
 } from '@/lib/cancelled-prompt';
+import type { RateLimitHold } from '@/lib/rate-limit';
 
 interface ComposerDraft {
   text: string;
@@ -66,6 +68,14 @@ interface PromptInputProps {
   commands?: SlashCommand[];
   voiceEnabled?: boolean;
   voiceAutoSend?: boolean;
+  /**
+   * The session's subscription rate-limit pause, or null. Sends are still
+   * accepted while paused — the server queues them — so this only renders the
+   * explanatory banner; it never disables the composer.
+   */
+  rateLimitHold?: RateLimitHold | null;
+  /** How many of this session's prompts are parked behind the pause. */
+  queuedCount?: number;
 }
 
 export function PromptInput({
@@ -78,6 +88,8 @@ export function PromptInput({
   commands = [],
   voiceEnabled = false,
   voiceAutoSend = true,
+  rateLimitHold = null,
+  queuedCount = 0,
 }: PromptInputProps) {
   const send = useCallback(
     (draft: ComposerDraft) =>
@@ -269,167 +281,179 @@ export function PromptInput({
   }, [selectedIndex, showCommands]);
 
   return (
-    <form onSubmit={handleSubmit} className="border-t bg-background p-4">
-      <div className="relative">
-        {showCommands && (
-          <div
-            ref={commandsRef}
-            className="absolute bottom-full left-0 right-0 mb-1 max-h-64 overflow-y-auto rounded-md border bg-popover shadow-md z-50"
-          >
-            {filteredCommands.map((command, index) => (
-              <button
-                key={command.name}
-                type="button"
-                data-selected={index === selectedIndex}
-                className={`w-full text-left px-3 py-2 text-sm hover:bg-accent cursor-pointer ${
-                  index === selectedIndex ? 'bg-accent' : ''
-                }`}
-                onMouseDown={(e) => {
-                  // Use onMouseDown to prevent textarea blur before click fires
-                  e.preventDefault();
-                  insertCommand(command);
-                }}
-                onMouseEnter={() => setSelectedIndex(index)}
-              >
-                <div className="flex items-baseline gap-2">
-                  <span className="font-mono font-medium text-foreground">/{command.name}</span>
-                  {command.argumentHint && (
-                    <span className="text-muted-foreground text-xs">{command.argumentHint}</span>
-                  )}
-                </div>
-                <div className="text-muted-foreground text-xs mt-0.5">{command.description}</div>
-              </button>
-            ))}
-          </div>
-        )}
-
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          className="hidden"
-          onChange={(e) => {
-            void handleFilesSelected(e.currentTarget.files);
-            // Reset so selecting the same file again re-triggers onChange.
-            e.currentTarget.value = '';
-          }}
+    <>
+      {rateLimitHold && (
+        // Clearing the queue goes through the same Stop path as an interrupt, so
+        // the recalled prompts land back in this composer.
+        <RateLimitPauseBanner
+          hold={rateLimitHold}
+          queuedCount={queuedCount}
+          onClearQueue={handleInterrupt}
+          isClearing={isInterrupting}
         />
-
-        {(attachments.length > 0 || uploadError || sendError) && (
-          <div className="mb-2 flex flex-wrap items-center gap-2">
-            {attachments.map((att) => (
-              <span
-                key={att.storedName}
-                className="inline-flex items-center gap-1.5 rounded-md border bg-muted px-2 py-1 text-xs"
-              >
-                <Paperclip className="h-3 w-3 shrink-0 text-muted-foreground" />
-                <span className="max-w-[12rem] truncate" title={att.name}>
-                  {att.name}
-                </span>
+      )}
+      <form onSubmit={handleSubmit} className="border-t bg-background p-4">
+        <div className="relative">
+          {showCommands && (
+            <div
+              ref={commandsRef}
+              className="absolute bottom-full left-0 right-0 mb-1 max-h-64 overflow-y-auto rounded-md border bg-popover shadow-md z-50"
+            >
+              {filteredCommands.map((command, index) => (
                 <button
+                  key={command.name}
                   type="button"
-                  onClick={() => removeAttachment(att.storedName)}
-                  className="text-muted-foreground hover:text-foreground"
-                  aria-label={`Remove ${att.name}`}
+                  data-selected={index === selectedIndex}
+                  className={`w-full text-left px-3 py-2 text-sm hover:bg-accent cursor-pointer ${
+                    index === selectedIndex ? 'bg-accent' : ''
+                  }`}
+                  onMouseDown={(e) => {
+                    // Use onMouseDown to prevent textarea blur before click fires
+                    e.preventDefault();
+                    insertCommand(command);
+                  }}
+                  onMouseEnter={() => setSelectedIndex(index)}
                 >
-                  <X className="h-3 w-3" />
+                  <div className="flex items-baseline gap-2">
+                    <span className="font-mono font-medium text-foreground">/{command.name}</span>
+                    {command.argumentHint && (
+                      <span className="text-muted-foreground text-xs">{command.argumentHint}</span>
+                    )}
+                  </div>
+                  <div className="text-muted-foreground text-xs mt-0.5">{command.description}</div>
                 </button>
-              </span>
-            ))}
-            {uploadError && (
-              <span className="inline-flex items-center gap-1.5 text-xs text-destructive">
-                {uploadError}
-                <button
-                  type="button"
-                  onClick={clearError}
-                  className="hover:text-foreground"
-                  aria-label="Dismiss upload error"
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              </span>
-            )}
-            {sendError && (
-              <span className="inline-flex items-center gap-1.5 text-xs text-destructive">
-                {sendError}
-                <button
-                  type="button"
-                  onClick={clearSendError}
-                  className="hover:text-foreground"
-                  aria-label="Dismiss send error"
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              </span>
-            )}
-          </div>
-        )}
-
-        <div className="flex items-end gap-2">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={disabled || uploading}
-            title="Attach files"
-            aria-label="Attach files"
-          >
-            {uploading ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Paperclip className="h-4 w-4" />
-            )}
-          </Button>
-
-          <div className="flex-1">
-            <Textarea
-              ref={textareaRef}
-              value={isRecording && interimTranscript ? prompt + interimTranscript : prompt}
-              onChange={handleChange}
-              onKeyDown={handleKeyDown}
-              placeholder={
-                disabled
-                  ? 'Session is not running'
-                  : isRecording
-                    ? 'Listening...'
-                    : isRunning
-                      ? "Claude is working — send anyway, it'll read it as it goes"
-                      : 'Type your message... (Enter to send, Shift+Enter for new line)'
-              }
-              disabled={disabled}
-              readOnly={isRecording}
-              rows={1}
-              className="min-h-[44px] resize-none"
-            />
-          </div>
-
-          {voiceEnabled && (
-            <VoiceMicButton
-              isRecording={isRecording}
-              onClick={handleMicClick}
-              disabled={disabled}
-              error={voiceError}
-            />
+              ))}
+            </div>
           )}
 
-          {/* While a turn runs, Stop interrupts it; Send still delivers straight
-              to the agent, which reads it mid-turn. */}
-          {isRunning && (
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              void handleFilesSelected(e.currentTarget.files);
+              // Reset so selecting the same file again re-triggers onChange.
+              e.currentTarget.value = '';
+            }}
+          />
+
+          {(attachments.length > 0 || uploadError || sendError) && (
+            <div className="mb-2 flex flex-wrap items-center gap-2">
+              {attachments.map((att) => (
+                <span
+                  key={att.storedName}
+                  className="inline-flex items-center gap-1.5 rounded-md border bg-muted px-2 py-1 text-xs"
+                >
+                  <Paperclip className="h-3 w-3 shrink-0 text-muted-foreground" />
+                  <span className="max-w-[12rem] truncate" title={att.name}>
+                    {att.name}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => removeAttachment(att.storedName)}
+                    className="text-muted-foreground hover:text-foreground"
+                    aria-label={`Remove ${att.name}`}
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              ))}
+              {uploadError && (
+                <span className="inline-flex items-center gap-1.5 text-xs text-destructive">
+                  {uploadError}
+                  <button
+                    type="button"
+                    onClick={clearError}
+                    className="hover:text-foreground"
+                    aria-label="Dismiss upload error"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              )}
+              {sendError && (
+                <span className="inline-flex items-center gap-1.5 text-xs text-destructive">
+                  {sendError}
+                  <button
+                    type="button"
+                    onClick={clearSendError}
+                    className="hover:text-foreground"
+                    aria-label="Dismiss send error"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              )}
+            </div>
+          )}
+
+          <div className="flex items-end gap-2">
             <Button
               type="button"
-              variant="destructive"
-              onClick={handleInterrupt}
-              disabled={isInterrupting}
+              variant="ghost"
+              size="icon"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={disabled || uploading}
+              title="Attach files"
+              aria-label="Attach files"
             >
-              {isInterrupting ? 'Stopping...' : 'Stop'}
+              {uploading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Paperclip className="h-4 w-4" />
+              )}
             </Button>
-          )}
-          <Button type="submit" disabled={!canSubmit}>
-            Send
-          </Button>
+
+            <div className="flex-1">
+              <Textarea
+                ref={textareaRef}
+                value={isRecording && interimTranscript ? prompt + interimTranscript : prompt}
+                onChange={handleChange}
+                onKeyDown={handleKeyDown}
+                placeholder={
+                  disabled
+                    ? 'Session is not running'
+                    : isRecording
+                      ? 'Listening...'
+                      : isRunning
+                        ? "Claude is working — send anyway, it'll read it as it goes"
+                        : 'Type your message... (Enter to send, Shift+Enter for new line)'
+                }
+                disabled={disabled}
+                readOnly={isRecording}
+                rows={1}
+                className="min-h-[44px] resize-none"
+              />
+            </div>
+
+            {voiceEnabled && (
+              <VoiceMicButton
+                isRecording={isRecording}
+                onClick={handleMicClick}
+                disabled={disabled}
+                error={voiceError}
+              />
+            )}
+
+            {/* While a turn runs, Stop interrupts it; Send still delivers straight
+              to the agent, which reads it mid-turn. */}
+            {isRunning && (
+              <Button
+                type="button"
+                variant="destructive"
+                onClick={handleInterrupt}
+                disabled={isInterrupting}
+              >
+                {isInterrupting ? 'Stopping...' : 'Stop'}
+              </Button>
+            )}
+            <Button type="submit" disabled={!canSubmit}>
+              Send
+            </Button>
+          </div>
         </div>
-      </div>
-    </form>
+      </form>
+    </>
   );
 }

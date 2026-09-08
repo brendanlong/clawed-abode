@@ -7,7 +7,7 @@ import { SubagentTranscript } from './messages/SubagentTranscript';
 import { TaskDisplay } from './messages/TaskDisplay';
 import type { ToolCall, MessageContent, DisplayMessage } from './messages/types';
 import { MessageListProvider } from './messages/MessageListContext';
-import { Clock } from 'lucide-react';
+import { Clock, PauseCircle } from 'lucide-react';
 import { Spinner } from '@/components/ui/spinner';
 import { ContextUsageIndicator } from '@/components/ContextUsageIndicator';
 import type { TokenUsageStats } from '@/lib/token-estimation';
@@ -46,6 +46,11 @@ interface MessageListProps {
    */
   pendingMessageIds?: string[];
   /**
+   * Ids of user messages parked by a rate-limit pause — never handed to the SDK
+   * at all, so they get their own marker rather than "Sending…".
+   */
+  queuedMessageIds?: string[];
+  /**
    * Whether the session's query is live. Gates pinning a still-running subagent's
    * box to the bottom (a subagent whose result was lost to a dead query would
    * otherwise pin forever). See {@link computeSubagentPlacements}.
@@ -63,6 +68,7 @@ export function MessageList({
   onAnswerQuestion,
   onRespondToPlan,
   pendingMessageIds = [],
+  queuedMessageIds = [],
   isSessionRunning = false,
 }: MessageListProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -362,6 +368,7 @@ export function MessageList({
   );
 
   const pendingIds = useMemo(() => new Set(pendingMessageIds), [pendingMessageIds]);
+  const queuedIds = useMemo(() => new Set(queuedMessageIds), [queuedMessageIds]);
 
   const contextValue = useMemo(
     () => ({
@@ -465,6 +472,12 @@ export function MessageList({
                   <span className="mt-1 inline-flex items-center gap-1 text-xs text-muted-foreground">
                     <Clock className="h-3 w-3" />
                     Sending…
+                  </span>
+                )}
+                {queuedIds.has(message.id) && (
+                  <span className="mt-1 inline-flex items-center gap-1 text-xs text-muted-foreground">
+                    <PauseCircle className="h-3 w-3" />
+                    Queued — waiting for the usage limit to reset
                   </span>
                 )}
               </div>

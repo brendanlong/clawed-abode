@@ -64,6 +64,8 @@ function SessionView({ sessionId }: { sessionId: string }) {
     backgroundTasks,
     backgroundActive,
     pendingMessageIds,
+    queuedMessageIds,
+    rateLimitHold,
     send: sendPrompt,
     interrupt,
     isInterrupting,
@@ -280,6 +282,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
           onAnswerQuestion={answerQuestion}
           onRespondToPlan={respondToPlan}
           pendingMessageIds={pendingMessageIds}
+          queuedMessageIds={queuedMessageIds}
           isSessionRunning={isClaudeRunning}
         />
 
@@ -315,6 +318,8 @@ function SessionView({ sessionId }: { sessionId: string }) {
               commands={commands}
               voiceEnabled={voiceConfig.sttEnabled}
               voiceAutoSend={voiceConfig.autoSend}
+              rateLimitHold={rateLimitHold}
+              queuedCount={queuedMessageIds.length}
             />
           </>
         )}

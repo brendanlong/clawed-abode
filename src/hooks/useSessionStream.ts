@@ -123,6 +123,17 @@ export function useSessionStream(sessionId: string, options: UseSessionStreamOpt
             );
             break;
           }
+          case 'queued': {
+            utils.claude.getQueuedMessageIds.setData(
+              { sessionId },
+              { messageIds: event.messageIds }
+            );
+            break;
+          }
+          case 'rate_limit': {
+            utils.claude.getRateLimitHold.setData({ sessionId }, { hold: event.hold });
+            break;
+          }
           case 'resync': {
             void resyncLiveQueries(queryClient);
             break;

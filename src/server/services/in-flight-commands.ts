@@ -130,50 +130,74 @@ function asCancelCapable(query: Query): CancelCapableQuery | null {
 }
 
 /**
- * Pull back every message we pushed that the agent hasn't read yet, deleting their
- * bubbles and handing the text/attachments back for the composer. Must run
- * **before** `interrupt()`: the abort wakes the CLI's drain loop, which starts the
- * next queued command immediately (see doc/claude-sessions.md).
+ * Pull back every message we pushed that the agent hasn't read yet, in push order.
+ * The bubbles are left alone — the two callers disagree about what to do with them
+ * (Stop deletes them, a rate-limit pause keeps them and re-queues) — so disposing
+ * of them is the caller's job.
+ *
+ * Must run **before** `interrupt()`: the abort wakes the CLI's drain loop, which
+ * starts the next queued command immediately (see doc/claude-sessions.md).
+ */
+export async function recallUnstartedCommands(
+  sessionId: string,
+  state: SessionState,
+  query: Query
+): Promise<InFlightCommand[]> {
+  const recallable = [...state.inFlightCommands].filter(([, c]) => !c.started);
+  const canceller = recallable.length > 0 ? asCancelCapable(query) : null;
+  if (!canceller) return [];
+
+  const recalled: InFlightCommand[] = [];
+  for (const [commandUuid, command] of recallable) {
+    let dropped = false;
+    try {
+      dropped = await canceller.cancelAsyncMessage(commandUuid);
+    } catch (err) {
+      log.warn('recallUnstartedCommands: cancelAsyncMessage failed', {
+        sessionId,
+        error: toError(err).message,
+      });
+    }
+    // false = the CLI already dequeued it; the agent did read it, so it stays put.
+    if (!dropped) continue;
+    state.inFlightCommands.delete(commandUuid);
+    recalled.push(command);
+  }
+
+  if (recalled.length === 0) return [];
+  sseEvents.emitPendingMessages(sessionId, pendingMessageIds(state));
+  syncRunning(sessionId, state);
+  return recalled;
+}
+
+/**
+ * Recall for Stop: the prompts never happened, so their bubbles are deleted and
+ * the text/attachments handed back for the composer to restore.
  */
 export async function cancelInFlightCommands(
   sessionId: string,
   state: SessionState,
   query: Query
 ): Promise<CancelledPrompt[]> {
-  const recallable = [...state.inFlightCommands].filter(([, c]) => !c.started);
-  const canceller = recallable.length > 0 ? asCancelCapable(query) : null;
-  if (!canceller) return [];
+  const recalled = await recallUnstartedCommands(sessionId, state, query);
+  if (recalled.length === 0) return [];
 
-  const recalled: InFlightCommand[] = [];
-  const removedMessageIds: string[] = [];
-  for (const [commandUuid, command] of recallable) {
-    let dropped = false;
-    try {
-      dropped = await canceller.cancelAsyncMessage(commandUuid);
-    } catch (err) {
-      log.warn('cancelInFlightCommands: cancelAsyncMessage failed', {
-        sessionId,
-        error: toError(err).message,
-      });
-    }
-    // false = the CLI already dequeued it; the agent did read it, so its bubble stays.
-    if (!dropped) continue;
-    state.inFlightCommands.delete(commandUuid);
-    recalled.push(command);
-    removedMessageIds.push(command.messageId);
-  }
-
-  if (removedMessageIds.length === 0) return [];
-  await removeMessages(sessionId, removedMessageIds);
-  sseEvents.emitPendingMessages(sessionId, pendingMessageIds(state));
-  syncRunning(sessionId, state);
-
-  return Promise.all(
-    recalled.map(async (command) => ({
-      text: command.text,
-      attachments: await describeAttachments(sessionId, command.attachments),
-    }))
+  await removeMessages(
+    sessionId,
+    recalled.map((command) => command.messageId)
   );
+  return Promise.all(recalled.map((command) => describeCancelledPrompt(sessionId, command)));
+}
+
+/** Rebuild the composer-restorable form of a recalled prompt. */
+export async function describeCancelledPrompt(
+  sessionId: string,
+  command: { text: string; attachments: string[] }
+): Promise<CancelledPrompt> {
+  return {
+    text: command.text,
+    attachments: await describeAttachments(sessionId, command.attachments),
+  };
 }
 
 /**

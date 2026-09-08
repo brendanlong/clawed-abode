@@ -31,6 +31,7 @@ function session(overrides: Partial<Session> & Pick<Session, 'id' | 'name'>): Se
     pullRequest: null,
     turnActive: false,
     backgroundActive: false,
+    rateLimitPaused: false,
     lastActivityAt: new Date('2024-01-15T10:00:00Z'),
     createdAt: new Date('2024-01-15T09:00:00Z'),
     ...overrides,

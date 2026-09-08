@@ -2,6 +2,7 @@ import { EventEmitter } from 'events';
 import type { Message, Session } from '@/generated/prisma/client';
 import type { SlashCommand } from '@anthropic-ai/claude-agent-sdk';
 import type { RetryState } from '@/lib/claude-messages';
+import type { RateLimitHold } from '@/lib/rate-limit';
 import { toSessionView, type SessionView } from '@/lib/session-view';
 import { taskHasEndState, type BackgroundTask } from '@/lib/session-status';
 
@@ -20,6 +21,10 @@ type ParsedMessage = Omit<Message, 'content'> & { content: unknown };
  * - `pending`: ids of persisted user messages the SDK has accepted but not yet
  *   handed to the model. The full set every time (not a delta), so a reconnecting
  *   client can't drift. See `inFlightCommands` in session-state / in-flight-commands.
+ * - `queued`: ids of persisted user messages held back by a rate-limit pause,
+ *   likewise the full set. Distinct from `pending`: those are with the SDK, these
+ *   have never left the server (see doc/rate-limit-pause.md).
+ * - `rate_limit`: this session's rate-limit hold, or null when it may work.
  */
 export type SessionStreamEvent =
   | { kind: 'message'; message: ParsedMessage }
@@ -29,7 +34,9 @@ export type SessionStreamEvent =
   | { kind: 'session'; session: SessionView<Session> }
   | { kind: 'retry'; retry: RetryState | null }
   | { kind: 'background'; tasks: BackgroundTask[] }
-  | { kind: 'pending'; messageIds: string[] };
+  | { kind: 'pending'; messageIds: string[] }
+  | { kind: 'queued'; messageIds: string[] }
+  | { kind: 'rate_limit'; hold: RateLimitHold | null };
 
 /**
  * Events fanned out to the global session-list channel (`sse.onSessionListEvents`),
@@ -49,12 +56,15 @@ export type SessionStreamEvent =
  *   non-empty, so the badge can flip live even when the change produces no
  *   `running`/`finished` edge (the last background task settling with no
  *   main-agent continuation, or a user ✕-stopping it).
+ * - `rate_limit`: the session started or stopped being paused for a subscription
+ *   rate limit, so the list badge and the global paused banner can update.
  */
 export type SessionListEvent =
   | { kind: 'session'; sessionId: string; name: string }
   | { kind: 'running'; sessionId: string; running: boolean }
   | { kind: 'finished'; sessionId: string }
-  | { kind: 'background'; sessionId: string; active: boolean };
+  | { kind: 'background'; sessionId: string; active: boolean }
+  | { kind: 'rate_limit'; sessionId: string; paused: boolean };
 
 // Global channel name for cross-session list updates (not session-scoped).
 const SESSION_LIST_EVENT = 'session-list';
@@ -108,6 +118,15 @@ class SSEEventEmitter extends EventEmitter {
 
   emitPendingMessages(sessionId: string, messageIds: string[]): void {
     this.emitSession(sessionId, { kind: 'pending', messageIds });
+  }
+
+  emitQueuedMessages(sessionId: string, messageIds: string[]): void {
+    this.emitSession(sessionId, { kind: 'queued', messageIds });
+  }
+
+  emitRateLimitHold(sessionId: string, hold: RateLimitHold | null): void {
+    this.emitSession(sessionId, { kind: 'rate_limit', hold });
+    this.emitList({ kind: 'rate_limit', sessionId, paused: hold !== null });
   }
 
   onSessionEvents(sessionId: string, callback: (event: SessionStreamEvent) => void): () => void {

@@ -11,6 +11,8 @@ import {
   getSessionBackgroundTasks,
   stopBackgroundTask,
   getPendingMessageIds,
+  getQueuedMessageIds,
+  getSessionRateLimitHold,
 } from '../services/claude-runner';
 import {
   markLastMessageAsInterrupted,
@@ -258,6 +260,23 @@ export const claudeRouter = router({
     .input(z.object({ sessionId: z.string().uuid() }))
     .query(({ input }) => {
       return { messageIds: getPendingMessageIds(input.sessionId) };
+    }),
+
+  // This session's subscription rate-limit pause, or null when it may work.
+  // Updates stream live over the `rate_limit` SSE channel; this seeds the initial
+  // value and resyncs on reconnect.
+  getRateLimitHold: protectedProcedure
+    .input(z.object({ sessionId: z.string().uuid() }))
+    .query(async ({ input }) => {
+      return { hold: await getSessionRateLimitHold(input.sessionId) };
+    }),
+
+  // Transcript ids of prompts held back by a rate-limit pause, in queue order.
+  // Updates stream live over the `queued` SSE channel.
+  getQueuedMessageIds: protectedProcedure
+    .input(z.object({ sessionId: z.string().uuid() }))
+    .query(async ({ input }) => {
+      return { messageIds: await getQueuedMessageIds(input.sessionId) };
     }),
 
   // Stop a single running background task.

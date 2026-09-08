@@ -39,6 +39,7 @@ function stateWith(commands: Record<string, { started?: boolean }>) {
       messageId: `m-${uuid}`,
       text: uuid,
       attachments: [],
+      content: uuid,
       started: c.started ?? false,
       resultsSeen: 0,
     });
