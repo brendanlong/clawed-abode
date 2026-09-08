@@ -74,11 +74,15 @@ vi.mock('./settings-merger', async (importOriginal) => {
 });
 
 import { createPushable } from '@/lib/pushable';
-import { GLOBAL_SETTINGS_ID } from './settings-scope';
 
+// Everything that reaches @/lib/prisma is imported dynamically in beforeAll,
+// after setupTestDb has pointed DATABASE_URL at the throwaway database. A static
+// import instantiates the client against the default path at module load, which
+// only works on a machine that happens to have a dev database already.
 type Runner = typeof import('./claude-runner');
 let runner: Runner;
 let resetRateLimitState: typeof import('./rate-limit-state')._resetRateLimitState;
+let GLOBAL_SETTINGS_ID: string;
 
 const HOUR_MS = 60 * 60 * 1000;
 const NOW = Date.UTC(2026, 8, 7, 12, 0, 0);
@@ -220,6 +224,7 @@ describe('rate-limit pause', () => {
     await setupTestDb();
     runner = await import('./claude-runner');
     resetRateLimitState = (await import('./rate-limit-state'))._resetRateLimitState;
+    GLOBAL_SETTINGS_ID = (await import('./settings-scope')).GLOBAL_SETTINGS_ID;
   });
   afterAll(async () => {
     await teardownTestDb();
