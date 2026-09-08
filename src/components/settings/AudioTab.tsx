@@ -5,7 +5,6 @@ import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Spinner } from '@/components/ui/spinner';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Slider } from '@/components/ui/slider';
 import {
   Select,
@@ -18,6 +17,7 @@ import { trpc } from '@/lib/trpc';
 import { useVoiceConfig } from '@/hooks/useVoiceConfig';
 import { useSpeechSynthesisVoices } from '@/hooks/useSpeechSynthesisVoices';
 import { dedupeAndSortVoices } from '@/lib/tts';
+import { SettingsCard } from './shared/SettingsCard';
 
 export function AudioTab() {
   const { data: settings, isLoading, refetch } = trpc.globalSettings.get.useQuery();
@@ -32,46 +32,26 @@ export function AudioTab() {
 
   return (
     <div className="space-y-6">
-      <Card>
-        <CardHeader>
-          <CardTitle>TTS Voice</CardTitle>
-          <CardDescription>
-            Select the voice for text-to-speech playback. Available voices depend on your device and
-            browser. This preference is stored per-device.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <TtsVoiceSection />
-        </CardContent>
-      </Card>
+      <SettingsCard
+        title="TTS Voice"
+        description="Select the voice for text-to-speech playback. Available voices depend on your device and browser. This preference is stored per-device."
+      >
+        <TtsVoiceSection />
+      </SettingsCard>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>TTS Speed</CardTitle>
-          <CardDescription>
-            Controls how fast the browser text-to-speech voice speaks (using the Web Speech API).
-            Range: 0.25x (very slow) to 4.0x (very fast). Default is 1.0x.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <TtsSpeedSection currentSpeed={settings?.ttsSpeed ?? null} onUpdate={refetch} />
-        </CardContent>
-      </Card>
+      <SettingsCard
+        title="TTS Speed"
+        description="Controls how fast the browser text-to-speech voice speaks (using the Web Speech API). Range: 0.25x (very slow) to 4.0x (very fast). Default is 1.0x."
+      >
+        <TtsSpeedSection currentSpeed={settings?.ttsSpeed ?? null} onUpdate={refetch} />
+      </SettingsCard>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Auto-Send Voice Input</CardTitle>
-          <CardDescription>
-            When enabled, speech-to-text transcripts are automatically sent as prompts after
-            recording stops. When disabled, transcripts are inserted into the input field for
-            editing before sending. Uses the browser&apos;s built-in speech recognition (Web Speech
-            API).
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <VoiceAutoSendSection autoSend={settings?.voiceAutoSend ?? true} onUpdate={refetch} />
-        </CardContent>
-      </Card>
+      <SettingsCard
+        title="Auto-Send Voice Input"
+        description="When enabled, speech-to-text transcripts are automatically sent as prompts after recording stops. When disabled, transcripts are inserted into the input field for editing before sending. Uses the browser's built-in speech recognition (Web Speech API)."
+      >
+        <VoiceAutoSendSection autoSend={settings?.voiceAutoSend ?? true} onUpdate={refetch} />
+      </SettingsCard>
     </div>
   );
 }
@@ -149,24 +129,18 @@ function TtsSpeedSection({
   onUpdate: () => void;
 }) {
   const [editValue, setEditValue] = useState(currentSpeed ?? 1.0);
-  const [error, setError] = useState<string | null>(null);
 
-  const mutation = trpc.globalSettings.setTtsSpeed.useMutation({
-    onSuccess: () => onUpdate(),
-    onError: (err) => setError(err.message),
-  });
+  const mutation = trpc.globalSettings.setTtsSpeed.useMutation({ onSuccess: onUpdate });
 
   const handleChange = (value: number[]) => {
     setEditValue(value[0]);
   };
 
   const handleCommit = (value: number[]) => {
-    setError(null);
     mutation.mutate({ ttsSpeed: value[0] });
   };
 
   const handleReset = () => {
-    setError(null);
     setEditValue(1.0);
     mutation.mutate({ ttsSpeed: null });
   };
@@ -207,23 +181,13 @@ function TtsSpeedSection({
           1.0x
         </span>
       </div>
-      {error && <p className="text-sm text-destructive">{error}</p>}
+      {mutation.error && <p className="text-sm text-destructive">{mutation.error.message}</p>}
     </div>
   );
 }
 
 function VoiceAutoSendSection({ autoSend, onUpdate }: { autoSend: boolean; onUpdate: () => void }) {
-  const [error, setError] = useState<string | null>(null);
-
-  const mutation = trpc.globalSettings.setVoiceAutoSend.useMutation({
-    onSuccess: () => onUpdate(),
-    onError: (err) => setError(err.message),
-  });
-
-  const handleToggle = (checked: boolean) => {
-    setError(null);
-    mutation.mutate({ voiceAutoSend: checked });
-  };
+  const mutation = trpc.globalSettings.setVoiceAutoSend.useMutation({ onSuccess: onUpdate });
 
   return (
     <div className="space-y-3">
@@ -231,14 +195,14 @@ function VoiceAutoSendSection({ autoSend, onUpdate }: { autoSend: boolean; onUpd
         <Switch
           id="voice-auto-send"
           checked={autoSend}
-          onCheckedChange={handleToggle}
+          onCheckedChange={(voiceAutoSend) => mutation.mutate({ voiceAutoSend })}
           disabled={mutation.isPending}
         />
         <Label htmlFor="voice-auto-send">
           {autoSend ? 'Auto-send enabled' : 'Auto-send disabled'}
         </Label>
       </div>
-      {error && <p className="text-sm text-destructive">{error}</p>}
+      {mutation.error && <p className="text-sm text-destructive">{mutation.error.message}</p>}
     </div>
   );
 }

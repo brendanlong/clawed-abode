@@ -27,7 +27,6 @@ interface SessionModelButtonProps {
  */
 export function SessionModelButton({ sessionId, claudeModel }: SessionModelButtonProps) {
   const [open, setOpen] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const utils = trpc.useUtils();
   const { data: globalSettings } = trpc.globalSettings.get.useQuery();
 
@@ -35,7 +34,6 @@ export function SessionModelButton({ sessionId, claudeModel }: SessionModelButto
     onSuccess: () => {
       void utils.sessions.get.invalidate({ sessionId });
     },
-    onError: (err) => setError(err.message),
   });
 
   const fallbackModel = fallbackClaudeModel(globalSettings);
@@ -73,12 +71,10 @@ export function SessionModelButton({ sessionId, claudeModel }: SessionModelButto
             <ModelOverrideField
               currentModel={claudeModel}
               defaultModel={fallbackModel}
-              onSave={(model, onSuccess) => {
-                setError(null);
-                mutation.mutate({ sessionId, claudeModel: model }, { onSuccess });
-              }}
-              isPending={mutation.isPending}
-              error={error}
+              onSave={(model, onSuccess) =>
+                mutation.mutate({ sessionId, claudeModel: model }, { onSuccess })
+              }
+              mutation={mutation}
               setButtonLabel="Set Model"
             />
           </div>

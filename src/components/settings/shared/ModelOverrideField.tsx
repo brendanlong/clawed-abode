@@ -1,20 +1,10 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Spinner } from '@/components/ui/spinner';
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandItem,
-  CommandList,
-} from '@/components/ui/command';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { trpc } from '@/lib/trpc';
-import { Check, ChevronsUpDown } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { ModelCombobox } from './ModelCombobox';
+import type { SaveMutation } from './save-mutation';
 
 interface ModelOverrideFieldProps {
   /** The currently saved override, or null when none is set. */
@@ -23,8 +13,7 @@ interface ModelOverrideFieldProps {
   defaultModel: string;
   /** Persists the new value. Pass null to clear the override. Call onSuccess once the save succeeds. */
   onSave: (model: string | null, onSuccess: () => void) => void;
-  isPending: boolean;
-  error: string | null;
+  mutation: SaveMutation;
   /** Text shown in the value box when no model is set. Defaults to {@link defaultModel}. */
   emptyLabel?: string;
   /** Muted hint next to the empty label (e.g. "(default)"). Pass null to hide. */
@@ -45,8 +34,7 @@ export function ModelOverrideField({
   currentModel,
   defaultModel,
   onSave,
-  isPending,
-  error,
+  mutation,
   emptyLabel,
   emptyHint = '(default)',
   setButtonLabel = 'Override',
@@ -55,119 +43,44 @@ export function ModelOverrideField({
 }: ModelOverrideFieldProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState('');
-  const [popoverOpen, setPopoverOpen] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  const { data: suggestionsData } = trpc.globalSettings.getModelSuggestions.useQuery(undefined, {
-    enabled: isEditing,
-    staleTime: 60 * 60 * 1000, // 1 hour
-  });
-  const suggestions = suggestionsData?.models ?? [];
 
   const startEditing = () => {
     setEditValue(currentModel ?? '');
     setIsEditing(true);
+    mutation.reset();
   };
 
-  useEffect(() => {
-    if (isEditing) {
-      const timer = setTimeout(() => inputRef.current?.focus(), 50);
-      return () => clearTimeout(timer);
-    }
-  }, [isEditing]);
+  const stopEditing = () => {
+    setIsEditing(false);
+    mutation.reset();
+  };
 
   const handleSave = () => {
-    if (isPending) return;
+    if (mutation.isPending) return;
     const trimmed = editValue.trim();
     const value = trimmed || (emptySavesDefault ? defaultModel : null);
     onSave(value, () => setIsEditing(false));
   };
 
-  const handleSelectSuggestion = (model: string) => {
-    setEditValue(model);
-    setPopoverOpen(false);
-    setTimeout(() => inputRef.current?.focus(), 50);
-  };
-
-  const filteredSuggestions = editValue.trim()
-    ? suggestions.filter((s) => s.toLowerCase().includes(editValue.trim().toLowerCase()))
-    : suggestions;
-
   if (isEditing) {
     return (
       <div className="space-y-3">
-        <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
-          <PopoverTrigger asChild>
-            <div className="relative">
-              <Input
-                ref={inputRef}
-                value={editValue}
-                onChange={(e) => {
-                  setEditValue(e.target.value);
-                  if (e.target.value && !popoverOpen) {
-                    setPopoverOpen(true);
-                  }
-                }}
-                onFocus={() => setPopoverOpen(true)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    handleSave();
-                  } else if (e.key === 'Escape') {
-                    if (popoverOpen) {
-                      setPopoverOpen(false);
-                    } else {
-                      setIsEditing(false);
-                    }
-                  }
-                }}
-                placeholder={defaultModel}
-                disabled={isPending}
-                className="font-mono text-sm pr-8"
-              />
-              <ChevronsUpDown className="absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 opacity-50" />
-            </div>
-          </PopoverTrigger>
-          <PopoverContent
-            className="p-0 w-[var(--radix-popover-trigger-width)]"
-            align="start"
-            onOpenAutoFocus={(e) => e.preventDefault()}
-            onCloseAutoFocus={(e) => e.preventDefault()}
-          >
-            <Command shouldFilter={false}>
-              <CommandList>
-                <CommandEmpty className="py-3 text-center text-sm text-muted-foreground">
-                  No matching models
-                </CommandEmpty>
-                <CommandGroup>
-                  {filteredSuggestions.map((model) => (
-                    <CommandItem
-                      key={model}
-                      value={model}
-                      onSelect={() => handleSelectSuggestion(model)}
-                      className="font-mono text-sm cursor-pointer"
-                    >
-                      <Check
-                        className={cn(
-                          'mr-2 h-4 w-4',
-                          editValue === model ? 'opacity-100' : 'opacity-0'
-                        )}
-                      />
-                      {model}
-                    </CommandItem>
-                  ))}
-                </CommandGroup>
-              </CommandList>
-            </Command>
-          </PopoverContent>
-        </Popover>
-        {error && <p className="text-sm text-destructive">{error}</p>}
+        <ModelCombobox
+          value={editValue}
+          onChange={setEditValue}
+          placeholder={defaultModel}
+          disabled={mutation.isPending}
+          onSubmit={handleSave}
+          onEscape={stopEditing}
+          autoFocus
+        />
+        {mutation.error && <p className="text-sm text-destructive">{mutation.error.message}</p>}
         <div className="flex justify-end gap-2">
-          <Button variant="outline" size="sm" onClick={() => setIsEditing(false)}>
+          <Button variant="outline" size="sm" onClick={stopEditing}>
             Cancel
           </Button>
-          <Button size="sm" onClick={handleSave} disabled={isPending}>
-            {isPending ? <Spinner size="sm" /> : 'Save'}
+          <Button size="sm" onClick={handleSave} disabled={mutation.isPending}>
+            {mutation.isPending ? <Spinner size="sm" /> : 'Save'}
           </Button>
         </div>
       </div>
@@ -193,12 +106,13 @@ export function ModelOverrideField({
             variant="outline"
             size="sm"
             onClick={() => onSave(null, () => {})}
-            disabled={isPending}
+            disabled={mutation.isPending}
           >
-            {isPending ? <Spinner size="sm" /> : clearButtonLabel}
+            {mutation.isPending ? <Spinner size="sm" /> : clearButtonLabel}
           </Button>
         )}
       </div>
+      {mutation.error && <p className="text-sm text-destructive">{mutation.error.message}</p>}
     </div>
   );
 }

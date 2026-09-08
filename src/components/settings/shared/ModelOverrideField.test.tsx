@@ -3,7 +3,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ModelOverrideField } from './ModelOverrideField';
 
-// The field queries model suggestions only while editing; a stub is enough.
+// The combobox mounted while editing queries model suggestions; a stub is enough.
 vi.mock('@/lib/trpc', () => ({
   trpc: {
     globalSettings: {
@@ -14,6 +14,8 @@ vi.mock('@/lib/trpc', () => ({
   },
 }));
 
+const idleMutation = { isPending: false, error: null, reset: () => {} };
+
 describe('ModelOverrideField empty-save behavior', () => {
   it('adopts defaultModel on an empty save when emptySavesDefault is set', async () => {
     const user = userEvent.setup();
@@ -23,8 +25,7 @@ describe('ModelOverrideField empty-save behavior', () => {
         currentModel={null}
         defaultModel="claude-fable-5"
         onSave={onSave}
-        isPending={false}
-        error={null}
+        mutation={idleMutation}
         setButtonLabel="Enable"
         emptySavesDefault
       />
@@ -46,8 +47,7 @@ describe('ModelOverrideField empty-save behavior', () => {
         currentModel={null}
         defaultModel="opus[1m]"
         onSave={onSave}
-        isPending={false}
-        error={null}
+        mutation={idleMutation}
         setButtonLabel="Override"
       />
     );
