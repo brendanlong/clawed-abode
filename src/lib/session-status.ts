@@ -181,11 +181,9 @@ type BackgroundEvent =
  * `task_notification` settles a task. The high-frequency `task_progress` ticks
  * and `task_updated` patches are intentionally ignored.
  *
- * A background task lingering in the indicator until query teardown is possible
- * if its `task_notification` never arrives (e.g. a `killed` task, for which the
- * SDK emits no notification). This is an accepted tradeoff for a single-user
- * indicator: it never gates input, so the only impact is a stale count, and the
- * user can always clear it with the ✕ button (`stopBackgroundTask`).
+ * A task whose `task_notification` never arrives (e.g. a `killed` one, for which
+ * the SDK emits none) lingers until query teardown. Accepted: this axis never
+ * gates input, so the cost is a stale count the user can clear with the ✕.
  */
 function parseBackgroundTaskEvent(message: SDKMessage): BackgroundEvent | null {
   if (message.type !== 'system') return null;
@@ -272,9 +270,8 @@ function parsePersistentMonitorCalls(message: SDKMessage): string[] | null {
  *   path relies on `includePartialMessages: true` (the runner hard-enables it) so the
  *   terminal `message_delta` arrives; without partials only the `result` backstop
  *   would clear it.
- * - background tasks: `task_started` adds; a `task_notification` removes. A task
- *   with no `task_notification` (e.g. `killed`) lingers until teardown — an
- *   accepted tradeoff for an indicator-only count (see `parseBackgroundTaskEvent`).
+ * - background tasks: `task_started` adds; a `task_notification` removes (see
+ *   `parseBackgroundTaskEvent` for the lingering-task tradeoff).
  * - retry: an `api_retry` message sets it; any other TOP-LEVEL message clears it
  *   (the main request recovered). Background traffic leaves retry untouched, so a
  *   subagent's messages can't prematurely clear a main-turn retry indicator.
