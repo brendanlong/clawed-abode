@@ -37,6 +37,28 @@ export class RateLimiter {
   }
 
   /**
+   * Expire an entry's lockout and/or attempt window in place, so both `check`
+   * and `recordFailure` see the same freshly-aged entry.
+   *
+   * An expired lockout clears `lockedUntil` and the attempt count but keeps
+   * `lockoutCount`, so exponential backoff survives a lockout being served. Only
+   * a window that expires outside a lockout is a clean slate that resets it.
+   */
+  private refreshEntry(entry: RateLimitEntry, now: number): void {
+    if (entry.lockedUntil !== null && now >= entry.lockedUntil) {
+      entry.lockedUntil = null;
+      entry.attempts = 0;
+      entry.firstAttemptAt = now;
+    }
+
+    if (now - entry.firstAttemptAt > this.config.windowMs && entry.lockedUntil === null) {
+      entry.attempts = 0;
+      entry.firstAttemptAt = now;
+      entry.lockoutCount = 0;
+    }
+  }
+
+  /**
    * Check if a request is allowed for the given key (typically IP address).
    * Call this BEFORE attempting authentication.
    */
@@ -62,21 +84,7 @@ export class RateLimiter {
       };
     }
 
-    // Check if lockout has expired - reset lockout but keep lockout count for exponential backoff
-    if (entry.lockedUntil !== null && now >= entry.lockedUntil) {
-      entry.lockedUntil = null;
-      entry.attempts = 0;
-      entry.firstAttemptAt = now;
-      // Keep lockoutCount for exponential backoff - don't reset it here
-    }
-
-    // Check if window has expired AND we're not in an active lockout sequence
-    // Only reset lockoutCount if enough time has passed since the last lockout ended
-    if (now - entry.firstAttemptAt > this.config.windowMs && entry.lockedUntil === null) {
-      entry.attempts = 0;
-      entry.firstAttemptAt = now;
-      entry.lockoutCount = 0; // Reset exponential backoff after clean window
-    }
+    this.refreshEntry(entry, now);
 
     const remainingAttempts = Math.max(0, this.config.maxAttempts - entry.attempts);
 
@@ -105,21 +113,7 @@ export class RateLimiter {
       this.entries.set(key, entry);
     }
 
-    // Check if lockout has expired - reset attempts but keep lockout count
-    if (entry.lockedUntil !== null && now >= entry.lockedUntil) {
-      entry.lockedUntil = null;
-      entry.attempts = 0;
-      entry.firstAttemptAt = now;
-      // Keep lockoutCount for exponential backoff - don't reset it here
-    }
-
-    // Check if window has expired AND we're not in an active lockout sequence
-    // Only reset lockoutCount if enough time has passed since the last lockout ended
-    if (now - entry.firstAttemptAt > this.config.windowMs && entry.lockedUntil === null) {
-      entry.attempts = 0;
-      entry.firstAttemptAt = now;
-      entry.lockoutCount = 0;
-    }
+    this.refreshEntry(entry, now);
 
     entry.attempts++;
 
