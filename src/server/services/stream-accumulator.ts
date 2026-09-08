@@ -172,6 +172,8 @@ export class StreamAccumulator {
         return null;
       }
 
+      // message_stop emits the final partial; the caller resets once the full
+      // AssistantMessage follows.
       case 'content_block_stop':
       case 'message_stop': {
         if (!this.active) return null;
@@ -242,6 +244,7 @@ export class StreamAccumulator {
     };
   }
 
+  /** Call when the full AssistantMessage arrives — it supersedes the partial. */
   reset(): void {
     this.contentBlocks = [];
     this.model = undefined;
