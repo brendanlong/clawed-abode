@@ -7,9 +7,9 @@ import { McpServerSection } from '../shared/McpServerSection';
 import type { EnvVarMutations } from '../shared/EnvVarSection';
 import type { McpServerMutations } from '../shared/McpServerSection';
 
-function useGlobalEnvVarMutations(onUpdate: () => void): EnvVarMutations {
+function useGlobalEnvVarMutations(): EnvVarMutations {
   const utils = trpc.useUtils();
-  const deleteMutation = trpc.globalSettings.deleteEnvVar.useMutation({ onSuccess: onUpdate });
+  const deleteMutation = trpc.globalSettings.deleteEnvVar.useMutation();
   const setMutation = trpc.globalSettings.setEnvVar.useMutation();
 
   return {
@@ -25,8 +25,8 @@ function useGlobalEnvVarMutations(onUpdate: () => void): EnvVarMutations {
   };
 }
 
-function useGlobalMcpServerMutations(onUpdate: () => void): McpServerMutations {
-  const deleteMutation = trpc.globalSettings.deleteMcpServer.useMutation({ onSuccess: onUpdate });
+function useGlobalMcpServerMutations(): McpServerMutations {
+  const deleteMutation = trpc.globalSettings.deleteMcpServer.useMutation();
   const setMutation = trpc.globalSettings.setMcpServer.useMutation();
   const validateMutation = trpc.globalSettings.validateMcpServer.useMutation();
 
@@ -45,7 +45,7 @@ function useGlobalMcpServerMutations(onUpdate: () => void): McpServerMutations {
 
 export function GlobalEnvVarsCard() {
   const { data, isLoading, refetch } = trpc.globalSettings.getWithSettings.useQuery();
-  const mutations = useGlobalEnvVarMutations(refetch);
+  const mutations = useGlobalEnvVarMutations();
 
   return (
     <SettingsCard
@@ -67,7 +67,7 @@ export function GlobalEnvVarsCard() {
 
 export function GlobalMcpServersCard() {
   const { data, isLoading, refetch } = trpc.globalSettings.getWithSettings.useQuery();
-  const mutations = useGlobalMcpServerMutations(refetch);
+  const mutations = useGlobalMcpServerMutations();
 
   return (
     <SettingsCard

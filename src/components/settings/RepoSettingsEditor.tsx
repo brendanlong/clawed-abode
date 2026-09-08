@@ -27,9 +27,9 @@ interface RepoSettingsEditorProps {
   onClose: () => void;
 }
 
-function useRepoEnvVarMutations(repoFullName: string, onUpdate: () => void): EnvVarMutations {
+function useRepoEnvVarMutations(repoFullName: string): EnvVarMutations {
   const utils = trpc.useUtils();
-  const deleteMutation = trpc.repoSettings.deleteEnvVar.useMutation({ onSuccess: onUpdate });
+  const deleteMutation = trpc.repoSettings.deleteEnvVar.useMutation();
   const setMutation = trpc.repoSettings.setEnvVar.useMutation();
 
   return {
@@ -45,8 +45,8 @@ function useRepoEnvVarMutations(repoFullName: string, onUpdate: () => void): Env
   };
 }
 
-function useRepoMcpServerMutations(repoFullName: string, onUpdate: () => void): McpServerMutations {
-  const deleteMutation = trpc.repoSettings.deleteMcpServer.useMutation({ onSuccess: onUpdate });
+function useRepoMcpServerMutations(repoFullName: string): McpServerMutations {
+  const deleteMutation = trpc.repoSettings.deleteMcpServer.useMutation();
   const setMutation = trpc.repoSettings.setMcpServer.useMutation();
   const validateMutation = trpc.repoSettings.validateMcpServer.useMutation();
 
@@ -68,8 +68,8 @@ export function RepoSettingsEditor({ repoFullName, onClose }: RepoSettingsEditor
   const toggleFavorite = trpc.repoSettings.toggleFavorite.useMutation({
     onSuccess: () => refetch(),
   });
-  const envVarMutations = useRepoEnvVarMutations(repoFullName, refetch);
-  const mcpServerMutations = useRepoMcpServerMutations(repoFullName, refetch);
+  const envVarMutations = useRepoEnvVarMutations(repoFullName);
+  const mcpServerMutations = useRepoMcpServerMutations(repoFullName);
 
   return (
     <Sheet open onOpenChange={(open) => !open && onClose()}>
@@ -94,7 +94,6 @@ export function RepoSettingsEditor({ repoFullName, onClose }: RepoSettingsEditor
           </div>
         ) : (
           <div className="mt-6 space-y-6">
-            {/* Favorite toggle */}
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Star
@@ -112,7 +111,6 @@ export function RepoSettingsEditor({ repoFullName, onClose }: RepoSettingsEditor
 
             <Separator />
 
-            {/* Custom System Prompt */}
             <CustomSystemPromptSection
               repoFullName={repoFullName}
               customSystemPrompt={data?.customSystemPrompt ?? null}
@@ -121,7 +119,6 @@ export function RepoSettingsEditor({ repoFullName, onClose }: RepoSettingsEditor
 
             <Separator />
 
-            {/* Claude Model */}
             <ClaudeModelSection
               repoFullName={repoFullName}
               claudeModel={data?.claudeModel ?? null}
@@ -130,7 +127,6 @@ export function RepoSettingsEditor({ repoFullName, onClose }: RepoSettingsEditor
 
             <Separator />
 
-            {/* Environment Variables */}
             <EnvVarSection
               envVars={data?.envVars ?? []}
               mutations={envVarMutations}
@@ -140,7 +136,6 @@ export function RepoSettingsEditor({ repoFullName, onClose }: RepoSettingsEditor
 
             <Separator />
 
-            {/* MCP Servers */}
             <McpServerSection
               mcpServers={data?.mcpServers ?? []}
               mutations={mcpServerMutations}
