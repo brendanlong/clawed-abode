@@ -124,6 +124,12 @@ export function useSessionStream(sessionId: string, options: UseSessionStreamOpt
             );
             break;
           }
+          case 'resync': {
+            // The server dropped buffered events (a stalled consumer); latest-value
+            // state may be stale.
+            void resyncLiveQueries(queryClient);
+            break;
+          }
           default:
             // Compile-time guard: a new SessionStreamEvent kind must be handled here.
             assertNeverFallback(event, undefined);
