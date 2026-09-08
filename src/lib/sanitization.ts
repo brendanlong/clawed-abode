@@ -1,17 +1,19 @@
 import { z } from 'zod';
 
 /**
- * Findings from the input sanitizer (`agent-input-sanitizer`), persisted on the
+ * Findings from the input sanitizer (`agent-sanitizer`), persisted on the
  * affected message so the UI can surface a visible "hidden content was filtered"
  * indicator on the exact message/tool result it applied to.
  *
- * - `found`: the library's detected categories (e.g. invisible-unicode, ansi,
- *   html-comment, exfil-url).
- * - `warnings`: its human-readable notes, including the hex-dump recovery pointer
- *   for stripped bytes.
- * - `removed`: true when a string was actually rewritten. Exfil-shaped URLs are
- *   *detected and reported* but deliberately left in place by the library, so a
- *   finding can be advisory-only (`removed: false`).
+ * - `found`: the library's detected categories (e.g. cf-format, ansi,
+ *   html-comments, hidden-html, exfil-urls, confusable-host). These render raw
+ *   in the badge when no message accompanies them, so they are user-visible.
+ * - `warnings`: its human-readable messages, merged from both of the library's
+ *   severity tiers (see `collectMessages` in the input sanitizer) and including
+ *   the hex-dump recovery pointer for stripped bytes.
+ * - `removed`: true when a string was actually rewritten. Exfil-shaped URLs and
+ *   look-alike host names are *detected and reported* but deliberately left in
+ *   place by the library, so a finding can be advisory-only (`removed: false`).
  *
  * Kept dependency-free (schema + pure helpers) so the server writer and the client
  * renderer share one source of truth.

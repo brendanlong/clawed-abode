@@ -1,4 +1,4 @@
-import { sanitize } from 'agent-input-sanitizer';
+import { sanitize } from 'agent-sanitizer';
 import type { HookInput, HookJSONOutput } from '@anthropic-ai/claude-agent-sdk';
 import { createLogger, toError } from '@/lib/logger';
 import { buildSanitizationInfo, type SanitizationInfo } from '@/lib/sanitization';
@@ -16,11 +16,31 @@ export interface SanitizeContext {
 }
 
 /**
+ * The library splits its human-readable findings into two severity tiers:
+ * `warnings` (injection-shaped — something was hidden or removed) and `notes`
+ * (reported but not alarming — usually content that was *preserved* and merely
+ * described). We surface both as one list, because the tier a message lands in
+ * doesn't line up with whether we report it at all: that decision keys off
+ * `found`, which is severity-blind. Exfil-shaped URLs, for instance, emit an
+ * `exfil-urls` category — so they get a badge and a log line — while their
+ * explanation sits in `notes`. Keeping only `warnings` would badge those
+ * findings with no text to explain them.
+ *
+ * Note-tier findings on text with no `found` category (a preserved `<script>`,
+ * say) are still dropped: `buildSanitizationInfo` returns null for an empty
+ * `found`, which is what keeps ordinary web pages from raising a badge.
+ */
+function collectMessages({ warnings, notes }: { warnings: string[]; notes: string[] }): string[] {
+  return [...warnings, ...notes];
+}
+
+/**
  * Strip hidden-content injection vectors from untrusted text before it reaches
  * the model: payload-capable invisible Unicode, ANSI escapes, and
- * human-invisible HTML (comments / hidden elements). Data-exfil-shaped URLs are
- * *detected and reported* but deliberately left in place by the library, so
- * they surface only as a logged warning.
+ * human-invisible HTML (comments / hidden elements). Data-exfil-shaped URLs and
+ * look-alike (confusable) host names are *detected and reported* but
+ * deliberately left in place by the library, so they surface as an advisory
+ * finding rather than a rewrite.
  *
  * Defense-in-depth, not a hard boundary. The library documents that it never
  * throws, but this sits on the critical path of every message send, so we fail
@@ -34,18 +54,22 @@ export async function sanitizeUntrustedInput(
   sanitizeFn: typeof sanitize = sanitize
 ): Promise<{ cleaned: string; info: SanitizationInfo | null }> {
   try {
-    const { cleaned, found, warnings } = await sanitizeFn(text, { html: true });
+    const result = await sanitizeFn(text, { html: true });
+    const { cleaned, found } = result;
+    const messages = collectMessages(result);
+    const removed = cleaned !== text;
     if (found.length > 0) {
-      log.warn('Neutralized hidden content in untrusted input', {
+      log.warn('Detected hidden content in untrusted input', {
         ...context,
         found,
-        warnings,
+        messages,
+        neutralized: removed,
       });
     }
     // `info` is surfaced on the persisted message so the UI can show which
     // findings applied to this prompt; `removed` distinguishes an actual rewrite
     // from advisory-only detection (exfil URLs are flagged but left in place).
-    return { cleaned, info: buildSanitizationInfo(found, warnings, cleaned !== text) };
+    return { cleaned, info: buildSanitizationInfo(found, messages, removed) };
   } catch (err) {
     log.error('Sanitizing untrusted input failed; passing original text through', toError(err), {
       ...context,
@@ -68,14 +92,16 @@ interface SanitizeAccumulator {
  * etc.), and the SDK only honors `updatedToolOutput` when it keeps the original
  * shape — so we replace string leaves in place rather than flattening. Object
  * keys are structural and left untouched. `warnings` (deduped) carry the
- * library's operator/agent-facing notes, including the recovery pointer to a hex
- * dump for stripped bytes.
+ * library's operator/agent-facing messages from both severity tiers (see
+ * `collectMessages`), including the recovery pointer to a hex dump for stripped
+ * bytes.
  */
 async function sanitizeStringsDeep(value: unknown, acc: SanitizeAccumulator): Promise<unknown> {
   if (typeof value === 'string') {
-    const { cleaned, found, warnings } = await sanitize(value, { html: true });
+    const result = await sanitize(value, { html: true });
+    const { cleaned, found } = result;
     for (const category of found) acc.found.add(category);
-    for (const warning of warnings) acc.warnings.add(warning);
+    for (const message of collectMessages(result)) acc.warnings.add(message);
     if (cleaned !== value) acc.mutated = true;
     return cleaned;
   }

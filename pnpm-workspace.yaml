@@ -5,7 +5,7 @@ minimumReleaseAgeExclude:
   # Pinned, security-relevant input sanitizer; new releases ship faster than the
   # 7-day quarantine. Pinned to an exact version below so an excluded auto-bump
   # can't slip in silently.
-  - 'agent-input-sanitizer'
+  - 'agent-sanitizer'
 
 packages:
   - '.'
