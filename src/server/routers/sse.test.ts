@@ -6,7 +6,10 @@ import { createEventQueue } from './sse';
  * queue handle plus the captured `push` and an `unsubscribed` flag so tests can
  * assert the cleanup invariants.
  */
-function harness<T>() {
+function harness<T>(options?: {
+  maxQueued?: number;
+  coalesceKey?: (event: T) => string | undefined;
+}) {
   let push: ((event: T) => void) | null = null;
   let unsubscribed = false;
   const handle = createEventQueue<T>((p) => {
@@ -14,7 +17,7 @@ function harness<T>() {
     return () => {
       unsubscribed = true;
     };
-  });
+  }, options);
   return {
     ...handle,
     push: (event: T) => push!(event),
@@ -81,6 +84,85 @@ describe('createEventQueue', () => {
     h.push(2);
     await second;
     expect(h.queue.shift()).toBe(2);
+  });
+
+  it('reports no overflow while under the cap', () => {
+    const h = harness<number>({ maxQueued: 2 });
+    h.push(1);
+    h.push(2);
+    expect(h.takeOverflow()).toBe(false);
+    expect(h.queue).toEqual([1, 2]);
+  });
+
+  it('drops the buffer and flags overflow once when the cap is exceeded', () => {
+    const h = harness<number>({ maxQueued: 2 });
+    h.push(1);
+    h.push(2);
+    h.push(3);
+    expect(h.queue).toEqual([]);
+    expect(h.takeOverflow()).toBe(true);
+    expect(h.takeOverflow()).toBe(false);
+  });
+
+  it('discards events that arrive between the overflow and the resync', () => {
+    // Anything pushed before the consumer resyncs is covered by that resync, so
+    // buffering it would only re-grow the queue while the consumer is stalled.
+    const h = harness<number>({ maxQueued: 1 });
+    h.push(1);
+    h.push(2);
+    h.push(3);
+    expect(h.queue).toEqual([]);
+    expect(h.takeOverflow()).toBe(true);
+  });
+
+  it('resumes buffering after the overflow is taken', () => {
+    const h = harness<number>({ maxQueued: 1 });
+    h.push(1);
+    h.push(2);
+    h.takeOverflow();
+    h.push(3);
+    expect(h.queue).toEqual([3]);
+    expect(h.takeOverflow()).toBe(false);
+  });
+
+  it('wakes a waiting consumer on overflow so it can resync promptly', async () => {
+    const h = harness<number>({ maxQueued: 1 });
+    h.push(1);
+    const wait = h.waitForEvent(undefined);
+    h.push(2);
+    await expect(wait).resolves.toBeUndefined();
+    expect(h.takeOverflow()).toBe(true);
+  });
+
+  describe('coalescing', () => {
+    type Ev = { id: string; partial: boolean; n: number };
+    const coalesceKey = (e: Ev) => (e.partial ? e.id : undefined);
+
+    it('replaces a buffered event with the same key in place instead of appending', () => {
+      const h = harness<Ev>({ coalesceKey });
+      h.push({ id: 'p1', partial: true, n: 1 });
+      h.push({ id: 'c1', partial: false, n: 2 });
+      h.push({ id: 'p1', partial: true, n: 3 });
+      expect(h.queue).toEqual([
+        { id: 'p1', partial: true, n: 3 },
+        { id: 'c1', partial: false, n: 2 },
+      ]);
+    });
+
+    it('does not count superseded events toward the cap', () => {
+      const h = harness<Ev>({ maxQueued: 2, coalesceKey });
+      for (let n = 0; n < 10; n++) h.push({ id: 'p1', partial: true, n });
+      h.push({ id: 'c1', partial: false, n: 10 });
+      expect(h.queue).toHaveLength(2);
+      expect(h.takeOverflow()).toBe(false);
+    });
+
+    it('never coalesces events without a key', () => {
+      const h = harness<Ev>({ coalesceKey });
+      h.push({ id: 'c1', partial: false, n: 1 });
+      h.push({ id: 'c1', partial: false, n: 2 });
+      expect(h.queue).toHaveLength(2);
+    });
   });
 
   it('unsubscribe invokes the underlying subscription cleanup', () => {

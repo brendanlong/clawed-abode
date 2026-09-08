@@ -59,7 +59,7 @@ export function useWorkCompleteNotifications() {
 
   useSessionListEvent((event) => {
     if (event.kind === 'session') {
-      namesRef.current.set(event.session.id, event.session.name);
+      namesRef.current.set(event.sessionId, event.name);
       return;
     }
     if (event.kind !== 'finished') return;

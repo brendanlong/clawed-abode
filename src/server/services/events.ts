@@ -8,95 +8,18 @@ import { taskHasEndState, type BackgroundTask } from '@/lib/session-status';
 // Message with parsed content (for SSE events)
 type ParsedMessage = Omit<Message, 'content'> & { content: unknown };
 
-// Event types for type-safe event handling
-interface SessionUpdateEvent {
-  type: 'session_update';
-  sessionId: string;
-  session: SessionView<Session>;
-}
-
-interface MessageEvent {
-  type: 'new_message';
-  sessionId: string;
-  message: ParsedMessage;
-}
-
-interface ClaudeRunningEvent {
-  type: 'claude_running';
-  sessionId: string;
-  running: boolean;
-}
-
 /**
- * A main-agent turn ended **naturally** (not interrupted, not stopped/torn down)
- * and left nothing pending. Distinct from `claude_running: false`, which also
- * fires on interrupt/stop/error — this is the genuine "Claude finished" signal the
- * app-level work-complete notifier keys off of. Global-channel only.
- */
-interface ClaudeFinishedEvent {
-  type: 'claude_finished';
-  sessionId: string;
-}
-
-interface CommandsEvent {
-  type: 'commands';
-  sessionId: string;
-  commands: SlashCommand[];
-}
-
-interface ClaudeRetryEvent {
-  type: 'claude_retry';
-  sessionId: string;
-  retry: RetryState | null;
-}
-
-interface BackgroundTasksEvent {
-  type: 'background_tasks';
-  sessionId: string;
-  tasks: BackgroundTask[];
-}
-
-/**
- * A session's background-task set flipped between empty and non-empty. Global-channel
- * only: a lightweight signal (no task payload) so the home page can flip a session's
- * badge running↔background↔waiting live even when the change produces no
- * `claude_running`/`claude_finished` edge — e.g. the last background task settling with
- * no main-agent continuation, or a user ✕-stopping it. The list refetches `sessions.list`
- * on any global event, which carries the authoritative `backgroundActive`.
- */
-interface ClaudeBackgroundEvent {
-  type: 'claude_background';
-  sessionId: string;
-  active: boolean;
-}
-
-/**
- * Ids of persisted user messages the SDK has accepted but not yet handed to the
- * model. The full set every time (not a delta), so a reconnecting client can't
- * drift. See `inFlightCommands` in session-state / in-flight-commands.
- */
-interface PendingMessagesEvent {
-  type: 'pending_messages';
-  sessionId: string;
-  messageIds: string[];
-}
-
-/**
- * A persisted message was deleted server-side and must disappear from the
- * transcript. Only used for a prompt cancelled by Stop before the agent read it —
- * messages are otherwise immutable once written.
- */
-interface MessageRemovedEvent {
-  type: 'message_removed';
-  sessionId: string;
-  messageId: string;
-}
-
-/**
- * Normalized union delivered over the single multiplexed per-session SSE stream.
- * The per-channel events above are folded into this discriminated union by
- * {@link SSEEventEmitter.onSessionEvents}. A `message`'s id distinguishes partial
- * (transient streaming) from complete (persisted) messages.
+ * Everything delivered over the single multiplexed per-session SSE stream
+ * (`sse.onSessionEvents`), emitted as-is on the `session:${id}` channel.
+ *
+ * - `message`: the id distinguishes partial (transient streaming) from complete
+ *   (persisted) messages.
+ * - `message_removed`: a persisted message was deleted server-side and must
+ *   disappear from the transcript. Only used for a prompt cancelled by Stop before
+ *   the agent read it — messages are otherwise immutable once written.
+ * - `pending`: ids of persisted user messages the SDK has accepted but not yet
+ *   handed to the model. The full set every time (not a delta), so a reconnecting
+ *   client can't drift. See `inFlightCommands` in session-state / in-flight-commands.
  */
 export type SessionStreamEvent =
   | { kind: 'message'; message: ParsedMessage }
@@ -108,161 +31,91 @@ export type SessionStreamEvent =
   | { kind: 'background'; tasks: BackgroundTask[] }
   | { kind: 'pending'; messageIds: string[] };
 
+/**
+ * Events fanned out to the global session-list channel (`sse.onSessionListEvents`),
+ * so the home page can show running/background/waiting per session without a
+ * subscription per row. Payloads are deliberately lightweight: the list refetches
+ * `sessions.list` on any event, which carries the authoritative state.
+ *
+ * - `session`: a session row changed. Only `name` rides along (the work-complete
+ *   notifier needs it); the full row goes to the per-session stream.
+ * - `finished`: a main-agent turn ended **naturally** (not interrupted, not
+ *   stopped/torn down) and left nothing pending. Distinct from `running: false`,
+ *   which also fires on interrupt/stop/error — this is the genuine "Claude
+ *   finished" signal the work-complete notifier keys off of. It is the one list
+ *   event a refetch can't reconstruct, so a stream `resync` (buffer overflow)
+ *   can lose a notification.
+ * - `background`: the session's background-task set flipped between empty and
+ *   non-empty, so the badge can flip live even when the change produces no
+ *   `running`/`finished` edge (the last background task settling with no
+ *   main-agent continuation, or a user ✕-stopping it).
+ */
+export type SessionListEvent =
+  | { kind: 'session'; sessionId: string; name: string }
+  | { kind: 'running'; sessionId: string; running: boolean }
+  | { kind: 'finished'; sessionId: string }
+  | { kind: 'background'; sessionId: string; active: boolean };
+
 // Global channel name for cross-session list updates (not session-scoped).
 const SESSION_LIST_EVENT = 'session-list';
 
-/**
- * Events fanned out to the global session-list channel: session record changes
- * plus main-agent running-state changes, so the home page can show
- * running/waiting per session without a subscription per row.
- */
-export type SessionListEvent =
-  SessionUpdateEvent | ClaudeRunningEvent | ClaudeFinishedEvent | ClaudeBackgroundEvent;
-
-// Create a typed event emitter
 class SSEEventEmitter extends EventEmitter {
-  emitSessionUpdate(sessionId: string, row: Session): void {
-    const event: SessionUpdateEvent = {
-      type: 'session_update',
-      sessionId,
-      session: toSessionView(row),
-    };
+  private emitSession(sessionId: string, event: SessionStreamEvent): void {
     this.emit(`session:${sessionId}`, event);
-    // Fan out to the global list channel so the home page updates live for any
-    // session, without each row needing its own subscription.
+  }
+
+  private emitList(event: SessionListEvent): void {
     this.emit(SESSION_LIST_EVENT, event);
+  }
+
+  emitSessionUpdate(sessionId: string, row: Session): void {
+    this.emitSession(sessionId, { kind: 'session', session: toSessionView(row) });
+    this.emitList({ kind: 'session', sessionId, name: row.name });
   }
 
   emitNewMessage(sessionId: string, message: ParsedMessage): void {
-    this.emit(`messages:${sessionId}`, {
-      type: 'new_message',
-      sessionId,
-      message,
-    } satisfies MessageEvent);
-  }
-
-  emitClaudeRunning(sessionId: string, running: boolean): void {
-    const event: ClaudeRunningEvent = {
-      type: 'claude_running',
-      sessionId,
-      running,
-    };
-    this.emit(`claude:${sessionId}`, event);
-    // Fan out to the global list channel so the home page can flip a session
-    // between "running" and "waiting" live.
-    this.emit(SESSION_LIST_EVENT, event);
-  }
-
-  /**
-   * Signal that a main-agent turn ended naturally (see {@link ClaudeFinishedEvent}).
-   * Global-channel only — consumed by the app-level work-complete notifier.
-   */
-  emitClaudeFinished(sessionId: string): void {
-    this.emit(SESSION_LIST_EVENT, {
-      type: 'claude_finished',
-      sessionId,
-    } satisfies ClaudeFinishedEvent);
-  }
-
-  emitCommands(sessionId: string, commands: SlashCommand[]): void {
-    this.emit(`commands:${sessionId}`, {
-      type: 'commands',
-      sessionId,
-      commands,
-    } satisfies CommandsEvent);
-  }
-
-  emitClaudeRetry(sessionId: string, retry: RetryState | null): void {
-    this.emit(`retry:${sessionId}`, {
-      type: 'claude_retry',
-      sessionId,
-      retry,
-    } satisfies ClaudeRetryEvent);
-  }
-
-  emitBackgroundTasks(sessionId: string, tasks: BackgroundTask[]): void {
-    this.emit(`background:${sessionId}`, {
-      type: 'background_tasks',
-      sessionId,
-      tasks,
-    } satisfies BackgroundTasksEvent);
-    // Fan a lightweight active/idle signal to the global list channel so the home
-    // page's badge stays live even when the background set changes outside a
-    // main-agent turn transition (a task settling with no continuation, or a user
-    // ✕-stop) — those produce no claude_running/finished edge to trigger a refetch.
-    // `active` mirrors the busy axis (tasks with a knowable end state only) — the
-    // client refetches on any event rather than reading it, but keep it truthful.
-    this.emit(SESSION_LIST_EVENT, {
-      type: 'claude_background',
-      sessionId,
-      active: tasks.some(taskHasEndState),
-    } satisfies ClaudeBackgroundEvent);
-  }
-
-  emitPendingMessages(sessionId: string, messageIds: string[]): void {
-    this.emit(`pending:${sessionId}`, {
-      type: 'pending_messages',
-      sessionId,
-      messageIds,
-    } satisfies PendingMessagesEvent);
+    this.emitSession(sessionId, { kind: 'message', message });
   }
 
   emitMessageRemoved(sessionId: string, messageId: string): void {
-    this.emit(`messages:${sessionId}`, {
-      type: 'message_removed',
-      sessionId,
-      messageId,
-    } satisfies MessageRemovedEvent);
+    this.emitSession(sessionId, { kind: 'message_removed', messageId });
   }
 
-  /**
-   * Subscribe to a single per-session EventEmitter channel, returning an
-   * unsubscribe. The channel payloads are the typed `*Event` interfaces above;
-   * the caller maps them into the normalized {@link SessionStreamEvent} union.
-   */
-  private onChannel<E>(channel: string, callback: (event: E) => void): () => void {
+  emitClaudeRunning(sessionId: string, running: boolean): void {
+    this.emitSession(sessionId, { kind: 'running', running });
+    this.emitList({ kind: 'running', sessionId, running });
+  }
+
+  /** Global-channel only — see `finished` on {@link SessionListEvent}. */
+  emitClaudeFinished(sessionId: string): void {
+    this.emitList({ kind: 'finished', sessionId });
+  }
+
+  emitCommands(sessionId: string, commands: SlashCommand[]): void {
+    this.emitSession(sessionId, { kind: 'commands', commands });
+  }
+
+  emitClaudeRetry(sessionId: string, retry: RetryState | null): void {
+    this.emitSession(sessionId, { kind: 'retry', retry });
+  }
+
+  emitBackgroundTasks(sessionId: string, tasks: BackgroundTask[]): void {
+    this.emitSession(sessionId, { kind: 'background', tasks });
+    // `active` mirrors the busy axis (tasks with a knowable end state only) — the
+    // client refetches on any event rather than reading it, but keep it truthful.
+    this.emitList({ kind: 'background', sessionId, active: tasks.some(taskHasEndState) });
+  }
+
+  emitPendingMessages(sessionId: string, messageIds: string[]): void {
+    this.emitSession(sessionId, { kind: 'pending', messageIds });
+  }
+
+  onSessionEvents(sessionId: string, callback: (event: SessionStreamEvent) => void): () => void {
+    const channel = `session:${sessionId}`;
     this.on(channel, callback);
     return () => this.off(channel, callback);
   }
 
-  /**
-   * Subscribe to all event kinds for a session as a single normalized stream.
-   * Returns one unsubscribe that detaches every underlying channel listener.
-   */
-  onSessionEvents(sessionId: string, callback: (event: SessionStreamEvent) => void): () => void {
-    const unsubscribes = [
-      // New and removed messages share one channel so a removal can never be
-      // delivered ahead of the insert it undoes.
-      this.onChannel<MessageEvent | MessageRemovedEvent>(`messages:${sessionId}`, (e) =>
-        callback(
-          e.type === 'new_message'
-            ? { kind: 'message', message: e.message }
-            : { kind: 'message_removed', messageId: e.messageId }
-        )
-      ),
-      this.onChannel<ClaudeRunningEvent>(`claude:${sessionId}`, (e) =>
-        callback({ kind: 'running', running: e.running })
-      ),
-      this.onChannel<CommandsEvent>(`commands:${sessionId}`, (e) =>
-        callback({ kind: 'commands', commands: e.commands })
-      ),
-      this.onChannel<SessionUpdateEvent>(`session:${sessionId}`, (e) =>
-        callback({ kind: 'session', session: e.session })
-      ),
-      this.onChannel<ClaudeRetryEvent>(`retry:${sessionId}`, (e) =>
-        callback({ kind: 'retry', retry: e.retry })
-      ),
-      this.onChannel<BackgroundTasksEvent>(`background:${sessionId}`, (e) =>
-        callback({ kind: 'background', tasks: e.tasks })
-      ),
-      this.onChannel<PendingMessagesEvent>(`pending:${sessionId}`, (e) =>
-        callback({ kind: 'pending', messageIds: e.messageIds })
-      ),
-    ];
-    return () => unsubscribes.forEach((unsubscribe) => unsubscribe());
-  }
-
-  // Subscribe to session list changes across all sessions (home page).
   onSessionListChanged(callback: (event: SessionListEvent) => void): () => void {
     this.on(SESSION_LIST_EVENT, callback);
     return () => this.off(SESSION_LIST_EVENT, callback);

@@ -77,7 +77,7 @@ export interface SessionState {
    */
   inFlightCommands: Map<string, InFlightCommand>;
   /**
-   * Last value emitted on the `claude_running` channel. The composer's "working"
+   * Last `running` value emitted. The composer's "working"
    * state is `turnActive || inFlightCommands.size > 0`, derived from two
    * independently-changing inputs, so the last emitted value is kept rather than
    * inferred from a status diff.
