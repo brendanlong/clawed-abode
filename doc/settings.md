@@ -9,6 +9,7 @@ Env vars and MCP servers are **scope-generic**: one table each, `repoSettingsId`
 - **Claude model**: session → repo → global → `CLAUDE_MODEL` env (`resolveClaudeModel`). The per-session override lives on `Session.claudeModel` (set at create or via `sessions.setModel`, the gear button in the session header).
 - **Env vars / MCP servers**: global entries apply everywhere; a per-repo entry with the same name wins.
 - **System prompt**: base (default, or the override if enabled) + global append + per-repo append, in that order.
+- **Rate-limit pause**: session → global, with the two fields (on/off, threshold) resolving independently so a session can raise its threshold without restating the global on/off (`resolvePausePolicy`; there is no repo layer). Applies immediately, not at the next establishment. See [`rate-limit-pause.md`](rate-limit-pause.md).
 - **Setting sources**: global-only toggles for the SDK's `user` / `project` / `local` filesystem scopes (`resolveSettingSources`, default: only `project`). Widening is a **trust decision** — these scopes load hooks (which execute) and permissions. A settings-file `PostToolUse` hook merges with, not displaces, the app's sanitizer hook (verified by `scripts/spike-hook-merge.ts`).
 
 ## Advisor Model
@@ -27,4 +28,4 @@ Values marked secret are encrypted at rest (AES-256-GCM with `ENCRYPTION_KEY`, [
 
 ## Live vs Restart-Bound
 
-Settings bind when the query is established. **Model and MCP servers** re-apply live on the next send when changed (`query.setModel` / `query.setMcpServers`; `sessions.setModel` also refreshes an idle query immediately). **Env vars, system prompt, advisor model, and setting sources** have no live SDK setter and take effect only after Stop→Start.
+Settings bind when the query is established. **Model and MCP servers** re-apply live on the next send when changed (`query.setModel` / `query.setMcpServers`; `sessions.setModel` also refreshes an idle query immediately). **Env vars, system prompt, advisor model, and setting sources** have no live SDK setter and take effect only after Stop→Start. The **rate-limit pause** settings aren't SDK options at all — they're evaluated server-side per send, so they apply at once.

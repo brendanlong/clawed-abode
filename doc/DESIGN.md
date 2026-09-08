@@ -9,6 +9,7 @@ This file is the high-level map and is auto-loaded into every agent session — 
 - [`claude-sessions.md`](claude-sessions.md) — the persistent SDK query, turn/background status, message delivery, interactive tools, process reaping, cost estimation
 - [`messages-and-sse.md`](messages-and-sse.md) — message classification, storage/pagination, SSE streaming/resume
 - [`settings.md`](settings.md) — settings layers, model resolution, secrets, MCP servers
+- [`rate-limit-pause.md`](rate-limit-pause.md) — pausing sessions on subscription usage limits and draining when the window resets
 - [`security.md`](security.md) — auth and input sanitization
 
 Keep this doc and the reference docs up to date when changing behavior (see the documentation rules in the root `CLAUDE.md`).
@@ -58,13 +59,15 @@ The schema ([`prisma/schema.prisma`](../prisma/schema.prisma)) is the source of 
 - `Session.claudeModel` is a per-session model override, the highest-precedence layer of model resolution (see [`settings.md`](settings.md)).
 - `Session.pullRequest` is a JSON snapshot of the PR for `currentBranch`, refreshed after each turn, so listing sessions never calls GitHub (see [`messages-and-sse.md`](messages-and-sse.md)).
 - Deleting a session **archives** it: the workspace is removed, messages are kept and viewable read-only, and it's excluded from the session list by default.
+- `QueuedPrompt` rows hold prompts parked by a rate-limit pause; their transcript bubbles are already written, so a row is only the payload to re-push. `RateLimitWindow` is the account-wide usage state, persisted so a restart doesn't release paused work early.
 - `EnvVar` / `McpServer` rows with `repoSettingsId = null` are global; per-repo entries with the same name take precedence (a partial unique index enforces global name uniqueness). "No Repository" sessions use the `__no_repo__` sentinel in `RepoSettings`.
 
 ## Session Lifecycle
 
+- **Paused for a usage limit**: when a Claude subscription window fills, a session's sends go to a durable queue instead of the SDK and are released when the window resets. Readings are account-wide; the policy (off / threshold) resolves per-session over a global default — see [`rate-limit-pause.md`](rate-limit-pause.md).
 - **Create** (`sessions.create`) returns immediately with status `creating`; cloning happens in the background and the UI polls `statusMessage`. An optional initial prompt is sent server-side once the session is running, so it works even if the client disconnects.
 - **Interact**: prompts go through the session's persistent streaming query ([`claude-sessions.md`](claude-sessions.md)). The composer is never disabled and nothing is held back — a mid-turn send goes straight to the SDK and the agent reads it mid-turn.
-- **Interrupt** stops only the current turn; the query stays alive. **Stop** closes the query; the worktree stays on disk and **Start** revives it. **Delete** stops the query, removes the workspace, and archives.
+- **Interrupt** stops only the current turn; the query stays alive. It also empties the session's rate-limit queue (see [`rate-limit-pause.md`](rate-limit-pause.md)). **Stop** closes the query; the worktree stays on disk and **Start** revives it. **Delete** stops the query, removes the workspace, and archives.
 - **Restart recovery**: a server restart loses in-memory state but not intent — a session in DB status `running` is revived lazily with `resume` on the next interaction. In-flight background work is not resurrected (its subprocess is gone); recovery restores the conversation.
 
 ### File Uploads
