@@ -378,6 +378,36 @@ describe('authRouter integration', () => {
       expect(session!.revokedAt).toBeNull();
     });
 
+    it('should throw NOT_FOUND for an unknown session id', async () => {
+      const loginCaller = createCaller(null);
+      const loginResult = await loginCaller.auth.login({ password: TEST_PASSWORD });
+
+      const currentSession = await testPrisma.authSession.findFirst({
+        where: { token: loginResult.token },
+      });
+
+      const caller = createCaller(currentSession!.id);
+
+      await expect(
+        caller.auth.deleteSession({ sessionId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' })
+      ).rejects.toMatchObject({ code: 'NOT_FOUND', message: 'Session not found' });
+    });
+
+    it('should reject a non-uuid session id', async () => {
+      const loginCaller = createCaller(null);
+      const loginResult = await loginCaller.auth.login({ password: TEST_PASSWORD });
+
+      const currentSession = await testPrisma.authSession.findFirst({
+        where: { token: loginResult.token },
+      });
+
+      const caller = createCaller(currentSession!.id);
+
+      await expect(caller.auth.deleteSession({ sessionId: 'not-a-uuid' })).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+      });
+    });
+
     it('should require authentication', async () => {
       const caller = createCaller(null);
 

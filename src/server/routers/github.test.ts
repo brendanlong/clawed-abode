@@ -139,6 +139,15 @@ describe('githubRouter', () => {
       expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining('page=2'), expect.any(Object));
     });
 
+    it('should reject a non-numeric cursor', async () => {
+      const caller = createCaller('auth-session-id');
+
+      await expect(caller.github.listRepos({ cursor: 'not-a-page' })).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+      });
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
     it('should throw PRECONDITION_FAILED if no GitHub token', async () => {
       delete process.env.GITHUB_TOKEN;
       resetEnvCache();
@@ -413,6 +422,15 @@ describe('githubRouter', () => {
       });
 
       expect(result.nextCursor).toBe('3');
+    });
+
+    it('should reject a non-numeric cursor', async () => {
+      const caller = createCaller('auth-session-id');
+
+      await expect(
+        caller.github.listIssues({ repoFullName: 'owner/repo', cursor: 'not-a-page' })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(mockFetch).not.toHaveBeenCalled();
     });
 
     it('should throw PRECONDITION_FAILED if no GitHub token', async () => {

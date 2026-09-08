@@ -74,6 +74,18 @@ function mapGitHubError(err: unknown): never {
   throw err;
 }
 
+/** Every procedure here needs a configured token; none can degrade without one. */
+function requireGitHubToken(): string {
+  const token = env.GITHUB_TOKEN;
+  if (!token) {
+    throw new TRPCError({
+      code: 'PRECONDITION_FAILED',
+      message: 'GitHub token is not configured',
+    });
+  }
+  return token;
+}
+
 async function githubFetchResponse(path: string, token?: string): Promise<Response> {
   try {
     return await serviceGithubFetchResponse(path, token);
@@ -95,19 +107,12 @@ export const githubRouter = router({
     .input(
       z.object({
         search: z.string().optional(),
-        cursor: z.string().optional(), // page number as string
+        cursor: z.string().regex(/^\d+$/).optional(), // page number as string
         perPage: z.number().int().min(1).max(100).default(30),
       })
     )
     .query(async ({ input }) => {
-      const token = env.GITHUB_TOKEN;
-
-      if (!token) {
-        throw new TRPCError({
-          code: 'PRECONDITION_FAILED',
-          message: 'GitHub token is not configured',
-        });
-      }
+      const token = requireGitHubToken();
 
       const page = input.cursor ? parseInt(input.cursor, 10) : 1;
 
@@ -115,7 +120,6 @@ export const githubRouter = router({
       let response: Response;
 
       if (input.search) {
-        // Search repositories
         const query = encodeURIComponent(`${input.search} in:name user:@me`);
         const url = `/search/repositories?q=${query}&per_page=${input.perPage}&page=${page}`;
 
@@ -123,7 +127,6 @@ export const githubRouter = router({
         const data = await response.json();
         repos = data.items;
       } else {
-        // List user's repositories
         const url = `/user/repos?sort=updated&per_page=${input.perPage}&page=${page}`;
 
         response = await githubFetchResponse(url, token);
@@ -154,19 +157,10 @@ export const githubRouter = router({
       })
     )
     .query(async ({ input }) => {
-      const token = env.GITHUB_TOKEN;
+      const token = requireGitHubToken();
 
-      if (!token) {
-        throw new TRPCError({
-          code: 'PRECONDITION_FAILED',
-          message: 'GitHub token is not configured',
-        });
-      }
-
-      // Get repo info for default branch
       const repo = await githubFetch<GitHubRepo>(`/repos/${input.repoFullName}`, token);
 
-      // Get branches
       const branches = await githubFetch<GitHubBranch[]>(
         `/repos/${input.repoFullName}/branches?per_page=100`,
         token
@@ -187,19 +181,12 @@ export const githubRouter = router({
         repoFullName: z.string().regex(/^[\w-]+\/[\w.-]+$/),
         search: z.string().optional(),
         state: z.enum(['open', 'closed', 'all']).default('open'),
-        cursor: z.string().optional(), // page number as string
+        cursor: z.string().regex(/^\d+$/).optional(), // page number as string
         perPage: z.number().int().min(1).max(100).default(30),
       })
     )
     .query(async ({ input }) => {
-      const token = env.GITHUB_TOKEN;
-
-      if (!token) {
-        throw new TRPCError({
-          code: 'PRECONDITION_FAILED',
-          message: 'GitHub token is not configured',
-        });
-      }
+      const token = requireGitHubToken();
 
       const page = input.cursor ? parseInt(input.cursor, 10) : 1;
 
@@ -207,7 +194,6 @@ export const githubRouter = router({
       let response: Response;
 
       if (input.search) {
-        // Search issues in the specific repository
         const query = encodeURIComponent(
           `${input.search} repo:${input.repoFullName} is:issue state:${input.state}`
         );
@@ -217,7 +203,6 @@ export const githubRouter = router({
         const data = await response.json();
         issues = data.items;
       } else {
-        // List issues for the repository
         const url = `/repos/${input.repoFullName}/issues?state=${input.state}&per_page=${input.perPage}&page=${page}&sort=updated&direction=desc`;
 
         response = await githubFetchResponse(url, token);

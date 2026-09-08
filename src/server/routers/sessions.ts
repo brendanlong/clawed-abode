@@ -226,9 +226,7 @@ export const sessionsRouter = router({
       });
     }
 
-    // For the new architecture, "starting" just means marking as running.
-    // The workspace (worktree) already exists on disk.
-    // Claude queries run in-process when the user sends a prompt.
+    // Queries run in-process and are established lazily on the next prompt.
     const updatedSession = await prisma.session.update({
       where: { id: session.id },
       data: { status: 'running' },
@@ -289,8 +287,17 @@ export const sessionsRouter = router({
   stop: sessionProcedure.mutation(async ({ ctx, input }) => {
     const { session } = ctx;
 
-    // Stop any running Claude query (synchronous: closes input + query).
+    // Stop any running Claude query (synchronous: closes input + query). This
+    // runs even for an archived session: a concurrent send can re-establish a
+    // query in the window between delete's cleanupSession and its archive
+    // write, and stop has to stay the way out of that. No-op when idle.
     stopSession(input.sessionId);
+
+    // Archived sessions keep their status — the workspace is already gone, and
+    // 'stopped' would let start() revive the session with nothing on disk.
+    if (session.status === 'archived') {
+      return { session: toSessionView(session) };
+    }
 
     const updatedSession = await prisma.session.update({
       where: { id: session.id },

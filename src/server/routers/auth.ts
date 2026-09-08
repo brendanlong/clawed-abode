@@ -27,7 +27,6 @@ export const authRouter = router({
       });
     }
 
-    // Check if password hash is configured
     if (!env.PASSWORD_HASH) {
       throw new TRPCError({
         code: 'INTERNAL_SERVER_ERROR',
@@ -47,7 +46,6 @@ export const authRouter = router({
     }
 
     if (!valid) {
-      // Record failed attempt for rate limiting
       const failureResult = loginRateLimiter.recordFailure(rateLimitKey);
       log.warn('Failed login attempt', {
         ip: ctx.ipAddress,
@@ -59,7 +57,6 @@ export const authRouter = router({
       });
     }
 
-    // Record successful login (resets attempt counter)
     loginRateLimiter.recordSuccess(rateLimitKey);
 
     try {
@@ -74,7 +71,6 @@ export const authRouter = router({
   }),
 
   logout: protectedProcedure.mutation(async ({ ctx }) => {
-    // Revoke the current session instead of deleting
     await prisma.authSession.update({
       where: { id: ctx.sessionId },
       data: { revokedAt: new Date() },
@@ -118,7 +114,7 @@ export const authRouter = router({
   }),
 
   deleteSession: protectedProcedure
-    .input(z.object({ sessionId: z.string() }))
+    .input(z.object({ sessionId: z.string().uuid() }))
     .mutation(async ({ input, ctx }) => {
       // Prevent revoking current session via this endpoint
       if (input.sessionId === ctx.sessionId) {
@@ -128,11 +124,16 @@ export const authRouter = router({
         });
       }
 
-      // Revoke the session instead of deleting
-      await prisma.authSession.update({
+      // updateMany, not update, so a missing row reports NOT_FOUND instead of
+      // throwing Prisma's P2025 as a 500.
+      const { count } = await prisma.authSession.updateMany({
         where: { id: input.sessionId },
         data: { revokedAt: new Date() },
       });
+
+      if (count === 0) {
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'Session not found' });
+      }
 
       return { success: true };
     }),

@@ -44,12 +44,10 @@ export async function createContext(opts: { headers: Headers }): Promise<Context
 
   const now = new Date();
 
-  // Check if session has been revoked
   if (session.revokedAt) {
     return { sessionId: null, ...clientInfo };
   }
 
-  // Check if session has expired
   if (session.expiresAt < now) {
     return { sessionId: null, ...clientInfo };
   }
