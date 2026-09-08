@@ -81,18 +81,6 @@ interface StreamEvent {
   [key: string]: unknown;
 }
 
-/**
- * Accumulates stream_event deltas into partial assistant messages.
- *
- * Usage:
- *   const acc = new StreamAccumulator();
- *   // For each stream_event from the SDK:
- *   const partial = acc.accumulate(streamEventMessage);
- *   if (partial) {
- *     // Emit this partial to connected clients
- *   }
- *   // When a full assistant message arrives, call reset()
- */
 export class StreamAccumulator {
   private contentBlocks: AccumulatingContentBlock[] = [];
   private model: string | undefined;
@@ -184,8 +172,6 @@ export class StreamAccumulator {
         return null;
       }
 
-      // content_block_stop: block finished. message_stop: message complete, with
-      // the full AssistantMessage still to follow — both just emit current state.
       case 'content_block_stop':
       case 'message_stop': {
         if (!this.active) return null;
@@ -256,9 +242,6 @@ export class StreamAccumulator {
     };
   }
 
-  /**
-   * Reset the accumulator state. Call this when a full AssistantMessage arrives.
-   */
   reset(): void {
     this.contentBlocks = [];
     this.model = undefined;

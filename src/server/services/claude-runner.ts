@@ -3,11 +3,6 @@
  * establishment with resume, the output loop that persists messages and derives
  * live status, sends, interrupts and teardown. Design and rationale live in
  * doc/claude-sessions.md; invariants in src/server/services/CLAUDE.md.
- *
- * Seams (each independently testable): agent-env (login-shell env), sdk-options
- * (query construction), in-flight-commands (delivery tracking), message-store
- * (persistence), session-commands (slash commands), session-branch-pr (turn-end
- * branch/PR refresh), session-state (the in-memory record).
  */
 
 import {

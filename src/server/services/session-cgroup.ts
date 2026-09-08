@@ -134,13 +134,7 @@ export async function stopSessionScope(unitName: string): Promise<void> {
   }
 }
 
-/**
- * Stop a specific set of session scopes by exact unit name, cgroup-killing each
- * process tree. Best-effort and idempotent (a missing/already-stopped unit is
- * fine). Used at startup to reap scopes recorded in the DB that a previous crash
- * orphaned — by EXACT name, never a glob, so it can only ever touch scopes this
- * deployment created and never a concurrent instance's (or a test's) sessions.
- */
+/** Stop each named scope concurrently; see stopSessionScope for the contract. */
 export async function reapSessionScopes(unitNames: string[]): Promise<void> {
   await Promise.allSettled(unitNames.map((unit) => stopSessionScope(unit)));
 }
