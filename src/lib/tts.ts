@@ -112,3 +112,39 @@ export function dedupeAndSortVoices<V extends VoiceLike & { name: string }>(
     .filter((v) => !seen.has(v.voiceURI) && seen.add(v.voiceURI))
     .sort((a, b) => a.lang.localeCompare(b.lang) || a.name.localeCompare(b.name));
 }
+
+/** Most voices a picker renders at once; see {@link searchVoices}. */
+export const VOICE_PICKER_LIMIT = 50;
+
+export interface VoiceSearchResult<V> {
+  /** At most `limit` voices, locale matches first. */
+  matches: V[];
+  /** How many voices matched before the cap. */
+  total: number;
+}
+
+/**
+ * Voices whose name or language contains every whitespace-separated term of
+ * `query` (case-insensitive), with those for the primary language of `locale`
+ * first, capped at `limit`. The cap is the point: Firefox on Linux with
+ * speech-dispatcher reports ~15,000 voices, and rendering them all as list items
+ * froze the browser for over a minute.
+ */
+export function searchVoices<V extends VoiceLike & { name: string }>(
+  voices: readonly V[],
+  query: string,
+  locale: string,
+  limit: number = VOICE_PICKER_LIMIT
+): VoiceSearchResult<V> {
+  const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const wanted = primaryLang(locale);
+  const preferred: V[] = [];
+  const rest: V[] = [];
+  for (const voice of voices) {
+    const haystack = `${voice.name} ${voice.lang}`.toLowerCase();
+    if (!terms.every((term) => haystack.includes(term))) continue;
+    (primaryLang(voice.lang) === wanted ? preferred : rest).push(voice);
+  }
+  const total = preferred.length + rest.length;
+  return { matches: preferred.concat(rest).slice(0, limit), total };
+}
