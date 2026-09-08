@@ -17,7 +17,6 @@ model AuthSession {
   ipAddress      String?
   userAgent      String?
 
-  @@index([token])
   @@index([expiresAt])
   @@index([revokedAt])
   @@index([createdAt, id])
@@ -41,8 +40,8 @@ model Session {
   claudeModel     String? // If set, overrides the repo/global/env Claude model for this session only (highest precedence)
   messages        Message[]
 
-  @@index([status])
-  @@index([status, lastActivityAt, id]) // sessions.list keyset order
+  @@index([lastActivityAt, id]) // sessions.list default keyset order (status != 'archived')
+  @@index([status, lastActivityAt, id]) // sessions.list keyset order filtered by status
 }
 
 model Message {
@@ -56,7 +55,6 @@ model Message {
   session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   @@unique([sessionId, sequence])
-  @@index([sessionId, sequence])
 }
 
 // Per-repository settings for favorites, env vars, and MCP servers
