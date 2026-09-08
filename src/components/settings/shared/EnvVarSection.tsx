@@ -77,39 +77,39 @@ export function EnvVarSection({
       emptyMessage={emptyMessage}
       deleteDialogTitle="Delete environment variable?"
       deleteDescriptionPrefix={deleteDescriptionPrefix}
-      renderItem={(envVar) => (
-        <>
-          <div className="font-mono text-sm">{envVar.name}</div>
-          <div className="text-xs text-muted-foreground flex items-center gap-1">
-            {envVar.isSecret ? (
-              <>
-                <span>
-                  {state.revealedSecrets.has(envVar.name)
-                    ? state.revealedSecrets.get(envVar.name)
-                    : '••••••••'}
-                </span>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-5 w-5 p-0"
-                  onClick={() => toggleSecretVisibility(envVar.name)}
-                  disabled={state.loadingSecret === envVar.name}
-                >
-                  {state.loadingSecret === envVar.name ? (
-                    <Spinner size="sm" className="h-3 w-3" />
-                  ) : state.revealedSecrets.has(envVar.name) ? (
-                    <EyeOff className="h-3 w-3" />
-                  ) : (
-                    <Eye className="h-3 w-3" />
-                  )}
-                </Button>
-              </>
-            ) : (
-              <span className="truncate">{envVar.value}</span>
-            )}
-          </div>
-        </>
-      )}
+      renderItem={(envVar) => {
+        const revealed = state.revealedSecrets.has(envVar.name);
+        return (
+          <>
+            <div className="font-mono text-sm">{envVar.name}</div>
+            <div className="text-xs text-muted-foreground flex items-center gap-1">
+              {envVar.isSecret ? (
+                <>
+                  <span>{revealed ? state.revealedSecrets.get(envVar.name) : '••••••••'}</span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-5 w-5 p-0"
+                    onClick={() => toggleSecretVisibility(envVar.name)}
+                    disabled={state.loadingSecret === envVar.name}
+                    aria-label={revealed ? 'Hide value' : 'Show value'}
+                  >
+                    {state.loadingSecret === envVar.name ? (
+                      <Spinner size="sm" className="h-3 w-3" />
+                    ) : revealed ? (
+                      <EyeOff className="h-3 w-3" />
+                    ) : (
+                      <Eye className="h-3 w-3" />
+                    )}
+                  </Button>
+                </>
+              ) : (
+                <span className="truncate">{envVar.value}</span>
+              )}
+            </div>
+          </>
+        );
+      }}
       renderForm={({ existingItem, onClose, onSuccess }) => (
         <EnvVarForm
           existingEnvVar={existingItem}
@@ -162,11 +162,9 @@ function EnvVarForm({
 
     dispatch({ type: 'startSubmit' });
     try {
-      await setEnvVar({
-        name: form.name,
-        value: existingEnvVar?.isSecret && !form.value ? existingEnvVar.value : form.value,
-        isSecret: form.isSecret,
-      });
+      // An empty value for a secret is the server's "keep the stored ciphertext"
+      // protocol — never substitute `existingEnvVar.value`, which is the mask.
+      await setEnvVar({ name: form.name, value: form.value, isSecret: form.isSecret });
       onSuccess();
     } catch (err) {
       dispatch({
