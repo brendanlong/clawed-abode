@@ -75,7 +75,28 @@ describe('EditableTextSetting', () => {
     expect(textarea).toHaveValue('default text');
   });
 
-  it('cancelling leaves edit mode and resets the mutation error', async () => {
+  it('closes the editor once onSave reports success', async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn((_value: string | null, onSuccess: () => void) => onSuccess());
+    render(
+      <EditableTextSetting
+        value={null}
+        onSave={onSave}
+        mutation={idleMutation()}
+        placeholder="Type here"
+        addLabel="Add"
+      />
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Add' }));
+    await user.type(screen.getByPlaceholderText('Type here'), 'x');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(screen.queryByPlaceholderText('Type here')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Add' })).toBeInTheDocument();
+  });
+
+  it('resets a stale mutation error when the editor opens or is cancelled', async () => {
     const user = userEvent.setup();
     const mutation = { isPending: false, error: { message: 'boom' }, reset: vi.fn() };
     render(
@@ -88,11 +109,12 @@ describe('EditableTextSetting', () => {
       />
     );
 
+    expect(screen.queryByText('boom')).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Add' }));
-    expect(screen.getByText('boom')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Cancel' }));
-
     expect(mutation.reset).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(mutation.reset).toHaveBeenCalledTimes(2);
     expect(screen.queryByPlaceholderText('Type here')).not.toBeInTheDocument();
   });
 });

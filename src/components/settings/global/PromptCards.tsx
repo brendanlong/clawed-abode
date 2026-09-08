@@ -37,12 +37,16 @@ export function SystemPromptOverrideCard({
         <div className="flex items-center gap-2">
           <Switch
             id="override-enabled"
-            checked={overrideEnabled}
+            checked={overrideEnabled && currentOverride !== null}
             onCheckedChange={(enabled) => toggleMutation.mutate({ enabled })}
-            disabled={toggleMutation.isPending}
+            disabled={toggleMutation.isPending || currentOverride === null}
           />
           <Label htmlFor="override-enabled">
-            {overrideEnabled ? 'Override enabled' : 'Using default prompt'}
+            {currentOverride === null
+              ? 'No override set'
+              : overrideEnabled
+                ? 'Override enabled'
+                : 'Using default prompt'}
           </Label>
         </div>
         {toggleMutation.error && (
@@ -53,7 +57,10 @@ export function SystemPromptOverrideCard({
           value={currentOverride}
           onSave={(systemPromptOverride, onSuccess) =>
             saveMutation.mutate(
-              { systemPromptOverride, systemPromptOverrideEnabled: overrideEnabled },
+              {
+                systemPromptOverride,
+                systemPromptOverrideEnabled: overrideEnabled && systemPromptOverride !== null,
+              },
               { onSuccess }
             )
           }

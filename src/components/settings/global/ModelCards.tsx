@@ -3,8 +3,6 @@
 import type { inferRouterOutputs } from '@trpc/server';
 import type { AppRouter } from '@/server/routers';
 import { trpc } from '@/lib/trpc';
-import { DEFAULT_CLAUDE_MODEL } from '@/lib/claude-model';
-import { SUGGESTED_ADVISOR_MODEL } from '@/lib/advisor';
 import { SettingsCard } from '../shared/SettingsCard';
 import { ModelOverrideField } from '../shared/ModelOverrideField';
 
@@ -26,7 +24,7 @@ export function ClaudeModelCard({
     >
       <ModelOverrideField
         currentModel={settings.claudeModel}
-        defaultModel={settings.defaultClaudeModel ?? DEFAULT_CLAUDE_MODEL}
+        defaultModel={settings.defaultClaudeModel}
         onSave={(claudeModel, onSuccess) => mutation.mutate({ claudeModel }, { onSuccess })}
         mutation={mutation}
       />
@@ -50,7 +48,7 @@ export function AdvisorModelCard({
     >
       <ModelOverrideField
         currentModel={settings.advisorModel}
-        defaultModel={settings.suggestedAdvisorModel ?? SUGGESTED_ADVISOR_MODEL}
+        defaultModel={settings.suggestedAdvisorModel}
         emptyLabel="Disabled"
         emptyHint={null}
         setButtonLabel="Enable"

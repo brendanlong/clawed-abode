@@ -3,7 +3,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ModelOverrideField } from './ModelOverrideField';
 
-// The field queries model suggestions only while editing; a stub is enough.
+// The combobox mounted while editing queries model suggestions; a stub is enough.
 vi.mock('@/lib/trpc', () => ({
   trpc: {
     globalSettings: {

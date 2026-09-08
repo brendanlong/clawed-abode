@@ -1,8 +1,8 @@
 'use client';
 
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Spinner } from '@/components/ui/spinner';
 import { trpc } from '@/lib/trpc';
-import { DEFAULT_SETTING_SOURCE_FLAGS } from '@/lib/setting-sources';
 import { AdvisorModelCard, ClaudeModelCard } from './global/ModelCards';
 import { ApiKeyCard } from './global/ApiKeyCard';
 import {
@@ -14,11 +14,19 @@ import { SettingSourcesCard } from './global/SettingSourcesCard';
 import { GlobalEnvVarsCard, GlobalMcpServersCard } from './global/ScopedSettingsCards';
 
 export function GeneralTab() {
-  const { data: settings, isLoading, refetch } = trpc.globalSettings.get.useQuery();
+  const { data: settings, error, refetch } = trpc.globalSettings.get.useQuery();
   const { data: defaultPromptData } = trpc.globalSettings.getDefaultSystemPrompt.useQuery();
   const defaultPrompt = defaultPromptData?.defaultSystemPrompt ?? '';
 
-  if (isLoading || !settings) {
+  if (error) {
+    return (
+      <Alert variant="destructive">
+        <AlertDescription>{error.message}</AlertDescription>
+      </Alert>
+    );
+  }
+
+  if (!settings) {
     return (
       <div className="flex justify-center py-12">
         <Spinner size="lg" />
@@ -42,10 +50,7 @@ export function GeneralTab() {
         onUpdate={refetch}
       />
       <SystemPromptAppendCard currentAppend={settings.systemPromptAppend} onUpdate={refetch} />
-      <SettingSourcesCard
-        current={settings.settingSources ?? DEFAULT_SETTING_SOURCE_FLAGS}
-        onUpdate={refetch}
-      />
+      <SettingSourcesCard current={settings.settingSources} onUpdate={refetch} />
       <GlobalEnvVarsCard />
       <GlobalMcpServersCard />
       <DefaultPromptCard defaultPrompt={defaultPrompt} />

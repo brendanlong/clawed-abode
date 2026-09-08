@@ -47,6 +47,7 @@ export function ModelOverrideField({
   const startEditing = () => {
     setEditValue(currentModel ?? '');
     setIsEditing(true);
+    mutation.reset();
   };
 
   const stopEditing = () => {
@@ -111,6 +112,7 @@ export function ModelOverrideField({
           </Button>
         )}
       </div>
+      {mutation.error && <p className="text-sm text-destructive">{mutation.error.message}</p>}
     </div>
   );
 }

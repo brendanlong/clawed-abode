@@ -49,6 +49,7 @@ export function EditableTextSetting({
   const startEditing = () => {
     setDraft(value ?? emptyDraft);
     setIsEditing(true);
+    mutation.reset();
   };
 
   const handleCancel = () => {

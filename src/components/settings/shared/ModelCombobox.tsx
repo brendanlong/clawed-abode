@@ -21,7 +21,7 @@ interface ModelComboboxProps {
   /** Shown as the input placeholder (a suggested model). */
   placeholder: string;
   disabled?: boolean;
-  /** Enter key, with the suggestion popover closed. */
+  /** Enter key. When omitted, Enter falls through to the surrounding form. */
   onSubmit?: () => void;
   /** Escape key, with the suggestion popover already closed. */
   onEscape?: () => void;
@@ -80,9 +80,9 @@ export function ModelCombobox({
             }}
             onFocus={() => setPopoverOpen(true)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter') {
+              if (e.key === 'Enter' && onSubmit) {
                 e.preventDefault();
-                onSubmit?.();
+                onSubmit();
               } else if (e.key === 'Escape') {
                 if (popoverOpen) {
                   setPopoverOpen(false);
