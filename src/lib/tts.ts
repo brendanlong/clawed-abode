@@ -69,12 +69,15 @@ export interface VoiceLike {
   localService: boolean;
 }
 
-/** Normalize `en_US` to `en-US`; some engines report underscores. */
-function normalizeLang(lang: string): string {
-  return lang.replace('_', '-');
+/** A voice with a display name; a real SpeechSynthesisVoice satisfies it. */
+export type NamedVoice = VoiceLike & { name: string };
+
+/** Normalize `en_US` to `en-US`; some engines report underscores. Headless browsers can leave `navigator.language` undefined. */
+function normalizeLang(lang: string | undefined): string {
+  return (lang ?? '').replace('_', '-');
 }
 
-function primaryLang(lang: string): string {
+function primaryLang(lang: string | undefined): string {
   return normalizeLang(lang).split('-')[0];
 }
 
@@ -104,9 +107,7 @@ export function selectVoice<V extends VoiceLike>(
  * Voices for a picker: deduplicated by URI (some platforms report duplicates) and
  * sorted by language, then name.
  */
-export function dedupeAndSortVoices<V extends VoiceLike & { name: string }>(
-  voices: readonly V[]
-): V[] {
+export function dedupeAndSortVoices<V extends NamedVoice>(voices: readonly V[]): V[] {
   const seen = new Set<string>();
   return voices
     .filter((v) => !seen.has(v.voiceURI) && seen.add(v.voiceURI))
@@ -116,6 +117,16 @@ export function dedupeAndSortVoices<V extends VoiceLike & { name: string }>(
 /** Most voices a picker renders at once; see {@link searchVoices}. */
 export const VOICE_PICKER_LIMIT = 50;
 
+/** Whether `haystack` contains every whitespace-separated term of `query`, case-insensitively. */
+export function matchesAllTerms(haystack: string, query: string): boolean {
+  const lower = haystack.toLowerCase();
+  return query
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean)
+    .every((term) => lower.includes(term));
+}
+
 export interface VoiceSearchResult<V> {
   /** At most `limit` voices, locale matches first. */
   matches: V[];
@@ -124,27 +135,27 @@ export interface VoiceSearchResult<V> {
 }
 
 /**
- * Voices whose name or language contains every whitespace-separated term of
- * `query` (case-insensitive), with those for the primary language of `locale`
- * first, capped at `limit`. The cap is the point: Firefox on Linux with
- * speech-dispatcher reports ~15,000 voices, and rendering them all as list items
- * froze the browser for over a minute.
+ * Voices whose name or language matches `query` ({@link matchesAllTerms}), with
+ * those for the primary language of `locale` first, capped at `limit`. The cap
+ * matters because some browsers report ~15,000 voices. A matching `pinnedURI`
+ * (the current selection) is kept in the result even when it falls past the cap.
  */
-export function searchVoices<V extends VoiceLike & { name: string }>(
+export function searchVoices<V extends NamedVoice>(
   voices: readonly V[],
   query: string,
-  locale: string,
+  locale: string | undefined,
+  pinnedURI: string | null = null,
   limit: number = VOICE_PICKER_LIMIT
 ): VoiceSearchResult<V> {
-  const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
   const wanted = primaryLang(locale);
   const preferred: V[] = [];
   const rest: V[] = [];
   for (const voice of voices) {
-    const haystack = `${voice.name} ${voice.lang}`.toLowerCase();
-    if (!terms.every((term) => haystack.includes(term))) continue;
+    if (!matchesAllTerms(`${voice.name} ${voice.lang}`, query)) continue;
     (primaryLang(voice.lang) === wanted ? preferred : rest).push(voice);
   }
-  const total = preferred.length + rest.length;
-  return { matches: preferred.concat(rest).slice(0, limit), total };
+  const ordered = preferred.concat(rest);
+  const pinnedIndex = pinnedURI === null ? -1 : ordered.findIndex((v) => v.voiceURI === pinnedURI);
+  if (pinnedIndex >= limit) ordered.unshift(...ordered.splice(pinnedIndex, 1));
+  return { matches: ordered.slice(0, limit), total: ordered.length };
 }

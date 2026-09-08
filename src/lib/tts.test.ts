@@ -173,19 +173,38 @@ describe('searchVoices', () => {
     expect(searchVoices(voices, 'zzz', 'en-US')).toEqual({ matches: [], total: 0 });
   });
 
+  it('keeps input order when the locale is empty or missing', () => {
+    const uris = voices.map((v) => v.voiceURI);
+    expect(searchVoices(voices, '', '').matches.map((v) => v.voiceURI)).toEqual(uris);
+    expect(searchVoices(voices, '', undefined).matches.map((v) => v.voiceURI)).toEqual(uris);
+  });
+
+  const many = Array.from({ length: 200 }, (_, i) => ({
+    ...voice(`v${i}`, i % 2 === 0 ? 'en-US' : 'es-ES'),
+    name: `Voice ${i}`,
+  }));
+
   it('caps the matches while reporting the uncapped total', () => {
-    const many = Array.from({ length: 200 }, (_, i) => ({
-      ...voice(`v${i}`, i % 2 === 0 ? 'en-US' : 'es-ES'),
-      name: `Voice ${i}`,
-    }));
-    const { matches, total } = searchVoices(many, '', 'es', 10);
+    const { matches, total } = searchVoices(many, '', 'es', null, 10);
     expect(matches).toHaveLength(10);
     expect(matches.every((v) => v.lang === 'es-ES')).toBe(true);
     expect(total).toBe(200);
   });
 
+  it('moves a pinned voice that fell past the cap to the front', () => {
+    const { matches } = searchVoices(many, '', 'es', 'v198', 10);
+    expect(matches[0].voiceURI).toBe('v198');
+    expect(matches).toHaveLength(10);
+    // A pinned voice already inside the cap stays where it was.
+    expect(searchVoices(many, '', 'es', 'v3', 10).matches[1].voiceURI).toBe('v3');
+    // A pinned voice that doesn't match the query is not forced in.
+    expect(
+      searchVoices(many, 'voice 1', 'es', 'v0', 10).matches.some((v) => v.voiceURI === 'v0')
+    ).toBe(false);
+  });
+
   it('defaults the cap to VOICE_PICKER_LIMIT', () => {
-    const many = Array.from({ length: VOICE_PICKER_LIMIT + 5 }, (_, i) => voice(`v${i}`, 'en'));
-    expect(searchVoices(many, '', 'en').matches).toHaveLength(VOICE_PICKER_LIMIT);
+    const lots = Array.from({ length: VOICE_PICKER_LIMIT + 5 }, (_, i) => voice(`v${i}`, 'en'));
+    expect(searchVoices(lots, '', 'en').matches).toHaveLength(VOICE_PICKER_LIMIT);
   });
 });
