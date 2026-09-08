@@ -155,7 +155,11 @@ function EnvVarForm({
       return;
     }
 
-    if (!existingEnvVar?.isSecret && !form.value) {
+    // A blank value only means something for a stored secret staying secret —
+    // the server keys "keep the stored value" off the *submitted* isSecret, so
+    // demoting a secret with a blank value would store the empty string.
+    const keepsStoredSecret = !!existingEnvVar?.isSecret && form.isSecret;
+    if (!form.value && !keepsStoredSecret) {
       dispatch({ type: 'setError', error: 'Value is required' });
       return;
     }

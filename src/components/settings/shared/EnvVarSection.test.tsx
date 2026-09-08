@@ -47,6 +47,54 @@ describe('EnvVarSection', () => {
     expect(m.setEnvVar).toHaveBeenCalledWith({ name: 'TOKEN', value: 'new-token', isSecret: true });
   });
 
+  it('requires a value when demoting a secret to plain text', async () => {
+    const user = userEvent.setup();
+    const m = mutations();
+    render(<EnvVarSection envVars={[MASKED_SECRET]} mutations={m} onUpdate={vi.fn()} />);
+
+    await user.click(screen.getByRole('button', { name: 'Edit' }));
+    await user.click(screen.getByRole('switch'));
+    await user.click(screen.getByRole('button', { name: 'Update' }));
+
+    // The server keys "unchanged" off the submitted isSecret, so a blank
+    // non-secret submission would store the empty string.
+    expect(screen.getByText('Value is required')).toBeInTheDocument();
+    expect(m.setEnvVar).not.toHaveBeenCalled();
+
+    await user.type(screen.getByLabelText('Value'), 'plain');
+    await user.click(screen.getByRole('button', { name: 'Update' }));
+    expect(m.setEnvVar).toHaveBeenCalledWith({ name: 'TOKEN', value: 'plain', isSecret: false });
+  });
+
+  it('requires a value for a brand new secret, which has nothing stored to keep', async () => {
+    const user = userEvent.setup();
+    const m = mutations();
+    render(<EnvVarSection envVars={[]} mutations={m} onUpdate={vi.fn()} />);
+
+    await user.click(screen.getByRole('button', { name: 'Add' }));
+    await user.type(screen.getByLabelText('Name'), 'NEW_TOKEN');
+    await user.click(screen.getByRole('switch'));
+    // The section's "Add" and the open form's submit share a name.
+    const [, submit] = screen.getAllByRole('button', { name: 'Add' });
+    await user.click(submit);
+
+    expect(screen.getByText('Value is required')).toBeInTheDocument();
+    expect(m.setEnvVar).not.toHaveBeenCalled();
+  });
+
+  it('promotes a plain var to a secret, keeping its typed value', async () => {
+    const user = userEvent.setup();
+    const m = mutations();
+    const plain: EnvVar = { id: 'e2', name: 'PLAIN', value: 'v1', isSecret: false };
+    render(<EnvVarSection envVars={[plain]} mutations={m} onUpdate={vi.fn()} />);
+
+    await user.click(screen.getByRole('button', { name: 'Edit' }));
+    await user.click(screen.getByRole('switch'));
+    await user.click(screen.getByRole('button', { name: 'Update' }));
+
+    expect(m.setEnvVar).toHaveBeenCalledWith({ name: 'PLAIN', value: 'v1', isSecret: true });
+  });
+
   it('requires a value for a non-secret var', async () => {
     const user = userEvent.setup();
     const m = mutations();
@@ -61,15 +109,23 @@ describe('EnvVarSection', () => {
     expect(m.setEnvVar).not.toHaveBeenCalled();
   });
 
-  it('reveals a secret through the labelled toggle and refetches once per delete', async () => {
+  it('reveals and re-hides a secret through the labelled toggle', async () => {
+    const user = userEvent.setup();
+    const m = mutations();
+    render(<EnvVarSection envVars={[MASKED_SECRET]} mutations={m} onUpdate={vi.fn()} />);
+
+    await user.click(screen.getByRole('button', { name: 'Show value' }));
+    expect(await screen.findByText('shh')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Hide value' }));
+    expect(screen.queryByText('shh')).not.toBeInTheDocument();
+  });
+
+  it('notifies the parent once after a confirmed delete', async () => {
     const user = userEvent.setup();
     const onUpdate = vi.fn();
     const m = mutations();
     render(<EnvVarSection envVars={[MASKED_SECRET]} mutations={m} onUpdate={onUpdate} />);
-
-    await user.click(screen.getByRole('button', { name: 'Show value' }));
-    expect(await screen.findByText('shh')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Hide value' })).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Delete TOKEN' }));
     await user.click(screen.getByRole('button', { name: 'Delete' }));

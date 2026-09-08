@@ -54,7 +54,7 @@ export function KeyValueListEditor({
           variant="outline"
           size="sm"
           onClick={addEntry}
-          aria-label={`Add ${label}`}
+          aria-label={`Add to ${label}`}
         >
           <Plus className="h-4 w-4" />
         </Button>
@@ -91,7 +91,7 @@ export function KeyValueListEditor({
             size="sm"
             onClick={() => removeEntry(index)}
             className="text-destructive"
-            aria-label="Remove"
+            aria-label={entry.key ? `Remove ${entry.key}` : `Remove row ${index + 1}`}
           >
             <Trash2 className="h-4 w-4" />
           </Button>
