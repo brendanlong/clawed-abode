@@ -114,7 +114,9 @@ export async function upsertMcpServer(scope: SettingsScope, server: McpServerInp
   const data = buildMcpServerData(server, existing);
   const now = new Date().toISOString();
 
-  await prisma.$executeRaw`
+  // RETURNING gives the OAuth grant the server's id without a second read, whether
+  // the statement inserted a new row or updated the existing one.
+  const [{ id }] = await prisma.$queryRaw<[{ id: string }]>`
     INSERT INTO "McpServer" ("id", "repoSettingsId", "name", "type", "command", "args", "env", "url", "headers", "authType", "createdAt", "updatedAt")
     VALUES (${randomUUID()}, ${scope.repoSettingsId}, ${server.name}, ${data.type}, ${data.command}, ${data.args}, ${data.env}, ${data.url}, ${data.headers}, ${data.authType}, ${now}, ${now})
     ${conflictTarget(scope)} DO UPDATE SET
@@ -125,11 +127,9 @@ export async function upsertMcpServer(scope: SettingsScope, server: McpServerInp
       "url" = excluded."url",
       "headers" = excluded."headers",
       "authType" = excluded."authType",
-      "updatedAt" = excluded."updatedAt"`;
+      "updatedAt" = excluded."updatedAt"
+    RETURNING "id"`;
 
-  // The OAuth grant lives in its own row, so it needs the server's id — which the
-  // INSERT above can't return through the raw-SQL path used for the partial index.
-  const { id } = await requireMcpServer(scope, server.name);
   await syncMcpOAuthConfig({
     mcpServerId: id,
     isOAuth: server.type !== 'stdio' && server.authType === 'oauth',

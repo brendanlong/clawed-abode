@@ -51,7 +51,9 @@ function firstValue(value: string | null | undefined): string | undefined {
 }
 
 function defaultProtoFor(host: string): string {
-  const hostname = host.split(':')[0];
+  // IPv6 literals are bracketed (`[::1]:3000`), so a naive split on ':' would
+  // leave '[' and never match loopback.
+  const hostname = host.startsWith('[') ? host.slice(0, host.indexOf(']') + 1) : host.split(':')[0];
   return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]'
     ? 'http'
     : 'https';

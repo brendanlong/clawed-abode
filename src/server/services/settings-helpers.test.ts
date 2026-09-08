@@ -45,6 +45,7 @@ describe('settings-helpers', () => {
           url: null,
           headers: null,
           authType: 'headers',
+          oauth: null,
         },
         {
           id: '2',
@@ -56,6 +57,7 @@ describe('settings-helpers', () => {
           url: 'https://x',
           headers: JSON.stringify({ Authorization: { value: encrypt('t'), isSecret: true } }),
           authType: 'headers',
+          oauth: null,
         },
       ]);
       expect(stdio).toMatchObject({
@@ -97,6 +99,7 @@ describe('settings-helpers', () => {
           url: null,
           headers: null,
           authType: 'headers',
+          oauth: null,
         },
         {
           id: '2',
@@ -108,6 +111,7 @@ describe('settings-helpers', () => {
           url: 'https://x',
           headers: JSON.stringify({ A: { value: 'plain', isSecret: false } }),
           authType: 'headers',
+          oauth: null,
         },
         {
           id: '3',
@@ -119,6 +123,7 @@ describe('settings-helpers', () => {
           url: 'https://y',
           headers: null,
           authType: 'headers',
+          oauth: null,
         },
       ]);
       expect(stdio).toEqual({

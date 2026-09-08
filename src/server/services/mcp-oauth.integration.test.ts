@@ -31,6 +31,8 @@ class FakeMcpAuthServer {
   /** When set, the token endpoint rejects every request with this OAuth error. */
   tokenError: string | null = null;
   registrationEndpointEnabled = true;
+  /** Replaces the advertised authorization_endpoint, to test metadata validation. */
+  hostileAuthorizationEndpoint: string | null = null;
 
   constructor() {
     this.server = createServer((req, res) => void this.handle(req, res));
@@ -84,7 +86,8 @@ class FakeMcpAuthServer {
     if (url.pathname === '/.well-known/oauth-authorization-server/tenant') {
       json(200, {
         issuer: `${this.baseUrl}/tenant`,
-        authorization_endpoint: `${this.baseUrl}/tenant/authorize`,
+        authorization_endpoint:
+          this.hostileAuthorizationEndpoint ?? `${this.baseUrl}/tenant/authorize`,
         token_endpoint: `${this.baseUrl}/tenant/token`,
         ...(this.registrationEndpointEnabled
           ? { registration_endpoint: `${this.baseUrl}/tenant/register` }
@@ -119,7 +122,7 @@ class FakeMcpAuthServer {
       }
       json(200, {
         access_token: `access-${this.tokenRequests.length}`,
-        refresh_token: this.issuedRefreshToken,
+        ...(this.issuedRefreshToken ? { refresh_token: this.issuedRefreshToken } : {}),
         expires_in: this.accessTokenLifetimeSeconds,
         scope: 'data:read',
       });
@@ -194,6 +197,7 @@ describe('MCP OAuth', () => {
     remote.tokenRequests = [];
     remote.tokenError = null;
     remote.registrationEndpointEnabled = true;
+    remote.hostileAuthorizationEndpoint = null;
     remote.issuedRefreshToken = 'refresh-1';
     remote.accessTokenLifetimeSeconds = 3600;
   });
@@ -434,6 +438,164 @@ describe('MCP OAuth', () => {
       authType: 'headers',
     });
     expect(await testPrisma.mcpOAuth.count()).toBe(0);
+  });
+
+  it('reports an expired token with no refresh token instead of handing it back', async () => {
+    remote.issuedRefreshToken = undefined as unknown as string;
+    await addOAuthServer();
+    await connect();
+    await testPrisma.mcpOAuth.updateMany({ data: { expiresAt: new Date(Date.now() - 1000) } });
+
+    const row = await credential();
+    expect(row.refreshToken).toBeNull();
+    expect(await oauth.ensureMcpAccessToken(row.id)).toBeNull();
+
+    const stale = await credential();
+    expect(stale.accessToken).toBeNull();
+    expect(oauth.formatOAuthStatus(stale).state).toBe('error');
+  });
+
+  it('invalidates tokens when the manual client ID changes', async () => {
+    await scope.upsertMcpServer(scope.GLOBAL_SCOPE, {
+      name: 'remote',
+      type: 'http',
+      url: remote.mcpUrl,
+      authType: 'oauth',
+      oauth: { clientId: 'client-a', clientSecret: 's', scope: '' },
+    });
+    await connect();
+    expect((await credential()).accessToken).not.toBeNull();
+
+    await scope.upsertMcpServer(scope.GLOBAL_SCOPE, {
+      name: 'remote',
+      type: 'http',
+      url: remote.mcpUrl,
+      authType: 'oauth',
+      oauth: { clientId: 'client-b', clientSecret: '', scope: '' },
+    });
+    const rotated = await credential();
+    expect(rotated.clientId).toBe('client-b');
+    expect(rotated.accessToken).toBeNull();
+    // The secret entered for client-a must not silently authenticate client-b.
+    expect(rotated.refreshToken).toBeNull();
+  });
+
+  it('clears a manual client and its secret when the field is emptied', async () => {
+    await scope.upsertMcpServer(scope.GLOBAL_SCOPE, {
+      name: 'remote',
+      type: 'http',
+      url: remote.mcpUrl,
+      authType: 'oauth',
+      oauth: { clientId: 'client-a', clientSecret: 's', scope: '' },
+    });
+    await scope.upsertMcpServer(scope.GLOBAL_SCOPE, {
+      name: 'remote',
+      type: 'http',
+      url: remote.mcpUrl,
+      authType: 'oauth',
+      oauth: { clientId: '', clientSecret: '', scope: '' },
+    });
+
+    const cleared = await credential();
+    expect(cleared.clientId).toBeNull();
+    expect(cleared.clientSecret).toBeNull();
+    expect(cleared.clientIdIsManual).toBe(false);
+
+    // With nothing pinned, the next connect registers dynamically again.
+    await scope.startScopeMcpOAuth(scope.GLOBAL_SCOPE, 'remote', APP_ORIGIN);
+    expect(remote.registrations).toHaveLength(1);
+  });
+
+  it('keeps a dynamically registered client across an unrelated edit', async () => {
+    await addOAuthServer();
+    await connect();
+    await scope.upsertMcpServer(scope.GLOBAL_SCOPE, {
+      name: 'remote',
+      type: 'http',
+      url: remote.mcpUrl,
+      authType: 'oauth',
+      headers: { 'X-Extra': { value: 'v', isSecret: false } },
+      oauth: { clientId: '', clientSecret: '', scope: '' },
+    });
+
+    const kept = await credential();
+    expect(kept.clientId).toBe('registered-client');
+    expect(kept.accessToken).not.toBeNull();
+  });
+
+  it('exposes the grant to per-repo settings, not just global ones', async () => {
+    const repo = await testPrisma.repoSettings.create({ data: { repoFullName: 'o/r' } });
+    const repoScope = { repoSettingsId: repo.id };
+    await scope.upsertMcpServer(repoScope, {
+      name: 'remote',
+      type: 'http',
+      url: remote.mcpUrl,
+      authType: 'oauth',
+    });
+    const { authorizeUrl } = await scope.startScopeMcpOAuth(repoScope, 'remote', APP_ORIGIN);
+    const { state, code } = remote.approve(authorizeUrl);
+    await oauth.completeMcpOAuthFlow({ state, code });
+
+    const { mcpServers } = await scope.listScopeSettings(repoScope);
+    expect(mcpServers[0].oauth).toMatchObject({ state: 'connected' });
+
+    const merger = await import('./settings-merger');
+    const settings = await merger.loadMergedSessionSettings('o/r');
+    expect(settings.mcpServers[0]).toMatchObject({
+      headers: { Authorization: 'Bearer access-1' },
+    });
+  });
+
+  it('consumes the state so a duplicated callback cannot exchange the code twice', async () => {
+    await addOAuthServer();
+    const { authorizeUrl } = await scope.startScopeMcpOAuth(
+      scope.GLOBAL_SCOPE,
+      'remote',
+      APP_ORIGIN
+    );
+    const { state, code } = remote.approve(authorizeUrl);
+
+    const outcomes = await Promise.allSettled([
+      oauth.completeMcpOAuthFlow({ state, code }),
+      oauth.completeMcpOAuthFlow({ state, code }),
+    ]);
+    expect(outcomes.filter((o) => o.status === 'fulfilled')).toHaveLength(1);
+    expect(remote.tokenRequests).toHaveLength(1);
+
+    const row = await credential();
+    expect(crypto.decrypt(row.accessToken!)).toBe('access-1');
+    expect(row.lastError).toBeNull();
+  });
+
+  it('clears the pending flow when the user declines at the consent screen', async () => {
+    await addOAuthServer();
+    const { authorizeUrl } = await scope.startScopeMcpOAuth(
+      scope.GLOBAL_SCOPE,
+      'remote',
+      APP_ORIGIN
+    );
+    const state = new URL(authorizeUrl).searchParams.get('state')!;
+
+    await oauth.abandonMcpOAuthFlow(state, 'access_denied');
+    const abandoned = await credential();
+    expect(abandoned.flowState).toBeNull();
+    expect(abandoned.codeVerifier).toBeNull();
+    expect(abandoned.lastError).toBe('access_denied');
+  });
+
+  it('refuses an authorization endpoint that is not http(s)', async () => {
+    // `new URL()` parses `javascript:` happily, and the authorization endpoint is
+    // what the browser gets navigated to -- so the metadata must be rejected
+    // outright rather than merely failing later.
+    remote.hostileAuthorizationEndpoint = 'javascript:alert(1)';
+    await addOAuthServer();
+
+    await expect(
+      scope.startScopeMcpOAuth(scope.GLOBAL_SCOPE, 'remote', APP_ORIGIN)
+    ).rejects.toThrow();
+    // The document was discarded, so discovery fell through to the origin-root
+    // guess and nothing hostile was ever stored or handed to the browser.
+    expect((await credential()).authorizationEndpoint).toBeNull();
   });
 
   it('cascades the grant away with the server row', async () => {

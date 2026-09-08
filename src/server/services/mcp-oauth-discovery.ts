@@ -19,12 +19,29 @@ const protectedResourceMetadataSchema = z.object({
   scopes_supported: z.array(z.string()).optional(),
 });
 
+/**
+ * An endpoint we will either navigate the browser to or post credentials to. The
+ * scheme check is the important part: `new URL()` happily parses `javascript:`,
+ * and the authorization endpoint ends up in `window.location.assign`.
+ */
+const httpUrlSchema = z.string().refine(
+  (value) => {
+    try {
+      const { protocol } = new URL(value);
+      return protocol === 'https:' || protocol === 'http:';
+    } catch {
+      return false;
+    }
+  },
+  { message: 'must be an http(s) URL' }
+);
+
 /** RFC 8414 / OIDC authorization-server metadata. */
 const authorizationServerMetadataSchema = z.object({
   issuer: z.string().optional(),
-  authorization_endpoint: z.string(),
-  token_endpoint: z.string(),
-  registration_endpoint: z.string().optional(),
+  authorization_endpoint: httpUrlSchema,
+  token_endpoint: httpUrlSchema,
+  registration_endpoint: httpUrlSchema.optional(),
   scopes_supported: z.array(z.string()).optional(),
   token_endpoint_auth_methods_supported: z.array(z.string()).optional(),
   code_challenge_methods_supported: z.array(z.string()).optional(),

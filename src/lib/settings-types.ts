@@ -62,10 +62,12 @@ export interface ResolvedHttpMcpServer {
   url: string;
   headers?: Record<string, string>;
   /**
-   * McpOAuth row to mint an `Authorization` header from. Resolved (and stripped)
-   * by `applyMcpOAuthHeaders` after merging, so it never reaches the SDK config.
+   * The stored grant to mint an `Authorization` header from, loaded with the
+   * server row so the common (unexpired) case needs no further query. Resolved
+   * and stripped by `applyMcpOAuthHeaders` after merging, so neither the id nor
+   * the ciphertext ever reaches the SDK config.
    */
-  oauthCredentialId?: string;
+  oauth?: { id: string; accessToken: string | null; expiresAt: Date | null };
 }
 
 export type ResolvedMcpServer = ResolvedStdioMcpServer | ResolvedHttpMcpServer;

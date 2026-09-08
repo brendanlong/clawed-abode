@@ -12,10 +12,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Plug, Check, X, KeyRound, Unplug } from 'lucide-react';
+import { Plug, Check, X, KeyRound, TriangleAlert, Unplug } from 'lucide-react';
 import { SettingsListEditor } from './SettingsListEditor';
 import { KeyValueListEditor } from './KeyValueListEditor';
-import { MCP_OAUTH_CALLBACK_PATH } from '@/lib/mcp-oauth-urls';
+import { trpc } from '@/lib/trpc';
 import {
   mcpServerSectionReducer,
   initialMcpServerSectionState,
@@ -157,25 +157,38 @@ export function McpServerSection({
         return (
           <>
             {server.authType === 'oauth' && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() =>
-                  server.oauth?.state === 'connected'
-                    ? handleDisconnect(server.name)
-                    : handleConnect(server.name)
-                }
-                disabled={isConnecting}
-                title={server.oauth?.state === 'connected' ? 'Disconnect' : 'Connect with OAuth'}
-              >
-                {isConnecting ? (
-                  <Spinner size="sm" className="h-4 w-4" />
-                ) : server.oauth?.state === 'connected' ? (
-                  <Unplug className="h-4 w-4" />
-                ) : (
-                  <KeyRound className="h-4 w-4" />
+              <>
+                {/* Always offered, not just when disconnected: a grant whose refresh
+                    is failing needs re-authorizing, not disconnecting first. */}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => handleConnect(server.name)}
+                  disabled={isConnecting}
+                  title={
+                    server.oauth?.state === 'connected'
+                      ? 'Re-authorize with OAuth'
+                      : 'Connect with OAuth'
+                  }
+                >
+                  {isConnecting ? (
+                    <Spinner size="sm" className="h-4 w-4" />
+                  ) : (
+                    <KeyRound className="h-4 w-4" />
+                  )}
+                </Button>
+                {server.oauth?.state === 'connected' && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleDisconnect(server.name)}
+                    disabled={isConnecting}
+                    title="Disconnect"
+                  >
+                    <Unplug className="h-4 w-4" />
+                  </Button>
                 )}
-              </Button>
+              </>
             )}
             <Button
               variant="ghost"
@@ -219,6 +232,7 @@ export function McpServerSection({
 const BADGE_CLASS = 'text-xs px-2 py-1 rounded flex items-center gap-1';
 const OK_CLASS = 'text-green-700 bg-green-50 dark:text-green-400 dark:bg-green-950';
 const BAD_CLASS = 'text-red-700 bg-red-50 dark:text-red-400 dark:bg-red-950';
+const WARN_CLASS = 'text-amber-700 bg-amber-50 dark:text-amber-400 dark:bg-amber-950';
 
 function ErrorBadge({ message }: { message: string }) {
   return (
@@ -230,18 +244,28 @@ function ErrorBadge({ message }: { message: string }) {
 }
 
 function OAuthStatusBadge({ status }: { status: NonNullable<McpServer['oauth']> }) {
-  if (status.state === 'connected') {
+  if (status.state !== 'connected') {
     return (
-      <div className={`${BADGE_CLASS} ${OK_CLASS}`}>
-        <Check className="h-3 w-3 shrink-0" />
-        Authorized{status.scope ? ` \u2014 ${status.scope}` : ''}
+      <ErrorBadge
+        message={status.error ?? 'Not authorized \u2014 use Connect to sign in with OAuth'}
+      />
+    );
+  }
+  // Tokens are stored but the last refresh failed for a reason that might be
+  // transient; say so rather than reporting a flat "Authorized".
+  if (status.error) {
+    return (
+      <div className={`${BADGE_CLASS} ${WARN_CLASS}`}>
+        <TriangleAlert className="h-3 w-3 shrink-0" />
+        Authorized, but the last refresh failed: {status.error}
       </div>
     );
   }
   return (
-    <ErrorBadge
-      message={status.error ?? 'Not authorized \u2014 use Connect to sign in with OAuth'}
-    />
+    <div className={`${BADGE_CLASS} ${OK_CLASS}`}>
+      <Check className="h-3 w-3 shrink-0" />
+      Authorized{status.scope ? ` \u2014 ${status.scope}` : ''}
+    </div>
   );
 }
 
@@ -288,6 +312,9 @@ function McpServerForm({
   const [form, dispatch] = useReducer(mcpServerFormReducer, existingServer, (existing) =>
     createInitialMcpServerFormState(existing)
   );
+  const redirectUri = trpc.globalSettings.getMcpOAuthRedirectUri.useQuery(undefined, {
+    enabled: form.authType === 'oauth',
+  }).data?.redirectUri;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -476,11 +503,7 @@ function McpServerForm({
                 <p className="text-xs text-muted-foreground">
                   Needed only for servers without dynamic client registration (Google, Microsoft
                   Entra). Register the client with redirect URI{' '}
-                  <code className="font-mono">
-                    {typeof window === 'undefined' ? '' : window.location.origin}
-                    {MCP_OAUTH_CALLBACK_PATH}
-                  </code>
-                  .
+                  <code className="font-mono">{redirectUri ?? '(set APP_URL to see this)'}</code>.
                 </p>
               </div>
 

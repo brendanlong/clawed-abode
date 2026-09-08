@@ -1,8 +1,17 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createLogger, toError } from '@/lib/logger';
-import { completeMcpOAuthFlow } from '@/server/services/mcp-oauth';
+import { originHeadersFrom, resolveAppOrigin } from '@/lib/app-origin';
+import { env } from '@/lib/env';
+import { abandonMcpOAuthFlow, completeMcpOAuthFlow } from '@/server/services/mcp-oauth';
 
 const log = createLogger('mcp-oauth-callback');
+
+/**
+ * Anyone who can reach the app can hit this route with an arbitrary `error`, and
+ * the text is echoed into a banner on a trusted page. React escapes it, so the
+ * risk is a long phishing message rather than injection — cap it.
+ */
+const MAX_ERROR_LENGTH = 200;
 
 /**
  * Where an authorization server sends the user's browser after they approve (or
@@ -23,9 +32,10 @@ export async function GET(request: NextRequest) {
 
   if (error) {
     const description = params.get('error_description');
-    return settingsRedirect(request, {
-      error: description ? `${error}: ${description}` : error,
-    });
+    const message = (description ? `${error}: ${description}` : error).slice(0, MAX_ERROR_LENGTH);
+    // The user declined or bailed out; don't leave the flow pending for its full TTL.
+    if (state) await abandonMcpOAuthFlow(state, message);
+    return settingsRedirect(request, { error: message });
   }
   if (!state || !code) {
     return settingsRedirect(request, { error: 'Authorization response was missing code or state' });
@@ -37,7 +47,10 @@ export async function GET(request: NextRequest) {
   } catch (err) {
     log.error('MCP OAuth callback failed', toError(err));
     return settingsRedirect(request, {
-      error: err instanceof Error ? err.message : 'Authorization failed',
+      error: (err instanceof Error ? err.message : 'Authorization failed').slice(
+        0,
+        MAX_ERROR_LENGTH
+      ),
     });
   }
 }
@@ -46,7 +59,11 @@ function settingsRedirect(
   request: NextRequest,
   result: { connected: string } | { error: string }
 ): NextResponse {
-  const url = new URL('/settings', request.nextUrl.origin);
+  // Same origin resolution as the redirect URI, so an operator-set APP_URL sends
+  // the user back to the host their auth token is stored against.
+  const origin =
+    resolveAppOrigin(env.APP_URL, originHeadersFrom(request.headers)) ?? request.nextUrl.origin;
+  const url = new URL('/settings', origin);
   if ('connected' in result) {
     url.searchParams.set('mcpConnected', result.connected);
   } else {

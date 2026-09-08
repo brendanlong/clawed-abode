@@ -8,7 +8,7 @@ import type {
   ResolvedEnvVar,
   ResolvedMcpServer,
 } from '@/lib/settings-types';
-import { formatOAuthStatus, type OAuthStatusRow } from './mcp-oauth';
+import { formatOAuthStatus, type McpOAuthTokenSnapshot, type OAuthStatusRow } from './mcp-oauth';
 
 // ─── Validation Schemas ──────────────────────────────────────────────
 
@@ -142,7 +142,12 @@ interface DbMcpServer {
   url: string | null;
   headers: string | null;
   authType: string;
-  oauth?: (OAuthStatusRow & { id: string }) | null;
+  /**
+   * Required (not optional) so a query that forgets `include: { oauth: true }`
+   * fails to compile: a silently-absent grant reads as "not authorized" and would
+   * make the settings form clear the stored client on the next save.
+   */
+  oauth: (OAuthStatusRow & McpOAuthTokenSnapshot) | null;
 }
 
 /** MCP server formatted for API responses (masked secrets) */
@@ -226,7 +231,15 @@ export function decryptMcpServers(mcpServers: DbMcpServer[]): ResolvedMcpServer[
         type: serverType,
         url: mcp.url!,
         headers: decryptSecretRecord(mcp.headers),
-        ...(mcp.authType === 'oauth' && mcp.oauth ? { oauthCredentialId: mcp.oauth.id } : {}),
+        ...(mcp.authType === 'oauth' && mcp.oauth
+          ? {
+              oauth: {
+                id: mcp.oauth.id,
+                accessToken: mcp.oauth.accessToken,
+                expiresAt: mcp.oauth.expiresAt,
+              },
+            }
+          : {}),
       };
     }
 

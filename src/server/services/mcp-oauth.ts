@@ -123,9 +123,12 @@ export function accessTokenExpiry(expiresIn: number | undefined, now: Date): Dat
 
 /**
  * Run discovery and client acquisition, stash the PKCE verifier against a fresh
- * `state`, and return the URL the user's browser must visit. Existing tokens are
- * left alone until the callback succeeds, so abandoning a re-authorization
- * doesn't break a working connection.
+ * `state`, and return the URL the user's browser must visit.
+ *
+ * When the existing client is reused, existing tokens are left alone, so
+ * abandoning a re-authorization doesn't break a working connection. When a new
+ * client has to be registered they are cleared instead: a refresh token minted
+ * for the old `client_id` can only earn an `invalid_grant`.
  */
 export async function startMcpOAuthFlow(params: {
   mcpServerId: string;
@@ -162,6 +165,9 @@ export async function startMcpOAuthFlow(params: {
     redirectUri,
     flowStartedAt: new Date(),
     lastError: null,
+    ...(reusable
+      ? {}
+      : { accessToken: null, refreshToken: null, expiresAt: null, authorizedAt: null }),
   };
 
   await prisma.mcpOAuth.upsert({
@@ -230,6 +236,15 @@ export async function completeMcpOAuthFlow(params: {
   if (!row) {
     throw new Error('No pending authorization matches this callback');
   }
+  // Claim the state before spending the code, so a callback delivered twice can't
+  // run two exchanges and have the loser overwrite the winner's result.
+  const claimed = await prisma.mcpOAuth.updateMany({
+    where: { id: row.id, flowState: params.state },
+    data: { flowState: null },
+  });
+  if (claimed.count !== 1) {
+    throw new Error('No pending authorization matches this callback');
+  }
   if (isFlowExpired(row.flowStartedAt, new Date())) {
     await clearFlow(row.id, 'Authorization timed out; start it again');
     throw new Error('This authorization took too long and expired. Start it again.');
@@ -278,6 +293,12 @@ export async function completeMcpOAuthFlow(params: {
   }
 }
 
+/** Discard a pending authorization the user declined or abandoned at the consent screen. */
+export async function abandonMcpOAuthFlow(state: string, reason: string): Promise<void> {
+  const row = await prisma.mcpOAuth.findUnique({ where: { flowState: state } });
+  if (row) await clearFlow(row.id, reason);
+}
+
 async function clearFlow(id: string, lastError: string | null): Promise<void> {
   await prisma.mcpOAuth.update({
     where: { id },
@@ -309,21 +330,39 @@ export async function syncMcpOAuthConfig(params: {
     where: { mcpServerId: params.mcpServerId },
   });
   const clientId = params.clientId.trim() || null;
-  const clientSecret = params.clientSecret
-    ? encrypt(params.clientSecret)
-    : (existing?.clientSecret ?? null);
-  const invalidated = params.urlChanged
-    ? { accessToken: null, refreshToken: null, expiresAt: null, authorizedAt: null }
-    : {};
+  // A blank field is only a deliberate "clear" for a client the user typed; for a
+  // dynamically registered one it just means the form had nothing to show.
+  const clearingManualClient = !clientId && !!existing?.clientIdIsManual;
+  const client = clientId
+    ? { clientId, clientIdIsManual: true }
+    : clearingManualClient
+      ? { clientId: null, clientIdIsManual: false }
+      : {};
+
+  const clientSecret = clearingManualClient
+    ? null
+    : params.clientSecret
+      ? encrypt(params.clientSecret)
+      : (existing?.clientSecret ?? null);
+
+  // Tokens are bound to both the resource and the client they were issued for, so
+  // either changing means what we hold can no longer work.
+  const clientChanged = clientId !== null && clientId !== existing?.clientId;
+  const invalidated =
+    params.urlChanged || clientChanged || clearingManualClient
+      ? {
+          accessToken: null,
+          refreshToken: null,
+          expiresAt: null,
+          authorizedAt: null,
+          lastError: null,
+        }
+      : {};
 
   const config = {
     scope: params.scope.trim() || null,
-    ...(clientId
-      ? { clientId, clientSecret, clientIdIsManual: true }
-      : // Clearing a manual client ID drops back to discovery/DCR on the next connect.
-        existing?.clientIdIsManual
-        ? { clientId: null, clientSecret: null, clientIdIsManual: false }
-        : {}),
+    clientSecret,
+    ...client,
     ...invalidated,
   };
 
@@ -352,6 +391,14 @@ export async function disconnectMcpOAuth(mcpServerId: string): Promise<void> {
 }
 
 // ─── Access tokens for a query ───────────────────────────────────────
+
+/** The token columns of a grant, carried alongside the server row it belongs to. */
+export interface McpOAuthTokenSnapshot {
+  id: string;
+  /** Still encrypted — decrypted only when it is about to be used. */
+  accessToken: string | null;
+  expiresAt: Date | null;
+}
 
 /**
  * Refreshes in flight, keyed by credential id. Several sessions can establish at
@@ -383,7 +430,17 @@ async function resolveAccessToken(oauthId: string): Promise<string | null> {
     return decrypt(row.accessToken);
   }
   if (!row.refreshToken || !row.tokenEndpoint || !row.clientId) {
-    return row.accessToken ? decrypt(row.accessToken) : null;
+    // Expired with no way to refresh (the server issued no refresh token). Report
+    // it rather than handing back a token that can only produce a 401 the user
+    // would see as "connected but nothing works".
+    const lastError = row.accessToken
+      ? 'Access token expired and the server issued no refresh token — connect again'
+      : 'Not authorized — connect to sign in';
+    await prisma.mcpOAuth.update({
+      where: { id: oauthId },
+      data: { accessToken: null, lastError },
+    });
+    return null;
   }
 
   try {
@@ -441,12 +498,16 @@ export async function applyMcpOAuthHeaders(
 ): Promise<ResolvedMcpServer[]> {
   return Promise.all(
     servers.map(async (server) => {
-      if (server.type === 'stdio' || !server.oauthCredentialId) return server;
-      const { oauthCredentialId, ...rest } = server;
-      const token = await ensureMcpAccessToken(oauthCredentialId).catch((error) => {
-        log.error('Failed to resolve MCP OAuth token', toError(error));
-        return null;
-      });
+      if (server.type === 'stdio' || !server.oauth) return server;
+      const { oauth, ...rest } = server;
+      // The snapshot came with the server row, so an unexpired token costs no query.
+      const token =
+        oauth.accessToken && isAccessTokenFresh(oauth.expiresAt, new Date())
+          ? decrypt(oauth.accessToken)
+          : await ensureMcpAccessToken(oauth.id).catch((error) => {
+              log.error('Failed to resolve MCP OAuth token', toError(error));
+              return null;
+            });
       if (!token) return rest;
       return { ...rest, headers: { ...rest.headers, Authorization: `Bearer ${token}` } };
     })

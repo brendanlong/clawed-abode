@@ -27,6 +27,7 @@ describe('resolveAppOrigin', () => {
     expect(resolveAppOrigin(undefined, { host: 'host.ts.net' })).toBe('https://host.ts.net');
     expect(resolveAppOrigin(undefined, { host: 'localhost:3000' })).toBe('http://localhost:3000');
     expect(resolveAppOrigin(undefined, { host: '127.0.0.1:3000' })).toBe('http://127.0.0.1:3000');
+    expect(resolveAppOrigin(undefined, { host: '[::1]:3000' })).toBe('http://[::1]:3000');
   });
 
   it('returns null when there is nothing to derive an origin from', () => {

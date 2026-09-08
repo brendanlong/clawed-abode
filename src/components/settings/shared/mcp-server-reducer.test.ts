@@ -229,6 +229,45 @@ describe('mcpServerFormReducer', () => {
     });
   });
 
+  describe('OAuth connect actions', () => {
+    it('clears a previous error when a new attempt starts', () => {
+      const failed = mcpServerSectionReducer(initialMcpServerSectionState, {
+        type: 'connectFailed',
+        name: 'remote',
+        error: 'discovery failed',
+      });
+      expect(failed.connectErrors.get('remote')).toBe('discovery failed');
+      expect(failed.connectingServer).toBeNull();
+
+      const retried = mcpServerSectionReducer(failed, { type: 'startConnecting', name: 'remote' });
+      expect(retried.connectingServer).toBe('remote');
+      expect(retried.connectErrors.has('remote')).toBe(false);
+    });
+
+    it('leaves other servers\u2019 errors alone', () => {
+      const withError = mcpServerSectionReducer(initialMcpServerSectionState, {
+        type: 'connectFailed',
+        name: 'other',
+        error: 'boom',
+      });
+      const started = mcpServerSectionReducer(withError, {
+        type: 'startConnecting',
+        name: 'remote',
+      });
+      expect(started.connectErrors.get('other')).toBe('boom');
+    });
+
+    it('stops the spinner on success without recording an error', () => {
+      const started = mcpServerSectionReducer(initialMcpServerSectionState, {
+        type: 'startConnecting',
+        name: 'remote',
+      });
+      const done = mcpServerSectionReducer(started, { type: 'connectFinished', name: 'remote' });
+      expect(done.connectingServer).toBeNull();
+      expect(done.connectErrors.size).toBe(0);
+    });
+  });
+
   describe('field updates', () => {
     it('sets name', () => {
       const state = createInitialMcpServerFormState();
