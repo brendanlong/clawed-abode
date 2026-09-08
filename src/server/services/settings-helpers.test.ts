@@ -44,6 +44,8 @@ describe('settings-helpers', () => {
           }),
           url: null,
           headers: null,
+          authType: 'headers',
+          oauth: null,
         },
         {
           id: '2',
@@ -54,6 +56,8 @@ describe('settings-helpers', () => {
           env: null,
           url: 'https://x',
           headers: JSON.stringify({ Authorization: { value: encrypt('t'), isSecret: true } }),
+          authType: 'headers',
+          oauth: null,
         },
       ]);
       expect(stdio).toMatchObject({
@@ -94,6 +98,8 @@ describe('settings-helpers', () => {
           env: JSON.stringify({ K: { value: encrypt('x'), isSecret: true } }),
           url: null,
           headers: null,
+          authType: 'headers',
+          oauth: null,
         },
         {
           id: '2',
@@ -104,6 +110,8 @@ describe('settings-helpers', () => {
           env: null,
           url: 'https://x',
           headers: JSON.stringify({ A: { value: 'plain', isSecret: false } }),
+          authType: 'headers',
+          oauth: null,
         },
         {
           id: '3',
@@ -114,6 +122,8 @@ describe('settings-helpers', () => {
           env: null,
           url: 'https://y',
           headers: null,
+          authType: 'headers',
+          oauth: null,
         },
       ]);
       expect(stdio).toEqual({
@@ -160,6 +170,7 @@ describe('settings-helpers', () => {
           name: 'h',
           type: 'http',
           url: 'https://x',
+          authType: 'headers',
           headers: { A: { value: '', isSecret: true } },
         },
         { env: null, headers: JSON.stringify({ A: { value: 'was-plain', isSecret: false } }) }
@@ -195,6 +206,7 @@ describe('settings-helpers', () => {
         name: 'h',
         type: 'http',
         url: 'https://x',
+        authType: 'headers',
         headers: { A: { value: 'v', isSecret: false } },
       })
     ).toBe(false);

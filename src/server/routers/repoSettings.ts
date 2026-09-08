@@ -41,7 +41,7 @@ export const repoSettingsRouter = router({
       where: { repoFullName: input.repoFullName },
       include: {
         envVars: { orderBy: { name: 'asc' } },
-        mcpServers: { orderBy: { name: 'asc' } },
+        mcpServers: { orderBy: { name: 'asc' }, include: { oauth: true } },
       },
     });
     if (!settings) return null;

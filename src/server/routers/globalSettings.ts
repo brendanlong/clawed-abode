@@ -11,6 +11,7 @@ import { scopedSettingsProcedures } from './scoped-settings';
 import { getModelSuggestions } from '../services/anthropic-models';
 import { SUGGESTED_ADVISOR_MODEL } from '@/lib/advisor';
 import { settingSourceFlagsFromRow, settingSourceFlagsSchema } from '@/lib/setting-sources';
+import { mcpOAuthRedirectUri } from '@/lib/mcp-oauth-urls';
 import type { Prisma } from '@/generated/prisma/client';
 
 const log = createLogger('globalSettings');
@@ -59,6 +60,15 @@ export const globalSettingsRouter = router({
       hasEnvApiKey: !!env.CLAUDE_CODE_OAUTH_TOKEN,
     };
   }),
+
+  /**
+   * The exact redirect URI to register with an OAuth provider. Server-resolved
+   * because the client's own origin disagrees with it whenever APP_URL is set,
+   * and a mismatched redirect_uri is rejected outright.
+   */
+  getMcpOAuthRedirectUri: protectedProcedure.query(({ ctx }) => ({
+    redirectUri: ctx.appOrigin ? mcpOAuthRedirectUri(ctx.appOrigin) : null,
+  })),
 
   /** Well-known aliases + API models + inferred aliases; cached for an hour. */
   getModelSuggestions: protectedProcedure.query(async () => {

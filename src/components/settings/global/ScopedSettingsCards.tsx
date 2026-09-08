@@ -29,6 +29,8 @@ function useGlobalMcpServerMutations(): McpServerMutations {
   const deleteMutation = trpc.globalSettings.deleteMcpServer.useMutation();
   const setMutation = trpc.globalSettings.setMcpServer.useMutation();
   const validateMutation = trpc.globalSettings.validateMcpServer.useMutation();
+  const startOAuthMutation = trpc.globalSettings.startMcpOAuth.useMutation();
+  const disconnectOAuthMutation = trpc.globalSettings.disconnectMcpOAuth.useMutation();
 
   return {
     deleteMcpServer: async (name) => {
@@ -36,6 +38,12 @@ function useGlobalMcpServerMutations(): McpServerMutations {
     },
     setMcpServer: async (mcpServer) => {
       await setMutation.mutateAsync({ mcpServer });
+    },
+    startMcpOAuth: async (name) => {
+      return await startOAuthMutation.mutateAsync({ name });
+    },
+    disconnectMcpOAuth: async (name) => {
+      await disconnectOAuthMutation.mutateAsync({ name });
     },
     validateMcpServer: async (name) => {
       return await validateMutation.mutateAsync({ name });

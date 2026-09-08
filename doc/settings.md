@@ -18,7 +18,26 @@ Global-only and **opt-in**: null means the advisor tool isn't wired into request
 
 ## MCP Validation
 
-The Validate button connects with the MCP SDK and lists tools. HTTP/SSE servers are contacted directly; stdio servers are spawned on the host with the MCP SDK's minimal default environment plus their own decrypted env (never the app's `process.env`, which holds the encryption key and tokens) and killed after the check (15s timeout).
+The Validate button connects with the MCP SDK and lists tools. HTTP/SSE servers are contacted directly (with a fresh OAuth token when they use one); stdio servers are spawned on the host with the MCP SDK's minimal default environment plus their own decrypted env (never the app's `process.env`, which holds the encryption key and tokens) and killed after the check (15s timeout).
+
+## MCP OAuth
+
+An http/sse server's `authType` is `headers` (a static secret) or `oauth`. OAuth exists because a growing class of remote servers offers **no static credential at all**, and it is exactly the read-only tiers that are gated behind it (Google Calendar's MCP server is OAuth-only; Todoist's `data:read` scope has no personal-token equivalent).
+
+The grant is a `McpOAuth` row per `McpServer` row — so a global and a per-repo entry for the same remote server hold independent grants, and deleting the server deletes the grant. Client secret, tokens and the in-flight PKCE verifier are encrypted with `ENCRYPTION_KEY`; choosing `oauth` therefore requires encryption to be configured.
+
+Connect runs entirely server-side except the `/authorize` step ([`mcp-oauth.ts`](../src/server/services/mcp-oauth.ts), discovery in [`mcp-oauth-discovery.ts`](../src/server/services/mcp-oauth-discovery.ts), pure URL rules in [`src/lib/mcp-oauth-urls.ts`](../src/lib/mcp-oauth-urls.ts)):
+
+1. **Discovery** degrades one step at a time, because remote servers publish inconsistently: the `resource_metadata` pointer in the MCP endpoint's 401 → the RFC 9728 well-known locations → RFC 8414/OIDC authorization-server metadata → origin-root endpoints. Both well-known lookups try the **path-inserted** location first (RFC 9728 §3.1 / RFC 8414); the root one is only authoritative for a bare-origin resource, and deriving it wrong is the single most common way this flow dies silently.
+2. **Client acquisition**: reuse a client the user typed or one we registered against the same issuer, else dynamic client registration. `token_endpoint_auth_method: "none"` is requested only when the server advertises it. **A manually entered client ID is the escape hatch** and is not optional polish — Google and Microsoft Entra have no DCR at all.
+3. **Authorize** in the user's browser with PKCE S256 and the RFC 8707 `resource` indicator.
+4. **Callback** at `/api/mcp/oauth/callback` (see [`security.md`](security.md)), which exchanges the code and stores the tokens.
+
+The access token is refreshed on demand and injected as an `Authorization` header by `applyMcpOAuthHeaders`, **after** global/per-repo merging so a shadowed server never spends a refresh. The token columns ride along with the server row, so an unexpired token costs no extra query on a path that runs on every send. It flows through the same mode-0600 `mcp-config.json` as every other MCP secret. Refreshes are coalesced per credential (a rotating refresh token is single-use, and several sessions can establish at once). A refusal that means the grant is dead (`invalid_grant`), or an expiry with no refresh token to spend, clears the tokens so the UI shows "needs re-authorization"; anything else keeps them for the next attempt and reports the failure alongside the still-valid grant. When no token can be produced the server is still passed to the agent, just without the header — the session doesn't fail over one broken connector.
+
+The redirect URI is derived from the **request's** origin (`APP_URL` overrides), never loopback: the app is headless and the browser is on another device. The settings form shows the exact value from `globalSettings.getMcpOAuthRedirectUri` rather than the browser's own origin, because those differ whenever `APP_URL` is set and a mismatched `redirect_uri` is rejected outright.
+
+Tokens are bound to a resource _and_ a client, so changing the server URL, changing a manually entered client ID, or registering a new client because the issuer moved all discard the stored grant rather than leaving a refresh token that can only earn an `invalid_grant`. Discovered endpoints are scheme-checked (`new URL()` parses `javascript:`, and the authorization endpoint is what the browser gets navigated to).
 
 ## Secrets
 
