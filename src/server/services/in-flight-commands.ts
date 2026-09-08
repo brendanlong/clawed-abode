@@ -75,8 +75,12 @@ export function handleCommandLifecycle(
   return true;
 }
 
-/** Whether a message is the main agent's (top-level) `message_start`. */
-function isTopLevelMessageStart(message: SDKMessage): boolean {
+/**
+ * Whether a message is the main agent's (top-level) `message_start` — the moment a
+ * turn visibly begins. Also the signal that supersedes an optimistic `turnActive`
+ * (see {@link clearOptimisticTurn}).
+ */
+export function isTopLevelMessageStart(message: SDKMessage): boolean {
   if (message.type !== 'stream_event') return false;
   const parent = (message as { parent_tool_use_id?: string | null }).parent_tool_use_id;
   if (parent !== null && parent !== undefined) return false;
@@ -165,9 +169,22 @@ export async function recallUnstartedCommands(
   }
 
   if (recalled.length === 0) return [];
+  clearOptimisticTurn(state);
   sseEvents.emitPendingMessages(sessionId, pendingMessageIds(state));
   syncRunning(sessionId, state);
   return recalled;
+}
+
+/**
+ * Undo a purely optimistic `turnActive` once nothing is left in flight to justify
+ * it. Only safe when no real turn has been observed since the push
+ * ({@link SessionState.optimisticTurnActive}) — a turn that genuinely started
+ * must be left to the message stream to end.
+ */
+export function clearOptimisticTurn(state: SessionState): void {
+  if (!state.optimisticTurnActive || state.inFlightCommands.size > 0) return;
+  state.optimisticTurnActive = false;
+  if (state.status.turnActive) state.status = { ...state.status, turnActive: false };
 }
 
 /**

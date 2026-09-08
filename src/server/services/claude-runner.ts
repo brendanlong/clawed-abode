@@ -53,6 +53,7 @@ import {
   describeCancelledPrompt,
   effectiveRunning,
   handleCommandLifecycle,
+  isTopLevelMessageStart,
   pendingMessageIds,
   recallUnstartedCommands,
   retireInFlightCommands,
@@ -61,8 +62,8 @@ import {
 import {
   clearQueuedPrompts,
   emitQueuedPrompts,
-  enqueuePrompt,
-  dequeuePrompt,
+  claimQueuedPrompt,
+  enqueuePrompts,
   listQueuedPrompts,
   queuedMessageIds,
 } from './prompt-queue';
@@ -73,7 +74,6 @@ import {
   resolveSessionHold,
   setRateLimitChangeHandler,
 } from './rate-limit-state';
-import { pollRateLimitUsage } from './rate-limit-usage';
 import {
   forgetSessionCommands,
   getSessionCommands,
@@ -161,6 +161,7 @@ async function persistSessionScope(sessionId: string, unit: string | null): Prom
  */
 function clearLiveStatus(sessionId: string, state: SessionState): void {
   state.interruptRequested = false;
+  state.optimisticTurnActive = false;
   // Deliveries in flight die with the query. Their bubbles stay (they may well
   // have been read), but the "not delivered yet" marker must clear.
   if (state.inFlightCommands.size > 0) {
@@ -209,6 +210,12 @@ function applyStatus(sessionId: string, state: SessionState, message: SDKMessage
   if (turnEnded) state.interruptRequested = false;
 
   state.status = status;
+  // Any real turn boundary supersedes the optimistic flag: from here on the
+  // stream owns turnActive. `message_start` needs its own clause — it lands while
+  // the flag already reads true, so it moves no axis for `changed` to report.
+  if (changed.turnActive || isTopLevelMessageStart(message) || message.type === 'result') {
+    state.optimisticTurnActive = false;
+  }
 
   retireInFlightCommands(sessionId, state, message);
   syncRunning(sessionId, state);
@@ -226,8 +233,6 @@ function applyStatus(sessionId: string, state: SessionState, message: SDKMessage
 
   if (turnEnded) {
     void detectBranchAndPr(sessionId, state.workingDir);
-    // A turn boundary is the only moment a pre-emptive pause costs no work.
-    if (state.query) void pollRateLimitUsage(state.query);
   }
 }
 
@@ -251,8 +256,8 @@ async function runSessionLoop(sessionId: string, state: SessionState, q: Query):
       // Account-wide rate-limit state arrives on whichever session's stream happens
       // to be talking to the API; recording it re-evaluates the pause for ALL
       // sessions (see recomputeRateLimitHolds).
-      const reading = parseRateLimitEvent(message, Date.now());
-      if (reading) void recordRateLimitReadings([reading]);
+      const readings = parseRateLimitEvent(message, Date.now());
+      if (readings.length > 0) void recordRateLimitReadings(readings);
 
       if (message.type === 'stream_event') {
         const partial = accumulator.accumulate(
@@ -515,6 +520,7 @@ function pushPreparedPrompt(sessionId: string, state: SessionState, prompt: Push
   // `result` without a `message_start`.
   if (!state.status.turnActive) {
     state.status = { ...state.status, turnActive: true };
+    state.optimisticTurnActive = true;
   }
   syncRunning(sessionId, state);
 
@@ -541,11 +547,12 @@ function pushPreparedPrompt(sessionId: string, state: SessionState, prompt: Push
 export async function sendUserMessage(
   sessionId: string,
   prompt: string,
-  attachments: string[] = []
+  attachments: string[] = [],
+  { userInitiated = true } = {}
 ): Promise<void> {
   const hold = await resolveSessionHold(sessionId);
   if (hold) {
-    await queuePromptWhilePaused(sessionId, prompt, attachments, hold);
+    await queuePromptWhilePaused(sessionId, prompt, attachments, hold, userInitiated);
     return;
   }
 
@@ -555,7 +562,7 @@ export async function sendUserMessage(
   }
 
   await applyLiveSettings(sessionId, state);
-  await bumpSessionActivity(sessionId);
+  if (userInitiated) await bumpSessionActivity(sessionId);
 
   // Sanitize/resolve up front (no side effects) so a failure aborts cleanly before
   // anything is persisted and the client keeps the just-typed text to retry.
@@ -563,6 +570,19 @@ export async function sendUserMessage(
 
   const messageId = uuid();
   await insertPreparedMessage(sessionId, messageId, prepared);
+
+  const pushable = { messageId, content: prepared.content, text: prompt, attachments };
+
+  // A hold can land during the awaits above, after the check at the top. Re-read
+  // it here — synchronously, from the last recompute — because this is the same
+  // statement as the push: a prompt decided against a stale answer would go
+  // straight into a window the API is refusing, which is the one thing the pause
+  // exists to prevent.
+  if (emittedHolds.has(sessionId)) {
+    await enqueuePrompts(sessionId, [pushable]);
+    await emitQueuedPrompts(sessionId);
+    return;
+  }
 
   // Re-check the input *after* the insert: the query loop can exit mid-await (CLI
   // crash, stop) and null it. Tracking a command we never pushed would strand it
@@ -572,12 +592,7 @@ export async function sendUserMessage(
     throw new Error('Session query is not available');
   }
 
-  pushPreparedPrompt(sessionId, state, {
-    messageId,
-    content: prepared.content,
-    text: prompt,
-    attachments,
-  });
+  pushPreparedPrompt(sessionId, state, pushable);
 }
 
 /** Write the bubble for a prompt sent to a paused session and queue the payload. */
@@ -585,18 +600,16 @@ async function queuePromptWhilePaused(
   sessionId: string,
   prompt: string,
   attachments: string[],
-  hold: RateLimitHold
+  hold: RateLimitHold,
+  userInitiated: boolean
 ): Promise<void> {
-  await bumpSessionActivity(sessionId);
+  if (userInitiated) await bumpSessionActivity(sessionId);
   const prepared = await prepareUserMessage(sessionId, prompt, attachments);
   const messageId = uuid();
   await insertPreparedMessage(sessionId, messageId, prepared);
-  await enqueuePrompt(sessionId, {
-    messageId,
-    content: prepared.content,
-    text: prompt,
-    attachments,
-  });
+  await enqueuePrompts(sessionId, [
+    { messageId, content: prepared.content, text: prompt, attachments },
+  ]);
   await emitQueuedPrompts(sessionId);
   log.info('Queued prompt behind rate-limit pause', {
     sessionId,
@@ -637,22 +650,31 @@ export function recomputeRateLimitHolds(): Promise<void> {
     recomputeRequested = true;
     return recomputeInFlight;
   }
-  recomputeInFlight = runRecompute().finally(() => {
-    recomputeInFlight = null;
-    if (recomputeRequested) {
-      recomputeRequested = false;
-      void recomputeRateLimitHolds();
-    }
-  });
+  // The trigger is a fire-and-forget callback from rate-limit-state, so nothing
+  // is left to catch a rejection: swallow it here rather than crash the process.
+  recomputeInFlight = runRecompute()
+    .catch((err: unknown) => log.error('Rate-limit recompute failed', toError(err)))
+    .finally(() => {
+      recomputeInFlight = null;
+      if (recomputeRequested) {
+        recomputeRequested = false;
+        void recomputeRateLimitHolds();
+      }
+    });
   return recomputeInFlight;
 }
 
 async function runRecompute(): Promise<void> {
-  // Snapshot which sessions are mid-turn BEFORE any await: a rejection kills the
-  // turn it lands in, and by the time the holds are resolved that turn may already
-  // have collapsed — losing the very fact that tells us to nudge it later.
+  // Snapshot which sessions are genuinely mid-turn BEFORE any await: a rejection
+  // kills the turn it lands in, and by the time the holds are resolved that turn
+  // may already have collapsed — losing the very fact that tells us to nudge it
+  // later. A merely optimistic turnActive doesn't count: nothing started, so
+  // there is nothing to continue, and the prompt is recalled into the queue where
+  // it will run again in full.
   const turnActiveSessionIds = new Set(
-    [...sessions].filter(([, state]) => state.status.turnActive).map(([id]) => id)
+    [...sessions]
+      .filter(([, state]) => state.status.turnActive && !state.optimisticTurnActive)
+      .map(([id]) => id)
   );
 
   let holds: Map<string, RateLimitHold>;
@@ -672,7 +694,12 @@ async function runRecompute(): Promise<void> {
   }
 
   for (const [sessionId, hold] of holds) {
-    await pauseSessionForRateLimit(sessionId, hold, turnActiveSessionIds.has(sessionId));
+    try {
+      await pauseSessionForRateLimit(sessionId, hold, turnActiveSessionIds.has(sessionId));
+    } catch (err) {
+      // One session failing to park must not skip the drain phase for the rest.
+      log.error('Failed to pause session for rate limit', toError(err), { sessionId });
+    }
   }
 
   let toDrain: { id: string }[];
@@ -728,14 +755,15 @@ async function pauseSessionForRateLimit(
   const recalled = await recallUnstartedCommands(sessionId, state, state.query);
   if (recalled.length === 0) return;
 
-  for (const command of recalled) {
-    await enqueuePrompt(sessionId, {
+  await enqueuePrompts(
+    sessionId,
+    recalled.map((command) => ({
       messageId: command.messageId,
       content: command.content,
       text: command.text,
       attachments: command.attachments,
-    });
-  }
+    }))
+  );
   await emitQueuedPrompts(sessionId);
   log.info('Paused session for rate limit', {
     sessionId,
@@ -760,7 +788,10 @@ async function drainSessionAfterRateLimit(sessionId: string): Promise<void> {
     });
     if (count > 0) {
       log.info('Resuming turn cut short by a rate limit', { sessionId });
-      await sendUserMessage(sessionId, RATE_LIMIT_RESUME_PROMPT);
+      // Not user-initiated: a window resetting is a lifecycle event, and bumping
+      // lastActivityAt would reshuffle the session list with no user involved
+      // (see doc/DESIGN.md on Session.lastActivityAt).
+      await sendUserMessage(sessionId, RATE_LIMIT_RESUME_PROMPT, [], { userInitiated: false });
     }
 
     const queued = await listQueuedPrompts(sessionId);
@@ -772,27 +803,36 @@ async function drainSessionAfterRateLimit(sessionId: string): Promise<void> {
     });
     const state = await ensureSessionQuery(sessionId);
     for (const prompt of queued) {
+      // The input can vanish mid-drain (CLI crash, stop); leave the rest queued.
       if (!state.input) break;
+      // Claim before pushing: Stop can empty the queue underneath this loop, and
+      // pushing a prompt it already took back would run cancelled work with no
+      // bubble to show for it.
+      if (!(await claimQueuedPrompt(prompt.id))) continue;
       pushPreparedPrompt(sessionId, state, prompt);
-      await dequeuePrompt(prompt.id);
     }
   } catch (err) {
     // Leaving the queue in place is the safe failure: the next recompute retries.
     log.error('Failed to drain rate-limit queue', toError(err), { sessionId });
   } finally {
-    await emitQueuedPrompts(sessionId);
+    await emitQueuedPrompts(sessionId).catch(() => {});
   }
 }
 
 /**
- * Wire up the rate-limit pause and restore its state. Called once at startup,
- * before any session revives, so a restart during a pause doesn't release queued
- * work into a window that is still exhausted.
+ * Wire up the rate-limit pause and restore its state, then kick a first recompute.
+ *
+ * Restoring the readings is awaited so nothing can release queued work before we
+ * know whether the window is still exhausted. The recompute is deliberately NOT
+ * awaited: if the window reset while the server was down it drains, which means
+ * establishing queries — and a slow one must not stall startup. That drain is the
+ * one place a session revives without a user interaction (doc/DESIGN.md's lazy
+ * revival); the user's queued prompt is exactly the interaction, just an earlier one.
  */
 export async function initRateLimitPause(): Promise<void> {
   setRateLimitChangeHandler(() => void recomputeRateLimitHolds());
   await loadRateLimitReadings();
-  await recomputeRateLimitHolds();
+  void recomputeRateLimitHolds();
 }
 
 /**

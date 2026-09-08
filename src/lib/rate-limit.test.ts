@@ -9,8 +9,8 @@ import {
   mergeReading,
   nextReadingExpiry,
   normalizeResetsAt,
+  normalizeUtilization,
   parseRateLimitEvent,
-  parseUsageSnapshot,
   resolvePausePolicy,
   UNKNOWN_RESET_HOLD_MS,
   type RateLimitReading,
@@ -24,12 +24,14 @@ function reading(overrides: Partial<RateLimitReading> = {}): RateLimitReading {
   return {
     limitType: 'five_hour',
     rejected: false,
+    authoritative: true,
     utilization: 50,
     resetsAtMs: IN_AN_HOUR,
     ...overrides,
   };
 }
 
+/** Shaped like the real events in production (see the samples in rate-limit.ts). */
 const rateLimitEvent = (info: Record<string, unknown>) => ({
   type: 'rate_limit_event',
   uuid: 'u',
@@ -55,137 +57,171 @@ describe('normalizeResetsAt', () => {
   });
 });
 
+describe('normalizeUtilization', () => {
+  it('scales the fraction the SDK actually sends into a percentage', () => {
+    expect(normalizeUtilization(0.78)).toBe(78);
+    expect(normalizeUtilization(1)).toBe(100);
+    expect(normalizeUtilization(0)).toBe(0);
+  });
+
+  it('passes a value above 1 through as an already-percentage figure', () => {
+    expect(normalizeUtilization(58)).toBe(58);
+    expect(normalizeUtilization(500)).toBe(100);
+  });
+
+  it('rejects missing and nonsensical values', () => {
+    expect(normalizeUtilization(undefined)).toBeNull();
+    expect(normalizeUtilization(null)).toBeNull();
+    expect(normalizeUtilization(-1)).toBeNull();
+    expect(normalizeUtilization(NaN)).toBeNull();
+  });
+});
+
 describe('parseRateLimitEvent', () => {
   it('parses a rejection with a reset time', () => {
-    const parsed = parseRateLimitEvent(
-      rateLimitEvent({
-        status: 'rejected',
-        rateLimitType: 'five_hour',
-        resetsAt: IN_AN_HOUR / 1000,
-        utilization: 100,
-      }),
-      NOW
-    );
-    expect(parsed).toEqual({
-      limitType: 'five_hour',
-      rejected: true,
-      utilization: 100,
-      resetsAtMs: IN_AN_HOUR,
-    });
+    expect(
+      parseRateLimitEvent(
+        rateLimitEvent({
+          status: 'rejected',
+          rateLimitType: 'five_hour',
+          resetsAt: IN_AN_HOUR / 1000,
+        }),
+        NOW
+      )
+    ).toEqual([
+      {
+        limitType: 'five_hour',
+        rejected: true,
+        authoritative: true,
+        utilization: null,
+        resetsAtMs: IN_AN_HOUR,
+      },
+    ]);
   });
 
   it('dates a rejection with no reset time so it expires on its own', () => {
-    const parsed = parseRateLimitEvent(
-      rateLimitEvent({ status: 'rejected', rateLimitType: 'seven_day' }),
-      NOW
-    );
-    expect(parsed).toMatchObject({
-      limitType: 'seven_day',
-      rejected: true,
-      utilization: null,
-      resetsAtMs: NOW + UNKNOWN_RESET_HOLD_MS,
-    });
+    expect(
+      parseRateLimitEvent(
+        rateLimitEvent({ status: 'rejected', rateLimitType: 'seven_day' }),
+        NOW
+      )[0]
+    ).toMatchObject({ rejected: true, resetsAtMs: NOW + UNKNOWN_RESET_HOLD_MS });
   });
 
   it('applies the same fallback when the reported reset is already past', () => {
-    const parsed = parseRateLimitEvent(
+    expect(
+      parseRateLimitEvent(
+        rateLimitEvent({
+          status: 'rejected',
+          rateLimitType: 'five_hour',
+          resetsAt: (NOW - 1) / 1000,
+        }),
+        NOW
+      )[0].resetsAtMs
+    ).toBe(NOW + UNKNOWN_RESET_HOLD_MS);
+  });
+
+  // Verified against real events: a plain `allowed` carries no top-level
+  // utilization at all, and every window's usage rides in `unifiedWindows`.
+  it('reads every window out of unifiedWindows, only the stated one authoritative', () => {
+    const readings = parseRateLimitEvent(
       rateLimitEvent({
-        status: 'rejected',
+        status: 'allowed',
         rateLimitType: 'five_hour',
-        resetsAt: (NOW - 1) / 1000,
+        resetsAt: IN_AN_HOUR / 1000,
+        unifiedWindows: {
+          five_hour: { utilization: 0.78, resetsAt: IN_AN_HOUR / 1000 },
+          seven_day: { utilization: 0.66, resetsAt: IN_A_WEEK / 1000 },
+        },
       }),
       NOW
     );
-    expect(parsed?.resetsAtMs).toBe(NOW + UNKNOWN_RESET_HOLD_MS);
+    expect(readings).toEqual([
+      {
+        limitType: 'seven_day',
+        rejected: false,
+        authoritative: false,
+        utilization: 66,
+        resetsAtMs: IN_A_WEEK,
+      },
+      {
+        limitType: 'five_hour',
+        rejected: false,
+        authoritative: true,
+        utilization: 78,
+        resetsAtMs: IN_AN_HOUR,
+      },
+    ]);
   });
 
-  it('parses an allowed reading with utilization', () => {
-    const parsed = parseRateLimitEvent(
+  it('fills the stated window from unifiedWindows when the top level omits usage', () => {
+    const [reading] = parseRateLimitEvent(
+      rateLimitEvent({
+        status: 'rejected',
+        rateLimitType: 'seven_day_overage_included',
+        resetsAt: IN_A_WEEK / 1000,
+        unifiedWindows: {
+          seven_day_overage_included: { utilization: 1, resetsAt: IN_A_WEEK / 1000 },
+        },
+      }),
+      NOW
+    );
+    expect(reading).toMatchObject({ rejected: true, authoritative: true, utilization: 100 });
+  });
+
+  it('prefers the top-level utilization over the unifiedWindows copy', () => {
+    const [reading] = parseRateLimitEvent(
       rateLimitEvent({
         status: 'allowed_warning',
         rateLimitType: 'five_hour',
         resetsAt: IN_AN_HOUR / 1000,
-        utilization: 92.5,
+        utilization: 0.92,
+        unifiedWindows: { five_hour: { utilization: 0.9, resetsAt: IN_AN_HOUR / 1000 } },
       }),
       NOW
     );
-    expect(parsed).toEqual({
-      limitType: 'five_hour',
-      rejected: false,
-      utilization: 92.5,
-      resetsAtMs: IN_AN_HOUR,
-    });
+    expect(reading.utilization).toBe(92);
   });
 
   it('drops an undated non-rejection (nothing to hold until)', () => {
     expect(
       parseRateLimitEvent(
-        rateLimitEvent({ status: 'allowed', rateLimitType: 'five_hour', utilization: 40 }),
-        NOW
-      )
-    ).toBeNull();
-  });
-
-  it('drops windows we never hold for', () => {
-    expect(
-      parseRateLimitEvent(
-        rateLimitEvent({ status: 'rejected', rateLimitType: 'overage', resetsAt: IN_AN_HOUR }),
-        NOW
-      )
-    ).toBeNull();
-  });
-
-  it('drops events with no window and non-events', () => {
-    expect(parseRateLimitEvent(rateLimitEvent({ status: 'rejected' }), NOW)).toBeNull();
-    expect(parseRateLimitEvent({ type: 'result', subtype: 'success' }, NOW)).toBeNull();
-    expect(parseRateLimitEvent(null, NOW)).toBeNull();
-    expect(parseRateLimitEvent('nope', NOW)).toBeNull();
-  });
-
-  it('drops a malformed payload rather than throwing', () => {
-    expect(
-      parseRateLimitEvent(rateLimitEvent({ status: 7, rateLimitType: 'five_hour' }), NOW)
-    ).toBeNull();
-    expect(parseRateLimitEvent({ type: 'rate_limit_event' }, NOW)).toBeNull();
-  });
-});
-
-describe('parseUsageSnapshot', () => {
-  it('reads every dated window and never reports rejection', () => {
-    const readings = parseUsageSnapshot(
-      {
-        rate_limits: {
-          five_hour: { utilization: 58, resets_at: new Date(IN_AN_HOUR).toISOString() },
-          seven_day: { utilization: 44, resets_at: new Date(IN_A_WEEK).toISOString() },
-          seven_day_opus: null,
-        },
-      },
-      NOW
-    );
-    expect(readings).toEqual([
-      { limitType: 'five_hour', rejected: false, utilization: 58, resetsAtMs: IN_AN_HOUR },
-      { limitType: 'seven_day', rejected: false, utilization: 44, resetsAtMs: IN_A_WEEK },
-    ]);
-  });
-
-  it('skips windows with no or stale reset times', () => {
-    expect(
-      parseUsageSnapshot(
-        {
-          rate_limits: {
-            five_hour: { utilization: 58, resets_at: null },
-            seven_day: { utilization: 44, resets_at: new Date(NOW - 1000).toISOString() },
-          },
-        },
+        rateLimitEvent({ status: 'allowed', rateLimitType: 'five_hour', utilization: 0.4 }),
         NOW
       )
     ).toEqual([]);
   });
 
-  it('returns nothing when rate limits are unavailable or the shape is unknown', () => {
-    expect(parseUsageSnapshot({ rate_limits: null }, NOW)).toEqual([]);
-    expect(parseUsageSnapshot({}, NOW)).toEqual([]);
-    expect(parseUsageSnapshot('nope', NOW)).toEqual([]);
+  it('drops windows we never hold for, including from unifiedWindows', () => {
+    expect(
+      parseRateLimitEvent(
+        rateLimitEvent({
+          status: 'rejected',
+          rateLimitType: 'overage',
+          resetsAt: IN_AN_HOUR / 1000,
+          unifiedWindows: { overage: { utilization: 1, resetsAt: IN_AN_HOUR / 1000 } },
+        }),
+        NOW
+      )
+    ).toEqual([]);
+  });
+
+  // Production has 8 of these; with no window they can't be attributed anywhere.
+  it('drops an event with no window type', () => {
+    expect(parseRateLimitEvent(rateLimitEvent({ status: 'rejected' }), NOW)).toEqual([]);
+  });
+
+  it('drops non-events', () => {
+    expect(parseRateLimitEvent({ type: 'result', subtype: 'success' }, NOW)).toEqual([]);
+    expect(parseRateLimitEvent(null, NOW)).toEqual([]);
+    expect(parseRateLimitEvent('nope', NOW)).toEqual([]);
+  });
+
+  it('drops a malformed payload rather than throwing', () => {
+    expect(
+      parseRateLimitEvent(rateLimitEvent({ status: 7, rateLimitType: 'five_hour' }), NOW)
+    ).toEqual([]);
+    expect(parseRateLimitEvent({ type: 'rate_limit_event' }, NOW)).toEqual([]);
   });
 });
 
@@ -201,6 +237,26 @@ describe('mergeReading', () => {
     const weekly = reading({ limitType: 'seven_day', resetsAtMs: IN_A_WEEK });
     const merged = mergeReading([stale, weekly], reading(), NOW);
     expect(merged.map((r) => r.limitType)).toEqual(['five_hour', 'seven_day']);
+  });
+
+  it('does not let a usage-only reading clear a live rejection', () => {
+    const rejected = reading({ rejected: true, utilization: 100 });
+    const usageOnly = reading({ authoritative: false, utilization: 40 });
+    expect(mergeReading([rejected], usageOnly, NOW)[0]).toMatchObject({
+      rejected: true,
+      utilization: 40,
+    });
+  });
+
+  it('lets an authoritative reading clear a rejection', () => {
+    const rejected = reading({ rejected: true });
+    expect(mergeReading([rejected], reading({ utilization: 20 }), NOW)[0].rejected).toBe(false);
+  });
+
+  it('drops an inherited rejection once the window has rolled over', () => {
+    const rejected = reading({ rejected: true });
+    const nextWindow = reading({ authoritative: false, resetsAtMs: IN_A_WEEK });
+    expect(mergeReading([rejected], nextWindow, NOW)[0].rejected).toBe(false);
   });
 });
 

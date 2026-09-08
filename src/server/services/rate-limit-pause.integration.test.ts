@@ -110,12 +110,16 @@ function makeFakeQuery() {
 let uuidCounter = 0;
 const nextUuid = () => `uuid-${uuidCounter++}`;
 
-/** A window reading as the CLI reports it: `resetsAt` in unix seconds. */
+/**
+ * A `rate_limit_event` shaped like the real ones: `resetsAt` in unix seconds and
+ * `utilization` as a 0-1 fraction.
+ */
 function rateLimitEvent(info: {
   status: string;
-  rateLimitType: string;
+  rateLimitType?: string;
   resetsAt?: number;
   utilization?: number;
+  unifiedWindows?: Record<string, { utilization: number; resetsAt: number }>;
 }): SDKMessage {
   return {
     type: 'rate_limit_event',
@@ -370,7 +374,8 @@ describe('rate-limit pause', () => {
         status: 'allowed',
         rateLimitType: 'five_hour',
         resetsAt: (NOW + HOUR_MS) / 1000,
-        utilization: 60,
+        // A fraction, as the CLI actually sends it — 0.6 is 60% of the window.
+        unifiedWindows: { five_hour: { utilization: 0.6, resetsAt: (NOW + HOUR_MS) / 1000 } },
       })
     );
     await waitFor(async () => (await testPrisma.rateLimitWindow.count()) > 0);
@@ -395,7 +400,7 @@ describe('rate-limit pause', () => {
         status: 'allowed_warning',
         rateLimitType: 'seven_day',
         resetsAt: (NOW + 7 * 24 * HOUR_MS) / 1000,
-        utilization: 99,
+        utilization: 0.99,
       })
     );
     await waitFor(async () => (await testPrisma.rateLimitWindow.count()) > 0);
@@ -447,5 +452,94 @@ describe('rate-limit pause', () => {
 
     expect(await runner.getSessionRateLimitHold(sessionId)).toMatchObject({ reason: 'rejected' });
     expect(await queuedTexts(sessionId)).toEqual(['queued']);
+  });
+
+  it('keeps a weekly hold when an unrelated 5-hour event reports that window', async () => {
+    const fake = makeFakeQuery();
+    runner._setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+    const weekReset = (NOW + 3 * 24 * HOUR_MS) / 1000;
+
+    await sendAndDeliver(fake, sessionId, 'start');
+    fake.emit(
+      rateLimitEvent({
+        status: 'rejected',
+        rateLimitType: 'seven_day_overage_included',
+        resetsAt: weekReset,
+        unifiedWindows: {
+          seven_day_overage_included: { utilization: 1, resetsAt: weekReset },
+        },
+      })
+    );
+    await waitFor(async () => (await testPrisma.rateLimitWindow.count()) > 0);
+    await runner.recomputeRateLimitHolds();
+    expect(await runner.getSessionRateLimitHold(sessionId)).toMatchObject({ reason: 'rejected' });
+
+    await runner.sendUserMessage(sessionId, 'queued behind the week');
+
+    // A routine 5-hour event carries every window's usage, including the rejected
+    // one — but says nothing about refusal, so the hold must survive it.
+    fake.emit(
+      rateLimitEvent({
+        status: 'allowed',
+        rateLimitType: 'five_hour',
+        resetsAt: (NOW + HOUR_MS) / 1000,
+        unifiedWindows: {
+          five_hour: { utilization: 0.4, resetsAt: (NOW + HOUR_MS) / 1000 },
+          seven_day_overage_included: { utilization: 1, resetsAt: weekReset },
+        },
+      })
+    );
+    await waitFor(async () => (await testPrisma.rateLimitWindow.count()) > 1);
+    await runner.recomputeRateLimitHolds();
+
+    expect(await runner.getSessionRateLimitHold(sessionId)).toMatchObject({ reason: 'rejected' });
+    expect(await queuedTexts(sessionId)).toEqual(['queued behind the week']);
+
+    runner.stopSession(sessionId);
+  });
+
+  it('does not leave the composer working after recalling a never-read prompt', async () => {
+    const fake = makeFakeQuery();
+    runner._setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+
+    // A send the CLI never picks up: turnActive is only optimistic, so nothing
+    // will ever arrive to clear it once the pause pulls the prompt back.
+    await runner.sendUserMessage(sessionId, 'never read');
+    expect(runner.isClaudeRunning(sessionId)).toBe(true);
+
+    await rejectFiveHourWindow(fake);
+
+    expect(runner.isClaudeRunning(sessionId)).toBe(false);
+    expect(await queuedTexts(sessionId)).toEqual(['never read']);
+    // ...and it must not be mistaken for a cut-short turn needing a nudge.
+    expect(
+      (await testPrisma.session.findUniqueOrThrow({ where: { id: sessionId } }))
+        .resumeAfterRateLimit
+    ).toBe(false);
+
+    runner.stopSession(sessionId);
+  });
+
+  it('does not reorder the session list when the resume nudge fires', async () => {
+    const fake = makeFakeQuery();
+    runner._setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+
+    await sendAndDeliver(fake, sessionId, 'do the thing', { settle: false });
+    await rejectFiveHourWindow(fake);
+    const before = (await testPrisma.session.findUniqueOrThrow({ where: { id: sessionId } }))
+      .lastActivityAt;
+
+    vi.setSystemTime(NOW + HOUR_MS + 1000);
+    await runner.recomputeRateLimitHolds();
+
+    expect(fake.inputs.at(-1)?.message.content).toBe(runner.RATE_LIMIT_RESUME_PROMPT);
+    const after = (await testPrisma.session.findUniqueOrThrow({ where: { id: sessionId } }))
+      .lastActivityAt;
+    expect(after).toEqual(before);
+
+    runner.stopSession(sessionId);
   });
 });

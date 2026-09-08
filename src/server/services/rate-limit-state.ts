@@ -101,7 +101,7 @@ export async function recordRateLimitReadings(incoming: RateLimitReading[]): Pro
   }
   if (!readingsChanged(before, readings)) return;
 
-  for (const reading of incoming) {
+  for (const reading of readings) {
     log.info('Observed subscription rate limit', {
       limitType: reading.limitType,
       rejected: reading.rejected,
@@ -110,7 +110,7 @@ export async function recordRateLimitReadings(incoming: RateLimitReading[]): Pro
     });
   }
 
-  await persistReadings(incoming);
+  await persistReadings(mergedFor(new Set(incoming.map((r) => r.limitType))));
   scheduleExpiryWake();
   onChange?.();
 }
@@ -126,6 +126,11 @@ function readingsChanged(before: RateLimitReading[], after: RateLimitReading[]):
       b.resetsAtMs !== a.resetsAtMs
     );
   });
+}
+
+/** Persist the merged state of the windows the incoming readings touched. */
+function mergedFor(limitTypes: Set<string>): RateLimitReading[] {
+  return readings.filter((r) => limitTypes.has(r.limitType));
 }
 
 async function persistReadings(incoming: RateLimitReading[]): Promise<void> {
@@ -160,6 +165,8 @@ export async function loadRateLimitReadings(): Promise<void> {
       .map((row) => ({
         limitType: row.limitType as HoldableLimitType,
         rejected: row.rejected,
+        // What was persisted is the merged state, so it stands on its own.
+        authoritative: true,
         utilization: row.utilization,
         resetsAtMs: row.resetsAt.getTime(),
       }))

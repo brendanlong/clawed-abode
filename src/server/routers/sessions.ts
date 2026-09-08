@@ -28,6 +28,7 @@ import type { Prisma } from '@/generated/prisma/client';
 import { keysetPage, keysetPageInputSchema } from '@/lib/keyset-page';
 import { sessionStatusSchema } from '@/lib/session-display-status';
 import { thresholdSchema } from './rateLimit';
+import { clearQueuedPrompts } from '../services/prompt-queue';
 
 const log = createLogger('sessions');
 
@@ -349,6 +350,11 @@ export const sessionsRouter = router({
 
     // Stop any running query and clean up all in-memory state
     cleanupSession(input.sessionId);
+
+    // Archiving keeps the session row, so the QueuedPrompt cascade never fires
+    // and nothing drains an archived session — clear the queue here or it waits
+    // forever, counted in the paused banner and badged in a read-only transcript.
+    await clearQueuedPrompts(session.id);
 
     // Remove workspace directory
     await removeWorkspace(session.id);

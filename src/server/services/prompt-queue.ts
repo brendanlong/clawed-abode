@@ -63,31 +63,37 @@ const QUEUE_SELECT = {
   attachments: true,
 } as const;
 
-/** Append a prompt to a session's queue, assigning its position atomically. */
-export async function enqueuePrompt(
+/**
+ * Append prompts to a session's queue in order, reserving all their positions in
+ * one statement and writing them in one insert — a partial write would strand the
+ * remainder with no path back to the SDK (their in-flight entries are already
+ * cancelled by the time this runs).
+ */
+export async function enqueuePrompts(
   sessionId: string,
-  prompt: Omit<QueuedPrompt, 'id' | 'position'>
+  prompts: Omit<QueuedPrompt, 'id' | 'position'>[]
 ): Promise<void> {
+  if (prompts.length === 0) return;
   const rows = await prisma.$queryRaw<{ queuedPromptSequence: number | bigint }[]>`
     UPDATE "Session"
-    SET "queuedPromptSequence" = "queuedPromptSequence" + 1
+    SET "queuedPromptSequence" = "queuedPromptSequence" + ${prompts.length}
     WHERE "id" = ${sessionId}
     RETURNING "queuedPromptSequence"
   `;
   if (rows.length === 0) {
-    throw new Error(`enqueuePrompt: session ${sessionId} not found`);
+    throw new Error(`enqueuePrompts: session ${sessionId} not found`);
   }
-  const position = Number(rows[0].queuedPromptSequence) - 1;
+  const nextPosition = Number(rows[0].queuedPromptSequence) - prompts.length;
 
-  await prisma.queuedPrompt.create({
-    data: {
+  await prisma.queuedPrompt.createMany({
+    data: prompts.map((prompt, index) => ({
       sessionId,
-      position,
+      position: nextPosition + index,
       messageId: prompt.messageId,
       content: prompt.content,
       text: prompt.text,
       attachments: JSON.stringify(prompt.attachments),
-    },
+    })),
   });
 }
 
@@ -120,32 +126,34 @@ export async function emitQueuedPrompts(sessionId: string): Promise<void> {
 }
 
 /**
- * Remove a prompt from the queue once it has been pushed into the SDK. Deletes by
- * id so a concurrently-cancelled row is simply a no-op.
+ * Claim a queued prompt for pushing, returning false if it is already gone.
+ *
+ * The delete is the claim, and it must happen **before** the push: the drain works
+ * from a snapshot, so a Stop landing mid-drain would otherwise clear the rows and
+ * delete the bubbles while the loop went on pushing the prompts the user just
+ * took back. Losing the race here means skipping the prompt, which is what
+ * cancelling asked for.
  */
-export async function dequeuePrompt(id: string): Promise<void> {
-  await prisma.queuedPrompt.deleteMany({ where: { id } });
+export async function claimQueuedPrompt(id: string): Promise<boolean> {
+  const { count } = await prisma.queuedPrompt.deleteMany({ where: { id } });
+  return count > 0;
 }
 
-/** Session ids that currently have queued prompts. */
-export async function sessionIdsWithQueuedPrompts(): Promise<string[]> {
-  const rows = await prisma.queuedPrompt.findMany({
-    distinct: ['sessionId'],
-    select: { sessionId: true },
-  });
-  return rows.map((r) => r.sessionId);
-}
-
-/** How many prompts are queued across all sessions (for the paused banner). */
+/**
+ * How many prompts are waiting across all sessions. Archived sessions are
+ * excluded: archiving leaves the session row in place (so the cascade never
+ * fires) and nothing drains an archived session, so counting theirs would report
+ * work that can never run.
+ */
 export function countQueuedPrompts(): Promise<number> {
-  return prisma.queuedPrompt.count();
+  return prisma.queuedPrompt.count({ where: { session: { status: { not: 'archived' } } } });
 }
 
 /**
  * Empty a session's queue and return what was in it, so the caller can delete the
  * bubbles and hand the text back to the composer (the Stop path — see
- * `interruptClaude`). Deletes the rows before returning so a concurrent drain
- * can't also push them.
+ * `interruptClaude`) or discard them (archive). The rows go first, so a drain
+ * racing this finds nothing left to claim.
  */
 export async function clearQueuedPrompts(sessionId: string): Promise<QueuedPrompt[]> {
   const queued = await listQueuedPrompts(sessionId);
