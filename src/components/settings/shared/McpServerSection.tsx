@@ -12,16 +12,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Plug, Check, X } from 'lucide-react';
+import { Plug, Check, X, KeyRound, Unplug } from 'lucide-react';
 import { SettingsListEditor } from './SettingsListEditor';
 import { KeyValueListEditor } from './KeyValueListEditor';
+import { MCP_OAUTH_CALLBACK_PATH } from '@/lib/mcp-oauth-urls';
 import {
   mcpServerSectionReducer,
   initialMcpServerSectionState,
   mcpServerFormReducer,
   createInitialMcpServerFormState,
 } from './mcp-server-reducer';
-import type { McpServer, McpServerType, ValidationResult } from '@/lib/settings-types';
+import type { McpAuthType, McpServer, McpServerType, ValidationResult } from '@/lib/settings-types';
 
 interface StdioMcpServerInput {
   name: string;
@@ -36,6 +37,8 @@ interface HttpSseMcpServerInput {
   type: 'http' | 'sse';
   url: string;
   headers?: Record<string, { value: string; isSecret: boolean }>;
+  authType: McpAuthType;
+  oauth?: { clientId: string; clientSecret: string; scope: string };
 }
 
 type McpServerInput = StdioMcpServerInput | HttpSseMcpServerInput;
@@ -44,6 +47,8 @@ export interface McpServerMutations {
   deleteMcpServer: (name: string) => Promise<void>;
   setMcpServer: (mcpServer: McpServerInput) => Promise<void>;
   validateMcpServer: (name: string) => Promise<ValidationResult>;
+  startMcpOAuth: (name: string) => Promise<{ authorizeUrl: string }>;
+  disconnectMcpOAuth: (name: string) => Promise<void>;
 }
 
 interface McpServerSectionProps {
@@ -78,6 +83,37 @@ export function McpServerSection({
           success: false,
           error: err instanceof Error ? err.message : 'Validation failed',
         },
+      });
+    }
+  };
+
+  // The authorization server has to talk to the user's browser, so the flow is a
+  // full navigation away and back through /api/mcp/oauth/callback.
+  const handleConnect = async (name: string) => {
+    dispatch({ type: 'startConnecting', name });
+    try {
+      const { authorizeUrl } = await mutations.startMcpOAuth(name);
+      window.location.assign(authorizeUrl);
+    } catch (err) {
+      dispatch({
+        type: 'connectFailed',
+        name,
+        error: err instanceof Error ? err.message : 'Could not start authorization',
+      });
+    }
+  };
+
+  const handleDisconnect = async (name: string) => {
+    dispatch({ type: 'startConnecting', name });
+    try {
+      await mutations.disconnectMcpOAuth(name);
+      dispatch({ type: 'connectFinished', name });
+      onUpdate();
+    } catch (err) {
+      dispatch({
+        type: 'connectFailed',
+        name,
+        error: err instanceof Error ? err.message : 'Could not disconnect',
       });
     }
   };
@@ -117,21 +153,52 @@ export function McpServerSection({
       )}
       extraItemActions={(server) => {
         const isTesting = state.validatingServer === server.name;
+        const isConnecting = state.connectingServer === server.name;
         return (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => handleValidate(server.name)}
-            disabled={isTesting}
-            title="Test connection"
-          >
-            {isTesting ? <Spinner size="sm" className="h-4 w-4" /> : <Plug className="h-4 w-4" />}
-          </Button>
+          <>
+            {server.authType === 'oauth' && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() =>
+                  server.oauth?.state === 'connected'
+                    ? handleDisconnect(server.name)
+                    : handleConnect(server.name)
+                }
+                disabled={isConnecting}
+                title={server.oauth?.state === 'connected' ? 'Disconnect' : 'Connect with OAuth'}
+              >
+                {isConnecting ? (
+                  <Spinner size="sm" className="h-4 w-4" />
+                ) : server.oauth?.state === 'connected' ? (
+                  <Unplug className="h-4 w-4" />
+                ) : (
+                  <KeyRound className="h-4 w-4" />
+                )}
+              </Button>
+            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => handleValidate(server.name)}
+              disabled={isTesting}
+              title="Test connection"
+            >
+              {isTesting ? <Spinner size="sm" className="h-4 w-4" /> : <Plug className="h-4 w-4" />}
+            </Button>
+          </>
         );
       }}
       renderItemExtra={(server) => {
         const result = state.validationResults.get(server.name);
-        return result ? <ValidationResultBadge result={result} /> : null;
+        const connectError = state.connectErrors.get(server.name);
+        return (
+          <>
+            {server.oauth && <OAuthStatusBadge status={server.oauth} />}
+            {connectError ? <ErrorBadge message={connectError} /> : null}
+            {result ? <ValidationResultBadge result={result} /> : null}
+          </>
+        );
       }}
       renderForm={({ existingItem, onClose, onSuccess }) => (
         <McpServerForm
@@ -145,6 +212,35 @@ export function McpServerSection({
           idPrefix={idPrefix}
         />
       )}
+    />
+  );
+}
+
+const BADGE_CLASS = 'text-xs px-2 py-1 rounded flex items-center gap-1';
+const OK_CLASS = 'text-green-700 bg-green-50 dark:text-green-400 dark:bg-green-950';
+const BAD_CLASS = 'text-red-700 bg-red-50 dark:text-red-400 dark:bg-red-950';
+
+function ErrorBadge({ message }: { message: string }) {
+  return (
+    <div className={`${BADGE_CLASS} ${BAD_CLASS}`}>
+      <X className="h-3 w-3 shrink-0" />
+      {message}
+    </div>
+  );
+}
+
+function OAuthStatusBadge({ status }: { status: NonNullable<McpServer['oauth']> }) {
+  if (status.state === 'connected') {
+    return (
+      <div className={`${BADGE_CLASS} ${OK_CLASS}`}>
+        <Check className="h-3 w-3 shrink-0" />
+        Authorized{status.scope ? ` \u2014 ${status.scope}` : ''}
+      </div>
+    );
+  }
+  return (
+    <ErrorBadge
+      message={status.error ?? 'Not authorized \u2014 use Connect to sign in with OAuth'}
     />
   );
 }
@@ -247,6 +343,15 @@ function McpServerForm({
           type: form.serverType,
           url: form.url,
           headers: Object.keys(headersRecord).length > 0 ? headersRecord : undefined,
+          authType: form.authType,
+          oauth:
+            form.authType === 'oauth'
+              ? {
+                  clientId: form.oauthClientId.trim(),
+                  clientSecret: form.oauthClientSecret,
+                  scope: form.oauthScope.trim(),
+                }
+              : undefined,
         });
       }
       onSuccess();
@@ -334,8 +439,82 @@ function McpServerForm({
             />
           </div>
 
+          <div className="space-y-2">
+            <Label htmlFor={`${idPrefix}-auth`}>Authentication</Label>
+            <Select
+              value={form.authType}
+              onValueChange={(value) =>
+                dispatch({ type: 'setAuthType', authType: value as McpAuthType })
+              }
+            >
+              <SelectTrigger id={`${idPrefix}-auth`}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="headers">Static headers</SelectItem>
+                <SelectItem value="oauth">OAuth</SelectItem>
+              </SelectContent>
+            </Select>
+            {form.authType === 'oauth' && (
+              <p className="text-xs text-muted-foreground">
+                Save the server, then use Connect to sign in. The access token is refreshed
+                automatically and sent as the Authorization header.
+              </p>
+            )}
+          </div>
+
+          {form.authType === 'oauth' && (
+            <>
+              <div className="space-y-2">
+                <Label htmlFor={`${idPrefix}-oauth-client-id`}>OAuth Client ID (optional)</Label>
+                <Input
+                  id={`${idPrefix}-oauth-client-id`}
+                  value={form.oauthClientId}
+                  onChange={(e) => dispatch({ type: 'setOauthClientId', clientId: e.target.value })}
+                  placeholder="Leave blank to register automatically"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Needed only for servers without dynamic client registration (Google, Microsoft
+                  Entra). Register the client with redirect URI{' '}
+                  <code className="font-mono">
+                    {typeof window === 'undefined' ? '' : window.location.origin}
+                    {MCP_OAUTH_CALLBACK_PATH}
+                  </code>
+                  .
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor={`${idPrefix}-oauth-client-secret`}>
+                  OAuth Client Secret (optional)
+                </Label>
+                <Input
+                  id={`${idPrefix}-oauth-client-secret`}
+                  type="password"
+                  value={form.oauthClientSecret}
+                  onChange={(e) =>
+                    dispatch({ type: 'setOauthClientSecret', clientSecret: e.target.value })
+                  }
+                  placeholder={
+                    existingServer?.oauth?.clientId ? 'Leave blank to keep the stored secret' : ''
+                  }
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor={`${idPrefix}-oauth-scope`}>Scope (optional)</Label>
+                <Input
+                  id={`${idPrefix}-oauth-scope`}
+                  value={form.oauthScope}
+                  onChange={(e) => dispatch({ type: 'setOauthScope', scope: e.target.value })}
+                  placeholder="Leave blank to use the scopes the server advertises"
+                />
+              </div>
+            </>
+          )}
+
           <KeyValueListEditor
-            label="Headers"
+            label={form.authType === 'oauth' ? 'Additional Headers' : 'Headers'}
             entries={form.headers}
             existingEntries={existingServer?.headers}
             onChange={(headers) => dispatch({ type: 'setHeaders', headers })}

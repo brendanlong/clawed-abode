@@ -11,6 +11,7 @@ import { env } from '@/lib/env';
 import type { ResolvedEnvVar, ResolvedMcpServer } from '@/lib/settings-types';
 import { decryptEnvVars, decryptMcpServers } from './settings-helpers';
 import { GLOBAL_SCOPE, GLOBAL_SETTINGS_ID } from './settings-scope';
+import { applyMcpOAuthHeaders } from './mcp-oauth';
 
 /** Per-repo settings with secrets decrypted, ready to merge. */
 export interface ResolvedRepoSettings {
@@ -38,7 +39,7 @@ export async function loadResolvedRepoSettings(
 ): Promise<ResolvedRepoSettings | null> {
   const settings = await prisma.repoSettings.findUnique({
     where: { repoFullName },
-    include: { envVars: true, mcpServers: true },
+    include: { envVars: true, mcpServers: { include: { oauth: true } } },
   });
   if (!settings) return null;
   return {
@@ -53,7 +54,7 @@ export async function loadResolvedGlobalSettings(): Promise<ResolvedGlobalSettin
   const [settings, envVarRows, mcpServerRows] = await Promise.all([
     prisma.globalSettings.findUnique({ where: { id: GLOBAL_SETTINGS_ID } }),
     prisma.envVar.findMany({ where: GLOBAL_SCOPE }),
-    prisma.mcpServer.findMany({ where: GLOBAL_SCOPE }),
+    prisma.mcpServer.findMany({ where: GLOBAL_SCOPE, include: { oauth: true } }),
   ]);
   return {
     systemPromptOverride: settings?.systemPromptOverride ?? null,
@@ -118,7 +119,11 @@ export async function loadMergedSessionSettings(
   });
 
   const envVars = mergeEnvVars(globalSettings.envVars, repoSettings?.envVars ?? []);
-  const mcpServers = mergeMcpServers(globalSettings.mcpServers, repoSettings?.mcpServers ?? []);
+  // OAuth tokens are minted after merging so a server shadowed by a per-repo
+  // entry of the same name never spends a refresh on a config nobody will use.
+  const mcpServers = await applyMcpOAuthHeaders(
+    mergeMcpServers(globalSettings.mcpServers, repoSettings?.mcpServers ?? [])
+  );
 
   return {
     systemPrompt,

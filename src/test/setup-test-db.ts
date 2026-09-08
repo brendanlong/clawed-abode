@@ -103,6 +103,7 @@ export async function clearTestDb(): Promise<void> {
   await testPrisma.authSession.deleteMany();
   // Settings tables (envVar/mcpServer cover both per-repo and global rows)
   await testPrisma.envVar.deleteMany();
+  await testPrisma.mcpOAuth.deleteMany();
   await testPrisma.mcpServer.deleteMany();
   await testPrisma.repoSettings.deleteMany();
   await testPrisma.globalSettings.deleteMany();

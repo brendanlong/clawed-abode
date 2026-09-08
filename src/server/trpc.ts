@@ -4,6 +4,8 @@ import { z } from 'zod';
 import { parseAuthHeader, IDLE_TIMEOUT_MS, ACTIVITY_UPDATE_THROTTLE_MS } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { createLogger } from '@/lib/logger';
+import { originHeadersFrom, resolveAppOrigin } from '@/lib/app-origin';
+import { env } from '@/lib/env';
 
 const log = createLogger('trpc');
 
@@ -12,6 +14,8 @@ export interface Context {
   /** Client IP and user agent, derived from request headers for login rate limiting and the auth-session audit list. */
   ipAddress?: string;
   userAgent?: string;
+  /** Origin the browser reached this request on, when derivable. Used for OAuth redirect URIs. */
+  appOrigin?: string | null;
 }
 
 /** Tailscale Serve/Funnel and other reverse proxies put the real client IP first in X-Forwarded-For. */
@@ -25,6 +29,7 @@ export async function createContext(opts: { headers: Headers }): Promise<Context
   const clientInfo = {
     ipAddress: getClientIp(opts.headers),
     userAgent: opts.headers.get('user-agent') ?? undefined,
+    appOrigin: resolveAppOrigin(env.APP_URL, originHeadersFrom(opts.headers)),
   };
   const authHeader = opts.headers.get('authorization');
   const token = parseAuthHeader(authHeader);
@@ -122,6 +127,7 @@ export const protectedProcedure = baseProcedure.use(({ ctx, next }) => {
   return next({
     ctx: {
       sessionId: ctx.sessionId,
+      appOrigin: ctx.appOrigin,
     },
   });
 });

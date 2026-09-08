@@ -108,11 +108,52 @@ model McpServer {
   env            String? // For stdio: JSON object: { "KEY": { "value": "...", "isSecret": true } }
   url            String? // For http/sse: server URL
   headers        String? // For http/sse: JSON object of headers, { "KEY": { "value": "...", "isSecret": true } }
+  authType       String        @default("headers") // For http/sse: "headers" (static) or "oauth" (see McpOAuth)
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
 
+  oauth McpOAuth?
+
   @@unique([repoSettingsId, name])
   @@index([repoSettingsId])
+}
+
+// OAuth 2.1 grant for one http/sse MCP server (authType = "oauth"). One row per
+// server row, so a global and a per-repo entry for the same remote server hold
+// independent grants. Client secret, tokens and the in-flight PKCE verifier are
+// encrypted with ENCRYPTION_KEY; see src/server/services/mcp-oauth.ts.
+model McpOAuth {
+  id          String    @id @default(uuid())
+  mcpServerId String    @unique
+  mcpServer   McpServer @relation(fields: [mcpServerId], references: [id], onDelete: Cascade)
+
+  // Client registration: discovered endpoints plus the client we authenticate as
+  // (registered via DCR, or entered by hand when the server has no DCR).
+  issuer                String?
+  authorizationEndpoint String?
+  tokenEndpoint         String?
+  registrationEndpoint  String?
+  resource              String? // RFC 8707 resource indicator (the canonical MCP URL)
+  scope                 String? // Scope requested at /authorize; null = whatever the server defaults to
+  clientId              String?
+  clientSecret          String? // Encrypted
+  clientIdIsManual      Boolean @default(false) // Entered by the user, so never replaced by DCR
+
+  // In-flight authorization (cleared once the callback completes)
+  flowState     String?   @unique // The OAuth `state`; the callback's only credential
+  codeVerifier  String? // Encrypted PKCE verifier
+  redirectUri   String? // Exact value sent to /authorize, replayed at /token
+  flowStartedAt DateTime?
+
+  // Tokens
+  accessToken  String? // Encrypted
+  refreshToken String? // Encrypted
+  expiresAt    DateTime? // Access-token expiry
+  authorizedAt DateTime? // Last successful authorization-code exchange
+  lastError    String? // Why the most recent connect/refresh failed; null when healthy
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // Global application settings (singleton - only one row)

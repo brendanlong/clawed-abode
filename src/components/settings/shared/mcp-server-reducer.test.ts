@@ -155,6 +155,10 @@ describe('mcpServerFormReducer', () => {
         envVars: [],
         url: '',
         headers: [],
+        authType: 'headers',
+        oauthClientId: '',
+        oauthClientSecret: '',
+        oauthScope: '',
         error: null,
         isPending: false,
       });
@@ -162,6 +166,8 @@ describe('mcpServerFormReducer', () => {
 
     it('populates from existing stdio server', () => {
       const state = createInitialMcpServerFormState({
+        id: '1',
+        authType: 'headers',
         name: 'memory',
         type: 'stdio',
         command: 'npx',
@@ -178,6 +184,8 @@ describe('mcpServerFormReducer', () => {
 
     it('populates from existing HTTP server', () => {
       const state = createInitialMcpServerFormState({
+        id: '2',
+        authType: 'headers',
         name: 'web-server',
         type: 'http',
         command: '',
@@ -194,6 +202,8 @@ describe('mcpServerFormReducer', () => {
 
     it('clears secret env var values', () => {
       const state = createInitialMcpServerFormState({
+        id: '3',
+        authType: 'headers',
         name: 'test',
         type: 'stdio',
         command: 'node',
@@ -206,6 +216,8 @@ describe('mcpServerFormReducer', () => {
 
     it('joins args with spaces', () => {
       const state = createInitialMcpServerFormState({
+        id: '3',
+        authType: 'headers',
         name: 'test',
         type: 'stdio',
         command: 'node',

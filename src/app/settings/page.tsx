@@ -8,6 +8,7 @@ import { AppearanceTab } from '@/components/settings/AppearanceTab';
 import { AudioTab } from '@/components/settings/AudioTab';
 import { RepositoriesTab } from '@/components/settings/RepositoriesTab';
 import { GeneralTab } from '@/components/settings/GeneralTab';
+import { McpOAuthResultBanner } from '@/components/settings/McpOAuthResultBanner';
 
 export default function SettingsPage() {
   return (
@@ -18,6 +19,8 @@ export default function SettingsPage() {
         <main className="max-w-2xl mx-auto py-6 sm:px-6 lg:px-8">
           <div className="px-4 py-6 sm:px-0">
             <h1 className="text-2xl font-bold mb-6">Settings</h1>
+
+            <McpOAuthResultBanner />
 
             <Tabs defaultValue="appearance">
               <TabsList className="mb-4 flex-wrap">

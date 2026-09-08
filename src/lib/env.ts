@@ -21,6 +21,10 @@ const envSchema = z.object({
   // 32+ character key for encrypting secrets (env vars, MCP API keys)
   // Generate with: openssl rand -base64 32
   ENCRYPTION_KEY: z.string().min(32).optional(),
+  // Public base URL the browser reaches this app on (e.g. https://host.tailnet.ts.net).
+  // Used to build the OAuth redirect URI for MCP servers; when unset it is derived
+  // from the request's forwarded host/proto (see src/lib/app-origin.ts).
+  APP_URL: z.string().optional(),
   // Base URL of a self-hosted code-server (browser VS Code) instance used to
   // view/edit session worktrees remotely (e.g. https://host.tailnet.ts.net:8443).
   // When unset, the "Open in VS Code" button is hidden. See scripts/setup-code-server.sh.
