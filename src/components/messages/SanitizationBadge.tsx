@@ -8,8 +8,8 @@ import type { SanitizationInfo } from '@/lib/sanitization';
 /**
  * Small amber badge surfacing that the input sanitizer filtered (or flagged)
  * hidden/unsafe content on the message it is attached to. Click to reveal the
- * sanitizer's warnings — this is purely informational; the model already got the
- * cleaned text plus a recovery note.
+ * sanitizer's warnings — this is purely informational; the model was told the
+ * same thing at the time, alongside the tool result itself.
  */
 export function SanitizationBadge({
   info,

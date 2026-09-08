@@ -32,11 +32,11 @@ export type SanitizationInfo = z.infer<typeof SanitizationInfoSchema>;
  */
 export function buildSanitizationInfo(
   found: string[],
-  warnings: string[],
+  messages: string[],
   removed: boolean
 ): SanitizationInfo | null {
   if (found.length === 0) return null;
-  return { found, warnings, removed };
+  return { found, warnings: messages, removed };
 }
 
 /**
