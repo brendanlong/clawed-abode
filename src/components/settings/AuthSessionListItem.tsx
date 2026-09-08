@@ -48,7 +48,6 @@ function formatRelativeTime(date: Date): string {
 function parseUserAgent(userAgent: string | null): string {
   if (!userAgent) return 'Unknown device';
 
-  // Simple browser and OS detection
   let browser = 'Unknown browser';
   let os = 'Unknown OS';
 
