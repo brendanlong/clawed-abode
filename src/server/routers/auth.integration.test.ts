@@ -2,15 +2,13 @@ import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vites
 import { TRPCError } from '@trpc/server';
 import { setupTestDb, teardownTestDb, testPrisma, clearTestDb } from '@/test/setup-test-db';
 import { hashPassword, IDLE_TIMEOUT_MS } from '@/lib/auth';
+import { resetEnvCache } from '@/lib/env';
 
-// Mock env - we'll set the real hash in beforeAll
-const mockEnv = vi.hoisted(() => ({
-  PASSWORD_HASH: undefined as string | undefined,
-}));
-
-vi.mock('@/lib/env', () => ({
-  env: mockEnv,
-}));
+function setPasswordHash(hash: string | undefined) {
+  if (hash === undefined) delete process.env.PASSWORD_HASH;
+  else process.env.PASSWORD_HASH = Buffer.from(hash).toString('base64');
+  resetEnvCache();
+}
 
 vi.mock('@/lib/logger', async () => (await import('@/test/mock-logger')).mockLoggerModule());
 
@@ -42,9 +40,7 @@ describe('authRouter integration', () => {
     authRouter = authModule.authRouter;
     router = trpcModule.router;
 
-    // Create a real password hash for testing
-    const hash = await hashPassword(TEST_PASSWORD);
-    mockEnv.PASSWORD_HASH = hash;
+    setPasswordHash(await hashPassword(TEST_PASSWORD));
   });
 
   afterAll(async () => {
@@ -94,17 +90,19 @@ describe('authRouter integration', () => {
     });
 
     it('should throw error if PASSWORD_HASH is not configured', async () => {
-      const originalHash = mockEnv.PASSWORD_HASH;
-      mockEnv.PASSWORD_HASH = undefined;
+      const originalHash = process.env.PASSWORD_HASH;
+      setPasswordHash(undefined);
 
-      const caller = createCaller(null);
-
-      await expect(caller.auth.login({ password: 'any-password' })).rejects.toMatchObject({
-        code: 'INTERNAL_SERVER_ERROR',
-        message: 'Authentication not configured. Set PASSWORD_HASH environment variable.',
-      });
-
-      mockEnv.PASSWORD_HASH = originalHash;
+      try {
+        const caller = createCaller(null);
+        await expect(caller.auth.login({ password: 'any-password' })).rejects.toMatchObject({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: 'Authentication not configured. Set PASSWORD_HASH environment variable.',
+        });
+      } finally {
+        process.env.PASSWORD_HASH = originalHash;
+        resetEnvCache();
+      }
     });
 
     it('should create multiple sessions for multiple logins', async () => {
@@ -223,7 +221,7 @@ describe('authRouter integration', () => {
       });
 
       const caller = createCaller(currentSession!.id);
-      const result = await caller.auth.listSessions();
+      const result = await caller.auth.listSessions({});
 
       // Should list all 3 sessions including the revoked one
       expect(result.sessions).toHaveLength(3);
@@ -273,7 +271,7 @@ describe('authRouter integration', () => {
       });
 
       const caller = createCaller(dbSession!.id);
-      const result = await caller.auth.listSessions();
+      const result = await caller.auth.listSessions({});
 
       const listedSession = result.sessions.find((s) => s.id === dbSession!.id)!;
       // effectiveExpiresAt should be lastActivityAt + idle timeout (i.e. ~1 day ago)
@@ -285,10 +283,34 @@ describe('authRouter integration', () => {
       expect(listedSession.expiresAt.getTime()).toBeGreaterThan(Date.now());
     });
 
+    it('paginates by (createdAt, id) cursor without skipping or repeating', async () => {
+      const ids: string[] = [];
+      for (let i = 0; i < 5; i++) {
+        const { token } = await createCaller(null).auth.login({ password: TEST_PASSWORD });
+        const row = await testPrisma.authSession.findFirstOrThrow({ where: { token } });
+        ids.push(row.id);
+      }
+      const caller = createCaller(ids[0]);
+
+      const seen: string[] = [];
+      let cursor: { at: string; id: string } | undefined;
+      let pages = 0;
+      do {
+        const page = await caller.auth.listSessions({ limit: 2, cursor });
+        seen.push(...page.sessions.map((s) => s.id));
+        cursor = page.nextCursor;
+        pages++;
+      } while (cursor);
+
+      expect(pages).toBe(3);
+      expect(new Set(seen).size).toBe(5);
+      expect(seen.sort()).toEqual([...ids].sort());
+    });
+
     it('should require authentication', async () => {
       const caller = createCaller(null);
 
-      await expect(caller.auth.listSessions()).rejects.toMatchObject({
+      await expect(caller.auth.listSessions({})).rejects.toMatchObject({
         code: 'UNAUTHORIZED',
       });
     });

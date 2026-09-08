@@ -5,8 +5,10 @@
  * from there — even inside the NEXT_RUNTIME guard.
  */
 
+import { getEnv } from '@/lib/env';
 import { createLogger, toError } from '@/lib/logger';
 import { prisma } from '@/lib/prisma';
+import { purgeInactiveAuthSessions } from '@/server/services/auth-sessions';
 import { reapOrphanedSessionScopes, stopAllSessions } from '@/server/services/claude-runner';
 
 const log = createLogger('startup');
@@ -17,7 +19,21 @@ export async function registerNode() {
   // Idempotent: a second call would attach a second pair of signal handlers.
   if (registered) return;
   registered = true;
+
+  // Fail at boot on a bad env rather than on the first request that reads it.
+  try {
+    getEnv();
+  } catch (err) {
+    log.error('Refusing to start', toError(err));
+    process.exit(1);
+  }
   log.info('Starting server');
+
+  try {
+    await purgeInactiveAuthSessions();
+  } catch (err) {
+    log.error('Error purging inactive auth sessions', toError(err));
+  }
 
   // Reap session cgroup scopes orphaned by a previous crash (which never ran
   // teardown) before sessions revive into fresh scopes. Best-effort. Reaps

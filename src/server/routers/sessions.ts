@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { router, protectedProcedure } from '../trpc';
+import { router, protectedProcedure, sessionProcedure } from '../trpc';
 import { prisma } from '@/lib/prisma';
 import { TRPCError } from '@trpc/server';
 import {
@@ -23,12 +23,7 @@ import { env } from '@/lib/env';
 import { SESSION_NAME_MAX_LENGTH } from '@/lib/types';
 import { toSessionView } from '@/lib/session-view';
 import type { Prisma } from '@/generated/prisma/client';
-import {
-  SESSION_PAGE_SIZE,
-  buildSessionCursorWhere,
-  sessionCursorSchema,
-  sliceSessionPage,
-} from '@/lib/session-list-page';
+import { keysetPage, keysetPageInputSchema } from '@/lib/keyset-page';
 import { sessionStatusSchema } from '@/lib/session-display-status';
 
 const log = createLogger('sessions');
@@ -167,24 +162,19 @@ export const sessionsRouter = router({
   // excluded unless `status: 'archived'` is requested explicitly, so the home page
   // fetches the active and archived lists as two independent paginated queries.
   list: protectedProcedure
-    .input(
-      z.object({
-        status: sessionStatusSchema.optional(),
-        cursor: sessionCursorSchema.optional(),
-        limit: z.number().int().min(1).max(100).default(SESSION_PAGE_SIZE),
-      })
-    )
+    .input(keysetPageInputSchema.extend({ status: sessionStatusSchema.optional() }))
     .query(async ({ input }) => {
+      const page = keysetPage('lastActivityAt', input);
       const rows = await prisma.session.findMany({
         where: {
           ...(input.status ? { status: input.status } : { status: { not: 'archived' } }),
-          ...buildSessionCursorWhere(input.cursor),
+          ...page.where,
         },
-        orderBy: [{ lastActivityAt: 'desc' }, { id: 'desc' }],
-        take: input.limit + 1,
+        orderBy: page.orderBy,
+        take: page.take,
         select: sessionListSelect,
       });
-      const { items, nextCursor } = sliceSessionPage(rows, input.limit);
+      const { items, nextCursor } = page.slice(rows);
 
       // Attach the live status axes (in-memory lookups, no extra query) so the
       // list can distinguish "running" (main agent generating) from "background"
@@ -199,110 +189,59 @@ export const sessionsRouter = router({
       };
     }),
 
-  get: protectedProcedure
-    .input(z.object({ sessionId: z.string().uuid() }))
-    .query(async ({ input }) => {
-      const session = await prisma.session.findUnique({
-        where: { id: input.sessionId },
-      });
-
-      if (!session) {
-        throw new TRPCError({
-          code: 'NOT_FOUND',
-          message: 'Session not found',
-        });
-      }
-
-      return { session: toSessionView(session) };
-    }),
+  get: sessionProcedure.query(({ ctx }) => ({ session: toSessionView(ctx.session) })),
 
   // Deep link into a self-hosted code-server (browser VS Code) instance opened
   // on this session's worktree folder. Returns { url: null } when the editor is
   // not configured (CODE_SERVER_URL unset) or the session has no workspace on
   // disk (archived), so the UI can hide the button.
-  getEditorUrl: protectedProcedure
-    .input(z.object({ sessionId: z.string().uuid() }))
-    .query(async ({ input }) => {
-      const session = await prisma.session.findUnique({
-        where: { id: input.sessionId },
+  getEditorUrl: sessionProcedure.query(({ ctx }) => {
+    const { session } = ctx;
+
+    // Archived sessions have their workspace removed from disk.
+    if (session.status === 'archived') {
+      return { url: null };
+    }
+
+    // Open the session's workspace root (not just the repo checkout) so the
+    // operator sees all of the session's files — the repo clone alongside the
+    // uploads/ sibling folder.
+    const workspaceDir = getSessionWorkspacePath(session.id);
+    return { url: buildEditorUrl(env.CODE_SERVER_URL, workspaceDir) };
+  }),
+
+  start: sessionProcedure.mutation(async ({ ctx, input }) => {
+    const { session } = ctx;
+
+    if (session.status === 'running') {
+      return { session: toSessionView(session) };
+    }
+
+    // Only stopped or error sessions can be started.
+    // Archived sessions have their workspace removed, creating sessions are in progress.
+    if (session.status !== 'stopped' && session.status !== 'error') {
+      throw new TRPCError({
+        code: 'PRECONDITION_FAILED',
+        message: `Cannot start session in '${session.status}' state`,
       });
+    }
 
-      if (!session) {
-        throw new TRPCError({
-          code: 'NOT_FOUND',
-          message: 'Session not found',
-        });
-      }
+    // For the new architecture, "starting" just means marking as running.
+    // The workspace (worktree) already exists on disk.
+    // Claude queries run in-process when the user sends a prompt.
+    const updatedSession = await prisma.session.update({
+      where: { id: session.id },
+      data: { status: 'running' },
+    });
 
-      // Archived sessions have their workspace removed from disk.
-      if (session.status === 'archived') {
-        return { url: null };
-      }
+    sseEvents.emitSessionUpdate(input.sessionId, updatedSession);
+    return { session: toSessionView(updatedSession) };
+  }),
 
-      // Open the session's workspace root (not just the repo checkout) so the
-      // operator sees all of the session's files — the repo clone alongside the
-      // uploads/ sibling folder.
-      const workspaceDir = getSessionWorkspacePath(session.id);
-      return { url: buildEditorUrl(env.CODE_SERVER_URL, workspaceDir) };
-    }),
-
-  start: protectedProcedure
-    .input(z.object({ sessionId: z.string().uuid() }))
-    .mutation(async ({ input }) => {
-      const session = await prisma.session.findUnique({
-        where: { id: input.sessionId },
-      });
-
-      if (!session) {
-        throw new TRPCError({
-          code: 'NOT_FOUND',
-          message: 'Session not found',
-        });
-      }
-
-      if (session.status === 'running') {
-        return { session: toSessionView(session) };
-      }
-
-      // Only stopped or error sessions can be started.
-      // Archived sessions have their workspace removed, creating sessions are in progress.
-      if (session.status !== 'stopped' && session.status !== 'error') {
-        throw new TRPCError({
-          code: 'PRECONDITION_FAILED',
-          message: `Cannot start session in '${session.status}' state`,
-        });
-      }
-
-      // For the new architecture, "starting" just means marking as running.
-      // The workspace (worktree) already exists on disk.
-      // Claude queries run in-process when the user sends a prompt.
-      const updatedSession = await prisma.session.update({
-        where: { id: session.id },
-        data: { status: 'running' },
-      });
-
-      sseEvents.emitSessionUpdate(input.sessionId, updatedSession);
-      return { session: toSessionView(updatedSession) };
-    }),
-
-  rename: protectedProcedure
-    .input(
-      z.object({
-        sessionId: z.string().uuid(),
-        name: z.string().trim().min(1).max(SESSION_NAME_MAX_LENGTH),
-      })
-    )
-    .mutation(async ({ input }) => {
-      const session = await prisma.session.findUnique({
-        where: { id: input.sessionId },
-      });
-
-      if (!session) {
-        throw new TRPCError({
-          code: 'NOT_FOUND',
-          message: 'Session not found',
-        });
-      }
+  rename: sessionProcedure
+    .input(z.object({ name: z.string().trim().min(1).max(SESSION_NAME_MAX_LENGTH) }))
+    .mutation(async ({ ctx, input }) => {
+      const { session } = ctx;
 
       // Renaming only changes the display name; the session id and workspace
       // are untouched. lastActivityAt is deliberately not bumped so renaming
@@ -320,24 +259,10 @@ export const sessionsRouter = router({
   // resolveClaudeModel). Pass null/empty to clear (reverts to repo/global/env
   // model). Persisted, so it survives restarts; applied live to a running query
   // on the next turn (refreshSessionSettings applies it now if idle).
-  setModel: protectedProcedure
-    .input(
-      z.object({
-        sessionId: z.string().uuid(),
-        claudeModel: z.string().max(200).nullable(),
-      })
-    )
-    .mutation(async ({ input }) => {
-      const session = await prisma.session.findUnique({
-        where: { id: input.sessionId },
-      });
-
-      if (!session) {
-        throw new TRPCError({
-          code: 'NOT_FOUND',
-          message: 'Session not found',
-        });
-      }
+  setModel: sessionProcedure
+    .input(z.object({ claudeModel: z.string().max(200).nullable() }))
+    .mutation(async ({ ctx, input }) => {
+      const { session } = ctx;
 
       // Archived sessions are read-only (workspace removed, no live query).
       if (session.status === 'archived') {
@@ -361,63 +286,41 @@ export const sessionsRouter = router({
       return { session: toSessionView(updatedSession) };
     }),
 
-  stop: protectedProcedure
-    .input(z.object({ sessionId: z.string().uuid() }))
-    .mutation(async ({ input }) => {
-      const session = await prisma.session.findUnique({
-        where: { id: input.sessionId },
-      });
+  stop: sessionProcedure.mutation(async ({ ctx, input }) => {
+    const { session } = ctx;
 
-      if (!session) {
-        throw new TRPCError({
-          code: 'NOT_FOUND',
-          message: 'Session not found',
-        });
-      }
+    // Stop any running Claude query (synchronous: closes input + query).
+    stopSession(input.sessionId);
 
-      // Stop any running Claude query (synchronous: closes input + query).
-      stopSession(input.sessionId);
+    const updatedSession = await prisma.session.update({
+      where: { id: session.id },
+      data: { status: 'stopped' },
+    });
 
-      const updatedSession = await prisma.session.update({
-        where: { id: session.id },
-        data: { status: 'stopped' },
-      });
+    sseEvents.emitSessionUpdate(input.sessionId, updatedSession);
+    return { session: toSessionView(updatedSession) };
+  }),
 
-      sseEvents.emitSessionUpdate(input.sessionId, updatedSession);
-      return { session: toSessionView(updatedSession) };
-    }),
+  delete: sessionProcedure.mutation(async ({ ctx, input }) => {
+    const { session } = ctx;
 
-  delete: protectedProcedure
-    .input(z.object({ sessionId: z.string().uuid() }))
-    .mutation(async ({ input }) => {
-      const session = await prisma.session.findUnique({
-        where: { id: input.sessionId },
-      });
-
-      if (!session) {
-        throw new TRPCError({
-          code: 'NOT_FOUND',
-          message: 'Session not found',
-        });
-      }
-
-      if (session.status === 'archived') {
-        return { success: true };
-      }
-
-      // Stop any running query and clean up all in-memory state
-      cleanupSession(input.sessionId);
-
-      // Remove workspace directory
-      await removeWorkspace(session.id);
-
-      // Archive session (keep messages for viewing)
-      const updatedSession = await prisma.session.update({
-        where: { id: session.id },
-        data: { status: 'archived' },
-      });
-
-      sseEvents.emitSessionUpdate(input.sessionId, updatedSession);
+    if (session.status === 'archived') {
       return { success: true };
-    }),
+    }
+
+    // Stop any running query and clean up all in-memory state
+    cleanupSession(input.sessionId);
+
+    // Remove workspace directory
+    await removeWorkspace(session.id);
+
+    // Archive session (keep messages for viewing)
+    const updatedSession = await prisma.session.update({
+      where: { id: session.id },
+      data: { status: 'archived' },
+    });
+
+    sseEvents.emitSessionUpdate(input.sessionId, updatedSession);
+    return { success: true };
+  }),
 });

@@ -19,6 +19,8 @@ model AuthSession {
 
   @@index([token])
   @@index([expiresAt])
+  @@index([revokedAt])
+  @@index([createdAt, id])
 }
 
 model Session {

@@ -69,6 +69,19 @@ export async function loadResolvedGlobalSettings(): Promise<ResolvedGlobalSettin
 }
 
 /**
+ * The Claude credential in effect for server-side Anthropic API calls: the
+ * encrypted global override when set, else `CLAUDE_CODE_OAUTH_TOKEN`.
+ */
+export async function loadClaudeCredential(): Promise<string | null> {
+  const settings = await prisma.globalSettings.findUnique({
+    where: { id: GLOBAL_SETTINGS_ID },
+    select: { claudeApiKey: true },
+  });
+  const stored = settings?.claudeApiKey ? decrypt(settings.claudeApiKey) : null;
+  return stored || env.CLAUDE_CODE_OAUTH_TOKEN || null;
+}
+
+/**
  * Fully merged session settings for establishing a Claude query.
  */
 export interface MergedSessionSettings {

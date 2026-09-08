@@ -1,3 +1,4 @@
+import { resetEnvCache } from '@/lib/env';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock global fetch
@@ -23,6 +24,7 @@ describe('github service', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     process.env.GITHUB_TOKEN = 'test-token';
+    resetEnvCache();
   });
 
   afterEach(() => {
@@ -186,6 +188,7 @@ describe('github service', () => {
 
     it('should return undefined when no GitHub token is configured', async () => {
       delete process.env.GITHUB_TOKEN;
+      resetEnvCache();
 
       const result = await fetchPullRequestForBranch('owner/repo', 'branch');
 

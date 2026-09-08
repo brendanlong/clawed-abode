@@ -1,3 +1,4 @@
+import { resetEnvCache } from '@/lib/env';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { encrypt } from '@/lib/crypto';
 import {
@@ -14,6 +15,7 @@ const MASK = '••••••••';
 describe('settings-helpers', () => {
   beforeAll(() => {
     process.env.ENCRYPTION_KEY = 'unit-test-encryption-key-that-is-long-enough';
+    resetEnvCache();
   });
 
   describe('display formatting', () => {

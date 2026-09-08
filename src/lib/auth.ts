@@ -6,6 +6,8 @@ const TOKEN_LENGTH = 32; // 256 bits of entropy
 export const SESSION_DURATION_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 export const IDLE_TIMEOUT_MS = 24 * 60 * 60 * 1000; // 24 hours
 export const ACTIVITY_UPDATE_THROTTLE_MS = 60 * 1000; // 1 minute - minimum time between activity updates
+// How long expired/revoked auth sessions stay listed for audit before being deleted
+export const AUTH_SESSION_RETENTION_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 export const loginSchema = z.object({
   password: z.string().min(1, 'Password is required'),

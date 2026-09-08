@@ -1,9 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { env } from '@/lib/env';
-import { decrypt } from '@/lib/crypto';
-import { prisma } from '@/lib/prisma';
+import { classifyClaudeCredential } from '@/lib/claude-credential';
 import { createLogger, toError } from '@/lib/logger';
-import { GLOBAL_SETTINGS_ID } from './settings-scope';
+import { loadClaudeCredential } from './settings-merger';
 
 const log = createLogger('anthropic-models');
 
@@ -37,54 +35,18 @@ function inferAlias(modelId: string): string | null {
 }
 
 /**
- * Get the OAuth token or API key to use for the Anthropic SDK.
- * Checks the DB first, then falls back to env var.
- */
-async function getAuthCredentials(): Promise<{
-  authToken?: string;
-  apiKey?: string;
-} | null> {
-  // Check DB for stored API key
-  const settings = await prisma.globalSettings.findUnique({
-    where: { id: GLOBAL_SETTINGS_ID },
-    select: { claudeApiKey: true },
-  });
-
-  if (settings?.claudeApiKey) {
-    const decrypted = decrypt(settings.claudeApiKey);
-    // Anthropic API keys start with "sk-ant-", OAuth tokens don't
-    if (decrypted.startsWith('sk-ant-')) {
-      return { apiKey: decrypted };
-    }
-    return { authToken: decrypted };
-  }
-
-  const envToken = env.CLAUDE_CODE_OAUTH_TOKEN;
-  if (envToken) {
-    if (envToken.startsWith('sk-ant-')) {
-      return { apiKey: envToken };
-    }
-    return { authToken: envToken };
-  }
-
-  return null;
-}
-
-/**
  * Fetch available model IDs from the Anthropic API.
  * Returns model IDs and inferred aliases, deduplicated and sorted.
  */
 async function fetchModelsFromApi(): Promise<string[]> {
-  const credentials = await getAuthCredentials();
-  if (!credentials) {
+  const credential = await loadClaudeCredential();
+  if (!credential) {
     log.debug('No credentials available, skipping API model fetch');
     return [];
   }
 
   try {
-    const client = new Anthropic({
-      ...credentials,
-    });
+    const client = new Anthropic(classifyClaudeCredential(credential));
 
     const models: string[] = [];
     // Use for-await to auto-paginate

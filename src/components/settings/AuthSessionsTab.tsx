@@ -13,8 +13,12 @@ import { trpc } from '@/lib/trpc';
  */
 export function AuthSessionsTab() {
   const [showInactive, setShowInactive] = useState(false);
-  const { data, isLoading, refetch } = trpc.auth.listSessions.useQuery();
-  const sessions = data?.sessions ?? [];
+  const query = trpc.auth.listSessions.useInfiniteQuery(
+    {},
+    { getNextPageParam: (lastPage) => lastPage.nextCursor }
+  );
+  const { isLoading, refetch, hasNextPage, isFetchingNextPage, fetchNextPage } = query;
+  const sessions = query.data?.pages.flatMap((page) => page.sessions) ?? [];
 
   const deleteMutation = trpc.auth.deleteSession.useMutation({
     onSuccess: () => {
@@ -63,11 +67,22 @@ export function AuthSessionsTab() {
         </CardContent>
       </Card>
 
-      {/* Toggle for inactive sessions */}
-      <div className="flex justify-center">
+      {/* Pages are ordered by creation, so later pages are mostly inactive;
+          only offer them once that section is visible. */}
+      <div className="flex justify-center gap-2">
         <Button variant="ghost" size="sm" onClick={() => setShowInactive(!showInactive)}>
           {showInactive ? 'Hide inactive sessions' : 'Show inactive sessions'}
         </Button>
+        {showInactive && hasNextPage && (
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={isFetchingNextPage}
+            onClick={() => void fetchNextPage()}
+          >
+            {isFetchingNextPage ? 'Loading…' : 'Load more'}
+          </Button>
+        )}
       </div>
 
       {/* Inactive sessions section */}

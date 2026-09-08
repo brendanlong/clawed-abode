@@ -1,35 +1,15 @@
 import { z } from 'zod';
 import { router, publicProcedure, protectedProcedure } from '../trpc';
 import { prisma } from '@/lib/prisma';
-import {
-  verifyPassword,
-  generateSessionToken,
-  loginSchema,
-  SESSION_DURATION_MS,
-  IDLE_TIMEOUT_MS,
-} from '@/lib/auth';
+import { verifyPassword, loginSchema, IDLE_TIMEOUT_MS } from '@/lib/auth';
 import { loginRateLimiter } from '@/lib/rate-limiter';
 import { env } from '@/lib/env';
 import { TRPCError } from '@trpc/server';
 import { createLogger, toError } from '@/lib/logger';
+import { keysetPage, keysetPageInputSchema } from '@/lib/keyset-page';
+import { createAuthSession, purgeInactiveAuthSessions } from '../services/auth-sessions';
 
 const log = createLogger('auth');
-
-async function createAuthSession(ipAddress?: string, userAgent?: string): Promise<string> {
-  const token = generateSessionToken();
-  const expiresAt = new Date(Date.now() + SESSION_DURATION_MS);
-
-  await prisma.authSession.create({
-    data: {
-      token,
-      expiresAt,
-      ipAddress,
-      userAgent,
-    },
-  });
-
-  return token;
-}
 
 export const authRouter = router({
   login: publicProcedure.input(loginSchema).mutation(async ({ input, ctx }) => {
@@ -82,6 +62,12 @@ export const authRouter = router({
     // Record successful login (resets attempt counter)
     loginRateLimiter.recordSuccess(rateLimitKey);
 
+    try {
+      await purgeInactiveAuthSessions();
+    } catch (error) {
+      log.error('Failed to purge inactive auth sessions', toError(error));
+    }
+
     const token = await createAuthSession(ctx.ipAddress, ctx.userAgent);
 
     return { token };
@@ -97,8 +83,12 @@ export const authRouter = router({
     return { success: true };
   }),
 
-  listSessions: protectedProcedure.query(async ({ ctx }) => {
-    const sessions = await prisma.authSession.findMany({
+  // Keyset-paginated by (createdAt desc, id desc); inactive sessions are included
+  // for audit until purgeInactiveAuthSessions deletes them.
+  listSessions: protectedProcedure.input(keysetPageInputSchema).query(async ({ input, ctx }) => {
+    const page = keysetPage('createdAt', input);
+    const rows = await prisma.authSession.findMany({
+      where: page.where,
       select: {
         id: true,
         createdAt: true,
@@ -108,12 +98,14 @@ export const authRouter = router({
         ipAddress: true,
         userAgent: true,
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: page.orderBy,
+      take: page.take,
     });
+    const { items, nextCursor } = page.slice(rows);
 
     return {
-      sessions: sessions.map((s) => {
-        const idleExpiresAt = new Date(new Date(s.lastActivityAt).getTime() + IDLE_TIMEOUT_MS);
+      sessions: items.map((s) => {
+        const idleExpiresAt = new Date(s.lastActivityAt.getTime() + IDLE_TIMEOUT_MS);
         const effectiveExpiresAt = idleExpiresAt < s.expiresAt ? idleExpiresAt : s.expiresAt;
         return {
           ...s,
@@ -121,6 +113,7 @@ export const authRouter = router({
           isCurrent: s.id === ctx.sessionId,
         };
       }),
+      nextCursor,
     };
   }),
 

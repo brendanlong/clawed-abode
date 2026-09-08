@@ -1,9 +1,12 @@
 /**
  * Centralized logging utility for the server.
  * Provides consistent, structured logging across all backend services.
+ * Entries below `LOG_LEVEL` (default `info`) are dropped.
  */
 
-export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+import { env, LOG_LEVELS } from './env';
+
+export type LogLevel = (typeof LOG_LEVELS)[number];
 
 interface LogEntry {
   timestamp: string;
@@ -16,6 +19,10 @@ interface LogEntry {
     message: string;
     stack?: string;
   };
+}
+
+export function isLogLevelEnabled(level: LogLevel, threshold: LogLevel): boolean {
+  return LOG_LEVELS.indexOf(level) >= LOG_LEVELS.indexOf(threshold);
 }
 
 function formatLogEntry(entry: LogEntry): string {
@@ -70,7 +77,18 @@ function createLogEntry(
   return entry;
 }
 
+/** Falls back to `info` when the env is invalid so the boot-time error itself can be logged. */
+function configuredLogLevel(): LogLevel {
+  try {
+    return env.LOG_LEVEL;
+  } catch {
+    return 'info';
+  }
+}
+
 function writeLog(entry: LogEntry): void {
+  if (!isLogLevelEnabled(entry.level, configuredLogLevel())) return;
+
   const formatted = formatLogEntry(entry);
 
   if (entry.level === 'error') {

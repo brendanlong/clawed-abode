@@ -47,7 +47,8 @@ Key decisions:
 - **SQLite + Prisma 7** with the Rust-free `prisma-client` generator (client generated to `src/generated/prisma/`, gitignored; imported via `@/generated/prisma/client`). Schema: [`prisma/schema.prisma`](../prisma/schema.prisma); CLI config: [`prisma.config.ts`](../prisma.config.ts).
 - **tRPC for the API** ([`src/server/routers/`](../src/server/routers/)); **SSE for all server→client streaming**. Client→server actions are ordinary mutations, so a bidirectional transport (WebSockets) is unnecessary.
 - **Single-user password auth** behind Tailscale — see [`security.md`](security.md).
-- **Cursor-based pagination everywhere**, keyed on per-session message `sequence` numbers.
+- **Cursor-based pagination everywhere**: messages by per-session `sequence`; session and auth-session lists by a `(timestamp desc, id desc)` keyset ([`src/lib/keyset-page.ts`](../src/lib/keyset-page.ts)).
+- **Environment is validated once at boot** ([`src/lib/env.ts`](../src/lib/env.ts), called from instrumentation) so a bad variable stops startup instead of the first request that reads it. `LOG_LEVEL` filters the centralized logger.
 
 ## Data Model
 
@@ -87,7 +88,7 @@ The "Open in VS Code" button deep-links into a self-hosted [code-server](https:/
 
 ## Where Things Live
 
-- [`src/server/routers/`](../src/server/routers/) — tRPC API (auth, github, sessions, claude, sse, globalSettings, repoSettings)
+- [`src/server/routers/`](../src/server/routers/) — tRPC API (auth, github, sessions, claude, sse, globalSettings, repoSettings). Procedure bases live in [`src/server/trpc.ts`](../src/server/trpc.ts): a procedure that needs the session row builds on `sessionProcedure` (loads `ctx.session` or throws NOT_FOUND) or `runningSessionProcedure` rather than repeating the lookup; ones that only read in-memory state stay on `protectedProcedure`.
 - [`src/server/services/`](../src/server/services/) — session/query/workspace management; [`claude-runner.ts`](../src/server/services/claude-runner.ts) orchestrates the session query and its sibling modules own the seams (see [`src/server/services/CLAUDE.md`](../src/server/services/CLAUDE.md))
 - [`src/lib/`](../src/lib/) — pure, unit-testable logic shared by server and client
 - [`src/hooks/`](../src/hooks/) — React Query + SSE wiring

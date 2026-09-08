@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { router, protectedProcedure } from '../trpc';
+import { router, protectedProcedure, sessionProcedure, runningSessionProcedure } from '../trpc';
 import { prisma } from '@/lib/prisma';
 import { TRPCError } from '@trpc/server';
 import {
@@ -35,7 +35,8 @@ import {
  *    restarted) — the original tool call can't be resolved. Mark it answered
  *    with a synthetic tool_result (idempotent) and resume with a new turn.
  *
- * The caller (UI) never needs to know which path is taken.
+ * The caller (UI) never needs to know which path is taken. The session must
+ * already be known to be running (see `runningSessionProcedure`).
  */
 async function submitToolResponse(
   sessionId: string,
@@ -46,19 +47,6 @@ async function submitToolResponse(
     return { routed: 'live' };
   }
 
-  const session = await prisma.session.findUnique({
-    where: { id: sessionId },
-    select: { status: true },
-  });
-  if (!session) {
-    throw new TRPCError({ code: 'NOT_FOUND', message: 'Session not found' });
-  }
-  if (session.status !== 'running') {
-    throw new TRPCError({
-      code: 'PRECONDITION_FAILED',
-      message: 'Session is not running. Start it to respond.',
-    });
-  }
   // A live promise should have been found above; if a turn is still active it
   // hasn't parked yet (or is busy with something else). Don't start a second
   // turn — let the client retry.
@@ -84,7 +72,7 @@ async function submitToolResponse(
 
 // One user message: typed text and/or previously-uploaded attachments (stored
 // names, see /api/upload). Either typed text or at least one attachment must be
-// present. Shared by `send` and each element of `sendBatch`.
+// present.
 const messageInputSchema = z
   .object({
     prompt: z.string().max(100000),
@@ -95,44 +83,17 @@ const messageInputSchema = z
   });
 
 export const claudeRouter = router({
-  send: protectedProcedure
-    .input(z.object({ sessionId: z.string().uuid() }).and(messageInputSchema))
-    .mutation(async ({ input }) => {
-      const session = await prisma.session.findUnique({
-        where: { id: input.sessionId },
-        select: { status: true },
-      });
+  send: runningSessionProcedure.input(messageInputSchema).mutation(async ({ input }) => {
+    // A send is always accepted while the session is running and goes straight
+    // into the SDK, whatever the agent is doing — the CLI interleaves it into
+    // the running turn. Neither a live turn nor background tasks gate input.
+    await sendUserMessage(input.sessionId, input.prompt, input.attachments ?? []);
 
-      if (!session) {
-        throw new TRPCError({
-          code: 'NOT_FOUND',
-          message: 'Session not found',
-        });
-      }
+    return { success: true };
+  }),
 
-      if (session.status !== 'running') {
-        throw new TRPCError({
-          code: 'PRECONDITION_FAILED',
-          message: 'Session is not running',
-        });
-      }
-
-      // A send is always accepted while the session is running and goes straight
-      // into the SDK, whatever the agent is doing — the CLI interleaves it into
-      // the running turn. Neither a live turn nor background tasks gate input.
-      await sendUserMessage(input.sessionId, input.prompt, input.attachments ?? []);
-
-      return { success: true };
-    }),
-
-  answerQuestion: protectedProcedure
-    .input(
-      z.object({
-        sessionId: z.string().uuid(),
-        toolUseId: z.string().min(1),
-        answers: z.record(z.string(), z.string()),
-      })
-    )
+  answerQuestion: runningSessionProcedure
+    .input(z.object({ toolUseId: z.string().min(1), answers: z.record(z.string(), z.string()) }))
     .mutation(async ({ input }) => {
       const { routed } = await submitToolResponse(input.sessionId, input.toolUseId, {
         kind: 'questions',
@@ -141,10 +102,9 @@ export const claudeRouter = router({
       return { success: true, routed };
     }),
 
-  respondToPlan: protectedProcedure
+  respondToPlan: runningSessionProcedure
     .input(
       z.object({
-        sessionId: z.string().uuid(),
         toolUseId: z.string().min(1),
         approve: z.boolean(),
         feedback: z.string().max(100000).optional(),
@@ -159,35 +119,21 @@ export const claudeRouter = router({
       return { success: true, routed };
     }),
 
-  interrupt: protectedProcedure
-    .input(z.object({ sessionId: z.string().uuid() }))
-    .mutation(async ({ input }) => {
-      const session = await prisma.session.findUnique({
-        where: { id: input.sessionId },
-      });
+  interrupt: sessionProcedure.mutation(async ({ input }) => {
+    const { interrupted, cancelled } = await interruptClaude(input.sessionId);
 
-      if (!session) {
-        throw new TRPCError({
-          code: 'NOT_FOUND',
-          message: 'Session not found',
-        });
-      }
+    if (interrupted) {
+      await markLastMessageAsInterrupted(input.sessionId);
+    }
 
-      const { interrupted, cancelled } = await interruptClaude(input.sessionId);
+    // Prompts Stop pulled back before the agent read them. Returned so the
+    // composer can restore them rather than silently dropping the user's text.
+    return { success: interrupted, cancelled };
+  }),
 
-      if (interrupted) {
-        await markLastMessageAsInterrupted(input.sessionId);
-      }
-
-      // Prompts Stop pulled back before the agent read them. Returned so the
-      // composer can restore them rather than silently dropping the user's text.
-      return { success: interrupted, cancelled };
-    }),
-
-  getHistory: protectedProcedure
+  getHistory: sessionProcedure
     .input(
       z.object({
-        sessionId: z.string().uuid(),
         cursor: z
           .object({
             sequence: z.number().int().optional(),
@@ -198,17 +144,6 @@ export const claudeRouter = router({
       })
     )
     .query(async ({ input }) => {
-      const session = await prisma.session.findUnique({
-        where: { id: input.sessionId },
-      });
-
-      if (!session) {
-        throw new TRPCError({
-          code: 'NOT_FOUND',
-          message: 'Session not found',
-        });
-      }
-
       const isBackward = input.cursor?.direction === 'backward';
       const getNewest = isBackward || input.cursor?.sequence == null;
 
@@ -259,33 +194,20 @@ export const claudeRouter = router({
       };
     }),
 
-  getTokenUsage: protectedProcedure
-    .input(z.object({ sessionId: z.string().uuid() }))
-    .query(async ({ input }) => {
-      const session = await prisma.session.findUnique({
-        where: { id: input.sessionId },
-      });
-
-      if (!session) {
-        throw new TRPCError({
-          code: 'NOT_FOUND',
-          message: 'Session not found',
-        });
-      }
-
-      // The context-% calculation needs the latest top-level (main-agent)
-      // assistant message; subagent messages (parent_tool_use_id set) run in
-      // their own context and would misreport the main conversation's size.
-      const [resultAndSystemMessages, lastTopLevelAssistant] = await Promise.all([
-        prisma.message.findMany({
-          where: {
-            sessionId: input.sessionId,
-            type: { in: ['result', 'system'] },
-          },
-          select: { type: true, content: true },
-          orderBy: { sequence: 'asc' },
-        }),
-        prisma.$queryRaw<{ type: string; content: string }[]>`
+  getTokenUsage: sessionProcedure.query(async ({ input }) => {
+    // The context-% calculation needs the latest top-level (main-agent)
+    // assistant message; subagent messages (parent_tool_use_id set) run in
+    // their own context and would misreport the main conversation's size.
+    const [resultAndSystemMessages, lastTopLevelAssistant] = await Promise.all([
+      prisma.message.findMany({
+        where: {
+          sessionId: input.sessionId,
+          type: { in: ['result', 'system'] },
+        },
+        select: { type: true, content: true },
+        orderBy: { sequence: 'asc' },
+      }),
+      prisma.$queryRaw<{ type: string; content: string }[]>`
           SELECT type, content FROM Message
           WHERE sessionId = ${input.sessionId}
             AND type = 'assistant'
@@ -293,17 +215,17 @@ export const claudeRouter = router({
           ORDER BY sequence DESC
           LIMIT 1
         `,
-      ]);
+    ]);
 
-      const allMessages = [...resultAndSystemMessages, ...lastTopLevelAssistant];
+    const allMessages = [...resultAndSystemMessages, ...lastTopLevelAssistant];
 
-      const parsedMessages = allMessages.map((m) => ({
-        type: m.type,
-        content: JSON.parse(m.content),
-      }));
+    const parsedMessages = allMessages.map((m) => ({
+      type: m.type,
+      content: JSON.parse(m.content),
+    }));
 
-      return estimateTokenUsage(parsedMessages);
-    }),
+    return estimateTokenUsage(parsedMessages);
+  }),
 
   getCommands: protectedProcedure
     .input(z.object({ sessionId: z.string().uuid() }))
