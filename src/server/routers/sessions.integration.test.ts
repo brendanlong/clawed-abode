@@ -588,6 +588,21 @@ describe('sessionsRouter integration', () => {
       expect(dbSession!.status).toBe('stopped');
     });
 
+    it('should leave an archived session archived', async () => {
+      const session = await createNoRepoSession({
+        name: 'Archived Session',
+        status: 'archived',
+      });
+
+      const caller = createCaller('auth-session-id');
+      const result = await caller.sessions.stop({ sessionId: session.id });
+
+      expect(result.session.status).toBe('archived');
+
+      const dbSession = await testPrisma.session.findUnique({ where: { id: session.id } });
+      expect(dbSession!.status).toBe('archived');
+    });
+
     it('should throw NOT_FOUND for non-existent session', async () => {
       const caller = createCaller('auth-session-id');
 

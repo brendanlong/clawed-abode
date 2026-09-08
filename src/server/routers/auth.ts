@@ -118,7 +118,7 @@ export const authRouter = router({
   }),
 
   deleteSession: protectedProcedure
-    .input(z.object({ sessionId: z.string() }))
+    .input(z.object({ sessionId: z.string().uuid() }))
     .mutation(async ({ input, ctx }) => {
       // Prevent revoking current session via this endpoint
       if (input.sessionId === ctx.sessionId) {
@@ -128,11 +128,16 @@ export const authRouter = router({
         });
       }
 
-      // Revoke the session instead of deleting
-      await prisma.authSession.update({
+      // Revoke the session instead of deleting. updateMany (not update) so a
+      // missing row reports NOT_FOUND rather than throwing P2025 as a 500.
+      const { count } = await prisma.authSession.updateMany({
         where: { id: input.sessionId },
         data: { revokedAt: new Date() },
       });
+
+      if (count === 0) {
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'Session not found' });
+      }
 
       return { success: true };
     }),

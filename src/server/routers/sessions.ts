@@ -289,6 +289,13 @@ export const sessionsRouter = router({
   stop: sessionProcedure.mutation(async ({ ctx, input }) => {
     const { session } = ctx;
 
+    // Archived sessions have no workspace or live query; stopping one would
+    // move it back to 'stopped', from which start() would revive it with
+    // nothing on disk.
+    if (session.status === 'archived') {
+      return { session: toSessionView(session) };
+    }
+
     // Stop any running Claude query (synchronous: closes input + query).
     stopSession(input.sessionId);
 

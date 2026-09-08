@@ -95,7 +95,7 @@ export const githubRouter = router({
     .input(
       z.object({
         search: z.string().optional(),
-        cursor: z.string().optional(), // page number as string
+        cursor: z.string().regex(/^\d+$/).optional(), // page number as string
         perPage: z.number().int().min(1).max(100).default(30),
       })
     )
@@ -187,7 +187,7 @@ export const githubRouter = router({
         repoFullName: z.string().regex(/^[\w-]+\/[\w.-]+$/),
         search: z.string().optional(),
         state: z.enum(['open', 'closed', 'all']).default('open'),
-        cursor: z.string().optional(), // page number as string
+        cursor: z.string().regex(/^\d+$/).optional(), // page number as string
         perPage: z.number().int().min(1).max(100).default(30),
       })
     )
