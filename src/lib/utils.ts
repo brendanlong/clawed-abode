@@ -12,5 +12,5 @@ export function cn(...inputs: ClassValue[]) {
  * - https://github.com/owner/repo.git
  */
 export function extractRepoFullName(repoUrl: string): string {
-  return repoUrl.replace('https://github.com/', '').replace('.git', '');
+  return repoUrl.replace('https://github.com/', '').replace(/\.git$/, '');
 }
