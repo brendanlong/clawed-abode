@@ -26,24 +26,6 @@ vi.mock('@/hooks/useVoiceRecording', () => ({
   },
 }));
 
-const { voiceConfigState } = vi.hoisted(() => ({
-  voiceConfigState: { autoSend: true },
-}));
-
-vi.mock('@/hooks/useVoiceConfig', () => ({
-  useVoiceConfig: () => ({
-    enabled: true,
-    sttEnabled: true,
-    ttsEnabled: true,
-    autoRead: false,
-    setAutoRead: vi.fn(),
-    autoSend: voiceConfigState.autoSend,
-    ttsSpeed: 1.0,
-    voiceURI: null,
-    setVoiceURI: vi.fn(),
-  }),
-}));
-
 vi.mock('@/hooks/useVoicePlayback', () => ({
   useVoicePlaybackContext: () => ({
     enabled: true,
@@ -62,9 +44,9 @@ vi.mock('@/hooks/useVoicePlayback', () => ({
 
 describe('VoiceControlPanel send-failure handling', () => {
   const defaultProps = {
-    sessionId: 'test-session-id',
     messages: [],
     isRunning: false,
+    voiceAutoSend: true,
     onSendPrompt: vi.fn(),
     onClose: vi.fn(),
     onInterrupt: vi.fn(),
@@ -73,11 +55,9 @@ describe('VoiceControlPanel send-failure handling', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     recordingState.transcript = 'dictated message';
-    voiceConfigState.autoSend = true;
   });
 
   it('auto-send: restores the transcript and shows an error when the send rejects', async () => {
-    voiceConfigState.autoSend = true;
     const onSendPrompt = vi.fn().mockRejectedValue(new Error('Queue is full'));
     const user = userEvent.setup();
     render(<VoiceControlPanel {...defaultProps} onSendPrompt={onSendPrompt} />);
@@ -93,10 +73,11 @@ describe('VoiceControlPanel send-failure handling', () => {
   });
 
   it('manual send: restores the transcript and shows an error when the send rejects', async () => {
-    voiceConfigState.autoSend = false;
     const onSendPrompt = vi.fn().mockRejectedValue(new Error('Session is not running'));
     const user = userEvent.setup();
-    render(<VoiceControlPanel {...defaultProps} onSendPrompt={onSendPrompt} />);
+    render(
+      <VoiceControlPanel {...defaultProps} voiceAutoSend={false} onSendPrompt={onSendPrompt} />
+    );
 
     const mic = screen.getByRole('button', { name: /start recording/i });
     await user.click(mic);
@@ -113,7 +94,6 @@ describe('VoiceControlPanel send-failure handling', () => {
   });
 
   it('does not show an error when the send succeeds', async () => {
-    voiceConfigState.autoSend = true;
     const onSendPrompt = vi.fn().mockResolvedValue(undefined);
     const user = userEvent.setup();
     render(<VoiceControlPanel {...defaultProps} onSendPrompt={onSendPrompt} />);
@@ -128,10 +108,11 @@ describe('VoiceControlPanel send-failure handling', () => {
   });
 
   it('cancel clears a send error', async () => {
-    voiceConfigState.autoSend = false;
     const onSendPrompt = vi.fn().mockRejectedValue(new Error('Queue is full'));
     const user = userEvent.setup();
-    render(<VoiceControlPanel {...defaultProps} onSendPrompt={onSendPrompt} />);
+    render(
+      <VoiceControlPanel {...defaultProps} voiceAutoSend={false} onSendPrompt={onSendPrompt} />
+    );
 
     await user.click(screen.getByRole('button', { name: /start recording/i }));
     await user.click(screen.getByRole('button', { name: /stop recording/i }));
