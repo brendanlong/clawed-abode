@@ -20,7 +20,6 @@ interface DeleteConfirmDialogProps {
   title: string;
   description: ReactNode;
   isPending?: boolean;
-  confirmLabel?: string;
 }
 
 export function DeleteConfirmDialog({
@@ -30,7 +29,6 @@ export function DeleteConfirmDialog({
   title,
   description,
   isPending = false,
-  confirmLabel = 'Delete',
 }: DeleteConfirmDialogProps) {
   return (
     <AlertDialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
@@ -46,7 +44,7 @@ export function DeleteConfirmDialog({
             disabled={isPending}
             className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
           >
-            {isPending ? <Spinner size="sm" /> : confirmLabel}
+            {isPending ? <Spinner size="sm" /> : 'Delete'}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

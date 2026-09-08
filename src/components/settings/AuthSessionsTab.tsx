@@ -85,7 +85,6 @@ export function AuthSessionsTab() {
         )}
       </div>
 
-      {/* Inactive sessions section */}
       {showInactive && inactiveSessions.length > 0 && (
         <Card>
           <CardHeader className="py-3">

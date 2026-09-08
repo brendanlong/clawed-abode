@@ -75,6 +75,7 @@ export function SettingsListEditor<T extends SettingsListItem>({
                   size="sm"
                   onClick={() => dispatch({ type: 'setDeleteTarget', name: item.name })}
                   className="text-destructive hover:text-destructive"
+                  aria-label={`Delete ${item.name}`}
                 >
                   <Trash2 className="h-4 w-4" />
                 </Button>

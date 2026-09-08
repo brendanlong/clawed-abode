@@ -49,7 +49,13 @@ export function KeyValueListEditor({
     <div className="space-y-2">
       <div className="flex items-center justify-between">
         <Label>{label}</Label>
-        <Button type="button" variant="outline" size="sm" onClick={addEntry}>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={addEntry}
+          aria-label={`Add to ${label}`}
+        >
           <Plus className="h-4 w-4" />
         </Button>
       </div>
@@ -85,6 +91,7 @@ export function KeyValueListEditor({
             size="sm"
             onClick={() => removeEntry(index)}
             className="text-destructive"
+            aria-label={entry.key ? `Remove ${entry.key}` : `Remove row ${index + 1}`}
           >
             <Trash2 className="h-4 w-4" />
           </Button>

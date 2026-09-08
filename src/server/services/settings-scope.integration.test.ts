@@ -48,6 +48,10 @@ describe('settings-scope', () => {
 
       expect(await scopeModule.getEnvVarValue(scope, 'SECRET')).toBe('shh');
       expect(await scopeModule.getEnvVarValue(scope, 'PLAIN')).toBe('v2');
+
+      // Only the empty string means unchanged; any other value overwrites.
+      await scopeModule.upsertEnvVar(scope, { name: 'SECRET', value: 'shh2', isSecret: true });
+      expect(await scopeModule.getEnvVarValue(scope, 'SECRET')).toBe('shh2');
       await expect(scopeModule.getEnvVarValue(scope, 'NOPE')).rejects.toMatchObject({
         code: 'NOT_FOUND',
       });
