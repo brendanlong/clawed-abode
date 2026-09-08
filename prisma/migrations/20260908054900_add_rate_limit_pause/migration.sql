@@ -68,7 +68,11 @@ CREATE TABLE "new_Session" (
 INSERT INTO "new_Session" ("branch", "claudeModel", "createdAt", "currentBranch", "id", "lastActivityAt", "messageSequence", "name", "pullRequest", "repoPath", "repoUrl", "sessionScope", "status", "statusMessage", "updatedAt") SELECT "branch", "claudeModel", "createdAt", "currentBranch", "id", "lastActivityAt", "messageSequence", "name", "pullRequest", "repoPath", "repoUrl", "sessionScope", "status", "statusMessage", "updatedAt" FROM "Session";
 DROP TABLE "Session";
 ALTER TABLE "new_Session" RENAME TO "Session";
-CREATE INDEX "Session_status_idx" ON "Session"("status");
+-- SQLite drops a table's indexes with the table, so this rebuild must recreate
+-- exactly the set schema.prisma declares TODAY. Regenerating this file before
+-- 20260907190000 landed would resurrect the Session_status_idx that migration
+-- dropped and lose the Session_lastActivityAt_id_idx it added.
+CREATE INDEX "Session_lastActivityAt_id_idx" ON "Session"("lastActivityAt", "id");
 CREATE INDEX "Session_status_lastActivityAt_id_idx" ON "Session"("status", "lastActivityAt", "id");
 PRAGMA foreign_keys=ON;
 PRAGMA defer_foreign_keys=OFF;
