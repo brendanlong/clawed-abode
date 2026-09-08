@@ -1,6 +1,5 @@
 'use client';
 
-import { useState } from 'react';
 import {
   Sheet,
   SheetContent,
@@ -8,19 +7,18 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet';
-import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Spinner } from '@/components/ui/spinner';
 import { Separator } from '@/components/ui/separator';
-import { Textarea } from '@/components/ui/textarea';
 import { trpc } from '@/lib/trpc';
 import { fallbackClaudeModel } from '@/lib/claude-model';
-import { Plus, Star, FileText, FolderOpen, Cpu } from 'lucide-react';
+import { Star, FileText, FolderOpen, Cpu } from 'lucide-react';
 import { NO_REPO_SENTINEL } from '@/components/RepoSelector';
 import { EnvVarSection } from './shared/EnvVarSection';
 import { McpServerSection } from './shared/McpServerSection';
 import { ModelOverrideField } from './shared/ModelOverrideField';
+import { EditableTextSetting } from './shared/EditableTextSetting';
 import type { EnvVarMutations } from './shared/EnvVarSection';
 import type { McpServerMutations } from './shared/McpServerSection';
 
@@ -165,31 +163,7 @@ function CustomSystemPromptSection({
   customSystemPrompt: string | null;
   onUpdate: () => void;
 }) {
-  const [isEditing, setIsEditing] = useState(false);
-  const [value, setValue] = useState(customSystemPrompt ?? '');
-  const [error, setError] = useState<string | null>(null);
-
-  const mutation = trpc.repoSettings.setCustomSystemPrompt.useMutation({
-    onSuccess: () => {
-      setIsEditing(false);
-      onUpdate();
-    },
-    onError: (err) => setError(err.message),
-  });
-
-  const handleSave = () => {
-    setError(null);
-    mutation.mutate({
-      repoFullName,
-      customSystemPrompt: value.trim() || null,
-    });
-  };
-
-  const handleCancel = () => {
-    setValue(customSystemPrompt ?? '');
-    setIsEditing(false);
-    setError(null);
-  };
+  const mutation = trpc.repoSettings.setCustomSystemPrompt.useMutation({ onSuccess: onUpdate });
 
   return (
     <div className="space-y-4">
@@ -202,39 +176,15 @@ function CustomSystemPromptSection({
         This prompt is appended to the default system prompt for all sessions using this repository.
       </p>
 
-      {isEditing ? (
-        <div className="space-y-3">
-          <Textarea
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            placeholder="Enter custom instructions for Claude when working with this repository..."
-            className="min-h-[120px] font-mono text-sm"
-          />
-          {error && <p className="text-sm text-destructive">{error}</p>}
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" size="sm" onClick={handleCancel}>
-              Cancel
-            </Button>
-            <Button size="sm" onClick={handleSave} disabled={mutation.isPending}>
-              {mutation.isPending ? <Spinner size="sm" /> : 'Save'}
-            </Button>
-          </div>
-        </div>
-      ) : customSystemPrompt ? (
-        <div className="space-y-3">
-          <div className="rounded-md bg-muted/50 p-3">
-            <pre className="text-sm whitespace-pre-wrap font-mono">{customSystemPrompt}</pre>
-          </div>
-          <Button variant="outline" size="sm" onClick={() => setIsEditing(true)}>
-            Edit
-          </Button>
-        </div>
-      ) : (
-        <Button variant="outline" size="sm" onClick={() => setIsEditing(true)}>
-          <Plus className="h-4 w-4 mr-1" />
-          Add Custom Prompt
-        </Button>
-      )}
+      <EditableTextSetting
+        value={customSystemPrompt}
+        onSave={(value, onSuccess) =>
+          mutation.mutate({ repoFullName, customSystemPrompt: value }, { onSuccess })
+        }
+        mutation={mutation}
+        placeholder="Enter custom instructions for Claude when working with this repository..."
+        addLabel="Add Custom Prompt"
+      />
     </div>
   );
 }
@@ -248,15 +198,8 @@ function ClaudeModelSection({
   claudeModel: string | null;
   onUpdate: () => void;
 }) {
-  const [error, setError] = useState<string | null>(null);
   const { data: globalSettings } = trpc.globalSettings.get.useQuery();
-
-  const mutation = trpc.repoSettings.setClaudeModel.useMutation({
-    onSuccess: () => onUpdate(),
-    onError: (err) => setError(err.message),
-  });
-
-  const fallbackModel = fallbackClaudeModel(globalSettings);
+  const mutation = trpc.repoSettings.setClaudeModel.useMutation({ onSuccess: onUpdate });
 
   return (
     <div className="space-y-4">
@@ -271,13 +214,11 @@ function ClaudeModelSection({
 
       <ModelOverrideField
         currentModel={claudeModel}
-        defaultModel={fallbackModel}
-        onSave={(model, onSuccess) => {
-          setError(null);
-          mutation.mutate({ repoFullName, claudeModel: model }, { onSuccess });
-        }}
-        isPending={mutation.isPending}
-        error={error}
+        defaultModel={fallbackClaudeModel(globalSettings)}
+        onSave={(model, onSuccess) =>
+          mutation.mutate({ repoFullName, claudeModel: model }, { onSuccess })
+        }
+        mutation={mutation}
         setButtonLabel="Set Model"
       />
     </div>

@@ -17,7 +17,7 @@ import { Spinner } from '@/components/ui/spinner';
 import { RepoSelector, NO_REPO_SENTINEL } from '@/components/RepoSelector';
 import { BranchSelector } from '@/components/BranchSelector';
 import { IssueSelector } from '@/components/IssueSelector';
-import { ModelOverrideField } from '@/components/settings/shared/ModelOverrideField';
+import { ModelCombobox } from '@/components/settings/shared/ModelCombobox';
 import { Cpu } from 'lucide-react';
 import type { Repo } from '@/components/RepoSelector';
 import type { Issue } from '@/lib/types';
@@ -131,7 +131,7 @@ function NewSessionForm() {
       repoFullName: isNoRepo ? undefined : form.selectedRepo.fullName,
       branch: isNoRepo ? undefined : form.selectedBranch,
       initialPrompt: form.initialPrompt.trim() || undefined,
-      claudeModel: form.claudeModel ?? undefined,
+      claudeModel: form.claudeModel?.trim() || undefined,
     });
   };
 
@@ -196,21 +196,15 @@ function NewSessionForm() {
           </div>
 
           <div className="space-y-2">
-            <Label className="flex items-center gap-1.5">
+            <Label htmlFor="claudeModel" className="flex items-center gap-1.5">
               <Cpu className="h-4 w-4 text-muted-foreground" />
               Claude model (optional)
             </Label>
-            <ModelOverrideField
-              currentModel={form.claudeModel}
-              defaultModel={fallbackModel}
-              onSave={(model, onSuccess) => {
-                dispatch({ type: 'editModel', claudeModel: model });
-                onSuccess();
-              }}
-              isPending={false}
-              error={null}
-              setButtonLabel="Set Model"
-              emptyHint="(default)"
+            <ModelCombobox
+              id="claudeModel"
+              value={form.claudeModel ?? ''}
+              onChange={(value) => dispatch({ type: 'editModel', claudeModel: value || null })}
+              placeholder={fallbackModel}
             />
             <p className="text-xs text-muted-foreground">
               Overrides the model for this session only. You can change it later from the session

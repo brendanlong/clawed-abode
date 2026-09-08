@@ -7,7 +7,7 @@ import { AuthSessionsTab } from '@/components/settings/AuthSessionsTab';
 import { AppearanceTab } from '@/components/settings/AppearanceTab';
 import { AudioTab } from '@/components/settings/AudioTab';
 import { RepositoriesTab } from '@/components/settings/RepositoriesTab';
-import { SystemPromptTab } from '@/components/settings/SystemPromptTab';
+import { GeneralTab } from '@/components/settings/GeneralTab';
 
 export default function SettingsPage() {
   return (
@@ -22,7 +22,7 @@ export default function SettingsPage() {
             <Tabs defaultValue="appearance">
               <TabsList className="mb-4 flex-wrap">
                 <TabsTrigger value="appearance">Appearance</TabsTrigger>
-                <TabsTrigger value="system-prompt">System Prompt</TabsTrigger>
+                <TabsTrigger value="general">General</TabsTrigger>
                 <TabsTrigger value="audio">Audio</TabsTrigger>
                 <TabsTrigger value="repositories">Repositories</TabsTrigger>
                 <TabsTrigger value="sessions">Sessions</TabsTrigger>
@@ -32,8 +32,8 @@ export default function SettingsPage() {
                 <AppearanceTab />
               </TabsContent>
 
-              <TabsContent value="system-prompt">
-                <SystemPromptTab />
+              <TabsContent value="general">
+                <GeneralTab />
               </TabsContent>
 
               <TabsContent value="audio">
