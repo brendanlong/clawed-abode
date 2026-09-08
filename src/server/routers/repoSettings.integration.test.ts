@@ -328,19 +328,5 @@ describe('repoSettings router', () => {
       const result = await loadResolvedRepoSettings(testRepoName);
       expect(result?.customSystemPrompt).toBe(customPrompt);
     });
-
-    it('should include customSystemPrompt in listWithSettings', async () => {
-      const caller = createCaller();
-      const customPrompt = 'My custom prompt';
-
-      await caller.repoSettings.setCustomSystemPrompt({
-        repoFullName: testRepoName,
-        customSystemPrompt: customPrompt,
-      });
-
-      const result = await caller.repoSettings.listWithSettings();
-      const found = result.settings.find((s) => s.repoFullName === testRepoName);
-      expect(found?.customSystemPrompt).toBe(customPrompt);
-    });
   });
 });

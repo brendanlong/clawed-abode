@@ -74,6 +74,18 @@ function mapGitHubError(err: unknown): never {
   throw err;
 }
 
+/** Every procedure here needs a configured token; none can degrade without one. */
+function requireGitHubToken(): string {
+  const token = env.GITHUB_TOKEN;
+  if (!token) {
+    throw new TRPCError({
+      code: 'PRECONDITION_FAILED',
+      message: 'GitHub token is not configured',
+    });
+  }
+  return token;
+}
+
 async function githubFetchResponse(path: string, token?: string): Promise<Response> {
   try {
     return await serviceGithubFetchResponse(path, token);
@@ -100,14 +112,7 @@ export const githubRouter = router({
       })
     )
     .query(async ({ input }) => {
-      const token = env.GITHUB_TOKEN;
-
-      if (!token) {
-        throw new TRPCError({
-          code: 'PRECONDITION_FAILED',
-          message: 'GitHub token is not configured',
-        });
-      }
+      const token = requireGitHubToken();
 
       const page = input.cursor ? parseInt(input.cursor, 10) : 1;
 
@@ -154,14 +159,7 @@ export const githubRouter = router({
       })
     )
     .query(async ({ input }) => {
-      const token = env.GITHUB_TOKEN;
-
-      if (!token) {
-        throw new TRPCError({
-          code: 'PRECONDITION_FAILED',
-          message: 'GitHub token is not configured',
-        });
-      }
+      const token = requireGitHubToken();
 
       // Get repo info for default branch
       const repo = await githubFetch<GitHubRepo>(`/repos/${input.repoFullName}`, token);
@@ -192,14 +190,7 @@ export const githubRouter = router({
       })
     )
     .query(async ({ input }) => {
-      const token = env.GITHUB_TOKEN;
-
-      if (!token) {
-        throw new TRPCError({
-          code: 'PRECONDITION_FAILED',
-          message: 'GitHub token is not configured',
-        });
-      }
+      const token = requireGitHubToken();
 
       const page = input.cursor ? parseInt(input.cursor, 10) : 1;
 

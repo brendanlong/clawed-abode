@@ -115,9 +115,11 @@ export const repoSettingsRouter = router({
   /** Every repository with settings, summarized for the settings page. */
   listWithSettings: protectedProcedure.query(async () => {
     const settings = await prisma.repoSettings.findMany({
-      include: {
-        envVars: { select: { id: true, name: true, isSecret: true } },
-        mcpServers: { select: { id: true, name: true } },
+      select: {
+        id: true,
+        repoFullName: true,
+        isFavorite: true,
+        _count: { select: { envVars: true, mcpServers: true } },
       },
       orderBy: [{ isFavorite: 'desc' }, { updatedAt: 'desc' }],
     });
@@ -127,13 +129,8 @@ export const repoSettingsRouter = router({
         id: s.id,
         repoFullName: s.repoFullName,
         isFavorite: s.isFavorite,
-        customSystemPrompt: s.customSystemPrompt,
-        claudeModel: s.claudeModel,
-        envVarCount: s.envVars.length,
-        mcpServerCount: s.mcpServers.length,
-        envVars: s.envVars,
-        mcpServers: s.mcpServers,
-        updatedAt: s.updatedAt,
+        envVarCount: s._count.envVars,
+        mcpServerCount: s._count.mcpServers,
       })),
     };
   }),
