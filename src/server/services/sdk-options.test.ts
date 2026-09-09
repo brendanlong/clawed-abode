@@ -91,6 +91,22 @@ describe('buildSdkOptions', () => {
     expect(resumed.sessionId).toBeUndefined();
   });
 
+  // The SDK's systemPrompt.snapshot default flipped to true in 0.3.266: a recorded
+  // prompt is replayed verbatim through every resume, so an edited system prompt
+  // would never reach a session that has history. doc/settings.md promises it takes
+  // effect on Stop->Start, which only holds while we opt out explicitly.
+  it('renders the appended system prompt fresh rather than letting the SDK record it', async () => {
+    for (const shouldResume of [false, true]) {
+      const { options } = await build(settings(), shouldResume);
+      expect(options.systemPrompt).toEqual({
+        type: 'preset',
+        preset: 'claude_code',
+        append: 'prompt',
+        snapshot: false,
+      });
+    }
+  });
+
   it('passes MCP servers via a config file path and removes a stale file when there are none', async () => {
     const withMcp = (
       await build(settings({ mcpServers: [{ name: 's', type: 'stdio', command: 'node' }] }))
