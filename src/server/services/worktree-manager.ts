@@ -10,22 +10,41 @@ import { join } from 'path';
 import { homedir } from 'os';
 import { createLogger, toError } from '@/lib/logger';
 import { env } from '@/lib/env';
+import {
+  GITHUB_CREDENTIAL_HELPER_KEY,
+  buildGithubCredentialHelper,
+  writeGithubToken,
+} from './github-credentials';
 
 const log = createLogger('worktree-manager');
 
 /** Base directory for session workspaces */
 const WORKTREES_DIR = join(homedir(), 'worktrees');
 
+/**
+ * Run a command, rejecting with its stderr. The failure message includes the
+ * argv, so callers must keep secrets out of it (see `github-credentials.ts`).
+ */
 function run(command: string, args: string[], options: { cwd?: string } = {}): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile(command, args, { ...options, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
-      if (err) {
-        const msg = `${command} ${args.join(' ')} failed: ${stderr || err.message}`;
-        reject(new Error(msg));
-        return;
+    execFile(
+      command,
+      args,
+      {
+        ...options,
+        maxBuffer: 10 * 1024 * 1024,
+        // Never block on a credential prompt: a bad token must fail, not hang.
+        env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+      },
+      (err, stdout, stderr) => {
+        if (err) {
+          const msg = `${command} ${args.join(' ')} failed: ${stderr || err.message}`;
+          reject(new Error(msg));
+          return;
+        }
+        resolve(stdout);
       }
-      resolve(stdout);
-    });
+    );
   });
 }
 
@@ -73,11 +92,24 @@ export async function cloneRepo(config: CloneConfig): Promise<CloneResult> {
 
   await mkdir(workspacePath, { recursive: true });
 
-  const repoUrl = githubToken
-    ? `https://${githubToken}@github.com/${repoFullName}.git`
-    : `https://github.com/${repoFullName}.git`;
+  // The token is never embedded in the URL or the helper: both would put it on
+  // git's argv and in `.git/config`. It goes to a mode-0600 file the helper reads.
+  const credentialHelper = githubToken
+    ? buildGithubCredentialHelper(await writeGithubToken(workspacePath, githubToken))
+    : null;
+  const credentialArgs = credentialHelper
+    ? ['-c', `${GITHUB_CREDENTIAL_HELPER_KEY}=${credentialHelper}`]
+    : [];
 
-  await run('git', ['clone', '--branch', branch, '--single-branch', repoUrl, clonePath]);
+  await run('git', [
+    ...credentialArgs,
+    'clone',
+    '--branch',
+    branch,
+    '--single-branch',
+    `https://github.com/${repoFullName}.git`,
+    clonePath,
+  ]);
 
   // Widen fetch refspec to track all remote branches
   await run('git', [
@@ -88,25 +120,9 @@ export async function cloneRepo(config: CloneConfig): Promise<CloneResult> {
     '+refs/heads/*:refs/remotes/origin/*',
   ]);
 
-  // Strip token from remote URL
-  await run('git', [
-    '-C',
-    clonePath,
-    'remote',
-    'set-url',
-    'origin',
-    `https://github.com/${repoFullName}.git`,
-  ]);
-
-  // Configure git credential helper if we have a token
-  if (githubToken) {
-    await run('git', [
-      '-C',
-      clonePath,
-      'config',
-      'credential.https://github.com.helper',
-      `!f() { echo "protocol=https"; echo "host=github.com"; echo "username=x-access-token"; echo "password=${githubToken}"; }; f`,
-    ]);
+  // Persist the helper so the agent's own pushes authenticate too
+  if (credentialHelper) {
+    await run('git', ['-C', clonePath, 'config', GITHUB_CREDENTIAL_HELPER_KEY, credentialHelper]);
   }
 
   // Create and check out a session-specific branch

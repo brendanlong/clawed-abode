@@ -2,7 +2,7 @@
 
 Layers: Tailscale Serve/Funnel (HTTPS, no exposed ports) in front of single-user password auth — Argon2 hash in `PASSWORD_HASH` (base64), DB-backed sessions with 256-bit tokens, 7-day expiry, IP/user-agent audit, per-session revocation. Expired/revoked sessions stay listed for 30 days of audit, then `purgeInactiveAuthSessions` deletes them (at boot and on login) so the table stays bounded.
 
-**GitHub token**: use a fine-grained PAT scoped to only the exposed repos, granting no more than the permissions the README lists; it's wired into each clone via a git credential helper.
+**GitHub token**: use a fine-grained PAT scoped to only the exposed repos, granting no more than the permissions the README lists. It reaches each clone through a git credential helper that `cat`s a mode-0600 file in the session workspace ([`github-credentials.ts`](../src/server/services/github-credentials.ts)). Only that path — never the token — goes on git's argv or into the clone's `.git/config`, both of which are readable by every user on the host (`/proc/<pid>/cmdline`); the file is not, and it dies with the workspace on archive. The helper answers `get` only, so a rejected token is never erased from under the operator.
 
 Session isolation is convention-only and `bypassPermissions` is used — the machine must be dedicated to this app (see DESIGN.md).
 
