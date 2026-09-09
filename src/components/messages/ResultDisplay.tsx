@@ -6,6 +6,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { Badge } from '@/components/ui/badge';
 import { MarkdownContent } from '@/components/MarkdownContent';
 import { CopyButton } from './CopyButton';
+import { MessageTimestamp } from './MessageTimestamp';
 import { formatAsJson } from './types';
 
 interface ModelUsageEntry {
@@ -89,7 +90,13 @@ function formatDuration(ms?: number): string {
  * Handles all result subtypes: success, error_max_turns, error_during_execution,
  * error_max_budget_usd, error_max_structured_output_retries.
  */
-export function ResultDisplay({ content }: { content: ResultContent }) {
+export function ResultDisplay({
+  content,
+  createdAt,
+}: {
+  content: ResultContent;
+  createdAt?: Date;
+}) {
   const [expanded, setExpanded] = useState(false);
   const getJsonText = useCallback(() => formatAsJson(content), [content]);
 
@@ -122,7 +129,10 @@ export function ResultDisplay({ content }: { content: ResultContent }) {
             {formatCost(content.total_cost_usd)} total · {content.num_turns} turn
             {content.num_turns !== 1 ? 's' : ''} · {formatDuration(content.duration_ms)}
           </span>
-          <span className="text-muted-foreground ml-auto">{expanded ? '−' : '+'}</span>
+          <span className="ml-auto flex items-center gap-2">
+            <MessageTimestamp createdAt={createdAt} />
+            <span className="text-muted-foreground">{expanded ? '−' : '+'}</span>
+          </span>
         </CollapsibleTrigger>
 
         <CollapsibleContent>

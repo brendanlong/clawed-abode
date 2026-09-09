@@ -8,6 +8,7 @@ import { OctagonX, Loader2 } from 'lucide-react';
 import { CopyButton } from './CopyButton';
 import { ToolCallDisplay } from './ToolCallDisplay';
 import { SanitizationBadge } from './SanitizationBadge';
+import { MessageTimestamp } from './MessageTimestamp';
 import { renderContent } from './ContentRenderer';
 import { parseSanitizationInfo } from '@/lib/sanitization';
 import { MessagePlayButton } from '@/components/voice/MessagePlayButton';
@@ -26,6 +27,7 @@ interface MainMessageBubbleProps {
   category: MessageCategory;
   isPartial: boolean;
   toolResults?: ToolResultMap;
+  createdAt?: Date;
 }
 
 /**
@@ -38,6 +40,7 @@ export function MainMessageBubble({
   category,
   isPartial,
   toolResults,
+  createdAt,
 }: MainMessageBubbleProps) {
   const isUser = category === 'user';
   const isAssistant = category === 'assistant';
@@ -117,7 +120,7 @@ export function MainMessageBubble({
         )}
       </div>
       {!isPartial && (
-        <div className="mt-1 flex items-center gap-1">
+        <div className={cn('mt-1 flex items-center gap-1', isUser && 'justify-end')}>
           <CopyButton getText={handleGetCopyText} />
           {textForPlayback && messageId && (
             <MessagePlayButton
@@ -126,6 +129,7 @@ export function MainMessageBubble({
               className="h-6 px-2 text-xs opacity-0 group-hover:opacity-100 transition-opacity"
             />
           )}
+          {isUser && <MessageTimestamp createdAt={createdAt} />}
         </div>
       )}
     </div>

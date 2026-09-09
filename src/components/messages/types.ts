@@ -102,6 +102,7 @@ export interface DisplayMessage {
   type: string;
   content: unknown;
   sequence: number;
+  createdAt: Date;
 }
 
 export const todoItemSchema = z.object({

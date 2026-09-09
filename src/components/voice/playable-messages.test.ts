@@ -12,6 +12,7 @@ function makeAssistantText(id: string, sequence: number, text: string): DisplayM
     id,
     type: 'assistant',
     sequence,
+    createdAt: new Date(0),
     content: {
       message: {
         content: [{ type: 'text', text }],
@@ -26,6 +27,7 @@ function makeAssistantToolUse(id: string, sequence: number): DisplayMessage {
     id,
     type: 'assistant',
     sequence,
+    createdAt: new Date(0),
     content: {
       message: {
         content: [{ type: 'tool_use', id: `tool-${id}`, name: 'Bash', input: { command: 'ls' } }],
@@ -40,6 +42,7 @@ function makeAssistantMixed(id: string, sequence: number, text: string): Display
     id,
     type: 'assistant',
     sequence,
+    createdAt: new Date(0),
     content: {
       message: {
         content: [
@@ -57,6 +60,7 @@ function makeUserPrompt(id: string, sequence: number, text: string): DisplayMess
     id,
     type: 'user',
     sequence,
+    createdAt: new Date(0),
     content: {
       message: {
         content: [{ type: 'text', text }],
@@ -71,6 +75,7 @@ function makeToolResult(id: string, sequence: number): DisplayMessage {
     id,
     type: 'user',
     sequence,
+    createdAt: new Date(0),
     content: {
       message: {
         content: [
@@ -91,6 +96,7 @@ function makePartialAssistant(text: string, sequence: number): DisplayMessage {
     id: `partial-${crypto.randomUUID()}`,
     type: 'assistant',
     sequence,
+    createdAt: new Date(0),
     content: {
       message: {
         content: [{ type: 'text', text }],
@@ -105,6 +111,7 @@ function makeResult(id: string, sequence: number): DisplayMessage {
     id,
     type: 'result',
     sequence,
+    createdAt: new Date(0),
     content: { subtype: 'result', cost_usd: 0.01 },
   };
 }
@@ -120,6 +127,7 @@ describe('extractAssistantText', () => {
       id: 'a1',
       type: 'assistant',
       sequence: 1,
+      createdAt: new Date(0),
       content: {
         message: {
           content: [
@@ -148,6 +156,7 @@ describe('extractAssistantText', () => {
       id: 'a1',
       type: 'assistant',
       sequence: 1,
+      createdAt: new Date(0),
       content: { message: { content: [] } },
     };
     expect(extractAssistantText(msg)).toBeNull();
@@ -158,6 +167,7 @@ describe('extractAssistantText', () => {
       id: 'a1',
       type: 'assistant',
       sequence: 1,
+      createdAt: new Date(0),
       content: {},
     };
     expect(extractAssistantText(msg)).toBeNull();
@@ -184,8 +194,8 @@ describe('getAssistantTextMessages', () => {
 
   it('skips null or non-object content without throwing', () => {
     const messages: DisplayMessage[] = [
-      { id: 'a1', type: 'assistant', sequence: 1, content: null },
-      { id: 'a2', type: 'assistant', sequence: 2, content: 'plain string' },
+      { id: 'a1', type: 'assistant', sequence: 1, createdAt: new Date(0), content: null },
+      { id: 'a2', type: 'assistant', sequence: 2, createdAt: new Date(0), content: 'plain string' },
       makeAssistantText('a3', 3, 'Real text.'),
     ];
     expect(getAssistantTextMessages(messages)).toEqual([{ id: 'a3', text: 'Real text.' }]);

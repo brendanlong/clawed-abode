@@ -17,19 +17,13 @@ import {
 import { Spinner } from '@/components/ui/spinner';
 import type { inferRouterOutputs } from '@trpc/server';
 import type { AppRouter } from '@/server/routers';
+import { formatFullTimestamp } from '@/lib/message-timestamp';
 
 type AuthSession = inferRouterOutputs<AppRouter>['auth']['listSessions']['sessions'][number];
 
 interface AuthSessionListItemProps {
   session: AuthSession;
   onRevoke: (sessionId: string) => Promise<void>;
-}
-
-function formatDate(date: Date): string {
-  return new Intl.DateTimeFormat('en-US', {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(new Date(date));
 }
 
 function formatRelativeTime(date: Date): string {
@@ -125,12 +119,14 @@ export function AuthSessionListItem({ session, onRevoke }: AuthSessionListItemPr
           <div className="text-xs text-muted-foreground space-y-0.5">
             {session.ipAddress && <p>IP: {session.ipAddress}</p>}
             <p>Last active: {formatRelativeTime(session.lastActivityAt)}</p>
-            {isRevoked && session.revokedAt && <p>Revoked: {formatDate(session.revokedAt)}</p>}
+            {isRevoked && session.revokedAt && (
+              <p>Revoked: {formatFullTimestamp(session.revokedAt)}</p>
+            )}
             <p>
-              {isExpired ? 'Expired' : 'Expires'}: {formatDate(session.effectiveExpiresAt)}
+              {isExpired ? 'Expired' : 'Expires'}: {formatFullTimestamp(session.effectiveExpiresAt)}
               {isIdleExpired && ' (idle)'}
             </p>
-            <p>Created: {formatDate(session.createdAt)}</p>
+            <p>Created: {formatFullTimestamp(session.createdAt)}</p>
           </div>
         </div>
 

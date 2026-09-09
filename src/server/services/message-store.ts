@@ -145,7 +145,7 @@ export async function markLastMessageAsInterrupted(sessionId: string): Promise<v
   const lastMainMessage = await prisma.message.findFirst({
     where: { sessionId, type: { in: ['assistant', 'result'] } },
     orderBy: { sequence: 'desc' },
-    select: { id: true, sequence: true, type: true, content: true },
+    select: { id: true, sequence: true, type: true, content: true, createdAt: true },
   });
 
   if (lastMainMessage) {
@@ -162,7 +162,7 @@ export async function markLastMessageAsInterrupted(sessionId: string): Promise<v
         sequence: lastMainMessage.sequence,
         type: lastMainMessage.type,
         content,
-        createdAt: new Date(),
+        createdAt: lastMainMessage.createdAt,
       });
     } catch (err) {
       log.warn('Failed to mark message as interrupted', {
