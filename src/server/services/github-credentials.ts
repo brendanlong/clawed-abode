@@ -6,9 +6,10 @@ import { createLogger, toError } from '@/lib/logger';
 const log = createLogger('github-credentials');
 
 /**
- * Filename of the per-session GitHub token, written inside the session workspace
- * (a sibling of the repo clone, like `mcp-config.json` — so it doesn't pollute
- * git status). Removed with the workspace when the session is archived.
+ * Filename of the per-session GitHub token. It sits in the workspace root, which
+ * has to be somewhere outside the clone anyway: the helper is installed for the
+ * clone itself, so the token must exist before the clone directory does. Removed
+ * with the workspace when the session is archived.
  */
 const GITHUB_TOKEN_FILENAME = '.github-token';
 
