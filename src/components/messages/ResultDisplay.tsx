@@ -95,7 +95,6 @@ export function ResultDisplay({
   createdAt,
 }: {
   content: ResultContent;
-  /** When the turn ended; rendered alongside the cost/duration summary. */
   createdAt?: Date;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -130,8 +129,10 @@ export function ResultDisplay({
             {formatCost(content.total_cost_usd)} total · {content.num_turns} turn
             {content.num_turns !== 1 ? 's' : ''} · {formatDuration(content.duration_ms)}
           </span>
-          <MessageTimestamp createdAt={createdAt} />
-          <span className="text-muted-foreground ml-auto">{expanded ? '−' : '+'}</span>
+          <span className="ml-auto flex items-center gap-2">
+            <MessageTimestamp createdAt={createdAt} />
+            <span className="text-muted-foreground">{expanded ? '−' : '+'}</span>
+          </span>
         </CollapsibleTrigger>
 
         <CollapsibleContent>

@@ -1,14 +1,7 @@
 import { useMemo } from 'react';
 import { trpc } from '@/lib/trpc';
 import { STREAM_ERROR_RESYNC_META } from '@/lib/live-query';
-
-interface Message {
-  id: string;
-  type: string;
-  content: unknown;
-  sequence: number;
-  createdAt: Date;
-}
+import type { DisplayMessage } from '@/components/messages/types';
 
 const MESSAGE_PAGE_SIZE = 20;
 
@@ -70,7 +63,7 @@ export function useSessionMessages(sessionId: string) {
   // page is an older backward fetch. Each page's messages are already chronological.
   const messages = useMemo(() => {
     if (!historyData?.pages) return [];
-    const result: Message[] = [];
+    const result: DisplayMessage[] = [];
     for (let i = historyData.pages.length - 1; i >= 0; i--) {
       for (const msg of historyData.pages[i].messages) {
         result.push(msg);

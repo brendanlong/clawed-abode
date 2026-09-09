@@ -2,6 +2,8 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { MessageBubble } from './MessageBubble';
 import { MessageListProvider } from './MessageListContext';
+import { SubagentTranscript } from './SubagentTranscript';
+import { formatFullTimestamp, formatMessageTimestamp } from '@/lib/message-timestamp';
 import type { ToolResultMap, MessageContent } from './types';
 
 describe('MessageBubble', () => {
@@ -718,5 +720,91 @@ describe('MessageBubble', () => {
       const assistantBubble = container.querySelector('[class*="bg-card"]');
       expect(assistantBubble).toBeInTheDocument();
     });
+  });
+});
+
+describe('turn-boundary timestamps', () => {
+  const createdAt = new Date(2024, 0, 15, 9, 30);
+  const timeElements = (container: HTMLElement) => Array.from(container.querySelectorAll('time'));
+
+  it('shows one under a user prompt', () => {
+    const { container } = render(
+      <MessageBubble message={{ id: 'u1', type: 'user', content: { content: 'hi' }, createdAt }} />
+    );
+    const [time] = timeElements(container);
+    expect(time.getAttribute('dateTime')).toBe(createdAt.toISOString());
+    expect(time.textContent).toBe(formatMessageTimestamp(createdAt, new Date()));
+    expect(time.getAttribute('title')).toBe(formatFullTimestamp(createdAt));
+  });
+
+  it('uses the compact time-only form for a prompt sent today', () => {
+    const today = new Date();
+    const { container } = render(
+      <MessageBubble
+        message={{ id: 'u1', type: 'user', content: { content: 'hi' }, createdAt: today }}
+      />
+    );
+    const [time] = timeElements(container);
+    expect(time.textContent).toBe(formatMessageTimestamp(today, today));
+    expect(time.textContent).not.toBe(formatFullTimestamp(today));
+  });
+
+  it('shows one on the result row and on an interrupt marker', () => {
+    const { container } = render(
+      <>
+        <MessageBubble
+          message={{
+            id: 'r1',
+            type: 'result',
+            content: { type: 'result', subtype: 'success', session_id: 's1', num_turns: 1 },
+            createdAt,
+          }}
+        />
+        <MessageBubble
+          message={{
+            id: 'i1',
+            type: 'user',
+            content: { type: 'user', subtype: 'interrupt', content: 'Interrupted' },
+            createdAt,
+          }}
+        />
+      </>
+    );
+    expect(timeElements(container)).toHaveLength(2);
+  });
+
+  it('does not show one on assistant messages', () => {
+    const { container } = render(
+      <MessageBubble
+        message={{
+          id: 'a1',
+          type: 'assistant',
+          content: { message: { content: [{ type: 'text', text: 'hello' }] } },
+          createdAt,
+        }}
+      />
+    );
+    expect(timeElements(container)).toHaveLength(0);
+  });
+
+  it('does not show one inside a subagent transcript', () => {
+    const { container } = render(
+      <SubagentTranscript
+        messages={[
+          { id: 'u1', type: 'user', sequence: 1, content: { content: 'go' }, createdAt },
+          {
+            id: 'r1',
+            type: 'result',
+            sequence: 2,
+            content: { type: 'result', subtype: 'success', session_id: 's1', num_turns: 1 },
+            createdAt,
+          },
+        ]}
+        toolResults={new Map()}
+        pairedMessageIds={new Set()}
+      />
+    );
+    expect(container.textContent).toContain('go');
+    expect(timeElements(container)).toHaveLength(0);
   });
 });

@@ -24,11 +24,6 @@ export function MessageBubble({
   message,
   toolResults,
 }: {
-  /**
-   * `createdAt` is only passed for top-level rows: it renders a timestamp on the
-   * turn boundaries (user prompt, result, interrupt), which nested subagent
-   * transcripts don't have.
-   */
   message: { id?: string; type: string; content: unknown; createdAt?: Date };
   toolResults?: ToolResultMap;
 }) {

@@ -27,7 +27,6 @@ interface MainMessageBubbleProps {
   category: MessageCategory;
   isPartial: boolean;
   toolResults?: ToolResultMap;
-  /** Shown under user prompts only — the start of a turn. */
   createdAt?: Date;
 }
 
@@ -122,7 +121,6 @@ export function MainMessageBubble({
       </div>
       {!isPartial && (
         <div className={cn('mt-1 flex items-center gap-1', isUser && 'justify-end')}>
-          {isUser && <MessageTimestamp createdAt={createdAt} />}
           <CopyButton getText={handleGetCopyText} />
           {textForPlayback && messageId && (
             <MessagePlayButton
@@ -131,6 +129,7 @@ export function MainMessageBubble({
               className="h-6 px-2 text-xs opacity-0 group-hover:opacity-100 transition-opacity"
             />
           )}
+          {isUser && <MessageTimestamp createdAt={createdAt} />}
         </div>
       )}
     </div>

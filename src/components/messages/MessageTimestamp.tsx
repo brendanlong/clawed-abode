@@ -5,12 +5,15 @@ import { formatFullTimestamp, formatMessageTimestamp } from '@/lib/message-times
 
 /**
  * Small muted timestamp for a turn boundary. Each instance ticks on its own so a
- * day rollover only re-renders the timestamps, not the whole transcript. Renders
- * nothing without a `createdAt` (nested subagent rows don't pass one).
+ * day rollover only re-renders the timestamps, not the whole transcript.
  */
 export function MessageTimestamp({ createdAt }: { createdAt?: Date }) {
-  const now = useNowTick();
   if (!createdAt) return null;
+  return <TickingTimestamp createdAt={createdAt} />;
+}
+
+function TickingTimestamp({ createdAt }: { createdAt: Date }) {
+  const now = useNowTick();
   return (
     <time
       dateTime={createdAt.toISOString()}

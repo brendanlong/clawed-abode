@@ -126,6 +126,15 @@ function renderList(messages: DisplayMessage[], isSessionRunning: boolean) {
   );
 }
 
+describe('MessageList timestamps', () => {
+  it('renders a timestamp on the top-level user prompt but not on subagent rows', () => {
+    const { container } = renderList(baseMessages({ withNotification: true }), false);
+    const times = Array.from(container.querySelectorAll('time'));
+    expect(times).toHaveLength(1);
+    expect(container.querySelector('[data-message-id="m0"] time')).not.toBeNull();
+  });
+});
+
 describe('MessageList subagent relocation', () => {
   it('pins a running background subagent and leaves a breadcrumb at the spawn point', () => {
     const { container } = renderList(baseMessages(), true);
