@@ -29,6 +29,18 @@ describe('auth', () => {
       expect(isValid).toBe(false);
     });
 
+    // PASSWORD_HASH is minted once by scripts/hash-password.ts and then lives in
+    // the user's env forever, so an argon2 upgrade that stopped verifying older
+    // encoded hashes would lock them out of their own server. This hash was
+    // produced by argon2 0.43.1.
+    it('verifies a hash minted by an older argon2 release', async () => {
+      const legacyHash =
+        '$argon2id$v=19$m=65536,t=3,p=4$JNHWoSjmKZtR7C+yCYIPDw$McGhI2hfQf3tps3ZVhVaml4Z4CqsiaweANDyUUJl7oo';
+
+      expect(await verifyPassword('correct horse battery staple', legacyHash)).toBe(true);
+      expect(await verifyPassword('wrong password', legacyHash)).toBe(false);
+    });
+
     it('should generate different hashes for the same password', async () => {
       const password = 'same-password';
       const hash1 = await hashPassword(password);
