@@ -7,6 +7,7 @@ interface Message {
   type: string;
   content: unknown;
   sequence: number;
+  createdAt: Date;
 }
 
 const MESSAGE_PAGE_SIZE = 20;

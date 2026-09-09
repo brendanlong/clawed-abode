@@ -9,6 +9,7 @@ import { ResultDisplay } from './ResultDisplay';
 import { CompactBoundaryDisplay } from './CompactBoundaryDisplay';
 import { RefusalFallbackDisplay } from './RefusalFallbackDisplay';
 import { MainMessageBubble } from './MainMessageBubble';
+import { MessageTimestamp } from './MessageTimestamp';
 import {
   isRecognizedMessage,
   getToolResults,
@@ -23,7 +24,12 @@ export function MessageBubble({
   message,
   toolResults,
 }: {
-  message: { id?: string; type: string; content: unknown };
+  /**
+   * `createdAt` is only passed for top-level rows: it renders a timestamp on the
+   * turn boundaries (user prompt, result, interrupt), which nested subagent
+   * transcripts don't have.
+   */
+  message: { id?: string; type: string; content: unknown; createdAt?: Date };
   toolResults?: ToolResultMap;
 }) {
   const { type } = message;
@@ -81,7 +87,7 @@ export function MessageBubble({
   if (category === 'result') {
     return (
       <div className="w-full max-w-[85%]">
-        <ResultDisplay content={content as Record<string, unknown>} />
+        <ResultDisplay content={content as Record<string, unknown>} createdAt={message.createdAt} />
       </div>
     );
   }
@@ -101,6 +107,7 @@ export function MessageBubble({
         <div className="flex items-center gap-2 justify-end text-muted-foreground text-sm py-2">
           <OctagonX className="h-4 w-4" />
           <span>Interrupted</span>
+          <MessageTimestamp createdAt={message.createdAt} />
         </div>
       </div>
     );
@@ -113,6 +120,7 @@ export function MessageBubble({
       category={category!}
       isPartial={isPartial}
       toolResults={toolResults}
+      createdAt={message.createdAt}
     />
   );
 }

@@ -465,6 +465,7 @@ export function MessageList({
                     id: message.id,
                     type: message.type,
                     content: message.content,
+                    createdAt: message.createdAt,
                   }}
                   toolResults={resultMap}
                 />

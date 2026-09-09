@@ -599,6 +599,7 @@ describe('isVisibleTranscriptMessage', () => {
     id: 'm1',
     type: 'assistant',
     sequence: 0,
+    createdAt: new Date(0),
     content: { message: { content: [{ type: 'text', text: 'hi' }] } },
     ...over,
   });
@@ -654,6 +655,7 @@ describe('groupSubagentMessages', () => {
     id,
     type: 'assistant',
     sequence: 0,
+    createdAt: new Date(0),
     content: { parent_tool_use_id: parent },
   });
 
@@ -794,6 +796,7 @@ function assistant(
     id: `m${sequence}`,
     type: 'assistant',
     sequence,
+    createdAt: new Date(0),
     content: { parent_tool_use_id: parentToolUseId, message: { content: blocks } },
   };
 }
@@ -807,6 +810,7 @@ function toolResultMessage(sequence: number, results: ContentBlock[]): DisplayMe
     id: `m${sequence}`,
     type: 'user',
     sequence,
+    createdAt: new Date(0),
     content: { message: { content: results } },
   };
 }
@@ -820,6 +824,7 @@ function system(sequence: number, subtype: string, toolUseId?: string): DisplayM
     id: `m${sequence}`,
     type: 'system',
     sequence,
+    createdAt: new Date(0),
     content: { subtype, tool_use_id: toolUseId },
   };
 }
@@ -832,6 +837,7 @@ describe('toolUseBlocks', () => {
         id: 'u',
         type: 'user',
         sequence: 2,
+        createdAt: new Date(0),
         content: { message: { content: [toolUse('x', 'Nope')] } },
       },
       assistant(3, [toolUse('b', 'Bash'), toolUse('c', 'Grep')], 'parent-1'),
@@ -850,8 +856,14 @@ describe('toolUseBlocks', () => {
   it('skips tool_use blocks without an id and assistant messages with non-array content', () => {
     const messages: DisplayMessage[] = [
       assistant(1, [{ type: 'tool_use', name: 'Read' }]),
-      { id: 'm2', type: 'assistant', sequence: 2, content: { message: { content: 'text' } } },
-      { id: 'm3', type: 'assistant', sequence: 3, content: undefined },
+      {
+        id: 'm2',
+        type: 'assistant',
+        sequence: 2,
+        createdAt: new Date(0),
+        content: { message: { content: 'text' } },
+      },
+      { id: 'm3', type: 'assistant', sequence: 3, createdAt: new Date(0), content: undefined },
     ];
     expect([...toolUseBlocks(messages)]).toEqual([]);
   });
@@ -913,6 +925,7 @@ describe('buildToolResultMap', () => {
         id: 'p',
         type: 'user',
         sequence: 1,
+        createdAt: new Date(0),
         content: { message: { content: [{ type: 'text', text: 'hi' }] } },
       },
     ]);

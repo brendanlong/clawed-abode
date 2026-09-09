@@ -20,12 +20,14 @@ function baseMessages(opts: { withNotification?: boolean } = {}): DisplayMessage
       id: 'm0',
       type: 'user',
       sequence: 0,
+      createdAt: new Date(0),
       content: { message: { content: [{ type: 'text', text: 'do the thing' }] } },
     },
     {
       id: 'm1',
       type: 'assistant',
       sequence: 1,
+      createdAt: new Date(0),
       content: {
         parent_tool_use_id: null,
         message: {
@@ -44,12 +46,14 @@ function baseMessages(opts: { withNotification?: boolean } = {}): DisplayMessage
       id: 'm2',
       type: 'system',
       sequence: 2,
+      createdAt: new Date(0),
       content: { subtype: 'task_started', tool_use_id: AGENT_ID, task_id: 'task_1' },
     },
     {
       id: 'm3',
       type: 'user',
       sequence: 3,
+      createdAt: new Date(0),
       content: {
         message: {
           content: [
@@ -66,6 +70,7 @@ function baseMessages(opts: { withNotification?: boolean } = {}): DisplayMessage
       id: 'm4',
       type: 'assistant',
       sequence: 4,
+      createdAt: new Date(0),
       content: {
         parent_tool_use_id: AGENT_ID,
         message: { content: [{ type: 'text', text: 'subagent looking...' }] },
@@ -75,6 +80,7 @@ function baseMessages(opts: { withNotification?: boolean } = {}): DisplayMessage
       id: 'm5',
       type: 'assistant',
       sequence: 5,
+      createdAt: new Date(0),
       content: {
         parent_tool_use_id: null,
         message: { content: [{ type: 'text', text: 'meanwhile the main agent works' }] },
@@ -84,6 +90,7 @@ function baseMessages(opts: { withNotification?: boolean } = {}): DisplayMessage
       id: 'm6',
       type: 'assistant',
       sequence: 6,
+      createdAt: new Date(0),
       content: {
         parent_tool_use_id: AGENT_ID,
         message: { content: [{ type: 'text', text: 'subagent found it' }] },
@@ -95,6 +102,7 @@ function baseMessages(opts: { withNotification?: boolean } = {}): DisplayMessage
       id: 'm7',
       type: 'system',
       sequence: 7,
+      createdAt: new Date(0),
       content: {
         subtype: 'task_notification',
         tool_use_id: AGENT_ID,
