@@ -41,6 +41,7 @@ vi.mock('./github', () => ({
 vi.mock('./worktree-manager', () => ({
   getCurrentBranch: vi.fn().mockResolvedValue(null),
   getSessionWorkingDir: vi.fn(() => '/tmp/spike-runner-test'),
+  getSessionWorkspacePath: vi.fn(() => '/tmp/spike-runner-test'),
 }));
 
 const baseSettings = {

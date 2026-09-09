@@ -1,7 +1,8 @@
-import { mkdir, writeFile, chmod, rm } from 'fs/promises';
+import { rm } from 'fs/promises';
 import path from 'path';
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import { getSessionWorkspacePath } from './worktree-manager';
+import { writeSecretFile } from './secret-file';
 import { createLogger } from '@/lib/logger';
 
 const log = createLogger('mcp-config-file');
@@ -33,19 +34,14 @@ export function getSessionMcpConfigPath(sessionId: string): string {
  * The JSON shape (`{ mcpServers: ... }`) matches what the CLI's `--mcp-config`
  * expects for a file. Rewritten on every query establishment so it self-heals if
  * deleted and always reflects the current settings (which are bound at establish
- * anyway). `chmod` is explicit so the mode is guaranteed even when overwriting an
- * existing file (the `writeFile` mode is only applied at creation).
+ * anyway).
  */
 export async function writeSessionMcpConfig(
   sessionId: string,
   mcpServers: Record<string, McpServerConfig>
 ): Promise<string> {
-  const dir = getSessionWorkspacePath(sessionId);
-  await mkdir(dir, { recursive: true });
-
   const filePath = getSessionMcpConfigPath(sessionId);
-  await writeFile(filePath, JSON.stringify({ mcpServers }, null, 2), { mode: 0o600 });
-  await chmod(filePath, 0o600);
+  await writeSecretFile(filePath, JSON.stringify({ mcpServers }, null, 2));
 
   log.info('Wrote session MCP config', { sessionId, servers: Object.keys(mcpServers).length });
   return filePath;

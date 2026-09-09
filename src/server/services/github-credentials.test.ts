@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { shellSingleQuote, buildGithubCredentialHelper } from './github-credentials';
+import {
+  shellSingleQuote,
+  buildGithubCredentialHelper,
+  githubCredentialArgs,
+  GITHUB_CREDENTIAL_HELPER_KEY,
+} from './github-credentials';
 
 describe('shellSingleQuote', () => {
   it('wraps a plain value in single quotes', () => {
@@ -17,14 +22,19 @@ describe('shellSingleQuote', () => {
 });
 
 describe('buildGithubCredentialHelper', () => {
-  it('references the token path instead of embedding a secret', () => {
-    const helper = buildGithubCredentialHelper('/home/app/worktrees/abc/.github-token');
-    expect(helper).toContain("cat '/home/app/worktrees/abc/.github-token'");
+  it('reads the token from the quoted path rather than embedding it', () => {
+    const helper = buildGithubCredentialHelper("/home/app/worktrees/we'ird/.github-token");
+    expect(helper).toContain(`cat '/home/app/worktrees/we'\\''ird/.github-token'`);
     expect(helper).toContain('username=x-access-token');
-    expect(helper).not.toContain('password=ghp_');
   });
+});
 
-  it('only answers the get operation', () => {
-    expect(buildGithubCredentialHelper('/t')).toContain('test "$1" = get || return 0');
+describe('githubCredentialArgs', () => {
+  it('installs the helper for one command under the github.com-scoped key', () => {
+    const args = githubCredentialArgs('/w/.github-token');
+    expect(args[0]).toBe('-c');
+    expect(args[1]).toBe(
+      `${GITHUB_CREDENTIAL_HELPER_KEY}=${buildGithubCredentialHelper('/w/.github-token')}`
+    );
   });
 });

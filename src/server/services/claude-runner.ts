@@ -28,10 +28,12 @@ import type { ToolResponse } from '@/lib/tool-response';
 import type { CancelledPrompt } from '@/lib/cancelled-prompt';
 import { extractRepoFullName } from '@/lib/utils';
 import { createLogger, toError } from '@/lib/logger';
+import { env } from '@/lib/env';
 import { attachToolResultSanitizations } from '@/lib/message-sanitization';
 import { PARTIAL_MESSAGE_ID_PREFIX } from '@/lib/message-cache';
 import { sseEvents } from './events';
-import { getSessionWorkingDir } from './worktree-manager';
+import { getSessionWorkingDir, getSessionWorkspacePath } from './worktree-manager';
+import { refreshGithubCredentials } from './github-credentials';
 import {
   loadMergedSessionSettings,
   mcpServersEqual,
@@ -368,6 +370,13 @@ async function establishSessionQuery(
   const settingsKey = repoFullName ?? '__no_repo__';
   const settings = await loadMergedSessionSettings(settingsKey, session.claudeModel);
   const workingDir = getSessionWorkingDir(sessionId, session.repoPath);
+  if (session.repoPath && env.GITHUB_TOKEN) {
+    await refreshGithubCredentials(
+      getSessionWorkspacePath(sessionId),
+      workingDir,
+      env.GITHUB_TOKEN
+    );
+  }
 
   const shouldResume = (await prisma.message.count({ where: { sessionId } })) > 0;
   const options = await buildSdkOptions({ sessionId, workingDir, settings, shouldResume, state });

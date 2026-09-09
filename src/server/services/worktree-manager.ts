@@ -4,15 +4,15 @@
  * Each session gets its own git clone at ~/worktrees/{sessionId}/{repoName}.
  */
 
-import { execFile } from 'child_process';
 import { mkdir, rm } from 'fs/promises';
 import { join } from 'path';
 import { homedir } from 'os';
 import { createLogger, toError } from '@/lib/logger';
 import { env } from '@/lib/env';
+import { runGit } from './git';
 import {
-  GITHUB_CREDENTIAL_HELPER_KEY,
-  buildGithubCredentialHelper,
+  githubCredentialArgs,
+  installGithubCredentialHelper,
   writeGithubToken,
 } from './github-credentials';
 
@@ -20,33 +20,6 @@ const log = createLogger('worktree-manager');
 
 /** Base directory for session workspaces */
 const WORKTREES_DIR = join(homedir(), 'worktrees');
-
-/**
- * Run a command, rejecting with its stderr. The failure message includes the
- * argv, so callers must keep secrets out of it (see `github-credentials.ts`).
- */
-function run(command: string, args: string[], options: { cwd?: string } = {}): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile(
-      command,
-      args,
-      {
-        ...options,
-        maxBuffer: 10 * 1024 * 1024,
-        // Never block on a credential prompt: a bad token must fail, not hang.
-        env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
-      },
-      (err, stdout, stderr) => {
-        if (err) {
-          const msg = `${command} ${args.join(' ')} failed: ${stderr || err.message}`;
-          reject(new Error(msg));
-          return;
-        }
-        resolve(stdout);
-      }
-    );
-  });
-}
 
 export function getSessionWorkspacePath(sessionId: string): string {
   return join(WORKTREES_DIR, sessionId);
@@ -92,17 +65,13 @@ export async function cloneRepo(config: CloneConfig): Promise<CloneResult> {
 
   await mkdir(workspacePath, { recursive: true });
 
-  // The token is never embedded in the URL or the helper: both would put it on
-  // git's argv and in `.git/config`. It goes to a mode-0600 file the helper reads.
-  const credentialHelper = githubToken
-    ? buildGithubCredentialHelper(await writeGithubToken(workspacePath, githubToken))
-    : null;
-  const credentialArgs = credentialHelper
-    ? ['-c', `${GITHUB_CREDENTIAL_HELPER_KEY}=${credentialHelper}`]
-    : [];
+  // The token is never embedded in the URL or in the helper string: both would
+  // put it on git's argv and in `.git/config`. It goes to a mode-0600 file the
+  // helper reads (see `github-credentials.ts`).
+  const tokenPath = githubToken ? await writeGithubToken(workspacePath, githubToken) : null;
 
-  await run('git', [
-    ...credentialArgs,
+  await runGit([
+    ...(tokenPath ? githubCredentialArgs(tokenPath) : []),
     'clone',
     '--branch',
     branch,
@@ -112,7 +81,7 @@ export async function cloneRepo(config: CloneConfig): Promise<CloneResult> {
   ]);
 
   // Widen fetch refspec to track all remote branches
-  await run('git', [
+  await runGit([
     '-C',
     clonePath,
     'config',
@@ -121,13 +90,13 @@ export async function cloneRepo(config: CloneConfig): Promise<CloneResult> {
   ]);
 
   // Persist the helper so the agent's own pushes authenticate too
-  if (credentialHelper) {
-    await run('git', ['-C', clonePath, 'config', GITHUB_CREDENTIAL_HELPER_KEY, credentialHelper]);
+  if (tokenPath) {
+    await installGithubCredentialHelper(clonePath, tokenPath);
   }
 
   // Create and check out a session-specific branch
   const sessionBranch = `${env.SESSION_BRANCH_PREFIX}${sessionId}`;
-  await run('git', ['-C', clonePath, 'checkout', '-b', sessionBranch]);
+  await runGit(['-C', clonePath, 'checkout', '-b', sessionBranch]);
 
   log.info('Repo cloned successfully', { sessionId, repoName, branch: sessionBranch });
 
@@ -162,7 +131,7 @@ export async function removeWorkspace(sessionId: string): Promise<void> {
  */
 export async function getCurrentBranch(workingDir: string): Promise<string | null> {
   try {
-    const result = await run('git', ['symbolic-ref', '--short', 'HEAD'], { cwd: workingDir });
+    const result = await runGit(['symbolic-ref', '--short', 'HEAD'], { cwd: workingDir });
     return result.trim() || null;
   } catch {
     return null;
