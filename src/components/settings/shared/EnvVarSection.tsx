@@ -14,6 +14,7 @@ import {
   envVarFormReducer,
   createInitialEnvVarFormState,
 } from './env-var-reducer';
+import { keepsStoredSecret } from '@/lib/key-value-entries';
 import type { EnvVar } from '@/lib/settings-types';
 
 export interface EnvVarMutations {
@@ -155,11 +156,7 @@ function EnvVarForm({
       return;
     }
 
-    // A blank value only means something for a stored secret staying secret —
-    // the server keys "keep the stored value" off the *submitted* isSecret, so
-    // demoting a secret with a blank value would store the empty string.
-    const keepsStoredSecret = !!existingEnvVar?.isSecret && form.isSecret;
-    if (!form.value && !keepsStoredSecret) {
+    if (!form.value && !keepsStoredSecret(existingEnvVar, form.isSecret)) {
       dispatch({ type: 'setError', error: 'Value is required' });
       return;
     }

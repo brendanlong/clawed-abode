@@ -15,6 +15,7 @@ import {
 import { Plug, Check, X, KeyRound, TriangleAlert, Unplug } from 'lucide-react';
 import { SettingsListEditor } from './SettingsListEditor';
 import { KeyValueListEditor } from './KeyValueListEditor';
+import { buildKeyValueRecord, type SecretValueMap } from '@/lib/key-value-entries';
 import { trpc } from '@/lib/trpc';
 import {
   mcpServerSectionReducer,
@@ -29,14 +30,14 @@ interface StdioMcpServerInput {
   type: 'stdio';
   command: string;
   args: string[];
-  env?: Record<string, { value: string; isSecret: boolean }>;
+  env?: SecretValueMap;
 }
 
 interface HttpSseMcpServerInput {
   name: string;
   type: 'http' | 'sse';
   url: string;
-  headers?: Record<string, { value: string; isSecret: boolean }>;
+  headers?: SecretValueMap;
   authType: McpAuthType;
   oauth?: { clientId: string; clientSecret: string; scope: string };
 }
@@ -332,22 +333,18 @@ function McpServerForm({
           return;
         }
 
-        const env = form.envVars.reduce(
-          (acc, { key, value, isSecret }) => {
-            if (key) {
-              acc[key] = { value, isSecret };
-            }
-            return acc;
-          },
-          {} as Record<string, { value: string; isSecret: boolean }>
-        );
+        const env = buildKeyValueRecord(form.envVars, existingServer?.env, 'environment variable');
+        if (!env.ok) {
+          dispatch({ type: 'submitError', error: env.error });
+          return;
+        }
 
         await setMcpServer({
           name: form.name,
           type: 'stdio',
           command: form.command,
           args: form.args.split(/\s+/).filter(Boolean),
-          env: Object.keys(env).length > 0 ? env : undefined,
+          env: Object.keys(env.record).length > 0 ? env.record : undefined,
         });
       } else {
         if (!form.url) {
@@ -355,21 +352,17 @@ function McpServerForm({
           return;
         }
 
-        const headersRecord = form.headers.reduce(
-          (acc, { key, value, isSecret }) => {
-            if (key) {
-              acc[key] = { value, isSecret };
-            }
-            return acc;
-          },
-          {} as Record<string, { value: string; isSecret: boolean }>
-        );
+        const headers = buildKeyValueRecord(form.headers, existingServer?.headers, 'header');
+        if (!headers.ok) {
+          dispatch({ type: 'submitError', error: headers.error });
+          return;
+        }
 
         await setMcpServer({
           name: form.name,
           type: form.serverType,
           url: form.url,
-          headers: Object.keys(headersRecord).length > 0 ? headersRecord : undefined,
+          headers: Object.keys(headers.record).length > 0 ? headers.record : undefined,
           authType: form.authType,
           oauth:
             form.authType === 'oauth'
