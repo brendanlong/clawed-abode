@@ -10,7 +10,14 @@ Session isolation is convention-only and `bypassPermissions` is used — the mac
 
 ## Rendering Untrusted Markdown
 
-Model output and the tool results quoted inside it are rendered as HTML by [`MarkdownContent`](../src/components/MarkdownContent.tsx). Two independent defenses, and both must stay: every value interpolated into an HTML string is escaped at the point of interpolation ([`html-escape.ts`](../src/lib/html-escape.ts)), _and_ the result goes through `DOMPurify.sanitize`. Escaping alone would miss markup the model emits directly; the sanitizer alone would make every widening of its `ADD_ATTR` allowlist a potential XSS sink with no local signal. Never interpolate untrusted text into markup without escaping it, on the grounds that the sanitizer will catch it.
+Model output and the tool results quoted inside it are rendered as HTML by [`MarkdownContent`](../src/components/MarkdownContent.tsx). Two layers, both required, neither sufficient on its own:
+
+- **Escaping at the point of interpolation** ([`html-escape.ts`](../src/lib/html-escape.ts)) is what keeps a crafted link `href`/`title` inside its attribute. It does nothing about dangerous URL schemes — `javascript:` passes through escaping unchanged.
+- **`DOMPurify.sanitize`** over the result is what strips `on*` handlers and `javascript:` URIs, and it is the only thing that does. But it can't tell an intended attribute from an injected one, so widening its `ADD_ATTR` allowlist re-opens whatever the escaping layer is holding shut.
+
+So: never interpolate untrusted text into markup unescaped because the sanitizer will catch it, and never widen `ADD_ATTR` without re-reading the interpolation sites.
+
+[`highlightCode`](../src/lib/syntax-highlight.ts) is a third interpolation site with only the first layer — its output reaches `dangerouslySetInnerHTML` in [`CodeBlock`](../src/components/messages/CodeBlock.tsx) with no sanitizer, so its escaping is load-bearing alone.
 
 ## Input Sanitization
 

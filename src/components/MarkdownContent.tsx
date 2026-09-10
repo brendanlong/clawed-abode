@@ -10,14 +10,16 @@ interface MarkdownContentProps {
   className?: string;
 }
 
-// Create custom renderer that opens links in new windows.
-// `href`/`title` are untrusted text, so they are escaped here rather than
-// relying on DOMPurify's config below to be the only thing standing between a
-// crafted link and an attribute breakout. `text` is already-rendered HTML from
-// marked's inline tokens, so it must not be escaped.
+// Create custom renderer that opens links in new windows. Everything
+// interpolated here is untrusted: `href`/`title` are escaped, and the link text
+// goes through `parseInline`, which both renders inline markup (`[**bold**](…)`)
+// and escapes text tokens — the token's own `text` field is raw markdown source.
+// Escaping at the interpolation site rather than leaning on the DOMPurify config
+// below; see doc/security.md.
 const renderer = new Renderer();
-renderer.link = ({ href, title, text }) => {
+renderer.link = function ({ href, title, tokens }) {
   const titleAttr = title ? ` title="${escapeHtmlAttribute(title)}"` : '';
+  const text = this.parser.parseInline(tokens);
   return `<a href="${escapeHtmlAttribute(href)}"${titleAttr} target="_blank" rel="noopener noreferrer">${text}</a>`;
 };
 

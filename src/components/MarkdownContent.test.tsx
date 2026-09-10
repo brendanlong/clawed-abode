@@ -31,12 +31,27 @@ describe('MarkdownContent', () => {
     expect(link).not.toHaveAttribute('onmouseover');
   });
 
-  it('keeps ampersands in link hrefs intact', () => {
-    render(<MarkdownContent content="[x](https://example.com/?a=1&b=2)" />);
+  it('does not double-encode an entity in a link href', () => {
+    // marked passes link destinations through verbatim, so the `&amp;` here reaches
+    // the renderer literally; escaping `&` would turn it into `&amp;amp;`.
+    // Braces, not a quoted attribute: JSX decodes entities in attribute strings.
+    render(<MarkdownContent content={'[x](https://example.com/?q=a&amp;b)'} />);
     expect(screen.getByRole('link', { name: 'x' })).toHaveAttribute(
       'href',
-      'https://example.com/?a=1&b=2'
+      'https://example.com/?q=a&b'
     );
+  });
+
+  it('renders inline markup inside link text', () => {
+    render(<MarkdownContent content="[**bold** link](https://example.com)" />);
+    const link = screen.getByRole('link', { name: 'bold link' });
+    expect(link.querySelector('strong')?.textContent).toBe('bold');
+  });
+
+  it('escapes tag metacharacters in link text', () => {
+    const { container } = render(<MarkdownContent content="[a<b](https://example.com)" />);
+    expect(screen.getByRole('link').textContent).toBe('a<b');
+    expect(container.querySelector('a b')).toBeNull();
   });
 
   it('renders bold and italic text', () => {

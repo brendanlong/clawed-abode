@@ -1,8 +1,10 @@
 /**
- * Escape a value for interpolation into a double- or single-quoted HTML
- * attribute. `&` is deliberately left alone: it cannot break out of an
+ * Escape a value for interpolation into a **quoted** HTML attribute (it is not
+ * sufficient for an unquoted one, where space, backtick and `=` also terminate
+ * the value). `&` is deliberately left alone: it cannot break out of an
  * attribute, and escaping it would double-encode the entity references that
- * markdown link destinations carry through verbatim (`?a=1&amp;b=2`).
+ * markdown link destinations carry through verbatim, turning `?a=1&amp;b=2`
+ * into a URL with a literal `&amp;` in it.
  */
 export function escapeHtmlAttribute(value: string): string {
   return value
