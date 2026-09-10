@@ -30,7 +30,7 @@ See [Setup](#setup) below.
 
 ## Prerequisites
 
-- A Linux host with systemd user services (for the session process scopes and the service unit), `sudo` for creating the user, and Git
+- A Linux host with systemd user services (for the session process scopes and the service unit), `sudo` for creating the user, and Git 2.31+ (clones pass credentials via `GIT_CONFIG_*`)
 - Node.js 22 (20.19+ works); the setup below installs it via nvm
 
 ## Setup

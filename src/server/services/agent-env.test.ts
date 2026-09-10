@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { GITHUB_TOKEN_ENV } from '@/lib/git-credentials';
 import { mergeAgentEnv } from './agent-env';
 
 describe('mergeAgentEnv', () => {
@@ -24,6 +25,11 @@ describe('mergeAgentEnv', () => {
     const env = mergeAgentEnv({ ...baseEnv, CLAUDE_CODE_OAUTH_TOKEN: 'shell-token' }, [], null);
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe('shell-token');
     expect(mergeAgentEnv(baseEnv, [], null).CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+  });
+
+  it('exposes the GitHub token under the name the clone credential helper reads', () => {
+    expect(mergeAgentEnv(baseEnv, [], null, 'gh-token')[GITHUB_TOKEN_ENV]).toBe('gh-token');
+    expect(mergeAgentEnv(baseEnv, [], null)[GITHUB_TOKEN_ENV]).toBeUndefined();
   });
 
   it('does not mutate the base env', () => {
