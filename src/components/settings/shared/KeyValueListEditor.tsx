@@ -5,17 +5,16 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Plus, Trash2 } from 'lucide-react';
-
-interface KeyValueEntry {
-  key: string;
-  value: string;
-  isSecret: boolean;
-}
+import {
+  keepsStoredSecret,
+  type KeyValueEntry,
+  type SecretValueMap,
+} from '@/lib/key-value-entries';
 
 interface KeyValueListEditorProps {
   label: string;
   entries: KeyValueEntry[];
-  existingEntries?: Record<string, { value: string; isSecret: boolean }>;
+  existingEntries?: SecretValueMap;
   onChange: (entries: KeyValueEntry[]) => void;
   keyPlaceholder?: string;
   keyTransform?: (key: string) => string;
@@ -71,19 +70,26 @@ export function KeyValueListEditor({
               )
             }
             placeholder={keyPlaceholder}
+            aria-label={`${label} name (row ${index + 1})`}
             className="flex-1"
           />
           <Input
             type={entry.isSecret ? 'password' : 'text'}
             value={entry.value}
             onChange={(e) => updateEntry(index, 'value', e.target.value)}
-            placeholder={existingEntries?.[entry.key]?.isSecret ? '(unchanged)' : 'value'}
+            placeholder={
+              keepsStoredSecret(existingEntries?.[entry.key], entry.isSecret)
+                ? '(unchanged)'
+                : 'value'
+            }
+            aria-label={entry.key ? `${entry.key} value` : `${label} value (row ${index + 1})`}
             className="flex-1"
           />
           <Switch
             checked={entry.isSecret}
             onCheckedChange={(checked) => updateEntry(index, 'isSecret', checked)}
             title="Secret"
+            aria-label={entry.key ? `${entry.key} is secret` : `Row ${index + 1} is secret`}
           />
           <Button
             type="button"

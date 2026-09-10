@@ -1,5 +1,6 @@
 import type { SettingsListState, SettingsListAction } from './settings-list-reducer';
 import { initialSettingsListState, reduceSettingsListAction } from './settings-list-reducer';
+import type { KeyValueEntry } from '@/lib/key-value-entries';
 import type { McpAuthType, McpServer, McpServerType, ValidationResult } from '@/lib/settings-types';
 
 // -- McpServerSection (list management) reducer --
@@ -63,12 +64,6 @@ export function mcpServerSectionReducer(
 }
 
 // -- McpServerForm reducer --
-
-interface KeyValueEntry {
-  key: string;
-  value: string;
-  isSecret: boolean;
-}
 
 export interface McpServerFormState {
   name: string;
