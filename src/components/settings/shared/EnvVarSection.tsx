@@ -195,7 +195,9 @@ function EnvVarForm({
           type={form.isSecret ? 'password' : 'text'}
           value={form.value}
           onChange={(e) => dispatch({ type: 'setValue', value: e.target.value })}
-          placeholder={existingEnvVar?.isSecret ? '(unchanged)' : 'Enter value'}
+          placeholder={
+            keepsStoredSecret(existingEnvVar, form.isSecret) ? '(unchanged)' : 'Enter value'
+          }
         />
       </div>
 

@@ -54,6 +54,11 @@ describe('EnvVarSection', () => {
 
     await user.click(screen.getByRole('button', { name: 'Edit' }));
     await user.click(screen.getByRole('switch'));
+
+    // The placeholder must stop promising "unchanged" as soon as the flag drops,
+    // since that's exactly when the blank value stops being preserved.
+    expect(screen.getByLabelText('Value')).toHaveAttribute('placeholder', 'Enter value');
+
     await user.click(screen.getByRole('button', { name: 'Update' }));
 
     // The server keys "unchanged" off the submitted isSecret, so a blank

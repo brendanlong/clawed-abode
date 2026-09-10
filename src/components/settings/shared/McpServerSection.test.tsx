@@ -76,6 +76,11 @@ describe('McpServerSection', () => {
     const user = await openEditForm(m);
 
     await user.click(screen.getByLabelText('Authorization is secret'));
+
+    // The placeholder must stop promising "unchanged" as soon as the flag drops,
+    // since that's exactly when the blank value stops being preserved.
+    expect(screen.getByLabelText('Authorization value')).toHaveAttribute('placeholder', 'value');
+
     await user.click(screen.getByRole('button', { name: 'Update' }));
 
     // The server keys "unchanged" off the submitted isSecret, so a blank
