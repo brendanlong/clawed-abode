@@ -31,15 +31,18 @@ describe('MarkdownContent', () => {
     expect(link).not.toHaveAttribute('onmouseover');
   });
 
-  it('does not double-encode an entity in a link href', () => {
-    // marked passes link destinations through verbatim, so the `&amp;` here reaches
-    // the renderer literally; escaping `&` would turn it into `&amp;amp;`.
-    // Braces, not a quoted attribute: JSX decodes entities in attribute strings.
-    render(<MarkdownContent content={'[x](https://example.com/?q=a&amp;b)'} />);
-    expect(screen.getByRole('link', { name: 'x' })).toHaveAttribute(
-      'href',
-      'https://example.com/?q=a&b'
-    );
+  it('strips a javascript: URL from a link', () => {
+    const { container } = render(<MarkdownContent content="[click me](javascript:alert(1))" />);
+    const anchor = container.querySelector('a');
+    expect(anchor?.textContent).toBe('click me');
+    expect(anchor).not.toHaveAttribute('href');
+  });
+
+  it('overrides a model-supplied target on a raw anchor', () => {
+    render(<MarkdownContent content={'<a href="https://example.com" target="_top">x</a>'} />);
+    const link = screen.getByRole('link', { name: 'x' });
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer');
   });
 
   it('renders inline markup inside link text', () => {

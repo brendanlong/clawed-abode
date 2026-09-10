@@ -10,14 +10,11 @@ Session isolation is convention-only and `bypassPermissions` is used — the mac
 
 ## Rendering Untrusted Markdown
 
-Model output and the tool results quoted inside it are rendered as HTML by [`MarkdownContent`](../src/components/MarkdownContent.tsx). Two layers, both required, neither sufficient on its own:
+Model output and the tool results quoted inside it are rendered as HTML by [`MarkdownContent`](../src/components/MarkdownContent.tsx): marked parses it, `DOMPurify.sanitize` cleans the result, and a sanitizer hook adds `target="_blank" rel="noopener noreferrer"` to anchors.
 
-- **Escaping at the point of interpolation** ([`html-escape.ts`](../src/lib/html-escape.ts)) is what keeps a crafted link `href`/`title` inside its attribute. It does nothing about dangerous URL schemes — `javascript:` passes through escaping unchanged.
-- **`DOMPurify.sanitize`** over the result is what strips `on*` handlers and `javascript:` URIs, and it is the only thing that does. But it can't tell an intended attribute from an injected one, so widening its `ADD_ATTR` allowlist re-opens whatever the escaping layer is holding shut.
+**Never add a marked renderer override.** A renderer has to assemble its element as an HTML string, which means hand-escaping untrusted values — and marked hands the renderer the _raw_ markdown source (`Tokens.Link.text` is unparsed; `href`/`title` are pre-encoded fragments), so getting that right is subtler than it looks. The override this replaced got it wrong three ways: it skipped marked's `cleanUrl`, so `javascript:` URLs reached DOMPurify that marked would have dropped; it interpolated `href`/`title` unescaped (#503); and it emitted link text unparsed, so `[**bold**](…)` rendered its asterisks. Mutate the sanitized DOM in a `afterSanitizeAttributes` hook instead — no string building, nothing to escape.
 
-So: never interpolate untrusted text into markup unescaped because the sanitizer will catch it, and never widen `ADD_ATTR` without re-reading the interpolation sites.
-
-[`highlightCode`](../src/lib/syntax-highlight.ts) is a third interpolation site with only the first layer — its output reaches `dangerouslySetInnerHTML` in [`CodeBlock`](../src/components/messages/CodeBlock.tsx) with no sanitizer, so its escaping is load-bearing alone.
+The one remaining place we build HTML by hand is [`highlightCode`](../src/lib/syntax-highlight.ts), whose output reaches `dangerouslySetInnerHTML` in [`CodeBlock`](../src/components/messages/CodeBlock.tsx) with no sanitizer behind it — so its escaping is load-bearing on its own.
 
 ## Input Sanitization
 

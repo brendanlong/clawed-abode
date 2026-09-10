@@ -1,33 +1,31 @@
 'use client';
 
 import { useMemo } from 'react';
-import { marked, Renderer, type Tokens } from 'marked';
+import { marked, type Tokens } from 'marked';
 import DOMPurify from 'dompurify';
-import { escapeHtmlAttribute } from '@/lib/html-escape';
 
 interface MarkdownContentProps {
   content: string;
   className?: string;
 }
 
-// Create custom renderer that opens links in new windows. Everything
-// interpolated here is untrusted: `href`/`title` are escaped, and the link text
-// goes through `parseInline`, which both renders inline markup (`[**bold**](…)`)
-// and escapes text tokens — the token's own `text` field is raw markdown source.
-// Escaping at the interpolation site rather than leaning on the DOMPurify config
-// below; see doc/security.md.
-const renderer = new Renderer();
-renderer.link = function ({ href, title, tokens }) {
-  const titleAttr = title ? ` title="${escapeHtmlAttribute(title)}"` : '';
-  const text = this.parser.parseInline(tokens);
-  return `<a href="${escapeHtmlAttribute(href)}"${titleAttr} target="_blank" rel="noopener noreferrer">${text}</a>`;
-};
-
 // Configure marked options
 marked.setOptions({
   gfm: true, // GitHub Flavored Markdown
   breaks: true, // Convert \n to <br>
-  renderer,
+});
+
+// Open links in a new window. A sanitizer hook rather than a marked renderer
+// override, because a renderer has to assemble the anchor as an HTML string —
+// which means hand-escaping href/title and skipping marked's own URL
+// sanitization. See doc/security.md. The hook is global to the shared DOMPurify
+// instance; that's fine, since it only touches anchors and `noopener` is wanted
+// wherever one shows up.
+DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+  if (node.tagName === 'A' && node.hasAttribute('href')) {
+    node.setAttribute('target', '_blank');
+    node.setAttribute('rel', 'noopener noreferrer');
+  }
 });
 
 // Only allow double-tilde strikethrough (`~~text~~`). Claude uses a single `~`
@@ -56,15 +54,10 @@ export function MarkdownContent({ content, className = '' }: MarkdownContentProp
       // marked.parse can return string or Promise<string>, but with sync options it returns string
       const rawHtml = typeof result === 'string' ? result : '';
       // Sanitize HTML to prevent XSS attacks
-      // Allow target attribute on links so they open in new windows
-      return DOMPurify.sanitize(rawHtml, {
-        ADD_ATTR: ['target'],
-      });
+      return DOMPurify.sanitize(rawHtml);
     } catch {
       // Fallback to sanitized plain text if parsing fails
-      return DOMPurify.sanitize(content, {
-        ADD_ATTR: ['target'],
-      });
+      return DOMPurify.sanitize(content);
     }
   }, [content]);
 
