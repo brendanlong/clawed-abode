@@ -24,6 +24,21 @@ describe('MarkdownContent', () => {
     expect(link).toHaveAttribute('rel', 'noopener noreferrer');
   });
 
+  it('keeps a quote-laden link title inside its attribute', () => {
+    render(<MarkdownContent content={'[x](https://example.com "a \\" onmouseover=alert(1) b")'} />);
+    const link = screen.getByRole('link', { name: 'x' });
+    expect(link).toHaveAttribute('title', 'a " onmouseover=alert(1) b');
+    expect(link).not.toHaveAttribute('onmouseover');
+  });
+
+  it('keeps ampersands in link hrefs intact', () => {
+    render(<MarkdownContent content="[x](https://example.com/?a=1&b=2)" />);
+    expect(screen.getByRole('link', { name: 'x' })).toHaveAttribute(
+      'href',
+      'https://example.com/?a=1&b=2'
+    );
+  });
+
   it('renders bold and italic text', () => {
     render(<MarkdownContent content="This is **bold** and *italic*." />);
     expect(screen.getByText('bold')).toBeInTheDocument();

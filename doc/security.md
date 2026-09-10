@@ -8,6 +8,10 @@ Session isolation is convention-only and `bypassPermissions` is used — the mac
 
 **MCP OAuth callback**: `/api/mcp/oauth/callback` is the one route that runs unauthenticated. It has to — the app authenticates with a bearer token the browser only attaches to its own tRPC calls, and a cross-site redirect from an authorization server carries no such header. Its credential is the OAuth `state`: 256 bits of randomness bound to one pending flow, consumed on use and expired after 15 minutes. The handler reads nothing else from the query string. See [`settings.md`](settings.md) for the flow.
 
+## Rendering Untrusted Markdown
+
+Model output and the tool results quoted inside it are rendered as HTML by [`MarkdownContent`](../src/components/MarkdownContent.tsx). Two independent defenses, and both must stay: every value interpolated into an HTML string is escaped at the point of interpolation ([`html-escape.ts`](../src/lib/html-escape.ts)), _and_ the result goes through `DOMPurify.sanitize`. Escaping alone would miss markup the model emits directly; the sanitizer alone would make every widening of its `ADD_ATTR` allowlist a potential XSS sink with no local signal. Never interpolate untrusted text into markup without escaping it, on the grounds that the sanitizer will catch it.
+
 ## Input Sanitization
 
 Untrusted text is scrubbed before it reaches the model using [`agent-sanitizer`](https://github.com/AlexanderMattTurner/agent-sanitizer) (hidden-content prompt injection: invisible Unicode, ANSI escapes, human-invisible HTML; plus advisory detection of exfil-shaped URLs and look-alike host names). Both seams live in [`src/server/services/input-sanitizer.ts`](../src/server/services/input-sanitizer.ts) and **fail open** — on any internal error the original content passes through rather than blocking the send.

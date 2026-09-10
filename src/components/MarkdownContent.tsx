@@ -3,17 +3,22 @@
 import { useMemo } from 'react';
 import { marked, Renderer, type Tokens } from 'marked';
 import DOMPurify from 'dompurify';
+import { escapeHtmlAttribute } from '@/lib/html-escape';
 
 interface MarkdownContentProps {
   content: string;
   className?: string;
 }
 
-// Create custom renderer that opens links in new windows
+// Create custom renderer that opens links in new windows.
+// `href`/`title` are untrusted text, so they are escaped here rather than
+// relying on DOMPurify's config below to be the only thing standing between a
+// crafted link and an attribute breakout. `text` is already-rendered HTML from
+// marked's inline tokens, so it must not be escaped.
 const renderer = new Renderer();
 renderer.link = ({ href, title, text }) => {
-  const titleAttr = title ? ` title="${title}"` : '';
-  return `<a href="${href}"${titleAttr} target="_blank" rel="noopener noreferrer">${text}</a>`;
+  const titleAttr = title ? ` title="${escapeHtmlAttribute(title)}"` : '';
+  return `<a href="${escapeHtmlAttribute(href)}"${titleAttr} target="_blank" rel="noopener noreferrer">${text}</a>`;
 };
 
 // Configure marked options

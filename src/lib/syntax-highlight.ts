@@ -1,5 +1,6 @@
 import hljs from 'highlight.js/lib/core';
 import type { LanguageFn } from 'highlight.js';
+import { escapeHtml } from '@/lib/html-escape';
 import typescript from 'highlight.js/lib/languages/typescript';
 import javascript from 'highlight.js/lib/languages/javascript';
 import python from 'highlight.js/lib/languages/python';
@@ -81,11 +82,6 @@ function ensureRegistered(): void {
     if (lang.grammar) hljs.registerLanguage(lang.name, lang.grammar);
   }
   registered = true;
-}
-
-/** Escape HTML so plain (un-highlighted) code is rendered safely as text. */
-function escapeHtml(value: string): string {
-  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 /**
