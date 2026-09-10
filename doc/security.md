@@ -8,6 +8,14 @@ Session isolation is convention-only and `bypassPermissions` is used — the mac
 
 **MCP OAuth callback**: `/api/mcp/oauth/callback` is the one route that runs unauthenticated. It has to — the app authenticates with a bearer token the browser only attaches to its own tRPC calls, and a cross-site redirect from an authorization server carries no such header. Its credential is the OAuth `state`: 256 bits of randomness bound to one pending flow, consumed on use and expired after 15 minutes. The handler reads nothing else from the query string. See [`settings.md`](settings.md) for the flow.
 
+## Rendering Untrusted Markdown
+
+Model output and the tool results quoted inside it are rendered as HTML by [`MarkdownContent`](../src/components/MarkdownContent.tsx): marked parses it, `DOMPurify.sanitize` cleans the result, and a sanitizer hook adds `target="_blank" rel="noopener noreferrer"` to anchors.
+
+**Never add a marked renderer override.** A renderer has to assemble its element as an HTML string, which means hand-escaping untrusted values — and marked hands the renderer the _raw_ markdown source (`Tokens.Link.text` is unparsed; `href`/`title` are pre-encoded fragments), so getting that right is subtler than it looks. The override this replaced got it wrong three ways: it skipped marked's `cleanUrl`, so `javascript:` URLs reached DOMPurify that marked would have dropped; it interpolated `href`/`title` unescaped (#503); and it emitted link text unparsed, so `[**bold**](…)` rendered its asterisks. Mutate the sanitized DOM in a `afterSanitizeAttributes` hook instead — no string building, nothing to escape.
+
+The one remaining place we build HTML by hand is [`highlightCode`](../src/lib/syntax-highlight.ts), whose output reaches `dangerouslySetInnerHTML` in [`CodeBlock`](../src/components/messages/CodeBlock.tsx) with no sanitizer behind it — so its escaping is load-bearing on its own.
+
 ## Input Sanitization
 
 Untrusted text is scrubbed before it reaches the model using [`agent-sanitizer`](https://github.com/AlexanderMattTurner/agent-sanitizer) (hidden-content prompt injection: invisible Unicode, ANSI escapes, human-invisible HTML; plus advisory detection of exfil-shaped URLs and look-alike host names). Both seams live in [`src/server/services/input-sanitizer.ts`](../src/server/services/input-sanitizer.ts) and **fail open** — on any internal error the original content passes through rather than blocking the send.

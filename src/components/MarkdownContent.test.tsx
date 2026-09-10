@@ -24,6 +24,39 @@ describe('MarkdownContent', () => {
     expect(link).toHaveAttribute('rel', 'noopener noreferrer');
   });
 
+  it('keeps a quote-laden link title inside its attribute', () => {
+    render(<MarkdownContent content={'[x](https://example.com "a \\" onmouseover=alert(1) b")'} />);
+    const link = screen.getByRole('link', { name: 'x' });
+    expect(link).toHaveAttribute('title', 'a " onmouseover=alert(1) b');
+    expect(link).not.toHaveAttribute('onmouseover');
+  });
+
+  it('strips a javascript: URL from a link', () => {
+    const { container } = render(<MarkdownContent content="[click me](javascript:alert(1))" />);
+    const anchor = container.querySelector('a');
+    expect(anchor?.textContent).toBe('click me');
+    expect(anchor).not.toHaveAttribute('href');
+  });
+
+  it('overrides a model-supplied target on a raw anchor', () => {
+    render(<MarkdownContent content={'<a href="https://example.com" target="_top">x</a>'} />);
+    const link = screen.getByRole('link', { name: 'x' });
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+  });
+
+  it('renders inline markup inside link text', () => {
+    render(<MarkdownContent content="[**bold** link](https://example.com)" />);
+    const link = screen.getByRole('link', { name: 'bold link' });
+    expect(link.querySelector('strong')?.textContent).toBe('bold');
+  });
+
+  it('escapes tag metacharacters in link text', () => {
+    const { container } = render(<MarkdownContent content="[a<b](https://example.com)" />);
+    expect(screen.getByRole('link').textContent).toBe('a<b');
+    expect(container.querySelector('a b')).toBeNull();
+  });
+
   it('renders bold and italic text', () => {
     render(<MarkdownContent content="This is **bold** and *italic*." />);
     expect(screen.getByText('bold')).toBeInTheDocument();
