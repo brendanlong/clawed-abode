@@ -31,7 +31,7 @@ import { createLogger, toError } from '@/lib/logger';
 import { attachToolResultSanitizations } from '@/lib/message-sanitization';
 import { PARTIAL_MESSAGE_ID_PREFIX } from '@/lib/message-cache';
 import { sseEvents } from './events';
-import { getSessionWorkingDir } from './worktree-manager';
+import { ensureGithubCredentialHelper, getSessionWorkingDir } from './worktree-manager';
 import {
   loadMergedSessionSettings,
   mcpServersEqual,
@@ -368,6 +368,17 @@ async function establishSessionQuery(
   const settingsKey = repoFullName ?? '__no_repo__';
   const settings = await loadMergedSessionSettings(settingsKey, session.claudeModel);
   const workingDir = getSessionWorkingDir(sessionId, session.repoPath);
+
+  if (session.repoPath) {
+    // Clones made before the credential helper read the token from the
+    // environment persisted it in plaintext; rewriting on revive retires those.
+    await ensureGithubCredentialHelper(workingDir).catch((err) => {
+      log.warn('Failed to refresh git credential helper', {
+        sessionId,
+        error: toError(err).message,
+      });
+    });
+  }
 
   const shouldResume = (await prisma.message.count({ where: { sessionId } })) > 0;
   const options = await buildSdkOptions({ sessionId, workingDir, settings, shouldResume, state });

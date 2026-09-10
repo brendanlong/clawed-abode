@@ -73,6 +73,51 @@ export interface CloneResult {
 }
 
 /**
+ * The `git clone` invocation for a repo, with credentials in the environment.
+ * Pure so the no-secrets-in-argv rule is testable: nothing here may put the
+ * token in `args`.
+ */
+export function buildCloneCommand(params: {
+  repoFullName: string;
+  branch: string;
+  clonePath: string;
+  githubToken?: string;
+}): { args: string[]; env: Record<string, string> } {
+  const { repoFullName, branch, clonePath, githubToken } = params;
+  return {
+    args: [
+      'clone',
+      '--branch',
+      branch,
+      '--single-branch',
+      `https://github.com/${repoFullName}.git`,
+      clonePath,
+    ],
+    env: {
+      // Fail instead of blocking on a username prompt when auth is missing or rejected.
+      GIT_TERMINAL_PROMPT: '0',
+      ...(githubToken ? githubCredentialEnv(githubToken) : {}),
+    },
+  };
+}
+
+/**
+ * Point a clone's credential helper at the environment. Idempotent, and
+ * `--replace-all` collapses whatever was there before — which is how clones
+ * made before this helper existed shed the plaintext token they persisted.
+ */
+export async function ensureGithubCredentialHelper(clonePath: string): Promise<void> {
+  await run('git', [
+    '-C',
+    clonePath,
+    'config',
+    '--replace-all',
+    GITHUB_CREDENTIAL_CONFIG_KEY,
+    GITHUB_CREDENTIAL_HELPER,
+  ]);
+}
+
+/**
  * Clone a repository for a session.
  *
  * Creates a fresh clone at /worktrees/{sessionId}/{repoName},
@@ -88,16 +133,8 @@ export async function cloneRepo(config: CloneConfig): Promise<CloneResult> {
 
   await mkdir(workspacePath, { recursive: true });
 
-  const repoUrl = `https://github.com/${repoFullName}.git`;
-  const cloneEnv = {
-    // Fail instead of blocking on a username prompt when auth is missing or rejected.
-    GIT_TERMINAL_PROMPT: '0',
-    ...(githubToken ? githubCredentialEnv(githubToken) : {}),
-  };
-
-  await run('git', ['clone', '--branch', branch, '--single-branch', repoUrl, clonePath], {
-    env: cloneEnv,
-  });
+  const clone = buildCloneCommand({ repoFullName, branch, clonePath, githubToken });
+  await run('git', clone.args, { env: clone.env });
 
   // Widen fetch refspec to track all remote branches
   await run('git', [
@@ -108,15 +145,7 @@ export async function cloneRepo(config: CloneConfig): Promise<CloneResult> {
     '+refs/heads/*:refs/remotes/origin/*',
   ]);
 
-  if (githubToken) {
-    await run('git', [
-      '-C',
-      clonePath,
-      'config',
-      GITHUB_CREDENTIAL_CONFIG_KEY,
-      GITHUB_CREDENTIAL_HELPER,
-    ]);
-  }
+  await ensureGithubCredentialHelper(clonePath);
 
   // Create and check out a session-specific branch
   const sessionBranch = `${env.SESSION_BRANCH_PREFIX}${sessionId}`;

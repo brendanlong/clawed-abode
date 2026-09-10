@@ -28,12 +28,14 @@ interface GitEnvOptions {
   env?: Record<string, string>;
 }
 
-/** Env that isolates git from the host's real user/system config. */
+/** Env that isolates git from the host's real user/system config and token. */
 function gitEnv({ globalConfig, env }: GitEnvOptions = {}): NodeJS.ProcessEnv {
   return {
     ...process.env,
+    [GITHUB_TOKEN_ENV]: undefined,
     GIT_CONFIG_GLOBAL: globalConfig ?? '/dev/null',
     GIT_CONFIG_SYSTEM: '/dev/null',
+    GIT_TERMINAL_PROMPT: '0',
     ...env,
   };
 }
@@ -49,16 +51,19 @@ function repoConfigPath(repoDir: string): string {
 }
 
 /** Ask git for github.com credentials the way `clone`/`fetch`/`push` do. */
-async function credentialFill(repoDir: string, options: GitEnvOptions = {}): Promise<string> {
+async function credentialFill(
+  repoDir: string,
+  options: GitEnvOptions = {}
+): Promise<{ stdout: string; failed: boolean }> {
   const child = execFile('git', ['-C', repoDir, 'credential', 'fill'], { env: gitEnv(options) });
   child.stdin!.end('protocol=https\nhost=github.com\n\n');
   const chunks: string[] = [];
   child.stdout!.on('data', (chunk: Buffer) => chunks.push(chunk.toString()));
-  await new Promise<void>((resolve, reject) => {
+  const code = await new Promise<number | null>((resolve, reject) => {
     child.on('error', reject);
-    child.on('close', () => resolve());
+    child.on('close', (exitCode) => resolve(exitCode));
   });
-  return chunks.join('');
+  return { stdout: chunks.join(''), failed: code !== 0 };
 }
 
 beforeAll(async () => {
@@ -75,15 +80,15 @@ describe('githubCredentialEnv', () => {
   it('supplies the token to git while leaving no secret in any config file', async () => {
     const repoDir = await makeRepo('injected');
 
-    const output = await credentialFill(repoDir, {
+    const { stdout } = await credentialFill(repoDir, {
       globalConfig: hostConfigPath,
       env: githubCredentialEnv(TOKEN),
     });
 
-    expect(output).toContain('username=x-access-token');
-    expect(output).toContain(`password=${TOKEN}`);
+    expect(stdout).toContain('username=x-access-token');
+    expect(stdout).toContain(`password=${TOKEN}`);
     // It also wins over the helper the host configured globally.
-    expect(output).not.toContain('host-token');
+    expect(stdout).not.toContain('host-token');
     expect(await readFile(repoConfigPath(repoDir), 'utf8')).not.toContain(TOKEN);
     expect(await readFile(hostConfigPath, 'utf8')).not.toContain(TOKEN);
   });
@@ -102,18 +107,33 @@ describe('GITHUB_CREDENTIAL_HELPER persisted in a clone', () => {
   });
 
   it('reads the token from the environment at run time, storing no secret on disk', async () => {
-    const output = await credentialFill(repoDir, { env: { [GITHUB_TOKEN_ENV]: TOKEN } });
+    const { stdout } = await credentialFill(repoDir, { env: { [GITHUB_TOKEN_ENV]: TOKEN } });
 
-    expect(output).toContain('username=x-access-token');
-    expect(output).toContain(`password=${TOKEN}`);
+    expect(stdout).toContain('username=x-access-token');
+    expect(stdout).toContain(`password=${TOKEN}`);
     expect(await readFile(repoConfigPath(repoDir), 'utf8')).not.toContain(TOKEN);
   });
 
-  it('answers nothing when the token is absent, leaving other helpers to reply', async () => {
-    const output = await credentialFill(repoDir, { globalConfig: hostConfigPath });
+  it('preserves a token containing shell escapes', async () => {
+    const awkward = 'tok\\cen\\nvalue';
 
-    expect(output).toContain('username=host-account');
-    expect(output).toContain('password=host-token');
-    expect(output).not.toMatch(/password=$/m);
+    const { stdout } = await credentialFill(repoDir, { env: { [GITHUB_TOKEN_ENV]: awkward } });
+
+    expect(stdout).toContain(`password=${awkward}`);
+  });
+
+  it('answers nothing when the token is absent rather than sending an empty password', async () => {
+    const { stdout, failed } = await credentialFill(repoDir);
+
+    // Nothing else can answer here, so git has to give up entirely.
+    expect(stdout).not.toContain('username=');
+    expect(failed).toBe(true);
+  });
+
+  it('leaves another configured helper free to answer when the token is absent', async () => {
+    const { stdout } = await credentialFill(repoDir, { globalConfig: hostConfigPath });
+
+    expect(stdout).toContain('username=host-account');
+    expect(stdout).toContain('password=host-token');
   });
 });

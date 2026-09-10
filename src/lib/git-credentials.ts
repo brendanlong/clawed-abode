@@ -17,10 +17,12 @@ export const GITHUB_CREDENTIAL_CONFIG_KEY = 'credential.https://github.com.helpe
 /**
  * Emits nothing when the var is unset, so git falls through to whatever other
  * helpers the host has configured instead of answering with an empty password.
+ * `printf` rather than `echo` because /bin/sh is dash, whose `echo` would
+ * mangle a token containing a backslash escape.
  */
 export const GITHUB_CREDENTIAL_HELPER =
   `!f() { test -n "$${GITHUB_TOKEN_ENV}" || return; ` +
-  `echo username=x-access-token; echo "password=$${GITHUB_TOKEN_ENV}"; }; f`;
+  `printf 'username=x-access-token\\npassword=%s\\n' "$${GITHUB_TOKEN_ENV}"; }; f`;
 
 /**
  * Environment for a git command that must authenticate to GitHub as `token`.
