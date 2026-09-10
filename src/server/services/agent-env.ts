@@ -1,5 +1,7 @@
 import { execFile } from 'child_process';
 import { promisify } from 'util';
+import { env } from '@/lib/env';
+import { GITHUB_TOKEN_ENV } from '@/lib/git-credentials';
 import { createLogger, toError } from '@/lib/logger';
 import type { ResolvedEnvVar } from '@/lib/settings-types';
 
@@ -83,21 +85,29 @@ export function resetBaseEnvCache(): void {
 }
 
 /**
- * Merge the agent environment from its three sources, lowest to highest
- * precedence: the base (login shell) env, the global Claude API key, and the
- * user-configured env vars. Never removes vars from the base env — a
- * CLAUDE_CODE_OAUTH_TOKEN exported by the login shell passes through when no
- * claudeApiKey is configured.
+ * Merge the agent environment from its sources, lowest to highest precedence:
+ * the base (login shell) env, the server's own tokens, and the user-configured
+ * env vars. Never removes vars from the base env — a CLAUDE_CODE_OAUTH_TOKEN
+ * exported by the login shell passes through when no claudeApiKey is
+ * configured.
+ *
+ * `githubToken` is what the clone's credential helper reads, so the agent's
+ * own fetches and pushes authenticate (see src/lib/git-credentials.ts).
  */
 export function mergeAgentEnv(
   baseEnv: Record<string, string>,
   userEnvVars: ResolvedEnvVar[],
-  claudeApiKey?: string | null
+  claudeApiKey?: string | null,
+  githubToken?: string
 ): Record<string, string | undefined> {
   const agentEnv: Record<string, string | undefined> = { ...baseEnv };
 
   if (claudeApiKey) {
     agentEnv['CLAUDE_CODE_OAUTH_TOKEN'] = claudeApiKey;
+  }
+
+  if (githubToken) {
+    agentEnv[GITHUB_TOKEN_ENV] = githubToken;
   }
 
   for (const { name, value } of userEnvVars) {
@@ -112,5 +122,5 @@ export async function buildAgentEnv(
   userEnvVars: ResolvedEnvVar[],
   claudeApiKey?: string | null
 ): Promise<Record<string, string | undefined>> {
-  return mergeAgentEnv(await getBaseEnv(), userEnvVars, claudeApiKey);
+  return mergeAgentEnv(await getBaseEnv(), userEnvVars, claudeApiKey, env.GITHUB_TOKEN);
 }

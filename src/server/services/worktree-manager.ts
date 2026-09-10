@@ -10,15 +10,30 @@ import { join } from 'path';
 import { homedir } from 'os';
 import { createLogger, toError } from '@/lib/logger';
 import { env } from '@/lib/env';
+import {
+  GITHUB_CREDENTIAL_CONFIG_KEY,
+  GITHUB_CREDENTIAL_HELPER,
+  githubCredentialEnv,
+} from '@/lib/git-credentials';
 
 const log = createLogger('worktree-manager');
 
 /** Base directory for session workspaces */
 const WORKTREES_DIR = join(homedir(), 'worktrees');
 
-function run(command: string, args: string[], options: { cwd?: string } = {}): Promise<string> {
+function run(
+  command: string,
+  args: string[],
+  options: { cwd?: string; env?: Record<string, string> } = {}
+): Promise<string> {
+  const { env: extraEnv, ...rest } = options;
   return new Promise((resolve, reject) => {
-    execFile(command, args, { ...options, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
+    const childOptions = {
+      ...rest,
+      env: { ...process.env, ...extraEnv },
+      maxBuffer: 10 * 1024 * 1024,
+    };
+    execFile(command, args, childOptions, (err, stdout, stderr) => {
       if (err) {
         const msg = `${command} ${args.join(' ')} failed: ${stderr || err.message}`;
         reject(new Error(msg));
@@ -73,11 +88,16 @@ export async function cloneRepo(config: CloneConfig): Promise<CloneResult> {
 
   await mkdir(workspacePath, { recursive: true });
 
-  const repoUrl = githubToken
-    ? `https://${githubToken}@github.com/${repoFullName}.git`
-    : `https://github.com/${repoFullName}.git`;
+  const repoUrl = `https://github.com/${repoFullName}.git`;
+  const cloneEnv = {
+    // Fail instead of blocking on a username prompt when auth is missing or rejected.
+    GIT_TERMINAL_PROMPT: '0',
+    ...(githubToken ? githubCredentialEnv(githubToken) : {}),
+  };
 
-  await run('git', ['clone', '--branch', branch, '--single-branch', repoUrl, clonePath]);
+  await run('git', ['clone', '--branch', branch, '--single-branch', repoUrl, clonePath], {
+    env: cloneEnv,
+  });
 
   // Widen fetch refspec to track all remote branches
   await run('git', [
@@ -88,24 +108,13 @@ export async function cloneRepo(config: CloneConfig): Promise<CloneResult> {
     '+refs/heads/*:refs/remotes/origin/*',
   ]);
 
-  // Strip token from remote URL
-  await run('git', [
-    '-C',
-    clonePath,
-    'remote',
-    'set-url',
-    'origin',
-    `https://github.com/${repoFullName}.git`,
-  ]);
-
-  // Configure git credential helper if we have a token
   if (githubToken) {
     await run('git', [
       '-C',
       clonePath,
       'config',
-      'credential.https://github.com.helper',
-      `!f() { echo "protocol=https"; echo "host=github.com"; echo "username=x-access-token"; echo "password=${githubToken}"; }; f`,
+      GITHUB_CREDENTIAL_CONFIG_KEY,
+      GITHUB_CREDENTIAL_HELPER,
     ]);
   }
 
