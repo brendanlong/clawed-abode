@@ -21,17 +21,33 @@ const TOKEN = 'ghp_test_token_value';
 let workDir: string;
 let repoDir: string;
 
+/**
+ * Env for the fixture's own git commands: no host config, and an identity, so
+ * the seed commit works on a CI runner that has neither.
+ */
+const fixtureEnv: NodeJS.ProcessEnv = {
+  ...process.env,
+  GIT_CONFIG_GLOBAL: '/dev/null',
+  GIT_CONFIG_SYSTEM: '/dev/null',
+  GIT_AUTHOR_NAME: 'Test',
+  GIT_AUTHOR_EMAIL: 'test@example.com',
+  GIT_COMMITTER_NAME: 'Test',
+  GIT_COMMITTER_EMAIL: 'test@example.com',
+};
+
+async function fixtureGit(args: string[]): Promise<void> {
+  await execFileAsync('git', args, { env: fixtureEnv });
+}
+
 async function git(args: string[]): Promise<string> {
-  const { stdout } = await execFileAsync('git', ['-C', repoDir, ...args], {
-    env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' },
-  });
+  const { stdout } = await execFileAsync('git', ['-C', repoDir, ...args], { env: fixtureEnv });
   return stdout;
 }
 
 beforeEach(async () => {
   workDir = await mkdtemp(path.join(tmpdir(), 'worktree-manager-test-'));
   repoDir = path.join(workDir, 'repo');
-  await execFileAsync('git', ['init', '-q', repoDir]);
+  await fixtureGit(['init', '-q', repoDir]);
 });
 
 afterAll(async () => {
@@ -69,13 +85,13 @@ describe('cloneRepo', () => {
 
   beforeEach(async () => {
     const originDir = path.join(workDir, 'owner', 'repo.git');
-    await execFileAsync('git', ['init', '-q', '--bare', '-b', 'main', originDir]);
+    await fixtureGit(['init', '-q', '--bare', '-b', 'main', originDir]);
     const seed = path.join(workDir, 'seed');
-    await execFileAsync('git', ['clone', '-q', originDir, seed]);
+    await fixtureGit(['clone', '-q', originDir, seed]);
     await writeFile(path.join(seed, 'README.md'), '# seed\n');
-    await execFileAsync('git', ['-C', seed, 'add', '.']);
-    await execFileAsync('git', ['-C', seed, 'commit', '-qm', 'seed']);
-    await execFileAsync('git', ['-C', seed, 'push', '-q', 'origin', 'main']);
+    await fixtureGit(['-C', seed, 'add', '.']);
+    await fixtureGit(['-C', seed, 'commit', '-qm', 'seed']);
+    await fixtureGit(['-C', seed, 'push', '-q', 'origin', 'main']);
 
     const globalConfig = path.join(workDir, 'gitconfig');
     await writeFile(
@@ -103,13 +119,11 @@ describe('cloneRepo', () => {
     const config = await readFile(path.join(workingDir, '.git', 'config'), 'utf8');
     expect(config).not.toContain(TOKEN);
     expect(config).toContain(GITHUB_TOKEN_ENV);
-    const { stdout: remote } = await execFileAsync('git', [
-      '-C',
-      workingDir,
-      'remote',
-      'get-url',
-      'origin',
-    ]);
+    const { stdout: remote } = await execFileAsync(
+      'git',
+      ['-C', workingDir, 'config', '--get', 'remote.origin.url'],
+      { env: fixtureEnv }
+    );
     expect(remote).not.toContain(TOKEN);
   });
 });
