@@ -21,12 +21,18 @@ marked.setOptions({
 // sanitization. See doc/security.md. The hook is global to the shared DOMPurify
 // instance; that's fine, since it only touches anchors and `noopener` is wanted
 // wherever one shows up.
-DOMPurify.addHook('afterSanitizeAttributes', (node) => {
-  if (node.tagName === 'A' && node.hasAttribute('href')) {
-    node.setAttribute('target', '_blank');
-    node.setAttribute('rel', 'noopener noreferrer');
-  }
-});
+//
+// Guarded on `isSupported`: without a DOM (this module is imported during SSR)
+// dompurify's default export is a stub with neither `addHook` nor `sanitize`,
+// and calling one throws while rendering the page.
+if (DOMPurify.isSupported) {
+  DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+    if (node.tagName === 'A' && node.hasAttribute('href')) {
+      node.setAttribute('target', '_blank');
+      node.setAttribute('rel', 'noopener noreferrer');
+    }
+  });
+}
 
 // Only allow double-tilde strikethrough (`~~text~~`). Claude uses a single `~`
 // to mean "approximately" (e.g. `~5 minutes`) far more often than for
