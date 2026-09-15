@@ -176,3 +176,38 @@ describe('MessageList subagent relocation', () => {
     expect(container.textContent).toContain('Subagent started');
   });
 });
+
+describe('MessageList older-page loader', () => {
+  function renderLoader(opts: { hasMore: boolean; isLoading: boolean }) {
+    return render(
+      <MessageList
+        messages={baseMessages()}
+        isLoading={opts.isLoading}
+        hasMore={opts.hasMore}
+        onLoadMore={() => {}}
+      />
+    );
+  }
+
+  // The slot must hold its height across the whole fetch cycle; MessageList.tsx
+  // explains why. jsdom has no layout, so assert the class that sets it.
+  it.each([true, false])('reserves the slot at a fixed height (isLoading=%s)', (isLoading) => {
+    const { container } = renderLoader({ hasMore: true, isLoading });
+    const slot = container.querySelector('[data-older-messages-loader]');
+    expect(slot).not.toBeNull();
+    expect(slot!.className).toContain('h-12');
+  });
+
+  it('shows the spinner only while a page is in flight', () => {
+    const loading = renderLoader({ hasMore: true, isLoading: true });
+    expect(loading.container.querySelector('[data-older-messages-loader] > svg')).not.toBeNull();
+
+    const idle = renderLoader({ hasMore: true, isLoading: false });
+    expect(idle.container.querySelector('[data-older-messages-loader] > svg')).toBeNull();
+  });
+
+  it('drops the slot once there are no older pages left to fetch', () => {
+    const { container } = renderLoader({ hasMore: false, isLoading: false });
+    expect(container.querySelector('[data-older-messages-loader]')).toBeNull();
+  });
+});
