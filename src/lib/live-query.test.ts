@@ -2,21 +2,15 @@ import { describe, it, expect } from 'vitest';
 import { QueryClient, QueryObserver, type QueryKey } from '@tanstack/react-query';
 import { LIVE_QUERY_OPTIONS, STREAM_ERROR_RESYNC_META, resyncLiveQueries } from './live-query';
 
-/** Subscribe (mounting the query) and resolve once it has data, fetched or cached. */
+/** Subscribe (mounting the query) and resolve once its fetch has settled. */
 function mount<K extends QueryKey>(
   observer: QueryObserver<number, Error, number, number, K>
 ): Promise<() => void> {
   return new Promise((resolve) => {
     const unsubscribe = observer.subscribe((result) => {
-      if (result.isSuccess) resolve(unsubscribe);
+      if (result.isSuccess && !result.isFetching) resolve(unsubscribe);
     });
-    if (observer.getCurrentResult().isSuccess) resolve(unsubscribe);
   });
-}
-
-/** Let any refetch a mount kicked off run to completion. */
-function flushPendingFetches(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 describe('resyncLiveQueries', () => {
@@ -55,31 +49,35 @@ describe('resyncLiveQueries', () => {
 });
 
 describe('LIVE_QUERY_OPTIONS', () => {
-  it('does not refetch on remount, so a stale read cannot clobber the live value', async () => {
+  // The SSE stream that maintains these caches is subscribed by the same component
+  // as the queries, so an unmounted query's cache is stale by construction and a
+  // remount has to go back to the server rather than trust it.
+  it('refetches on remount, so an unmaintained cache is never trusted', async () => {
     const queryClient = new QueryClient();
-    let calls = 0;
+    let served = 1;
 
     const observe = () =>
       new QueryObserver(queryClient, {
         queryKey: ['live'],
-        queryFn: async () => ++calls,
+        queryFn: async () => served,
         ...LIVE_QUERY_OPTIONS,
       });
 
     const unsubscribeFirst = await mount(observe());
-    expect(calls).toBe(1);
+    expect(queryClient.getQueryData(['live'])).toBe(1);
     unsubscribeFirst();
 
-    // The SSE stream wrote a newer value into the cache while nothing was mounted.
-    queryClient.setQueryData(['live'], 99);
+    // While nothing was mounted the stream died and the server state moved on.
+    served = 2;
 
+    // `subscribe` kicks the refetch off synchronously, so this pins the mount
+    // refetch itself rather than waiting on a promise that never settles without it.
     const remounted = observe();
-    const unsubscribeSecond = await mount(remounted);
-    expect(remounted.getCurrentResult().isFetching).toBe(false);
-    await flushPendingFetches();
+    const settled = mount(remounted);
+    expect(remounted.getCurrentResult().isFetching).toBe(true);
 
-    expect(calls).toBe(1);
-    expect(queryClient.getQueryData(['live'])).toBe(99);
+    const unsubscribeSecond = await settled;
+    expect(queryClient.getQueryData(['live'])).toBe(2);
     unsubscribeSecond();
   });
 });
