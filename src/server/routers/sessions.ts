@@ -29,6 +29,7 @@ import { keysetPage, keysetPageInputSchema } from '@/lib/keyset-page';
 import { sessionStatusSchema } from '@/lib/session-display-status';
 import { thresholdSchema } from './rateLimit';
 import { clearQueuedPrompts } from '../services/prompt-queue';
+import { refreshStalePullRequests } from '../services/session-branch-pr';
 
 const log = createLogger('sessions');
 
@@ -41,6 +42,7 @@ const sessionListSelect = {
   statusMessage: true,
   currentBranch: true,
   pullRequest: true,
+  prCheckedAt: true,
   lastActivityAt: true,
   createdAt: true,
 } satisfies Prisma.SessionSelect;
@@ -183,18 +185,23 @@ export const sessionsRouter = router({
       // Attach the live status axes (in-memory lookups, no extra query) so the
       // list can distinguish "running" (main agent generating) from "background"
       // (only a subagent/background task running) from "waiting" (fully idle).
-      return {
-        sessions: items.map((session) => ({
-          ...toSessionView(session),
-          turnActive: isClaudeRunning(session.id),
-          backgroundActive: isSessionBackgroundActive(session.id),
-          rateLimitPaused: isSessionRateLimitPaused(session.id),
-        })),
-        nextCursor,
-      };
+      const sessions = items.map((session) => ({
+        ...toSessionView(session),
+        turnActive: isClaudeRunning(session.id),
+        backgroundActive: isSessionBackgroundActive(session.id),
+        rateLimitPaused: isSessionRateLimitPaused(session.id),
+      }));
+
+      refreshStalePullRequests(sessions);
+
+      return { sessions, nextCursor };
     }),
 
-  get: sessionProcedure.query(({ ctx }) => ({ session: toSessionView(ctx.session) })),
+  get: sessionProcedure.query(({ ctx }) => {
+    const session = toSessionView(ctx.session);
+    refreshStalePullRequests([session]);
+    return { session };
+  }),
 
   // Deep link into a self-hosted code-server (browser VS Code) instance opened
   // on this session's worktree folder. Returns { url: null } when the editor is

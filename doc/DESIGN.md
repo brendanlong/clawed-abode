@@ -57,7 +57,7 @@ The schema ([`prisma/schema.prisma`](../prisma/schema.prisma)) is the source of 
 
 - `Session.lastActivityAt` is bumped only on **user interactions** (sending a prompt, answering a question/plan) — never on assistant/background traffic or lifecycle changes — so the session list orders by where the user last acted and doesn't shuffle while other sessions generate.
 - `Session.claudeModel` is a per-session model override, the highest-precedence layer of model resolution (see [`settings.md`](settings.md)).
-- `Session.pullRequest` is a JSON snapshot of the PR for `currentBranch`, refreshed after each turn, so listing sessions never calls GitHub (see [`messages-and-sse.md`](messages-and-sse.md)).
+- `Session.pullRequest` is a JSON snapshot of the PR for `currentBranch`, refreshed after each turn and re-polled off the response path when `prCheckedAt` ages out, so listing sessions never waits on GitHub (see [`messages-and-sse.md`](messages-and-sse.md)).
 - Deleting a session **archives** it: the workspace is removed, messages are kept and viewable read-only, and it's excluded from the session list by default.
 - `QueuedPrompt` rows hold prompts parked by a rate-limit pause; their transcript bubbles are already written, so a row is only the payload to re-push. `RateLimitWindow` is the account-wide usage state, persisted so a restart doesn't release paused work early.
 - `EnvVar` / `McpServer` rows with `repoSettingsId = null` are global; per-repo entries with the same name take precedence (a partial unique index enforces global name uniqueness). "No Repository" sessions use the `__no_repo__` sentinel in `RepoSettings`.

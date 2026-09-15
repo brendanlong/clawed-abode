@@ -427,7 +427,7 @@ describe('claude-runner persistent streaming loop', () => {
       stopSession(id);
     });
 
-    it('writes nothing when neither branch nor PR changed', async () => {
+    it('announces nothing when neither branch nor PR changed', async () => {
       const { getCurrentBranch } = await import('./worktree-manager');
       const { fetchPullRequestForBranch } = await import('./github');
       vi.mocked(getCurrentBranch).mockResolvedValue('feat-a');
@@ -451,7 +451,9 @@ describe('claude-runner persistent streaming loop', () => {
       const row = await testPrisma.session.findUnique({ where: { id } });
       expect(row?.currentBranch).toBe('feat-a');
       expect(JSON.parse(row!.pullRequest!)).toEqual(pr);
-      // No session event means no needless list refetch on every turn end.
+      // The check still counts against the staleness TTL...
+      expect(row?.prCheckedAt).not.toBeNull();
+      // ...but no session event means no needless list refetch on every turn end.
       expect(mockSseEvents.emitSessionUpdate).not.toHaveBeenCalled();
       stopSession(id);
     });
