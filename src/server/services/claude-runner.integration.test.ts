@@ -13,6 +13,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi, afterEach } from 'vitest';
 import type { Query, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { setupTestDb, teardownTestDb, testPrisma, clearTestDb } from '@/test/setup-test-db';
+import { waitFor } from '@/test/wait-for';
 
 const mockSseEvents = vi.hoisted(() => ({
   emitNewMessage: vi.fn(),
@@ -266,15 +267,6 @@ function taskUpdated(taskId: string, status: string): SDKMessage {
   } as unknown as SDKMessage;
 }
 
-async function waitFor(fn: () => boolean | Promise<boolean>, timeout = 2000): Promise<void> {
-  const end = Date.now() + timeout;
-  for (;;) {
-    if (await fn()) return;
-    if (Date.now() >= end) throw new Error('waitFor timed out');
-    await new Promise((r) => setTimeout(r, 10));
-  }
-}
-
 async function createRunningSession(): Promise<string> {
   const session = await testPrisma.session.create({
     data: { name: 'Test', repoPath: '', status: 'running' },
@@ -427,7 +419,7 @@ describe('claude-runner persistent streaming loop', () => {
       stopSession(id);
     });
 
-    it('writes nothing when neither branch nor PR changed', async () => {
+    it('announces nothing when neither branch nor PR changed', async () => {
       const { getCurrentBranch } = await import('./worktree-manager');
       const { fetchPullRequestForBranch } = await import('./github');
       vi.mocked(getCurrentBranch).mockResolvedValue('feat-a');
@@ -451,7 +443,9 @@ describe('claude-runner persistent streaming loop', () => {
       const row = await testPrisma.session.findUnique({ where: { id } });
       expect(row?.currentBranch).toBe('feat-a');
       expect(JSON.parse(row!.pullRequest!)).toEqual(pr);
-      // No session event means no needless list refetch on every turn end.
+      // The check still counts against the staleness TTL...
+      expect(row?.prCheckedAt).not.toBeNull();
+      // ...but no session event means no needless list refetch on every turn end.
       expect(mockSseEvents.emitSessionUpdate).not.toHaveBeenCalled();
       stopSession(id);
     });
