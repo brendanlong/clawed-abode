@@ -15,36 +15,33 @@ export function useClaudeState(sessionId: string) {
 
   const { data: commandsData } = trpc.claude.getCommands.useQuery(
     { sessionId },
-    { staleTime: Infinity, ...LIVE_QUERY_OPTIONS }
+    LIVE_QUERY_OPTIONS
   );
 
   // Ephemeral API-retry status (rate limit / overload).
-  const { data: retryData } = trpc.claude.getRetryState.useQuery(
-    { sessionId },
-    { staleTime: Infinity, ...LIVE_QUERY_OPTIONS }
-  );
+  const { data: retryData } = trpc.claude.getRetryState.useQuery({ sessionId }, LIVE_QUERY_OPTIONS);
 
   // Running background tasks. These never gate input — indicator only.
   const { data: backgroundData } = trpc.claude.getBackgroundTasks.useQuery(
     { sessionId },
-    { staleTime: Infinity, ...LIVE_QUERY_OPTIONS }
+    LIVE_QUERY_OPTIONS
   );
 
   // Ids of messages the SDK has accepted but not yet handed to the agent.
   const { data: pendingData } = trpc.claude.getPendingMessageIds.useQuery(
     { sessionId },
-    { staleTime: Infinity, ...LIVE_QUERY_OPTIONS }
+    LIVE_QUERY_OPTIONS
   );
 
   // Prompts held back by a subscription rate-limit pause, and the pause itself.
   const { data: queuedData } = trpc.claude.getQueuedMessageIds.useQuery(
     { sessionId },
-    { staleTime: Infinity, ...LIVE_QUERY_OPTIONS }
+    LIVE_QUERY_OPTIONS
   );
 
   const { data: rateLimitData } = trpc.claude.getRateLimitHold.useQuery(
     { sessionId },
-    { staleTime: Infinity, ...LIVE_QUERY_OPTIONS }
+    LIVE_QUERY_OPTIONS
   );
 
   const sendMutation = trpc.claude.send.useMutation();
