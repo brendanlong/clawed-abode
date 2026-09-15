@@ -176,3 +176,40 @@ describe('MessageList subagent relocation', () => {
     expect(container.textContent).toContain('Subagent started');
   });
 });
+
+describe('MessageList older-page loader', () => {
+  function renderLoader(opts: { hasMore: boolean; isLoading: boolean }) {
+    return render(
+      <MessageList
+        messages={baseMessages()}
+        isLoading={opts.isLoading}
+        hasMore={opts.hasMore}
+        onLoadMore={() => {}}
+      />
+    );
+  }
+
+  // Scrolling back at speed pins the container at scrollTop 0, where scroll
+  // anchoring cannot compensate for a height change above the messages. The slot
+  // must therefore stay in the layout across the whole fetch cycle — only the
+  // spinner inside it may come and go.
+  it('keeps the loader slot mounted whether or not a page is in flight', () => {
+    for (const isLoading of [true, false]) {
+      const { container } = renderLoader({ hasMore: true, isLoading });
+      expect(container.querySelector('[data-older-messages-loader]')).not.toBeNull();
+    }
+  });
+
+  it('shows the spinner only while a page is in flight', () => {
+    const loading = renderLoader({ hasMore: true, isLoading: true });
+    expect(loading.container.querySelector('[data-older-messages-loader] svg')).not.toBeNull();
+
+    const idle = renderLoader({ hasMore: true, isLoading: false });
+    expect(idle.container.querySelector('[data-older-messages-loader] svg')).toBeNull();
+  });
+
+  it('drops the slot once there are no older pages left to fetch', () => {
+    const { container } = renderLoader({ hasMore: false, isLoading: false });
+    expect(container.querySelector('[data-older-messages-loader]')).toBeNull();
+  });
+});
