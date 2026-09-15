@@ -408,7 +408,10 @@ export function MessageList({
             height above the messages must never change while paginating. Scrolling
             back at speed pins the container at scrollTop 0, where scroll anchoring
             has nothing to compensate with, so mounting and unmounting this block
-            moved the whole transcript by its own height ~12 times a second. */}
+            moved the whole transcript by its own height ~12 times a second.
+            The gap is therefore permanent above the topmost loaded message, which
+            costs nothing: you only see it scrolled to the top of what's loaded,
+            and that is the moment the next fetch fills it. */}
         {hasMore && (
           <div
             data-older-messages-loader

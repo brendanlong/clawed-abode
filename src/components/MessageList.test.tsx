@@ -189,23 +189,21 @@ describe('MessageList older-page loader', () => {
     );
   }
 
-  // Scrolling back at speed pins the container at scrollTop 0, where scroll
-  // anchoring cannot compensate for a height change above the messages. The slot
-  // must therefore stay in the layout across the whole fetch cycle — only the
-  // spinner inside it may come and go.
-  it('keeps the loader slot mounted whether or not a page is in flight', () => {
-    for (const isLoading of [true, false]) {
-      const { container } = renderLoader({ hasMore: true, isLoading });
-      expect(container.querySelector('[data-older-messages-loader]')).not.toBeNull();
-    }
+  // The slot must hold its height across the whole fetch cycle; MessageList.tsx
+  // explains why. jsdom has no layout, so assert the class that sets it.
+  it.each([true, false])('reserves the slot at a fixed height (isLoading=%s)', (isLoading) => {
+    const { container } = renderLoader({ hasMore: true, isLoading });
+    const slot = container.querySelector('[data-older-messages-loader]');
+    expect(slot).not.toBeNull();
+    expect(slot!.className).toContain('h-12');
   });
 
   it('shows the spinner only while a page is in flight', () => {
     const loading = renderLoader({ hasMore: true, isLoading: true });
-    expect(loading.container.querySelector('[data-older-messages-loader] svg')).not.toBeNull();
+    expect(loading.container.querySelector('[data-older-messages-loader] > svg')).not.toBeNull();
 
     const idle = renderLoader({ hasMore: true, isLoading: false });
-    expect(idle.container.querySelector('[data-older-messages-loader] svg')).toBeNull();
+    expect(idle.container.querySelector('[data-older-messages-loader] > svg')).toBeNull();
   });
 
   it('drops the slot once there are no older pages left to fetch', () => {
