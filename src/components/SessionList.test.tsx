@@ -29,7 +29,6 @@ function session(overrides: Partial<Session> & Pick<Session, 'id' | 'name'>): Se
     statusMessage: null,
     currentBranch: null,
     pullRequest: null,
-    prCheckedAt: null,
     turnActive: false,
     backgroundActive: false,
     rateLimitPaused: false,

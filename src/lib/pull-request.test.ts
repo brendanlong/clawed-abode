@@ -3,6 +3,7 @@ import {
   isPrSnapshotStale,
   parsePullRequestJson,
   serializePullRequest,
+  MERGED_PR_SNAPSHOT_TTL_MS,
   PR_SNAPSHOT_TTL_MS,
   type PrRefreshCandidate,
   type PullRequestInfo,
@@ -41,6 +42,8 @@ describe('isPrSnapshotStale', () => {
   const old = new Date(now - 60 * 60 * 1000);
 
   const candidate = (overrides: Partial<PrRefreshCandidate> = {}): PrRefreshCandidate => ({
+    id: 's1',
+    status: 'running',
     repoUrl: 'https://github.com/o/r.git',
     currentBranch: 'feature',
     pullRequest: pr,
@@ -58,6 +61,10 @@ describe('isPrSnapshotStale', () => {
     expect(isPrSnapshotStale(candidate({ prCheckedAt: atTtl }), now)).toBe(true);
   });
 
+  it('never polls an archived session — its transcript is read-only history', () => {
+    expect(isPrSnapshotStale(candidate({ status: 'archived', prCheckedAt: old }), now)).toBe(false);
+  });
+
   it('refreshes a session that has never been checked', () => {
     expect(isPrSnapshotStale(candidate({ prCheckedAt: null }), now)).toBe(true);
   });
@@ -66,10 +73,15 @@ describe('isPrSnapshotStale', () => {
     expect(isPrSnapshotStale(candidate({ pullRequest: null, prCheckedAt: old }), now)).toBe(true);
   });
 
-  it('never refreshes a merged PR — nothing about it can change again', () => {
+  it('gives a merged PR a long TTL — the branch can still get a second one', () => {
     const merged = { ...pr, state: 'merged' as const };
     expect(isPrSnapshotStale(candidate({ pullRequest: merged, prCheckedAt: old }), now)).toBe(
       false
+    );
+
+    const ancient = new Date(now - MERGED_PR_SNAPSHOT_TTL_MS - 1000);
+    expect(isPrSnapshotStale(candidate({ pullRequest: merged, prCheckedAt: ancient }), now)).toBe(
+      true
     );
   });
 

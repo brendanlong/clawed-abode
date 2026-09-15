@@ -13,6 +13,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi, afterEach } from 'vitest';
 import type { Query, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { setupTestDb, teardownTestDb, testPrisma, clearTestDb } from '@/test/setup-test-db';
+import { waitFor } from '@/test/wait-for';
 
 const mockSseEvents = vi.hoisted(() => ({
   emitNewMessage: vi.fn(),
@@ -264,15 +265,6 @@ function taskUpdated(taskId: string, status: string): SDKMessage {
     session_id: 's',
     uuid: nextUuid(),
   } as unknown as SDKMessage;
-}
-
-async function waitFor(fn: () => boolean | Promise<boolean>, timeout = 2000): Promise<void> {
-  const end = Date.now() + timeout;
-  for (;;) {
-    if (await fn()) return;
-    if (Date.now() >= end) throw new Error('waitFor timed out');
-    await new Promise((r) => setTimeout(r, 10));
-  }
 }
 
 async function createRunningSession(): Promise<string> {

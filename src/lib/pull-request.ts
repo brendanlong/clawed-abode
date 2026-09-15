@@ -34,7 +34,16 @@ export function serializePullRequest(pullRequest: PullRequestInfo | null): strin
 /** How long a `Session.pullRequest` snapshot is trusted before it's re-fetched. */
 export const PR_SNAPSHOT_TTL_MS = 5 * 60 * 1000;
 
+/**
+ * A merged PR can't change — but the column is keyed by *branch*, and a branch
+ * can get a second PR after the first merges, so this is a long TTL rather than
+ * "never look again".
+ */
+export const MERGED_PR_SNAPSHOT_TTL_MS = 6 * 60 * 60 * 1000;
+
 export interface PrRefreshCandidate {
+  id: string;
+  status: string;
   repoUrl: string | null;
   currentBranch: string | null;
   pullRequest: PullRequestInfo | null;
@@ -42,22 +51,17 @@ export interface PrRefreshCandidate {
 }
 
 /**
- * Whether a session's PR snapshot should be re-fetched when the client looks at
- * it. The turn-end refresh alone leaves a session stale forever once the agent
- * stops working (a PR opened, reviewed or merged afterwards never lands), and
- * GitHub can't push to us — the server isn't reachable from the internet — so
- * freshness has to come from polling what's actually on screen.
+ * Whether a session's PR snapshot has aged out and should be re-fetched the next
+ * time a client reads the session. Archived sessions are read-only history and a
+ * session with no repo or branch has nothing to look up.
  *
- * `prCheckedAt` is stamped even when the lookup fails, so a repo the token can't
- * read costs one call per TTL rather than one per list request. A merged PR is
- * terminal: nothing about it can change again, so it's never re-fetched.
+ * Why poll at all: see "Session list" in doc/messages-and-sse.md.
  */
-export function isPrSnapshotStale(
-  session: PrRefreshCandidate,
-  now: number,
-  ttlMs: number = PR_SNAPSHOT_TTL_MS
-): boolean {
+export function isPrSnapshotStale(session: PrRefreshCandidate, now: number): boolean {
+  if (session.status === 'archived') return false;
   if (!session.repoUrl || !session.currentBranch) return false;
-  if (session.pullRequest?.state === 'merged') return false;
+
+  const ttlMs =
+    session.pullRequest?.state === 'merged' ? MERGED_PR_SNAPSHOT_TTL_MS : PR_SNAPSHOT_TTL_MS;
   return session.prCheckedAt === null || now - session.prCheckedAt.getTime() >= ttlMs;
 }

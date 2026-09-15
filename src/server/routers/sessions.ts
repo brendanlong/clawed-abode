@@ -42,7 +42,7 @@ const sessionListSelect = {
   statusMessage: true,
   currentBranch: true,
   pullRequest: true,
-  prCheckedAt: true,
+  prCheckedAt: true, // server-only; toSessionView drops it before the client sees it
   lastActivityAt: true,
   createdAt: true,
 } satisfies Prisma.SessionSelect;
@@ -192,15 +192,14 @@ export const sessionsRouter = router({
         rateLimitPaused: isSessionRateLimitPaused(session.id),
       }));
 
-      refreshStalePullRequests(sessions);
+      refreshStalePullRequests(items);
 
       return { sessions, nextCursor };
     }),
 
   get: sessionProcedure.query(({ ctx }) => {
-    const session = toSessionView(ctx.session);
-    refreshStalePullRequests([session]);
-    return { session };
+    refreshStalePullRequests([ctx.session]);
+    return { session: toSessionView(ctx.session) };
   }),
 
   // Deep link into a self-hosted code-server (browser VS Code) instance opened
