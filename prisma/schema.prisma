@@ -31,7 +31,8 @@ model Session {
   status          String    @default("creating") // creating, running, stopped, error, archived
   statusMessage   String? // Human-readable progress message during creation
   currentBranch   String? // Current git branch (detected after each turn)
-  pullRequest     String? // JSON PullRequestInfo for currentBranch, refreshed after each turn; null = none/unknown (see src/lib/pull-request.ts)
+  pullRequest     String? // JSON PullRequestInfo for currentBranch; null = none/unknown (see src/lib/pull-request.ts)
+  prCheckedAt     DateTime? // When GitHub was last asked about pullRequest, successfully or not; drives the staleness refresh (see src/lib/pull-request.ts)
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
   lastActivityAt  DateTime  @default(now()) // Bumped only on user interactions (prompt, answer); drives session-list ordering

@@ -403,9 +403,22 @@ export function MessageList({
         {/* so when new messages load above, the view stays on current messages */}
         <div ref={topSentinelRef} className="h-1" style={{ overflowAnchor: 'none' }} />
 
-        {hasMore && isLoading && (
-          <div className="text-center py-2 mb-4" style={{ overflowAnchor: 'none' }}>
-            <Spinner size="sm" className="mx-auto" />
+        {/* Loading slot for older pages. The slot is reserved for as long as there
+            are older pages to fetch, and only the spinner inside it toggles — the
+            height above the messages must never change while paginating. Scrolling
+            back at speed pins the container at scrollTop 0, where scroll anchoring
+            has nothing to compensate with, so mounting and unmounting this block
+            moved the whole transcript by its own height ~12 times a second.
+            The gap is therefore permanent above the topmost loaded message, which
+            costs nothing: you only see it scrolled to the top of what's loaded,
+            and that is the moment the next fetch fills it. */}
+        {hasMore && (
+          <div
+            data-older-messages-loader
+            className="flex h-12 items-center justify-center"
+            style={{ overflowAnchor: 'none' }}
+          >
+            {isLoading && <Spinner size="sm" />}
           </div>
         )}
 

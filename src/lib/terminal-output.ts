@@ -1,5 +1,5 @@
 import AnsiToHtml from 'ansi-to-html';
-import DOMPurify from 'dompurify';
+import { sanitizeHtml } from './sanitize-html';
 
 // Singleton converter instance with sensible defaults
 const converter = new AnsiToHtml({
@@ -85,7 +85,7 @@ export function processTerminalOutput(text: string): string {
   const html = converter.toHtml(processed);
 
   // Sanitize the output to prevent XSS (defense in depth)
-  return DOMPurify.sanitize(html);
+  return sanitizeHtml(html);
 }
 
 /**
