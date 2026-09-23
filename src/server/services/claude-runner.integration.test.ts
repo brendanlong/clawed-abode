@@ -824,7 +824,7 @@ describe('claude-runner persistent streaming loop', () => {
 
     fake = makeFakeQuery();
     await sendUserMessage(sessionId, 'hello again');
-    // First establish had no history, so it started fresh; the revive resumes /clear's.
+    // First establish had no conversation, so it started fresh; the revive resumes /clear's.
     expect(resumes).toEqual([undefined, 'post-clear']);
     stopSession(sessionId);
   });
@@ -847,6 +847,28 @@ describe('claude-runner persistent streaming loop', () => {
     fake = makeFakeQuery();
     await sendUserMessage(sessionId, 'hello again');
     expect(resumes).toEqual([undefined, sessionId]);
+    stopSession(sessionId);
+  });
+
+  it('starts fresh when messages exist but the CLI never started a conversation', async () => {
+    const resumes: (string | undefined)[] = [];
+    let fake = makeFakeQuery();
+    _setQueryFactory((p) => {
+      resumes.push((p.options as { resume?: string }).resume);
+      return fake.factory(p);
+    });
+    const sessionId = await createRunningSession();
+
+    // The query dies before any system/init; only the app-side user bubble is saved.
+    await sendUserMessage(sessionId, 'hi');
+    fake.end();
+    await waitFor(() => !isClaudeRunning(sessionId));
+    stopSession(sessionId);
+    expect(await testPrisma.message.count({ where: { sessionId } })).toBeGreaterThan(0);
+
+    fake = makeFakeQuery();
+    await sendUserMessage(sessionId, 'hello again');
+    expect(resumes).toEqual([undefined, undefined]);
     stopSession(sessionId);
   });
 

@@ -60,9 +60,9 @@ export async function buildSdkOptions(params: {
     // snapshot: false keeps the appended prompt rendered fresh on every request.
     // The SDK's default flipped to true in 0.3.266, which records the prompt on a
     // conversation's first request and replays it verbatim through every later
-    // `resume` — and we resume every session that has history, so an edited system
-    // prompt would never reach an existing session, breaking the Stop→Start
-    // contract in doc/settings.md.
+    // `resume` — and we resume every session whose CLI started a conversation, so
+    // an edited system prompt would never reach an existing session, breaking the
+    // Stop→Start contract in doc/settings.md.
     systemPrompt: {
       type: 'preset',
       preset: 'claude_code',
