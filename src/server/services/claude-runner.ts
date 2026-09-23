@@ -155,20 +155,23 @@ async function persistSessionScope(sessionId: string, unit: string | null): Prom
 }
 
 /**
- * Record a change of Claude Code conversation (the CLI starts a new one on
- * `/clear`) so the next revive resumes it rather than the pre-clear transcript.
- * Awaited by the loop so a teardown right after `/clear` can't revive the old one.
+ * Record the Claude Code conversation the CLI reports (it switches on `/clear`) so
+ * the next revive resumes it rather than the pre-clear transcript. The in-memory
+ * copy only advances after a successful write, so a failed write retries on the
+ * next init. A torn-down loop never writes: a revive may already own the row.
  */
 async function trackClaudeSessionId(
   sessionId: string,
   state: SessionState,
+  q: Query,
   message: SDKMessage
 ): Promise<void> {
   const claudeSessionId = initSessionId(message);
   if (!claudeSessionId || claudeSessionId === state.claudeSessionId) return;
-  state.claudeSessionId = claudeSessionId;
+  if (state.query !== q) return;
   try {
     await prisma.session.updateMany({ where: { id: sessionId }, data: { claudeSessionId } });
+    state.claudeSessionId = claudeSessionId;
   } catch (err) {
     log.error('Failed to persist Claude session id', toError(err), { sessionId, claudeSessionId });
   }
@@ -307,7 +310,7 @@ async function runSessionLoop(sessionId: string, state: SessionState, q: Query):
       }
 
       mergeInitCommands(sessionId, state, message);
-      await trackClaudeSessionId(sessionId, state, message);
+      await trackClaudeSessionId(sessionId, state, q, message);
 
       const handling = classifyMessage(message);
       if (handling.kind !== 'persist') continue;
@@ -421,7 +424,7 @@ async function establishSessionQuery(
   state.workingDir = workingDir;
   state.boundSettings = settings;
   state.settingsKey = settingsKey;
-  state.claudeSessionId = resumeId ?? sessionId;
+  state.claudeSessionId = null;
 
   const input = createPushable<SDKUserMessage>();
   const q = queryFactory({ prompt: input.iterable, options });

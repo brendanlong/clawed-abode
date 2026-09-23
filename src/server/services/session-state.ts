@@ -116,8 +116,8 @@ export interface SessionState {
    */
   sessionScope: string | null;
   /**
-   * Claude Code conversation the live CLI is in (mirrored to
-   * `Session.claudeSessionId`), so a change — `/clear` — is persisted once.
+   * Claude Code conversation last persisted to `Session.claudeSessionId` by the
+   * live query (null until its first init), so only changes are written.
    */
   claudeSessionId: string | null;
 }

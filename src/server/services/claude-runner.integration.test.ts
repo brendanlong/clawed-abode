@@ -806,6 +806,13 @@ describe('claude-runner persistent streaming loop', () => {
 
     await sendUserMessage(sessionId, '/clear');
     fake.emit(systemInit(sessionId));
+    // The real CLI announces a reset first, under an id with no transcript.
+    fake.emit({
+      type: 'conversation_reset',
+      new_conversation_id: 'decoy',
+      session_id: sessionId,
+      uuid: nextUuid(),
+    } as unknown as SDKMessage);
     fake.emit(systemInit('post-clear'));
     fake.emit(result());
     await waitFor(
@@ -840,9 +847,6 @@ describe('claude-runner persistent streaming loop', () => {
     fake = makeFakeQuery();
     await sendUserMessage(sessionId, 'hello again');
     expect(resumes).toEqual([undefined, sessionId]);
-    expect(
-      (await testPrisma.session.findUnique({ where: { id: sessionId } }))?.claudeSessionId
-    ).toBeNull();
     stopSession(sessionId);
   });
 
