@@ -14,6 +14,7 @@ import {
   isIgnoredSystemMessage,
   parseRetryState,
   formatRetryReason,
+  initSessionId,
 } from './claude-messages';
 
 describe('claude-messages', () => {
@@ -458,6 +459,25 @@ describe('claude-messages', () => {
     it('returns null when nothing is known', () => {
       expect(formatRetryReason({ attempt: 1, maxRetries: 10 })).toBeNull();
       expect(formatRetryReason({ attempt: 1, maxRetries: 10, error: 'unknown' })).toBeNull();
+    });
+  });
+
+  describe('initSessionId', () => {
+    it('reads the conversation id from a system init message', () => {
+      const init = {
+        type: 'system',
+        subtype: 'init',
+        cwd: '/w',
+        session_id: 'after-clear',
+        model: 'claude-opus-5-5',
+      };
+      expect(initSessionId(init)).toBe('after-clear');
+    });
+
+    it('ignores every other message, even ones carrying a session_id', () => {
+      expect(initSessionId({ type: 'result', subtype: 'success', session_id: 's' })).toBeNull();
+      expect(initSessionId({ type: 'system', subtype: 'status', session_id: 's' })).toBeNull();
+      expect(initSessionId(null)).toBeNull();
     });
   });
 });

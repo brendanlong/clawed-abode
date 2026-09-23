@@ -42,10 +42,11 @@ export async function buildSdkOptions(params: {
   sessionId: string;
   workingDir: string;
   settings: MergedSessionSettings;
-  shouldResume: boolean;
+  /** Claude Code conversation to resume, or null to start one under `sessionId`. */
+  resumeId: string | null;
   state: SessionState;
 }): Promise<Options> {
-  const { sessionId, workingDir, settings, shouldResume, state } = params;
+  const { sessionId, workingDir, settings, resumeId, state } = params;
   const agentEnv = await buildAgentEnv(settings.envVars, settings.claudeApiKey);
   const mcpServersRecord = buildMcpServersRecord(settings.mcpServers);
 
@@ -105,8 +106,8 @@ export async function buildSdkOptions(params: {
   };
 
   // cwd MUST be stable across a resume — Claude Code keys sessions by project dir.
-  if (shouldResume) {
-    options.resume = sessionId;
+  if (resumeId) {
+    options.resume = resumeId;
   } else {
     options.sessionId = sessionId;
   }
