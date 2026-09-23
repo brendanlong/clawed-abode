@@ -115,6 +115,11 @@ export interface SessionState {
    * reap it by exact name; stopped on teardown to kill the whole process tree.
    */
   sessionScope: string | null;
+  /**
+   * Claude Code conversation last persisted to `Session.claudeSessionId` by the
+   * live query (null until its first init), so only changes are written.
+   */
+  claudeSessionId: string | null;
 }
 
 export function createSessionState(workingDir: string, commands: SlashCommand[]): SessionState {
@@ -135,5 +140,6 @@ export function createSessionState(workingDir: string, commands: SlashCommand[])
     interruptRequested: false,
     optimisticTurnActive: false,
     sessionScope: null,
+    claudeSessionId: null,
   };
 }

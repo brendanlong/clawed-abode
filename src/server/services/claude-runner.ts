@@ -15,7 +15,7 @@ import {
 } from '@anthropic-ai/claude-agent-sdk';
 import { v4 as uuid } from 'uuid';
 import { prisma } from '@/lib/prisma';
-import { classifyMessage, type RetryState } from '@/lib/claude-messages';
+import { classifyMessage, initSessionId, type RetryState } from '@/lib/claude-messages';
 import { holdsEqual, parseRateLimitEvent, type RateLimitHold } from '@/lib/rate-limit';
 import {
   reduceSessionMessage,
@@ -155,6 +155,29 @@ async function persistSessionScope(sessionId: string, unit: string | null): Prom
 }
 
 /**
+ * Record the Claude Code conversation the CLI reports (it switches on `/clear`) so
+ * the next revive resumes it rather than the pre-clear transcript. The in-memory
+ * copy only advances after a successful write, so a failed write retries on the
+ * next init. A torn-down loop never writes: a revive may already own the row.
+ */
+async function trackClaudeSessionId(
+  sessionId: string,
+  state: SessionState,
+  q: Query,
+  message: SDKMessage
+): Promise<void> {
+  const claudeSessionId = initSessionId(message);
+  if (!claudeSessionId || claudeSessionId === state.claudeSessionId) return;
+  if (state.query !== q) return;
+  try {
+    await prisma.session.updateMany({ where: { id: sessionId }, data: { claudeSessionId } });
+    state.claudeSessionId = claudeSessionId;
+  } catch (err) {
+    log.error('Failed to persist Claude session id', toError(err), { sessionId, claudeSessionId });
+  }
+}
+
+/**
  * Force all live status off and emit only the channels that changed. Used by the
  * loop `finally`, `stopSession`, and shutdown so a torn-down session never leaves
  * a stale "running"/"background"/"retrying" indicator.
@@ -287,6 +310,7 @@ async function runSessionLoop(sessionId: string, state: SessionState, q: Query):
       }
 
       mergeInitCommands(sessionId, state, message);
+      await trackClaudeSessionId(sessionId, state, q, message);
 
       const handling = classifyMessage(message);
       if (handling.kind !== 'persist') continue;
@@ -358,7 +382,7 @@ async function establishSessionQuery(
 ): Promise<SessionState> {
   const session = await prisma.session.findUnique({
     where: { id: sessionId },
-    select: { repoUrl: true, repoPath: true, claudeModel: true },
+    select: { repoUrl: true, repoPath: true, claudeModel: true, claudeSessionId: true },
   });
   if (!session) {
     throw new Error('Session not found');
@@ -380,8 +404,9 @@ async function establishSessionQuery(
     });
   }
 
-  const shouldResume = (await prisma.message.count({ where: { sessionId } })) > 0;
-  const options = await buildSdkOptions({ sessionId, workingDir, settings, shouldResume, state });
+  const hasHistory = (await prisma.message.count({ where: { sessionId } })) > 0;
+  const resumeId = hasHistory ? (session.claudeSessionId ?? sessionId) : null;
+  const options = await buildSdkOptions({ sessionId, workingDir, settings, resumeId, state });
   // Record the scope name durably BEFORE the subprocess (and thus the scope) is
   // spawned, so a crash between here and teardown can always reap it by exact
   // name. Over-recording — a name written for a scope that ends up not created
@@ -399,13 +424,14 @@ async function establishSessionQuery(
   state.workingDir = workingDir;
   state.boundSettings = settings;
   state.settingsKey = settingsKey;
+  state.claudeSessionId = null;
 
   const input = createPushable<SDKUserMessage>();
   const q = queryFactory({ prompt: input.iterable, options });
   state.input = input;
   state.query = q;
 
-  log.info('Established session query', { sessionId, workingDir, shouldResume });
+  log.info('Established session query', { sessionId, workingDir, resumeId });
 
   // Fetch rich command metadata once (init message may arrive first; merge both).
   void q

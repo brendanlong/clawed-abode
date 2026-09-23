@@ -47,13 +47,13 @@ const settings = (overrides: Partial<MergedSessionSettings> = {}): MergedSession
   ...overrides,
 });
 
-const build = (s: MergedSessionSettings, shouldResume = false) => {
+const build = (s: MergedSessionSettings, resumeId: string | null = null) => {
   const state = createSessionState('/w', []);
   return buildSdkOptions({
     sessionId: 'sid',
     workingDir: '/w',
     settings: s,
-    shouldResume,
+    resumeId,
     state,
   }).then((options) => ({ options, state }));
 };
@@ -78,7 +78,7 @@ describe('buildMcpServersRecord', () => {
 });
 
 describe('buildSdkOptions', () => {
-  it('uses sessionId for a fresh session and resume for one with history, keeping cwd', async () => {
+  it('uses sessionId for a fresh session and resumes the given conversation otherwise, keeping cwd', async () => {
     const fresh = (await build(settings())).options;
     expect(fresh).toMatchObject({
       sessionId: 'sid',
@@ -86,8 +86,8 @@ describe('buildSdkOptions', () => {
       permissionMode: 'bypassPermissions',
     });
     expect(fresh.resume).toBeUndefined();
-    const resumed = (await build(settings(), true)).options;
-    expect(resumed.resume).toBe('sid');
+    const resumed = (await build(settings(), 'post-clear-id')).options;
+    expect(resumed.resume).toBe('post-clear-id');
     expect(resumed.sessionId).toBeUndefined();
   });
 
@@ -96,8 +96,8 @@ describe('buildSdkOptions', () => {
   // would never reach a session that has history. doc/settings.md promises it takes
   // effect on Stop->Start, which only holds while we opt out explicitly.
   it('renders the appended system prompt fresh rather than letting the SDK record it', async () => {
-    for (const shouldResume of [false, true]) {
-      const { options } = await build(settings(), shouldResume);
+    for (const resumeId of [null, 'sid']) {
+      const { options } = await build(settings(), resumeId);
       expect(options.systemPrompt).toEqual({
         type: 'preset',
         preset: 'claude_code',

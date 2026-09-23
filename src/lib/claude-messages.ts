@@ -233,6 +233,18 @@ export const SystemInitContentSchema = z.object({
 });
 
 /**
+ * The Claude Code conversation a message says the CLI is now in, or null if it
+ * doesn't say. Every query start (and every turn) emits an init; `/clear` emits
+ * one carrying a brand-new id, which is what a later revive must resume. Not
+ * `conversation_reset.new_conversation_id`: `/clear` sends that too, but with a
+ * different id that has no transcript to resume.
+ */
+export function initSessionId(message: unknown): string | null {
+  const parsed = SystemInitContentSchema.safeParse(message);
+  return parsed.success ? parsed.data.session_id : null;
+}
+
+/**
  * Permission denial info from result messages
  */
 const PermissionDenialSchema = z.object({

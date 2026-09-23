@@ -234,6 +234,16 @@ function commandLifecycle(commandUuid: string, state: string): SDKMessage {
     uuid: nextUuid(),
   } as unknown as SDKMessage;
 }
+function systemInit(claudeSessionId: string): SDKMessage {
+  return {
+    type: 'system',
+    subtype: 'init',
+    cwd: '/tmp/spike-runner-test',
+    model: 'claude-opus-5-5',
+    session_id: claudeSessionId,
+    uuid: nextUuid(),
+  } as unknown as SDKMessage;
+}
 function taskStarted(taskId: string): SDKMessage {
   return {
     type: 'system',
@@ -782,6 +792,61 @@ describe('claude-runner persistent streaming loop', () => {
     // No live session state to act on → false.
     expect(await stopBackgroundTask('00000000-0000-0000-0000-000000000000', 'task-1')).toBe(false);
 
+    stopSession(sessionId);
+  });
+
+  it('revives the conversation the CLI switched to on /clear, not the original', async () => {
+    const resumes: (string | undefined)[] = [];
+    let fake = makeFakeQuery();
+    _setQueryFactory((p) => {
+      resumes.push((p.options as { resume?: string }).resume);
+      return fake.factory(p);
+    });
+    const sessionId = await createRunningSession();
+
+    await sendUserMessage(sessionId, '/clear');
+    fake.emit(systemInit(sessionId));
+    // The real CLI announces a reset first, under an id with no transcript.
+    fake.emit({
+      type: 'conversation_reset',
+      new_conversation_id: 'decoy',
+      session_id: sessionId,
+      uuid: nextUuid(),
+    } as unknown as SDKMessage);
+    fake.emit(systemInit('post-clear'));
+    fake.emit(result());
+    await waitFor(
+      async () =>
+        (await testPrisma.session.findUnique({ where: { id: sessionId } }))?.claudeSessionId ===
+        'post-clear'
+    );
+    stopSession(sessionId);
+
+    fake = makeFakeQuery();
+    await sendUserMessage(sessionId, 'hello again');
+    // First establish had no history, so it started fresh; the revive resumes /clear's.
+    expect(resumes).toEqual([undefined, 'post-clear']);
+    stopSession(sessionId);
+  });
+
+  it('resumes under the session id when the CLI never switched conversations', async () => {
+    const resumes: (string | undefined)[] = [];
+    let fake = makeFakeQuery();
+    _setQueryFactory((p) => {
+      resumes.push((p.options as { resume?: string }).resume);
+      return fake.factory(p);
+    });
+    const sessionId = await createRunningSession();
+
+    await sendUserMessage(sessionId, 'hi');
+    fake.emit(systemInit(sessionId));
+    fake.emit(result());
+    await waitFor(() => !isClaudeRunning(sessionId));
+    stopSession(sessionId);
+
+    fake = makeFakeQuery();
+    await sendUserMessage(sessionId, 'hello again');
+    expect(resumes).toEqual([undefined, sessionId]);
     stopSession(sessionId);
   });
 
