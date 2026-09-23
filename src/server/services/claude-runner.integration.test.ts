@@ -824,7 +824,7 @@ describe('claude-runner persistent streaming loop', () => {
 
     fake = makeFakeQuery();
     await sendUserMessage(sessionId, 'hello again');
-    // First establish had no history, so it started fresh; the revive resumes /clear's.
+    // First establish had no conversation, so it started fresh; the revive resumes /clear's.
     expect(resumes).toEqual([undefined, 'post-clear']);
     stopSession(sessionId);
   });
