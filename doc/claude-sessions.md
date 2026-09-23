@@ -10,7 +10,7 @@ Each session has **one long-lived `query()` in streaming-input mode** (the promp
 
 Revival uses `options.resume`. **The `cwd` must be stable across a resume** — Claude Code keys sessions by project dir — so revival always uses the session's persistent `workingDir`.
 
-**Resume the CLI's current conversation, not `Session.id`.** A query starts its conversation under `Session.id`, but `/clear` makes the CLI switch to a new conversation id mid-stream (announced by a `system/init`). The loop records it on `Session.claudeSessionId` and revival resumes that; resuming `Session.id` would silently restore the cleared context and drop everything since.
+**Resume the CLI's current conversation, not `Session.id`.** A query starts its conversation under `Session.id`, but `/clear` makes the CLI switch to a new conversation id mid-stream (announced by a `system/init`). The loop records every init's id on `Session.claudeSessionId` and revival resumes that; resuming `Session.id` would silently restore the cleared context and drop everything since. A null `claudeSessionId` means no transcript exists, so the query starts fresh — never infer one from app-side `Message` rows, which can exist without the CLI ever writing a transcript (a first prompt parked by a rate-limit pause, an error from a query that died before init); resuming an unwritten id fails every retry with "No conversation found".
 
 There is deliberately **no idle reaper and no status timers**: the server cannot distinguish a hung turn from a slow one, so recovery is user-driven and deterministic (interrupt, or the header Stop, which closes the query and forces the status flags off in the loop's `finally`). A persistent subprocess per live session is fine for a single-user host.
 

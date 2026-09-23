@@ -39,7 +39,7 @@ model Session {
   messageSequence Int       @default(0) // Monotonic counter for atomic message sequence assignment (next sequence to assign)
   sessionScope    String? // systemd user scope unit this session's CLI runs in; recorded so a crash-restart can reap the exact orphaned scope (null when not scoped / after clean teardown)
   claudeModel     String? // If set, overrides the repo/global/env Claude model for this session only (highest precedence)
-  claudeSessionId String? // The Claude Code conversation to resume; the CLI starts a new one on /clear. null = never switched (conversation id is Session.id)
+  claudeSessionId String? // The Claude Code conversation to resume, recorded from each system/init (the CLI starts a new one on /clear). null = no conversation started yet, so the next query starts fresh
 
   // Rate-limit pause overrides; null means "inherit the global setting" (see src/lib/rate-limit.ts).
   rateLimitPauseEnabled   Boolean? // If set, overrides whether this session pauses when the subscription window fills

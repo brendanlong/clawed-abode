@@ -373,8 +373,8 @@ async function runSessionLoop(sessionId: string, state: SessionState, q: Query):
 
 /**
  * Establish a fresh streaming query for a session: load settings, build the input
- * channel + options, start the SDK query and its output loop. Resumes prior
- * history when the session already has messages.
+ * channel + options, start the SDK query and its output loop. Resumes the
+ * conversation the CLI last announced, if any.
  */
 async function establishSessionQuery(
   sessionId: string,
@@ -404,8 +404,10 @@ async function establishSessionQuery(
     });
   }
 
-  const hasHistory = (await prisma.message.count({ where: { sessionId } })) > 0;
-  const resumeId = hasHistory ? (session.claudeSessionId ?? sessionId) : null;
+  // Only a conversation the CLI announced has a transcript to resume; app-side
+  // messages alone (a rate-limit-queued first prompt, an error from a query that
+  // died before init) don't mean one was ever written.
+  const resumeId = session.claudeSessionId;
   const options = await buildSdkOptions({ sessionId, workingDir, settings, resumeId, state });
   // Record the scope name durably BEFORE the subprocess (and thus the scope) is
   // spawned, so a crash between here and teardown can always reap it by exact
