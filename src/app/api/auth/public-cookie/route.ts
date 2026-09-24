@@ -1,24 +1,21 @@
 import { NextResponse } from 'next/server';
 import { parseAuthHeader, SESSION_DURATION_MS } from '@/lib/auth';
-import { resolveAuthSessionId } from '@/server/trpc';
-import { PUBLIC_AUTH_COOKIE, PUBLIC_URL_PREFIX } from '@/lib/public-files';
+import { resolveAuthSessionId } from '@/server/services/auth-sessions';
+import { PUBLIC_AUTH_COOKIE } from '@/lib/public-files';
 
 const COOKIE_OPTIONS = {
-  path: PUBLIC_URL_PREFIX,
+  path: '/',
   httpOnly: true,
   secure: true,
-  sameSite: 'none',
+  sameSite: 'lax',
 } as const;
 
 /**
- * Mirrors the caller's bearer token into the cookie that authenticates plain
- * browser requests to `/public/…` (see src/app/public/). The client calls this
- * whenever it holds a token, so logins from before the cookie existed pick it up.
- *
- * SameSite=None because public pages are served with a CSP sandbox, which gives
- * them an opaque origin: their own subresource requests (images, scripts) count
- * as cross-site and a Lax cookie would be withheld. The cookie is path-scoped, so
- * it is only ever sent with reads of public files, which still need the session UUID.
+ * Mirrors the caller's bearer token into the cookie the public files server
+ * (src/server/services/public-files-server.ts) authenticates with. Cookies ignore
+ * ports, so one set here reaches that server as long as it shares the app's
+ * hostname. The client calls this whenever it holds a token, so logins from
+ * before the cookie existed pick it up. The app's own routes ignore the cookie.
  */
 export async function POST(request: Request): Promise<Response> {
   const token = parseAuthHeader(request.headers.get('authorization'));

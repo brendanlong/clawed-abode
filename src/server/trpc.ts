@@ -1,7 +1,8 @@
 import { initTRPC, TRPCError } from '@trpc/server';
 import superjson from 'superjson';
 import { z } from 'zod';
-import { parseAuthHeader, IDLE_TIMEOUT_MS, ACTIVITY_UPDATE_THROTTLE_MS } from '@/lib/auth';
+import { parseAuthHeader } from '@/lib/auth';
+import { resolveAuthSessionId } from '@/server/services/auth-sessions';
 import { prisma } from '@/lib/prisma';
 import { createLogger } from '@/lib/logger';
 import { originHeadersFrom, resolveAppOrigin } from '@/lib/app-origin';
@@ -33,50 +34,6 @@ export async function createContext(opts: { headers: Headers }): Promise<Context
   };
   const token = parseAuthHeader(opts.headers.get('authorization'));
   return { sessionId: token ? await resolveAuthSessionId(token) : null, ...clientInfo };
-}
-
-/**
- * The auth session a bearer token belongs to, or null when it is unknown,
- * revoked, expired, or idle. Shared by the Authorization header (tRPC, upload)
- * and the `/public` cookie so both enforce the same rules.
- */
-export async function resolveAuthSessionId(token: string): Promise<string | null> {
-  const session = await prisma.authSession.findUnique({
-    where: { token },
-    select: { id: true, expiresAt: true, lastActivityAt: true, revokedAt: true },
-  });
-
-  if (!session || session.revokedAt) {
-    return null;
-  }
-
-  const now = new Date();
-
-  if (session.expiresAt < now) {
-    return null;
-  }
-
-  // Check for idle timeout
-  const idleTime = now.getTime() - session.lastActivityAt.getTime();
-  if (idleTime > IDLE_TIMEOUT_MS) {
-    // Session is idle, reject it (but don't delete - keep for audit/display)
-    log.info('Session rejected due to idle timeout', { sessionId: session.id });
-    return null;
-  }
-
-  // Update last activity (throttled to avoid excessive DB writes)
-  if (idleTime > ACTIVITY_UPDATE_THROTTLE_MS) {
-    prisma.authSession
-      .update({
-        where: { id: session.id },
-        data: { lastActivityAt: now },
-      })
-      .catch(() => {
-        // Fire and forget - don't fail the request if activity update fails
-      });
-  }
-
-  return session.id;
 }
 
 const t = initTRPC.context<Context>().create({

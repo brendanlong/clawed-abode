@@ -3,39 +3,51 @@ import { DEFAULT_CLAUDE_MODEL } from './claude-model';
 
 export const LOG_LEVELS = ['debug', 'info', 'warn', 'error'] as const;
 
-const envSchema = z.object({
-  DATABASE_URL: z.string().default('file:./data/dev.db'),
-  GITHUB_TOKEN: z.string().optional(),
-  // Claude Code OAuth token (run `claude setup-token` to generate)
-  // Optional if configured via Settings UI instead
-  CLAUDE_CODE_OAUTH_TOKEN: z.string().optional().default(''),
-  // Claude model to use (e.g., "opus", "sonnet", "claude-opus-4-5-20251101")
-  CLAUDE_MODEL: z.string().default(DEFAULT_CLAUDE_MODEL),
-  // Prefix for session branches (e.g., "claude/" creates branches like "claude/{sessionId}")
-  SESSION_BRANCH_PREFIX: z.string().default('claude/'),
-  // Base64-encoded Argon2 hash for authentication (generate with: pnpm hash-password <yourpassword>)
-  PASSWORD_HASH: z
-    .string()
-    .optional()
-    .transform((val) => (val ? Buffer.from(val, 'base64').toString('utf-8') : undefined)),
-  // 32+ character key for encrypting secrets (env vars, MCP API keys)
-  // Generate with: openssl rand -base64 32
-  ENCRYPTION_KEY: z.string().min(32).optional(),
-  // Public base URL the browser reaches this app on (e.g. https://host.tailnet.ts.net).
-  // Used to build the OAuth redirect URI for MCP servers; when unset it is derived
-  // from the request's forwarded host/proto (see src/lib/app-origin.ts).
-  // Validated (unlike CODE_SERVER_URL) because a typo here doesn't degrade — it
-  // produces a redirect_uri the authorization server rejects.
-  APP_URL: z.string().url().optional(),
-  // Base URL of a self-hosted code-server (browser VS Code) instance used to
-  // view/edit session worktrees remotely (e.g. https://host.tailnet.ts.net:8443).
-  // When unset, the "Open in VS Code" button is hidden. See scripts/setup-code-server.sh.
-  // Intentionally free-form (not z.string().url()): it is operator-controlled and
-  // may legitimately be a relative reverse-proxy path like "/editor".
-  CODE_SERVER_URL: z.string().optional(),
-  // Minimum level the server logger writes (see src/lib/logger.ts).
-  LOG_LEVEL: z.enum(LOG_LEVELS).default('info'),
-});
+const envSchema = z
+  .object({
+    DATABASE_URL: z.string().default('file:./data/dev.db'),
+    GITHUB_TOKEN: z.string().optional(),
+    // Claude Code OAuth token (run `claude setup-token` to generate)
+    // Optional if configured via Settings UI instead
+    CLAUDE_CODE_OAUTH_TOKEN: z.string().optional().default(''),
+    // Claude model to use (e.g., "opus", "sonnet", "claude-opus-4-5-20251101")
+    CLAUDE_MODEL: z.string().default(DEFAULT_CLAUDE_MODEL),
+    // Prefix for session branches (e.g., "claude/" creates branches like "claude/{sessionId}")
+    SESSION_BRANCH_PREFIX: z.string().default('claude/'),
+    // Base64-encoded Argon2 hash for authentication (generate with: pnpm hash-password <yourpassword>)
+    PASSWORD_HASH: z
+      .string()
+      .optional()
+      .transform((val) => (val ? Buffer.from(val, 'base64').toString('utf-8') : undefined)),
+    // 32+ character key for encrypting secrets (env vars, MCP API keys)
+    // Generate with: openssl rand -base64 32
+    ENCRYPTION_KEY: z.string().min(32).optional(),
+    // Public base URL the browser reaches this app on (e.g. https://host.tailnet.ts.net).
+    // Used to build the OAuth redirect URI for MCP servers; when unset it is derived
+    // from the request's forwarded host/proto (see src/lib/app-origin.ts).
+    // Validated (unlike CODE_SERVER_URL) because a typo here doesn't degrade — it
+    // produces a redirect_uri the authorization server rejects.
+    APP_URL: z.string().url().optional(),
+    // Base URL of a self-hosted code-server (browser VS Code) instance used to
+    // view/edit session worktrees remotely (e.g. https://host.tailnet.ts.net:8443).
+    // When unset, the "Open in VS Code" button is hidden. See scripts/setup-code-server.sh.
+    // Intentionally free-form (not z.string().url()): it is operator-controlled and
+    // may legitimately be a relative reverse-proxy path like "/editor".
+    CODE_SERVER_URL: z.string().optional(),
+    // Serve each session's public/ directory on this loopback port, reached by the
+    // browser at PUBLIC_FILES_URL (see scripts/expose-public-files-tailscale.sh).
+    // Both or neither: the port without a URL would serve files no agent links to.
+    // The URL must use the app's hostname — the auth cookie is shared across ports,
+    // not hostnames.
+    PUBLIC_FILES_PORT: z.coerce.number().int().min(1).max(65535).optional(),
+    PUBLIC_FILES_URL: z.string().url().optional(),
+    // Minimum level the server logger writes (see src/lib/logger.ts).
+    LOG_LEVEL: z.enum(LOG_LEVELS).default('info'),
+  })
+  .refine((e) => (e.PUBLIC_FILES_PORT === undefined) === (e.PUBLIC_FILES_URL === undefined), {
+    message: 'Set both PUBLIC_FILES_PORT and PUBLIC_FILES_URL, or neither',
+    path: ['PUBLIC_FILES_URL'],
+  });
 
 export type Env = z.infer<typeof envSchema>;
 

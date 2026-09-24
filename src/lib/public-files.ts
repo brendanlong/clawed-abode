@@ -1,19 +1,16 @@
 import { z } from 'zod';
 
-/** URL prefix a session's `public/` directory is served under: `/public/{sessionId}/…`. */
-export const PUBLIC_URL_PREFIX = '/public';
-
 /**
- * Browsers only attach the app's bearer token to its own fetches, so plain links
- * to public files authenticate with a copy of it in this cookie, scoped to
- * {@link PUBLIC_URL_PREFIX} so the browser sends it nowhere else.
+ * Browsers only attach the app's bearer token to its own fetches, so the public
+ * files server authenticates with a copy of it in this cookie. Cookies ignore
+ * ports, so the app sets it and the browser sends it to the other port.
  */
 export const PUBLIC_AUTH_COOKIE = 'public_auth';
 
 const sessionIdSchema = z.string().uuid();
 
-export function publicUrlPath(sessionId: string): string {
-  return `${PUBLIC_URL_PREFIX}/${sessionId}/`;
+export function publicFilesUrl(baseUrl: string, sessionId: string): string {
+  return `${baseUrl.replace(/\/+$/, '')}/${sessionId}/`;
 }
 
 export interface PublicRequestPath {
@@ -24,14 +21,13 @@ export interface PublicRequestPath {
 }
 
 /**
- * Parse `/public/{sessionId}/a/b` into its session and decoded segments. Returns
- * null for anything that could step outside the directory (`.`/`..`, encoded
+ * Parse `/{sessionId}/a/b` into its session and decoded segments. Returns null
+ * for anything that could step outside the directory (`.`/`..`, encoded
  * slashes, NUL) so callers never join an unsafe segment onto a path.
  */
 export function parsePublicRequestPath(pathname: string): PublicRequestPath | null {
-  const prefix = `${PUBLIC_URL_PREFIX}/`;
-  if (!pathname.startsWith(prefix)) return null;
-  const [rawSessionId, ...rawSegments] = pathname.slice(prefix.length).split('/');
+  if (!pathname.startsWith('/')) return null;
+  const [rawSessionId, ...rawSegments] = pathname.slice(1).split('/');
   const parsedSessionId = sessionIdSchema.safeParse(rawSessionId);
   if (!parsedSessionId.success) return null;
 
@@ -48,6 +44,16 @@ export function parsePublicRequestPath(pathname: string): PublicRequestPath | nu
     segments.push(segment);
   }
   return { sessionId: parsedSessionId.data, segments, trailingSlash };
+}
+
+export function parseCookie(header: string | undefined, name: string): string | null {
+  for (const pair of header?.split(';') ?? []) {
+    const eq = pair.indexOf('=');
+    if (eq !== -1 && pair.slice(0, eq).trim() === name) {
+      return pair.slice(eq + 1).trim() || null;
+    }
+  }
+  return null;
 }
 
 function isSafeSegment(segment: string): boolean {

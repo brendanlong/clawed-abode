@@ -8,8 +8,7 @@ import {
   type SettingSourceFlags,
 } from '@/lib/setting-sources';
 import { env } from '@/lib/env';
-import { resolveAppOrigin } from '@/lib/app-origin';
-import { publicUrlPath } from '@/lib/public-files';
+import { publicFilesUrl } from '@/lib/public-files';
 import type { ResolvedEnvVar, ResolvedMcpServer } from '@/lib/settings-types';
 import { decryptEnvVars, decryptMcpServers } from './settings-helpers';
 import { GLOBAL_SCOPE, GLOBAL_SETTINGS_ID } from './settings-scope';
@@ -118,10 +117,12 @@ export async function loadMergedSessionSettings(
   ]);
 
   const systemPrompt = buildSystemPrompt({
-    publicDir: {
-      path: getSessionPublicDir(sessionId),
-      url: (resolveAppOrigin(env.APP_URL, {}) ?? '') + publicUrlPath(sessionId),
-    },
+    publicDir: env.PUBLIC_FILES_URL
+      ? {
+          path: getSessionPublicDir(sessionId),
+          url: publicFilesUrl(env.PUBLIC_FILES_URL, sessionId),
+        }
+      : undefined,
     customSystemPrompt: repoSettings?.customSystemPrompt,
     globalSettings,
   });

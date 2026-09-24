@@ -83,17 +83,16 @@ describe('buildSystemPrompt', () => {
 });
 
 describe('public dir note', () => {
-  const publicDir = { path: '/home/u/worktrees/s/public', url: 'https://host.ts.net/public/s/' };
+  const publicDir = { path: '/home/u/worktrees/s/public', url: 'https://host.ts.net:8444/s/' };
 
   it('tells the agent where to write browser output and its URL', () => {
     const prompt = buildSystemPrompt({ publicDir });
     expect(prompt).toContain('`/home/u/worktrees/s/public`');
-    expect(prompt).toContain('https://host.ts.net/public/s/');
+    expect(prompt).toContain('https://host.ts.net:8444/s/');
   });
 
-  it('describes a relative URL as a path on the web UI host', () => {
-    const prompt = buildSystemPrompt({ publicDir: { ...publicDir, url: '/public/s/' } });
-    expect(prompt).toContain('`/public/s/` on the same host');
+  it('is omitted when public files are not configured', () => {
+    expect(buildSystemPrompt({})).not.toContain('public');
   });
 
   it('survives a system prompt override and precedes appended content', () => {

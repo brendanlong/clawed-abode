@@ -3,13 +3,15 @@ import { mkdir, rm, symlink, writeFile } from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import { randomUUID } from 'crypto';
-import { NextRequest } from 'next/server';
+import type { Server } from 'http';
+import type { AddressInfo } from 'net';
 import { setupTestDb, teardownTestDb, testPrisma, clearTestDb } from '@/test/setup-test-db';
 
-// The route imports @/lib/prisma at module load, so import it only after the test DB is configured.
-let GET: typeof import('./route').GET;
-let getSessionPublicDir: typeof import('@/server/services/public-dir').getSessionPublicDir;
-let getSessionWorkspacePath: typeof import('@/server/services/worktree-manager').getSessionWorkspacePath;
+// The server imports @/lib/prisma at module load, so import it only after the test DB is configured.
+let getSessionPublicDir: typeof import('./public-dir').getSessionPublicDir;
+let getSessionWorkspacePath: typeof import('./worktree-manager').getSessionWorkspacePath;
+let server: Server;
+let baseUrl: string;
 
 const TOKEN = 'public-route-test-token';
 const createdSessionIds: string[] = [];
@@ -32,18 +34,20 @@ function get(
   token: string | null = TOKEN,
   headers: Record<string, string> = {}
 ): Promise<Response> {
-  return GET(
-    new NextRequest(`http://localhost${pathname}`, {
-      headers: { ...headers, ...(token ? { cookie: `public_auth=${token}` } : {}) },
-    })
-  );
+  return fetch(`${baseUrl}${pathname}`, {
+    redirect: 'manual',
+    headers: { ...headers, ...(token ? { cookie: `other=1; public_auth=${token}` } : {}) },
+  });
 }
 
 beforeAll(async () => {
   await setupTestDb();
-  ({ GET } = await import('./route'));
-  ({ getSessionPublicDir } = await import('@/server/services/public-dir'));
-  ({ getSessionWorkspacePath } = await import('@/server/services/worktree-manager'));
+  ({ getSessionPublicDir } = await import('./public-dir'));
+  ({ getSessionWorkspacePath } = await import('./worktree-manager'));
+  const { createPublicFilesServer } = await import('./public-files-server');
+  server = createPublicFilesServer();
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 
   await testPrisma.authSession.create({
     data: { token: TOKEN, expiresAt: new Date(Date.now() + 60 * 60 * 1000) },
@@ -59,24 +63,44 @@ afterEach(async () => {
 });
 
 afterAll(async () => {
+  await new Promise((resolve) => server.close(resolve));
   await clearTestDb();
   await teardownTestDb();
 });
 
-describe('GET /public/{sessionId}/…', () => {
+describe('public files server', () => {
   it('requires a valid auth cookie', async () => {
     const id = await createSession();
     await writePublic(id, 'a.txt', 'secret');
 
-    expect((await get(`/public/${id}/a.txt`, null)).status).toBe(401);
-    expect((await get(`/public/${id}/a.txt`, 'bogus')).status).toBe(401);
+    expect((await get(`/${id}/a.txt`, null)).status).toBe(401);
+    expect((await get(`/${id}/a.txt`, 'bogus')).status).toBe(401);
+  });
+
+  it('rejects non-read methods', async () => {
+    const id = await createSession();
+    const res = await fetch(`${baseUrl}/${id}/`, { method: 'POST' });
+    expect(res.status).toBe(405);
+  });
+
+  it('answers HEAD without a body', async () => {
+    const id = await createSession();
+    await writePublic(id, 'a.txt', 'hello');
+
+    const res = await fetch(`${baseUrl}/${id}/a.txt`, {
+      method: 'HEAD',
+      headers: { cookie: `public_auth=${TOKEN}` },
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-length')).toBe('5');
+    expect(await res.text()).toBe('');
   });
 
   it('serves a file with an extension-derived content type and no-cache', async () => {
     const id = await createSession();
     await writePublic(id, 'plots/chart.svg', '<svg/>');
 
-    const res = await get(`/public/${id}/plots/chart.svg`);
+    const res = await get(`/${id}/plots/chart.svg`);
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toBe('image/svg+xml');
     expect(res.headers.get('cache-control')).toBe('no-cache');
@@ -87,13 +111,13 @@ describe('GET /public/{sessionId}/…', () => {
     const id = await createSession();
     await writePublic(id, 'clip.mp4', '0123456789');
 
-    const res = await get(`/public/${id}/clip.mp4`, TOKEN, { range: 'bytes=2-4' });
+    const res = await get(`/${id}/clip.mp4`, TOKEN, { range: 'bytes=2-4' });
     expect(res.status).toBe(206);
     expect(res.headers.get('content-range')).toBe('bytes 2-4/10');
     expect(res.headers.get('content-length')).toBe('3');
     expect(await res.text()).toBe('234');
 
-    const past = await get(`/public/${id}/clip.mp4`, TOKEN, { range: 'bytes=10-' });
+    const past = await get(`/${id}/clip.mp4`, TOKEN, { range: 'bytes=10-' });
     expect(past.status).toBe(416);
     expect(past.headers.get('content-range')).toBe('bytes */10');
   });
@@ -102,7 +126,7 @@ describe('GET /public/{sessionId}/…', () => {
     const id = await createSession();
     await writePublic(id, 'empty.txt', '');
 
-    const res = await get(`/public/${id}/empty.txt`);
+    const res = await get(`/${id}/empty.txt`);
     expect(res.status).toBe(200);
     expect(await res.text()).toBe('');
   });
@@ -111,7 +135,7 @@ describe('GET /public/{sessionId}/…', () => {
     const id = await createSession();
     await writePublic(id, 'my report.html', 'hi');
 
-    const res = await get(`/public/${id}/my%20report.html`);
+    const res = await get(`/${id}/my%20report.html`);
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toBe('text/html; charset=utf-8');
   });
@@ -120,17 +144,17 @@ describe('GET /public/{sessionId}/…', () => {
     const id = await createSession();
     await writePublic(id, 'docs/index.html', 'index');
 
-    const res = await get(`/public/${id}/docs`);
+    const res = await get(`/${id}/docs`);
     expect(res.status).toBe(308);
-    expect(res.headers.get('location')).toBe(`/public/${id}/docs/`);
-    expect((await get(`/public/${id}`)).headers.get('location')).toBe(`/public/${id}/`);
+    expect(res.headers.get('location')).toBe(`/${id}/docs/`);
+    expect((await get(`/${id}`)).headers.get('location')).toBe(`/${id}/`);
   });
 
   it('serves index.html for a directory that has one', async () => {
     const id = await createSession();
     await writePublic(id, 'index.html', '<h1>home</h1>');
 
-    const res = await get(`/public/${id}/`);
+    const res = await get(`/${id}/`);
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toBe('text/html; charset=utf-8');
     expect(await res.text()).toBe('<h1>home</h1>');
@@ -141,7 +165,7 @@ describe('GET /public/{sessionId}/…', () => {
     await writePublic(id, 'a.png', 'x');
     await writePublic(id, 'sub/b.png', 'y');
 
-    const res = await get(`/public/${id}/`);
+    const res = await get(`/${id}/`);
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain('href="a.png"');
@@ -150,20 +174,20 @@ describe('GET /public/{sessionId}/…', () => {
 
   it('404s for missing files, a missing public dir, and malformed session ids', async () => {
     const id = await createSession();
-    expect((await get(`/public/${id}/nope.html`)).status).toBe(404);
+    expect((await get(`/${id}/nope.html`)).status).toBe(404);
 
     await rm(getSessionPublicDir(id), { recursive: true });
-    expect((await get(`/public/${id}/`)).status).toBe(404);
+    expect((await get(`/${id}/`)).status).toBe(404);
 
-    expect((await get('/public/not-a-uuid/')).status).toBe(404);
-    expect((await get(`/public/${randomUUID()}/`)).status).toBe(404);
+    expect((await get('/not-a-uuid/')).status).toBe(404);
+    expect((await get(`/${randomUUID()}/`)).status).toBe(404);
   });
 
   it('does not serve archived sessions even if files remain', async () => {
     const id = await createSession('archived');
     await writePublic(id, 'a.txt', 'x');
 
-    expect((await get(`/public/${id}/a.txt`)).status).toBe(404);
+    expect((await get(`/${id}/a.txt`)).status).toBe(404);
   });
 
   it('refuses traversal and symlinks that escape the public dir', async () => {
@@ -172,10 +196,10 @@ describe('GET /public/{sessionId}/…', () => {
     await symlink(os.homedir(), path.join(getSessionPublicDir(id), 'home'));
     await symlink('../secret.txt', path.join(getSessionPublicDir(id), 'leak.txt'));
 
-    expect((await get(`/public/${id}/..%2Fsecret.txt`)).status).toBe(404);
-    expect((await get(`/public/${id}/%2E%2E/secret.txt`)).status).toBe(404);
-    expect((await get(`/public/${id}/leak.txt`)).status).toBe(404);
-    expect((await get(`/public/${id}/home/`)).status).toBe(404);
+    expect((await get(`/${id}/..%2Fsecret.txt`)).status).toBe(404);
+    expect((await get(`/${id}/%2E%2E/secret.txt`)).status).toBe(404);
+    expect((await get(`/${id}/leak.txt`)).status).toBe(404);
+    expect((await get(`/${id}/home/`)).status).toBe(404);
   });
 
   it('follows symlinks that stay inside the public dir', async () => {
@@ -183,7 +207,7 @@ describe('GET /public/{sessionId}/…', () => {
     await writePublic(id, 'real.txt', 'real');
     await symlink('real.txt', path.join(getSessionPublicDir(id), 'alias.txt'));
 
-    const res = await get(`/public/${id}/alias.txt`);
+    const res = await get(`/${id}/alias.txt`);
     expect(res.status).toBe(200);
     expect(await res.text()).toBe('real');
   });

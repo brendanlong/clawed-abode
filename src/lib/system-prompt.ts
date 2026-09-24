@@ -24,15 +24,11 @@ For the same reason, don't touch global or user-level configuration unless the u
 
 export interface PublicDirInfo {
   path: string;
-  /** Absolute URL when the app's origin is known, else a path on it. */
   url: string;
 }
 
 export function buildPublicDirNote({ path, url }: PublicDirInfo): string {
-  const where = url.startsWith('/')
-    ? `at the path \`${url}\` on the same host the user reaches this web UI on`
-    : `at ${url}`;
-  return `To show the user something in their browser (HTML reports, plots, small demos), write it to \`${path}\` (create the directory if needed) instead of starting your own HTTP server. This app serves that directory ${where}; directories serve \`index.html\` or a file listing, and relative links between files work. Pages run sandboxed with an opaque origin: no cookies or localStorage, and \`fetch()\`/XHR and \`<script type="module">\` can't load other files from the directory, so inline data and use classic \`<script src>\` tags (images, stylesheets, and classic scripts load fine).`;
+  return `To show the user something in their browser (HTML reports, plots, small demos), write it to \`${path}\` (create the directory if needed) instead of starting your own HTTP server. It is served at ${url}; directories serve \`index.html\` or a file listing, and relative links between files work.`;
 }
 
 /**
