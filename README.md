@@ -203,18 +203,19 @@ tailscale funnel 3000
 
 The schema in [`src/lib/env.ts`](src/lib/env.ts) is authoritative; it is validated once at startup and the server refuses to boot on an invalid value.
 
-| Variable                  | Description                                                                                                   | Default              |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------- | -------------------- |
-| `PASSWORD_HASH`           | Base64-encoded Argon2 hash for auth; logins fail without it                                                   | None                 |
-| `DATABASE_URL`            | SQLite database path                                                                                          | `file:./data/dev.db` |
-| `GITHUB_TOKEN`            | GitHub Fine-grained PAT; without it repo/branch/issue pickers and PR status are unavailable                   | None                 |
-| `CLAUDE_CODE_OAUTH_TOKEN` | Claude Code OAuth token (`claude setup-token`); can instead be set in the Settings UI                         | None                 |
-| `CLAUDE_MODEL`            | Default Claude model (overridable per repo/session in Settings)                                               | `opus[1m]`           |
-| `SESSION_BRANCH_PREFIX`   | Prefix for session git branches                                                                               | `claude/`            |
-| `ENCRYPTION_KEY`          | 32+ char key for encrypting secrets; required before any secret env var or MCP header can be saved            | None                 |
-| `APP_URL`                 | Public URL the browser reaches this app on; only used to build the MCP OAuth redirect URI                     | Derived from request |
-| `CODE_SERVER_URL`         | Base URL of a code-server instance; enables the "Open in VS Code" button (see `scripts/setup-code-server.sh`) | None                 |
-| `LOG_LEVEL`               | Minimum server log level: `debug`, `info`, `warn`, or `error`                                                 | `info`               |
+| Variable                                 | Description                                                                                                                                        | Default              |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- |
+| `PASSWORD_HASH`                          | Base64-encoded Argon2 hash for auth; logins fail without it                                                                                        | None                 |
+| `DATABASE_URL`                           | SQLite database path                                                                                                                               | `file:./data/dev.db` |
+| `GITHUB_TOKEN`                           | GitHub Fine-grained PAT; without it repo/branch/issue pickers and PR status are unavailable                                                        | None                 |
+| `CLAUDE_CODE_OAUTH_TOKEN`                | Claude Code OAuth token (`claude setup-token`); can instead be set in the Settings UI                                                              | None                 |
+| `CLAUDE_MODEL`                           | Default Claude model (overridable per repo/session in Settings)                                                                                    | `opus[1m]`           |
+| `SESSION_BRANCH_PREFIX`                  | Prefix for session git branches                                                                                                                    | `claude/`            |
+| `ENCRYPTION_KEY`                         | 32+ char key for encrypting secrets; required before any secret env var or MCP header can be saved                                                 | None                 |
+| `APP_URL`                                | Public URL the browser reaches this app on; only used to build the MCP OAuth redirect URI                                                          | Derived from request |
+| `CODE_SERVER_URL`                        | Base URL of a code-server instance; enables the "Open in VS Code" button (see `scripts/setup-code-server.sh`)                                      | None                 |
+| `PUBLIC_FILES_PORT` / `PUBLIC_FILES_URL` | Loopback port and browser URL for serving each session's `public/` directory; set both or neither (see `scripts/expose-public-files-tailscale.sh`) | None                 |
+| `LOG_LEVEL`                              | Minimum server log level: `debug`, `info`, `warn`, or `error`                                                                                      | `info`               |
 
 ## Development
 

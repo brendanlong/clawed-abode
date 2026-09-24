@@ -23,11 +23,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/lib-code-server.sh
 source "$SCRIPT_DIR/lib-code-server.sh"
+# shellcheck source=scripts/lib-tailscale.sh
+source "$SCRIPT_DIR/lib-tailscale.sh"
 
-if ! command -v tailscale >/dev/null 2>&1; then
-  echo "Error: tailscale is not installed or not on PATH." >&2
-  exit 1
-fi
+require_tailscale
 
 # The loopback port is read from the code-server config (written by setup). If it
 # is missing, setup has not run yet — bail rather than proxying to a blank port.
@@ -47,22 +46,7 @@ tailscale serve --service="${SERVICE}" --bg --https=443 "http://127.0.0.1:${CODE
 # The service hostname is ${CODE_SERVER_SERVICE}.<tailnet-suffix>. Read the
 # tailnet's MagicDNS suffix (e.g. tail1234.ts.net) rather than this host's own
 # DNS name — the service has its own name, independent of the host's.
-if command -v jq >/dev/null 2>&1; then
-  DNS_SUFFIX="$(tailscale status --json | jq -r '.CurrentTailnet.MagicDNSSuffix')"
-elif command -v python3 >/dev/null 2>&1; then
-  DNS_SUFFIX="$(tailscale status --json |
-    python3 -c 'import sys,json; print(json.load(sys.stdin)["CurrentTailnet"]["MagicDNSSuffix"])')"
-else
-  echo "Error: need jq or python3 to read this tailnet's DNS suffix." >&2
-  exit 1
-fi
-DNS_SUFFIX="${DNS_SUFFIX%.}" # strip any trailing dot
-
-if [ -z "$DNS_SUFFIX" ] || [ "$DNS_SUFFIX" = "null" ]; then
-  echo "Error: could not determine this tailnet's DNS suffix." >&2
-  echo "Is Tailscale logged in? Try: tailscale status" >&2
-  exit 1
-fi
+DNS_SUFFIX="$(tailscale_status_field CurrentTailnet.MagicDNSSuffix)"
 
 URL="https://${CODE_SERVER_SERVICE}.${DNS_SUFFIX}"
 

@@ -390,7 +390,7 @@ async function establishSessionQuery(
 
   const repoFullName = session.repoUrl ? extractRepoFullName(session.repoUrl) : null;
   const settingsKey = repoFullName ?? '__no_repo__';
-  const settings = await loadMergedSessionSettings(settingsKey, session.claudeModel);
+  const settings = await loadMergedSessionSettings(sessionId, settingsKey, session.claudeModel);
   const workingDir = getSessionWorkingDir(sessionId, session.repoPath);
 
   if (session.repoPath) {
@@ -493,7 +493,7 @@ async function applyLiveSettings(sessionId: string, state: SessionState): Promis
       where: { id: sessionId },
       select: { claudeModel: true },
     });
-    settings = await loadMergedSessionSettings(state.settingsKey, session?.claudeModel);
+    settings = await loadMergedSessionSettings(sessionId, state.settingsKey, session?.claudeModel);
   } catch (err) {
     log.debug('applyLiveSettings: failed to load settings', {
       sessionId,

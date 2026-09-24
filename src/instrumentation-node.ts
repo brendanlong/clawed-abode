@@ -5,10 +5,11 @@
  * from there — even inside the NEXT_RUNTIME guard.
  */
 
-import { getEnv } from '@/lib/env';
+import { env, getEnv } from '@/lib/env';
 import { createLogger, toError } from '@/lib/logger';
 import { prisma } from '@/lib/prisma';
 import { purgeInactiveAuthSessions } from '@/server/services/auth-sessions';
+import { startPublicFilesServer } from '@/server/services/public-files-server';
 import {
   initRateLimitPause,
   reapOrphanedSessionScopes,
@@ -65,6 +66,16 @@ export async function registerNode() {
     await initRateLimitPause();
   } catch (err) {
     log.error('Error restoring rate-limit pause state', toError(err));
+  }
+
+  // Fatal like a bad env: the system prompt would otherwise hand out dead links.
+  if (env.PUBLIC_FILES_PORT !== undefined) {
+    try {
+      await startPublicFilesServer(env.PUBLIC_FILES_PORT);
+    } catch (err) {
+      log.error('Refusing to start: the public files server could not listen', toError(err));
+      process.exit(1);
+    }
   }
 
   // Sessions left `running` by a previous process are revived lazily with

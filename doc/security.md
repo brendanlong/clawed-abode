@@ -8,6 +8,8 @@ Session isolation is convention-only and `bypassPermissions` is used — the mac
 
 **MCP OAuth callback**: `/api/mcp/oauth/callback` is the one route that runs unauthenticated. It has to — the app authenticates with a bearer token the browser only attaches to its own tRPC calls, and a cross-site redirect from an authorization server carries no such header. Its credential is the OAuth `state`: 256 bits of randomness bound to one pending flow, consumed on use and expired after 15 minutes. The handler reads nothing else from the query string. See [`settings.md`](settings.md) for the flow.
 
+**Public files** (the separate public-files port, see DESIGN.md): the pages are agent-written and may pull in third-party scripts, so they must not share the app's origin, or they could read its localStorage token. A different port is a different origin but the same site, and cookies ignore ports: the client mirrors its bearer token into an HttpOnly, `SameSite=Lax` `public_auth` cookie ([`src/app/api/auth/public-cookie/route.ts`](../src/app/api/auth/public-cookie/route.ts)) that the public server checks and the app's own routes ignore. It is the same token, not a weaker credential; HttpOnly keeps it from page scripts. This only works when `PUBLIC_FILES_URL` uses the hostname the user reaches the app on. All sessions' pages share one origin, which is fine for a single user.
+
 ## Rendering Untrusted Markdown
 
 Model output and the tool results quoted inside it are rendered as HTML by [`MarkdownContent`](../src/components/MarkdownContent.tsx): marked parses it, `DOMPurify.sanitize` cleans the result, and a sanitizer hook adds `target="_blank" rel="noopener noreferrer"` to anchors.

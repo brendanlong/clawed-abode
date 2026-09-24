@@ -42,6 +42,32 @@ describe('env', () => {
     expect(() => getEnv()).toThrow(/LOG_LEVEL/);
   });
 
+  it('requires PUBLIC_FILES_PORT and PUBLIC_FILES_URL together', () => {
+    process.env.PUBLIC_FILES_PORT = '8444';
+    delete process.env.PUBLIC_FILES_URL;
+    resetEnvCache();
+    expect(() => getEnv()).toThrow(/PUBLIC_FILES_URL/);
+
+    process.env.PUBLIC_FILES_URL = 'https://host.ts.net:8444';
+    resetEnvCache();
+    expect(env.PUBLIC_FILES_PORT).toBe(8444);
+  });
+
+  it('treats empty PUBLIC_FILES_* values as unset', () => {
+    process.env.PUBLIC_FILES_PORT = '';
+    process.env.PUBLIC_FILES_URL = '';
+    resetEnvCache();
+    expect(env.PUBLIC_FILES_PORT).toBeUndefined();
+    expect(env.PUBLIC_FILES_URL).toBeUndefined();
+  });
+
+  it('rejects a PUBLIC_FILES_URL with a path', () => {
+    process.env.PUBLIC_FILES_PORT = '8444';
+    process.env.PUBLIC_FILES_URL = 'https://host.ts.net:8444/files';
+    resetEnvCache();
+    expect(() => getEnv()).toThrow(/PUBLIC_FILES_URL/);
+  });
+
   it('lists every invalid field in the error', () => {
     process.env.LOG_LEVEL = 'verbose';
     process.env.ENCRYPTION_KEY = 'short';

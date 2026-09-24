@@ -8,10 +8,12 @@ import {
   type SettingSourceFlags,
 } from '@/lib/setting-sources';
 import { env } from '@/lib/env';
+import { publicFilesUrl } from '@/lib/public-files';
 import type { ResolvedEnvVar, ResolvedMcpServer } from '@/lib/settings-types';
 import { decryptEnvVars, decryptMcpServers } from './settings-helpers';
 import { GLOBAL_SCOPE, GLOBAL_SETTINGS_ID } from './settings-scope';
 import { applyMcpOAuthHeaders } from './mcp-oauth';
+import { getSessionPublicDir } from './public-dir';
 
 /** Per-repo settings with secrets decrypted, ready to merge. */
 export interface ResolvedRepoSettings {
@@ -105,6 +107,7 @@ export interface MergedSessionSettings {
  * and merges env vars and MCP servers.
  */
 export async function loadMergedSessionSettings(
+  sessionId: string,
   repoFullName: string | null | undefined,
   sessionModel?: string | null | undefined
 ): Promise<MergedSessionSettings> {
@@ -114,6 +117,12 @@ export async function loadMergedSessionSettings(
   ]);
 
   const systemPrompt = buildSystemPrompt({
+    publicDir: env.PUBLIC_FILES_URL
+      ? {
+          path: getSessionPublicDir(sessionId),
+          url: publicFilesUrl(env.PUBLIC_FILES_URL, sessionId),
+        }
+      : undefined,
     customSystemPrompt: repoSettings?.customSystemPrompt,
     globalSettings,
   });

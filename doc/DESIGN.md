@@ -74,6 +74,10 @@ The schema ([`prisma/schema.prisma`](../prisma/schema.prisma)) is the source of 
 
 `POST /api/upload` ([`src/app/api/upload/route.ts`](../src/app/api/upload/route.ts)) — a route rather than a tRPC mutation so binary bodies stream as `FormData` instead of being base64-inflated through superjson. Files land in an `uploads/` **sibling of the clone**, so they are readable by the agent but invisible to git status and removed with the workspace on archive. Stored names get a random prefix (re-uploads never overwrite; no check-then-set) and a sanitized basename, and size/count caps are enforced up front so a batch never writes partially ([`src/server/services/uploads.ts`](../src/server/services/uploads.ts)). On send, attachment paths are prefixed onto the persisted message text, so the transcript shows exactly what the model saw.
 
+### Public Files
+
+Opt-in (`PUBLIC_FILES_PORT` + `PUBLIC_FILES_URL`): a second HTTP server in the same process ([`public-files-server.ts`](../src/server/services/public-files-server.ts)) serves each workspace's `public/` directory (a sibling of the clone, like `uploads/`) at `/{sessionId}/…`, and the system prompt gives each session its directory and URL — so agents hand the user a stable link instead of running their own HTTP server. It is a separate port rather than an app route to give agent-written pages their own origin (see [`security.md`](security.md)). Exposed by [`scripts/expose-public-files-tailscale.sh`](../scripts/expose-public-files-tailscale.sh).
+
 ### System Prompt
 
 `DEFAULT_SYSTEM_PROMPT` in [`src/lib/system-prompt.ts`](../src/lib/system-prompt.ts) — the prompt text states its own rationale: the user has no local file access (so commit/push/PR is mandatory), and every session shares one host user with the app server (so kill by PID or a `--cgroup`-scoped pattern, never by name).

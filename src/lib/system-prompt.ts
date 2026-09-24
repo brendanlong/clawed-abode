@@ -22,12 +22,23 @@ pkill --cgroup "$(sed 's#^0::##' /proc/self/cgroup)" -f <pattern>
 
 For the same reason, don't touch global or user-level configuration unless the user explicitly asks: no \`git config --global\`, \`~/.bashrc\`, or other \`$HOME\` dotfiles. Those changes permanently affect every other session on this host. Scope tests to your repo or environment if necessary.`;
 
+export interface PublicDirInfo {
+  path: string;
+  url: string;
+}
+
+export function buildPublicDirNote({ path, url }: PublicDirInfo): string {
+  return `To show the user something in their browser (HTML reports, plots, small demos), write it to \`${path}\` (create the directory if needed) instead of starting your own HTTP server. It is served at ${url}; directories serve \`index.html\` or a file listing, and relative links between files work.`;
+}
+
 /**
  * Build the full system prompt from global settings and per-repo custom prompt.
  *
- * Order: base prompt (default or override) → global append → per-repo custom.
+ * Order: base prompt (default or override) → public-dir note → global append → per-repo custom.
+ * The public-dir note describes the session rather than policy, so an override keeps it.
  */
 export function buildSystemPrompt(options: {
+  publicDir?: PublicDirInfo;
   customSystemPrompt?: string | null;
   globalSettings?: {
     systemPromptOverride: string | null;
@@ -35,7 +46,7 @@ export function buildSystemPrompt(options: {
     systemPromptAppend: string | null;
   } | null;
 }): string {
-  const { customSystemPrompt, globalSettings } = options;
+  const { publicDir, customSystemPrompt, globalSettings } = options;
 
   let basePrompt = DEFAULT_SYSTEM_PROMPT;
   if (globalSettings?.systemPromptOverrideEnabled && globalSettings.systemPromptOverride) {
@@ -43,6 +54,10 @@ export function buildSystemPrompt(options: {
   }
 
   let fullSystemPrompt = basePrompt;
+
+  if (publicDir) {
+    fullSystemPrompt += '\n\n' + buildPublicDirNote(publicDir);
+  }
 
   if (globalSettings?.systemPromptAppend) {
     fullSystemPrompt += '\n\n' + globalSettings.systemPromptAppend;

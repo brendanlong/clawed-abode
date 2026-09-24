@@ -41,6 +41,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  // Links to the public files server can't carry the bearer header, so mirror it into a cookie.
+  useEffect(() => {
+    if (authState.isLoading) return;
+    const token = authState.token;
+    fetch('/api/auth/public-cookie', {
+      method: token ? 'POST' : 'DELETE',
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    }).catch(() => {
+      // Best-effort: only public-file links depend on it.
+    });
+  }, [authState]);
+
   const login = useCallback((newToken: string) => {
     setAuthToken(newToken);
     setAuthState({ token: newToken, isLoading: false });
