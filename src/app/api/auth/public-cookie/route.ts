@@ -17,9 +17,8 @@ const COOKIE_OPTIONS = {
  *
  * SameSite=None because public pages are served with a CSP sandbox, which gives
  * them an opaque origin: their own subresource requests (images, scripts) count
- * as cross-site and a Lax cookie would be withheld. The cookie is path-scoped and
- * only authorizes reads of public files, so cross-site sending grants nothing new
- * beyond what the session UUID in the URL already gates.
+ * as cross-site and a Lax cookie would be withheld. The cookie is path-scoped, so
+ * it is only ever sent with reads of public files, which still need the session UUID.
  */
 export async function POST(request: Request): Promise<Response> {
   const token = parseAuthHeader(request.headers.get('authorization'));

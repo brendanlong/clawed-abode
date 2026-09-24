@@ -27,10 +27,14 @@ async function writePublic(sessionId: string, relPath: string, content: string):
   await writeFile(file, content);
 }
 
-function get(pathname: string, token: string | null = TOKEN): Promise<Response> {
+function get(
+  pathname: string,
+  token: string | null = TOKEN,
+  headers: Record<string, string> = {}
+): Promise<Response> {
   return GET(
     new NextRequest(`http://localhost${pathname}`, {
-      headers: token ? { cookie: `public_auth=${token}` } : {},
+      headers: { ...headers, ...(token ? { cookie: `public_auth=${token}` } : {}) },
     })
   );
 }
@@ -77,6 +81,30 @@ describe('GET /public/{sessionId}/…', () => {
     expect(res.headers.get('content-type')).toBe('image/svg+xml');
     expect(res.headers.get('cache-control')).toBe('no-cache');
     expect(await res.text()).toBe('<svg/>');
+  });
+
+  it('serves byte ranges', async () => {
+    const id = await createSession();
+    await writePublic(id, 'clip.mp4', '0123456789');
+
+    const res = await get(`/public/${id}/clip.mp4`, TOKEN, { range: 'bytes=2-4' });
+    expect(res.status).toBe(206);
+    expect(res.headers.get('content-range')).toBe('bytes 2-4/10');
+    expect(res.headers.get('content-length')).toBe('3');
+    expect(await res.text()).toBe('234');
+
+    const past = await get(`/public/${id}/clip.mp4`, TOKEN, { range: 'bytes=10-' });
+    expect(past.status).toBe(416);
+    expect(past.headers.get('content-range')).toBe('bytes */10');
+  });
+
+  it('serves empty files', async () => {
+    const id = await createSession();
+    await writePublic(id, 'empty.txt', '');
+
+    const res = await get(`/public/${id}/empty.txt`);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('');
   });
 
   it('decodes percent-encoded names', async () => {

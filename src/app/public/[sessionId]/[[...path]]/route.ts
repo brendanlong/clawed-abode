@@ -1,12 +1,13 @@
-import { createReadStream } from 'fs';
+import { open } from 'fs/promises';
 import { Readable } from 'stream';
 import type { NextRequest } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { resolveAuthSessionId } from '@/server/trpc';
-import { resolvePublicTarget, type PublicFile } from '@/server/services/public-dir';
+import { resolvePublicTarget } from '@/server/services/public-dir';
 import {
   PUBLIC_AUTH_COOKIE,
   contentTypeFor,
+  parseByteRange,
   parsePublicRequestPath,
   renderDirectoryListing,
 } from '@/lib/public-files';
@@ -40,28 +41,58 @@ export async function GET(request: NextRequest): Promise<Response> {
     case 'notFound':
       return notFound();
     case 'file':
-      return serveFile(target.file, parsed.segments.at(-1) ?? '');
+      return serveFile(target.path, parsed.segments.at(-1) ?? '', request);
     case 'directory':
       // Relative links in the page resolve against the URL, so it must end in '/'.
       if (!parsed.trailingSlash) {
         return new Response(null, { status: 308, headers: { Location: `${pathname}/` } });
       }
-      if (target.index) return serveFile(target.index, 'index.html');
+      if (target.index !== null) return serveFile(target.index, 'index.html', request);
       return new Response(renderDirectoryListing(pathname, target.entries), {
         headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' },
       });
   }
 }
 
-function serveFile(file: PublicFile, name: string): Response {
-  const body = Readable.toWeb(createReadStream(file.path)) as ReadableStream<Uint8Array>;
+async function serveFile(filePath: string, name: string, request: Request): Promise<Response> {
+  let handle;
+  try {
+    handle = await open(filePath);
+  } catch {
+    return notFound();
+  }
+  // Size from the open handle, so an agent replacing the file mid-request can't
+  // make Content-Length disagree with the bytes streamed.
+  const { size } = await handle.stat();
+  const headers: Record<string, string> = {
+    'Content-Type': contentTypeFor(name),
+    'Accept-Ranges': 'bytes',
+    // Agents overwrite files in place; always revalidate.
+    'Cache-Control': 'no-cache',
+  };
+
+  const range = parseByteRange(request.headers.get('range'), size);
+  if (range === 'unsatisfiable') {
+    await handle.close();
+    return new Response(null, {
+      status: 416,
+      headers: { ...headers, 'Content-Range': `bytes */${size}` },
+    });
+  }
+  if (size === 0) {
+    await handle.close();
+    return new Response(null, { headers: { ...headers, 'Content-Length': '0' } });
+  }
+
+  const { start, end } = range ?? { start: 0, end: size - 1 };
+  const body = Readable.toWeb(
+    handle.createReadStream({ start, end })
+  ) as ReadableStream<Uint8Array>;
+  headers['Content-Length'] = String(end - start + 1);
+  if (!range) return new Response(body, { headers });
   return new Response(body, {
-    headers: {
-      'Content-Type': contentTypeFor(name),
-      'Content-Length': String(file.size),
-      // Agents overwrite files in place; always revalidate.
-      'Cache-Control': 'no-cache',
-    },
+    status: 206,
+    headers: { ...headers, 'Content-Range': `bytes ${start}-${end}/${size}` },
   });
 }
 

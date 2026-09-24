@@ -5,6 +5,7 @@ const nextConfig = {
   turbopack: {},
   // Next strips trailing slashes by default, which loops with the /public route's
   // redirect *to* a trailing slash (directory pages need one for relative links).
+  // App-wide, so app pages also answer at `/x/`; nothing links there.
   skipTrailingSlashRedirect: true,
   // Exclude the data directory from production build output tracing.
   // The data/ directory contains the SQLite database and sockets at runtime

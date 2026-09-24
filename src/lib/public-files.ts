@@ -6,7 +6,7 @@ export const PUBLIC_URL_PREFIX = '/public';
 /**
  * Browsers only attach the app's bearer token to its own fetches, so plain links
  * to public files authenticate with a copy of it in this cookie, scoped to
- * {@link PUBLIC_URL_PREFIX} so it authorizes nothing else.
+ * {@link PUBLIC_URL_PREFIX} so the browser sends it nowhere else.
  */
 export const PUBLIC_AUTH_COOKIE = 'public_auth';
 
@@ -100,6 +100,35 @@ export function contentTypeFor(fileName: string): string {
   const dot = fileName.lastIndexOf('.');
   const ext = dot === -1 ? '' : fileName.slice(dot + 1).toLowerCase();
   return CONTENT_TYPES[ext] ?? 'application/octet-stream';
+}
+
+export type ByteRange = { start: number; end: number };
+
+/**
+ * Parse a single-range `Range: bytes=…` header against a file size (iOS Safari
+ * won't play video without range support). Returns null to serve the whole file
+ * (no header, or a form we don't support, like multiple ranges) and
+ * 'unsatisfiable' for a range entirely past the end.
+ */
+export function parseByteRange(
+  header: string | null,
+  size: number
+): ByteRange | 'unsatisfiable' | null {
+  const match = header?.match(/^bytes=(\d*)-(\d*)$/);
+  if (!match) return null;
+  const [, rawStart, rawEnd] = match;
+  if (rawStart === '' && rawEnd === '') return null;
+
+  if (rawStart === '') {
+    const suffix = Number(rawEnd);
+    if (suffix === 0 || size === 0) return 'unsatisfiable';
+    return { start: Math.max(0, size - suffix), end: size - 1 };
+  }
+  const start = Number(rawStart);
+  const end = rawEnd === '' ? size - 1 : Math.min(Number(rawEnd), size - 1);
+  if (start >= size) return 'unsatisfiable';
+  if (end < start) return null;
+  return { start, end };
 }
 
 export interface DirectoryEntry {

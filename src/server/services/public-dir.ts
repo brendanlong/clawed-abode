@@ -12,14 +12,9 @@ export function getSessionPublicDir(sessionId: string): string {
   return path.join(getSessionWorkspacePath(sessionId), 'public');
 }
 
-export interface PublicFile {
-  path: string;
-  size: number;
-}
-
 export type PublicTarget =
-  | { kind: 'file'; file: PublicFile }
-  | { kind: 'directory'; index: PublicFile }
+  | { kind: 'file'; path: string }
+  | { kind: 'directory'; index: string }
   | { kind: 'directory'; index: null; entries: DirectoryEntry[] }
   | { kind: 'notFound' };
 
@@ -42,7 +37,7 @@ export async function resolvePublicTarget(
   if (!target) return { kind: 'notFound' };
 
   if (target.stats.isFile()) {
-    return { kind: 'file', file: { path: target.path, size: target.stats.size } };
+    return { kind: 'file', path: target.path };
   }
   if (!target.stats.isDirectory()) {
     return { kind: 'notFound' };
@@ -50,7 +45,7 @@ export async function resolvePublicTarget(
 
   const index = await resolveInside(root, [...segments, 'index.html']);
   if (index?.stats.isFile()) {
-    return { kind: 'directory', index: { path: index.path, size: index.stats.size } };
+    return { kind: 'directory', index: index.path };
   }
   const dirents = await readdir(target.path, { withFileTypes: true });
   return {

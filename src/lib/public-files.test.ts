@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   contentTypeFor,
+  parseByteRange,
   parsePublicRequestPath,
   publicUrlPath,
   renderDirectoryListing,
@@ -84,5 +85,29 @@ describe('renderDirectoryListing', () => {
 
   it('says when a directory is empty', () => {
     expect(renderDirectoryListing('/', [])).toContain('empty');
+  });
+});
+
+describe('parseByteRange', () => {
+  it('serves the whole file without a usable header', () => {
+    expect(parseByteRange(null, 100)).toBeNull();
+    expect(parseByteRange('bytes=-', 100)).toBeNull();
+    expect(parseByteRange('bytes=0-1,5-6', 100)).toBeNull();
+    expect(parseByteRange('items=0-1', 100)).toBeNull();
+    expect(parseByteRange('bytes=5-2', 100)).toBeNull();
+  });
+
+  it('parses bounded, open-ended, and suffix ranges, clamping to the file', () => {
+    expect(parseByteRange('bytes=0-9', 100)).toEqual({ start: 0, end: 9 });
+    expect(parseByteRange('bytes=90-', 100)).toEqual({ start: 90, end: 99 });
+    expect(parseByteRange('bytes=90-500', 100)).toEqual({ start: 90, end: 99 });
+    expect(parseByteRange('bytes=-10', 100)).toEqual({ start: 90, end: 99 });
+    expect(parseByteRange('bytes=-500', 100)).toEqual({ start: 0, end: 99 });
+  });
+
+  it('rejects ranges past the end', () => {
+    expect(parseByteRange('bytes=100-', 100)).toBe('unsatisfiable');
+    expect(parseByteRange('bytes=-0', 100)).toBe('unsatisfiable');
+    expect(parseByteRange('bytes=0-', 0)).toBe('unsatisfiable');
   });
 });
