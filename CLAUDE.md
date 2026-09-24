@@ -20,6 +20,7 @@
 - Always write tests for the intended behavior of functions, not the actual behavior. If the actual behavior is wrong and the issue is pre-existing, write the test correctly, mark it skipped, and file a GitHub issue on brendanlong/clawed-abode
 - Always import at the top of files, not in the middle of functions
 - Never use barrel files (index.ts that re-export from other modules). Import directly from the source file instead.
+- Next.js 16 has breaking changes your training data may not cover; check the version-matched docs in `node_modules/next/dist/docs/` before using a Next API you're unsure of.
 
 # Documentation rules
 
