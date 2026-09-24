@@ -3,6 +3,11 @@ import { DEFAULT_CLAUDE_MODEL } from './claude-model';
 
 export const LOG_LEVELS = ['debug', 'info', 'warn', 'error'] as const;
 
+/** Treat `VAR=` (common in .env templates) as unset. */
+function emptyToUndefined(value: unknown): unknown {
+  return value === '' ? undefined : value;
+}
+
 const envSchema = z
   .object({
     DATABASE_URL: z.string().default('file:./data/dev.db'),
@@ -39,8 +44,19 @@ const envSchema = z
     // Both or neither: the port without a URL would serve files no agent links to.
     // The URL must use the app's hostname — the auth cookie is shared across ports,
     // not hostnames.
-    PUBLIC_FILES_PORT: z.coerce.number().int().min(1).max(65535).optional(),
-    PUBLIC_FILES_URL: z.string().url().optional(),
+    PUBLIC_FILES_PORT: z.preprocess(
+      emptyToUndefined,
+      z.coerce.number().int().min(1).max(65535).optional()
+    ),
+    // Origin only: the server serves /{sessionId}/… at its root.
+    PUBLIC_FILES_URL: z.preprocess(
+      emptyToUndefined,
+      z
+        .string()
+        .url()
+        .refine((url) => new URL(url).pathname === '/', 'must be an origin, with no path')
+        .optional()
+    ),
     // Minimum level the server logger writes (see src/lib/logger.ts).
     LOG_LEVEL: z.enum(LOG_LEVELS).default('info'),
   })

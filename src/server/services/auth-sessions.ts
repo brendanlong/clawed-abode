@@ -36,7 +36,7 @@ export async function purgeInactiveAuthSessions(now = new Date()): Promise<numbe
 /**
  * The auth session a bearer token belongs to, or null when it is unknown,
  * revoked, expired, or idle. Shared by the Authorization header (tRPC, upload)
- * and the `/public` cookie so both enforce the same rules.
+ * and the public-files cookie so both enforce the same rules.
  */
 export async function resolveAuthSessionId(token: string): Promise<string | null> {
   const session = await prisma.authSession.findUnique({

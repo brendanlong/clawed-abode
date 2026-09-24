@@ -76,7 +76,7 @@ The schema ([`prisma/schema.prisma`](../prisma/schema.prisma)) is the source of 
 
 ### Public Files
 
-Opt-in (`PUBLIC_FILES_PORT` + `PUBLIC_FILES_URL`): a second HTTP server in the same process ([`public-files-server.ts`](../src/server/services/public-files-server.ts)) serves each workspace's `public/` directory (a sibling of the clone, like `uploads/`) at `/{sessionId}/…`, so agents hand the user a stable link instead of running their own HTTP server. The system prompt tells each session its directory and URL. A separate port rather than an app route: it gives agent-written pages their own origin, isolated from the app's token without a sandbox that would break `fetch()` and module scripts (see [`security.md`](security.md)). Directories get `index.html` or a listing; symlinks may not resolve outside the directory; archived sessions 404. Exposed by [`scripts/expose-public-files-tailscale.sh`](../scripts/expose-public-files-tailscale.sh).
+Opt-in (`PUBLIC_FILES_PORT` + `PUBLIC_FILES_URL`): a second HTTP server in the same process ([`public-files-server.ts`](../src/server/services/public-files-server.ts)) serves each workspace's `public/` directory (a sibling of the clone, like `uploads/`) at `/{sessionId}/…`, and the system prompt gives each session its directory and URL — so agents hand the user a stable link instead of running their own HTTP server. It is a separate port rather than an app route to give agent-written pages their own origin (see [`security.md`](security.md)). Exposed by [`scripts/expose-public-files-tailscale.sh`](../scripts/expose-public-files-tailscale.sh).
 
 ### System Prompt
 

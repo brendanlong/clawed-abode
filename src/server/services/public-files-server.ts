@@ -25,6 +25,11 @@ const log = createLogger('public-files');
 export function createPublicFilesServer(): Server {
   return createServer((req, res) => {
     handleRequest(req, res).catch((err) => {
+      // Clients abort mid-stream all the time (video seeking, navigating away).
+      if (res.destroyed) {
+        log.debug('Public file response aborted', { url: req.url });
+        return;
+      }
       log.error('Public file request failed', toError(err), { url: req.url });
       if (!res.headersSent) sendText(res, 500, 'Internal error\n');
       else res.destroy();

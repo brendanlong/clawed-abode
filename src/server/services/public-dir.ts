@@ -1,4 +1,4 @@
-import { readdir, realpath, stat } from 'fs/promises';
+import { lstat, readdir, realpath, stat } from 'fs/promises';
 import type { Stats } from 'fs';
 import path from 'path';
 import type { DirectoryEntry } from '@/lib/public-files';
@@ -27,9 +27,12 @@ export async function resolvePublicTarget(
   sessionId: string,
   segments: string[]
 ): Promise<PublicTarget> {
+  // Resolve the workspace, not public/ itself: `public` must be a real directory,
+  // or an agent's `ln -s ~ public` would move the containment root to $HOME.
   let root: string;
   try {
-    root = await realpath(getSessionPublicDir(sessionId));
+    root = path.join(await realpath(getSessionWorkspacePath(sessionId)), 'public');
+    if (!(await lstat(root)).isDirectory()) return { kind: 'notFound' };
   } catch {
     return { kind: 'notFound' };
   }

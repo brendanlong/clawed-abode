@@ -202,6 +202,18 @@ describe('public files server', () => {
     expect((await get(`/${id}/home/`)).status).toBe(404);
   });
 
+  it('refuses a public dir that is itself a symlink', async () => {
+    const id = await createSession();
+    const elsewhere = path.join(getSessionWorkspacePath(id), 'elsewhere');
+    await mkdir(elsewhere);
+    await writeFile(path.join(elsewhere, 'secret.txt'), 'secret');
+    await rm(getSessionPublicDir(id), { recursive: true });
+    await symlink(elsewhere, getSessionPublicDir(id));
+
+    expect((await get(`/${id}/secret.txt`)).status).toBe(404);
+    expect((await get(`/${id}/`)).status).toBe(404);
+  });
+
   it('follows symlinks that stay inside the public dir', async () => {
     const id = await createSession();
     await writePublic(id, 'real.txt', 'real');

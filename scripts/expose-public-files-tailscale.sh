@@ -21,7 +21,8 @@ source "$SCRIPT_DIR/lib-tailscale.sh"
 
 LOCAL_PORT="${1:-}"
 HTTPS_PORT="${2:-8444}"
-if ! [[ "$LOCAL_PORT" =~ ^[0-9]+$ && "$HTTPS_PORT" =~ ^[0-9]+$ ]]; then
+valid_port() { [[ "$1" =~ ^[0-9]+$ ]] && ((1 <= 10#$1 && 10#$1 <= 65535)); }
+if ! valid_port "$LOCAL_PORT" || ! valid_port "$HTTPS_PORT"; then
   echo "Usage: $0 <PUBLIC_FILES_PORT> [https-port (default 8444)]" >&2
   exit 1
 fi
@@ -29,17 +30,18 @@ fi
 require_tailscale
 
 if [ -n "${TAILSCALE_SERVICE:-}" ]; then
-  SERVICE="svc:${TAILSCALE_SERVICE}"
-  echo "==> Serving public files on ${SERVICE} (HTTPS ${HTTPS_PORT} -> 127.0.0.1:${LOCAL_PORT})"
-  tailscale serve --service="${SERVICE}" --bg --https="${HTTPS_PORT}" "http://127.0.0.1:${LOCAL_PORT}"
+  # Resolve the hostname before changing any serve config, so a failed lookup
+  # leaves nothing half-configured.
   HOST="${TAILSCALE_SERVICE}.$(tailscale_status_field CurrentTailnet.MagicDNSSuffix)"
-  OFF_CMD="tailscale serve --service=${SERVICE} --https=${HTTPS_PORT} off"
+  SERVE_ARGS=(--service="svc:${TAILSCALE_SERVICE}")
 else
-  echo "==> Serving public files on this host (HTTPS ${HTTPS_PORT} -> 127.0.0.1:${LOCAL_PORT})"
-  tailscale serve --bg --https="${HTTPS_PORT}" "http://127.0.0.1:${LOCAL_PORT}"
   HOST="$(tailscale_status_field Self.DNSName)"
-  OFF_CMD="tailscale serve --https=${HTTPS_PORT} off"
+  SERVE_ARGS=()
 fi
+
+echo "==> Serving public files at https://${HOST}:${HTTPS_PORT} -> 127.0.0.1:${LOCAL_PORT}"
+tailscale serve "${SERVE_ARGS[@]}" --bg --https="${HTTPS_PORT}" "http://127.0.0.1:${LOCAL_PORT}"
+OFF_CMD="tailscale serve ${SERVE_ARGS[*]} --https=${HTTPS_PORT} off"
 
 URL="https://${HOST}:${HTTPS_PORT}"
 

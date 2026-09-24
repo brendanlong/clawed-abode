@@ -68,11 +68,13 @@ export async function registerNode() {
     log.error('Error restoring rate-limit pause state', toError(err));
   }
 
+  // Fatal like a bad env: the system prompt would otherwise hand out dead links.
   if (env.PUBLIC_FILES_PORT !== undefined) {
     try {
       await startPublicFilesServer(env.PUBLIC_FILES_PORT);
     } catch (err) {
-      log.error('Error starting the public files server', toError(err));
+      log.error('Refusing to start: the public files server could not listen', toError(err));
+      process.exit(1);
     }
   }
 

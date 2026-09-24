@@ -41,7 +41,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  // Plain links to /public/… can't carry the bearer header, so mirror it into a cookie.
+  // Links to the public files server can't carry the bearer header, so mirror it into a cookie.
   useEffect(() => {
     if (authState.isLoading) return;
     const token = authState.token;
