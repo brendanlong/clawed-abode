@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'http';
+import { randomUUID } from 'crypto';
 import type { AddressInfo } from 'net';
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { setupTestDb, teardownTestDb, testPrisma, clearTestDb } from '@/test/setup-test-db';
@@ -252,7 +253,7 @@ describe('MCP OAuth', () => {
     await connect();
 
     const merger = await import('./settings-merger');
-    const settings = await merger.loadMergedSessionSettings(null);
+    const settings = await merger.loadMergedSessionSettings(randomUUID(), null);
     expect(settings.mcpServers).toEqual([
       {
         name: 'remote',
@@ -540,7 +541,7 @@ describe('MCP OAuth', () => {
     expect(mcpServers[0].oauth).toMatchObject({ state: 'connected' });
 
     const merger = await import('./settings-merger');
-    const settings = await merger.loadMergedSessionSettings('o/r');
+    const settings = await merger.loadMergedSessionSettings(randomUUID(), 'o/r');
     expect(settings.mcpServers[0]).toMatchObject({
       headers: { Authorization: 'Bearer access-1' },
     });

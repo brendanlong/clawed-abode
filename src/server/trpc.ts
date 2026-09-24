@@ -31,30 +31,29 @@ export async function createContext(opts: { headers: Headers }): Promise<Context
     userAgent: opts.headers.get('user-agent') ?? undefined,
     appOrigin: resolveAppOrigin(env.APP_URL, originHeadersFrom(opts.headers)),
   };
-  const authHeader = opts.headers.get('authorization');
-  const token = parseAuthHeader(authHeader);
+  const token = parseAuthHeader(opts.headers.get('authorization'));
+  return { sessionId: token ? await resolveAuthSessionId(token) : null, ...clientInfo };
+}
 
-  if (!token) {
-    return { sessionId: null, ...clientInfo };
-  }
-
+/**
+ * The auth session a bearer token belongs to, or null when it is unknown,
+ * revoked, expired, or idle. Shared by the Authorization header (tRPC, upload)
+ * and the `/public` cookie so both enforce the same rules.
+ */
+export async function resolveAuthSessionId(token: string): Promise<string | null> {
   const session = await prisma.authSession.findUnique({
     where: { token },
     select: { id: true, expiresAt: true, lastActivityAt: true, revokedAt: true },
   });
 
-  if (!session) {
-    return { sessionId: null, ...clientInfo };
+  if (!session || session.revokedAt) {
+    return null;
   }
 
   const now = new Date();
 
-  if (session.revokedAt) {
-    return { sessionId: null, ...clientInfo };
-  }
-
   if (session.expiresAt < now) {
-    return { sessionId: null, ...clientInfo };
+    return null;
   }
 
   // Check for idle timeout
@@ -62,7 +61,7 @@ export async function createContext(opts: { headers: Headers }): Promise<Context
   if (idleTime > IDLE_TIMEOUT_MS) {
     // Session is idle, reject it (but don't delete - keep for audit/display)
     log.info('Session rejected due to idle timeout', { sessionId: session.id });
-    return { sessionId: null, ...clientInfo };
+    return null;
   }
 
   // Update last activity (throttled to avoid excessive DB writes)
@@ -77,7 +76,7 @@ export async function createContext(opts: { headers: Headers }): Promise<Context
       });
   }
 
-  return { sessionId: session.id, ...clientInfo };
+  return session.id;
 }
 
 const t = initTRPC.context<Context>().create({

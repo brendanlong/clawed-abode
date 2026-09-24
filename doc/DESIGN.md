@@ -74,6 +74,10 @@ The schema ([`prisma/schema.prisma`](../prisma/schema.prisma)) is the source of 
 
 `POST /api/upload` ([`src/app/api/upload/route.ts`](../src/app/api/upload/route.ts)) — a route rather than a tRPC mutation so binary bodies stream as `FormData` instead of being base64-inflated through superjson. Files land in an `uploads/` **sibling of the clone**, so they are readable by the agent but invisible to git status and removed with the workspace on archive. Stored names get a random prefix (re-uploads never overwrite; no check-then-set) and a sanitized basename, and size/count caps are enforced up front so a batch never writes partially ([`src/server/services/uploads.ts`](../src/server/services/uploads.ts)). On send, attachment paths are prefixed onto the persisted message text, so the transcript shows exactly what the model saw.
 
+### Public Files
+
+`/public/{sessionId}/…` ([`src/app/public/`](../src/app/public/)) serves the workspace's `public/` directory (a sibling of the clone, like `uploads/`) as static files, so agents hand the user a stable link instead of running their own HTTP server. The system prompt tells each session its directory and URL (a full URL only when `APP_URL` is set). Directories get `index.html` or a listing; symlinks may not resolve outside the directory; archived sessions 404. See [`security.md`](security.md) for how these pages are authenticated and sandboxed.
+
 ### System Prompt
 
 `DEFAULT_SYSTEM_PROMPT` in [`src/lib/system-prompt.ts`](../src/lib/system-prompt.ts) — the prompt text states its own rationale: the user has no local file access (so commit/push/PR is mandatory), and every session shares one host user with the app server (so kill by PID or a `--cgroup`-scoped pattern, never by name).

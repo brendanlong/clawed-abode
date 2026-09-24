@@ -81,3 +81,33 @@ describe('buildSystemPrompt', () => {
     expect(prompt).toBe('Override\n\nGlobal append\n\nRepo prompt');
   });
 });
+
+describe('public dir note', () => {
+  const publicDir = { path: '/home/u/worktrees/s/public', url: 'https://host.ts.net/public/s/' };
+
+  it('tells the agent where to write browser output and its URL', () => {
+    const prompt = buildSystemPrompt({ publicDir });
+    expect(prompt).toContain('`/home/u/worktrees/s/public`');
+    expect(prompt).toContain('https://host.ts.net/public/s/');
+  });
+
+  it('describes a relative URL as a path on the web UI host', () => {
+    const prompt = buildSystemPrompt({ publicDir: { ...publicDir, url: '/public/s/' } });
+    expect(prompt).toContain('`/public/s/` on the same host');
+  });
+
+  it('survives a system prompt override and precedes appended content', () => {
+    const prompt = buildSystemPrompt({
+      publicDir,
+      customSystemPrompt: 'Repo custom',
+      globalSettings: {
+        systemPromptOverride: 'Custom override',
+        systemPromptOverrideEnabled: true,
+        systemPromptAppend: 'Global append',
+      },
+    });
+    expect(prompt.startsWith('Custom override')).toBe(true);
+    expect(prompt.indexOf(publicDir.url)).toBeLessThan(prompt.indexOf('Global append'));
+    expect(prompt.indexOf('Global append')).toBeLessThan(prompt.indexOf('Repo custom'));
+  });
+});
