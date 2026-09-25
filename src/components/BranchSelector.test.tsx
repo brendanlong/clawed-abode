@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { BranchSelector } from './BranchSelector';
 
 type QueryResult = {
-  data?: { branches: Array<{ name: string; protected: boolean }>; defaultBranch: string };
+  data?: { branches: string[]; defaultBranch: string };
   isLoading: boolean;
   error?: { message: string };
 };
@@ -55,7 +56,7 @@ describe('BranchSelector', () => {
     listBranchesResult.current = {
       isLoading: false,
       error: { message: 'GitHub rate limit exceeded' },
-      data: { branches: [{ name: 'main', protected: true }], defaultBranch: 'main' },
+      data: { branches: ['main'], defaultBranch: 'main' },
     };
 
     render(<BranchSelector repoFullName="owner/repo" selectedBranch="main" onSelect={vi.fn()} />);
@@ -69,10 +70,7 @@ describe('BranchSelector', () => {
     listBranchesResult.current = {
       isLoading: false,
       data: {
-        branches: [
-          { name: 'main', protected: true },
-          { name: 'dev', protected: false },
-        ],
+        branches: ['main', 'dev'],
         defaultBranch: 'main',
       },
     };
@@ -80,5 +78,23 @@ describe('BranchSelector', () => {
     render(<BranchSelector repoFullName="owner/repo" selectedBranch="" onSelect={onSelect} />);
 
     expect(onSelect).toHaveBeenCalledWith('main');
+  });
+
+  it('filters branches by search text', async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+    listBranchesResult.current = {
+      isLoading: false,
+      data: { branches: ['main', 'fix/a', 'feature/b'], defaultBranch: 'main' },
+    };
+
+    render(<BranchSelector repoFullName="owner/repo" selectedBranch="main" onSelect={onSelect} />);
+
+    await user.click(screen.getByRole('combobox'));
+    await user.type(screen.getByPlaceholderText('Search branches...'), 'feat');
+
+    expect(screen.queryByRole('option', { name: /fix\/a/ })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('option', { name: /feature\/b/ }));
+    expect(onSelect).toHaveBeenCalledWith('feature/b');
   });
 });

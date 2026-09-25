@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { router, protectedProcedure } from '../trpc';
 import { TRPCError } from '@trpc/server';
 import { env } from '@/lib/env';
+import { defaultBranchFirst } from '@/lib/branch-list';
 import {
   githubFetch as serviceGithubFetch,
   githubFetchResponse as serviceGithubFetchResponse,
@@ -22,8 +23,10 @@ interface GitHubRepo {
 
 interface GitHubBranch {
   name: string;
-  protected: boolean;
 }
+
+/** Bounds the page walk; the default branch is added even if it falls past the cap. */
+const MAX_BRANCH_PAGES = 10;
 
 interface GitHubIssue {
   id: number;
@@ -161,16 +164,20 @@ export const githubRouter = router({
 
       const repo = await githubFetch<GitHubRepo>(`/repos/${input.repoFullName}`, token);
 
-      const branches = await githubFetch<GitHubBranch[]>(
-        `/repos/${input.repoFullName}/branches?per_page=100`,
-        token
-      );
+      const names: string[] = [];
+      let page: string | undefined = '1';
+      for (let i = 0; page && i < MAX_BRANCH_PAGES; i++) {
+        const response = await githubFetchResponse(
+          `/repos/${input.repoFullName}/branches?per_page=100&page=${page}`,
+          token
+        );
+        const branches: GitHubBranch[] = await response.json();
+        names.push(...branches.map((b) => b.name));
+        page = parseLinkHeader(response.headers.get('link')).next;
+      }
 
       return {
-        branches: branches.map((b) => ({
-          name: b.name,
-          protected: b.protected,
-        })),
+        branches: defaultBranchFirst(names, repo.default_branch),
         defaultBranch: repo.default_branch,
       };
     }),
