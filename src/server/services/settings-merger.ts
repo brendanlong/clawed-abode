@@ -97,8 +97,6 @@ export interface MergedSessionSettings {
   claudeApiKey: string | undefined;
   /** Claude Code scopes the SDK loads filesystem config from — see {@link resolveSettingSources}. */
   settingSources: SettingSource[];
-  customSystemPrompt: string | null | undefined;
-  globalSettings: ResolvedGlobalSettings;
 }
 
 /**
@@ -127,11 +125,11 @@ export async function loadMergedSessionSettings(
     globalSettings,
   });
 
-  const envVars = mergeEnvVars(globalSettings.envVars, repoSettings?.envVars ?? []);
+  const envVars = mergeByName(globalSettings.envVars, repoSettings?.envVars ?? []);
   // OAuth tokens are minted after merging so a server shadowed by a per-repo
   // entry of the same name never spends a refresh on a config nobody will use.
   const mcpServers = await applyMcpOAuthHeaders(
-    mergeMcpServers(globalSettings.mcpServers, repoSettings?.mcpServers ?? [])
+    mergeByName(globalSettings.mcpServers, repoSettings?.mcpServers ?? [])
   );
 
   return {
@@ -147,8 +145,6 @@ export async function loadMergedSessionSettings(
     advisorModel: resolveAdvisorModel(globalSettings.advisorModel),
     claudeApiKey: globalSettings.claudeApiKey ?? undefined,
     settingSources: resolveSettingSources(globalSettings.settingSources),
-    customSystemPrompt: repoSettings?.customSystemPrompt,
-    globalSettings,
   };
 }
 
@@ -177,26 +173,12 @@ export function resolveAdvisorModel(globalModel: string | null | undefined): str
 }
 
 /** Per-repo entries take precedence over global ones with the same name. */
-function mergeByName<T extends { name: string }>(globals: T[], repo: T[]): T[] {
+export function mergeByName<T extends { name: string }>(globals: T[], repo: T[]): T[] {
   const merged = new Map<string, T>();
   for (const entry of [...globals, ...repo]) {
     merged.set(entry.name, entry);
   }
   return Array.from(merged.values());
-}
-
-export function mergeEnvVars(
-  globalEnvVars: ResolvedEnvVar[],
-  repoEnvVars: ResolvedEnvVar[]
-): ResolvedEnvVar[] {
-  return mergeByName(globalEnvVars, repoEnvVars);
-}
-
-export function mergeMcpServers(
-  globalMcpServers: ResolvedMcpServer[],
-  repoMcpServers: ResolvedMcpServer[]
-): ResolvedMcpServer[] {
-  return mergeByName(globalMcpServers, repoMcpServers);
 }
 
 /**

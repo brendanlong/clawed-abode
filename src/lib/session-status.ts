@@ -25,8 +25,6 @@ export interface BackgroundTask {
   description?: string;
   taskType?: string;
   subagentType?: string;
-  /** Ambient/housekeeping task the SDK flags to hide from the inline transcript. */
-  ambient: boolean;
   /**
    * A session-length `persistent: true` Monitor watch — no `timeout_ms` deadline,
    * so it has no knowable end state (see {@link taskHasEndState}). Detected by
@@ -194,7 +192,6 @@ function parseBackgroundTaskEvent(message: SDKMessage): BackgroundEvent | null {
     description?: string;
     task_type?: string;
     subagent_type?: string;
-    skip_transcript?: boolean;
   };
   if (typeof m.task_id !== 'string') return null;
 
@@ -207,7 +204,6 @@ function parseBackgroundTaskEvent(message: SDKMessage): BackgroundEvent | null {
         description: m.description,
         taskType: m.task_type,
         subagentType: m.subagent_type,
-        ambient: m.skip_transcript === true,
         // Overridden in the reducer when the tool_use_id links back to a
         // persistent Monitor call (see persistentMonitorToolUseIds).
         persistent: false,

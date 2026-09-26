@@ -99,26 +99,16 @@ export function requireEncryptionForSecrets(hasSecrets: boolean): void {
   }
 }
 
-/**
- * Mask secret values for display
- */
-function maskSecrets<T extends { value: string; isSecret: boolean }>(items: T[]): T[] {
-  return items.map((item) => ({
-    ...item,
-    value: item.isSecret ? '••••••••' : item.value,
-  }));
+/** Mask a secret value for display. */
+function maskSecret<T extends { value: string; isSecret: boolean }>(item: T): T {
+  return { ...item, value: item.isSecret ? '••••••••' : item.value };
 }
 
-/**
- * Mask MCP server env/header secrets for display
- */
-function maskMcpEnv(env: Record<string, McpServerEnvValue>): Record<string, McpServerEnvValue> {
-  return Object.fromEntries(
-    Object.entries(env).map(([key, { value, isSecret }]) => [
-      key,
-      { value: isSecret ? '••••••••' : value, isSecret },
-    ])
-  );
+/** Parse a stored MCP env/header JSON column, masking secrets for display. */
+function parseMaskedMcpEnv(json: string | null): Record<string, McpServerEnvValue> {
+  if (!json) return {};
+  const env = JSON.parse(json) as Record<string, McpServerEnvValue>;
+  return Object.fromEntries(Object.entries(env).map(([key, entry]) => [key, maskSecret(entry)]));
 }
 
 // ─── Display Formatters ──────────────────────────────────────────────
@@ -168,9 +158,7 @@ export interface DisplayMcpServer {
  * Format env var DB rows for display (mask secrets)
  */
 export function formatEnvVarsForDisplay(envVars: DbEnvVar[]) {
-  return maskSecrets(
-    envVars.map(({ id, name, value, isSecret }) => ({ id, name, value, isSecret }))
-  );
+  return envVars.map(({ id, name, value, isSecret }) => maskSecret({ id, name, value, isSecret }));
 }
 
 /**
@@ -185,11 +173,9 @@ export function formatMcpServersForDisplay(mcpServers: DbMcpServer[]): DisplayMc
       type: (mcp.type || 'stdio') as 'stdio' | 'http' | 'sse',
       command: mcp.command,
       args: mcp.args ? (JSON.parse(mcp.args) as string[]) : [],
-      env: mcp.env ? maskMcpEnv(JSON.parse(mcp.env) as Record<string, McpServerEnvValue>) : {},
+      env: parseMaskedMcpEnv(mcp.env),
       url: mcp.url ?? undefined,
-      headers: mcp.headers
-        ? maskMcpEnv(JSON.parse(mcp.headers) as Record<string, McpServerEnvValue>)
-        : {},
+      headers: parseMaskedMcpEnv(mcp.headers),
       authType,
       ...(authType === 'oauth' ? { oauth: formatOAuthStatus(mcp.oauth) } : {}),
     };

@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  mergeEnvVars,
-  mergeMcpServers,
+  mergeByName,
   mcpServersEqual,
   resolveClaudeModel,
   resolveAdvisorModel,
@@ -52,9 +51,9 @@ describe('resolveAdvisorModel', () => {
   });
 });
 
-describe('mergeEnvVars', () => {
+describe('mergeByName', () => {
   it('should return empty array when both inputs are empty', () => {
-    expect(mergeEnvVars([], [])).toEqual([]);
+    expect(mergeByName([], [])).toEqual([]);
   });
 
   it('should return global env vars when no repo vars exist', () => {
@@ -62,20 +61,20 @@ describe('mergeEnvVars', () => {
       { name: 'API_KEY', value: 'global-key' },
       { name: 'DEBUG', value: 'true' },
     ];
-    const result = mergeEnvVars(global, []);
+    const result = mergeByName(global, []);
     expect(result).toEqual(global);
   });
 
   it('should return repo env vars when no global vars exist', () => {
     const repo: ResolvedEnvVar[] = [{ name: 'REPO_VAR', value: 'repo-value' }];
-    const result = mergeEnvVars([], repo);
+    const result = mergeByName([], repo);
     expect(result).toEqual(repo);
   });
 
   it('should merge global and repo env vars', () => {
     const global: ResolvedEnvVar[] = [{ name: 'GLOBAL_VAR', value: 'global' }];
     const repo: ResolvedEnvVar[] = [{ name: 'REPO_VAR', value: 'repo' }];
-    const result = mergeEnvVars(global, repo);
+    const result = mergeByName(global, repo);
     expect(result).toHaveLength(2);
     expect(result).toContainEqual({ name: 'GLOBAL_VAR', value: 'global' });
     expect(result).toContainEqual({ name: 'REPO_VAR', value: 'repo' });
@@ -90,68 +89,11 @@ describe('mergeEnvVars', () => {
       { name: 'SHARED', value: 'repo-shared' },
       { name: 'REPO_ONLY', value: 'repo' },
     ];
-    const result = mergeEnvVars(global, repo);
+    const result = mergeByName(global, repo);
     expect(result).toHaveLength(3);
     expect(result).toContainEqual({ name: 'API_KEY', value: 'global-key' });
     expect(result).toContainEqual({ name: 'SHARED', value: 'repo-shared' });
     expect(result).toContainEqual({ name: 'REPO_ONLY', value: 'repo' });
-  });
-});
-
-describe('mergeMcpServers', () => {
-  it('should return empty array when both inputs are empty', () => {
-    expect(mergeMcpServers([], [])).toEqual([]);
-  });
-
-  it('should return global servers when no repo servers exist', () => {
-    const global: ResolvedMcpServer[] = [
-      { name: 'memory', type: 'stdio', command: 'npx', args: ['@anthropic/mcp-server-memory'] },
-    ];
-    const result = mergeMcpServers(global, []);
-    expect(result).toEqual(global);
-  });
-
-  it('should return repo servers when no global servers exist', () => {
-    const repo: ResolvedMcpServer[] = [
-      { name: 'repo-server', type: 'http', url: 'https://example.com' },
-    ];
-    const result = mergeMcpServers([], repo);
-    expect(result).toEqual(repo);
-  });
-
-  it('should merge global and repo MCP servers', () => {
-    const global: ResolvedMcpServer[] = [
-      { name: 'memory', type: 'stdio', command: 'npx', args: ['@anthropic/mcp-server-memory'] },
-    ];
-    const repo: ResolvedMcpServer[] = [
-      { name: 'repo-server', type: 'http', url: 'https://example.com' },
-    ];
-    const result = mergeMcpServers(global, repo);
-    expect(result).toHaveLength(2);
-    expect(result.find((s) => s.name === 'memory')).toBeDefined();
-    expect(result.find((s) => s.name === 'repo-server')).toBeDefined();
-  });
-
-  it('should let per-repo servers override global ones with the same name', () => {
-    const global: ResolvedMcpServer[] = [
-      { name: 'shared', type: 'stdio', command: 'global-cmd' },
-      { name: 'global-only', type: 'http', url: 'https://global.com' },
-    ];
-    const repo: ResolvedMcpServer[] = [
-      { name: 'shared', type: 'http', url: 'https://repo.com' },
-      { name: 'repo-only', type: 'sse', url: 'https://repo-sse.com' },
-    ];
-    const result = mergeMcpServers(global, repo);
-    expect(result).toHaveLength(3);
-
-    const sharedServer = result.find((s) => s.name === 'shared');
-    expect(sharedServer?.type).toBe('http');
-    expect(sharedServer && 'url' in sharedServer ? sharedServer.url : undefined).toBe(
-      'https://repo.com'
-    );
-
-    expect(result.find((s) => s.name === 'global-only')).toBeDefined();
-    expect(result.find((s) => s.name === 'repo-only')).toBeDefined();
   });
 });
 

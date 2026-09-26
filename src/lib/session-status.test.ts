@@ -210,15 +210,6 @@ describe('reduceSessionMessage — background tasks', () => {
     expect(backgroundActive(status)).toBe(true);
     expect(changed.background).toBe(true);
     expect(status.backgroundTasks.get('t1')?.description).toBe('do a thing');
-    expect(status.backgroundTasks.get('t1')?.ambient).toBe(false);
-  });
-
-  it('marks ambient tasks (skip_transcript) as ambient', () => {
-    const { status } = reduceSessionMessage(
-      INITIAL_LIVE_STATUS,
-      taskStarted('t1', { skip_transcript: true })
-    );
-    expect(status.backgroundTasks.get('t1')?.ambient).toBe(true);
   });
 
   it('task_notification removes the matching task', () => {
@@ -284,7 +275,6 @@ describe('reduceSessionMessage — background tasks', () => {
 describe('taskHasEndState (daemon exclusion)', () => {
   const make = (taskType?: string, persistent = false): BackgroundTask => ({
     taskId: 't',
-    ambient: false,
     taskType,
     persistent,
   });
@@ -400,7 +390,7 @@ describe('persistent Monitor detection (tool_use → task_started linkage)', () 
 
 describe('removeBackgroundTask (optimistic ✕ removal)', () => {
   function withTasks(...taskIds: string[]): ReadonlyMap<string, BackgroundTask> {
-    return new Map(taskIds.map((id) => [id, { taskId: id, ambient: false, persistent: false }]));
+    return new Map(taskIds.map((id) => [id, { taskId: id, persistent: false }]));
   }
 
   it('removes a present task and returns a new map without it', () => {

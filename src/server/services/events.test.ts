@@ -96,8 +96,8 @@ describe('sseEvents', () => {
     const l = listen('session-1');
 
     const tasks = [
-      { taskId: 't1', ambient: false, persistent: false },
-      { taskId: 't2', ambient: false, persistent: false },
+      { taskId: 't1', persistent: false },
+      { taskId: 't2', persistent: false },
     ];
     sseEvents.emitBackgroundTasks('session-1', tasks);
     expect(l.session).toHaveBeenCalledWith({ kind: 'background', tasks });
@@ -121,8 +121,8 @@ describe('sseEvents', () => {
     // also signals idle — they don't count toward the busy axis (taskHasEndState).
     l.list.mockClear();
     sseEvents.emitBackgroundTasks('session-1', [
-      { taskId: 'd1', ambient: false, persistent: false, taskType: 'local_bash' },
-      { taskId: 'm1', ambient: false, persistent: true, taskType: 'monitor' },
+      { taskId: 'd1', persistent: false, taskType: 'local_bash' },
+      { taskId: 'm1', persistent: true, taskType: 'monitor' },
     ]);
     expect(l.list).toHaveBeenCalledWith({
       kind: 'background',

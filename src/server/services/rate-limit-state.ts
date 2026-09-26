@@ -110,7 +110,9 @@ export async function recordRateLimitReadings(incoming: RateLimitReading[]): Pro
     });
   }
 
-  await persistReadings(mergedFor(new Set(incoming.map((r) => r.limitType))));
+  // Persist the merged state of the windows the incoming readings touched.
+  const touched = new Set(incoming.map((r) => r.limitType));
+  await persistReadings(readings.filter((r) => touched.has(r.limitType)));
   scheduleExpiryWake();
   onChange?.();
 }
@@ -126,11 +128,6 @@ function readingsChanged(before: RateLimitReading[], after: RateLimitReading[]):
       b.resetsAtMs !== a.resetsAtMs
     );
   });
-}
-
-/** Persist the merged state of the windows the incoming readings touched. */
-function mergedFor(limitTypes: Set<string>): RateLimitReading[] {
-  return readings.filter((r) => limitTypes.has(r.limitType));
 }
 
 async function persistReadings(incoming: RateLimitReading[]): Promise<void> {

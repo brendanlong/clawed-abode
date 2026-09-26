@@ -58,18 +58,6 @@ vi.mock('./settings-merger', async (importOriginal) => {
       advisorModel: null,
       claudeApiKey: undefined,
       settingSources: ['project'],
-      customSystemPrompt: null,
-      globalSettings: {
-        systemPromptOverride: null,
-        systemPromptOverrideEnabled: false,
-        systemPromptAppend: null,
-        claudeModel: null,
-        advisorModel: null,
-        claudeApiKey: null,
-        settingSources: { user: false, project: true, local: false },
-        envVars: [],
-        mcpServers: [],
-      },
     }),
   };
 });

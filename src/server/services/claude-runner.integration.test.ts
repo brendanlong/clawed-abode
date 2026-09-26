@@ -50,18 +50,6 @@ const baseSettings = {
   advisorModel: null as string | null,
   claudeApiKey: undefined,
   settingSources: ['project'] as ('user' | 'project' | 'local')[],
-  customSystemPrompt: null,
-  globalSettings: {
-    systemPromptOverride: null,
-    systemPromptOverrideEnabled: false,
-    systemPromptAppend: null,
-    claudeModel: null,
-    advisorModel: null,
-    claudeApiKey: null,
-    settingSources: { user: false, project: true, local: false },
-    envVars: [],
-    mcpServers: [],
-  },
 };
 
 // Stub the MCP config file writer so the wiring test doesn't touch the real

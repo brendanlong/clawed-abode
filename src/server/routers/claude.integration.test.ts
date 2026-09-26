@@ -46,12 +46,6 @@ vi.mock('../services/uploads', () => ({
 vi.mock('../services/settings-merger', () => ({
   loadMergedSessionSettings: vi.fn().mockResolvedValue({
     systemPrompt: 'test prompt',
-    customSystemPrompt: null,
-    globalSettings: {
-      systemPromptOverride: null,
-      systemPromptOverrideEnabled: false,
-      systemPromptAppend: null,
-    },
     envVars: [],
     mcpServers: [],
     claudeModel: null,
