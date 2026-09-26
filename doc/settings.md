@@ -26,7 +26,7 @@ An http/sse server's `authType` is `headers` (a static secret) or `oauth`. OAuth
 
 The grant is a `McpOAuth` row per `McpServer` row — so a global and a per-repo entry for the same remote server hold independent grants, and deleting the server deletes the grant. Client secret, tokens and the in-flight PKCE verifier are encrypted with `ENCRYPTION_KEY`; choosing `oauth` therefore requires encryption to be configured.
 
-Connect runs entirely server-side except the `/authorize` step ([`mcp-oauth.ts`](../src/server/services/mcp-oauth.ts), discovery in [`mcp-oauth-discovery.ts`](../src/server/services/mcp-oauth-discovery.ts), pure URL rules in [`src/lib/mcp-oauth-urls.ts`](../src/lib/mcp-oauth-urls.ts)):
+Connect runs entirely server-side except the `/authorize` step ([`mcp-oauth.ts`](../src/server/services/mcp-oauth.ts), discovery in [`mcp-oauth-discovery.ts`](../src/server/services/mcp-oauth-discovery.ts)). The protocol steps are the MCP SDK's `client/auth.js` building blocks; our wrappers exist only where its defaults differ from the rules below (it throws instead of degrading, skips the well-known lookup when a `resource_metadata` pointer is advertised, blocklists rather than allowlists URL schemes, and prefers HTTP Basic client auth):
 
 1. **Discovery** degrades one step at a time, because remote servers publish inconsistently: the `resource_metadata` pointer in the MCP endpoint's 401 → the RFC 9728 well-known locations → RFC 8414/OIDC authorization-server metadata → origin-root endpoints. Both well-known lookups try the **path-inserted** location first (RFC 9728 §3.1 / RFC 8414); the root one is only authoritative for a bare-origin resource, and deriving it wrong is the single most common way this flow dies silently.
 2. **Client acquisition**: reuse a client the user typed or one we registered against the same issuer, else dynamic client registration. `token_endpoint_auth_method: "none"` is requested only when the server advertises it. **A manually entered client ID is the escape hatch** and is not optional polish — Google and Microsoft Entra have no DCR at all.
@@ -37,7 +37,7 @@ The access token is refreshed on demand and injected as an `Authorization` heade
 
 The redirect URI is derived from the **request's** origin (`APP_URL` overrides), never loopback: the app is headless and the browser is on another device. The settings form shows the exact value from `globalSettings.getMcpOAuthRedirectUri` rather than the browser's own origin, because those differ whenever `APP_URL` is set and a mismatched `redirect_uri` is rejected outright.
 
-Tokens are bound to a resource _and_ a client, so changing the server URL, changing a manually entered client ID, or registering a new client because the issuer moved all discard the stored grant rather than leaving a refresh token that can only earn an `invalid_grant`. Discovered endpoints are scheme-checked (`new URL()` parses `javascript:`, and the authorization endpoint is what the browser gets navigated to).
+Tokens are bound to a resource _and_ a client, so changing the server URL, changing a manually entered client ID, or registering a new client because the issuer moved all discard the stored grant rather than leaving a refresh token that can only earn an `invalid_grant`. Discovered endpoints must be http(s) (`new URL()` parses `javascript:`, and the authorization endpoint is what the browser gets navigated to). Token requests send client credentials in the body (`client_secret_post`): servers that accept only one form overwhelmingly accept that one.
 
 ## Secrets
 

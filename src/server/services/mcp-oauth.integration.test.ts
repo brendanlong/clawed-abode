@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'http';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import type { AddressInfo } from 'net';
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { setupTestDb, teardownTestDb, testPrisma, clearTestDb } from '@/test/setup-test-db';
@@ -32,6 +32,9 @@ class FakeMcpAuthServer {
   /** When set, the token endpoint rejects every request with this OAuth error. */
   tokenError: string | null = null;
   registrationEndpointEnabled = true;
+  /** Replaces the 401's `resource_metadata` pointer, to test the well-known fallback. */
+  advertisedResourceMetadata: string | null = null;
+  tokenEndpointAuthMethods = ['none', 'client_secret_post'];
   /** Replaces the advertised authorization_endpoint, to test metadata validation. */
   hostileAuthorizationEndpoint: string | null = null;
 
@@ -66,7 +69,10 @@ class FakeMcpAuthServer {
       const authorization = req.headers.authorization;
       if (!authorization) {
         res.writeHead(401, {
-          'www-authenticate': `Bearer realm="OAuth", resource_metadata="${this.baseUrl}/.well-known/oauth-protected-resource/api/mcp"`,
+          'www-authenticate': `Bearer realm="OAuth", resource_metadata="${
+            this.advertisedResourceMetadata ??
+            `${this.baseUrl}/.well-known/oauth-protected-resource/api/mcp`
+          }"`,
         });
         res.end();
         return;
@@ -95,14 +101,15 @@ class FakeMcpAuthServer {
           : {}),
         response_types_supported: ['code'],
         code_challenge_methods_supported: ['S256'],
-        token_endpoint_auth_methods_supported: ['none', 'client_secret_post'],
+        token_endpoint_auth_methods_supported: this.tokenEndpointAuthMethods,
       });
       return;
     }
 
     if (url.pathname === '/tenant/register') {
-      this.registrations.push(JSON.parse(await readBody(req)) as Record<string, unknown>);
-      json(201, { client_id: 'registered-client', client_id_issued_at: 1 });
+      const registration = JSON.parse(await readBody(req)) as Record<string, unknown>;
+      this.registrations.push(registration);
+      json(201, { ...registration, client_id: 'registered-client', client_id_issued_at: 1 });
       return;
     }
 
@@ -115,7 +122,7 @@ class FakeMcpAuthServer {
       }
       if (params.grant_type === 'authorization_code') {
         const minted = this.codes.get(params.code);
-        if (!minted || minted.challenge !== oauth.codeChallengeFor(params.code_verifier)) {
+        if (!minted || minted.challenge !== codeChallengeFor(params.code_verifier)) {
           json(400, { error: 'invalid_grant', error_description: 'PKCE mismatch' });
           return;
         }
@@ -123,6 +130,7 @@ class FakeMcpAuthServer {
       }
       json(200, {
         access_token: `access-${this.tokenRequests.length}`,
+        token_type: 'Bearer',
         ...(this.issuedRefreshToken ? { refresh_token: this.issuedRefreshToken } : {}),
         expires_in: this.accessTokenLifetimeSeconds,
         scope: 'data:read',
@@ -153,6 +161,10 @@ function readBody(req: {
     req.on('data', (chunk) => chunks.push(chunk!));
     req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
   });
+}
+
+function codeChallengeFor(verifier: string): string {
+  return createHash('sha256').update(verifier).digest('base64url');
 }
 
 let remote: FakeMcpAuthServer;
@@ -199,6 +211,8 @@ describe('MCP OAuth', () => {
     remote.tokenError = null;
     remote.registrationEndpointEnabled = true;
     remote.hostileAuthorizationEndpoint = null;
+    remote.advertisedResourceMetadata = null;
+    remote.tokenEndpointAuthMethods = ['none', 'client_secret_post'];
     remote.issuedRefreshToken = 'refresh-1';
     remote.accessTokenLifetimeSeconds = 3600;
   });
@@ -230,7 +244,7 @@ describe('MCP OAuth', () => {
     const pending = await credential();
     expect(pending.flowState).toBe(url.searchParams.get('state'));
     expect(crypto.decrypt(pending.codeVerifier!)).toHaveLength(43);
-    expect(oauth.codeChallengeFor(crypto.decrypt(pending.codeVerifier!))).toBe(
+    expect(codeChallengeFor(crypto.decrypt(pending.codeVerifier!))).toBe(
       url.searchParams.get('code_challenge')
     );
 
@@ -246,6 +260,26 @@ describe('MCP OAuth', () => {
     // The flow is consumed, so a replayed callback has nothing to match.
     expect(connected.flowState).toBeNull();
     expect(connected.codeVerifier).toBeNull();
+  });
+
+  it('falls back to the path-inserted well-known location when the advertised pointer is broken', async () => {
+    remote.advertisedResourceMetadata = `${remote.baseUrl}/missing`;
+    await addOAuthServer();
+    const { authorizeUrl } = await scope.startScopeMcpOAuth(
+      scope.GLOBAL_SCOPE,
+      'remote',
+      APP_ORIGIN
+    );
+    const url = new URL(authorizeUrl);
+    expect(url.origin + url.pathname).toBe(`${remote.baseUrl}/tenant/authorize`);
+    expect(url.searchParams.get('resource')).toBe(remote.mcpUrl);
+  });
+
+  it('registers a confidential client when the server does not advertise "none"', async () => {
+    remote.tokenEndpointAuthMethods = ['client_secret_post'];
+    await addOAuthServer();
+    await scope.startScopeMcpOAuth(scope.GLOBAL_SCOPE, 'remote', APP_ORIGIN);
+    expect(remote.registrations[0]).not.toHaveProperty('token_endpoint_auth_method');
   });
 
   it('injects the access token as an Authorization header for a session', async () => {

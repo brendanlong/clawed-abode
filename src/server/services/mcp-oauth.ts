@@ -1,27 +1,25 @@
-import { createHash, randomBytes } from 'crypto';
-import { z } from 'zod';
+import { randomBytes } from 'crypto';
 import { TRPCError } from '@trpc/server';
+import {
+  exchangeAuthorization,
+  refreshAuthorization,
+  startAuthorization,
+  type AddClientAuthentication,
+} from '@modelcontextprotocol/sdk/client/auth.js';
+import { InvalidGrantError, OAuthError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
 import { prisma } from '@/lib/prisma';
 import { decrypt, encrypt } from '@/lib/crypto';
 import { createLogger, toError } from '@/lib/logger';
-import {
-  buildAuthorizeUrl,
-  isAccessTokenFresh,
-  isFlowExpired,
-  mcpOAuthRedirectUri,
-} from '@/lib/mcp-oauth-urls';
+import { isAccessTokenFresh, isFlowExpired, mcpOAuthRedirectUri } from '@/lib/mcp-oauth-urls';
 import type { McpOAuthStatus, ResolvedMcpServer } from '@/lib/settings-types';
-import { discoverMcpOAuth, registerOAuthClient, safeJsonParse } from './mcp-oauth-discovery';
+import {
+  discoverMcpOAuth,
+  fetchWithTimeout,
+  registerOAuthClient,
+  type DiscoveredOAuthConfig,
+} from './mcp-oauth-discovery';
 
 const log = createLogger('mcp-oauth');
-
-const TOKEN_TIMEOUT_MS = 30_000;
-
-// ─── PKCE / state ────────────────────────────────────────────────────
-
-export function codeChallengeFor(verifier: string): string {
-  return createHash('sha256').update(verifier).digest('base64url');
-}
 
 const CLEARED_TOKENS = {
   accessToken: null,
@@ -33,86 +31,41 @@ const CLEARED_FLOW = { flowState: null, codeVerifier: null, flowStartedAt: null 
 
 // ─── Token endpoint ──────────────────────────────────────────────────
 
-const tokenResponseSchema = z.object({
-  access_token: z.string(),
-  refresh_token: z.string().optional(),
-  expires_in: z.number().optional(),
-  scope: z.string().optional(),
-});
-
-export type TokenResponse = z.infer<typeof tokenResponseSchema>;
-
 /**
- * RFC 6749 token request parameters. Client credentials go in the body
- * (`client_secret_post`) rather than an Authorization header: servers that
- * accept only one of the two overwhelmingly accept the body form, and a public
- * PKCE client has no secret to put in a header anyway.
+ * Options shared by the SDK's code exchange and refresh, sending client
+ * credentials as `client_secret_post` instead of the SDK's default Basic header.
  */
-export function buildTokenRequestBody(params: {
-  grant:
-    | { type: 'authorization_code'; code: string; codeVerifier: string }
-    | { type: 'refresh_token'; refreshToken: string };
-  clientId: string;
-  clientSecret?: string | null;
-  redirectUri?: string | null;
-  resource?: string | null;
-  scope?: string | null;
-}): URLSearchParams {
-  const body = new URLSearchParams();
-  if (params.grant.type === 'authorization_code') {
-    body.set('grant_type', 'authorization_code');
-    body.set('code', params.grant.code);
-    body.set('code_verifier', params.grant.codeVerifier);
-    if (params.redirectUri) body.set('redirect_uri', params.redirectUri);
-  } else {
-    body.set('grant_type', 'refresh_token');
-    body.set('refresh_token', params.grant.refreshToken);
-    if (params.scope) body.set('scope', params.scope);
-  }
-  body.set('client_id', params.clientId);
-  if (params.clientSecret) body.set('client_secret', params.clientSecret);
-  if (params.resource) body.set('resource', params.resource);
-  return body;
+function tokenRequestOptions(
+  grant: { clientSecret: string | null; resource: string | null },
+  tokenEndpoint: string,
+  clientId: string
+) {
+  const clientSecret = grant.clientSecret ? decrypt(grant.clientSecret) : null;
+  const addClientAuthentication: AddClientAuthentication = (_headers, params) => {
+    params.set('client_id', clientId);
+    if (clientSecret) params.set('client_secret', clientSecret);
+  };
+  return {
+    // A token request reads only `token_endpoint` from the metadata.
+    metadata: {
+      issuer: tokenEndpoint,
+      authorization_endpoint: tokenEndpoint,
+      token_endpoint: tokenEndpoint,
+      response_types_supported: ['code'],
+    },
+    clientInformation: { client_id: clientId },
+    resource: grant.resource ? new URL(grant.resource) : undefined,
+    addClientAuthentication,
+    fetchFn: fetchWithTimeout,
+  };
 }
 
-/** An OAuth error the user has to fix by re-authorizing (RFC 6749 §5.2). */
-export class OAuthGrantInvalidError extends Error {}
-
-async function postTokenRequest(
-  tokenEndpoint: string,
-  body: URLSearchParams
-): Promise<TokenResponse> {
-  const response = await fetch(tokenEndpoint, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/x-www-form-urlencoded',
-      accept: 'application/json',
-    },
-    body,
-    signal: AbortSignal.timeout(TOKEN_TIMEOUT_MS),
-  });
-
-  const text = await response.text();
-  if (!response.ok) {
-    const parsed = safeJsonParse(text);
-    const error = z
-      .object({ error: z.string(), error_description: z.string().optional() })
-      .safeParse(parsed);
-    const detail = error.success
-      ? `${error.data.error}${error.data.error_description ? `: ${error.data.error_description}` : ''}`
-      : text.slice(0, 300);
-    const message = `Token request failed (${response.status}): ${detail}`;
-    if (error.success && error.data.error === 'invalid_grant') {
-      throw new OAuthGrantInvalidError(message);
-    }
-    throw new Error(message);
+function oauthErrorMessage(error: unknown): string {
+  if (error instanceof OAuthError) {
+    const detail = error.message.slice(0, 300);
+    return `Token request failed: ${error.errorCode}${detail ? `: ${detail}` : ''}`;
   }
-
-  const parsed = tokenResponseSchema.safeParse(safeJsonParse(text));
-  if (!parsed.success) {
-    throw new Error('Token endpoint returned no access_token');
-  }
-  return parsed.data;
+  return toError(error).message;
 }
 
 export function accessTokenExpiry(expiresIn: number | undefined, now: Date): Date | null {
@@ -142,20 +95,28 @@ export async function startMcpOAuthFlow(params: {
 
   // Reuse a client the user entered by hand, or one we registered against this
   // same issuer; re-register only when the issuer moved or we have nothing.
+  const { metadata } = discovered;
   const reusable =
-    existing?.clientId && (existing.clientIdIsManual || existing.issuer === discovered.issuer);
+    existing?.clientId && (existing.clientIdIsManual || existing.issuer === metadata.issuer);
   const client = reusable
     ? { clientId: existing.clientId!, encryptedSecret: existing.clientSecret }
     : await registerNewClient(discovered, redirectUri, scope);
 
-  const codeVerifier = randomBytes(32).toString('base64url');
   const state = randomBytes(32).toString('base64url');
+  const { authorizationUrl, codeVerifier } = await startAuthorization(metadata.issuer, {
+    metadata,
+    clientInformation: { client_id: client.clientId },
+    redirectUrl: redirectUri,
+    scope: scope ?? undefined,
+    state,
+    resource: new URL(discovered.resource),
+  });
 
   const flow = {
-    issuer: discovered.issuer,
-    authorizationEndpoint: discovered.authorizationEndpoint,
-    tokenEndpoint: discovered.tokenEndpoint,
-    registrationEndpoint: discovered.registrationEndpoint,
+    issuer: metadata.issuer,
+    authorizationEndpoint: metadata.authorization_endpoint,
+    tokenEndpoint: metadata.token_endpoint,
+    registrationEndpoint: metadata.registration_endpoint ?? null,
     resource: discovered.resource,
     scope,
     clientId: client.clientId,
@@ -176,29 +137,19 @@ export async function startMcpOAuthFlow(params: {
 
   log.info('Started MCP OAuth flow', {
     mcpServerId: params.mcpServerId,
-    issuer: discovered.issuer,
+    issuer: metadata.issuer,
     registered: !reusable,
   });
 
-  return {
-    authorizeUrl: buildAuthorizeUrl({
-      authorizationEndpoint: discovered.authorizationEndpoint,
-      clientId: client.clientId,
-      redirectUri,
-      state,
-      codeChallenge: codeChallengeFor(codeVerifier),
-      scope,
-      resource: discovered.resource,
-    }),
-  };
+  return { authorizeUrl: authorizationUrl.toString() };
 }
 
 async function registerNewClient(
-  discovered: Awaited<ReturnType<typeof discoverMcpOAuth>>,
+  discovered: DiscoveredOAuthConfig,
   redirectUri: string,
   scope: string | null
 ): Promise<{ clientId: string; encryptedSecret: string | null }> {
-  if (!discovered.registrationEndpoint) {
+  if (!discovered.metadata.registration_endpoint) {
     throw new TRPCError({
       code: 'PRECONDITION_FAILED',
       message:
@@ -207,10 +158,9 @@ async function registerNewClient(
     });
   }
   const registered = await registerOAuthClient({
-    registrationEndpoint: discovered.registrationEndpoint,
+    metadata: discovered.metadata,
     redirectUri,
     scope,
-    supportsPublicClient: discovered.supportsPublicClient,
   });
   return {
     clientId: registered.clientId,
@@ -247,26 +197,18 @@ export async function completeMcpOAuthFlow(params: {
     await clearFlow(row.id, 'Authorization timed out; start it again');
     throw new Error('This authorization took too long and expired. Start it again.');
   }
-  if (!row.tokenEndpoint || !row.clientId || !row.codeVerifier) {
+  if (!row.tokenEndpoint || !row.clientId || !row.codeVerifier || !row.redirectUri) {
     await clearFlow(row.id, 'Pending authorization was incomplete');
     throw new Error('Pending authorization was incomplete. Start it again.');
   }
 
   try {
-    const tokens = await postTokenRequest(
-      row.tokenEndpoint,
-      buildTokenRequestBody({
-        grant: {
-          type: 'authorization_code',
-          code: params.code,
-          codeVerifier: decrypt(row.codeVerifier),
-        },
-        clientId: row.clientId,
-        clientSecret: row.clientSecret ? decrypt(row.clientSecret) : null,
-        redirectUri: row.redirectUri,
-        resource: row.resource,
-      })
-    );
+    const tokens = await exchangeAuthorization(row.tokenEndpoint, {
+      ...tokenRequestOptions(row, row.tokenEndpoint, row.clientId),
+      authorizationCode: params.code,
+      codeVerifier: decrypt(row.codeVerifier),
+      redirectUri: row.redirectUri,
+    });
 
     await prisma.mcpOAuth.update({
       where: { id: row.id },
@@ -283,9 +225,9 @@ export async function completeMcpOAuthFlow(params: {
     log.info('Completed MCP OAuth flow', { mcpServerId: row.mcpServerId });
     return { serverName: row.mcpServer.name };
   } catch (error) {
-    const message = toError(error).message;
+    const message = oauthErrorMessage(error);
     await clearFlow(row.id, message);
-    throw error;
+    throw new Error(message, { cause: error });
   }
 }
 
@@ -425,21 +367,15 @@ async function resolveAccessToken(oauthId: string): Promise<string | null> {
   }
 
   try {
-    const tokens = await postTokenRequest(
-      row.tokenEndpoint,
-      buildTokenRequestBody({
-        grant: { type: 'refresh_token', refreshToken: decrypt(row.refreshToken) },
-        clientId: row.clientId,
-        clientSecret: row.clientSecret ? decrypt(row.clientSecret) : null,
-        resource: row.resource,
-        scope: row.scope,
-      })
-    );
+    const tokens = await refreshAuthorization(row.tokenEndpoint, {
+      ...tokenRequestOptions(row, row.tokenEndpoint, row.clientId),
+      refreshToken: decrypt(row.refreshToken),
+    });
     await prisma.mcpOAuth.update({
       where: { id: oauthId },
       data: {
         accessToken: encrypt(tokens.access_token),
-        // Rotation: keep the old refresh token only when the server didn't issue one.
+        // The SDK hands back the old refresh token when the server didn't rotate it.
         ...(tokens.refresh_token ? { refreshToken: encrypt(tokens.refresh_token) } : {}),
         expiresAt: accessTokenExpiry(tokens.expires_in, new Date()),
         lastError: null,
@@ -447,14 +383,14 @@ async function resolveAccessToken(oauthId: string): Promise<string | null> {
     });
     return tokens.access_token;
   } catch (error) {
-    const message = toError(error).message;
+    const message = oauthErrorMessage(error);
     // A rejected grant is dead: drop the tokens so the UI shows "needs re-auth"
     // instead of retrying a refresh that can never succeed. Anything else
     // (network, 5xx) is transient and keeps the tokens for the next attempt.
     await prisma.mcpOAuth.update({
       where: { id: oauthId },
       data:
-        error instanceof OAuthGrantInvalidError
+        error instanceof InvalidGrantError
           ? { ...CLEARED_TOKENS, lastError: message }
           : { lastError: message },
     });

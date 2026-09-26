@@ -1,172 +1,155 @@
-import { z } from 'zod';
-import { createLogger, toError } from '@/lib/logger';
 import {
-  authorizationServerMetadataUrls,
-  fallbackAuthorizationServerEndpoints,
-  originOf,
-  parseWwwAuthenticate,
-  protectedResourceMetadataUrls,
-} from '@/lib/mcp-oauth-urls';
+  discoverAuthorizationServerMetadata,
+  discoverOAuthProtectedResourceMetadata,
+  extractWWWAuthenticateParams,
+  registerClient,
+} from '@modelcontextprotocol/sdk/client/auth.js';
+import type {
+  AuthorizationServerMetadata,
+  OAuthProtectedResourceMetadata,
+} from '@modelcontextprotocol/sdk/shared/auth.js';
+import type { FetchLike } from '@modelcontextprotocol/sdk/shared/transport.js';
+import { createLogger, toError } from '@/lib/logger';
+import { isHttpUrl } from '@/lib/mcp-oauth-urls';
 
 const log = createLogger('mcp-oauth-discovery');
 
-const DISCOVERY_TIMEOUT_MS = 10_000;
+const OAUTH_TIMEOUT_MS = 30_000;
 
-/** RFC 9728 protected-resource metadata. */
-const protectedResourceMetadataSchema = z.object({
-  resource: z.string().optional(),
-  authorization_servers: z.array(z.string()).optional(),
-  scopes_supported: z.array(z.string()).optional(),
-});
-
-/**
- * An endpoint we will either navigate the browser to or post credentials to. The
- * scheme check is the important part: `new URL()` happily parses `javascript:`,
- * and the authorization endpoint ends up in `window.location.assign`.
- */
-const httpUrlSchema = z.string().refine(
-  (value) => {
-    try {
-      const { protocol } = new URL(value);
-      return protocol === 'https:' || protocol === 'http:';
-    } catch {
-      return false;
-    }
-  },
-  { message: 'must be an http(s) URL' }
-);
-
-/** RFC 8414 / OIDC authorization-server metadata. */
-const authorizationServerMetadataSchema = z.object({
-  issuer: z.string().optional(),
-  authorization_endpoint: httpUrlSchema,
-  token_endpoint: httpUrlSchema,
-  registration_endpoint: httpUrlSchema.optional(),
-  scopes_supported: z.array(z.string()).optional(),
-  token_endpoint_auth_methods_supported: z.array(z.string()).optional(),
-});
-
-export type AuthorizationServerMetadata = z.infer<typeof authorizationServerMetadataSchema>;
+export const fetchWithTimeout: FetchLike = (url, init) =>
+  fetch(url, { ...init, signal: AbortSignal.timeout(OAUTH_TIMEOUT_MS) });
 
 export interface DiscoveredOAuthConfig {
-  issuer: string;
-  authorizationEndpoint: string;
-  tokenEndpoint: string;
-  registrationEndpoint: string | null;
+  /** Real metadata, or origin-root endpoints synthesized when the server publishes none. */
+  metadata: AuthorizationServerMetadata;
   /** RFC 8707 resource indicator to request tokens for. */
   resource: string;
   /** Scopes the resource accepts — the PRM's list, not the AS's broader one. */
   scopesSupported: string[] | null;
-  /** Whether the AS accepts public (PKCE-only) clients at the token endpoint. */
-  supportsPublicClient: boolean;
-}
-
-async function fetchJson(url: string): Promise<unknown | null> {
-  try {
-    const response = await fetch(url, {
-      headers: { accept: 'application/json' },
-      signal: AbortSignal.timeout(DISCOVERY_TIMEOUT_MS),
-    });
-    if (!response.ok) return null;
-    return await response.json();
-  } catch (error) {
-    log.debug('Metadata fetch failed', {
-      url,
-      error: toError(error).message,
-    });
-    return null;
-  }
-}
-
-async function fetchFirstMatching<T>(urls: string[], schema: z.ZodType<T>): Promise<T | null> {
-  for (const url of urls) {
-    const body = await fetchJson(url);
-    if (body === null) continue;
-    const parsed = schema.safeParse(body);
-    if (parsed.success) return parsed.data;
-    log.info('Ignoring malformed metadata document', { url });
-  }
-  return null;
 }
 
 /**
  * Ask the MCP endpoint who guards it. A spec-compliant server answers an
  * unauthenticated request with 401 + `WWW-Authenticate: Bearer
- * resource_metadata="..."`; that pointer is authoritative, because a server
- * whose resource has a path publishes its metadata at the path-inserted
- * location, which we would otherwise only find on the second try.
+ * resource_metadata="..."`; that pointer is authoritative.
  */
-async function probeResourceMetadataUrl(mcpUrl: string): Promise<string | null> {
+async function probeResourceMetadataUrl(mcpUrl: string): Promise<URL | undefined> {
   try {
-    const response = await fetch(mcpUrl, {
+    const response = await fetchWithTimeout(mcpUrl, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
         accept: 'application/json, text/event-stream',
       },
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} }),
-      signal: AbortSignal.timeout(DISCOVERY_TIMEOUT_MS),
     });
-    if (response.status !== 401) return null;
-    return parseWwwAuthenticate(response.headers.get('www-authenticate')).resource_metadata ?? null;
+    await response.body?.cancel();
+    if (response.status !== 401) return undefined;
+    return extractWWWAuthenticateParams(response).resourceMetadataUrl;
   } catch (error) {
     log.info('Unauthenticated probe of MCP endpoint failed', {
       mcpUrl,
       error: toError(error).message,
     });
-    return null;
+    return undefined;
   }
+}
+
+async function discoverResourceMetadata(
+  mcpUrl: string
+): Promise<OAuthProtectedResourceMetadata | undefined> {
+  // The SDK tries only the given URL when one is advertised, so a broken pointer
+  // falls back to its own path-inserted-then-root well-known lookup.
+  const advertised = await probeResourceMetadataUrl(mcpUrl);
+  const attempts = advertised ? [{ resourceMetadataUrl: advertised }, {}] : [{}];
+  for (const opts of attempts) {
+    try {
+      return await discoverOAuthProtectedResourceMetadata(mcpUrl, opts, fetchWithTimeout);
+    } catch (error) {
+      log.debug('Protected resource metadata lookup failed', {
+        mcpUrl,
+        error: toError(error).message,
+      });
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The SDK rejects only `javascript:`/`data:`/`vbscript:`; the authorization
+ * endpoint ends up in `window.location.assign`, so allow http(s) and nothing else.
+ */
+function hasHttpEndpoints(metadata: AuthorizationServerMetadata): boolean {
+  return [
+    metadata.authorization_endpoint,
+    metadata.token_endpoint,
+    metadata.registration_endpoint,
+  ].every((url) => url === undefined || isHttpUrl(url));
+}
+
+async function discoverIssuerMetadata(
+  issuer: string
+): Promise<AuthorizationServerMetadata | undefined> {
+  try {
+    const metadata = await discoverAuthorizationServerMetadata(issuer, {
+      fetchFn: fetchWithTimeout,
+    });
+    if (metadata && !hasHttpEndpoints(metadata)) {
+      log.info('Ignoring metadata with non-http(s) endpoints', { issuer });
+      return undefined;
+    }
+    return metadata;
+  } catch (error) {
+    log.info('Ignoring unusable authorization server metadata', {
+      issuer,
+      error: toError(error).message,
+    });
+    return undefined;
+  }
+}
+
+/** What other MCP clients synthesize when nothing is published: the origin root, never the resource's path. */
+function originRootMetadata(mcpUrl: string): AuthorizationServerMetadata {
+  const { origin } = new URL(mcpUrl);
+  return {
+    issuer: origin,
+    authorization_endpoint: `${origin}/authorize`,
+    token_endpoint: `${origin}/token`,
+    registration_endpoint: `${origin}/register`,
+    response_types_supported: ['code'],
+  };
 }
 
 /**
  * Resolve everything needed to run an authorization-code flow against a remote
  * MCP server, degrading one step at a time: the advertised metadata pointer,
- * then the well-known locations, then the origin-root endpoints other MCP
- * clients synthesize. Only a server that publishes nothing anywhere fails.
+ * then the well-known locations, then the origin-root endpoints. Only a server
+ * that publishes nothing anywhere fails.
  */
 export async function discoverMcpOAuth(mcpUrl: string): Promise<DiscoveredOAuthConfig> {
-  const advertised = await probeResourceMetadataUrl(mcpUrl);
-  const prmUrls = advertised
-    ? [advertised, ...protectedResourceMetadataUrls(mcpUrl)]
-    : protectedResourceMetadataUrls(mcpUrl);
-  const prm = await fetchFirstMatching(prmUrls, protectedResourceMetadataSchema);
-
+  const prm = await discoverResourceMetadata(mcpUrl);
   const resource = prm?.resource ?? mcpUrl;
-  const issuerCandidates = prm?.authorization_servers?.length
+  const issuers = prm?.authorization_servers?.length
     ? prm.authorization_servers
-    : [originOf(mcpUrl)];
+    : [new URL(mcpUrl).origin];
 
-  for (const issuer of issuerCandidates) {
-    const metadata = await fetchFirstMatching(
-      authorizationServerMetadataUrls(issuer),
-      authorizationServerMetadataSchema
-    );
+  for (const issuer of issuers) {
+    const metadata = await discoverIssuerMetadata(issuer);
     if (!metadata) continue;
     return {
-      issuer: metadata.issuer ?? issuer,
-      authorizationEndpoint: metadata.authorization_endpoint,
-      tokenEndpoint: metadata.token_endpoint,
-      registrationEndpoint: metadata.registration_endpoint ?? null,
+      metadata,
       resource,
       scopesSupported: prm?.scopes_supported ?? metadata.scopes_supported ?? null,
-      supportsPublicClient:
-        metadata.token_endpoint_auth_methods_supported?.includes('none') ?? false,
     };
   }
 
   log.warn('No OAuth metadata published; falling back to origin-root endpoints', { mcpUrl });
   return {
-    ...fallbackAuthorizationServerEndpoints(mcpUrl),
+    metadata: originRootMetadata(mcpUrl),
     resource,
     scopesSupported: prm?.scopes_supported ?? null,
-    supportsPublicClient: false,
   };
 }
-
-const registrationResponseSchema = z.object({
-  client_id: z.string(),
-  client_secret: z.string().optional(),
-});
 
 export interface RegisteredClient {
   clientId: string;
@@ -180,49 +163,30 @@ export interface RegisteredClient {
  * confidential clients.
  */
 export async function registerOAuthClient(params: {
-  registrationEndpoint: string;
+  metadata: AuthorizationServerMetadata;
   redirectUri: string;
   scope: string | null;
-  supportsPublicClient: boolean;
 }): Promise<RegisteredClient> {
-  const body: Record<string, unknown> = {
-    client_name: 'Clawed Abode',
-    redirect_uris: [params.redirectUri],
-    grant_types: ['authorization_code', 'refresh_token'],
-    response_types: ['code'],
-  };
-  if (params.supportsPublicClient) body.token_endpoint_auth_method = 'none';
-  if (params.scope) body.scope = params.scope;
-
-  const response = await fetch(params.registrationEndpoint, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', accept: 'application/json' },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(DISCOVERY_TIMEOUT_MS),
-  });
-
-  const text = await response.text();
-  if (!response.ok) {
-    throw new Error(
-      `Dynamic client registration failed (${response.status}): ${text.slice(0, 300)}. ` +
-        'Register a client with this server by hand and enter its client ID.'
-    );
-  }
-
-  const parsed = registrationResponseSchema.safeParse(safeJsonParse(text));
-  if (!parsed.success) {
-    throw new Error(
-      'Dynamic client registration returned no client_id. ' +
-        'Register a client with this server by hand and enter its client ID.'
-    );
-  }
-  return { clientId: parsed.data.client_id, clientSecret: parsed.data.client_secret ?? null };
-}
-
-export function safeJsonParse(text: string): unknown {
+  const supportsPublicClient =
+    params.metadata.token_endpoint_auth_methods_supported?.includes('none') ?? false;
   try {
-    return JSON.parse(text);
-  } catch {
-    return null;
+    const registered = await registerClient(params.metadata.issuer, {
+      metadata: params.metadata,
+      clientMetadata: {
+        client_name: 'Clawed Abode',
+        redirect_uris: [params.redirectUri],
+        grant_types: ['authorization_code', 'refresh_token'],
+        response_types: ['code'],
+        ...(supportsPublicClient ? { token_endpoint_auth_method: 'none' } : {}),
+      },
+      scope: params.scope ?? undefined,
+      fetchFn: fetchWithTimeout,
+    });
+    return { clientId: registered.client_id, clientSecret: registered.client_secret ?? null };
+  } catch (error) {
+    throw new Error(
+      `Dynamic client registration failed: ${toError(error).message.slice(0, 300)}. ` +
+        'Register a client with this server by hand and enter its client ID.'
+    );
   }
 }
