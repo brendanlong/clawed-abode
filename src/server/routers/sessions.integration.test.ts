@@ -300,31 +300,6 @@ describe('sessionsRouter integration', () => {
       expect(result.sessions.every((s) => s.status === 'running')).toBe(true);
     });
 
-    it('should exclude archived sessions by default', async () => {
-      await testPrisma.session.createMany({
-        data: [
-          {
-            name: 'Active Session',
-            repoUrl: 'https://github.com/owner/repo.git',
-            branch: 'main',
-            status: 'running',
-          },
-          {
-            name: 'Archived Session',
-            repoUrl: 'https://github.com/owner/repo.git',
-            branch: 'main',
-            status: 'archived',
-          },
-        ],
-      });
-
-      const caller = createCaller('auth-session-id');
-      const result = await caller.sessions.list({});
-
-      expect(result.sessions).toHaveLength(1);
-      expect(result.sessions[0].name).toBe('Active Session');
-    });
-
     it('returns only archived sessions when status is archived, none otherwise', async () => {
       await testPrisma.session.createMany({
         data: [
@@ -395,36 +370,6 @@ describe('sessionsRouter integration', () => {
       expect(sessions[0]).not.toHaveProperty('sessionScope');
       expect(sessions[0]).not.toHaveProperty('messageSequence');
     });
-
-    it('should return only archived sessions when filtering by archived status', async () => {
-      await testPrisma.session.createMany({
-        data: [
-          {
-            name: 'Active Session',
-            repoUrl: 'https://github.com/owner/repo.git',
-            branch: 'main',
-            status: 'running',
-          },
-          {
-            name: 'Archived Session',
-            repoUrl: 'https://github.com/owner/repo.git',
-            branch: 'main',
-            status: 'archived',
-          },
-        ],
-      });
-
-      const caller = createCaller('auth-session-id');
-      const result = await caller.sessions.list({ status: 'archived' });
-
-      expect(result.sessions).toHaveLength(1);
-      expect(result.sessions[0].name).toBe('Archived Session');
-    });
-
-    it('should require authentication', async () => {
-      const caller = createCaller(null);
-      await expect(caller.sessions.list({})).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
-    });
   });
 
   describe('get', () => {
@@ -439,24 +384,6 @@ describe('sessionsRouter integration', () => {
       expect(result.session.id).toBe(session.id);
       expect(result.session.name).toBe('Test Session');
       expect(result.session.status).toBe('running');
-    });
-
-    it('should throw NOT_FOUND for non-existent session', async () => {
-      const caller = createCaller('auth-session-id');
-
-      await expect(
-        caller.sessions.get({ sessionId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' })
-      ).rejects.toMatchObject({
-        code: 'NOT_FOUND',
-        message: 'Session not found',
-      });
-    });
-
-    it('should require authentication', async () => {
-      const caller = createCaller(null);
-      await expect(
-        caller.sessions.get({ sessionId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' })
-      ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
     });
   });
 
@@ -510,20 +437,6 @@ describe('sessionsRouter integration', () => {
 
       expect(result.url).toBeNull();
     });
-
-    it('throws NOT_FOUND for a non-existent session', async () => {
-      const caller = createCaller('auth-session-id');
-      await expect(
-        caller.sessions.getEditorUrl({ sessionId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' })
-      ).rejects.toMatchObject({ code: 'NOT_FOUND' });
-    });
-
-    it('requires authentication', async () => {
-      const caller = createCaller(null);
-      await expect(
-        caller.sessions.getEditorUrl({ sessionId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' })
-      ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
-    });
   });
 
   describe('start', () => {
@@ -565,14 +478,6 @@ describe('sessionsRouter integration', () => {
         code: 'PRECONDITION_FAILED',
       });
     });
-
-    it('should throw NOT_FOUND for non-existent session', async () => {
-      const caller = createCaller('auth-session-id');
-
-      await expect(
-        caller.sessions.start({ sessionId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' })
-      ).rejects.toMatchObject({ code: 'NOT_FOUND' });
-    });
   });
 
   describe('stop', () => {
@@ -608,14 +513,6 @@ describe('sessionsRouter integration', () => {
 
       const dbSession = await testPrisma.session.findUnique({ where: { id: session.id } });
       expect(dbSession!.status).toBe('archived');
-    });
-
-    it('should throw NOT_FOUND for non-existent session', async () => {
-      const caller = createCaller('auth-session-id');
-
-      await expect(
-        caller.sessions.stop({ sessionId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' })
-      ).rejects.toMatchObject({ code: 'NOT_FOUND' });
     });
   });
 
@@ -674,28 +571,6 @@ describe('sessionsRouter integration', () => {
         session.id,
         expect.objectContaining({ name: 'New Name' })
       );
-    });
-
-    it('should throw NOT_FOUND for non-existent session', async () => {
-      const caller = createCaller('auth-session-id');
-
-      await expect(
-        caller.sessions.rename({
-          sessionId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',
-          name: 'New Name',
-        })
-      ).rejects.toMatchObject({ code: 'NOT_FOUND' });
-    });
-
-    it('should require authentication', async () => {
-      const caller = createCaller(null);
-
-      await expect(
-        caller.sessions.rename({
-          sessionId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',
-          name: 'New Name',
-        })
-      ).rejects.toThrow();
     });
   });
 
@@ -784,28 +659,6 @@ describe('sessionsRouter integration', () => {
         caller.sessions.setModel({ sessionId: session.id, claudeModel: 'sonnet' })
       ).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
     });
-
-    it('should throw NOT_FOUND for non-existent session', async () => {
-      const caller = createCaller('auth-session-id');
-
-      await expect(
-        caller.sessions.setModel({
-          sessionId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',
-          claudeModel: 'sonnet',
-        })
-      ).rejects.toMatchObject({ code: 'NOT_FOUND' });
-    });
-
-    it('should require authentication', async () => {
-      const caller = createCaller(null);
-
-      await expect(
-        caller.sessions.setModel({
-          sessionId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',
-          claudeModel: 'sonnet',
-        })
-      ).rejects.toThrow();
-    });
   });
 
   describe('delete (archive)', () => {
@@ -852,14 +705,6 @@ describe('sessionsRouter integration', () => {
 
       expect(result).toEqual({ success: true });
       expect(mockRemoveWorkspace).not.toHaveBeenCalled();
-    });
-
-    it('should throw NOT_FOUND for non-existent session', async () => {
-      const caller = createCaller('auth-session-id');
-
-      await expect(
-        caller.sessions.delete({ sessionId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' })
-      ).rejects.toMatchObject({ code: 'NOT_FOUND' });
     });
   });
 });

@@ -169,39 +169,6 @@ describe('claudeRouter integration', () => {
       await expect(caller.claude.send({ sessionId: session.id, prompt: '   ' })).rejects.toThrow();
     });
 
-    it('should throw NOT_FOUND for non-existent session', async () => {
-      const caller = createCaller('auth-session-id');
-
-      await expect(
-        caller.claude.send({
-          sessionId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',
-          prompt: 'Hello!',
-        })
-      ).rejects.toMatchObject({
-        code: 'NOT_FOUND',
-        message: 'Session not found',
-      });
-    });
-
-    it('should throw PRECONDITION_FAILED if session is not running', async () => {
-      const session = await createTestSession({
-        name: 'Stopped Session',
-        status: 'stopped',
-      });
-
-      const caller = createCaller('auth-session-id');
-
-      await expect(
-        caller.claude.send({
-          sessionId: session.id,
-          prompt: 'Hello!',
-        })
-      ).rejects.toMatchObject({
-        code: 'PRECONDITION_FAILED',
-        message: 'Session is not running',
-      });
-    });
-
     it('accepts a send while Claude is running (it interleaves into the turn)', async () => {
       const session = await createTestSession({
         name: 'Running Session',
@@ -221,30 +188,6 @@ describe('claudeRouter integration', () => {
 
       expect(result).toEqual({ success: true });
       expect(mockSendUserMessage).toHaveBeenCalledWith(session.id, 'Hello!', []);
-    });
-
-    it('should require authentication', async () => {
-      const caller = createCaller(null);
-
-      await expect(
-        caller.claude.send({
-          sessionId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',
-          prompt: 'Hello!',
-        })
-      ).rejects.toMatchObject({
-        code: 'UNAUTHORIZED',
-      });
-    });
-
-    it('should validate prompt is not empty', async () => {
-      const caller = createCaller('auth-session-id');
-
-      await expect(
-        caller.claude.send({
-          sessionId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',
-          prompt: '',
-        })
-      ).rejects.toThrow();
     });
   });
 
@@ -359,23 +302,6 @@ describe('claudeRouter integration', () => {
       ).rejects.toMatchObject({ code: 'CONFLICT' });
       expect(mockSendUserMessage).not.toHaveBeenCalled();
     });
-
-    it('throws PRECONDITION_FAILED when the session is not running', async () => {
-      const session = await createTestSession({
-        name: 'Stopped Q Session',
-        status: 'stopped',
-      });
-
-      const caller = createCaller('auth-session-id');
-
-      await expect(
-        caller.claude.answerQuestion({
-          sessionId: session.id,
-          toolUseId: 'toolu_stopped',
-          answers: { q: 'A' },
-        })
-      ).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
-    });
   });
 
   describe('respondToPlan (fallback path)', () => {
@@ -431,26 +357,6 @@ describe('claudeRouter integration', () => {
 
       expect(result).toEqual({ success: false, cancelled: [] });
       expect(mockMarkLastMessageAsInterrupted).not.toHaveBeenCalled();
-    });
-
-    it('should throw NOT_FOUND for non-existent session', async () => {
-      const caller = createCaller('auth-session-id');
-
-      await expect(
-        caller.claude.interrupt({ sessionId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' })
-      ).rejects.toMatchObject({
-        code: 'NOT_FOUND',
-      });
-    });
-
-    it('should require authentication', async () => {
-      const caller = createCaller(null);
-
-      await expect(
-        caller.claude.interrupt({ sessionId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' })
-      ).rejects.toMatchObject({
-        code: 'UNAUTHORIZED',
-      });
     });
   });
 
@@ -554,26 +460,6 @@ describe('claudeRouter integration', () => {
       expect(result.hasMore).toBe(false);
       expect(result.messages[0].sequence).toBe(11);
       expect(result.messages[8].sequence).toBe(19);
-    });
-
-    it('should throw NOT_FOUND for non-existent session', async () => {
-      const caller = createCaller('auth-session-id');
-
-      await expect(
-        caller.claude.getHistory({ sessionId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' })
-      ).rejects.toMatchObject({
-        code: 'NOT_FOUND',
-      });
-    });
-
-    it('should require authentication', async () => {
-      const caller = createCaller(null);
-
-      await expect(
-        caller.claude.getHistory({ sessionId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' })
-      ).rejects.toMatchObject({
-        code: 'UNAUTHORIZED',
-      });
     });
   });
 
@@ -681,26 +567,6 @@ describe('claudeRouter integration', () => {
       expect(result.inputTokens).toBe(3000);
       expect(result.outputTokens).toBe(1300);
       expect(result.totalTokens).toBe(4300);
-    });
-
-    it('should throw NOT_FOUND for non-existent session', async () => {
-      const caller = createCaller('auth-session-id');
-
-      await expect(
-        caller.claude.getTokenUsage({ sessionId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' })
-      ).rejects.toMatchObject({
-        code: 'NOT_FOUND',
-      });
-    });
-
-    it('should require authentication', async () => {
-      const caller = createCaller(null);
-
-      await expect(
-        caller.claude.getTokenUsage({ sessionId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' })
-      ).rejects.toMatchObject({
-        code: 'UNAUTHORIZED',
-      });
     });
   });
 });

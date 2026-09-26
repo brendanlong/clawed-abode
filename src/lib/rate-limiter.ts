@@ -159,20 +159,6 @@ export class RateLimiter {
   }
 
   /**
-   * Clear rate limit data for a specific key (useful for testing or admin reset).
-   */
-  reset(key: string): void {
-    this.entries.delete(key);
-  }
-
-  /**
-   * Clear all rate limit data (useful for testing or server restart).
-   */
-  resetAll(): void {
-    this.entries.clear();
-  }
-
-  /**
    * Clean up expired entries to prevent memory leaks.
    * Call this periodically (e.g., every hour).
    */

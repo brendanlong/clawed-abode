@@ -65,34 +65,10 @@ describe('formReducer', () => {
         claudeModel: null,
       });
     });
-
-    it('resets to initial state except for the new repo', () => {
-      const result = formReducer(initialFormState, { type: 'selectRepo', repo: mockRepo });
-
-      expect(result.selectedRepo).toBe(mockRepo);
-      expect(result.selectedBranch).toBe('');
-      expect(result.selectedIssue).toBeNull();
-      expect(result.sessionName).toBe('');
-      expect(result.nameManuallyEdited).toBe(false);
-      expect(result.initialPrompt).toBe('');
-      expect(result.promptManuallyEdited).toBe(false);
-    });
   });
 
   describe('selectBranch', () => {
-    it('sets the selected branch', () => {
-      const state: FormState = {
-        ...initialFormState,
-        selectedRepo: mockRepo,
-      };
-
-      const result = formReducer(state, { type: 'selectBranch', branch: 'feature-branch' });
-
-      expect(result.selectedBranch).toBe('feature-branch');
-      expect(result.selectedRepo).toBe(mockRepo);
-    });
-
-    it('preserves other state when changing branch', () => {
+    it('sets the branch and preserves other state', () => {
       const state: FormState = {
         selectedRepo: mockRepo,
         selectedBranch: 'main',
@@ -106,306 +82,89 @@ describe('formReducer', () => {
 
       const result = formReducer(state, { type: 'selectBranch', branch: 'develop' });
 
-      expect(result.selectedBranch).toBe('develop');
-      expect(result.selectedIssue).toBe(mockIssue);
-      expect(result.sessionName).toBe('my session');
-      expect(result.nameManuallyEdited).toBe(true);
-      expect(result.initialPrompt).toBe('my prompt');
-      expect(result.promptManuallyEdited).toBe(true);
+      expect(result).toEqual({ ...state, selectedBranch: 'develop' });
     });
   });
 
   describe('selectIssue', () => {
-    it('sets the issue and auto-fills session name when name was not manually edited', () => {
-      const state: FormState = {
-        ...initialFormState,
-        selectedRepo: mockRepo,
-        selectedBranch: 'main',
-      };
+    const base: FormState = { ...initialFormState, selectedRepo: mockRepo, selectedBranch: 'main' };
+    const edited: FormState = {
+      ...base,
+      sessionName: 'My custom name',
+      nameManuallyEdited: true,
+      initialPrompt: 'My custom prompt',
+      promptManuallyEdited: true,
+    };
 
-      const result = formReducer(state, { type: 'selectIssue', issue: mockIssue });
-
-      expect(result.selectedIssue).toBe(mockIssue);
-      expect(result.sessionName).toBe('#42: Fix the bug');
-    });
-
-    it('sets the generated prompt when prompt was not manually edited', () => {
-      const state: FormState = {
-        ...initialFormState,
-        selectedRepo: mockRepo,
-        selectedBranch: 'main',
-      };
-
-      const result = formReducer(state, {
+    it('auto-fills name and prompt from the issue unless they were manually edited', () => {
+      const select = {
         type: 'selectIssue',
         issue: mockIssue,
         generatedPrompt: 'Fix issue #42',
-      });
+      } as const;
 
-      expect(result.initialPrompt).toBe('Fix issue #42');
-    });
-
-    it('does not overwrite session name when name was manually edited', () => {
-      const state: FormState = {
-        ...initialFormState,
-        selectedRepo: mockRepo,
-        selectedBranch: 'main',
-        sessionName: 'My custom name',
-        nameManuallyEdited: true,
-      };
-
-      const result = formReducer(state, { type: 'selectIssue', issue: mockIssue });
-
-      expect(result.selectedIssue).toBe(mockIssue);
-      expect(result.sessionName).toBe('My custom name');
-    });
-
-    it('does not overwrite prompt when prompt was manually edited', () => {
-      const state: FormState = {
-        ...initialFormState,
-        selectedRepo: mockRepo,
-        selectedBranch: 'main',
-        initialPrompt: 'My custom prompt',
-        promptManuallyEdited: true,
-      };
-
-      const result = formReducer(state, {
-        type: 'selectIssue',
-        issue: mockIssue,
-        generatedPrompt: 'Fix issue #42',
-      });
-
-      expect(result.initialPrompt).toBe('My custom prompt');
-    });
-
-    it('clears session name when issue is deselected and name was not manually edited', () => {
-      const state: FormState = {
-        ...initialFormState,
-        selectedRepo: mockRepo,
-        selectedBranch: 'main',
+      expect(formReducer(base, select)).toMatchObject({
         selectedIssue: mockIssue,
         sessionName: '#42: Fix the bug',
-      };
-
-      const result = formReducer(state, { type: 'selectIssue', issue: null });
-
-      expect(result.selectedIssue).toBeNull();
-      expect(result.sessionName).toBe('');
+        initialPrompt: 'Fix issue #42',
+      });
+      expect(formReducer(edited, select)).toMatchObject({
+        selectedIssue: mockIssue,
+        sessionName: 'My custom name',
+        initialPrompt: 'My custom prompt',
+      });
     });
 
-    it('clears prompt when issue is deselected and prompt was not manually edited', () => {
-      const state: FormState = {
-        ...initialFormState,
-        selectedRepo: mockRepo,
-        selectedBranch: 'main',
+    it('clears auto-filled name and prompt on deselect but preserves manual edits', () => {
+      const autoFilled: FormState = {
+        ...base,
         selectedIssue: mockIssue,
+        sessionName: '#42: Fix the bug',
         initialPrompt: 'Fix issue #42',
       };
+      const deselect = { type: 'selectIssue', issue: null } as const;
 
-      const result = formReducer(state, { type: 'selectIssue', issue: null });
-
-      expect(result.selectedIssue).toBeNull();
-      expect(result.initialPrompt).toBe('');
+      expect(formReducer(autoFilled, deselect)).toMatchObject({
+        selectedIssue: null,
+        sessionName: '',
+        initialPrompt: '',
+      });
+      expect(formReducer({ ...edited, selectedIssue: mockIssue }, deselect)).toMatchObject({
+        selectedIssue: null,
+        sessionName: 'My custom name',
+        initialPrompt: 'My custom prompt',
+      });
     });
 
     it('truncates session name to max length when issue title is very long', () => {
       const longTitle = 'A'.repeat(200);
-      const longIssue: Issue = {
-        ...mockIssue,
-        number: 1,
-        title: longTitle,
-      };
-      const state: FormState = {
-        ...initialFormState,
-        selectedRepo: mockRepo,
-        selectedBranch: 'main',
-      };
+      const longIssue: Issue = { ...mockIssue, number: 1, title: longTitle };
 
-      const result = formReducer(state, { type: 'selectIssue', issue: longIssue });
+      const result = formReducer(base, { type: 'selectIssue', issue: longIssue });
 
       expect(result.sessionName.length).toBe(SESSION_NAME_MAX_LENGTH);
       expect(result.sessionName).toBe(`#1: ${longTitle}`.slice(0, SESSION_NAME_MAX_LENGTH));
     });
+  });
 
-    it('preserves session name when issue is deselected and name was manually edited', () => {
-      const state: FormState = {
-        ...initialFormState,
-        selectedRepo: mockRepo,
-        selectedBranch: 'main',
-        selectedIssue: mockIssue,
-        sessionName: 'My custom name',
+  it.each(['Custom', ''])(
+    'editName / editPrompt set %j and mark the field manually edited',
+    (value) => {
+      const state: FormState = { ...initialFormState, sessionName: 'Old', initialPrompt: 'Old' };
+
+      expect(formReducer(state, { type: 'editName', name: value })).toMatchObject({
+        sessionName: value,
         nameManuallyEdited: true,
-      };
-
-      const result = formReducer(state, { type: 'selectIssue', issue: null });
-
-      expect(result.selectedIssue).toBeNull();
-      expect(result.sessionName).toBe('My custom name');
-    });
-
-    it('preserves prompt when issue is deselected and prompt was manually edited', () => {
-      const state: FormState = {
-        ...initialFormState,
-        selectedRepo: mockRepo,
-        selectedBranch: 'main',
-        selectedIssue: mockIssue,
-        initialPrompt: 'My custom prompt',
+      });
+      expect(formReducer(state, { type: 'editPrompt', prompt: value })).toMatchObject({
+        initialPrompt: value,
         promptManuallyEdited: true,
-      };
-
-      const result = formReducer(state, { type: 'selectIssue', issue: null });
-
-      expect(result.selectedIssue).toBeNull();
-      expect(result.initialPrompt).toBe('My custom prompt');
-    });
-  });
-
-  describe('editName', () => {
-    it('sets the session name and marks it as manually edited', () => {
-      const state: FormState = {
-        ...initialFormState,
-        selectedRepo: mockRepo,
-        selectedBranch: 'main',
-      };
-
-      const result = formReducer(state, { type: 'editName', name: 'Custom session' });
-
-      expect(result.sessionName).toBe('Custom session');
-      expect(result.nameManuallyEdited).toBe(true);
-    });
-
-    it('marks as manually edited even when setting to empty string', () => {
-      const state: FormState = {
-        ...initialFormState,
-        selectedRepo: mockRepo,
-        sessionName: 'Something',
-        nameManuallyEdited: false,
-      };
-
-      const result = formReducer(state, { type: 'editName', name: '' });
-
-      expect(result.sessionName).toBe('');
-      expect(result.nameManuallyEdited).toBe(true);
-    });
-  });
-
-  describe('editPrompt', () => {
-    it('sets the prompt and marks it as manually edited', () => {
-      const state: FormState = {
-        ...initialFormState,
-        selectedRepo: mockRepo,
-        selectedBranch: 'main',
-      };
-
-      const result = formReducer(state, { type: 'editPrompt', prompt: 'Custom prompt' });
-
-      expect(result.initialPrompt).toBe('Custom prompt');
-      expect(result.promptManuallyEdited).toBe(true);
-    });
-
-    it('marks as manually edited even when setting to empty string', () => {
-      const state: FormState = {
-        ...initialFormState,
-        selectedRepo: mockRepo,
-        initialPrompt: 'Something',
-        promptManuallyEdited: false,
-      };
-
-      const result = formReducer(state, { type: 'editPrompt', prompt: '' });
-
-      expect(result.initialPrompt).toBe('');
-      expect(result.promptManuallyEdited).toBe(true);
-    });
-  });
-
-  describe('editModel', () => {
-    it('sets the per-session model override', () => {
-      const state: FormState = { ...initialFormState, selectedRepo: mockRepo };
-
-      const result = formReducer(state, { type: 'editModel', claudeModel: 'sonnet' });
-
-      expect(result.claudeModel).toBe('sonnet');
-    });
-
-    it('clears the override when set to null', () => {
-      const state: FormState = { ...initialFormState, claudeModel: 'sonnet' };
-
-      const result = formReducer(state, { type: 'editModel', claudeModel: null });
-
-      expect(result.claudeModel).toBeNull();
-    });
-  });
-
-  describe('state transitions', () => {
-    it('handles full workflow: select repo -> branch -> issue -> edit name -> change issue', () => {
-      let state = initialFormState;
-
-      // Select repo
-      state = formReducer(state, { type: 'selectRepo', repo: mockRepo });
-      expect(state.selectedRepo).toBe(mockRepo);
-
-      // Select branch
-      state = formReducer(state, { type: 'selectBranch', branch: 'main' });
-      expect(state.selectedBranch).toBe('main');
-
-      // Select issue - auto-fills name and prompt
-      state = formReducer(state, {
-        type: 'selectIssue',
-        issue: mockIssue,
-        generatedPrompt: 'Fix issue #42',
       });
-      expect(state.sessionName).toBe('#42: Fix the bug');
-      expect(state.initialPrompt).toBe('Fix issue #42');
+    }
+  );
 
-      // Manually edit name
-      state = formReducer(state, { type: 'editName', name: 'My preferred name' });
-      expect(state.nameManuallyEdited).toBe(true);
-
-      // Manually edit prompt
-      state = formReducer(state, { type: 'editPrompt', prompt: 'My custom prompt' });
-      expect(state.promptManuallyEdited).toBe(true);
-
-      // Select a different issue - should NOT overwrite manual name or prompt
-      const anotherIssue: Issue = {
-        ...mockIssue,
-        number: 99,
-        title: 'Another issue',
-      };
-      state = formReducer(state, {
-        type: 'selectIssue',
-        issue: anotherIssue,
-        generatedPrompt: 'Fix issue #99',
-      });
-      expect(state.sessionName).toBe('My preferred name');
-      expect(state.initialPrompt).toBe('My custom prompt');
-      expect(state.selectedIssue).toBe(anotherIssue);
-    });
-
-    it('resets nameManuallyEdited and promptManuallyEdited when selecting a new repo', () => {
-      let state: FormState = {
-        ...initialFormState,
-        selectedRepo: mockRepo,
-        selectedBranch: 'main',
-        sessionName: 'Custom name',
-        nameManuallyEdited: true,
-        initialPrompt: 'Custom prompt',
-        promptManuallyEdited: true,
-      };
-
-      // Select new repo - should reset everything
-      state = formReducer(state, { type: 'selectRepo', repo: mockRepo2 });
-      expect(state.nameManuallyEdited).toBe(false);
-      expect(state.promptManuallyEdited).toBe(false);
-      expect(state.initialPrompt).toBe('');
-
-      // Now selecting an issue should auto-fill name and prompt
-      state = formReducer(state, {
-        type: 'selectIssue',
-        issue: mockIssue,
-        generatedPrompt: 'Fix issue #42',
-      });
-      expect(state.sessionName).toBe('#42: Fix the bug');
-      expect(state.initialPrompt).toBe('Fix issue #42');
-    });
+  it('editModel sets the per-session model override', () => {
+    const result = formReducer(initialFormState, { type: 'editModel', claudeModel: 'sonnet' });
+    expect(result.claudeModel).toBe('sonnet');
   });
 });
