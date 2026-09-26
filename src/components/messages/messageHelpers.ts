@@ -62,10 +62,7 @@ export function extractTextContent(content: MessageContent): string | null {
  */
 export function isToolResultMessage(content: MessageContent): boolean {
   const innerContent = content.message?.content;
-  if (Array.isArray(innerContent)) {
-    return innerContent.some((block) => block.type === 'tool_result');
-  }
-  return false;
+  return Array.isArray(innerContent) && innerContent.some((block) => block.type === 'tool_result');
 }
 
 /**
@@ -80,33 +77,36 @@ export function getToolResults(content: MessageContent): ContentBlock[] {
 }
 
 /**
- * Whether an assistant message has any content worth rendering. Filters out
- * fragments whose blocks would all render to nothing — e.g. a `thinking` block
- * with empty `thinking` text (just a continuity signature) and nothing else,
- * which would otherwise show as an empty assistant bubble.
+ * Whether an assistant content block renders a visible element — e.g. a
+ * `thinking` block with empty text (just a continuity signature) renders nothing.
  *
  * Keep the renderable cases in sync with `ContentRenderer.renderContentBlocks`.
+ */
+function isRenderableBlock(block: ContentBlock): boolean {
+  switch (block?.type) {
+    case 'text':
+      return typeof block.text === 'string' && block.text.trim().length > 0;
+    case 'thinking':
+      return typeof block.thinking === 'string' && block.thinking.trim().length > 0;
+    case 'tool_use':
+    case 'redacted_thinking':
+    case 'server_tool_use':
+      return true;
+    // advisor_tool_result is deliberately not renderable: its content is
+    // encrypted, so the server_tool_use block is the visible indicator.
+    default:
+      return false;
+  }
+}
+
+/**
+ * Whether an assistant message has any content worth rendering, so fragments
+ * whose blocks all render to nothing don't show as an empty bubble.
  */
 export function hasRenderableAssistantContent(content: MessageContent): boolean {
   const blocks = content?.message?.content;
   // Non-array content (e.g. a string) is handled by other display paths.
-  if (!Array.isArray(blocks)) return true;
-  return blocks.some((block) => {
-    switch (block?.type) {
-      case 'text':
-        return typeof block.text === 'string' && block.text.trim().length > 0;
-      case 'thinking':
-        return typeof block.thinking === 'string' && block.thinking.trim().length > 0;
-      case 'tool_use':
-      case 'redacted_thinking':
-      case 'server_tool_use':
-        return true;
-      // advisor_tool_result is deliberately not renderable: its content is
-      // encrypted, so the server_tool_use block is the visible indicator.
-      default:
-        return false;
-    }
-  });
+  return !Array.isArray(blocks) || blocks.some(isRenderableBlock);
 }
 
 /**
@@ -132,33 +132,14 @@ export function isHiddenSystemMessage(type: string, content: MessageContent): bo
  * Whether an assistant message is purely one or more tool calls, with no other
  * visible content. Consecutive such messages are the "back-to-back tool calls"
  * that should render tightly packed rather than with full inter-message spacing.
- *
- * Any block that renders its own visible element above the tool calls — non-empty
- * text or thinking, a redacted-thinking indicator, or a server_tool_use (advisor)
- * indicator — disqualifies the message. Keep in sync with
- * {@link hasRenderableAssistantContent}.
  */
 export function isToolCallOnlyMessage(content: MessageContent): boolean {
   const blocks = content?.message?.content;
-  if (!Array.isArray(blocks)) return false;
-  let hasToolUse = false;
-  for (const block of blocks) {
-    switch (block.type) {
-      case 'tool_use':
-        hasToolUse = true;
-        break;
-      case 'text':
-        if (typeof block.text === 'string' && block.text.trim()) return false;
-        break;
-      case 'thinking':
-        if (typeof block.thinking === 'string' && block.thinking.trim()) return false;
-        break;
-      case 'redacted_thinking':
-      case 'server_tool_use':
-        return false;
-    }
-  }
-  return hasToolUse;
+  return (
+    Array.isArray(blocks) &&
+    blocks.some((block) => block.type === 'tool_use') &&
+    blocks.every((block) => block.type === 'tool_use' || !isRenderableBlock(block))
+  );
 }
 
 /**
@@ -353,28 +334,13 @@ export function isRecognizedMessage(type: string, content: MessageContent): Reco
     return { recognized: true, category: 'assistant' };
   }
 
-  // User messages that are tool results
-  if (type === 'user' && isToolResultMessage(content)) {
-    return { recognized: true, category: 'toolResult' };
-  }
-
-  // User interrupt messages
-  if (type === 'user' && content.subtype === 'interrupt') {
-    return { recognized: true, category: 'userInterrupt' };
-  }
-
-  // Regular user messages (prompts) must have text content
   if (type === 'user') {
-    // User prompts typically have message.content with text blocks
-    if (content.message?.content && Array.isArray(content.message.content)) {
-      return { recognized: true, category: 'user' };
-    }
-    // Or message.content as a string (e.g., /context command output)
-    if (typeof content.message?.content === 'string') {
-      return { recognized: true, category: 'user' };
-    }
-    // Or simple content string
-    if (typeof content.content === 'string') {
+    if (isToolResultMessage(content)) return { recognized: true, category: 'toolResult' };
+    if (content.subtype === 'interrupt') return { recognized: true, category: 'userInterrupt' };
+    // Prompts carry text blocks, a string message.content (e.g. /context command
+    // output), or a simple content string.
+    const inner = content.message?.content;
+    if (Array.isArray(inner) || typeof inner === 'string' || typeof content.content === 'string') {
       return { recognized: true, category: 'user' };
     }
     return { recognized: false };
