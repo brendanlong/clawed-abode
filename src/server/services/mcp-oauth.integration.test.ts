@@ -35,6 +35,8 @@ class FakeMcpAuthServer {
   /** Replaces the 401's `resource_metadata` pointer, to test the well-known fallback. */
   advertisedResourceMetadata: string | null = null;
   tokenEndpointAuthMethods = ['none', 'client_secret_post'];
+  /** Serve AS metadata only at the OIDC location, with the RFC 8414 one erroring. */
+  oidcOnly = false;
   /** Replaces the advertised authorization_endpoint, to test metadata validation. */
   hostileAuthorizationEndpoint: string | null = null;
 
@@ -90,7 +92,14 @@ class FakeMcpAuthServer {
       return;
     }
 
-    if (url.pathname === '/.well-known/oauth-authorization-server/tenant') {
+    const asMetadataPath = this.oidcOnly
+      ? '/.well-known/openid-configuration/tenant'
+      : '/.well-known/oauth-authorization-server/tenant';
+    if (this.oidcOnly && url.pathname === '/.well-known/oauth-authorization-server/tenant') {
+      res.writeHead(500).end();
+      return;
+    }
+    if (url.pathname === asMetadataPath) {
       json(200, {
         issuer: `${this.baseUrl}/tenant`,
         authorization_endpoint:
@@ -213,6 +222,7 @@ describe('MCP OAuth', () => {
     remote.hostileAuthorizationEndpoint = null;
     remote.advertisedResourceMetadata = null;
     remote.tokenEndpointAuthMethods = ['none', 'client_secret_post'];
+    remote.oidcOnly = false;
     remote.issuedRefreshToken = 'refresh-1';
     remote.accessTokenLifetimeSeconds = 3600;
   });
@@ -275,6 +285,18 @@ describe('MCP OAuth', () => {
     expect(url.searchParams.get('resource')).toBe(remote.mcpUrl);
   });
 
+  it('moves on to the OIDC location when the RFC 8414 one errors', async () => {
+    remote.oidcOnly = true;
+    await addOAuthServer();
+    const { authorizeUrl } = await scope.startScopeMcpOAuth(
+      scope.GLOBAL_SCOPE,
+      'remote',
+      APP_ORIGIN
+    );
+    const url = new URL(authorizeUrl);
+    expect(url.origin + url.pathname).toBe(`${remote.baseUrl}/tenant/authorize`);
+  });
+
   it('registers a confidential client when the server does not advertise "none"', async () => {
     remote.tokenEndpointAuthMethods = ['client_secret_post'];
     await addOAuthServer();
@@ -310,6 +332,7 @@ describe('MCP OAuth', () => {
       grant_type: 'refresh_token',
       refresh_token: 'refresh-1',
       resource: remote.mcpUrl,
+      scope: 'data:read',
     });
 
     const refreshed = await credential();

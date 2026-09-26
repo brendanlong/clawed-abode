@@ -12,6 +12,22 @@ export function isHttpUrl(value: string): boolean {
   }
 }
 
+/**
+ * Where to look for a resource's RFC 9728 metadata, most authoritative first.
+ *
+ * §3.1 inserts `/.well-known/oauth-protected-resource` **before** the resource's
+ * path, so `https://host/api/mcp` publishes at
+ * `https://host/.well-known/oauth-protected-resource/api/mcp`. The root location
+ * is only authoritative for a bare-origin resource, but plenty of servers serve
+ * it there anyway, so it stays as a fallback.
+ */
+export function protectedResourceMetadataUrls(resourceUrl: string): string[] {
+  const url = new URL(resourceUrl);
+  const path = url.pathname.replace(/\/+$/, '');
+  const root = `${url.origin}/.well-known/oauth-protected-resource`;
+  return path && path !== '/' ? [`${root}${path}`, root] : [root];
+}
+
 /** The app's own OAuth callback, which must be reachable from the user's browser. */
 export const MCP_OAUTH_CALLBACK_PATH = '/api/mcp/oauth/callback';
 

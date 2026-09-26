@@ -31,12 +31,18 @@ const CLEARED_FLOW = { flowState: null, codeVerifier: null, flowStartedAt: null 
 
 // ─── Token endpoint ──────────────────────────────────────────────────
 
+const tokenFetch = fetchWithTimeout(30_000);
+
 /**
- * Options shared by the SDK's code exchange and refresh, sending client
- * credentials as `client_secret_post` instead of the SDK's default Basic header.
+ * Options shared by the SDK's code exchange and refresh. The hook replaces the
+ * SDK's client authentication and its `resource` handling:
+ * - credentials go as `client_secret_post`, not the SDK's default Basic header;
+ * - `resource` is the exact stored string (the SDK sends `new URL(r).href`,
+ *   which turns `https://host` into `https://host/` and breaks exact matching);
+ * - `scope` is resent on refresh, which some servers (Entra) require.
  */
 function tokenRequestOptions(
-  grant: { clientSecret: string | null; resource: string | null },
+  grant: { clientSecret: string | null; resource: string | null; scope: string | null },
   tokenEndpoint: string,
   clientId: string
 ) {
@@ -44,6 +50,10 @@ function tokenRequestOptions(
   const addClientAuthentication: AddClientAuthentication = (_headers, params) => {
     params.set('client_id', clientId);
     if (clientSecret) params.set('client_secret', clientSecret);
+    if (grant.resource) params.set('resource', grant.resource);
+    if (grant.scope && params.get('grant_type') === 'refresh_token') {
+      params.set('scope', grant.scope);
+    }
   };
   return {
     // A token request reads only `token_endpoint` from the metadata.
@@ -54,18 +64,17 @@ function tokenRequestOptions(
       response_types_supported: ['code'],
     },
     clientInformation: { client_id: clientId },
-    resource: grant.resource ? new URL(grant.resource) : undefined,
     addClientAuthentication,
-    fetchFn: fetchWithTimeout,
+    fetchFn: tokenFetch,
   };
 }
 
 function oauthErrorMessage(error: unknown): string {
-  if (error instanceof OAuthError) {
-    const detail = error.message.slice(0, 300);
-    return `Token request failed: ${error.errorCode}${detail ? `: ${detail}` : ''}`;
-  }
-  return toError(error).message;
+  const message =
+    error instanceof OAuthError
+      ? `Token request failed: ${error.errorCode}${error.message ? `: ${error.message}` : ''}`
+      : toError(error).message;
+  return message.slice(0, 500);
 }
 
 export function accessTokenExpiry(expiresIn: number | undefined, now: Date): Date | null {
@@ -109,8 +118,9 @@ export async function startMcpOAuthFlow(params: {
     redirectUrl: redirectUri,
     scope: scope ?? undefined,
     state,
-    resource: new URL(discovered.resource),
   });
+  // Set here rather than via the SDK, which would normalize it (see tokenRequestOptions).
+  authorizationUrl.searchParams.set('resource', discovered.resource);
 
   const flow = {
     issuer: metadata.issuer,

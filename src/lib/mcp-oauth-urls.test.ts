@@ -4,6 +4,7 @@ import {
   isFlowExpired,
   isHttpUrl,
   mcpOAuthRedirectUri,
+  protectedResourceMetadataUrls,
   OAUTH_FLOW_TTL_MS,
   TOKEN_EXPIRY_SKEW_MS,
 } from './mcp-oauth-urls';
@@ -15,6 +16,22 @@ describe('isHttpUrl', () => {
     expect(isHttpUrl('javascript:alert(1)')).toBe(false);
     expect(isHttpUrl('file:///etc/passwd')).toBe(false);
     expect(isHttpUrl('not a url')).toBe(false);
+  });
+});
+
+describe('protectedResourceMetadataUrls', () => {
+  // RFC 9728 §3.1: the well-known segment goes *before* the resource's path.
+  it('tries the path-inserted location before the root one', () => {
+    expect(protectedResourceMetadataUrls('https://ai.todoist.net/mcp')).toEqual([
+      'https://ai.todoist.net/.well-known/oauth-protected-resource/mcp',
+      'https://ai.todoist.net/.well-known/oauth-protected-resource',
+    ]);
+  });
+
+  it('uses only the root location for a bare-origin resource', () => {
+    expect(protectedResourceMetadataUrls('https://mcp.example.com/')).toEqual([
+      'https://mcp.example.com/.well-known/oauth-protected-resource',
+    ]);
   });
 });
 

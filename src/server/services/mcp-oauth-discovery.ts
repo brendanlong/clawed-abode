@@ -1,23 +1,52 @@
+import { z } from 'zod';
 import {
-  discoverAuthorizationServerMetadata,
-  discoverOAuthProtectedResourceMetadata,
+  buildDiscoveryUrls,
   extractWWWAuthenticateParams,
   registerClient,
 } from '@modelcontextprotocol/sdk/client/auth.js';
-import type {
-  AuthorizationServerMetadata,
-  OAuthProtectedResourceMetadata,
-} from '@modelcontextprotocol/sdk/shared/auth.js';
+import type { AuthorizationServerMetadata } from '@modelcontextprotocol/sdk/shared/auth.js';
 import type { FetchLike } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { createLogger, toError } from '@/lib/logger';
-import { isHttpUrl } from '@/lib/mcp-oauth-urls';
+import { isHttpUrl, protectedResourceMetadataUrls } from '@/lib/mcp-oauth-urls';
 
 const log = createLogger('mcp-oauth-discovery');
 
-const OAUTH_TIMEOUT_MS = 30_000;
+export function fetchWithTimeout(ms: number): FetchLike {
+  return (url, init) => fetch(url, { ...init, signal: AbortSignal.timeout(ms) });
+}
 
-export const fetchWithTimeout: FetchLike = (url, init) =>
-  fetch(url, { ...init, signal: AbortSignal.timeout(OAUTH_TIMEOUT_MS) });
+const discoveryFetch = fetchWithTimeout(10_000);
+
+/**
+ * RFC 9728 protected-resource metadata. Deliberately laxer than the SDK's schema,
+ * which drops the whole document (and with it `authorization_servers`) when
+ * `resource` is missing.
+ */
+const protectedResourceMetadataSchema = z.object({
+  resource: z.string().optional(),
+  authorization_servers: z.array(z.string()).optional(),
+  scopes_supported: z.array(z.string()).optional(),
+});
+
+/**
+ * The SDK rejects only `javascript:`/`data:`/`vbscript:`; the authorization
+ * endpoint ends up in `window.location.assign`, so allow http(s) and nothing else.
+ */
+const httpUrlSchema = z.string().refine(isHttpUrl, { message: 'must be an http(s) URL' });
+
+/**
+ * RFC 8414 / OIDC authorization-server metadata, requiring only what the flow
+ * uses — the SDK's OIDC schema also demands `jwks_uri` and friends.
+ */
+const authorizationServerMetadataSchema = z.looseObject({
+  issuer: z.string().optional(),
+  authorization_endpoint: httpUrlSchema,
+  token_endpoint: httpUrlSchema,
+  registration_endpoint: httpUrlSchema.optional(),
+  response_types_supported: z.array(z.string()).optional(),
+  scopes_supported: z.array(z.string()).optional(),
+  token_endpoint_auth_methods_supported: z.array(z.string()).optional(),
+});
 
 export interface DiscoveredOAuthConfig {
   /** Real metadata, or origin-root endpoints synthesized when the server publishes none. */
@@ -28,14 +57,33 @@ export interface DiscoveredOAuthConfig {
   scopesSupported: string[] | null;
 }
 
+/** Try each URL in turn, skipping any that fails for any reason (unlike the SDK, which stops on a 5xx or malformed document). */
+async function fetchFirstMatching<T>(urls: string[], schema: z.ZodType<T>): Promise<T | null> {
+  for (const url of urls) {
+    try {
+      const response = await discoveryFetch(url, { headers: { accept: 'application/json' } });
+      if (!response.ok) {
+        await response.body?.cancel();
+        continue;
+      }
+      const parsed = schema.safeParse(await response.json());
+      if (parsed.success) return parsed.data;
+      log.info('Ignoring malformed metadata document', { url });
+    } catch (error) {
+      log.debug('Metadata fetch failed', { url, error: toError(error).message });
+    }
+  }
+  return null;
+}
+
 /**
  * Ask the MCP endpoint who guards it. A spec-compliant server answers an
  * unauthenticated request with 401 + `WWW-Authenticate: Bearer
  * resource_metadata="..."`; that pointer is authoritative.
  */
-async function probeResourceMetadataUrl(mcpUrl: string): Promise<URL | undefined> {
+async function probeResourceMetadataUrl(mcpUrl: string): Promise<string | null> {
   try {
-    const response = await fetchWithTimeout(mcpUrl, {
+    const response = await discoveryFetch(mcpUrl, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -44,67 +92,14 @@ async function probeResourceMetadataUrl(mcpUrl: string): Promise<URL | undefined
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} }),
     });
     await response.body?.cancel();
-    if (response.status !== 401) return undefined;
-    return extractWWWAuthenticateParams(response).resourceMetadataUrl;
+    if (response.status !== 401) return null;
+    return extractWWWAuthenticateParams(response).resourceMetadataUrl?.href ?? null;
   } catch (error) {
     log.info('Unauthenticated probe of MCP endpoint failed', {
       mcpUrl,
       error: toError(error).message,
     });
-    return undefined;
-  }
-}
-
-async function discoverResourceMetadata(
-  mcpUrl: string
-): Promise<OAuthProtectedResourceMetadata | undefined> {
-  // The SDK tries only the given URL when one is advertised, so a broken pointer
-  // falls back to its own path-inserted-then-root well-known lookup.
-  const advertised = await probeResourceMetadataUrl(mcpUrl);
-  const attempts = advertised ? [{ resourceMetadataUrl: advertised }, {}] : [{}];
-  for (const opts of attempts) {
-    try {
-      return await discoverOAuthProtectedResourceMetadata(mcpUrl, opts, fetchWithTimeout);
-    } catch (error) {
-      log.debug('Protected resource metadata lookup failed', {
-        mcpUrl,
-        error: toError(error).message,
-      });
-    }
-  }
-  return undefined;
-}
-
-/**
- * The SDK rejects only `javascript:`/`data:`/`vbscript:`; the authorization
- * endpoint ends up in `window.location.assign`, so allow http(s) and nothing else.
- */
-function hasHttpEndpoints(metadata: AuthorizationServerMetadata): boolean {
-  return [
-    metadata.authorization_endpoint,
-    metadata.token_endpoint,
-    metadata.registration_endpoint,
-  ].every((url) => url === undefined || isHttpUrl(url));
-}
-
-async function discoverIssuerMetadata(
-  issuer: string
-): Promise<AuthorizationServerMetadata | undefined> {
-  try {
-    const metadata = await discoverAuthorizationServerMetadata(issuer, {
-      fetchFn: fetchWithTimeout,
-    });
-    if (metadata && !hasHttpEndpoints(metadata)) {
-      log.info('Ignoring metadata with non-http(s) endpoints', { issuer });
-      return undefined;
-    }
-    return metadata;
-  } catch (error) {
-    log.info('Ignoring unusable authorization server metadata', {
-      issuer,
-      error: toError(error).message,
-    });
-    return undefined;
+    return null;
   }
 }
 
@@ -127,17 +122,29 @@ function originRootMetadata(mcpUrl: string): AuthorizationServerMetadata {
  * that publishes nothing anywhere fails.
  */
 export async function discoverMcpOAuth(mcpUrl: string): Promise<DiscoveredOAuthConfig> {
-  const prm = await discoverResourceMetadata(mcpUrl);
+  const advertised = await probeResourceMetadataUrl(mcpUrl);
+  const prm = await fetchFirstMatching(
+    [...(advertised ? [advertised] : []), ...protectedResourceMetadataUrls(mcpUrl)],
+    protectedResourceMetadataSchema
+  );
+
   const resource = prm?.resource ?? mcpUrl;
   const issuers = prm?.authorization_servers?.length
     ? prm.authorization_servers
     : [new URL(mcpUrl).origin];
 
   for (const issuer of issuers) {
-    const metadata = await discoverIssuerMetadata(issuer);
+    const metadata = await fetchFirstMatching(
+      buildDiscoveryUrls(issuer).map(({ url }) => url.href),
+      authorizationServerMetadataSchema
+    );
     if (!metadata) continue;
     return {
-      metadata,
+      metadata: {
+        ...metadata,
+        issuer: metadata.issuer ?? issuer,
+        response_types_supported: metadata.response_types_supported ?? ['code'],
+      },
       resource,
       scopesSupported: prm?.scopes_supported ?? metadata.scopes_supported ?? null,
     };
@@ -180,7 +187,7 @@ export async function registerOAuthClient(params: {
         ...(supportsPublicClient ? { token_endpoint_auth_method: 'none' } : {}),
       },
       scope: params.scope ?? undefined,
-      fetchFn: fetchWithTimeout,
+      fetchFn: discoveryFetch,
     });
     return { clientId: registered.client_id, clientSecret: registered.client_secret ?? null };
   } catch (error) {
