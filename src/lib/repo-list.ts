@@ -35,7 +35,13 @@ export function buildRepoChoices<R extends RepoLike>({
     ...matching.filter((r) => favorites.has(r.fullName)),
     ...matching.filter((r) => !favorites.has(r.fullName)),
   ];
-  const { matches, total } = capMatches(ordered, limit, (r) => r.fullName === selectedFullName);
+  const capped = capMatches(ordered, limit, (r) => r.fullName === selectedFullName);
+  // A pinned selection lands at index 0; move it back behind the favorites.
+  const matches = [
+    ...capped.matches.filter((r) => favorites.has(r.fullName)),
+    ...capped.matches.filter((r) => !favorites.has(r.fullName)),
+  ];
+  const { total } = capped;
 
   if (!matchesAllTerms(noRepoSearchText, query)) return { matches, total };
 

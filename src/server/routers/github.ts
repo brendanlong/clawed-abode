@@ -127,8 +127,11 @@ export const githubRouter = router({
       token
     );
 
+    // Pages are fetched in parallel, so a repo updated mid-walk can appear on two.
+    const unique = [...new Map(items.map((r) => [r.id, r])).values()];
+
     return {
-      repos: items.map((r) => ({
+      repos: unique.map((r) => ({
         id: r.id,
         fullName: r.full_name,
         name: r.name,

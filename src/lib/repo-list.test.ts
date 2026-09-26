@@ -51,4 +51,17 @@ describe('buildRepoChoices', () => {
     expect(result.matches.map((r) => r.fullName)).toEqual(['__no_repo__', 'b/two']);
     expect(result.total).toBe(3);
   });
+
+  it('keeps favorites contiguous when a selection past the cap is pinned', () => {
+    const result = buildRepoChoices({
+      repos: [{ fullName: 'f/1' }, { fullName: 'f/2' }, { fullName: 'x/1' }, { fullName: 'x/2' }],
+      favorites: new Set(['f/1', 'f/2']),
+      query: '',
+      noRepoEntry: NO_REPO,
+      noRepoSearchText: 'No Repository workspace',
+      selectedFullName: 'x/2',
+      limit: 3,
+    });
+    expect(result.matches.map((r) => r.fullName)).toEqual(['f/1', 'f/2', '__no_repo__', 'x/2']);
+  });
 });

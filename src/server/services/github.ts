@@ -122,13 +122,22 @@ export async function githubFetchAllPages<T>(
     `${path}${path.includes('?') ? '&' : '?'}per_page=100&page=${page}`;
 
   const first = await githubFetchResponse(pageUrl(1), token);
-  const lastPage = Number(parseLinkHeader(first.headers.get('link')).last ?? 1);
-  const pageCount = Math.min(lastPage, MAX_LIST_PAGES);
+  const links = parseLinkHeader(first.headers.get('link'));
+  // Without `last` the page count is unknown; keep page 1 and admit the gap.
+  const lastPage = links.last ? Number(links.last) : links.next ? Infinity : 1;
+  const pageCount = links.last ? Math.min(lastPage, MAX_LIST_PAGES) : 1;
   const rest = await Promise.all(
     Array.from({ length: pageCount - 1 }, (_, i) => githubFetch<unknown>(pageUrl(i + 2), token))
   );
 
-  const items = [await first.json(), ...rest].flatMap((page) => pageSchema.parse(page));
+  const items = [await first.json(), ...rest].flatMap((page) => {
+    const parsed = pageSchema.safeParse(page);
+    if (!parsed.success) {
+      log.error('Unexpected GitHub list response', parsed.error, { path });
+      throw new GitHubApiError(502, path, 'Unexpected response from GitHub');
+    }
+    return parsed.data;
+  });
   return { items, truncated: lastPage > MAX_LIST_PAGES };
 }
 

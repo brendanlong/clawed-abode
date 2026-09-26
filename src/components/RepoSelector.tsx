@@ -181,16 +181,21 @@ export function RepoSelector({
                 </li>
               );
             })}
-            {(hiddenCount > 0 || data?.truncated) && (
+            {hiddenCount > 0 && (
               <li className="px-4 py-3 text-xs text-muted-foreground">
-                {hiddenCount > 0
-                  ? `${hiddenCount.toLocaleString()} more repositories match. Keep typing to narrow the list.`
-                  : 'You have access to more repositories than can be listed; some are missing.'}
+                {hiddenCount.toLocaleString()} more repositories match. Keep typing to narrow the
+                list.
               </li>
             )}
           </ul>
         )}
       </div>
+
+      {data?.truncated && (
+        <p className="text-xs text-muted-foreground">
+          You have access to more repositories than can be listed; some are missing.
+        </p>
+      )}
     </div>
   );
 }

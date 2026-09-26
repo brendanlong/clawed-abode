@@ -119,12 +119,37 @@ describe('githubRouter', () => {
       expect(result.truncated).toBe(true);
     });
 
+    it('should drop a repo that shifted onto two pages mid-walk', async () => {
+      const repo = {
+        id: 7,
+        full_name: 'owner/moved',
+        name: 'moved',
+        owner: { login: 'owner' },
+        description: null,
+        private: false,
+        default_branch: 'main',
+      };
+      mockFetch.mockResolvedValue(
+        createMockResponse([repo], 200, {
+          link: '<https://api.github.com/user/repos?per_page=100&page=2>; rel="last"',
+        })
+      );
+
+      const caller = createCaller('auth-session-id');
+      const result = await caller.github.listRepos();
+
+      expect(result.repos.map((r) => r.id)).toEqual([7]);
+    });
+
     it('should reject a malformed GitHub response', async () => {
       mockFetch.mockResolvedValue(createMockResponse([{ id: 'not-a-number' }]));
 
       const caller = createCaller('auth-session-id');
 
-      await expect(caller.github.listRepos()).rejects.toThrow();
+      await expect(caller.github.listRepos()).rejects.toMatchObject({
+        code: 'INTERNAL_SERVER_ERROR',
+        message: 'GitHub API error 502: Unexpected response from GitHub',
+      });
     });
 
     it('should throw PRECONDITION_FAILED if no GitHub token', async () => {
@@ -196,6 +221,26 @@ describe('githubRouter', () => {
 
       expect(result.branches).toEqual(['main', 'fix/a', 'z']);
       expect(result.truncated).toBe(false);
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('/repos/owner/repo/branches?per_page=100&page=2'),
+        expect.anything()
+      );
+    });
+
+    it('should report truncation when GitHub gives a next link but no last', async () => {
+      mockFetch.mockImplementation(async (url: string) =>
+        url.includes('/branches')
+          ? createMockResponse([{ name: 'main' }], 200, {
+              link: '<https://api.github.com/repos/owner/repo/branches?per_page=100&page=2>; rel="next"',
+            })
+          : createMockResponse({ default_branch: 'main' })
+      );
+
+      const caller = createCaller('auth-session-id');
+      const result = await caller.github.listBranches({ repoFullName: 'owner/repo' });
+
+      expect(result.branches).toEqual(['main']);
+      expect(result.truncated).toBe(true);
     });
 
     it('should stop at the page cap and report the list as truncated', async () => {
