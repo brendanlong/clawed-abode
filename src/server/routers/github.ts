@@ -6,25 +6,23 @@ import { defaultBranchFirst } from '@/lib/branch-list';
 import {
   githubFetch as serviceGithubFetch,
   githubFetchResponse as serviceGithubFetchResponse,
+  githubFetchAllPages as serviceGithubFetchAllPages,
   parseLinkHeader,
   GitHubApiError,
 } from '../services/github';
 
-interface GitHubRepo {
-  id: number;
-  full_name: string;
-  name: string;
-  owner: { login: string };
-  description: string | null;
-  private: boolean;
-  default_branch: string;
-  updated_at: string;
-}
+const repoSchema = z.object({
+  id: z.number(),
+  full_name: z.string(),
+  name: z.string(),
+  owner: z.object({ login: z.string() }),
+  description: z.string().nullable(),
+  private: z.boolean(),
+  default_branch: z.string(),
+});
+type GitHubRepo = z.infer<typeof repoSchema>;
 
-const branchPageSchema = z.array(z.object({ name: z.string() }));
-
-/** Bounds the page walk; the default branch is added even if it falls past the cap. */
-const MAX_BRANCH_PAGES = 10;
+const branchSchema = z.object({ name: z.string() });
 
 interface GitHubIssue {
   id: number;
@@ -103,70 +101,45 @@ async function githubFetch<T>(path: string, token?: string): Promise<T> {
   }
 }
 
-async function fetchBranchNames(
-  repoFullName: string,
+async function githubFetchAllPages<T>(
+  path: string,
+  itemSchema: z.ZodType<T>,
   token: string
-): Promise<{ names: string[]; truncated: boolean }> {
-  const names: string[] = [];
-  let page: string | undefined = '1';
-  for (let i = 0; page && i < MAX_BRANCH_PAGES; i++) {
-    const response = await githubFetchResponse(
-      `/repos/${repoFullName}/branches?per_page=100&page=${page}`,
-      token
-    );
-    names.push(...branchPageSchema.parse(await response.json()).map((b) => b.name));
-    page = parseLinkHeader(response.headers.get('link')).next;
+): Promise<{ items: T[]; truncated: boolean }> {
+  try {
+    return await serviceGithubFetchAllPages(path, itemSchema, token);
+  } catch (err) {
+    mapGitHubError(err);
   }
-  return { names, truncated: page !== undefined };
 }
 
 export const githubRouter = router({
-  listRepos: protectedProcedure
-    .input(
-      z.object({
-        search: z.string().optional(),
-        cursor: z.string().regex(/^\d+$/).optional(), // page number as string
-        perPage: z.number().int().min(1).max(100).default(30),
-      })
-    )
-    .query(async ({ input }) => {
-      const token = requireGitHubToken();
+  /**
+   * Every repo the token can reach (owned, collaborator, and org), most recently
+   * updated first. The client searches this list itself: GitHub's search API
+   * can't scope to "repos I can access" and skips forks by default.
+   */
+  listRepos: protectedProcedure.query(async () => {
+    const token = requireGitHubToken();
+    const { items, truncated } = await githubFetchAllPages(
+      '/user/repos?sort=updated',
+      repoSchema,
+      token
+    );
 
-      const page = input.cursor ? parseInt(input.cursor, 10) : 1;
-
-      let repos: GitHubRepo[];
-      let response: Response;
-
-      if (input.search) {
-        const query = encodeURIComponent(`${input.search} in:name user:@me`);
-        const url = `/search/repositories?q=${query}&per_page=${input.perPage}&page=${page}`;
-
-        response = await githubFetchResponse(url, token);
-        const data = await response.json();
-        repos = data.items;
-      } else {
-        const url = `/user/repos?sort=updated&per_page=${input.perPage}&page=${page}`;
-
-        response = await githubFetchResponse(url, token);
-        repos = await response.json();
-      }
-
-      const links = parseLinkHeader(response.headers.get('link'));
-
-      return {
-        repos: repos.map((r) => ({
-          id: r.id,
-          fullName: r.full_name,
-          name: r.name,
-          owner: r.owner.login,
-          description: r.description,
-          private: r.private,
-          defaultBranch: r.default_branch,
-          updatedAt: r.updated_at,
-        })),
-        nextCursor: links.next,
-      };
-    }),
+    return {
+      repos: items.map((r) => ({
+        id: r.id,
+        fullName: r.full_name,
+        name: r.name,
+        owner: r.owner.login,
+        description: r.description,
+        private: r.private,
+        defaultBranch: r.default_branch,
+      })),
+      truncated,
+    };
+  }),
 
   listBranches: protectedProcedure
     .input(
@@ -177,13 +150,16 @@ export const githubRouter = router({
     .query(async ({ input }) => {
       const token = requireGitHubToken();
 
-      const [repo, { names, truncated }] = await Promise.all([
+      const [repo, { items, truncated }] = await Promise.all([
         githubFetch<GitHubRepo>(`/repos/${input.repoFullName}`, token),
-        fetchBranchNames(input.repoFullName, token),
+        githubFetchAllPages(`/repos/${input.repoFullName}/branches`, branchSchema, token),
       ]);
 
       return {
-        branches: defaultBranchFirst(names, repo.default_branch),
+        branches: defaultBranchFirst(
+          items.map((b) => b.name),
+          repo.default_branch
+        ),
         defaultBranch: repo.default_branch,
         truncated,
       };

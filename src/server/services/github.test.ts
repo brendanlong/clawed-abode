@@ -81,10 +81,10 @@ describe('github service', () => {
   });
 
   describe('parseLinkHeader', () => {
-    it('should parse next page from link header', () => {
+    it('should parse next and last pages from link header', () => {
       const header =
         '<https://api.github.com/repos?page=3>; rel="next", <https://api.github.com/repos?page=5>; rel="last"';
-      expect(parseLinkHeader(header)).toEqual({ next: '3' });
+      expect(parseLinkHeader(header)).toEqual({ next: '3', last: '5' });
     });
 
     it('should return empty object for null header', () => {

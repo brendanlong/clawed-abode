@@ -81,26 +81,55 @@ export class GitHubApiError extends Error {
   }
 }
 
-export function parseLinkHeader(header: string | null): { next?: string } {
+export function parseLinkHeader(header: string | null): { next?: string; last?: string } {
   if (!header) return {};
 
-  const links: { next?: string } = {};
+  const links: { next?: string; last?: string } = {};
   const parts = header.split(',');
 
   for (const part of parts) {
     const match = part.match(/<([^>]+)>;\s*rel="([^"]+)"/);
     if (match) {
       const [, url, rel] = match;
-      if (rel === 'next') {
+      if (rel === 'next' || rel === 'last') {
         const pageMatch = url.match(/[?&]page=(\d+)/);
         if (pageMatch) {
-          links.next = pageMatch[1];
+          links[rel] = pageMatch[1];
         }
       }
     }
   }
 
   return links;
+}
+
+/** Bounds {@link githubFetchAllPages}: at 100 items a page, 1000 items. */
+const MAX_LIST_PAGES = 10;
+
+/**
+ * Every item of a paginated GitHub list endpoint, for pickers that search the
+ * whole list locally (GitHub's search API can't express "everything I can
+ * access"). Page 1's `last` link gives the page count, so the rest are fetched
+ * in parallel. `truncated` means pages past the cap were skipped.
+ */
+export async function githubFetchAllPages<T>(
+  path: string,
+  itemSchema: z.ZodType<T>,
+  token: string
+): Promise<{ items: T[]; truncated: boolean }> {
+  const pageSchema = z.array(itemSchema);
+  const pageUrl = (page: number) =>
+    `${path}${path.includes('?') ? '&' : '?'}per_page=100&page=${page}`;
+
+  const first = await githubFetchResponse(pageUrl(1), token);
+  const lastPage = Number(parseLinkHeader(first.headers.get('link')).last ?? 1);
+  const pageCount = Math.min(lastPage, MAX_LIST_PAGES);
+  const rest = await Promise.all(
+    Array.from({ length: pageCount - 1 }, (_, i) => githubFetch<unknown>(pageUrl(i + 2), token))
+  );
+
+  const items = [await first.json(), ...rest].flatMap((page) => pageSchema.parse(page));
+  return { items, truncated: lastPage > MAX_LIST_PAGES };
 }
 
 // =============================================================================
