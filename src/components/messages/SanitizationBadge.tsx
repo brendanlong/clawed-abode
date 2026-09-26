@@ -1,7 +1,6 @@
 'use client';
 
 import { ShieldAlert } from 'lucide-react';
-import { cn } from '@/lib/utils';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import type { SanitizationInfo } from '@/lib/sanitization';
 
@@ -14,12 +13,10 @@ import type { SanitizationInfo } from '@/lib/sanitization';
 export function SanitizationBadge({
   info,
   surface,
-  className,
 }: {
   info: SanitizationInfo;
   /** What the finding applies to, for the popover copy. */
   surface: 'message' | 'tool result';
-  className?: string;
 }) {
   const label = info.removed ? 'Hidden content removed' : 'Suspicious content flagged';
   const details = info.warnings.length > 0 ? info.warnings : info.found;
@@ -29,10 +26,7 @@ export function SanitizationBadge({
       <PopoverTrigger asChild>
         <button
           type="button"
-          className={cn(
-            'inline-flex items-center gap-1 rounded-md border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800 transition-colors hover:bg-amber-100 focus:outline-none focus:ring-2 focus:ring-amber-400 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200 dark:hover:bg-amber-900',
-            className
-          )}
+          className="inline-flex items-center gap-1 rounded-md border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800 transition-colors hover:bg-amber-100 focus:outline-none focus:ring-2 focus:ring-amber-400 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200 dark:hover:bg-amber-900"
         >
           <ShieldAlert className="h-3 w-3" />
           <span>{label}</span>

@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Spinner } from '@/components/ui/spinner';
+import { CenteredSpinner, Spinner } from '@/components/ui/spinner';
 import { SessionListItem } from '@/components/SessionListItem';
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
 import type { PagedSessions } from '@/hooks/useSessionList';
@@ -54,11 +54,7 @@ export function SessionList({
   onToggleArchived,
 }: SessionListProps) {
   if (active.isLoading) {
-    return (
-      <div className="flex justify-center py-12">
-        <Spinner size="lg" />
-      </div>
-    );
+    return <CenteredSpinner />;
   }
 
   if (active.sessions.length === 0 && !showArchived) {
