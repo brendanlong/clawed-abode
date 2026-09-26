@@ -1,22 +1,15 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { Check, ChevronsUpDown } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
 import { trpc } from '@/lib/trpc';
 import { resolveListQueryState } from '@/lib/list-query-state';
-import { cn } from '@/lib/utils';
-import { Button } from '@/components/ui/button';
+import { capMatches, matchesAllTerms } from '@/lib/search';
 import { Label } from '@/components/ui/label';
 import { Spinner } from '@/components/ui/spinner';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from '@/components/ui/command';
+import { SearchableCombobox } from '@/components/SearchableCombobox';
+
+/** Most branches the picker renders at once; big repos have hundreds. */
+export const BRANCH_PICKER_LIMIT = 100;
 
 export function BranchSelector({
   repoFullName,
@@ -27,18 +20,29 @@ export function BranchSelector({
   selectedBranch: string;
   onSelect: (branch: string) => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
   const { data, isLoading, error } = trpc.github.listBranches.useQuery(
     { repoFullName },
-    { enabled: !!repoFullName }
+    // Listing a big repo walks several GitHub pages; don't redo it on every tab focus.
+    { enabled: !!repoFullName, staleTime: 5 * 60 * 1000 }
   );
 
-  const branches = data?.branches ?? [];
+  const branches = useMemo(() => data?.branches ?? [], [data]);
   const state = resolveListQueryState({
     isLoading,
     hasError: !!error,
     itemCount: branches.length,
   });
+
+  const cap = useMemo(
+    () =>
+      capMatches(
+        branches.filter((b) => matchesAllTerms(b, query)),
+        BRANCH_PICKER_LIMIT,
+        (b) => b === selectedBranch
+      ),
+    [branches, query, selectedBranch]
+  );
 
   useEffect(() => {
     if (data && data.branches.length > 0 && !selectedBranch) {
@@ -78,48 +82,28 @@ export function BranchSelector({
   return (
     <div className="space-y-2">
       <Label>Branch</Label>
-      <Popover open={open} onOpenChange={setOpen}>
-        <PopoverTrigger asChild>
-          <Button
-            type="button"
-            variant="outline"
-            role="combobox"
-            aria-expanded={open}
-            className="w-full justify-between font-normal"
-          >
-            <span className="truncate">{selectedBranch || 'Select a branch'}</span>
-            <ChevronsUpDown className="h-4 w-4 shrink-0 opacity-50" />
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent className="p-0 w-[var(--radix-popover-trigger-width)]" align="start">
-          <Command>
-            <CommandInput placeholder="Search branches..." />
-            <CommandList>
-              <CommandEmpty>No matching branches</CommandEmpty>
-              <CommandGroup>
-                {branches.map((branch) => (
-                  <CommandItem
-                    key={branch}
-                    value={branch}
-                    onSelect={() => {
-                      onSelect(branch);
-                      setOpen(false);
-                    }}
-                  >
-                    <Check
-                      className={cn(selectedBranch === branch ? 'opacity-100' : 'opacity-0')}
-                    />
-                    <span className="truncate">
-                      {branch}
-                      {branch === data?.defaultBranch ? ' (default)' : ''}
-                    </span>
-                  </CommandItem>
-                ))}
-              </CommandGroup>
-            </CommandList>
-          </Command>
-        </PopoverContent>
-      </Popover>
+      <SearchableCombobox
+        triggerLabel={selectedBranch || 'Select a branch'}
+        ariaLabel="Branch"
+        searchPlaceholder="Search branches..."
+        emptyText="No matching branches"
+        query={query}
+        onQueryChange={setQuery}
+        options={cap.matches.map((branch) => ({
+          value: branch,
+          label: branch === data?.defaultBranch ? `${branch} (default)` : branch,
+          selected: branch === selectedBranch,
+        }))}
+        onSelect={onSelect}
+        cap={{ ...cap, noun: 'branches' }}
+        footer={
+          data?.truncated && (
+            <p className="border-t px-3 py-2 text-xs text-muted-foreground">
+              This repository has too many branches to list them all; some are missing.
+            </p>
+          )
+        }
+      />
     </div>
   );
 }

@@ -21,9 +21,7 @@ interface GitHubRepo {
   updated_at: string;
 }
 
-interface GitHubBranch {
-  name: string;
-}
+const branchPageSchema = z.array(z.object({ name: z.string() }));
 
 /** Bounds the page walk; the default branch is added even if it falls past the cap. */
 const MAX_BRANCH_PAGES = 10;
@@ -105,6 +103,23 @@ async function githubFetch<T>(path: string, token?: string): Promise<T> {
   }
 }
 
+async function fetchBranchNames(
+  repoFullName: string,
+  token: string
+): Promise<{ names: string[]; truncated: boolean }> {
+  const names: string[] = [];
+  let page: string | undefined = '1';
+  for (let i = 0; page && i < MAX_BRANCH_PAGES; i++) {
+    const response = await githubFetchResponse(
+      `/repos/${repoFullName}/branches?per_page=100&page=${page}`,
+      token
+    );
+    names.push(...branchPageSchema.parse(await response.json()).map((b) => b.name));
+    page = parseLinkHeader(response.headers.get('link')).next;
+  }
+  return { names, truncated: page !== undefined };
+}
+
 export const githubRouter = router({
   listRepos: protectedProcedure
     .input(
@@ -162,23 +177,15 @@ export const githubRouter = router({
     .query(async ({ input }) => {
       const token = requireGitHubToken();
 
-      const repo = await githubFetch<GitHubRepo>(`/repos/${input.repoFullName}`, token);
-
-      const names: string[] = [];
-      let page: string | undefined = '1';
-      for (let i = 0; page && i < MAX_BRANCH_PAGES; i++) {
-        const response = await githubFetchResponse(
-          `/repos/${input.repoFullName}/branches?per_page=100&page=${page}`,
-          token
-        );
-        const branches: GitHubBranch[] = await response.json();
-        names.push(...branches.map((b) => b.name));
-        page = parseLinkHeader(response.headers.get('link')).next;
-      }
+      const [repo, { names, truncated }] = await Promise.all([
+        githubFetch<GitHubRepo>(`/repos/${input.repoFullName}`, token),
+        fetchBranchNames(input.repoFullName, token),
+      ]);
 
       return {
         branches: defaultBranchFirst(names, repo.default_branch),
         defaultBranch: repo.default_branch,
+        truncated,
       };
     }),
 

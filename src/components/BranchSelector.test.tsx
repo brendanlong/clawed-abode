@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { BranchSelector } from './BranchSelector';
+import { BRANCH_PICKER_LIMIT, BranchSelector } from './BranchSelector';
 
 type QueryResult = {
-  data?: { branches: string[]; defaultBranch: string };
+  data?: { branches: string[]; defaultBranch: string; truncated: boolean };
   isLoading: boolean;
   error?: { message: string };
 };
@@ -44,7 +44,7 @@ describe('BranchSelector', () => {
   it('reports an empty repository only when the query succeeded with no branches', () => {
     listBranchesResult.current = {
       isLoading: false,
-      data: { branches: [], defaultBranch: 'main' },
+      data: { branches: [], defaultBranch: 'main', truncated: false },
     };
 
     render(<BranchSelector repoFullName="owner/repo" selectedBranch="" onSelect={vi.fn()} />);
@@ -56,12 +56,12 @@ describe('BranchSelector', () => {
     listBranchesResult.current = {
       isLoading: false,
       error: { message: 'GitHub rate limit exceeded' },
-      data: { branches: ['main'], defaultBranch: 'main' },
+      data: { branches: ['main'], defaultBranch: 'main', truncated: false },
     };
 
     render(<BranchSelector repoFullName="owner/repo" selectedBranch="main" onSelect={vi.fn()} />);
 
-    expect(screen.getByRole('combobox')).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Branch' })).toBeInTheDocument();
     expect(screen.queryByText(/Could not load branches/)).not.toBeInTheDocument();
   });
 
@@ -72,6 +72,7 @@ describe('BranchSelector', () => {
       data: {
         branches: ['main', 'dev'],
         defaultBranch: 'main',
+        truncated: false,
       },
     };
 
@@ -85,16 +86,45 @@ describe('BranchSelector', () => {
     const onSelect = vi.fn();
     listBranchesResult.current = {
       isLoading: false,
-      data: { branches: ['main', 'fix/a', 'feature/b'], defaultBranch: 'main' },
+      data: { branches: ['main', 'fix/a', 'feature/b'], defaultBranch: 'main', truncated: false },
     };
 
     render(<BranchSelector repoFullName="owner/repo" selectedBranch="main" onSelect={onSelect} />);
 
-    await user.click(screen.getByRole('combobox'));
+    await user.click(screen.getByRole('combobox', { name: 'Branch' }));
     await user.type(screen.getByPlaceholderText('Search branches...'), 'feat');
 
     expect(screen.queryByRole('option', { name: /fix\/a/ })).not.toBeInTheDocument();
     await user.click(screen.getByRole('option', { name: /feature\/b/ }));
     expect(onSelect).toHaveBeenCalledWith('feature/b');
+  });
+
+  it('caps rendered branches but keeps the selected one', async () => {
+    const user = userEvent.setup();
+    const branches = Array.from({ length: 300 }, (_, i) => `b${i}`);
+    listBranchesResult.current = {
+      isLoading: false,
+      data: { branches, defaultBranch: 'b0', truncated: false },
+    };
+
+    render(<BranchSelector repoFullName="owner/repo" selectedBranch="b299" onSelect={vi.fn()} />);
+    await user.click(screen.getByRole('combobox', { name: 'Branch' }));
+
+    expect(screen.getAllByRole('option')).toHaveLength(BRANCH_PICKER_LIMIT);
+    expect(screen.getByRole('option', { name: 'b299' })).toBeInTheDocument();
+    expect(screen.getByText(/Showing 100 of 300 branches/)).toBeInTheDocument();
+  });
+
+  it('warns when the server could not list every branch', async () => {
+    const user = userEvent.setup();
+    listBranchesResult.current = {
+      isLoading: false,
+      data: { branches: ['main'], defaultBranch: 'main', truncated: true },
+    };
+
+    render(<BranchSelector repoFullName="owner/repo" selectedBranch="main" onSelect={vi.fn()} />);
+    await user.click(screen.getByRole('combobox', { name: 'Branch' }));
+
+    expect(screen.getByText(/too many branches/)).toBeInTheDocument();
   });
 });
