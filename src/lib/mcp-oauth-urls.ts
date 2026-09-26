@@ -1,24 +1,15 @@
 /**
- * Pure URL/header construction for the MCP OAuth client. Everything here is
- * spec plumbing (RFC 9728 / 8414 / 7636 / 8707) with no I/O, so the rules that
- * remote servers most often get wrong are unit-testable on their own.
+ * An endpoint we will either navigate the browser to or post credentials to.
+ * `new URL()` happily parses `javascript:`, and the authorization endpoint ends
+ * up in `window.location.assign`.
  */
-
-/** Parsed `WWW-Authenticate` challenge parameters (`resource_metadata`, `scope`, ...). */
-export function parseWwwAuthenticate(header: string | null | undefined): Record<string, string> {
-  if (!header) return {};
-  // Drop the auth-scheme token ("Bearer"); everything after it is `key=value` pairs.
-  const params = header.replace(/^\s*[A-Za-z][A-Za-z0-9-]*\s+/, '');
-  const result: Record<string, string> = {};
-  for (const match of params.matchAll(/([A-Za-z_][A-Za-z0-9_-]*)\s*=\s*(?:"([^"]*)"|([^,\s]+))/g)) {
-    result[match[1].toLowerCase()] = match[2] ?? match[3];
+export function isHttpUrl(value: string): boolean {
+  try {
+    const { protocol } = new URL(value);
+    return protocol === 'https:' || protocol === 'http:';
+  } catch {
+    return false;
   }
-  return result;
-}
-
-/** Strip a URL down to `scheme://host[:port]`. */
-export function originOf(url: string): string {
-  return new URL(url).origin;
 }
 
 /**
@@ -35,66 +26,6 @@ export function protectedResourceMetadataUrls(resourceUrl: string): string[] {
   const path = url.pathname.replace(/\/+$/, '');
   const root = `${url.origin}/.well-known/oauth-protected-resource`;
   return path && path !== '/' ? [`${root}${path}`, root] : [root];
-}
-
-/**
- * Where to look for an authorization server's metadata, most standard first:
- * RFC 8414 path-insertion, then the OIDC variants (an issuer with a path is
- * exactly where clients most often derive the wrong URL and give up).
- */
-export function authorizationServerMetadataUrls(issuer: string): string[] {
-  const url = new URL(issuer);
-  const path = url.pathname.replace(/\/+$/, '');
-  if (!path || path === '/') {
-    return [
-      `${url.origin}/.well-known/oauth-authorization-server`,
-      `${url.origin}/.well-known/openid-configuration`,
-    ];
-  }
-  return [
-    `${url.origin}/.well-known/oauth-authorization-server${path}`,
-    `${url.origin}/.well-known/openid-configuration${path}`,
-    `${url.origin}${path}/.well-known/openid-configuration`,
-  ];
-}
-
-/**
- * Endpoints to assume when a server publishes no metadata at all. Mirrors what
- * other MCP clients synthesize: the origin root, never the resource's path.
- */
-export function fallbackAuthorizationServerEndpoints(resourceUrl: string) {
-  const origin = originOf(resourceUrl);
-  return {
-    issuer: origin,
-    authorizationEndpoint: `${origin}/authorize`,
-    tokenEndpoint: `${origin}/token`,
-    registrationEndpoint: `${origin}/register`,
-  };
-}
-
-export interface AuthorizeUrlParams {
-  authorizationEndpoint: string;
-  clientId: string;
-  redirectUri: string;
-  state: string;
-  codeChallenge: string;
-  scope?: string | null;
-  /** RFC 8707 resource indicator — the canonical MCP URL the token is minted for. */
-  resource?: string | null;
-}
-
-export function buildAuthorizeUrl(params: AuthorizeUrlParams): string {
-  const url = new URL(params.authorizationEndpoint);
-  const query = url.searchParams;
-  query.set('response_type', 'code');
-  query.set('client_id', params.clientId);
-  query.set('redirect_uri', params.redirectUri);
-  query.set('state', params.state);
-  query.set('code_challenge', params.codeChallenge);
-  query.set('code_challenge_method', 'S256');
-  if (params.scope) query.set('scope', params.scope);
-  if (params.resource) query.set('resource', params.resource);
-  return url.toString();
 }
 
 /** The app's own OAuth callback, which must be reachable from the user's browser. */

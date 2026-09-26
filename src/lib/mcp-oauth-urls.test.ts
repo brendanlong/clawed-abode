@@ -1,37 +1,21 @@
 import { describe, it, expect } from 'vitest';
 import {
-  authorizationServerMetadataUrls,
-  buildAuthorizeUrl,
-  fallbackAuthorizationServerEndpoints,
   isAccessTokenFresh,
   isFlowExpired,
+  isHttpUrl,
   mcpOAuthRedirectUri,
-  parseWwwAuthenticate,
   protectedResourceMetadataUrls,
   OAUTH_FLOW_TTL_MS,
   TOKEN_EXPIRY_SKEW_MS,
 } from './mcp-oauth-urls';
 
-describe('parseWwwAuthenticate', () => {
-  it('extracts quoted challenge parameters, ignoring the scheme', () => {
-    expect(
-      parseWwwAuthenticate(
-        'Bearer realm="OAuth", resource_metadata="https://h/.well-known/oauth-protected-resource/api/mcp", error="invalid_token"'
-      )
-    ).toEqual({
-      realm: 'OAuth',
-      resource_metadata: 'https://h/.well-known/oauth-protected-resource/api/mcp',
-      error: 'invalid_token',
-    });
-  });
-
-  it('accepts unquoted values and a lowercase scheme', () => {
-    expect(parseWwwAuthenticate('bearer error=invalid_token')).toEqual({ error: 'invalid_token' });
-  });
-
-  it('returns nothing for a missing or scheme-only header', () => {
-    expect(parseWwwAuthenticate(null)).toEqual({});
-    expect(parseWwwAuthenticate('Bearer')).toEqual({});
+describe('isHttpUrl', () => {
+  it('accepts only http(s)', () => {
+    expect(isHttpUrl('https://as.example.com/authorize')).toBe(true);
+    expect(isHttpUrl('http://127.0.0.1:8080/token')).toBe(true);
+    expect(isHttpUrl('javascript:alert(1)')).toBe(false);
+    expect(isHttpUrl('file:///etc/passwd')).toBe(false);
+    expect(isHttpUrl('not a url')).toBe(false);
   });
 });
 
@@ -48,77 +32,6 @@ describe('protectedResourceMetadataUrls', () => {
     expect(protectedResourceMetadataUrls('https://mcp.example.com/')).toEqual([
       'https://mcp.example.com/.well-known/oauth-protected-resource',
     ]);
-  });
-});
-
-describe('authorizationServerMetadataUrls', () => {
-  it('path-inserts for an issuer with a path, then falls back to OIDC layouts', () => {
-    expect(authorizationServerMetadataUrls('https://auth.example.com/tenant1')).toEqual([
-      'https://auth.example.com/.well-known/oauth-authorization-server/tenant1',
-      'https://auth.example.com/.well-known/openid-configuration/tenant1',
-      'https://auth.example.com/tenant1/.well-known/openid-configuration',
-    ]);
-  });
-
-  it('uses the plain well-known locations for a bare issuer', () => {
-    expect(authorizationServerMetadataUrls('https://todoist.com')).toEqual([
-      'https://todoist.com/.well-known/oauth-authorization-server',
-      'https://todoist.com/.well-known/openid-configuration',
-    ]);
-  });
-});
-
-describe('fallbackAuthorizationServerEndpoints', () => {
-  it('synthesizes endpoints at the origin root, never under the resource path', () => {
-    expect(fallbackAuthorizationServerEndpoints('https://h.example.com/api/mcp')).toEqual({
-      issuer: 'https://h.example.com',
-      authorizationEndpoint: 'https://h.example.com/authorize',
-      tokenEndpoint: 'https://h.example.com/token',
-      registrationEndpoint: 'https://h.example.com/register',
-    });
-  });
-});
-
-describe('buildAuthorizeUrl', () => {
-  it('always sends PKCE and preserves query already on the endpoint', () => {
-    const url = new URL(
-      buildAuthorizeUrl({
-        authorizationEndpoint: 'https://as.example.com/authorize?tenant=a',
-        clientId: 'client-1',
-        redirectUri: 'https://app.ts.net/api/mcp/oauth/callback',
-        state: 'st',
-        codeChallenge: 'ch',
-        scope: 'data:read',
-        resource: 'https://ai.todoist.net/mcp',
-      })
-    );
-    expect(Object.fromEntries(url.searchParams)).toEqual({
-      tenant: 'a',
-      response_type: 'code',
-      client_id: 'client-1',
-      redirect_uri: 'https://app.ts.net/api/mcp/oauth/callback',
-      state: 'st',
-      code_challenge: 'ch',
-      code_challenge_method: 'S256',
-      scope: 'data:read',
-      resource: 'https://ai.todoist.net/mcp',
-    });
-  });
-
-  it('omits scope and resource when they are unknown', () => {
-    const url = new URL(
-      buildAuthorizeUrl({
-        authorizationEndpoint: 'https://as.example.com/authorize',
-        clientId: 'c',
-        redirectUri: 'https://app/cb',
-        state: 's',
-        codeChallenge: 'ch',
-        scope: null,
-        resource: null,
-      })
-    );
-    expect(url.searchParams.has('scope')).toBe(false);
-    expect(url.searchParams.has('resource')).toBe(false);
   });
 });
 
