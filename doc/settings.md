@@ -14,7 +14,7 @@ Env vars and MCP servers are **scope-generic**: one table each, `repoSettingsId`
 
 ## Advisor Model
 
-Global-only and **opt-in**: null means the advisor tool isn't wired into requests at all; setting a model enables it. `SUGGESTED_ADVISOR_MODEL` ([`src/lib/advisor.ts`](../src/lib/advisor.ts), dependency-free so server and client share it) is what an empty Enable→Save adopts — it is _not_ a resolution fallback; only the Disable button reaches the disabled state. There's no dedicated SDK option, so it's passed as an ad-hoc `--settings` source via `Options.extraArgs` (omitted entirely when disabled). SDK versions before 0.3.196 silently ignore `advisorModel`; to re-verify after a bump, capture the CLI's outgoing `/v1/messages` request and check the `tools` array for `advisor_20260301`.
+Global-only and **opt-in**: null means the advisor tool isn't wired into requests at all; setting a model enables it. `SUGGESTED_ADVISOR_MODEL` ([`src/lib/advisor.ts`](../src/lib/advisor.ts), dependency-free so server and client share it) is what an empty Enable→Save adopts — it is _not_ a resolution fallback; only the Disable button reaches the disabled state. There's no dedicated SDK option, so it's passed as an ad-hoc `--settings` source via `Options.extraArgs` (omitted entirely when disabled).
 
 ## MCP Validation
 

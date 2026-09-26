@@ -8,13 +8,13 @@ Every SDK message routes through `classifyMessage` ([`src/lib/claude-messages.ts
 
 1. **Ignored** (never persisted): pure progress ticks (`thinking_tokens`, `task_progress`, `api_retry`, …) — `IGNORED_SYSTEM_SUBTYPES`.
 2. **Visible**: `error`, `compact_boundary`, `model_refusal_fallback` — these carry signal. `model_refusal_fallback` marks a silent primary→fallback model downgrade after an API refusal; without a visible banner the downgrade would be invisible.
-3. **Hidden**: everything else is **persisted but not rendered** (`isHiddenSystemMessage` gates both the list filter and the bubble render). Persisting keeps the option of widening the visible set later without a backfill.
+3. **Hidden**: everything else is **persisted but not rendered**. Persisting keeps the option of widening the visible set later without a backfill.
 
 Other rendering-relevant classification: `server_tool_use` (e.g. the advisor, which runs inside the API and never passes `canUseTool`) renders as a one-line indicator; a message whose only block is an encrypted `advisor_tool_result` is hidden (nothing human-readable to show). Thinking blocks are accumulated from `thinking_delta`s, rendered as one collapsed section, and excluded from copy/voice output.
 
 ## Storage & Pagination
 
-Messages carry a per-session monotone `sequence`. **Every insert goes through `insertMessage`** ([`message-store.ts`](../src/server/services/message-store.ts)), which reserves a sequence with a single autocommit `UPDATE "Session" SET "messageSequence" = "messageSequence" + 1 … RETURNING` — one statement, so SQLite serializes it on the write lock and concurrent inserts can't collide. No read-then-insert, no retry loop, and no interactive transaction (those contend and deadlock under SQLite's single-writer model).
+Messages carry a per-session monotone `sequence`. **Every insert goes through `insertMessage`** ([`message-store.ts`](../src/server/services/message-store.ts)), which reserves a sequence with a single autocommit `UPDATE "Session" SET "messageSequence" = "messageSequence" + 1 … RETURNING` — one statement, so SQLite serializes it on the write lock and concurrent inserts can't collide.
 
 A duplicate `id` (e.g. an idempotent synthetic `tool_result`) fails the primary key and is treated as a no-op; the reserved sequence is skipped, leaving a gap — pagination orders by `sequence` and never assumes contiguity. All history queries are cursor-based on `sequence` (`claude.getHistory`, direction before/after).
 
@@ -39,7 +39,3 @@ All server→client updates flow over SSE via tRPC's `httpSubscriptionLink` (cli
 - `counter` = strictly increasing per connection, seeded from the previous `lastEventId`, so ids never repeat across reconnects (tRPC drops repeated tracked ids).
 
 `EventSource` auto-reconnects with `Last-Event-ID`; a `ConnectionStatusIndicator` banner shows while the stream is down. Ping/reconnect tuning lives in [`src/server/trpc.ts`](../src/server/trpc.ts).
-
-## Rendering
-
-Message display components and their rules (hidden system messages, tool-call density, subagent grouping/relocation) are documented in [`src/components/CLAUDE.md`](../src/components/CLAUDE.md).

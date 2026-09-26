@@ -32,8 +32,7 @@ you:
 
 - **`utilization` is a fraction, not a percentage.** 0.78 means 78%. Compared
   against a 0-100 threshold it would silently never fire.
-- **`unifiedWindows`** — undocumented, absent from the SDK types, first seen in
-  September 2026 — carries every window's usage on nearly every event. It is the
+- **`unifiedWindows`** — undocumented and absent from the SDK types — carries every window's usage on nearly every event. It is the
   only dependable source of a utilization figure: the top-level `utilization` is
   populated on `allowed_warning` events but null on the plain `allowed` ones that
   are ~87% of the stream, and null on rejections. Without it the threshold has
