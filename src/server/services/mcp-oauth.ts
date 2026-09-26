@@ -19,17 +19,17 @@ const TOKEN_TIMEOUT_MS = 30_000;
 
 // ─── PKCE / state ────────────────────────────────────────────────────
 
-function base64url(buffer: Buffer): string {
-  return buffer.toString('base64url');
-}
-
-function generateCodeVerifier(): string {
-  return base64url(randomBytes(32));
-}
-
 export function codeChallengeFor(verifier: string): string {
-  return base64url(createHash('sha256').update(verifier).digest());
+  return createHash('sha256').update(verifier).digest('base64url');
 }
+
+const CLEARED_TOKENS = {
+  accessToken: null,
+  refreshToken: null,
+  expiresAt: null,
+  authorizedAt: null,
+};
+const CLEARED_FLOW = { flowState: null, codeVerifier: null, flowStartedAt: null };
 
 // ─── Token endpoint ──────────────────────────────────────────────────
 
@@ -148,8 +148,8 @@ export async function startMcpOAuthFlow(params: {
     ? { clientId: existing.clientId!, encryptedSecret: existing.clientSecret }
     : await registerNewClient(discovered, redirectUri, scope);
 
-  const codeVerifier = generateCodeVerifier();
-  const state = base64url(randomBytes(32));
+  const codeVerifier = randomBytes(32).toString('base64url');
+  const state = randomBytes(32).toString('base64url');
 
   const flow = {
     issuer: discovered.issuer,
@@ -165,9 +165,7 @@ export async function startMcpOAuthFlow(params: {
     redirectUri,
     flowStartedAt: new Date(),
     lastError: null,
-    ...(reusable
-      ? {}
-      : { accessToken: null, refreshToken: null, expiresAt: null, authorizedAt: null }),
+    ...(reusable ? {} : CLEARED_TOKENS),
   };
 
   await prisma.mcpOAuth.upsert({
@@ -279,9 +277,7 @@ export async function completeMcpOAuthFlow(params: {
         scope: tokens.scope ?? row.scope,
         authorizedAt: new Date(),
         lastError: null,
-        flowState: null,
-        codeVerifier: null,
-        flowStartedAt: null,
+        ...CLEARED_FLOW,
       },
     });
     log.info('Completed MCP OAuth flow', { mcpServerId: row.mcpServerId });
@@ -302,7 +298,7 @@ export async function abandonMcpOAuthFlow(state: string, reason: string): Promis
 async function clearFlow(id: string, lastError: string | null): Promise<void> {
   await prisma.mcpOAuth.update({
     where: { id },
-    data: { flowState: null, codeVerifier: null, flowStartedAt: null, lastError },
+    data: { ...CLEARED_FLOW, lastError },
   });
 }
 
@@ -350,13 +346,7 @@ export async function syncMcpOAuthConfig(params: {
   const clientChanged = clientId !== null && clientId !== existing?.clientId;
   const invalidated =
     params.urlChanged || clientChanged || clearingManualClient
-      ? {
-          accessToken: null,
-          refreshToken: null,
-          expiresAt: null,
-          authorizedAt: null,
-          lastError: null,
-        }
+      ? { ...CLEARED_TOKENS, lastError: null }
       : {};
 
   const config = {
@@ -376,16 +366,7 @@ export async function syncMcpOAuthConfig(params: {
 export async function disconnectMcpOAuth(mcpServerId: string): Promise<void> {
   await prisma.mcpOAuth.updateMany({
     where: { mcpServerId },
-    data: {
-      accessToken: null,
-      refreshToken: null,
-      expiresAt: null,
-      authorizedAt: null,
-      flowState: null,
-      codeVerifier: null,
-      flowStartedAt: null,
-      lastError: null,
-    },
+    data: { ...CLEARED_TOKENS, ...CLEARED_FLOW, lastError: null },
   });
   log.info('Disconnected MCP OAuth grant', { mcpServerId });
 }
@@ -474,13 +455,7 @@ async function resolveAccessToken(oauthId: string): Promise<string | null> {
       where: { id: oauthId },
       data:
         error instanceof OAuthGrantInvalidError
-          ? {
-              accessToken: null,
-              refreshToken: null,
-              expiresAt: null,
-              authorizedAt: null,
-              lastError: message,
-            }
+          ? { ...CLEARED_TOKENS, lastError: message }
           : { lastError: message },
     });
     log.warn('MCP OAuth token refresh failed', { oauthId, error: message });

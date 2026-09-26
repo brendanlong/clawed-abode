@@ -44,7 +44,6 @@ const authorizationServerMetadataSchema = z.object({
   registration_endpoint: httpUrlSchema.optional(),
   scopes_supported: z.array(z.string()).optional(),
   token_endpoint_auth_methods_supported: z.array(z.string()).optional(),
-  code_challenge_methods_supported: z.array(z.string()).optional(),
 });
 
 export type AuthorizationServerMetadata = z.infer<typeof authorizationServerMetadataSchema>;

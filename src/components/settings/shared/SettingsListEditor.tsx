@@ -16,7 +16,8 @@ interface SettingsListEditorProps<T extends SettingsListItem> {
   items: T[];
   state: SettingsListState;
   dispatch: (action: SettingsListAction) => void;
-  onDelete: () => void;
+  onDelete: (name: string) => Promise<unknown>;
+  onUpdate: () => void;
   emptyMessage: string;
   deleteDialogTitle: string;
   deleteDescriptionPrefix: string;
@@ -36,6 +37,7 @@ export function SettingsListEditor<T extends SettingsListItem>({
   state,
   dispatch,
   onDelete,
+  onUpdate,
   emptyMessage,
   deleteDialogTitle,
   deleteDescriptionPrefix,
@@ -44,6 +46,18 @@ export function SettingsListEditor<T extends SettingsListItem>({
   extraItemActions,
   renderItemExtra,
 }: SettingsListEditorProps<T>) {
+  const handleDelete = async () => {
+    if (!state.deleteTarget) return;
+    dispatch({ type: 'startDeleting' });
+    try {
+      await onDelete(state.deleteTarget);
+      dispatch({ type: 'finishDeleting' });
+      onUpdate();
+    } catch {
+      dispatch({ type: 'finishDeleting' });
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -92,13 +106,16 @@ export function SettingsListEditor<T extends SettingsListItem>({
             ? items.find((item) => item.id === state.editingId)
             : undefined,
           onClose: () => dispatch({ type: 'closeForm' }),
-          onSuccess: () => dispatch({ type: 'formSuccess' }),
+          onSuccess: () => {
+            dispatch({ type: 'formSuccess' });
+            onUpdate();
+          },
         })}
 
       <DeleteConfirmDialog
         open={!!state.deleteTarget}
         onClose={() => dispatch({ type: 'setDeleteTarget', name: null })}
-        onConfirm={onDelete}
+        onConfirm={handleDelete}
         title={deleteDialogTitle}
         description={
           <>

@@ -17,8 +17,6 @@
  * without the SDK or the database.
  */
 
-import type { UserContent } from './claude-messages';
-
 /** A user's response to a parked interactive tool call. */
 export type ToolResponse =
   | { kind: 'questions'; answers: Record<string, string> }
@@ -72,15 +70,15 @@ export function formatToolResponsePrompt(response: ToolResponse): string {
 
 /**
  * Build a synthetic `user`/`tool_result` message that pairs a dangling
- * `tool_use` block. Matches {@link UserContent} so it parses and pairs exactly
- * like a real SDK tool result in the message list.
+ * `tool_use` block, shaped like a real SDK tool result so the message list
+ * pairs it the same way.
  */
 export function buildSyntheticToolResultContent(params: {
   sessionId: string;
   toolUseId: string;
   uuid: string;
   text: string;
-}): UserContent {
+}) {
   return {
     type: 'user',
     message: {

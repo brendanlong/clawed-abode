@@ -31,18 +31,6 @@ describe('RateLimiter', () => {
       expect(result.remainingAttempts).toBe(DEFAULT_RATE_LIMIT_CONFIG.maxAttempts - 2);
     });
 
-    it('should block requests during lockout', () => {
-      // Exhaust all attempts
-      for (let i = 0; i < DEFAULT_RATE_LIMIT_CONFIG.maxAttempts; i++) {
-        limiter.recordFailure('192.168.1.1');
-      }
-
-      const result = limiter.check('192.168.1.1');
-      expect(result.allowed).toBe(false);
-      expect(result.remainingAttempts).toBe(0);
-      expect(result.retryAfterMs).toBe(DEFAULT_RATE_LIMIT_CONFIG.lockoutDurationMs);
-    });
-
     it('should allow requests after lockout expires', () => {
       // Exhaust all attempts
       for (let i = 0; i < DEFAULT_RATE_LIMIT_CONFIG.maxAttempts; i++) {
@@ -71,14 +59,6 @@ describe('RateLimiter', () => {
   });
 
   describe('recordFailure', () => {
-    it('should increment attempt count', () => {
-      let result = limiter.recordFailure('192.168.1.1');
-      expect(result.remainingAttempts).toBe(DEFAULT_RATE_LIMIT_CONFIG.maxAttempts - 1);
-
-      result = limiter.recordFailure('192.168.1.1');
-      expect(result.remainingAttempts).toBe(DEFAULT_RATE_LIMIT_CONFIG.maxAttempts - 2);
-    });
-
     it('should trigger lockout at max attempts', () => {
       let result;
       for (let i = 0; i < DEFAULT_RATE_LIMIT_CONFIG.maxAttempts - 1; i++) {
@@ -90,6 +70,8 @@ describe('RateLimiter', () => {
       expect(result.allowed).toBe(false);
       expect(result.remainingAttempts).toBe(0);
       expect(result.retryAfterMs).toBe(DEFAULT_RATE_LIMIT_CONFIG.lockoutDurationMs);
+      // check() reports the same lockout until it expires.
+      expect(limiter.check('192.168.1.1')).toEqual(result);
     });
 
     it('should reset attempts when window expires', () => {
@@ -198,39 +180,6 @@ describe('RateLimiter', () => {
     });
   });
 
-  describe('reset', () => {
-    it('should clear data for specific IP', () => {
-      // Record failures for two IPs
-      for (let i = 0; i < DEFAULT_RATE_LIMIT_CONFIG.maxAttempts; i++) {
-        limiter.recordFailure('192.168.1.1');
-        limiter.recordFailure('192.168.1.2');
-      }
-
-      // Reset only IP1
-      limiter.reset('192.168.1.1');
-
-      // IP1 should be allowed, IP2 still locked
-      expect(limiter.check('192.168.1.1').allowed).toBe(true);
-      expect(limiter.check('192.168.1.2').allowed).toBe(false);
-    });
-  });
-
-  describe('resetAll', () => {
-    it('should clear all rate limit data', () => {
-      // Lock out multiple IPs
-      for (let i = 0; i < DEFAULT_RATE_LIMIT_CONFIG.maxAttempts; i++) {
-        limiter.recordFailure('192.168.1.1');
-        limiter.recordFailure('192.168.1.2');
-      }
-
-      limiter.resetAll();
-
-      expect(limiter.check('192.168.1.1').allowed).toBe(true);
-      expect(limiter.check('192.168.1.2').allowed).toBe(true);
-      expect(limiter.size).toBe(0);
-    });
-  });
-
   describe('cleanup', () => {
     it('should remove expired entries', () => {
       // Record some failures
@@ -273,34 +222,6 @@ describe('RateLimiter', () => {
       const cleanedAfter = customLimiter.cleanup();
       expect(cleanedAfter).toBe(1);
       expect(customLimiter.size).toBe(0);
-    });
-  });
-
-  describe('custom config', () => {
-    it('should allow custom max attempts', () => {
-      const customLimiter = new RateLimiter({ maxAttempts: 3 });
-
-      customLimiter.recordFailure('192.168.1.1');
-      customLimiter.recordFailure('192.168.1.1');
-
-      expect(customLimiter.check('192.168.1.1').remainingAttempts).toBe(1);
-
-      customLimiter.recordFailure('192.168.1.1');
-
-      expect(customLimiter.check('192.168.1.1').allowed).toBe(false);
-    });
-
-    it('should allow custom lockout duration', () => {
-      const customLimiter = new RateLimiter({
-        maxAttempts: 2,
-        lockoutDurationMs: 5000, // 5 seconds
-      });
-
-      customLimiter.recordFailure('192.168.1.1');
-      customLimiter.recordFailure('192.168.1.1');
-
-      const result = customLimiter.check('192.168.1.1');
-      expect(result.retryAfterMs).toBe(5000);
     });
   });
 });

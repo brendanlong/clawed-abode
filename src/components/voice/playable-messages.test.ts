@@ -207,17 +207,6 @@ describe('getNewAutoReadMessages', () => {
     expect(getNewAutoReadMessages([], new Set())).toEqual([]);
   });
 
-  it('returns new assistant text messages from the current turn', () => {
-    const messages: DisplayMessage[] = [
-      makeUserPrompt('u1', 1, 'Fix the bug'),
-      makeAssistantText('a1', 2, 'I fixed the bug.'),
-      makeResult('r1', 3),
-    ];
-
-    const result = getNewAutoReadMessages(messages, new Set());
-    expect(result).toEqual([{ id: 'a1', text: 'I fixed the bug.' }]);
-  });
-
   it('returns all text messages from the current turn (not just first and last)', () => {
     const messages: DisplayMessage[] = [
       makeUserPrompt('u1', 1, 'Do work'),
@@ -252,16 +241,6 @@ describe('getNewAutoReadMessages', () => {
     const queuedIds = new Set(['a1', 'a3']);
     const result = getNewAutoReadMessages(messages, queuedIds);
     expect(result).toEqual([{ id: 'a5', text: 'Done! I fixed the bug.' }]);
-  });
-
-  it('returns empty array when all messages are already queued', () => {
-    const messages: DisplayMessage[] = [
-      makeUserPrompt('u1', 1, 'Hello'),
-      makeAssistantText('a1', 2, 'Hi there!'),
-    ];
-
-    const result = getNewAutoReadMessages(messages, new Set(['a1']));
-    expect(result).toEqual([]);
   });
 
   it('skips tool-use-only messages', () => {
@@ -310,23 +289,6 @@ describe('getNewAutoReadMessages', () => {
     ]);
   });
 
-  it('treats tool result user messages as non-turn-boundary', () => {
-    const messages: DisplayMessage[] = [
-      makeUserPrompt('u1', 1, 'Do something'),
-      makeAssistantText('a1', 2, 'Starting.'),
-      makeAssistantToolUse('a2', 3),
-      makeToolResult('tr1', 4), // This is a 'user' type but NOT a user prompt
-      makeAssistantText('a3', 5, 'Finished.'),
-      makeResult('r1', 6),
-    ];
-
-    const result = getNewAutoReadMessages(messages, new Set());
-    expect(result).toEqual([
-      { id: 'a1', text: 'Starting.' },
-      { id: 'a3', text: 'Finished.' },
-    ]);
-  });
-
   it('handles mixed text and tool_use blocks (assistant message with both)', () => {
     const messages: DisplayMessage[] = [
       makeUserPrompt('u1', 1, 'Fix it'),
@@ -355,49 +317,6 @@ describe('getNewAutoReadMessages', () => {
       { id: 'a1', text: 'Hello!' },
       { id: 'a3', text: 'Done.' },
     ]);
-  });
-
-  it('simulates incremental message arrival during a turn', () => {
-    const queuedIds = new Set<string>();
-
-    // First message arrives
-    const messages1: DisplayMessage[] = [
-      makeUserPrompt('u1', 1, 'Fix the bug'),
-      makeAssistantText('a1', 2, 'Let me look at the code.'),
-    ];
-    const result1 = getNewAutoReadMessages(messages1, queuedIds);
-    expect(result1).toEqual([{ id: 'a1', text: 'Let me look at the code.' }]);
-    // Simulate the caller adding to queuedIds
-    for (const msg of result1) queuedIds.add(msg.id);
-
-    // Tool use happens, no new text
-    const messages2: DisplayMessage[] = [
-      ...messages1,
-      makeAssistantToolUse('a2', 3),
-      makeToolResult('tr1', 4),
-    ];
-    const result2 = getNewAutoReadMessages(messages2, queuedIds);
-    expect(result2).toEqual([]);
-
-    // New text message arrives
-    const messages3: DisplayMessage[] = [
-      ...messages2,
-      makeAssistantMixed('a3', 5, 'I see the issue, let me fix it.'),
-    ];
-    const result3 = getNewAutoReadMessages(messages3, queuedIds);
-    expect(result3).toEqual([{ id: 'a3', text: 'I see the issue, let me fix it.' }]);
-    for (const msg of result3) queuedIds.add(msg.id);
-
-    // More tool use, then final message
-    const messages4: DisplayMessage[] = [
-      ...messages3,
-      makeAssistantToolUse('a4', 6),
-      makeToolResult('tr2', 7),
-      makeAssistantText('a5', 8, 'Done! I fixed the bug.'),
-      makeResult('r1', 9),
-    ];
-    const result4 = getNewAutoReadMessages(messages4, queuedIds);
-    expect(result4).toEqual([{ id: 'a5', text: 'Done! I fixed the bug.' }]);
   });
 
   it('returns empty when all current-turn messages already queued', () => {

@@ -1,7 +1,7 @@
 'use client';
 
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Spinner } from '@/components/ui/spinner';
+import { CenteredSpinner } from '@/components/ui/spinner';
 import { trpc } from '@/lib/trpc';
 import { AdvisorModelCard, ClaudeModelCard } from './global/ModelCards';
 import { ApiKeyCard } from './global/ApiKeyCard';
@@ -28,11 +28,7 @@ export function GeneralTab() {
   }
 
   if (!settings) {
-    return (
-      <div className="flex justify-center py-12">
-        <Spinner size="lg" />
-      </div>
-    );
+    return <CenteredSpinner />;
   }
 
   return (

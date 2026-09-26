@@ -10,13 +10,11 @@
 - Prefer to use real versions of necessary systems for integration tests (i.e. actually run git in a tmp dir, actually run SQLite on a throwaway database file)
 - Co-locate test files with source (e.g., `auth.ts` → `auth.test.ts`, or `git.ts` → `git.integration.test.ts` for integration tests). Component/DOM tests use `*.test.tsx` and run under a separate vitest project (jsdom)
 - Run `pnpm test:run` to verify tests pass before committing — it runs all suites (unit `*.test.ts`, component `*.test.tsx`, and integration `*.integration.test.ts`), matching what CI checks. Run an individual suite with `pnpm test:unit` / `pnpm test:component` / `pnpm test:integration`
-- Try to do work in commit-sized chunks and commit when each piece is complete
-- Always commit changes when work is complete
+- Work in commit-sized chunks and commit each when complete
 - Always use cursor-based pagination and never offset
 - Use pnpm instead of npm
 - Always use shadcn/ui components
 - Use the centralized logger (`createLogger` from `@/lib/logger`) for all backend logging, especially errors
-- When writing tests, don't mock components where the real version is easy to run (like SQLite on a temp file)
 - Always write tests for the intended behavior of functions, not the actual behavior. If the actual behavior is wrong and the issue is pre-existing, write the test correctly, mark it skipped, and file a GitHub issue on brendanlong/clawed-abode
 - Always import at the top of files, not in the middle of functions
 - Never use barrel files (index.ts that re-export from other modules). Import directly from the source file instead.

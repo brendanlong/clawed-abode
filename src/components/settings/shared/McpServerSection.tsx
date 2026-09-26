@@ -1,6 +1,6 @@
 'use client';
 
-import { useReducer } from 'react';
+import { useId, useReducer } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -15,7 +15,7 @@ import {
 import { Plug, Check, X, KeyRound, TriangleAlert, Unplug } from 'lucide-react';
 import { SettingsListEditor } from './SettingsListEditor';
 import { KeyValueListEditor } from './KeyValueListEditor';
-import { buildKeyValueRecord, type SecretValueMap } from '@/lib/key-value-entries';
+import { buildKeyValueRecord } from '@/lib/key-value-entries';
 import { trpc } from '@/lib/trpc';
 import {
   mcpServerSectionReducer,
@@ -24,32 +24,14 @@ import {
   createInitialMcpServerFormState,
 } from './mcp-server-reducer';
 import type { McpAuthType, McpServer, McpServerType, ValidationResult } from '@/lib/settings-types';
-
-interface StdioMcpServerInput {
-  name: string;
-  type: 'stdio';
-  command: string;
-  args: string[];
-  env?: SecretValueMap;
-}
-
-interface HttpSseMcpServerInput {
-  name: string;
-  type: 'http' | 'sse';
-  url: string;
-  headers?: SecretValueMap;
-  authType: McpAuthType;
-  oauth?: { clientId: string; clientSecret: string; scope: string };
-}
-
-type McpServerInput = StdioMcpServerInput | HttpSseMcpServerInput;
+import type { McpServerInput } from '@/server/services/settings-helpers';
 
 export interface McpServerMutations {
-  deleteMcpServer: (name: string) => Promise<void>;
-  setMcpServer: (mcpServer: McpServerInput) => Promise<void>;
+  deleteMcpServer: (name: string) => Promise<unknown>;
+  setMcpServer: (mcpServer: McpServerInput) => Promise<unknown>;
   validateMcpServer: (name: string) => Promise<ValidationResult>;
   startMcpOAuth: (name: string) => Promise<{ authorizeUrl: string }>;
-  disconnectMcpOAuth: (name: string) => Promise<void>;
+  disconnectMcpOAuth: (name: string) => Promise<unknown>;
 }
 
 interface McpServerSectionProps {
@@ -58,7 +40,6 @@ interface McpServerSectionProps {
   onUpdate: () => void;
   emptyMessage?: string;
   deleteDescriptionPrefix?: string;
-  idPrefix?: string;
 }
 
 export function McpServerSection({
@@ -67,7 +48,6 @@ export function McpServerSection({
   onUpdate,
   emptyMessage = 'No MCP servers configured.',
   deleteDescriptionPrefix = 'This will delete the MCP server',
-  idPrefix = 'mcp',
 }: McpServerSectionProps) {
   const [state, dispatch] = useReducer(mcpServerSectionReducer, initialMcpServerSectionState);
 
@@ -119,25 +99,14 @@ export function McpServerSection({
     }
   };
 
-  const handleDelete = async () => {
-    if (!state.deleteTarget) return;
-    dispatch({ type: 'startDeleting' });
-    try {
-      await mutations.deleteMcpServer(state.deleteTarget);
-      dispatch({ type: 'finishDeleting' });
-      onUpdate();
-    } catch {
-      dispatch({ type: 'finishDeleting' });
-    }
-  };
-
   return (
     <SettingsListEditor
       title="MCP Servers"
       items={mcpServers}
       state={state}
       dispatch={dispatch}
-      onDelete={handleDelete}
+      onDelete={mutations.deleteMcpServer}
+      onUpdate={onUpdate}
       emptyMessage={emptyMessage}
       deleteDialogTitle="Delete MCP server?"
       deleteDescriptionPrefix={deleteDescriptionPrefix}
@@ -218,12 +187,8 @@ export function McpServerSection({
         <McpServerForm
           existingServer={existingItem}
           onClose={onClose}
-          onSuccess={() => {
-            onSuccess();
-            onUpdate();
-          }}
+          onSuccess={onSuccess}
           setMcpServer={mutations.setMcpServer}
-          idPrefix={idPrefix}
         />
       )}
     />
@@ -272,13 +237,7 @@ function OAuthStatusBadge({ status }: { status: NonNullable<McpServer['oauth']> 
 
 function ValidationResultBadge({ result }: { result: ValidationResult }) {
   return (
-    <div
-      className={`text-xs px-2 py-1 rounded flex items-center gap-1 ${
-        result.success
-          ? 'text-green-700 bg-green-50 dark:text-green-400 dark:bg-green-950'
-          : 'text-red-700 bg-red-50 dark:text-red-400 dark:bg-red-950'
-      }`}
-    >
+    <div className={`${BADGE_CLASS} ${result.success ? OK_CLASS : BAD_CLASS}`}>
       {result.success ? (
         <>
           <Check className="h-3 w-3" />
@@ -302,14 +261,13 @@ function McpServerForm({
   onClose,
   onSuccess,
   setMcpServer,
-  idPrefix,
 }: {
   existingServer?: McpServer;
   onClose: () => void;
   onSuccess: () => void;
   setMcpServer: McpServerMutations['setMcpServer'];
-  idPrefix: string;
 }) {
+  const id = useId();
   const [form, dispatch] = useReducer(mcpServerFormReducer, existingServer, (existing) =>
     createInitialMcpServerFormState(existing)
   );
@@ -386,9 +344,9 @@ function McpServerForm({
   return (
     <form onSubmit={handleSubmit} className="space-y-4 p-4 border rounded-md">
       <div className="space-y-2">
-        <Label htmlFor={`${idPrefix}-name`}>Name</Label>
+        <Label htmlFor={`${id}-name`}>Name</Label>
         <Input
-          id={`${idPrefix}-name`}
+          id={`${id}-name`}
           value={form.name}
           onChange={(e) => dispatch({ type: 'setName', name: e.target.value })}
           placeholder="memory"
@@ -397,7 +355,7 @@ function McpServerForm({
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor={`${idPrefix}-type`}>Type</Label>
+        <Label htmlFor={`${id}-type`}>Type</Label>
         <Select
           value={form.serverType}
           onValueChange={(value) =>
@@ -405,7 +363,7 @@ function McpServerForm({
           }
           disabled={!!existingServer}
         >
-          <SelectTrigger id={`${idPrefix}-type`}>
+          <SelectTrigger id={`${id}-type`}>
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -419,9 +377,9 @@ function McpServerForm({
       {form.serverType === 'stdio' ? (
         <>
           <div className="space-y-2">
-            <Label htmlFor={`${idPrefix}-command`}>Command</Label>
+            <Label htmlFor={`${id}-command`}>Command</Label>
             <Input
-              id={`${idPrefix}-command`}
+              id={`${id}-command`}
               value={form.command}
               onChange={(e) => dispatch({ type: 'setCommand', command: e.target.value })}
               placeholder="npx"
@@ -429,9 +387,9 @@ function McpServerForm({
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor={`${idPrefix}-args`}>Arguments (space-separated)</Label>
+            <Label htmlFor={`${id}-args`}>Arguments (space-separated)</Label>
             <Input
-              id={`${idPrefix}-args`}
+              id={`${id}-args`}
               value={form.args}
               onChange={(e) => dispatch({ type: 'setArgs', args: e.target.value })}
               placeholder="@anthropic/mcp-server-memory"
@@ -450,9 +408,9 @@ function McpServerForm({
       ) : (
         <>
           <div className="space-y-2">
-            <Label htmlFor={`${idPrefix}-url`}>URL</Label>
+            <Label htmlFor={`${id}-url`}>URL</Label>
             <Input
-              id={`${idPrefix}-url`}
+              id={`${id}-url`}
               value={form.url}
               onChange={(e) => dispatch({ type: 'setUrl', url: e.target.value })}
               placeholder="https://mcp.example.com/sse"
@@ -460,14 +418,14 @@ function McpServerForm({
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor={`${idPrefix}-auth`}>Authentication</Label>
+            <Label htmlFor={`${id}-auth`}>Authentication</Label>
             <Select
               value={form.authType}
               onValueChange={(value) =>
                 dispatch({ type: 'setAuthType', authType: value as McpAuthType })
               }
             >
-              <SelectTrigger id={`${idPrefix}-auth`}>
+              <SelectTrigger id={`${id}-auth`}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -486,9 +444,9 @@ function McpServerForm({
           {form.authType === 'oauth' && (
             <>
               <div className="space-y-2">
-                <Label htmlFor={`${idPrefix}-oauth-client-id`}>OAuth Client ID (optional)</Label>
+                <Label htmlFor={`${id}-oauth-client-id`}>OAuth Client ID (optional)</Label>
                 <Input
-                  id={`${idPrefix}-oauth-client-id`}
+                  id={`${id}-oauth-client-id`}
                   value={form.oauthClientId}
                   onChange={(e) => dispatch({ type: 'setOauthClientId', clientId: e.target.value })}
                   placeholder="Leave blank to register automatically"
@@ -501,11 +459,9 @@ function McpServerForm({
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor={`${idPrefix}-oauth-client-secret`}>
-                  OAuth Client Secret (optional)
-                </Label>
+                <Label htmlFor={`${id}-oauth-client-secret`}>OAuth Client Secret (optional)</Label>
                 <Input
-                  id={`${idPrefix}-oauth-client-secret`}
+                  id={`${id}-oauth-client-secret`}
                   type="password"
                   value={form.oauthClientSecret}
                   onChange={(e) =>
@@ -518,9 +474,9 @@ function McpServerForm({
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor={`${idPrefix}-oauth-scope`}>Scope (optional)</Label>
+                <Label htmlFor={`${id}-oauth-scope`}>Scope (optional)</Label>
                 <Input
-                  id={`${idPrefix}-oauth-scope`}
+                  id={`${id}-oauth-scope`}
                   value={form.oauthScope}
                   onChange={(e) => dispatch({ type: 'setOauthScope', scope: e.target.value })}
                   placeholder="Leave blank to use the scopes the server advertises"

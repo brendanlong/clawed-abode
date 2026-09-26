@@ -84,7 +84,6 @@ const AssistantContentSchema = z.object({
   type: z.literal('assistant'),
   parent_tool_use_id: z.string().nullable().optional(),
   message: z.object({
-    id: z.string().optional(),
     usage: MessageUsageSchema.optional(),
     model: z.string().optional(),
   }),
@@ -129,12 +128,8 @@ function extractUsageTokens(usage: z.infer<typeof MessageUsageSchema>): Extracte
 
 /**
  * Extract usage from an assistant message.
- * Returns the message id for deduplication — per the Anthropic docs, multiple
- * assistant messages in the same step share the same id and identical usage.
- * We should only count usage once per unique message id.
  */
 function extractAssistantUsage(content: unknown): {
-  messageId?: string;
   usage: ExtractedUsage;
   model?: string;
   isTopLevel: boolean;
@@ -145,7 +140,6 @@ function extractAssistantUsage(content: unknown): {
   }
 
   return {
-    messageId: parsed.data.message.id,
     usage: extractUsageTokens(parsed.data.message.usage),
     model: parsed.data.message.model,
     isTopLevel: parsed.data.parent_tool_use_id == null,
@@ -251,6 +245,7 @@ export function estimateTokenUsage(messages: Message[]): TokenUsageStats {
   // current context occupancy. Subagent messages (parent_tool_use_id set) run
   // in their own context and would misreport the main conversation's size.
   let lastAssistantContextTokens = 0;
+  let lastAssistantUsage: ExtractedUsage | undefined;
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i];
     if (msg.type !== 'assistant') {
@@ -264,6 +259,7 @@ export function estimateTokenUsage(messages: Message[]): TokenUsageStats {
     // (newly cached tokens are part of the prompt too); output tokens become
     // input in the next call. Together they are the current occupancy.
     const { usage } = extracted;
+    lastAssistantUsage = usage;
     lastAssistantContextTokens =
       usage.inputTokens + usage.cacheReadTokens + usage.cacheCreationTokens + usage.outputTokens;
     if (extracted.model && !detectedModel) {
@@ -272,33 +268,13 @@ export function estimateTokenUsage(messages: Message[]): TokenUsageStats {
     break;
   }
 
-  // If we have no result messages yet (mid-first-turn), sum assistant messages
-  // for total consumed tokens. Multiple assistant messages in the same step
-  // share the same message id and identical usage, so deduplicate by id.
-  if (resultMessages.length === 0) {
-    const processedMessageIds = new Set<string>();
-    for (const msg of messages) {
-      if (msg.type !== 'assistant') {
-        continue;
-      }
-      const extracted = extractAssistantUsage(msg.content);
-      if (!extracted) {
-        continue;
-      }
-      if (extracted.messageId) {
-        if (processedMessageIds.has(extracted.messageId)) {
-          continue;
-        }
-        processedMessageIds.add(extracted.messageId);
-      }
-      totalInputTokens += extracted.usage.inputTokens;
-      totalOutputTokens += extracted.usage.outputTokens;
-      totalCacheReadTokens += extracted.usage.cacheReadTokens;
-      totalCacheCreationTokens += extracted.usage.cacheCreationTokens;
-      if (extracted.model && !detectedModel) {
-        detectedModel = extracted.model;
-      }
-    }
+  // With no result messages yet (mid-first-turn), the latest assistant call's
+  // usage is the best available total.
+  if (resultMessages.length === 0 && lastAssistantUsage) {
+    totalInputTokens = lastAssistantUsage.inputTokens;
+    totalOutputTokens = lastAssistantUsage.outputTokens;
+    totalCacheReadTokens = lastAssistantUsage.cacheReadTokens;
+    totalCacheCreationTokens = lastAssistantUsage.cacheCreationTokens;
   }
 
   // Calculate total tokens consumed (for cost/display)

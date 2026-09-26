@@ -4,7 +4,6 @@ interface UseInfiniteScrollOptions {
   hasNextPage: boolean;
   isFetchingNextPage: boolean;
   fetchNextPage: () => void;
-  rootMargin?: string;
 }
 
 /**
@@ -18,7 +17,6 @@ export function useInfiniteScroll({
   hasNextPage,
   isFetchingNextPage,
   fetchNextPage,
-  rootMargin = '100px',
 }: UseInfiniteScrollOptions) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLLIElement>(null);
@@ -33,12 +31,12 @@ export function useInfiniteScroll({
           fetchNextPage();
         }
       },
-      { root: scrollRef.current, rootMargin }
+      { root: scrollRef.current, rootMargin: '100px' }
     );
 
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [hasNextPage, isFetchingNextPage, fetchNextPage, rootMargin]);
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
   return { scrollRef, sentinelRef };
 }

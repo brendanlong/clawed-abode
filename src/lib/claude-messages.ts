@@ -1,214 +1,12 @@
 /**
  * Claude Code Message Types
  *
- * Zod schemas describing the content shapes of Claude Code messages, plus the
+ * Zod schemas for the Claude Code messages we parse, plus the
  * classification/retry helpers used by the runner and UI.
  */
 
 import { z } from 'zod';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
-
-// =============================================================================
-// Content Block Schemas
-// =============================================================================
-
-/**
- * Text content block in an assistant message
- */
-export const TextBlockSchema = z.object({
-  type: z.literal('text'),
-  text: z.string(),
-});
-
-/**
- * Thinking content block - represents Claude's extended-thinking reasoning.
- * `signature` is present on summarized thinking and absent while streaming.
- */
-const ThinkingBlockSchema = z.object({
-  type: z.literal('thinking'),
-  thinking: z.string(),
-  signature: z.string().optional(),
-});
-
-/**
- * Redacted thinking block - thinking that the API encrypted rather than returning.
- * Carries no human-readable text, only opaque `data`.
- */
-const RedactedThinkingBlockSchema = z.object({
-  type: z.literal('redacted_thinking'),
-  data: z.string(),
-});
-
-/**
- * Tool use content block - represents a tool call by the assistant
- */
-export const ToolUseBlockSchema = z.object({
-  type: z.literal('tool_use'),
-  id: z.string(),
-  name: z.string(),
-  input: z.record(z.string(), z.unknown()),
-});
-
-/**
- * Tool result content block - represents the result of a tool call
- */
-export const ToolResultBlockSchema = z.object({
-  type: z.literal('tool_result'),
-  tool_use_id: z.string(),
-  content: z.string().optional(),
-  is_error: z.boolean().optional(),
-});
-
-/**
- * Server tool use content block - a tool executed server-side by the Anthropic
- * API (e.g. the advisor tool). Unlike `tool_use` it never goes through
- * canUseTool, and its result arrives as a dedicated block type rather than a
- * `tool_result` in a user message.
- */
-const ServerToolUseBlockSchema = z.object({
-  type: z.literal('server_tool_use'),
-  id: z.string(),
-  name: z.string(),
-  input: z.record(z.string(), z.unknown()),
-});
-
-/**
- * Advisor tool result block - the advisor's response to a `server_tool_use`
- * advisor call. The content is encrypted (`advisor_redacted_result`) and only
- * readable by the model, so it carries nothing renderable.
- */
-const AdvisorToolResultBlockSchema = z.object({
-  type: z.literal('advisor_tool_result'),
-  tool_use_id: z.string(),
-  content: z.unknown().optional(),
-});
-
-/**
- * Union of all content block types
- */
-export const ContentBlockSchema = z.discriminatedUnion('type', [
-  TextBlockSchema,
-  ThinkingBlockSchema,
-  RedactedThinkingBlockSchema,
-  ToolUseBlockSchema,
-  ToolResultBlockSchema,
-  ServerToolUseBlockSchema,
-  AdvisorToolResultBlockSchema,
-]);
-
-// =============================================================================
-// Usage Schemas
-// =============================================================================
-
-/**
- * Cache creation info
- */
-const CacheCreationSchema = z.object({
-  ephemeral_5m_input_tokens: z.number().optional(),
-  ephemeral_1h_input_tokens: z.number().optional(),
-});
-
-/**
- * Usage statistics for a single message
- */
-const MessageUsageSchema = z.object({
-  input_tokens: z.number().optional(),
-  output_tokens: z.number().optional(),
-  cache_creation_input_tokens: z.number().optional(),
-  cache_read_input_tokens: z.number().optional(),
-  cache_creation: CacheCreationSchema.optional(),
-  service_tier: z.string().optional(),
-});
-
-/**
- * Usage stats for a specific model in result messages
- */
-const ModelUsageSchema = z.object({
-  inputTokens: z.number().optional(),
-  outputTokens: z.number().optional(),
-  cacheReadInputTokens: z.number().optional(),
-  cacheCreationInputTokens: z.number().optional(),
-  webSearchRequests: z.number().optional(),
-  costUSD: z.number().optional(),
-  contextWindow: z.number().optional(),
-  maxOutputTokens: z.number().optional(),
-});
-
-/**
- * Server tool use stats
- */
-const ServerToolUseSchema = z.object({
-  web_search_requests: z.number().optional(),
-  web_fetch_requests: z.number().optional(),
-});
-
-/**
- * Aggregated usage for result messages.
- * Per the Anthropic Agent SDK, result messages use NonNullableUsage where
- * all fields are required numbers. We keep them optional in our schema for
- * backwards compatibility with older stored messages.
- */
-const ResultUsageSchema = z.object({
-  input_tokens: z.number().optional(),
-  output_tokens: z.number().optional(),
-  cache_creation_input_tokens: z.number().optional(),
-  cache_read_input_tokens: z.number().optional(),
-  server_tool_use: ServerToolUseSchema.optional(),
-  service_tier: z.string().optional(),
-  cache_creation: CacheCreationSchema.optional(),
-  inference_geo: z.string().nullable().optional(),
-  speed: z.enum(['standard', 'fast']).nullable().optional(),
-});
-
-// =============================================================================
-// Inner Message Schemas
-// =============================================================================
-
-/**
- * The inner message object from the API response
- */
-const ApiMessageSchema = z.object({
-  model: z.string().optional(),
-  id: z.string().optional(),
-  type: z.literal('message').optional(),
-  role: z.enum(['assistant', 'user']),
-  content: z.array(ContentBlockSchema),
-  stop_reason: z.string().nullable().optional(),
-  stop_sequence: z.string().nullable().optional(),
-  usage: MessageUsageSchema.optional(),
-  context_management: z.unknown().nullable().optional(),
-});
-
-// =============================================================================
-// Message Content Schemas (outer wrapper)
-// =============================================================================
-
-/**
- * Assistant message content
- */
-export const AssistantContentSchema = z.object({
-  type: z.literal('assistant'),
-  message: ApiMessageSchema,
-  parent_tool_use_id: z.string().nullable().optional(),
-  session_id: z.string(),
-  uuid: z.string(),
-});
-
-/**
- * User message content (can contain tool results)
- */
-export const UserContentSchema = z.object({
-  type: z.literal('user'),
-  message: z.object({
-    role: z.literal('user'),
-    content: z.array(ContentBlockSchema),
-  }),
-  parent_tool_use_id: z.string().nullable().optional(),
-  session_id: z.string(),
-  uuid: z.string(),
-  tool_use_result: z.unknown().optional(),
-});
-export type UserContent = z.infer<typeof UserContentSchema>;
 
 /**
  * System init message content
@@ -216,20 +14,8 @@ export type UserContent = z.infer<typeof UserContentSchema>;
 export const SystemInitContentSchema = z.object({
   type: z.literal('system'),
   subtype: z.literal('init'),
-  cwd: z.string(),
   session_id: z.string(),
-  tools: z.array(z.string()).optional(),
-  mcp_servers: z.array(z.unknown()).optional(),
-  model: z.string(),
-  permissionMode: z.string().optional(),
   slash_commands: z.array(z.string()).optional(),
-  apiKeySource: z.string().optional(),
-  claude_code_version: z.string().optional(),
-  output_style: z.string().optional(),
-  agents: z.array(z.string()).optional(),
-  skills: z.array(z.unknown()).optional(),
-  plugins: z.array(z.unknown()).optional(),
-  uuid: z.string().optional(),
 });
 
 /**
@@ -243,46 +29,6 @@ export function initSessionId(message: unknown): string | null {
   const parsed = SystemInitContentSchema.safeParse(message);
   return parsed.success ? parsed.data.session_id : null;
 }
-
-/**
- * Permission denial info from result messages
- */
-const PermissionDenialSchema = z.object({
-  tool_name: z.string().optional(),
-  tool_use_id: z.string().optional(),
-  tool_input: z.unknown().optional(),
-});
-
-/**
- * Result message content (session completion)
- * Handles all SDK result subtypes: success, error_max_turns, error_during_execution,
- * error_max_budget_usd, error_max_structured_output_retries
- */
-export const ResultContentSchema = z.object({
-  type: z.literal('result'),
-  subtype: z.enum([
-    'success',
-    'error',
-    'error_max_turns',
-    'error_during_execution',
-    'error_max_budget_usd',
-    'error_max_structured_output_retries',
-  ]),
-  is_error: z.boolean(),
-  duration_ms: z.number().optional(),
-  duration_api_ms: z.number().optional(),
-  num_turns: z.number().optional(),
-  stop_reason: z.string().nullable().optional(),
-  result: z.string().optional(),
-  errors: z.array(z.string()).optional(),
-  session_id: z.string(),
-  total_cost_usd: z.number().optional(),
-  usage: ResultUsageSchema.optional(),
-  modelUsage: z.record(z.string(), ModelUsageSchema).optional(),
-  permission_denials: z.array(PermissionDenialSchema).optional(),
-  structured_output: z.unknown().optional(),
-  uuid: z.string().optional(),
-});
 
 // =============================================================================
 // Message Handling Types

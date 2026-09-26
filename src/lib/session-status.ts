@@ -25,8 +25,6 @@ export interface BackgroundTask {
   description?: string;
   taskType?: string;
   subagentType?: string;
-  /** Ambient/housekeeping task the SDK flags to hide from the inline transcript. */
-  ambient: boolean;
   /**
    * A session-length `persistent: true` Monitor watch — no `timeout_ms` deadline,
    * so it has no knowable end state (see {@link taskHasEndState}). Detected by
@@ -130,7 +128,7 @@ export function backgroundActive(status: LiveStatus): boolean {
  * Remove a task from the background-task set (pure), returning a new map without
  * it. A no-op if the task is absent (the returned map simply won't contain it).
  * Shared by two paths: a `task_notification` settling a task, and the user
- * stopping one via the ✕ button (optimistic removal — see `dropBackgroundTask`
+ * stopping one via the ✕ button (optimistic removal — see `stopBackgroundTask`
  * in the runner — so the indicator clears even when the SDK never emits the
  * terminal notification). Callers that need to know whether anything changed
  * check membership (`tasks.has(taskId)`) before calling.
@@ -194,7 +192,6 @@ function parseBackgroundTaskEvent(message: SDKMessage): BackgroundEvent | null {
     description?: string;
     task_type?: string;
     subagent_type?: string;
-    skip_transcript?: boolean;
   };
   if (typeof m.task_id !== 'string') return null;
 
@@ -207,7 +204,6 @@ function parseBackgroundTaskEvent(message: SDKMessage): BackgroundEvent | null {
         description: m.description,
         taskType: m.task_type,
         subagentType: m.subagent_type,
-        ambient: m.skip_transcript === true,
         // Overridden in the reducer when the tool_use_id links back to a
         // persistent Monitor call (see persistentMonitorToolUseIds).
         persistent: false,

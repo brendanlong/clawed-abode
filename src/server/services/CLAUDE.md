@@ -10,4 +10,4 @@ Must-know invariants when touching this directory; design details in `doc/claude
 - Never reap session scopes by `clawed-session-*` glob — only by exact names recorded in this instance's DB. A glob sweep once cgroup-killed every live production session.
 - Secrets must never reach a child process's argv (it leaks via journald and `/proc/*/cmdline`) — pass MCP config via the mode-0600 workspace file, not `options.mcpServers`, and the GitHub token via the environment the credential helper reads (`src/lib/git-credentials.ts`), not a token-in-URL clone.
 - Settings bind at query establishment; only model and MCP servers can be applied live (`query.setModel` / `query.setMcpServers`).
-- Rate-limit holds are **never stored** — `recomputeRateLimitHolds` recomputes the desired state for every session and converges on it, so it stays idempotent under a missed or duplicated trigger. It is serialized; two concurrent runs would push the same queued prompt twice. Details: `doc/rate-limit-pause.md`.
+- Rate-limit holds are **never stored** — `recomputeRateLimitHolds` recomputes and converges (idempotent, serialized). Details: `doc/rate-limit-pause.md`.

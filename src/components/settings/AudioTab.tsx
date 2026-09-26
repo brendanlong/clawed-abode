@@ -4,7 +4,7 @@ import { useState, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
-import { Spinner } from '@/components/ui/spinner';
+import { CenteredSpinner, Spinner } from '@/components/ui/spinner';
 import { Slider } from '@/components/ui/slider';
 import { trpc } from '@/lib/trpc';
 import { useVoiceConfig } from '@/hooks/useVoiceConfig';
@@ -17,11 +17,7 @@ export function AudioTab() {
   const { data: settings, isLoading, refetch } = trpc.globalSettings.get.useQuery();
 
   if (isLoading) {
-    return (
-      <div className="flex justify-center py-12">
-        <Spinner size="lg" />
-      </div>
-    );
+    return <CenteredSpinner />;
   }
 
   return (

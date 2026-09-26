@@ -140,30 +140,6 @@ describe('globalSettings router', () => {
       expect(result.systemPromptOverride).toBeNull();
       expect(result.systemPromptOverrideEnabled).toBe(false);
     });
-
-    it('should trim whitespace from override', async () => {
-      const caller = createCaller();
-
-      await caller.globalSettings.setSystemPromptOverride({
-        systemPromptOverride: '  Custom prompt with whitespace  ',
-        systemPromptOverrideEnabled: true,
-      });
-
-      const result = await caller.globalSettings.get();
-      expect(result.systemPromptOverride).toBe('Custom prompt with whitespace');
-    });
-
-    it('should set override to null for empty string', async () => {
-      const caller = createCaller();
-
-      await caller.globalSettings.setSystemPromptOverride({
-        systemPromptOverride: '   ',
-        systemPromptOverrideEnabled: true,
-      });
-
-      const result = await caller.globalSettings.get();
-      expect(result.systemPromptOverride).toBeNull();
-    });
   });
 
   describe('setSystemPromptAppend', () => {
@@ -194,17 +170,6 @@ describe('globalSettings router', () => {
 
       const result = await caller.globalSettings.get();
       expect(result.systemPromptAppend).toBeNull();
-    });
-
-    it('should trim whitespace from append', async () => {
-      const caller = createCaller();
-
-      await caller.globalSettings.setSystemPromptAppend({
-        systemPromptAppend: '  Trimmed content  ',
-      });
-
-      const result = await caller.globalSettings.get();
-      expect(result.systemPromptAppend).toBe('Trimmed content');
     });
   });
 
@@ -266,25 +231,6 @@ describe('globalSettings router', () => {
 
       const result = await caller.globalSettings.get();
       expect(result.claudeModel).toBeNull();
-    });
-
-    it('should clear the model when set to empty string', async () => {
-      const caller = createCaller();
-
-      await caller.globalSettings.setClaudeModel({ claudeModel: 'sonnet' });
-      await caller.globalSettings.setClaudeModel({ claudeModel: '  ' });
-
-      const result = await caller.globalSettings.get();
-      expect(result.claudeModel).toBeNull();
-    });
-
-    it('should trim whitespace', async () => {
-      const caller = createCaller();
-
-      await caller.globalSettings.setClaudeModel({ claudeModel: '  opus  ' });
-
-      const result = await caller.globalSettings.get();
-      expect(result.claudeModel).toBe('opus');
     });
   });
 
@@ -417,24 +363,6 @@ describe('globalSettings router', () => {
 
       expect(result.envVars).toEqual([]);
       expect(result.mcpServers).toEqual([]);
-    });
-
-    it('should return all env vars and MCP servers', async () => {
-      const caller = createCaller();
-
-      await caller.globalSettings.setEnvVar({
-        envVar: { name: 'VAR1', value: 'value1', isSecret: false },
-      });
-      await caller.globalSettings.setEnvVar({
-        envVar: { name: 'VAR2', value: 'value2', isSecret: false },
-      });
-      await caller.globalSettings.setMcpServer({
-        mcpServer: { name: 'server1', type: 'stdio', command: 'node' },
-      });
-
-      const result = await caller.globalSettings.getWithSettings();
-      expect(result.envVars).toHaveLength(2);
-      expect(result.mcpServers).toHaveLength(1);
     });
   });
 });

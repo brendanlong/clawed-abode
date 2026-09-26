@@ -55,7 +55,7 @@ export function mergeMessageIntoCache<M extends MessageLike, P = unknown>(
     // No existing data - bootstrap a single page.
     return {
       pages: [{ messages: [message], hasMore: false }],
-      pageParams: [{ direction: 'backward' as const, sequence: undefined }] as unknown as P[],
+      pageParams: [null] as P[],
     };
   }
 

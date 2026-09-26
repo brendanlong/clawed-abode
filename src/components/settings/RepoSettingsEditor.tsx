@@ -9,7 +9,7 @@ import {
 } from '@/components/ui/sheet';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
-import { Spinner } from '@/components/ui/spinner';
+import { CenteredSpinner } from '@/components/ui/spinner';
 import { Separator } from '@/components/ui/separator';
 import { trpc } from '@/lib/trpc';
 import { fallbackClaudeModel } from '@/lib/claude-model';
@@ -33,15 +33,9 @@ function useRepoEnvVarMutations(repoFullName: string): EnvVarMutations {
   const setMutation = trpc.repoSettings.setEnvVar.useMutation();
 
   return {
-    deleteEnvVar: async (name) => {
-      await deleteMutation.mutateAsync({ repoFullName, name });
-    },
-    setEnvVar: async (envVar) => {
-      await setMutation.mutateAsync({ repoFullName, envVar });
-    },
-    getSecretValue: async (name) => {
-      return await utils.repoSettings.getEnvVarValue.fetch({ repoFullName, name });
-    },
+    deleteEnvVar: (name) => deleteMutation.mutateAsync({ repoFullName, name }),
+    setEnvVar: (envVar) => setMutation.mutateAsync({ repoFullName, envVar }),
+    getSecretValue: (name) => utils.repoSettings.getEnvVarValue.fetch({ repoFullName, name }),
   };
 }
 
@@ -53,21 +47,11 @@ function useRepoMcpServerMutations(repoFullName: string): McpServerMutations {
   const disconnectOAuthMutation = trpc.repoSettings.disconnectMcpOAuth.useMutation();
 
   return {
-    deleteMcpServer: async (name) => {
-      await deleteMutation.mutateAsync({ repoFullName, name });
-    },
-    setMcpServer: async (mcpServer) => {
-      await setMutation.mutateAsync({ repoFullName, mcpServer });
-    },
-    startMcpOAuth: async (name) => {
-      return await startOAuthMutation.mutateAsync({ repoFullName, name });
-    },
-    disconnectMcpOAuth: async (name) => {
-      await disconnectOAuthMutation.mutateAsync({ repoFullName, name });
-    },
-    validateMcpServer: async (name) => {
-      return await validateMutation.mutateAsync({ repoFullName, name });
-    },
+    deleteMcpServer: (name) => deleteMutation.mutateAsync({ repoFullName, name }),
+    setMcpServer: (mcpServer) => setMutation.mutateAsync({ repoFullName, mcpServer }),
+    startMcpOAuth: (name) => startOAuthMutation.mutateAsync({ repoFullName, name }),
+    disconnectMcpOAuth: (name) => disconnectOAuthMutation.mutateAsync({ repoFullName, name }),
+    validateMcpServer: (name) => validateMutation.mutateAsync({ repoFullName, name }),
   };
 }
 
@@ -97,9 +81,7 @@ export function RepoSettingsEditor({ repoFullName, onClose }: RepoSettingsEditor
         </SheetHeader>
 
         {isLoading ? (
-          <div className="flex justify-center py-12">
-            <Spinner size="lg" />
-          </div>
+          <CenteredSpinner />
         ) : (
           <div className="mt-6 space-y-6">
             <div className="flex items-center justify-between">
@@ -139,7 +121,6 @@ export function RepoSettingsEditor({ repoFullName, onClose }: RepoSettingsEditor
               envVars={data?.envVars ?? []}
               mutations={envVarMutations}
               onUpdate={refetch}
-              idPrefix="env"
             />
 
             <Separator />
@@ -148,7 +129,6 @@ export function RepoSettingsEditor({ repoFullName, onClose }: RepoSettingsEditor
               mcpServers={data?.mcpServers ?? []}
               mutations={mcpServerMutations}
               onUpdate={refetch}
-              idPrefix="mcp"
             />
           </div>
         )}

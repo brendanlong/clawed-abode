@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Spinner } from '@/components/ui/spinner';
+import { CenteredSpinner } from '@/components/ui/spinner';
 import { AuthSessionListItem } from './AuthSessionListItem';
 import { trpc } from '@/lib/trpc';
 
@@ -31,11 +31,7 @@ export function AuthSessionsTab() {
   };
 
   if (isLoading) {
-    return (
-      <div className="flex justify-center py-12">
-        <Spinner size="lg" />
-      </div>
-    );
+    return <CenteredSpinner />;
   }
 
   const now = new Date();

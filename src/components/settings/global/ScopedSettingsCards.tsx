@@ -13,15 +13,9 @@ function useGlobalEnvVarMutations(): EnvVarMutations {
   const setMutation = trpc.globalSettings.setEnvVar.useMutation();
 
   return {
-    deleteEnvVar: async (name) => {
-      await deleteMutation.mutateAsync({ name });
-    },
-    setEnvVar: async (envVar) => {
-      await setMutation.mutateAsync({ envVar });
-    },
-    getSecretValue: async (name) => {
-      return await utils.globalSettings.getEnvVarValue.fetch({ name });
-    },
+    deleteEnvVar: (name) => deleteMutation.mutateAsync({ name }),
+    setEnvVar: (envVar) => setMutation.mutateAsync({ envVar }),
+    getSecretValue: (name) => utils.globalSettings.getEnvVarValue.fetch({ name }),
   };
 }
 
@@ -33,21 +27,11 @@ function useGlobalMcpServerMutations(): McpServerMutations {
   const disconnectOAuthMutation = trpc.globalSettings.disconnectMcpOAuth.useMutation();
 
   return {
-    deleteMcpServer: async (name) => {
-      await deleteMutation.mutateAsync({ name });
-    },
-    setMcpServer: async (mcpServer) => {
-      await setMutation.mutateAsync({ mcpServer });
-    },
-    startMcpOAuth: async (name) => {
-      return await startOAuthMutation.mutateAsync({ name });
-    },
-    disconnectMcpOAuth: async (name) => {
-      await disconnectOAuthMutation.mutateAsync({ name });
-    },
-    validateMcpServer: async (name) => {
-      return await validateMutation.mutateAsync({ name });
-    },
+    deleteMcpServer: (name) => deleteMutation.mutateAsync({ name }),
+    setMcpServer: (mcpServer) => setMutation.mutateAsync({ mcpServer }),
+    startMcpOAuth: (name) => startOAuthMutation.mutateAsync({ name }),
+    disconnectMcpOAuth: (name) => disconnectOAuthMutation.mutateAsync({ name }),
+    validateMcpServer: (name) => validateMutation.mutateAsync({ name }),
   };
 }
 
@@ -67,7 +51,6 @@ export function GlobalEnvVarsCard() {
         onUpdate={refetch}
         emptyMessage="No global environment variables configured."
         deleteDescriptionPrefix="This will delete the global environment variable"
-        idPrefix="global-env"
       />
     </SettingsCard>
   );
@@ -89,7 +72,6 @@ export function GlobalMcpServersCard() {
         onUpdate={refetch}
         emptyMessage="No global MCP servers configured."
         deleteDescriptionPrefix="This will delete the global MCP server"
-        idPrefix="global-mcp"
       />
     </SettingsCard>
   );

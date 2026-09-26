@@ -53,15 +53,7 @@ function DiffLineRow({ line }: { line: DiffLine }) {
  * and word-level highlighting of the changed portions. Used by Edit displays in
  * place of separate "Removed"/"Added" blocks.
  */
-export function InlineDiff({
-  oldString,
-  newString,
-  className,
-}: {
-  oldString: string;
-  newString: string;
-  className?: string;
-}) {
+export function InlineDiff({ oldString, newString }: { oldString: string; newString: string }) {
   const lines = useMemo(() => computeInlineDiff(oldString, newString), [oldString, newString]);
   const stats = useMemo(() => diffStats(lines), [lines]);
 
@@ -74,7 +66,7 @@ export function InlineDiff({
         <span className="text-green-600 dark:text-green-400">+{stats.added}</span>
         <span className="text-red-600 dark:text-red-400">-{stats.removed}</span>
       </div>
-      <div className={cn('overflow-auto font-mono text-xs leading-relaxed max-h-96', className)}>
+      <div className="overflow-auto font-mono text-xs leading-relaxed max-h-96">
         {lines.length === 0 ? (
           <div className="px-2 py-1 text-muted-foreground italic">(no changes)</div>
         ) : (

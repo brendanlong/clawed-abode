@@ -7,10 +7,6 @@ export interface Issue {
   number: number;
   title: string;
   body: string | null;
-  state: 'open' | 'closed';
-  author: string;
   labels: Array<{ name: string; color: string }>;
   comments: number;
-  createdAt: string;
-  updatedAt: string;
 }

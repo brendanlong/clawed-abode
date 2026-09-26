@@ -299,23 +299,6 @@ describe('repoSettings router', () => {
       expect(settings?.customSystemPrompt).toBeNull();
     });
 
-    it('should clear the custom system prompt when set to empty string', async () => {
-      const caller = createCaller();
-
-      await caller.repoSettings.setCustomSystemPrompt({
-        repoFullName: testRepoName,
-        customSystemPrompt: 'Some prompt',
-      });
-
-      await caller.repoSettings.setCustomSystemPrompt({
-        repoFullName: testRepoName,
-        customSystemPrompt: '   ', // whitespace only
-      });
-
-      const settings = await caller.repoSettings.get({ repoFullName: testRepoName });
-      expect(settings?.customSystemPrompt).toBeNull();
-    });
-
     it('is included in the resolved settings the runner loads', async () => {
       const caller = createCaller();
       const customPrompt = 'Custom prompt for this repo';

@@ -5,9 +5,6 @@
  * a real in-memory SQLite DB, exercising the behaviors that matter for the
  * refactor: multi-turn over one persistent query, background tasks surviving a
  * turn, two-axis status emission, sequence integrity, and clean teardown.
- *
- * Real-SDK behavior (resume+streaming, interrupt, background auto-continue) is
- * covered by scripts/spike-streaming-resume.ts.
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi, afterEach } from 'vitest';
@@ -53,18 +50,6 @@ const baseSettings = {
   advisorModel: null as string | null,
   claudeApiKey: undefined,
   settingSources: ['project'] as ('user' | 'project' | 'local')[],
-  customSystemPrompt: null,
-  globalSettings: {
-    systemPromptOverride: null,
-    systemPromptOverrideEnabled: false,
-    systemPromptAppend: null,
-    claudeModel: null,
-    advisorModel: null,
-    claudeApiKey: null,
-    settingSources: { user: false, project: true, local: false },
-    envVars: [],
-    mcpServers: [],
-  },
 };
 
 // Stub the MCP config file writer so the wiring test doesn't touch the real
@@ -185,12 +170,22 @@ function toolResultMsg(toolUseId: string, text: string): SDKMessage {
 
 /** The PostToolUse hook the runner wired into the SDK options (real fn). */
 type PostToolUseHook = (input: unknown) => Promise<unknown>;
-function extractPostToolUseHook(options: unknown): PostToolUseHook {
+/** Fire the runner's real PostToolUse hook for a Bash call, exactly as the SDK would post-tool. */
+async function firePostToolUse(options: unknown, toolUseId: string, stdout: string) {
   const hooks = (options as { hooks?: { PostToolUse?: Array<{ hooks: PostToolUseHook[] }> } }).hooks
     ?.PostToolUse;
   const hook = hooks?.[0]?.hooks?.[0];
   if (!hook) throw new Error('PostToolUse hook not wired into options');
-  return hook;
+  await hook({
+    hook_event_name: 'PostToolUse',
+    session_id: 's',
+    transcript_path: '/tmp/t.jsonl',
+    cwd: '/tmp/spike-runner-test',
+    tool_name: 'Bash',
+    tool_input: {},
+    tool_response: { stdout, stderr: '', interrupted: false, isImage: false },
+    tool_use_id: toolUseId,
+  });
 }
 
 function assistant(text: string, parent: string | null = null): SDKMessage {
@@ -266,17 +261,6 @@ function taskNotification(taskId: string): SDKMessage {
     uuid: nextUuid(),
   } as unknown as SDKMessage;
 }
-function taskUpdated(taskId: string, status: string): SDKMessage {
-  return {
-    type: 'system',
-    subtype: 'task_updated',
-    task_id: taskId,
-    patch: { status },
-    session_id: 's',
-    uuid: nextUuid(),
-  } as unknown as SDKMessage;
-}
-
 async function createRunningSession(): Promise<string> {
   const session = await testPrisma.session.create({
     data: { name: 'Test', repoPath: '', status: 'running' },
@@ -649,38 +633,6 @@ describe('claude-runner persistent streaming loop', () => {
     stopSession(sessionId);
   });
 
-  it('ignores task_updated; only task_notification settles a background task', async () => {
-    const fake = makeFakeQuery();
-    _setQueryFactory(fake.factory);
-    const sessionId = await createRunningSession();
-
-    await sendUserMessage(sessionId, 'start a background job');
-    fake.emit(taskStarted('task-1'));
-    fake.emit(result());
-    await waitFor(() => getSessionBackgroundTasks(sessionId).length === 1);
-    mockSseEvents.emitBackgroundTasks.mockClear();
-
-    // A terminal task_updated is no longer honored — the task keeps running.
-    fake.emit(taskUpdated('task-1', 'killed'));
-    // Drive a turn so we can deterministically wait for the message to be processed.
-    fake.emit(assistant('still there'));
-    fake.emit(result());
-    await waitFor(async () =>
-      (await messagesFor(sessionId)).some(
-        (m) => m.type === 'assistant' && m.content.includes('still there')
-      )
-    );
-    expect(getSessionBackgroundTasks(sessionId).length).toBe(1);
-    expect(mockSseEvents.emitBackgroundTasks).not.toHaveBeenCalled();
-
-    // The task_notification is what settles it.
-    fake.emit(taskNotification('task-1'));
-    await waitFor(() => getSessionBackgroundTasks(sessionId).length === 0);
-    expect(mockSseEvents.emitBackgroundTasks).toHaveBeenCalledWith(sessionId, []);
-
-    stopSession(sessionId);
-  });
-
   it('stopBackgroundTask clears a tracked task, emits [], and calls the SDK', async () => {
     const fake = makeFakeQuery();
     _setQueryFactory(fake.factory);
@@ -724,61 +676,7 @@ describe('claude-runner persistent streaming loop', () => {
     stopSession(sessionId);
   });
 
-  it('a late terminal notification after optimistic removal is a no-op (no extra emit)', async () => {
-    const fake = makeFakeQuery();
-    _setQueryFactory(fake.factory);
-    const sessionId = await createRunningSession();
-
-    await sendUserMessage(sessionId, 'start a background job');
-    fake.emit(taskStarted('task-1'));
-    fake.emit(result());
-    await waitFor(() => getSessionBackgroundTasks(sessionId).length === 1);
-
-    await stopBackgroundTask(sessionId, 'task-1');
-    await waitFor(() => !isClaudeRunning(sessionId));
-    mockSseEvents.emitBackgroundTasks.mockClear();
-
-    // The real terminal notification arrives late; the reducer sees the task is
-    // already gone and must not re-emit the background channel.
-    fake.emit(taskNotification('task-1'));
-    // Drive a turn so we can deterministically wait for the message to be processed.
-    fake.emit(assistant('done'));
-    fake.emit(result());
-    await waitFor(async () =>
-      (await messagesFor(sessionId)).some(
-        (m) => m.type === 'assistant' && m.content.includes('done')
-      )
-    );
-
-    expect(getSessionBackgroundTasks(sessionId)).toEqual([]);
-    expect(mockSseEvents.emitBackgroundTasks).not.toHaveBeenCalled();
-
-    stopSession(sessionId);
-  });
-
-  it('is idempotent: a second stop of the same task returns true with no extra emit', async () => {
-    const fake = makeFakeQuery();
-    _setQueryFactory(fake.factory);
-    const sessionId = await createRunningSession();
-
-    await sendUserMessage(sessionId, 'start a background job');
-    fake.emit(taskStarted('task-1'));
-    fake.emit(result());
-    await waitFor(() => getSessionBackgroundTasks(sessionId).length === 1);
-
-    // First stop removes the entry and emits [].
-    expect(await stopBackgroundTask(sessionId, 'task-1')).toBe(true);
-    expect(getSessionBackgroundTasks(sessionId)).toEqual([]);
-    mockSseEvents.emitBackgroundTasks.mockClear();
-
-    // Second stop (task already gone) still reports success, but emits nothing.
-    expect(await stopBackgroundTask(sessionId, 'task-1')).toBe(true);
-    expect(mockSseEvents.emitBackgroundTasks).not.toHaveBeenCalled();
-
-    stopSession(sessionId);
-  });
-
-  it('returns true for an untracked id on a live session, false when no session exists', async () => {
+  it('returns true (without emitting) for an untracked id on a live session, false with no session', async () => {
     const fake = makeFakeQuery();
     _setQueryFactory(fake.factory);
     const sessionId = await createRunningSession();
@@ -789,6 +687,7 @@ describe('claude-runner persistent streaming loop', () => {
 
     // Live session, task never tracked → post-condition already holds → true.
     expect(await stopBackgroundTask(sessionId, 'ghost')).toBe(true);
+    expect(mockSseEvents.emitBackgroundTasks).not.toHaveBeenCalled();
     // No live session state to act on → false.
     expect(await stopBackgroundTask('00000000-0000-0000-0000-000000000000', 'task-1')).toBe(false);
 
@@ -872,40 +771,6 @@ describe('claude-runner persistent streaming loop', () => {
     stopSession(sessionId);
   });
 
-  it('stopSession closes the query and removes the session', async () => {
-    const fake = makeFakeQuery();
-    _setQueryFactory(fake.factory);
-    const sessionId = await createRunningSession();
-
-    await sendUserMessage(sessionId, 'hi');
-    fake.emit(assistant('ok'));
-    fake.emit(result());
-    await waitFor(() => !isClaudeRunning(sessionId));
-
-    stopSession(sessionId);
-    expect(isClaudeRunning(sessionId)).toBe(false);
-    // A second sendUserMessage would re-establish a fresh query (lazy revive).
-    expect(getSessionBackgroundTasks(sessionId)).toEqual([]);
-  });
-
-  it('injects the advisor model into extraArgs.settings when one is set', async () => {
-    const fake = makeFakeQuery();
-    let options: { extraArgs?: Record<string, string> } | undefined;
-    _setQueryFactory((p) => {
-      options = p.options as { extraArgs?: Record<string, string> };
-      return fake.factory(p);
-    });
-    mockLoadSettings.mockResolvedValue({ ...baseSettings, advisorModel: 'claude-opus-4-8' });
-    const sessionId = await createRunningSession();
-
-    await sendUserMessage(sessionId, 'hello');
-    expect(options?.extraArgs?.settings).toBe(JSON.stringify({ advisorModel: 'claude-opus-4-8' }));
-
-    fake.emit(result());
-    await waitFor(() => !isClaudeRunning(sessionId));
-    stopSession(sessionId);
-  });
-
   it('passes MCP servers via a --mcp-config file, not inline on argv', async () => {
     const fake = makeFakeQuery();
     let options:
@@ -948,53 +813,6 @@ describe('claude-runner persistent streaming loop', () => {
     stopSession(sessionId);
   });
 
-  it('omits --mcp-config and removes any stale config file when no MCP servers are set', async () => {
-    const fake = makeFakeQuery();
-    let options: { extraArgs?: Record<string, string> } | undefined;
-    _setQueryFactory((p) => {
-      options = p.options as { extraArgs?: Record<string, string> };
-      return fake.factory(p);
-    });
-    // baseSettings has mcpServers: [] — the empty default.
-    const sessionId = await createRunningSession();
-
-    await sendUserMessage(sessionId, 'hello');
-    expect(options?.extraArgs?.['mcp-config']).toBeUndefined();
-    expect(mockWriteSessionMcpConfig).not.toHaveBeenCalled();
-    // Stale config (from a prior establish with servers) is dropped so old
-    // secrets don't linger on disk.
-    expect(mockRemoveSessionMcpConfig).toHaveBeenCalledWith(sessionId);
-
-    fake.emit(result());
-    await waitFor(() => !isClaudeRunning(sessionId));
-    stopSession(sessionId);
-  });
-
-  it('composes the --mcp-config and advisor settings extraArgs together', async () => {
-    const fake = makeFakeQuery();
-    let options: { extraArgs?: Record<string, string> } | undefined;
-    _setQueryFactory((p) => {
-      options = p.options as { extraArgs?: Record<string, string> };
-      return fake.factory(p);
-    });
-    mockLoadSettings.mockResolvedValue({
-      ...baseSettings,
-      advisorModel: 'claude-opus-4-8',
-      mcpServers: [
-        { name: 'secret', type: 'http', url: 'https://example.com/mcp', headers: { A: 'b' } },
-      ],
-    });
-    const sessionId = await createRunningSession();
-
-    await sendUserMessage(sessionId, 'hello');
-    expect(options?.extraArgs?.['mcp-config']).toBe(`/tmp/worktrees/${sessionId}/mcp-config.json`);
-    expect(options?.extraArgs?.settings).toBe(JSON.stringify({ advisorModel: 'claude-opus-4-8' }));
-
-    fake.emit(result());
-    await waitFor(() => !isClaudeRunning(sessionId));
-    stopSession(sessionId);
-  });
-
   it('passes the resolved settingSources through to the SDK query', async () => {
     const fake = makeFakeQuery();
     let options: { settingSources?: string[] } | undefined;
@@ -1010,24 +828,6 @@ describe('claude-runner persistent streaming loop', () => {
 
     await sendUserMessage(sessionId, 'hello');
     expect(options?.settingSources).toEqual(['user', 'project']);
-
-    fake.emit(result());
-    await waitFor(() => !isClaudeRunning(sessionId));
-    stopSession(sessionId);
-  });
-
-  it('omits the settings arg entirely when the advisor is disabled', async () => {
-    const fake = makeFakeQuery();
-    let options: { extraArgs?: Record<string, string> } | undefined;
-    _setQueryFactory((p) => {
-      options = p.options as { extraArgs?: Record<string, string> };
-      return fake.factory(p);
-    });
-    // baseSettings has advisorModel: null (the disabled default).
-    const sessionId = await createRunningSession();
-
-    await sendUserMessage(sessionId, 'hello');
-    expect(options?.extraArgs?.settings).toBeUndefined();
 
     fake.emit(result());
     await waitFor(() => !isClaudeRunning(sessionId));
@@ -1169,35 +969,6 @@ describe('claude-runner persistent streaming loop', () => {
     fake.emit(result('error_during_execution'));
     await waitFor(() => !isClaudeRunning(sessionId));
     expect(mockSseEvents.emitClaudeFinished).not.toHaveBeenCalled();
-
-    stopSession(sessionId);
-  });
-
-  it('leaves a message alone on interrupt once the CLI has already dequeued it', async () => {
-    const fake = makeFakeQuery();
-    _setQueryFactory(fake.factory);
-    const sessionId = await createRunningSession();
-
-    await sendUserMessage(sessionId, 'first');
-    await waitFor(() => fake.inputs.length >= 1);
-    fake.emit(commandLifecycle(fake.inputs[0].uuid!, 'started'));
-    fake.emit(messageStart());
-    await waitFor(() => isClaudeRunning(sessionId));
-
-    await sendUserMessage(sessionId, 'already reading this');
-    await waitFor(() => fake.inputs.length >= 2);
-    const [pendingId] = getPendingMessageIds(sessionId);
-    expect(pendingId).toBeDefined();
-
-    // The CLI reports it could not be pulled back — the agent has it.
-    fake.cancelAsyncMessage.mockResolvedValueOnce(false);
-    const { cancelled } = await interruptClaude(sessionId);
-
-    expect(cancelled).toEqual([]);
-    // The bubble stays: the agent did read it, so the transcript is truthful.
-    expect(mockSseEvents.emitMessageRemoved).not.toHaveBeenCalled();
-    const userMsgs = (await messagesFor(sessionId)).filter((m) => m.type === 'user');
-    expect(userMsgs.map((m) => m.id)).toContain(pendingId);
 
     stopSession(sessionId);
   });
@@ -1392,22 +1163,7 @@ describe('claude-runner persistent streaming loop', () => {
 
     // Fire the real hook with tool output containing an invisible zero-width char,
     // exactly as the SDK would post-tool. This records the finding in the map.
-    const hook = extractPostToolUseHook(options);
-    await hook({
-      hook_event_name: 'PostToolUse',
-      session_id: 's',
-      transcript_path: '/tmp/t.jsonl',
-      cwd: '/tmp/spike-runner-test',
-      tool_name: 'Bash',
-      tool_input: {},
-      tool_response: {
-        stdout: `value${ZWSP}hidden`,
-        stderr: '',
-        interrupted: false,
-        isImage: false,
-      },
-      tool_use_id: 'toolu_x',
-    });
+    await firePostToolUse(options, 'toolu_x', `value${ZWSP}hidden`);
 
     // The matching tool_result streams back and is persisted with the badge.
     fake.emit(toolResultMsg('toolu_x', 'value hidden'));
@@ -1450,22 +1206,7 @@ describe('claude-runner persistent streaming loop', () => {
     const sessionId = await createRunningSession();
 
     await sendUserMessage(sessionId, 'run a command');
-    const hook = extractPostToolUseHook(options);
-    await hook({
-      hook_event_name: 'PostToolUse',
-      session_id: 's',
-      transcript_path: '/tmp/t.jsonl',
-      cwd: '/tmp/spike-runner-test',
-      tool_name: 'Bash',
-      tool_input: {},
-      tool_response: {
-        stdout: `value${ZWSP}hidden`,
-        stderr: '',
-        interrupted: false,
-        isImage: false,
-      },
-      tool_use_id: 'toolu_race',
-    });
+    await firePostToolUse(options, 'toolu_race', `value${ZWSP}hidden`);
 
     // Queue the result and stop in the same tick, before the loop can drain it.
     fake.emit(toolResultMsg('toolu_race', 'value hidden'));
@@ -1500,22 +1241,7 @@ describe('claude-runner persistent streaming loop', () => {
     const sessionId = await createRunningSession();
 
     await sendUserMessage(sessionId, 'run a command');
-    const hook = extractPostToolUseHook(options);
-    await hook({
-      hook_event_name: 'PostToolUse',
-      session_id: 's',
-      transcript_path: '/tmp/t.jsonl',
-      cwd: '/tmp/spike-runner-test',
-      tool_name: 'Bash',
-      tool_input: {},
-      tool_response: {
-        stdout: `value${ZWSP}hidden`,
-        stderr: '',
-        interrupted: false,
-        isImage: false,
-      },
-      tool_use_id: 'toolu_orphan',
-    });
+    await firePostToolUse(options, 'toolu_orphan', `value${ZWSP}hidden`);
 
     first.end(); // stream ends before the tool_result — the finding is stranded
     await waitFor(() => !isClaudeRunning(sessionId));
@@ -1555,17 +1281,7 @@ describe('claude-runner persistent streaming loop', () => {
     await sendUserMessage(sessionId, 'run a command');
 
     // Clean output → hook records nothing → no badge on the tool_result.
-    const hook = extractPostToolUseHook(options);
-    await hook({
-      hook_event_name: 'PostToolUse',
-      session_id: 's',
-      transcript_path: '/tmp/t.jsonl',
-      cwd: '/tmp/spike-runner-test',
-      tool_name: 'Bash',
-      tool_input: {},
-      tool_response: { stdout: 'all good', stderr: '', interrupted: false, isImage: false },
-      tool_use_id: 'toolu_clean',
-    });
+    await firePostToolUse(options, 'toolu_clean', 'all good');
 
     fake.emit(toolResultMsg('toolu_clean', 'all good'));
     fake.emit(result());

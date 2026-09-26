@@ -13,7 +13,7 @@ const MESSAGE_PAGE_SIZE = 20;
  * cache plus backward pagination.
  */
 export function useSessionMessages(sessionId: string) {
-  // Bidirectional infinite query for message history
+  // Infinite query for message history
   // - fetchNextPage: loads older messages (backward) when user scrolls up
   // - New messages arrive via SSE (useSessionStream) and are added to the cache
   const {
@@ -30,10 +30,6 @@ export function useSessionMessages(sessionId: string) {
       maxPages: 500,
       // Message data is immutable - never refetch automatically
       staleTime: Infinity,
-      initialCursor: {
-        direction: 'backward',
-        sequence: undefined,
-      },
       // For loading OLDER messages (user scrolls up)
       getNextPageParam: (lastPage, allPages) => {
         if (!lastPage.hasMore) return undefined;
@@ -46,7 +42,7 @@ export function useSessionMessages(sessionId: string) {
             }
           }
         }
-        return { sequence: oldestSequence, direction: 'backward' as const };
+        return oldestSequence;
       },
     }
   );

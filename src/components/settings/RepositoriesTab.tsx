@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Spinner } from '@/components/ui/spinner';
+import { CenteredSpinner } from '@/components/ui/spinner';
 import { trpc } from '@/lib/trpc';
 import { RepoSettingsEditor } from './RepoSettingsEditor';
 import { Star, Settings, Trash2, FolderOpen } from 'lucide-react';
@@ -22,11 +22,7 @@ export function RepositoriesTab() {
   });
 
   if (isLoading) {
-    return (
-      <div className="flex justify-center py-12">
-        <Spinner size="lg" />
-      </div>
-    );
+    return <CenteredSpinner />;
   }
 
   const settings = data?.settings || [];

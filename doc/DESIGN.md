@@ -4,15 +4,13 @@
 
 A self-hosted web application providing mobile-friendly access to Claude Code running on a local machine with GPU support. Sessions are persistent (they survive disconnections and server restarts), isolated by per-session git clones, and reached over Tailscale. The server runs in its own user account on a machine dedicated to this app.
 
-This file is the high-level map and is auto-loaded into every agent session — keep it short. Details live in reference docs, loaded on demand:
+This file is the high-level map. Details live in reference docs, loaded on demand:
 
 - [`claude-sessions.md`](claude-sessions.md) — the persistent SDK query, turn/background status, message delivery, interactive tools, process reaping, cost estimation
 - [`messages-and-sse.md`](messages-and-sse.md) — message classification, storage/pagination, SSE streaming/resume
 - [`settings.md`](settings.md) — settings layers, model resolution, secrets, MCP servers
 - [`rate-limit-pause.md`](rate-limit-pause.md) — pausing sessions on subscription usage limits and draining when the window resets
 - [`security.md`](security.md) — auth and input sanitization
-
-Keep this doc and the reference docs up to date when changing behavior (see the documentation rules in the root `CLAUDE.md`).
 
 ## Goals
 
@@ -49,25 +47,22 @@ Key decisions:
 - **tRPC for the API** ([`src/server/routers/`](../src/server/routers/)); **SSE for all server→client streaming**. Client→server actions are ordinary mutations, so a bidirectional transport (WebSockets) is unnecessary.
 - **Single-user password auth** behind Tailscale — see [`security.md`](security.md).
 - **Cursor-based pagination everywhere**: messages by per-session `sequence`; session and auth-session lists by a `(timestamp desc, id desc)` keyset ([`src/lib/keyset-page.ts`](../src/lib/keyset-page.ts)).
-- **Environment is validated once at boot** ([`src/lib/env.ts`](../src/lib/env.ts), called from instrumentation) so a bad variable stops startup instead of the first request that reads it. `LOG_LEVEL` filters the centralized logger.
+- **Environment is validated once at boot** ([`src/lib/env.ts`](../src/lib/env.ts), called from instrumentation) so a bad variable stops startup instead of the first request that reads it.
 
 ## Data Model
 
 The schema ([`prisma/schema.prisma`](../prisma/schema.prisma)) is the source of truth. Non-obvious semantics:
 
 - `Session.lastActivityAt` is bumped only on **user interactions** (sending a prompt, answering a question/plan) — never on assistant/background traffic or lifecycle changes — so the session list orders by where the user last acted and doesn't shuffle while other sessions generate.
-- `Session.claudeModel` is a per-session model override, the highest-precedence layer of model resolution (see [`settings.md`](settings.md)).
 - `Session.pullRequest` is a JSON snapshot of the PR for `currentBranch`, refreshed after each turn and re-polled when `prCheckedAt` ages out, so listing sessions never waits on GitHub (see [`messages-and-sse.md`](messages-and-sse.md)).
 - Deleting a session **archives** it: the workspace is removed, messages are kept and viewable read-only, and it's excluded from the session list by default.
-- `QueuedPrompt` rows hold prompts parked by a rate-limit pause; their transcript bubbles are already written, so a row is only the payload to re-push. `RateLimitWindow` is the account-wide usage state, persisted so a restart doesn't release paused work early.
-- `EnvVar` / `McpServer` rows with `repoSettingsId = null` are global; per-repo entries with the same name take precedence (a partial unique index enforces global name uniqueness). "No Repository" sessions use the `__no_repo__` sentinel in `RepoSettings`.
+- "No Repository" sessions use the `__no_repo__` sentinel in `RepoSettings`.
 
 ## Session Lifecycle
 
-- **Paused for a usage limit**: when a Claude subscription window fills, a session's sends go to a durable queue instead of the SDK and are released when the window resets. Readings are account-wide; the policy (off / threshold) resolves per-session over a global default — see [`rate-limit-pause.md`](rate-limit-pause.md).
-- **Create** (`sessions.create`) returns immediately with status `creating`; cloning happens in the background and the UI polls `statusMessage`. An optional initial prompt is sent server-side once the session is running, so it works even if the client disconnects.
-- **Interact**: prompts go through the session's persistent streaming query ([`claude-sessions.md`](claude-sessions.md)). The composer is never disabled and nothing is held back — a mid-turn send goes straight to the SDK and the agent reads it mid-turn.
-- **Interrupt** stops only the current turn; the query stays alive. It also empties the session's rate-limit queue (see [`rate-limit-pause.md`](rate-limit-pause.md)). **Stop** closes the query; the worktree stays on disk and **Start** revives it. **Delete** stops the query, removes the workspace, and archives.
+- **Create** (`sessions.create`) returns immediately with status `creating`; cloning happens in the background, with progress in `statusMessage` pushed over SSE. An optional initial prompt is sent server-side once the session is running, so it works even if the client disconnects.
+- **Interact**: prompts go through the session's persistent streaming query ([`claude-sessions.md`](claude-sessions.md)); a mid-turn send goes straight to the agent.
+- **Interrupt** stops only the current turn; the query stays alive. **Stop** closes the query; the worktree stays on disk and **Start** revives it. **Delete** stops the query, removes the workspace, and archives.
 - **Restart recovery**: a server restart loses in-memory state but not intent — a session in DB status `running` is revived lazily with `resume` on the next interaction. In-flight background work is not resurrected (its subprocess is gone); recovery restores the conversation.
 
 ### File Uploads
@@ -88,11 +83,11 @@ Speech input/output uses the browser's Web Speech APIs only (no keys, no server 
 
 ## Remote File Editing
 
-The "Open in VS Code" button deep-links into a self-hosted [code-server](https://github.com/coder/code-server) on the session's workspace folder (`${CODE_SERVER_URL}/?folder=<workspaceDir>`, built by the pure `buildEditorUrl`, served by `sessions.getEditorUrl`). code-server owns the whole editor experience; the app only contributes the link, which opens the workspace root so uploads are visible alongside the clone. Opt-in: when `CODE_SERVER_URL` is unset (or the session is archived, its workspace gone) the server returns `null` and the button hides — the server is authoritative, the UI stays dumb. Setup is two scripts sharing [`scripts/lib-code-server.sh`](../scripts/lib-code-server.sh): [`setup-code-server.sh`](../scripts/setup-code-server.sh) (no sudo/Tailscale, runnable by the app account; loopback on a random port recorded in code-server's config) and [`expose-code-server-tailscale.sh`](../scripts/expose-code-server-tailscale.sh) (tailnet-only `serve` service — same trust boundary as the app, never `funnel`).
+The "Open in VS Code" button deep-links into a self-hosted [code-server](https://github.com/coder/code-server) on the session's workspace folder (`${CODE_SERVER_URL}/?folder=<workspaceDir>`, built by the pure `buildEditorUrl`, served by `sessions.getEditorUrl`). code-server owns the whole editor experience; the app only contributes the link, which opens the workspace root so uploads are visible alongside the clone. Opt-in: when `CODE_SERVER_URL` is unset (or the session is archived, its workspace gone) the server returns `null` and the button hides — the server is authoritative, the UI stays dumb. Setup is two scripts sharing [`scripts/lib-code-server.sh`](../scripts/lib-code-server.sh): [`setup-code-server.sh`](../scripts/setup-code-server.sh) (no sudo, runnable by the app account) and [`expose-code-server-tailscale.sh`](../scripts/expose-code-server-tailscale.sh) (tailnet-only, never `funnel`).
 
 ## Where Things Live
 
-- [`src/server/routers/`](../src/server/routers/) — tRPC API (auth, github, sessions, claude, sse, globalSettings, repoSettings). Procedure bases live in [`src/server/trpc.ts`](../src/server/trpc.ts): a procedure that needs the session row builds on `sessionProcedure` (loads `ctx.session` or throws NOT_FOUND) or `runningSessionProcedure` rather than repeating the lookup; ones that only read in-memory state stay on `protectedProcedure`.
+- [`src/server/routers/`](../src/server/routers/) — tRPC API. Procedure bases live in [`src/server/trpc.ts`](../src/server/trpc.ts): a procedure that needs the session row builds on `sessionProcedure` (loads `ctx.session` or throws NOT_FOUND) or `runningSessionProcedure` rather than repeating the lookup; ones that only read in-memory state stay on `protectedProcedure`.
 - [`src/server/services/`](../src/server/services/) — session/query/workspace management; [`claude-runner.ts`](../src/server/services/claude-runner.ts) orchestrates the session query and its sibling modules own the seams (see [`src/server/services/CLAUDE.md`](../src/server/services/CLAUDE.md))
 - [`src/lib/`](../src/lib/) — pure, unit-testable logic shared by server and client
 - [`src/hooks/`](../src/hooks/) — React Query + SSE wiring

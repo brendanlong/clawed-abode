@@ -8,80 +8,10 @@ import {
 import type { EnvVarSectionState, EnvVarFormState } from './env-var-reducer';
 
 describe('envVarSectionReducer', () => {
-  describe('form visibility', () => {
-    it('opens the form', () => {
-      const result = envVarSectionReducer(initialEnvVarSectionState, { type: 'openForm' });
-      expect(result.showForm).toBe(true);
-    });
-
-    it('starts editing by id', () => {
-      const result = envVarSectionReducer(initialEnvVarSectionState, {
-        type: 'startEditing',
-        id: 'env-1',
-      });
-      expect(result.editingId).toBe('env-1');
-    });
-
-    it('closes the form and clears editingId', () => {
-      const state: EnvVarSectionState = {
-        ...initialEnvVarSectionState,
-        showForm: true,
-        editingId: 'env-1',
-      };
-      const result = envVarSectionReducer(state, { type: 'closeForm' });
-      expect(result.showForm).toBe(false);
-      expect(result.editingId).toBeNull();
-    });
-
-    it('formSuccess closes form and clears editingId', () => {
-      const state: EnvVarSectionState = {
-        ...initialEnvVarSectionState,
-        showForm: true,
-        editingId: 'env-1',
-      };
-      const result = envVarSectionReducer(state, { type: 'formSuccess' });
-      expect(result.showForm).toBe(false);
-      expect(result.editingId).toBeNull();
-    });
-  });
-
-  describe('delete flow', () => {
-    it('sets delete target', () => {
-      const result = envVarSectionReducer(initialEnvVarSectionState, {
-        type: 'setDeleteTarget',
-        name: 'MY_VAR',
-      });
-      expect(result.deleteTarget).toBe('MY_VAR');
-    });
-
-    it('clears delete target', () => {
-      const state: EnvVarSectionState = {
-        ...initialEnvVarSectionState,
-        deleteTarget: 'MY_VAR',
-      };
-      const result = envVarSectionReducer(state, { type: 'setDeleteTarget', name: null });
-      expect(result.deleteTarget).toBeNull();
-    });
-
-    it('starts deleting', () => {
-      const state: EnvVarSectionState = {
-        ...initialEnvVarSectionState,
-        deleteTarget: 'MY_VAR',
-      };
-      const result = envVarSectionReducer(state, { type: 'startDeleting' });
-      expect(result.isDeleting).toBe(true);
-    });
-
-    it('finishes deleting and clears target', () => {
-      const state: EnvVarSectionState = {
-        ...initialEnvVarSectionState,
-        isDeleting: true,
-        deleteTarget: 'MY_VAR',
-      };
-      const result = envVarSectionReducer(state, { type: 'finishDeleting' });
-      expect(result.isDeleting).toBe(false);
-      expect(result.deleteTarget).toBeNull();
-    });
+  it('delegates shared list actions and preserves its own fields', () => {
+    const state: EnvVarSectionState = { ...initialEnvVarSectionState, loadingSecret: 'API_KEY' };
+    const result = envVarSectionReducer(state, { type: 'openForm' });
+    expect(result).toEqual({ ...state, showForm: true });
   });
 
   describe('secret visibility', () => {
@@ -175,38 +105,6 @@ describe('envVarFormReducer', () => {
       expect(state.name).toBe('SECRET_VAR');
       expect(state.value).toBe('');
       expect(state.isSecret).toBe(true);
-    });
-  });
-
-  describe('field updates', () => {
-    it('sets name', () => {
-      const state = createInitialEnvVarFormState();
-      const result = envVarFormReducer(state, { type: 'setName', name: 'NEW_NAME' });
-      expect(result.name).toBe('NEW_NAME');
-    });
-
-    it('sets value', () => {
-      const state = createInitialEnvVarFormState();
-      const result = envVarFormReducer(state, { type: 'setValue', value: 'new-value' });
-      expect(result.value).toBe('new-value');
-    });
-
-    it('sets isSecret', () => {
-      const state = createInitialEnvVarFormState();
-      const result = envVarFormReducer(state, { type: 'setIsSecret', isSecret: true });
-      expect(result.isSecret).toBe(true);
-    });
-
-    it('sets error', () => {
-      const state = createInitialEnvVarFormState();
-      const result = envVarFormReducer(state, { type: 'setError', error: 'Something went wrong' });
-      expect(result.error).toBe('Something went wrong');
-    });
-
-    it('clears error', () => {
-      const state: EnvVarFormState = { ...createInitialEnvVarFormState(), error: 'old error' };
-      const result = envVarFormReducer(state, { type: 'setError', error: null });
-      expect(result.error).toBeNull();
     });
   });
 

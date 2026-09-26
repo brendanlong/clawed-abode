@@ -10,11 +10,11 @@ Env vars and MCP servers are **scope-generic**: one table each, `repoSettingsId`
 - **Env vars / MCP servers**: global entries apply everywhere; a per-repo entry with the same name wins.
 - **System prompt**: base (default, or the override if enabled) + the session's public-dir note (when public files are configured) + global append + per-repo append, in that order. The note describes the session rather than setting policy, so an override keeps it.
 - **Rate-limit pause**: session → global, with the two fields (on/off, threshold) resolving independently so a session can raise its threshold without restating the global on/off (`resolvePausePolicy`; there is no repo layer). Applies immediately, not at the next establishment. See [`rate-limit-pause.md`](rate-limit-pause.md).
-- **Setting sources**: global-only toggles for the SDK's `user` / `project` / `local` filesystem scopes (`resolveSettingSources`, default: only `project`). Widening is a **trust decision** — these scopes load hooks (which execute) and permissions. A settings-file `PostToolUse` hook merges with, not displaces, the app's sanitizer hook (verified by `scripts/spike-hook-merge.ts`).
+- **Setting sources**: global-only toggles for the SDK's `user` / `project` / `local` filesystem scopes (`resolveSettingSources`, default: only `project`). Widening is a **trust decision** — these scopes load hooks (which execute) and permissions. A settings-file `PostToolUse` hook merges with, not displaces, the app's sanitizer hook.
 
 ## Advisor Model
 
-Global-only and **opt-in**: null means the advisor tool isn't wired into requests at all; setting a model enables it. `SUGGESTED_ADVISOR_MODEL` ([`src/lib/advisor.ts`](../src/lib/advisor.ts), dependency-free so server and client share it) is what an empty Enable→Save adopts — it is _not_ a resolution fallback; only the Disable button reaches the disabled state. There's no dedicated SDK option, so it's passed as an ad-hoc `--settings` source via `Options.extraArgs` (omitted entirely when disabled). SDK versions before 0.3.196 silently ignore `advisorModel`; to re-verify after a bump, capture the CLI's outgoing `/v1/messages` request and check the `tools` array for `advisor_20260301`.
+Global-only and **opt-in**: null means the advisor tool isn't wired into requests at all; setting a model enables it. `SUGGESTED_ADVISOR_MODEL` ([`src/lib/advisor.ts`](../src/lib/advisor.ts), dependency-free so server and client share it) is what an empty Enable→Save adopts — it is _not_ a resolution fallback; only the Disable button reaches the disabled state. There's no dedicated SDK option, so it's passed as an ad-hoc `--settings` source via `Options.extraArgs` (omitted entirely when disabled).
 
 ## MCP Validation
 

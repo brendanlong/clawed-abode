@@ -201,70 +201,22 @@ describe('MessageBubble', () => {
     });
   });
 
-  describe('ignored system messages', () => {
-    it.each(['thinking_tokens', 'task_progress', 'commands_changed', 'api_retry'])(
-      'renders nothing for %s system messages',
-      (subtype) => {
-        const message = {
-          type: 'system',
-          content: { type: 'system', subtype } as MessageContent,
-        };
-
-        const { container } = render(<MessageBubble message={message} />);
-
-        expect(container).toBeEmptyDOMElement();
-      }
-    );
-
-    it('renders nothing for skip_transcript system messages', () => {
-      const message = {
-        type: 'system',
-        content: {
-          type: 'system',
-          subtype: 'task_started',
-          skip_transcript: true,
-        } as MessageContent,
-      };
-
-      const { container } = render(<MessageBubble message={message} />);
+  describe('renders nothing', () => {
+    it.each([
+      ['an ignored system subtype', 'system', { type: 'system', subtype: 'thinking_tokens' }],
+      ['a hidden system subtype', 'system', { type: 'system', subtype: 'notification' }],
+      [
+        'an assistant message with only an empty thinking block',
+        'assistant',
+        { message: { content: [{ type: 'thinking', thinking: '', signature: 'sig' }] } },
+      ],
+    ])('for %s', (_label, type, content) => {
+      const { container } = render(
+        <MessageBubble message={{ type, content: content as MessageContent }} />
+      );
 
       expect(container).toBeEmptyDOMElement();
     });
-  });
-
-  describe('empty assistant fragments', () => {
-    it('renders nothing for an assistant message with only an empty thinking block', () => {
-      const message = {
-        type: 'assistant',
-        content: {
-          message: {
-            content: [{ type: 'thinking', thinking: '', signature: 'sig' }],
-          },
-        } as MessageContent,
-      };
-
-      const { container } = render(<MessageBubble message={message} />);
-
-      expect(container).toBeEmptyDOMElement();
-    });
-  });
-
-  describe('generic system messages', () => {
-    // System messages are hidden from the transcript to reduce noise (issue #312),
-    // except errors and compact boundaries.
-    it.each(['notification', 'task_started', 'task_notification', 'some_future_thing'])(
-      'renders nothing for %s system messages',
-      (subtype) => {
-        const message = {
-          type: 'system',
-          content: { type: 'system', subtype, text: 'irrelevant' } as MessageContent,
-        };
-
-        const { container } = render(<MessageBubble message={message} />);
-
-        expect(container).toBeEmptyDOMElement();
-      }
-    );
   });
 
   describe('user messages', () => {
@@ -393,40 +345,6 @@ describe('MessageBubble', () => {
       render(<MessageBubble message={message} />);
 
       expect(screen.getByText('Interrupted')).toBeInTheDocument();
-    });
-  });
-
-  describe('system messages', () => {
-    it('renders nothing for a generic system message (hidden to reduce noise)', () => {
-      const message = {
-        type: 'system',
-        content: {
-          content: 'System notification text',
-        } as MessageContent,
-      };
-
-      const { container } = render(<MessageBubble message={message} />);
-
-      expect(container).toBeEmptyDOMElement();
-    });
-  });
-
-  describe('system init messages', () => {
-    it('renders nothing for a session init message (hidden to reduce noise)', () => {
-      const message = {
-        type: 'system',
-        content: {
-          subtype: 'init',
-          model: 'claude-3-opus',
-          claude_code_version: '1.0.0',
-          session_id: 'test-session-123',
-          cwd: '/workspace',
-        } as MessageContent,
-      };
-
-      const { container } = render(<MessageBubble message={message} />);
-
-      expect(container).toBeEmptyDOMElement();
     });
   });
 

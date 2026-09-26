@@ -1,6 +1,6 @@
 'use client';
 
-import { useReducer } from 'react';
+import { useId, useReducer } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -18,8 +18,8 @@ import { keepsStoredSecret } from '@/lib/key-value-entries';
 import type { EnvVar } from '@/lib/settings-types';
 
 export interface EnvVarMutations {
-  deleteEnvVar: (name: string) => Promise<void>;
-  setEnvVar: (envVar: { name: string; value: string; isSecret: boolean }) => Promise<void>;
+  deleteEnvVar: (name: string) => Promise<unknown>;
+  setEnvVar: (envVar: { name: string; value: string; isSecret: boolean }) => Promise<unknown>;
   getSecretValue: (name: string) => Promise<{ value: string }>;
 }
 
@@ -29,7 +29,6 @@ interface EnvVarSectionProps {
   onUpdate: () => void;
   emptyMessage?: string;
   deleteDescriptionPrefix?: string;
-  idPrefix?: string;
 }
 
 export function EnvVarSection({
@@ -38,7 +37,6 @@ export function EnvVarSection({
   onUpdate,
   emptyMessage = 'No environment variables configured.',
   deleteDescriptionPrefix = 'This will delete the environment variable',
-  idPrefix = 'env',
 }: EnvVarSectionProps) {
   const [state, dispatch] = useReducer(envVarSectionReducer, initialEnvVarSectionState);
 
@@ -56,25 +54,14 @@ export function EnvVarSection({
     }
   };
 
-  const handleDelete = async () => {
-    if (!state.deleteTarget) return;
-    dispatch({ type: 'startDeleting' });
-    try {
-      await mutations.deleteEnvVar(state.deleteTarget);
-      dispatch({ type: 'finishDeleting' });
-      onUpdate();
-    } catch {
-      dispatch({ type: 'finishDeleting' });
-    }
-  };
-
   return (
     <SettingsListEditor
       title="Environment Variables"
       items={envVars}
       state={state}
       dispatch={dispatch}
-      onDelete={handleDelete}
+      onDelete={mutations.deleteEnvVar}
+      onUpdate={onUpdate}
       emptyMessage={emptyMessage}
       deleteDialogTitle="Delete environment variable?"
       deleteDescriptionPrefix={deleteDescriptionPrefix}
@@ -115,12 +102,8 @@ export function EnvVarSection({
         <EnvVarForm
           existingEnvVar={existingItem}
           onClose={onClose}
-          onSuccess={() => {
-            onSuccess();
-            onUpdate();
-          }}
+          onSuccess={onSuccess}
           setEnvVar={mutations.setEnvVar}
-          idPrefix={idPrefix}
         />
       )}
     />
@@ -132,14 +115,13 @@ function EnvVarForm({
   onClose,
   onSuccess,
   setEnvVar,
-  idPrefix,
 }: {
   existingEnvVar?: EnvVar;
   onClose: () => void;
   onSuccess: () => void;
   setEnvVar: EnvVarMutations['setEnvVar'];
-  idPrefix: string;
 }) {
+  const id = useId();
   const [form, dispatch] = useReducer(envVarFormReducer, existingEnvVar, (existing) =>
     createInitialEnvVarFormState(existing)
   );
@@ -178,9 +160,9 @@ function EnvVarForm({
   return (
     <form onSubmit={handleSubmit} className="space-y-4 p-4 border rounded-md">
       <div className="space-y-2">
-        <Label htmlFor={`${idPrefix}-name`}>Name</Label>
+        <Label htmlFor={`${id}-name`}>Name</Label>
         <Input
-          id={`${idPrefix}-name`}
+          id={`${id}-name`}
           value={form.name}
           onChange={(e) => dispatch({ type: 'setName', name: e.target.value.toUpperCase() })}
           placeholder="MY_API_KEY"
@@ -189,9 +171,9 @@ function EnvVarForm({
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor={`${idPrefix}-value`}>Value</Label>
+        <Label htmlFor={`${id}-value`}>Value</Label>
         <Input
-          id={`${idPrefix}-value`}
+          id={`${id}-value`}
           type={form.isSecret ? 'password' : 'text'}
           value={form.value}
           onChange={(e) => dispatch({ type: 'setValue', value: e.target.value })}
@@ -203,11 +185,11 @@ function EnvVarForm({
 
       <div className="flex items-center gap-2">
         <Switch
-          id={`${idPrefix}-secret`}
+          id={`${id}-secret`}
           checked={form.isSecret}
           onCheckedChange={(isSecret) => dispatch({ type: 'setIsSecret', isSecret })}
         />
-        <Label htmlFor={`${idPrefix}-secret`}>Secret (encrypted at rest)</Label>
+        <Label htmlFor={`${id}-secret`}>Secret (encrypted at rest)</Label>
       </div>
 
       {form.error && <p className="text-sm text-destructive">{form.error}</p>}

@@ -11,9 +11,9 @@ import {
   getSessionBackgroundTasks,
   stopBackgroundTask,
   getPendingMessageIds,
-  getQueuedMessageIds,
-  getSessionRateLimitHold,
 } from '../services/claude-runner';
+import { queuedMessageIds } from '../services/prompt-queue';
+import { resolveSessionHold } from '../services/rate-limit-state';
 import {
   markLastMessageAsInterrupted,
   persistSyntheticToolResult,
@@ -136,35 +136,18 @@ export const claudeRouter = router({
   getHistory: sessionProcedure
     .input(
       z.object({
-        cursor: z
-          .object({
-            sequence: z.number().int().optional(),
-            direction: z.enum(['forward', 'backward']),
-          })
-          .optional(),
+        // Pages backward: returns the newest messages older than this sequence.
+        cursor: z.number().int().nullish(),
         limit: z.number().int().min(1).max(100).default(50),
       })
     )
     .query(async ({ input }) => {
-      const isBackward = input.cursor?.direction === 'backward';
-      const getNewest = isBackward || input.cursor?.sequence == null;
-
-      const whereClause: {
-        sessionId: string;
-        sequence?: { lt: number } | { gt: number };
-      } = {
-        sessionId: input.sessionId,
-      };
-
-      if (input.cursor?.sequence !== undefined) {
-        whereClause.sequence = isBackward
-          ? { lt: input.cursor.sequence }
-          : { gt: input.cursor.sequence };
-      }
-
       const messages = await prisma.message.findMany({
-        where: whereClause,
-        orderBy: { sequence: getNewest ? 'desc' : 'asc' },
+        where: {
+          sessionId: input.sessionId,
+          ...(input.cursor != null && { sequence: { lt: input.cursor } }),
+        },
+        orderBy: { sequence: 'desc' },
         take: input.limit + 1,
       });
 
@@ -178,14 +161,7 @@ export const claudeRouter = router({
         content: JSON.parse(m.content),
       }));
 
-      if (getNewest) {
-        parsedMessages.reverse();
-      }
-
-      return {
-        messages: parsedMessages,
-        hasMore,
-      };
+      return { messages: parsedMessages.reverse(), hasMore };
     }),
 
   isRunning: protectedProcedure
@@ -268,7 +244,7 @@ export const claudeRouter = router({
   getRateLimitHold: protectedProcedure
     .input(z.object({ sessionId: z.string().uuid() }))
     .query(async ({ input }) => {
-      return { hold: await getSessionRateLimitHold(input.sessionId) };
+      return { hold: await resolveSessionHold(input.sessionId) };
     }),
 
   // Transcript ids of prompts held back by a rate-limit pause, in queue order.
@@ -276,7 +252,7 @@ export const claudeRouter = router({
   getQueuedMessageIds: protectedProcedure
     .input(z.object({ sessionId: z.string().uuid() }))
     .query(async ({ input }) => {
-      return { messageIds: await getQueuedMessageIds(input.sessionId) };
+      return { messageIds: await queuedMessageIds(input.sessionId) };
     }),
 
   // Stop a single running background task.

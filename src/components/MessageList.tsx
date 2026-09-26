@@ -36,7 +36,6 @@ interface MessageListProps {
   hasMore: boolean;
   onLoadMore: () => void;
   tokenUsage?: TokenUsageStats | null;
-  onSendResponse?: (response: string) => void;
   onAnswerQuestion?: (toolUseId: string, answers: Record<string, string>) => void;
   onRespondToPlan?: (toolUseId: string, approve: boolean, feedback?: string) => void;
   /**
@@ -64,7 +63,6 @@ export function MessageList({
   hasMore,
   onLoadMore,
   tokenUsage,
-  onSendResponse,
   onAnswerQuestion,
   onRespondToPlan,
   pendingMessageIds = [],
@@ -375,7 +373,6 @@ export function MessageList({
       latestTodoWriteId,
       manuallyToggledTodoIds,
       onTodoManualToggle: handleTodoManualToggle,
-      onSendResponse,
       onAnswerQuestion,
       onRespondToPlan,
       planContentByToolUseId,
@@ -386,7 +383,6 @@ export function MessageList({
       latestTodoWriteId,
       manuallyToggledTodoIds,
       handleTodoManualToggle,
-      onSendResponse,
       onAnswerQuestion,
       onRespondToPlan,
       planContentByToolUseId,

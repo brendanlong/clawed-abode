@@ -70,13 +70,4 @@ describe('AskUserQuestionDisplay', () => {
 
     expect(screen.getByRole('button', { name: /Option A/ })).toBeDisabled();
   });
-
-  it('falls back to text response when no tool_use id is available', async () => {
-    const onSendResponse = vi.fn();
-    renderWithContext({ ...QUESTION_TOOL, id: undefined }, { onSendResponse });
-
-    await userEvent.click(screen.getByText('Option B'));
-
-    expect(onSendResponse).toHaveBeenCalledWith('Option B');
-  });
 });

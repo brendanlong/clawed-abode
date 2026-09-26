@@ -4,9 +4,9 @@ import { TRPCError } from '@trpc/server';
 import { env } from '@/lib/env';
 import { defaultBranchFirst } from '@/lib/branch-list';
 import {
-  githubFetch as serviceGithubFetch,
-  githubFetchResponse as serviceGithubFetchResponse,
-  githubFetchAllPages as serviceGithubFetchAllPages,
+  githubFetch,
+  githubFetchResponse,
+  githubFetchAllPages,
   parseLinkHeader,
   GitHubApiError,
 } from '../services/github';
@@ -29,89 +29,50 @@ interface GitHubIssue {
   number: number;
   title: string;
   body: string | null;
-  state: 'open' | 'closed';
-  user: { login: string } | null;
   labels: Array<{ name: string; color: string }>;
   comments: number;
-  created_at: string;
-  updated_at: string;
+}
+
+/** Map the shared service's {@link GitHubApiError} to the router's tRPC error surface. */
+function toTRPCError(err: GitHubApiError): TRPCError {
+  if (err.status === 401) {
+    return new TRPCError({
+      code: 'PRECONDITION_FAILED',
+      message: 'GitHub token is invalid or expired',
+    });
+  }
+  if (err.status === 403) {
+    return new TRPCError({
+      code: 'FORBIDDEN',
+      message: err.apiMessage ?? 'GitHub rate limit exceeded or access denied',
+    });
+  }
+  if (err.status === 404) {
+    return new TRPCError({ code: 'NOT_FOUND', message: 'GitHub resource not found' });
+  }
+  return new TRPCError({
+    code: 'INTERNAL_SERVER_ERROR',
+    message: err.apiMessage
+      ? `GitHub API error ${err.status}: ${err.apiMessage}`
+      : `GitHub API error: ${err.status}`,
+  });
 }
 
 /**
- * Map the shared service's {@link GitHubApiError} to the tRPC error surface the
- * router (and its clients) expect. The underlying fetch/link-header helpers live
- * in `../services/github`; these wrappers only translate the error shape so the
- * router's tRPC responses stay unchanged.
+ * Every procedure here needs a configured token (none can degrade without one),
+ * and surfaces GitHub API failures as tRPC errors.
  */
-function mapGitHubError(err: unknown): never {
-  if (err instanceof GitHubApiError) {
-    if (err.status === 401) {
-      throw new TRPCError({
-        code: 'PRECONDITION_FAILED',
-        message: 'GitHub token is invalid or expired',
-      });
-    }
-    if (err.status === 403) {
-      throw new TRPCError({
-        code: 'FORBIDDEN',
-        message: err.apiMessage ?? 'GitHub rate limit exceeded or access denied',
-      });
-    }
-    if (err.status === 404) {
-      throw new TRPCError({
-        code: 'NOT_FOUND',
-        message: 'GitHub resource not found',
-      });
-    }
-    throw new TRPCError({
-      code: 'INTERNAL_SERVER_ERROR',
-      message: err.apiMessage
-        ? `GitHub API error ${err.status}: ${err.apiMessage}`
-        : `GitHub API error: ${err.status}`,
-    });
-  }
-  throw err;
-}
-
-/** Every procedure here needs a configured token; none can degrade without one. */
-function requireGitHubToken(): string {
+const githubProcedure = protectedProcedure.use(async ({ next }) => {
   const token = env.GITHUB_TOKEN;
   if (!token) {
-    throw new TRPCError({
-      code: 'PRECONDITION_FAILED',
-      message: 'GitHub token is not configured',
-    });
+    throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'GitHub token is not configured' });
   }
-  return token;
-}
-
-async function githubFetchResponse(path: string, token?: string): Promise<Response> {
-  try {
-    return await serviceGithubFetchResponse(path, token);
-  } catch (err) {
-    mapGitHubError(err);
+  const result = await next({ ctx: { githubToken: token } });
+  if (!result.ok && result.error.cause instanceof GitHubApiError) {
+    throw toTRPCError(result.error.cause);
   }
-}
-
-async function githubFetch<T>(path: string, token?: string): Promise<T> {
-  try {
-    return await serviceGithubFetch<T>(path, token);
-  } catch (err) {
-    mapGitHubError(err);
-  }
-}
-
-async function githubFetchAllPages<T>(
-  path: string,
-  itemSchema: z.ZodType<T>,
-  token: string
-): Promise<{ items: T[]; truncated: boolean }> {
-  try {
-    return await serviceGithubFetchAllPages(path, itemSchema, token);
-  } catch (err) {
-    mapGitHubError(err);
-  }
-}
+  return result;
+});
 
 export const githubRouter = router({
   /**
@@ -119,12 +80,11 @@ export const githubRouter = router({
    * updated first. The client searches this list itself: GitHub's search API
    * can't scope to "repos I can access" and skips forks by default.
    */
-  listRepos: protectedProcedure.query(async () => {
-    const token = requireGitHubToken();
+  listRepos: githubProcedure.query(async ({ ctx }) => {
     const { items, truncated } = await githubFetchAllPages(
       '/user/repos?sort=updated',
       repoSchema,
-      token
+      ctx.githubToken
     );
 
     // Pages are fetched in parallel, so a repo updated mid-walk can appear on two.
@@ -144,15 +104,14 @@ export const githubRouter = router({
     };
   }),
 
-  listBranches: protectedProcedure
+  listBranches: githubProcedure
     .input(
       z.object({
         repoFullName: z.string().regex(/^[\w-]+\/[\w.-]+$/),
       })
     )
-    .query(async ({ input }) => {
-      const token = requireGitHubToken();
-
+    .query(async ({ ctx, input }) => {
+      const token = ctx.githubToken;
       const [repo, { items, truncated }] = await Promise.all([
         githubFetch<GitHubRepo>(`/repos/${input.repoFullName}`, token),
         githubFetchAllPages(`/repos/${input.repoFullName}/branches`, branchSchema, token),
@@ -168,19 +127,17 @@ export const githubRouter = router({
       };
     }),
 
-  listIssues: protectedProcedure
+  listIssues: githubProcedure
     .input(
       z.object({
         repoFullName: z.string().regex(/^[\w-]+\/[\w.-]+$/),
         search: z.string().optional(),
-        state: z.enum(['open', 'closed', 'all']).default('open'),
         cursor: z.string().regex(/^\d+$/).optional(), // page number as string
         perPage: z.number().int().min(1).max(100).default(30),
       })
     )
-    .query(async ({ input }) => {
-      const token = requireGitHubToken();
-
+    .query(async ({ ctx, input }) => {
+      const token = ctx.githubToken;
       const page = input.cursor ? parseInt(input.cursor, 10) : 1;
 
       let issues: GitHubIssue[];
@@ -188,7 +145,7 @@ export const githubRouter = router({
 
       if (input.search) {
         const query = encodeURIComponent(
-          `${input.search} repo:${input.repoFullName} is:issue state:${input.state}`
+          `${input.search} repo:${input.repoFullName} is:issue state:open`
         );
         const url = `/search/issues?q=${query}&per_page=${input.perPage}&page=${page}`;
 
@@ -196,7 +153,7 @@ export const githubRouter = router({
         const data = await response.json();
         issues = data.items;
       } else {
-        const url = `/repos/${input.repoFullName}/issues?state=${input.state}&per_page=${input.perPage}&page=${page}&sort=updated&direction=desc`;
+        const url = `/repos/${input.repoFullName}/issues?state=open&per_page=${input.perPage}&page=${page}&sort=updated&direction=desc`;
 
         response = await githubFetchResponse(url, token);
         issues = await response.json();
@@ -213,12 +170,8 @@ export const githubRouter = router({
           number: i.number,
           title: i.title,
           body: i.body,
-          state: i.state,
-          author: i.user?.login || 'unknown',
           labels: i.labels.map((l) => ({ name: l.name, color: l.color })),
           comments: i.comments,
-          createdAt: i.created_at,
-          updatedAt: i.updated_at,
         })),
         nextCursor: links.next,
       };

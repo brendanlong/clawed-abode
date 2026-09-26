@@ -26,16 +26,12 @@ Read more: [Clawed Abode: Claude Code is Too Cloudy](https://www.brendanlong.com
 - **Use a fine-grained GitHub token** scoped to only the repositories you want to expose
 - **Use Tailscale** or similar for remote access - never expose port 3000 directly to the internet
 
-See [Setup](#setup) below.
-
 ## Prerequisites
 
 - A Linux host with systemd user services (for the session process scopes and the service unit), `sudo` for creating the user, and Git 2.31+ (clones pass credentials via `GIT_CONFIG_*`)
-- Node.js 22 (20.19+ works); the setup below installs it via nvm
+- Node.js 22.22.1+; the setup below installs it via nvm
 
 ## Setup
-
-Claude Code agents can execute arbitrary code, so run the app as a dedicated unprivileged user — not your personal account.
 
 ### 1. Create the user
 
@@ -75,7 +71,7 @@ Edit `.env` and set `PASSWORD_HASH`, `GITHUB_TOKEN` and `CLAUDE_CODE_OAUTH_TOKEN
 
 #### Generate Claude OAuth Token
 
-Copy the token printed by `claude setup-token` in step 2 (run it again if you need to) into `.env` as `CLAUDE_CODE_OAUTH_TOKEN`. It can also be set later in the Settings UI.
+Copy the token printed by `claude setup-token` in step 2 (run it again if you need to) into `.env` as `CLAUDE_CODE_OAUTH_TOKEN`.
 
 #### Generate GitHub Token
 
@@ -106,8 +102,6 @@ Add the output to your `.env` file:
 PASSWORD_HASH="JGFyZ29uMmlkJHY9MTkkbT02NTUzNix0PTMscD00JC4uLg=="
 ```
 
-**Note:** Logins will fail if `PASSWORD_HASH` is not set.
-
 ### 4. Initialize the database
 
 ```bash
@@ -121,7 +115,7 @@ pnpm run build
 pnpm start
 ```
 
-Visit `http://localhost:3000` from the server itself (see [Remote Access](#remote-access-with-tailscale) for the URL to use from other devices). For development use `pnpm run dev` instead.
+Visit `http://localhost:3000` from the server itself (see [Remote Access](#remote-access-with-tailscale) for the URL to use from other devices).
 
 ### 6. Run as a systemd service
 
@@ -175,10 +169,6 @@ journalctl --user -u clawed-abode.service -f
 
 This pulls the latest code, installs dependencies, applies database migrations, rebuilds, and restarts the service. A plain `git pull` + restart is **not** enough — `next start` serves the prebuilt `.next` bundle, so without a rebuild you keep running the old code. If your service isn't named `clawed-abode.service`, set `CLAWED_ABODE_SERVICE`.
 
-## Architecture
-
-Sessions run directly on the host machine - no containers. Each session gets its own git clone for isolation. See [`doc/DESIGN.md`](doc/DESIGN.md) for the design and the reference docs it links to.
-
 ## Remote Access with Tailscale
 
 ### Tailscale Serve (within your Tailnet)
@@ -223,19 +213,9 @@ The schema in [`src/lib/env.ts`](src/lib/env.ts) is authoritative; it is validat
 
 ## Troubleshooting
 
-### Permission denied creating worktrees
-
-The application creates session workspaces at `~/worktrees/`. Make sure the user running the application has write access to their home directory.
-
 ### Claude Code authentication errors
 
-```bash
-# Check if Claude is authenticated
-claude --version
-
-# Re-authenticate if needed
-claude setup-token
-```
+Regenerate a token with `claude setup-token` and update `CLAUDE_CODE_OAUTH_TOKEN` in `.env` or Settings.
 
 ### Database errors
 

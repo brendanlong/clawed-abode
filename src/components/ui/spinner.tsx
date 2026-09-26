@@ -27,3 +27,11 @@ export function Spinner({ className, size = 'md' }: SpinnerProps) {
     </svg>
   );
 }
+
+export function CenteredSpinner() {
+  return (
+    <div className="flex justify-center py-12">
+      <Spinner size="lg" />
+    </div>
+  );
+}

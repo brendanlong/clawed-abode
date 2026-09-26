@@ -130,16 +130,6 @@ function SessionView({ sessionId }: { sessionId: string }) {
     [session, sendPrompt, stopWithAutoReadFlag]
   );
 
-  // Adapter for callers that only produce text (plan responses, voice transcripts)
-  // and don't handle the send promise. Swallow rejection so a failed send doesn't
-  // surface as an unhandled promise rejection (the composer path handles its own).
-  const handleSendText = useCallback(
-    (prompt: string) => {
-      void handleSendPrompt(prompt).catch(() => {});
-    },
-    [handleSendPrompt]
-  );
-
   // Interrupt the current turn. Resolves with the text of any prompts the agent
   // hadn't read yet, which the server cancelled — the composer restores them.
   const handleInterrupt = useCallback(
@@ -278,7 +268,6 @@ function SessionView({ sessionId }: { sessionId: string }) {
           hasMore={hasMore}
           onLoadMore={fetchMore}
           tokenUsage={tokenUsage}
-          onSendResponse={handleSendText}
           onAnswerQuestion={answerQuestion}
           onRespondToPlan={respondToPlan}
           pendingMessageIds={pendingMessageIds}

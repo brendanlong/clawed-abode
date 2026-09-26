@@ -1,6 +1,5 @@
 'use client';
 
-import { useMemo } from 'react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatTokenCount, formatPercentage, type TokenUsageStats } from '@/lib/token-estimation';
 import { cn } from '@/lib/utils';
@@ -61,19 +60,18 @@ function formatTooltipContent(stats: TokenUsageStats): string {
  * Shows in the bottom-right corner of the messages area.
  */
 export function ContextUsageIndicator({ stats, className }: ContextUsageIndicatorProps) {
-  const costLabel = useMemo(() => {
-    const totalCostUsd = stats?.totalCostUsd;
-    if (totalCostUsd === undefined || totalCostUsd === 0) return null;
-    if (totalCostUsd < 0.01) return '<$0.01';
-    return `$${totalCostUsd.toFixed(2)}`;
-  }, [stats?.totalCostUsd]);
-
   // Don't show if there's no usage yet
   if (!stats || stats.totalTokens === 0) {
     return null;
   }
 
   const colorClass = getUsageColorClass(stats.percentUsed);
+  const costLabel =
+    stats.totalCostUsd === 0
+      ? null
+      : stats.totalCostUsd < 0.01
+        ? '<$0.01'
+        : `$${stats.totalCostUsd.toFixed(2)}`;
 
   return (
     <TooltipProvider>
@@ -99,10 +97,14 @@ export function ContextUsageIndicator({ stats, className }: ContextUsageIndicato
               className="w-3.5 h-3.5"
             >
               <circle cx="12" cy="12" r="10" className="opacity-30" />
-              <path
-                d={describeArc(12, 12, 8, 0, (stats.percentUsed / 100) * 360)}
-                fill="none"
+              <circle
+                cx="12"
+                cy="12"
+                r="8"
                 strokeWidth="3"
+                pathLength={100}
+                strokeDasharray={`${stats.percentUsed} 100`}
+                transform="rotate(-90 12 12)"
               />
             </svg>
             <span>
@@ -117,39 +119,4 @@ export function ContextUsageIndicator({ stats, className }: ContextUsageIndicato
       </Tooltip>
     </TooltipProvider>
   );
-}
-
-/**
- * Create an SVG arc path for the progress indicator
- */
-function polarToCartesian(
-  centerX: number,
-  centerY: number,
-  radius: number,
-  angleInDegrees: number
-): { x: number; y: number } {
-  const angleInRadians = ((angleInDegrees - 90) * Math.PI) / 180.0;
-  return {
-    x: centerX + radius * Math.cos(angleInRadians),
-    y: centerY + radius * Math.sin(angleInRadians),
-  };
-}
-
-function describeArc(
-  x: number,
-  y: number,
-  radius: number,
-  startAngle: number,
-  endAngle: number
-): string {
-  // Handle edge case of full circle
-  if (endAngle >= 360) {
-    endAngle = 359.999;
-  }
-
-  const start = polarToCartesian(x, y, radius, endAngle);
-  const end = polarToCartesian(x, y, radius, startAngle);
-  const largeArcFlag = endAngle - startAngle <= 180 ? '0' : '1';
-
-  return ['M', start.x, start.y, 'A', radius, radius, 0, largeArcFlag, 0, end.x, end.y].join(' ');
 }
