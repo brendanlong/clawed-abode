@@ -83,6 +83,7 @@ import { createPushable } from '@/lib/pushable';
 type Runner = typeof import('./claude-runner');
 let runner: Runner;
 let resetRateLimitState: typeof import('./rate-limit-state')._resetRateLimitState;
+let resolveSessionHold: typeof import('./rate-limit-state').resolveSessionHold;
 let GLOBAL_SETTINGS_ID: string;
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -215,7 +216,8 @@ describe('rate-limit pause', () => {
   beforeAll(async () => {
     await setupTestDb();
     runner = await import('./claude-runner');
-    resetRateLimitState = (await import('./rate-limit-state'))._resetRateLimitState;
+    ({ _resetRateLimitState: resetRateLimitState, resolveSessionHold } =
+      await import('./rate-limit-state'));
     GLOBAL_SETTINGS_ID = (await import('./settings-scope')).GLOBAL_SETTINGS_ID;
   });
   afterAll(async () => {
@@ -353,7 +355,7 @@ describe('rate-limit pause', () => {
 
     expect(await queuedTexts(paused)).toEqual(['queued']);
     expect(await queuedTexts(urgent)).toEqual([]);
-    expect(await runner.getSessionRateLimitHold(urgent)).toBeNull();
+    expect(await resolveSessionHold(urgent)).toBeNull();
 
     runner.stopSession(paused);
     runner.stopSession(urgent);
@@ -379,8 +381,8 @@ describe('rate-limit pause', () => {
     await runner.recomputeRateLimitHolds();
 
     // 60% is past the low-priority session's 50% but short of the global 95%.
-    expect(await runner.getSessionRateLimitHold(patient)).toMatchObject({ reason: 'threshold' });
-    expect(await runner.getSessionRateLimitHold(eager)).toBeNull();
+    expect(await resolveSessionHold(patient)).toMatchObject({ reason: 'threshold' });
+    expect(await resolveSessionHold(eager)).toBeNull();
 
     runner.stopSession(eager);
     runner.stopSession(patient);
@@ -403,7 +405,7 @@ describe('rate-limit pause', () => {
     await waitFor(async () => (await testPrisma.rateLimitWindow.count()) > 0);
     await runner.recomputeRateLimitHolds();
 
-    expect(await runner.getSessionRateLimitHold(sessionId)).toBeNull();
+    expect(await resolveSessionHold(sessionId)).toBeNull();
 
     runner.stopSession(sessionId);
   });
@@ -443,11 +445,11 @@ describe('rate-limit pause', () => {
 
     // Simulate the process restarting: in-memory readings are gone, the DB isn't.
     resetRateLimitState();
-    expect(await runner.getSessionRateLimitHold(sessionId)).toBeNull();
+    expect(await resolveSessionHold(sessionId)).toBeNull();
 
     await runner.initRateLimitPause();
 
-    expect(await runner.getSessionRateLimitHold(sessionId)).toMatchObject({ reason: 'rejected' });
+    expect(await resolveSessionHold(sessionId)).toMatchObject({ reason: 'rejected' });
     expect(await queuedTexts(sessionId)).toEqual(['queued']);
   });
 
@@ -470,7 +472,7 @@ describe('rate-limit pause', () => {
     );
     await waitFor(async () => (await testPrisma.rateLimitWindow.count()) > 0);
     await runner.recomputeRateLimitHolds();
-    expect(await runner.getSessionRateLimitHold(sessionId)).toMatchObject({ reason: 'rejected' });
+    expect(await resolveSessionHold(sessionId)).toMatchObject({ reason: 'rejected' });
 
     await runner.sendUserMessage(sessionId, 'queued behind the week');
 
@@ -490,7 +492,7 @@ describe('rate-limit pause', () => {
     await waitFor(async () => (await testPrisma.rateLimitWindow.count()) > 1);
     await runner.recomputeRateLimitHolds();
 
-    expect(await runner.getSessionRateLimitHold(sessionId)).toMatchObject({ reason: 'rejected' });
+    expect(await resolveSessionHold(sessionId)).toMatchObject({ reason: 'rejected' });
     expect(await queuedTexts(sessionId)).toEqual(['queued behind the week']);
 
     runner.stopSession(sessionId);

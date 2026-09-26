@@ -65,7 +65,7 @@ import {
   claimQueuedPrompt,
   enqueuePrompts,
   listQueuedPrompts,
-  queuedMessageIds,
+  type QueuedPrompt,
 } from './prompt-queue';
 import {
   loadRateLimitReadings,
@@ -123,17 +123,6 @@ let queryFactory: QueryFactory = sdkQuery;
 /** Override the query factory (for tests). Pass null to restore the SDK default. */
 export function _setQueryFactory(factory: QueryFactory | null): void {
   queryFactory = factory ?? sdkQuery;
-}
-
-function getSessionState(sessionId: string, workingDir: string): SessionState {
-  let state = sessions.get(sessionId);
-  if (!state) {
-    state = createSessionState(workingDir, getSessionCommands(sessionId));
-    sessions.set(sessionId, state);
-  } else if (workingDir) {
-    state.workingDir = workingDir;
-  }
-  return state;
 }
 
 /**
@@ -206,17 +195,22 @@ function clearLiveStatus(sessionId: string, state: SessionState): void {
 }
 
 /**
- * Drop a single background task from a session's live set and emit the
- * `background` channel if it was present. Used by the optimistic-stop path so the
- * indicator clears immediately rather than waiting for a terminal
- * `task_notification` the SDK can drop.
+ * Detach a session's dead (or closing) query: reject its parked interactive tool
+ * call and stop its systemd scope, reaping anything the CLI left running. Call
+ * after {@link clearLiveStatus}.
  */
-function dropBackgroundTask(sessionId: string, state: SessionState, taskId: string): boolean {
-  if (!state.status.backgroundTasks.has(taskId)) return false;
-  const next = removeBackgroundTask(state.status.backgroundTasks, taskId);
-  state.status = { ...state.status, backgroundTasks: next };
-  sseEvents.emitBackgroundTasks(sessionId, [...next.values()]);
-  return true;
+function releaseQuery(sessionId: string, state: SessionState, reason: string): void {
+  state.query = null;
+  state.input = null;
+  if (state.pendingInput) {
+    state.pendingInput.reject(new Error(reason));
+    state.pendingInput = null;
+  }
+  if (state.sessionScope) {
+    void stopSessionScope(state.sessionScope);
+    void persistSessionScope(sessionId, null);
+    state.sessionScope = null;
+  }
 }
 
 /**
@@ -349,25 +343,10 @@ async function runSessionLoop(sessionId: string, state: SessionState, q: Query):
     // stopSession runs synchronously while messages may still be queued (it drops
     // the whole state record anyway, so it needs no clear of its own).
     state.toolSanitizations.clear();
-    if (state.pendingInput) {
-      state.pendingInput.reject(new Error('Query ended'));
-      state.pendingInput = null;
-    }
     // Drop the live query handle so the next interaction re-establishes (resume).
     // The state record stays in the map (commands etc. persist); only stop/delete
-    // remove it. The `=== q` guard skips this when a newer query has already
-    // re-established, so we never tear down the live one.
-    if (state.query === q) {
-      state.query = null;
-      state.input = null;
-      // This query's CLI subprocess is gone, so stop its scope to reap anything it
-      // left running. stopSession already nulled the scope on the stop path.
-      if (state.sessionScope) {
-        void stopSessionScope(state.sessionScope);
-        void persistSessionScope(sessionId, null);
-        state.sessionScope = null;
-      }
-    }
+    // remove it. The `=== q` guard skips this when stopSession already released it.
+    if (state.query === q) releaseQuery(sessionId, state, 'Query ended');
   }
 }
 
@@ -466,7 +445,8 @@ function ensureSessionQuery(sessionId: string): Promise<SessionState> {
   if (existing?.query) return Promise.resolve(existing);
   if (existing?.establishing) return existing.establishing;
 
-  const state = getSessionState(sessionId, existing?.workingDir ?? '');
+  const state = existing ?? createSessionState('', getSessionCommands(sessionId));
+  sessions.set(sessionId, state);
   // Establish against THIS state object; the promise is identity-checked on clear
   // so a stop+revive race never nulls a newer establishment's promise.
   const establishing: Promise<SessionState> = establishSessionQuery(sessionId, state).finally(
@@ -519,28 +499,16 @@ async function applyLiveSettings(sessionId: string, state: SessionState): Promis
 }
 
 /**
- * Everything needed to hand one already-persisted user message to the SDK. Shared
- * by the immediate send path and the rate-limit drain, which differ only in where
- * the bubble came from.
- */
-interface PushablePrompt {
-  /** Id of the transcript bubble already written for this prompt. */
-  messageId: string;
-  /** Prepared text (attachment paths prefixed, sanitized) to push. */
-  content: string;
-  /** The user's original typed text, for restore-on-cancel. */
-  text: string;
-  /** Stored upload names (see /api/upload). */
-  attachments: string[];
-}
-
-/**
  * Push a prepared prompt into a live query and start tracking its delivery. The
  * push is stamped with a `uuid` so the CLI reports progress over
  * `command_lifecycle`; until then it sits in `inFlightCommands`, marked
  * undelivered in the transcript and cancellable by Stop.
  */
-function pushPreparedPrompt(sessionId: string, state: SessionState, prompt: PushablePrompt): void {
+function pushPreparedPrompt(
+  sessionId: string,
+  state: SessionState,
+  prompt: Omit<QueuedPrompt, 'id' | 'position'>
+): void {
   const input = state.input;
   if (!input) throw new Error('Session query is not available');
 
@@ -590,17 +558,11 @@ export async function sendUserMessage(
   { userInitiated = true } = {}
 ): Promise<void> {
   const hold = await resolveSessionHold(sessionId);
-  if (hold) {
-    await queuePromptWhilePaused(sessionId, prompt, attachments, hold, userInitiated);
-    return;
+  const state = hold ? null : await ensureSessionQuery(sessionId);
+  if (state) {
+    if (!state.input) throw new Error('Session query is not available');
+    await applyLiveSettings(sessionId, state);
   }
-
-  const state = await ensureSessionQuery(sessionId);
-  if (!state.input) {
-    throw new Error('Session query is not available');
-  }
-
-  await applyLiveSettings(sessionId, state);
   if (userInitiated) await bumpSessionActivity(sessionId);
 
   // Sanitize/resolve up front (no side effects) so a failure aborts cleanly before
@@ -617,9 +579,11 @@ export async function sendUserMessage(
   // statement as the push: a prompt decided against a stale answer would go
   // straight into a window the API is refusing, which is the one thing the pause
   // exists to prevent.
-  if (emittedHolds.has(sessionId)) {
+  const queuedBehind = hold ?? emittedHolds.get(sessionId);
+  if (!state || queuedBehind) {
     await enqueuePrompts(sessionId, [pushable]);
     await emitQueuedPrompts(sessionId);
+    log.info('Queued prompt behind rate-limit pause', { sessionId, hold: queuedBehind });
     return;
   }
 
@@ -632,29 +596,6 @@ export async function sendUserMessage(
   }
 
   pushPreparedPrompt(sessionId, state, pushable);
-}
-
-/** Write the bubble for a prompt sent to a paused session and queue the payload. */
-async function queuePromptWhilePaused(
-  sessionId: string,
-  prompt: string,
-  attachments: string[],
-  hold: RateLimitHold,
-  userInitiated: boolean
-): Promise<void> {
-  if (userInitiated) await bumpSessionActivity(sessionId);
-  const prepared = await prepareUserMessage(sessionId, prompt, attachments);
-  const messageId = uuid();
-  await insertPreparedMessage(sessionId, messageId, prepared);
-  await enqueuePrompts(sessionId, [
-    { messageId, content: prepared.content, text: prompt, attachments },
-  ]);
-  await emitQueuedPrompts(sessionId);
-  log.info('Queued prompt behind rate-limit pause', {
-    sessionId,
-    limitType: hold.limitType,
-    resumesAt: new Date(hold.untilMs).toISOString(),
-  });
 }
 
 /**
@@ -883,16 +824,6 @@ export function isSessionRateLimitPaused(sessionId: string): boolean {
   return emittedHolds.has(sessionId);
 }
 
-/** This session's current rate-limit hold, or null when it may work. */
-export function getSessionRateLimitHold(sessionId: string): Promise<RateLimitHold | null> {
-  return resolveSessionHold(sessionId);
-}
-
-/** Transcript ids of a session's prompts waiting on a rate-limit pause. */
-export function getQueuedMessageIds(sessionId: string): Promise<string[]> {
-  return queuedMessageIds(sessionId);
-}
-
 /** Transcript ids of a session's not-yet-delivered messages (seeds the client). */
 export function getPendingMessageIds(sessionId: string): string[] {
   const state = sessions.get(sessionId);
@@ -1050,7 +981,11 @@ export async function stopBackgroundTask(sessionId: string, taskId: string): Pro
     });
   }
 
-  dropBackgroundTask(sessionId, state, taskId);
+  if (state.status.backgroundTasks.has(taskId)) {
+    const next = removeBackgroundTask(state.status.backgroundTasks, taskId);
+    state.status = { ...state.status, backgroundTasks: next };
+    sseEvents.emitBackgroundTasks(sessionId, [...next.values()]);
+  }
   return true;
 }
 
@@ -1093,20 +1028,10 @@ export function stopSession(sessionId: string): void {
   } catch {
     // ignore close errors
   }
+  clearLiveStatus(sessionId, state);
   // Closing the query kills the launcher, but stopping the scope is what
   // cgroup-kills the whole tree (incl. daemons the agent backgrounded).
-  if (state.sessionScope) {
-    void stopSessionScope(state.sessionScope);
-    void persistSessionScope(sessionId, null);
-    state.sessionScope = null;
-  }
-  if (state.pendingInput) {
-    state.pendingInput.reject(new Error('Session stopped'));
-    state.pendingInput = null;
-  }
-  clearLiveStatus(sessionId, state);
-  state.query = null;
-  state.input = null;
+  releaseQuery(sessionId, state, 'Session stopped');
   sessions.delete(sessionId);
 }
 
@@ -1132,17 +1057,18 @@ export async function stopAllSessions(): Promise<void> {
     stopSession(id);
   }
   await Promise.allSettled(scopes.map((scope) => stopSessionScope(scope)));
-  if (scopes.length > 0) {
-    try {
-      await prisma.session.updateMany({
-        where: { sessionScope: { in: scopes } },
-        data: { sessionScope: null },
-      });
-    } catch (err) {
-      log.debug('stopAllSessions: failed to clear recorded scopes', {
-        error: toError(err).message,
-      });
-    }
+  if (scopes.length > 0) await clearRecordedScopes(scopes);
+}
+
+/** Null out exactly these recorded scope names. Best-effort, like persistSessionScope. */
+async function clearRecordedScopes(scopes: string[]): Promise<void> {
+  try {
+    await prisma.session.updateMany({
+      where: { sessionScope: { in: scopes } },
+      data: { sessionScope: null },
+    });
+  } catch (err) {
+    log.debug('Failed to clear recorded session scopes', { error: toError(err).message });
   }
 }
 
@@ -1173,14 +1099,5 @@ export async function reapOrphanedSessionScopes(): Promise<void> {
   // session recorded a fresh live scope between the findMany and here, a blanket
   // clear would null a name still in use and leak that scope on the next crash.
   // Safe today given "runs once before any revive"; robust if that ever weakens.
-  try {
-    await prisma.session.updateMany({
-      where: { sessionScope: { in: scopes } },
-      data: { sessionScope: null },
-    });
-  } catch (err) {
-    log.debug('reapOrphanedSessionScopes: failed to clear recorded scopes', {
-      error: toError(err).message,
-    });
-  }
+  await clearRecordedScopes(scopes);
 }

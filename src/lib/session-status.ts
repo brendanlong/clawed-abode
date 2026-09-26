@@ -130,7 +130,7 @@ export function backgroundActive(status: LiveStatus): boolean {
  * Remove a task from the background-task set (pure), returning a new map without
  * it. A no-op if the task is absent (the returned map simply won't contain it).
  * Shared by two paths: a `task_notification` settling a task, and the user
- * stopping one via the ✕ button (optimistic removal — see `dropBackgroundTask`
+ * stopping one via the ✕ button (optimistic removal — see `stopBackgroundTask`
  * in the runner — so the indicator clears even when the SDK never emits the
  * terminal notification). Callers that need to know whether anything changed
  * check membership (`tasks.has(taskId)`) before calling.
