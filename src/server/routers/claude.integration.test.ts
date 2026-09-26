@@ -422,7 +422,7 @@ describe('claudeRouter integration', () => {
       // Get messages before sequence 50
       const result = await caller.claude.getHistory({
         sessionId: session.id,
-        cursor: { sequence: 50, direction: 'backward' },
+        cursor: 50,
         limit: 20,
       });
 
@@ -431,35 +431,6 @@ describe('claudeRouter integration', () => {
       // Should be sequences 30-49 in chronological order
       expect(result.messages[0].sequence).toBe(30);
       expect(result.messages[19].sequence).toBe(49);
-    });
-
-    it('should support forward pagination', async () => {
-      const session = await createTestSession({
-        name: 'Session with messages',
-      });
-
-      // Create 20 messages
-      const messages = Array.from({ length: 20 }, (_, i) => ({
-        sessionId: session.id,
-        sequence: i,
-        type: 'user',
-        content: JSON.stringify({ type: 'user', seq: i }),
-      }));
-      await testPrisma.message.createMany({ data: messages });
-
-      const caller = createCaller('auth-session-id');
-
-      // Get messages after sequence 10
-      const result = await caller.claude.getHistory({
-        sessionId: session.id,
-        cursor: { sequence: 10, direction: 'forward' },
-        limit: 50,
-      });
-
-      expect(result.messages).toHaveLength(9); // sequences 11-19
-      expect(result.hasMore).toBe(false);
-      expect(result.messages[0].sequence).toBe(11);
-      expect(result.messages[8].sequence).toBe(19);
     });
   });
 
