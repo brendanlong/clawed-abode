@@ -5,9 +5,6 @@
  * a real in-memory SQLite DB, exercising the behaviors that matter for the
  * refactor: multi-turn over one persistent query, background tasks surviving a
  * turn, two-axis status emission, sequence integrity, and clean teardown.
- *
- * Real-SDK behavior (resume+streaming, interrupt, background auto-continue) is
- * covered by scripts/spike-streaming-resume.ts.
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi, afterEach } from 'vitest';
