@@ -15,7 +15,7 @@ import {
 import { Plug, Check, X, KeyRound, TriangleAlert, Unplug } from 'lucide-react';
 import { SettingsListEditor } from './SettingsListEditor';
 import { KeyValueListEditor } from './KeyValueListEditor';
-import { buildKeyValueRecord, type SecretValueMap } from '@/lib/key-value-entries';
+import { buildKeyValueRecord } from '@/lib/key-value-entries';
 import { trpc } from '@/lib/trpc';
 import {
   mcpServerSectionReducer,
@@ -24,25 +24,7 @@ import {
   createInitialMcpServerFormState,
 } from './mcp-server-reducer';
 import type { McpAuthType, McpServer, McpServerType, ValidationResult } from '@/lib/settings-types';
-
-interface StdioMcpServerInput {
-  name: string;
-  type: 'stdio';
-  command: string;
-  args: string[];
-  env?: SecretValueMap;
-}
-
-interface HttpSseMcpServerInput {
-  name: string;
-  type: 'http' | 'sse';
-  url: string;
-  headers?: SecretValueMap;
-  authType: McpAuthType;
-  oauth?: { clientId: string; clientSecret: string; scope: string };
-}
-
-type McpServerInput = StdioMcpServerInput | HttpSseMcpServerInput;
+import type { McpServerInput } from '@/server/services/settings-helpers';
 
 export interface McpServerMutations {
   deleteMcpServer: (name: string) => Promise<unknown>;
@@ -255,13 +237,7 @@ function OAuthStatusBadge({ status }: { status: NonNullable<McpServer['oauth']> 
 
 function ValidationResultBadge({ result }: { result: ValidationResult }) {
   return (
-    <div
-      className={`text-xs px-2 py-1 rounded flex items-center gap-1 ${
-        result.success
-          ? 'text-green-700 bg-green-50 dark:text-green-400 dark:bg-green-950'
-          : 'text-red-700 bg-red-50 dark:text-red-400 dark:bg-red-950'
-      }`}
-    >
+    <div className={`${BADGE_CLASS} ${result.success ? OK_CLASS : BAD_CLASS}`}>
       {result.success ? (
         <>
           <Check className="h-3 w-3" />
