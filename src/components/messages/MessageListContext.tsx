@@ -9,9 +9,7 @@ interface MessageListContextValue {
   manuallyToggledTodoIds: Set<string>;
   /** Callback when a TodoWrite is manually toggled by the user */
   onTodoManualToggle: (toolId: string) => void;
-  /** Callback to send a response to Claude (for AskUserQuestion) */
-  onSendResponse?: (response: string) => void;
-  /** Answer an AskUserQuestion tool call (preferred over onSendResponse) */
+  /** Answer an AskUserQuestion tool call */
   onAnswerQuestion?: (toolUseId: string, answers: Record<string, string>) => void;
   /** Respond to an ExitPlanMode tool call (approve or request changes) */
   onRespondToPlan?: (toolUseId: string, approve: boolean, feedback?: string) => void;
