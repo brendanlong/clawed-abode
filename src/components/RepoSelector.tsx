@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { trpc } from '@/lib/trpc';
 import { resolveListQueryState } from '@/lib/list-query-state';
 import { Label } from '@/components/ui/label';
@@ -8,8 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Spinner } from '@/components/ui/spinner';
 import { cn } from '@/lib/utils';
 import { Star, FolderOpen } from 'lucide-react';
-import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
-import { useDebounce } from '@/hooks/useDebounce';
+import { buildRepoChoices } from '@/lib/repo-list';
 
 export const NO_REPO_SENTINEL = '__no_repo__';
 
@@ -22,6 +21,8 @@ export interface Repo {
   private: boolean;
   defaultBranch: string;
 }
+
+const NO_REPO_SEARCH_TEXT = 'No Repository workspace';
 
 /** Synthetic Repo entry representing "No Repository" */
 const NO_REPO_ENTRY: Repo = {
@@ -42,19 +43,15 @@ export function RepoSelector({
   onSelect: (repo: Repo) => void;
 }) {
   const [search, setSearch] = useState('');
-  const debouncedSearch = useDebounce(search, 300);
 
-  const { data, isLoading, error, fetchNextPage, hasNextPage, isFetchingNextPage } =
-    trpc.github.listRepos.useInfiniteQuery(
-      { search: debouncedSearch || undefined, perPage: 20 },
-      {
-        getNextPageParam: (lastPage) => lastPage.nextCursor,
-      }
-    );
+  const { data, isLoading, error } = trpc.github.listRepos.useQuery(undefined, {
+    // Listing walks every GitHub page; don't redo it on every tab focus.
+    staleTime: 5 * 60 * 1000,
+  });
 
   // Fetch favorites to sort repos and show star icons
   const { data: favoritesData } = trpc.repoSettings.listFavorites.useQuery();
-  const favorites = new Set(favoritesData?.favorites ?? []);
+  const favorites = useMemo(() => new Set(favoritesData?.favorites ?? []), [favoritesData]);
 
   const toggleFavorite = trpc.repoSettings.toggleFavorite.useMutation();
   const utils = trpc.useUtils();
@@ -72,54 +69,29 @@ export function RepoSelector({
     );
   };
 
-  const rawRepos = data?.pages.flatMap((p) => p.repos) || [];
+  const githubRepos = useMemo(() => data?.repos ?? [], [data]);
 
   // Counted on the GitHub repos alone: the synthetic "No Repository" entry is
   // always present, so including it would mask a failed query as a populated list.
-  const state = resolveListQueryState({ isLoading, hasError: !!error, itemCount: rawRepos.length });
-
-  const isNoRepoFavorite = favorites.has(NO_REPO_SENTINEL);
-
-  // Filter "no repo" entry by search
-  const showNoRepo =
-    !debouncedSearch ||
-    'no repository'.includes(debouncedSearch.toLowerCase()) ||
-    'workspace'.includes(debouncedSearch.toLowerCase());
-
-  // Sort repos with favorites first, and insert the no-repo entry
-  const sortedRepos = [...rawRepos].sort((a, b) => {
-    const aFav = favorites.has(a.fullName);
-    const bFav = favorites.has(b.fullName);
-    if (aFav && !bFav) return -1;
-    if (!aFav && bFav) return 1;
-    return 0;
+  const state = resolveListQueryState({
+    isLoading,
+    hasError: !!error,
+    itemCount: githubRepos.length,
   });
 
-  // Build final list: insert no-repo entry at the right position
-  const repos: Repo[] = [];
-  if (showNoRepo) {
-    if (isNoRepoFavorite) {
-      // If favorited, put it at the very top (above all repos)
-      repos.push(NO_REPO_ENTRY);
-    }
-  }
-  // Add all sorted GitHub repos
-  repos.push(...sortedRepos);
-  // If no-repo is not favorited but should be shown, add after favorites but above non-favorites
-  if (showNoRepo && !isNoRepoFavorite) {
-    const firstNonFavIndex = repos.findIndex((r) => !favorites.has(r.fullName));
-    if (firstNonFavIndex === -1) {
-      repos.push(NO_REPO_ENTRY);
-    } else {
-      repos.splice(firstNonFavIndex, 0, NO_REPO_ENTRY);
-    }
-  }
-
-  const { scrollRef, sentinelRef } = useInfiniteScroll({
-    hasNextPage: hasNextPage ?? false,
-    isFetchingNextPage,
-    fetchNextPage,
-  });
+  const { matches: repos, total } = useMemo(
+    () =>
+      buildRepoChoices({
+        repos: githubRepos,
+        favorites,
+        query: search,
+        noRepoEntry: NO_REPO_ENTRY,
+        noRepoSearchText: NO_REPO_SEARCH_TEXT,
+        selectedFullName: selectedRepo?.fullName,
+      }),
+    [githubRepos, favorites, search, selectedRepo?.fullName]
+  );
+  const hiddenCount = total - repos.filter((r) => r.fullName !== NO_REPO_SENTINEL).length;
 
   const isSelected = (repo: Repo) => {
     if (repo.fullName === NO_REPO_SENTINEL) {
@@ -147,7 +119,7 @@ export function RepoSelector({
         <p className="text-sm text-destructive">Could not load repositories: {error?.message}</p>
       )}
 
-      <div ref={scrollRef} className="border rounded-lg max-h-64 overflow-y-auto">
+      <div className="border rounded-lg max-h-64 overflow-y-auto">
         {state === 'loading' ? (
           <div className="flex justify-center py-8">
             <Spinner />
@@ -209,14 +181,21 @@ export function RepoSelector({
                 </li>
               );
             })}
-            {hasNextPage && (
-              <li ref={sentinelRef} className="px-4 py-3 flex justify-center">
-                <Spinner size="sm" />
+            {hiddenCount > 0 && (
+              <li className="px-4 py-3 text-xs text-muted-foreground">
+                {hiddenCount.toLocaleString()} more repositories match. Keep typing to narrow the
+                list.
               </li>
             )}
           </ul>
         )}
       </div>
+
+      {data?.truncated && (
+        <p className="text-xs text-muted-foreground">
+          You have access to more repositories than can be listed; some are missing.
+        </p>
+      )}
     </div>
   );
 }

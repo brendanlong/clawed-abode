@@ -56,7 +56,6 @@ describe('githubRouter', () => {
           description: 'Test repo 1',
           private: false,
           default_branch: 'main',
-          updated_at: '2024-01-01T00:00:00Z',
         },
         {
           id: 2,
@@ -66,14 +65,13 @@ describe('githubRouter', () => {
           description: null,
           private: true,
           default_branch: 'master',
-          updated_at: '2024-01-02T00:00:00Z',
         },
       ];
 
       mockFetch.mockResolvedValue(createMockResponse(mockRepos));
 
       const caller = createCaller('auth-session-id');
-      const result = await caller.github.listRepos({});
+      const result = await caller.github.listRepos();
 
       expect(result.repos).toHaveLength(2);
       expect(result.repos[0]).toMatchObject({
@@ -86,6 +84,7 @@ describe('githubRouter', () => {
         defaultBranch: 'main',
       });
       expect(result.repos[1].description).toBeNull();
+      expect(result.truncated).toBe(false);
       expect(mockFetch).toHaveBeenCalledWith(
         expect.stringContaining('/user/repos'),
         expect.objectContaining({
@@ -96,56 +95,61 @@ describe('githubRouter', () => {
       );
     });
 
-    it('should search repositories', async () => {
-      const mockSearchResult = {
-        items: [
-          {
-            id: 1,
-            full_name: 'owner/search-result',
-            name: 'search-result',
-            owner: { login: 'owner' },
-            description: 'Found by search',
-            private: false,
-            default_branch: 'main',
-            updated_at: '2024-01-01T00:00:00Z',
-          },
-        ],
-      };
-
-      mockFetch.mockResolvedValue(createMockResponse(mockSearchResult));
+    it('should fetch the remaining pages in parallel and report truncation past the cap', async () => {
+      const repo = (id: number) => ({
+        id,
+        full_name: `owner/r${id}`,
+        name: `r${id}`,
+        owner: { login: 'owner' },
+        description: null,
+        private: false,
+        default_branch: 'main',
+      });
+      mockFetch.mockImplementation(async (url: string) => {
+        const page = Number(new URL(url).searchParams.get('page'));
+        return createMockResponse([repo(page)], 200, {
+          link: '<https://api.github.com/user/repos?per_page=100&page=12>; rel="last"',
+        });
+      });
 
       const caller = createCaller('auth-session-id');
-      const result = await caller.github.listRepos({ search: 'test' });
+      const result = await caller.github.listRepos();
 
-      expect(result.repos).toHaveLength(1);
-      expect(result.repos[0].fullName).toBe('owner/search-result');
-      expect(mockFetch).toHaveBeenCalledWith(
-        expect.stringContaining('/search/repositories'),
-        expect.any(Object)
-      );
+      expect(result.repos.map((r) => r.id)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+      expect(result.truncated).toBe(true);
     });
 
-    it('should support pagination with cursor', async () => {
+    it('should drop a repo that shifted onto two pages mid-walk', async () => {
+      const repo = {
+        id: 7,
+        full_name: 'owner/moved',
+        name: 'moved',
+        owner: { login: 'owner' },
+        description: null,
+        private: false,
+        default_branch: 'main',
+      };
       mockFetch.mockResolvedValue(
-        createMockResponse([], 200, {
-          link: '<https://api.github.com/user/repos?page=3>; rel="next"',
+        createMockResponse([repo], 200, {
+          link: '<https://api.github.com/user/repos?per_page=100&page=2>; rel="last"',
         })
       );
 
       const caller = createCaller('auth-session-id');
-      const result = await caller.github.listRepos({ cursor: '2' });
+      const result = await caller.github.listRepos();
 
-      expect(result.nextCursor).toBe('3');
-      expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining('page=2'), expect.any(Object));
+      expect(result.repos.map((r) => r.id)).toEqual([7]);
     });
 
-    it('should reject a non-numeric cursor', async () => {
+    it('should reject a malformed GitHub response', async () => {
+      mockFetch.mockResolvedValue(createMockResponse([{ id: 'not-a-number' }]));
+
       const caller = createCaller('auth-session-id');
 
-      await expect(caller.github.listRepos({ cursor: 'not-a-page' })).rejects.toMatchObject({
-        code: 'BAD_REQUEST',
+      await expect(caller.github.listRepos()).rejects.toMatchObject({
+        code: 'INTERNAL_SERVER_ERROR',
+        message: 'GitHub API error 502: Unexpected response from GitHub',
       });
-      expect(mockFetch).not.toHaveBeenCalled();
     });
 
     it('should throw PRECONDITION_FAILED if no GitHub token', async () => {
@@ -154,7 +158,7 @@ describe('githubRouter', () => {
 
       const caller = createCaller('auth-session-id');
 
-      await expect(caller.github.listRepos({})).rejects.toMatchObject({
+      await expect(caller.github.listRepos()).rejects.toMatchObject({
         code: 'PRECONDITION_FAILED',
         message: 'GitHub token is not configured',
       });
@@ -165,7 +169,7 @@ describe('githubRouter', () => {
 
       const caller = createCaller('auth-session-id');
 
-      await expect(caller.github.listRepos({})).rejects.toMatchObject({
+      await expect(caller.github.listRepos()).rejects.toMatchObject({
         code: 'INTERNAL_SERVER_ERROR',
         message: 'GitHub API error: 500',
       });
@@ -174,7 +178,7 @@ describe('githubRouter', () => {
     it('should require authentication', async () => {
       const caller = createCaller(null);
 
-      await expect(caller.github.listRepos({})).rejects.toMatchObject({
+      await expect(caller.github.listRepos()).rejects.toMatchObject({
         code: 'UNAUTHORIZED',
       });
     });
@@ -202,24 +206,41 @@ describe('githubRouter', () => {
     });
 
     it('should follow pagination so later branches are included', async () => {
-      mockFetch
-        .mockResolvedValueOnce(createMockResponse({ default_branch: 'main' }))
-        .mockResolvedValueOnce(
-          createMockResponse([{ name: 'fix/a' }], 200, {
-            link: '<https://api.github.com/repos/owner/repo/branches?per_page=100&page=2>; rel="next"',
-          })
-        )
-        .mockResolvedValueOnce(createMockResponse([{ name: 'main' }, { name: 'z' }]));
+      mockFetch.mockImplementation(async (url: string) => {
+        if (!url.includes('/branches')) return createMockResponse({ default_branch: 'main' });
+        const page = new URL(url).searchParams.get('page');
+        return page === '1'
+          ? createMockResponse([{ name: 'fix/a' }], 200, {
+              link: '<https://api.github.com/repos/owner/repo/branches?per_page=100&page=2>; rel="next", <https://api.github.com/repos/owner/repo/branches?per_page=100&page=2>; rel="last"',
+            })
+          : createMockResponse([{ name: 'main' }, { name: 'z' }]);
+      });
 
       const caller = createCaller('auth-session-id');
       const result = await caller.github.listBranches({ repoFullName: 'owner/repo' });
 
       expect(result.branches).toEqual(['main', 'fix/a', 'z']);
       expect(result.truncated).toBe(false);
-      expect(mockFetch).toHaveBeenLastCalledWith(
+      expect(mockFetch).toHaveBeenCalledWith(
         expect.stringContaining('/repos/owner/repo/branches?per_page=100&page=2'),
         expect.anything()
       );
+    });
+
+    it('should report truncation when GitHub gives a next link but no last', async () => {
+      mockFetch.mockImplementation(async (url: string) =>
+        url.includes('/branches')
+          ? createMockResponse([{ name: 'main' }], 200, {
+              link: '<https://api.github.com/repos/owner/repo/branches?per_page=100&page=2>; rel="next"',
+            })
+          : createMockResponse({ default_branch: 'main' })
+      );
+
+      const caller = createCaller('auth-session-id');
+      const result = await caller.github.listBranches({ repoFullName: 'owner/repo' });
+
+      expect(result.branches).toEqual(['main']);
+      expect(result.truncated).toBe(true);
     });
 
     it('should stop at the page cap and report the list as truncated', async () => {
@@ -227,7 +248,7 @@ describe('githubRouter', () => {
         if (!url.includes('/branches')) return createMockResponse({ default_branch: 'main' });
         const page = Number(new URL(url).searchParams.get('page'));
         return createMockResponse([{ name: `b${page}` }], 200, {
-          link: `<https://api.github.com/repos/owner/repo/branches?per_page=100&page=${page + 1}>; rel="next"`,
+          link: '<https://api.github.com/repos/owner/repo/branches?per_page=100&page=15>; rel="last"',
         });
       });
 
