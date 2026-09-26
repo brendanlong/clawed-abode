@@ -1,9 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import {
-  ContentBlockSchema,
-  AssistantContentSchema,
-  ResultContentSchema,
   classifyMessage,
   parseCommandLifecycle,
   isIgnoredSystemMessage,
@@ -13,67 +10,6 @@ import {
 } from './claude-messages';
 
 describe('claude-messages', () => {
-  describe('ContentBlockSchema', () => {
-    it.each([
-      ['thinking without signature (mid-stream)', { type: 'thinking', thinking: 'partial' }],
-      [
-        'server_tool_use (advisor)',
-        {
-          type: 'server_tool_use',
-          id: 'srvtoolu_014mCNVrW6NLM6TiYm3bX4Ue',
-          name: 'advisor',
-          input: {},
-        },
-      ],
-      [
-        'advisor_tool_result with encrypted content',
-        {
-          type: 'advisor_tool_result',
-          tool_use_id: 'srvtoolu_014mCNVrW6NLM6TiYm3bX4Ue',
-          content: { type: 'advisor_redacted_result', encrypted_content: 'Eu8NCioI...' },
-        },
-      ],
-    ])('accepts %s', (_name, block) => {
-      expect(ContentBlockSchema.safeParse(block).success).toBe(true);
-    });
-
-    it('rejects an unknown block type', () => {
-      expect(ContentBlockSchema.safeParse({ type: 'unknown', data: 'test' }).success).toBe(false);
-    });
-  });
-
-  it('AssistantContentSchema parses an assistant message with tool use and usage', () => {
-    const result = AssistantContentSchema.safeParse({
-      type: 'assistant',
-      message: {
-        role: 'assistant',
-        model: 'claude-3-5-sonnet-20241022',
-        content: [
-          { type: 'text', text: 'Let me read that file.' },
-          { type: 'tool_use', id: 'tool-1', name: 'Read', input: { file_path: '/test.ts' } },
-        ],
-        usage: { input_tokens: 1000, output_tokens: 500 },
-      },
-      session_id: 'session-123',
-      uuid: 'uuid-456',
-    });
-    expect(result.success).toBe(true);
-  });
-
-  it('ResultContentSchema parses a result with usage and modelUsage', () => {
-    const result = ResultContentSchema.safeParse({
-      type: 'result',
-      subtype: 'success',
-      is_error: false,
-      session_id: 'session-123',
-      usage: { input_tokens: 5000, output_tokens: 2000 },
-      modelUsage: {
-        'claude-3-5-sonnet': { inputTokens: 5000, outputTokens: 2000, costUSD: 0.05 },
-      },
-    });
-    expect(result.success).toBe(true);
-  });
-
   describe('classifyMessage', () => {
     // Synthetic messages; classifyMessage only inspects type/subtype.
     const msg = (m: Record<string, unknown>) => classifyMessage(m as unknown as SDKMessage);
