@@ -3,6 +3,8 @@
  * playback hook so the quirk-driven logic is unit-testable.
  */
 
+import { capMatches, matchesAllTerms, type CappedMatches } from './search';
+
 /**
  * Chrome kills utterances over ~15 seconds (https://issues.chromium.org/issues/41294170),
  * so text is split into chunks of at most this many characters and spoken in sequence.
@@ -117,23 +119,6 @@ export function dedupeAndSortVoices<V extends NamedVoice>(voices: readonly V[]):
 /** Most voices a picker renders at once; see {@link searchVoices}. */
 export const VOICE_PICKER_LIMIT = 50;
 
-/** Whether `haystack` contains every whitespace-separated term of `query`, case-insensitively. */
-export function matchesAllTerms(haystack: string, query: string): boolean {
-  const lower = haystack.toLowerCase();
-  return query
-    .toLowerCase()
-    .split(/\s+/)
-    .filter(Boolean)
-    .every((term) => lower.includes(term));
-}
-
-export interface VoiceSearchResult<V> {
-  /** At most `limit` voices, locale matches first. */
-  matches: V[];
-  /** How many voices matched before the cap. */
-  total: number;
-}
-
 /**
  * Voices whose name or language matches `query` ({@link matchesAllTerms}), with
  * those for the primary language of `locale` first, capped at `limit`. The cap
@@ -146,7 +131,7 @@ export function searchVoices<V extends NamedVoice>(
   locale: string | undefined,
   pinnedURI: string | null = null,
   limit: number = VOICE_PICKER_LIMIT
-): VoiceSearchResult<V> {
+): CappedMatches<V> {
   const wanted = primaryLang(locale);
   const preferred: V[] = [];
   const rest: V[] = [];
@@ -154,8 +139,5 @@ export function searchVoices<V extends NamedVoice>(
     if (!matchesAllTerms(`${voice.name} ${voice.lang}`, query)) continue;
     (primaryLang(voice.lang) === wanted ? preferred : rest).push(voice);
   }
-  const ordered = preferred.concat(rest);
-  const pinnedIndex = pinnedURI === null ? -1 : ordered.findIndex((v) => v.voiceURI === pinnedURI);
-  if (pinnedIndex >= limit) ordered.unshift(...ordered.splice(pinnedIndex, 1));
-  return { matches: ordered.slice(0, limit), total: ordered.length };
+  return capMatches(preferred.concat(rest), limit, (v) => v.voiceURI === pinnedURI);
 }

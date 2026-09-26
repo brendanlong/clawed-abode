@@ -186,11 +186,7 @@ describe('githubRouter', () => {
         default_branch: 'main',
       };
 
-      const mockBranches = [
-        { name: 'main', protected: true },
-        { name: 'develop', protected: false },
-        { name: 'feature/test', protected: false },
-      ];
+      const mockBranches = [{ name: 'develop' }, { name: 'feature/test' }, { name: 'main' }];
 
       mockFetch
         .mockResolvedValueOnce(createMockResponse(mockRepo))
@@ -201,12 +197,47 @@ describe('githubRouter', () => {
         repoFullName: 'owner/repo',
       });
 
-      expect(result.branches).toHaveLength(3);
+      expect(result.branches).toEqual(['main', 'develop', 'feature/test']);
       expect(result.defaultBranch).toBe('main');
-      expect(result.branches[0]).toMatchObject({
-        name: 'main',
-        protected: true,
+    });
+
+    it('should follow pagination so later branches are included', async () => {
+      mockFetch
+        .mockResolvedValueOnce(createMockResponse({ default_branch: 'main' }))
+        .mockResolvedValueOnce(
+          createMockResponse([{ name: 'fix/a' }], 200, {
+            link: '<https://api.github.com/repos/owner/repo/branches?per_page=100&page=2>; rel="next"',
+          })
+        )
+        .mockResolvedValueOnce(createMockResponse([{ name: 'main' }, { name: 'z' }]));
+
+      const caller = createCaller('auth-session-id');
+      const result = await caller.github.listBranches({ repoFullName: 'owner/repo' });
+
+      expect(result.branches).toEqual(['main', 'fix/a', 'z']);
+      expect(result.truncated).toBe(false);
+      expect(mockFetch).toHaveBeenLastCalledWith(
+        expect.stringContaining('/repos/owner/repo/branches?per_page=100&page=2'),
+        expect.anything()
+      );
+    });
+
+    it('should stop at the page cap and report the list as truncated', async () => {
+      mockFetch.mockImplementation(async (url: string) => {
+        if (!url.includes('/branches')) return createMockResponse({ default_branch: 'main' });
+        const page = Number(new URL(url).searchParams.get('page'));
+        return createMockResponse([{ name: `b${page}` }], 200, {
+          link: `<https://api.github.com/repos/owner/repo/branches?per_page=100&page=${page + 1}>; rel="next"`,
+        });
       });
+
+      const caller = createCaller('auth-session-id');
+      const result = await caller.github.listBranches({ repoFullName: 'owner/repo' });
+
+      expect(result.truncated).toBe(true);
+      // The default branch is listed even though no fetched page contained it.
+      expect(result.branches).toHaveLength(11);
+      expect(result.branches[0]).toBe('main');
     });
 
     it('should throw PRECONDITION_FAILED if no GitHub token', async () => {

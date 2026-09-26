@@ -1,17 +1,15 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { trpc } from '@/lib/trpc';
 import { resolveListQueryState } from '@/lib/list-query-state';
+import { capMatches, matchesAllTerms } from '@/lib/search';
 import { Label } from '@/components/ui/label';
 import { Spinner } from '@/components/ui/spinner';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableCombobox } from '@/components/SearchableCombobox';
+
+/** Most branches the picker renders at once; big repos have hundreds. */
+export const BRANCH_PICKER_LIMIT = 100;
 
 export function BranchSelector({
   repoFullName,
@@ -22,24 +20,32 @@ export function BranchSelector({
   selectedBranch: string;
   onSelect: (branch: string) => void;
 }) {
+  const [query, setQuery] = useState('');
   const { data, isLoading, error } = trpc.github.listBranches.useQuery(
     { repoFullName },
-    { enabled: !!repoFullName }
+    // Listing a big repo walks several GitHub pages; don't redo it on every tab focus.
+    { enabled: !!repoFullName, staleTime: 5 * 60 * 1000 }
   );
 
-  const branches = data?.branches ?? [];
+  const branches = useMemo(() => data?.branches ?? [], [data]);
   const state = resolveListQueryState({
     isLoading,
     hasError: !!error,
     itemCount: branches.length,
   });
 
+  const cap = useMemo(
+    () =>
+      capMatches(
+        branches.filter((b) => matchesAllTerms(b, query)),
+        BRANCH_PICKER_LIMIT,
+        (b) => b === selectedBranch
+      ),
+    [branches, query, selectedBranch]
+  );
+
   useEffect(() => {
-    if (
-      data?.defaultBranch &&
-      !selectedBranch &&
-      data.branches.some((b) => b.name === data.defaultBranch)
-    ) {
+    if (data && data.branches.length > 0 && !selectedBranch) {
       onSelect(data.defaultBranch);
     }
   }, [data, selectedBranch, onSelect]);
@@ -76,19 +82,28 @@ export function BranchSelector({
   return (
     <div className="space-y-2">
       <Label>Branch</Label>
-      <Select value={selectedBranch} onValueChange={onSelect}>
-        <SelectTrigger>
-          <SelectValue placeholder="Select a branch" />
-        </SelectTrigger>
-        <SelectContent>
-          {branches.map((branch) => (
-            <SelectItem key={branch.name} value={branch.name}>
-              {branch.name}
-              {branch.name === data?.defaultBranch ? ' (default)' : ''}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+      <SearchableCombobox
+        triggerLabel={selectedBranch || 'Select a branch'}
+        ariaLabel="Branch"
+        searchPlaceholder="Search branches..."
+        emptyText="No matching branches"
+        query={query}
+        onQueryChange={setQuery}
+        options={cap.matches.map((branch) => ({
+          value: branch,
+          label: branch === data?.defaultBranch ? `${branch} (default)` : branch,
+          selected: branch === selectedBranch,
+        }))}
+        onSelect={onSelect}
+        cap={{ ...cap, noun: 'branches' }}
+        footer={
+          data?.truncated && (
+            <p className="border-t px-3 py-2 text-xs text-muted-foreground">
+              This repository has too many branches to list them all; some are missing.
+            </p>
+          )
+        }
+      />
     </div>
   );
 }
