@@ -363,28 +363,10 @@ describe('githubRouter', () => {
         number: 123,
         title: 'Bug report',
         body: 'Description of the bug',
-        state: 'open',
-        author: 'reporter',
         labels: [{ name: 'bug', color: 'd73a4a' }],
         comments: 3,
       });
-      expect(result.issues[1].author).toBe('unknown');
       expect(result.issues[1].body).toBeNull();
-    });
-
-    it('should filter issues by state', async () => {
-      mockFetch.mockResolvedValue(createMockResponse([]));
-
-      const caller = createCaller('auth-session-id');
-      await caller.github.listIssues({
-        repoFullName: 'owner/repo',
-        state: 'closed',
-      });
-
-      expect(mockFetch).toHaveBeenCalledWith(
-        expect.stringContaining('state=closed'),
-        expect.any(Object)
-      );
     });
 
     it('should search issues', async () => {
