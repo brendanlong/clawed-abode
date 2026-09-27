@@ -6,9 +6,11 @@
  * message_delta, message_stop) before the final complete AssistantMessage.
  *
  * This accumulator builds up a synthetic partial assistant message from those events
- * so the UI can show real-time progress. The partial message uses the stream_event's
- * UUID as its ID. When the final AssistantMessage arrives (with a different UUID),
- * the frontend replaces the partial with the final version.
+ * so the UI can show real-time progress. When the final AssistantMessage arrives, the
+ * frontend replaces the partial with the final version.
+ *
+ * Subagents stream concurrently with the main agent (and each other), with their
+ * events interleaved in one SDK stream, so state is kept per `parent_tool_use_id`.
  */
 
 /**
@@ -81,7 +83,43 @@ interface StreamEvent {
   [key: string]: unknown;
 }
 
+interface StreamEventMessage {
+  type: 'stream_event';
+  event: StreamEvent;
+  parent_tool_use_id: string | null;
+  uuid: string;
+  session_id: string;
+}
+
 export class StreamAccumulator {
+  private streams = new Map<string | null, MessageAccumulator>();
+
+  /**
+   * Process a stream_event and return a partial assistant message for its stream
+   * if content has changed. Returns null if the event doesn't produce a meaningful update.
+   */
+  accumulate(message: StreamEventMessage): PartialAssistantMessage | null {
+    let stream = this.streams.get(message.parent_tool_use_id);
+    if (!stream) {
+      stream = new MessageAccumulator();
+      this.streams.set(message.parent_tool_use_id, stream);
+    }
+    return stream.accumulate(message);
+  }
+
+  /** Call when a full AssistantMessage arrives — it supersedes its stream's partial. */
+  completeMessage(parentToolUseId: string | null): void {
+    this.streams.delete(parentToolUseId);
+  }
+
+  /** Call when the turn ends — any stream still open was abandoned (e.g. interrupted). */
+  resetAll(): void {
+    this.streams.clear();
+  }
+}
+
+/** Accumulates the stream events of one agent (main or a single subagent). */
+class MessageAccumulator {
   private contentBlocks: AccumulatingContentBlock[] = [];
   private model: string | undefined;
   private stopReason: string | null = null;
@@ -90,17 +128,7 @@ export class StreamAccumulator {
   private sessionId: string = '';
   private active = false;
 
-  /**
-   * Process a stream_event and return a partial assistant message if content has changed.
-   * Returns null if the event doesn't produce a meaningful update.
-   */
-  accumulate(message: {
-    type: 'stream_event';
-    event: StreamEvent;
-    parent_tool_use_id: string | null;
-    uuid: string;
-    session_id: string;
-  }): PartialAssistantMessage | null {
+  accumulate(message: StreamEventMessage): PartialAssistantMessage | null {
     const event = message.event;
 
     // Store metadata from the stream_event wrapper
@@ -172,8 +200,8 @@ export class StreamAccumulator {
         return null;
       }
 
-      // message_stop emits the final partial; the caller resets once the full
-      // AssistantMessage follows.
+      // message_stop emits the final partial; the caller discards this accumulator
+      // once the full AssistantMessage follows.
       case 'content_block_stop':
       case 'message_stop': {
         if (!this.active) return null;
@@ -242,16 +270,5 @@ export class StreamAccumulator {
       uuid: this.uuid,
       session_id: this.sessionId,
     };
-  }
-
-  /** Call when the full AssistantMessage arrives — it supersedes the partial. */
-  reset(): void {
-    this.contentBlocks = [];
-    this.model = undefined;
-    this.stopReason = null;
-    this.parentToolUseId = null;
-    this.uuid = '';
-    this.sessionId = '';
-    this.active = false;
   }
 }

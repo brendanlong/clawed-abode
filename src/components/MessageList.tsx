@@ -2,6 +2,7 @@
 
 import { useRef, useEffect, useCallback, useMemo, useState } from 'react';
 import { cn } from '@/lib/utils';
+import { getParentToolUseId } from '@/lib/claude-messages';
 import { MessageBubble } from './messages/MessageBubble';
 import { SubagentTranscript } from './messages/SubagentTranscript';
 import { TaskDisplay } from './messages/TaskDisplay';
@@ -17,7 +18,6 @@ import {
   isToolCallOnlyMessage,
   isToolResultMessage,
   isVisibleTranscriptMessage,
-  getParentToolUseId,
   groupSubagentMessages,
   computeSubagentPlacements,
   buildToolCallFromBlock,
