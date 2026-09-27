@@ -31,8 +31,12 @@ export function serializePullRequest(pullRequest: PullRequestInfo | null): strin
   return pullRequest ? JSON.stringify(pullRequest) : null;
 }
 
-/** How long a `Session.pullRequest` snapshot is trusted before it's re-fetched. */
-export const PR_SNAPSHOT_TTL_MS = 5 * 60 * 1000;
+/**
+ * How long a `Session.pullRequest` snapshot is trusted before it's re-fetched.
+ * Short because unchanged re-fetches are conditional requests that cost no rate
+ * limit (see `fetchPullRequestForBranch`).
+ */
+export const PR_SNAPSHOT_TTL_MS = 60 * 1000;
 
 /**
  * A merged PR can't change — but the column is keyed by *branch*, and a branch
@@ -64,4 +68,22 @@ export function isPrSnapshotStale(session: PrRefreshCandidate, now: number): boo
   const ttlMs =
     session.pullRequest?.state === 'merged' ? MERGED_PR_SNAPSHOT_TTL_MS : PR_SNAPSHOT_TTL_MS;
   return session.prCheckedAt === null || now - session.prCheckedAt.getTime() >= ttlMs;
+}
+
+const BRANCH_OR_PR_COMMAND =
+  /\bgit\b[^;&|\n]*\s(?:checkout|switch|push|merge)\b|\bgh\s+pr\s+(?:create|merge|close|reopen|ready|edit)\b/;
+const PR_MCP_TOOL = /^mcp__.+__(?:create|merge|update)_pull_request/;
+
+const bashInputSchema = z.object({ command: z.string() });
+
+/**
+ * Whether a finished tool call may have moved the session's branch or changed
+ * its PR, so the snapshot should be refreshed now rather than at turn end. False
+ * positives only cost one (usually 304) lookup.
+ */
+export function mayChangeBranchOrPr(toolName: string, toolInput: unknown): boolean {
+  if (PR_MCP_TOOL.test(toolName)) return true;
+  if (toolName !== 'Bash') return false;
+  const parsed = bashInputSchema.safeParse(toolInput);
+  return parsed.success && BRANCH_OR_PR_COMMAND.test(parsed.data.command);
 }

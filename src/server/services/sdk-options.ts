@@ -1,9 +1,11 @@
 import type { McpServerConfig, Options, PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import { createLogger } from '@/lib/logger';
+import { mayChangeBranchOrPr } from '@/lib/pull-request';
 import { CLAUDE_BIN_ENV, SESSION_SCOPE_ENV, sessionScopeUnitName } from '@/lib/session-scope';
 import { buildAgentEnv } from './agent-env';
 import { sanitizeToolOutputHook } from './input-sanitizer';
 import { writeSessionMcpConfig, removeSessionMcpConfig } from './mcp-config-file';
+import { scheduleBranchPrRefresh } from './session-branch-pr';
 import { getSessionScopeConfig, sessionScopeNonce } from './session-cgroup';
 import type { SessionState } from './session-state';
 import type { MergedSessionSettings } from './settings-merger';
@@ -99,6 +101,15 @@ export async function buildSdkOptions(params: {
               sanitizeToolOutputHook(input, sessionId, (toolUseId, info) => {
                 state.toolSanitizations.set(toolUseId, info);
               }),
+            async (input) => {
+              if (
+                input.hook_event_name === 'PostToolUse' &&
+                mayChangeBranchOrPr(input.tool_name, input.tool_input)
+              ) {
+                scheduleBranchPrRefresh(sessionId, workingDir);
+              }
+              return {};
+            },
           ],
         },
       ],

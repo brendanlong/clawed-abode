@@ -89,6 +89,28 @@ export async function detectBranchAndPr(sessionId: string, workingDir: string): 
 }
 
 /**
+ * Coalesces the bursts a single agent step produces (`git push && gh pr create`,
+ * several pushes in a row) into one refresh after the last of them.
+ */
+const TOOL_REFRESH_DEBOUNCE_MS = 2000;
+const toolRefreshTimers = new Map<string, NodeJS.Timeout>();
+
+/**
+ * Refresh branch and PR soon after a tool call that may have changed them
+ * (`mayChangeBranchOrPr`), so the header doesn't wait for the turn to end.
+ */
+export function scheduleBranchPrRefresh(sessionId: string, workingDir: string): void {
+  clearTimeout(toolRefreshTimers.get(sessionId));
+  toolRefreshTimers.set(
+    sessionId,
+    setTimeout(() => {
+      toolRefreshTimers.delete(sessionId);
+      void detectBranchAndPr(sessionId, workingDir);
+    }, TOOL_REFRESH_DEBOUNCE_MS)
+  );
+}
+
+/**
  * Sessions queued or being refreshed, so concurrent readers make one call, not N.
  * The cap keeps a single list read — which can carry every loaded page — from
  * opening a burst of connections GitHub would answer with a secondary rate limit.
