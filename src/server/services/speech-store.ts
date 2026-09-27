@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'crypto';
-import { splitTextIntoChunks } from '@/lib/tts';
+import { splitIntoSpeechChunks } from '@/lib/tts';
 import { stripMp3Metadata } from '@/lib/mp3';
 import type { KokoroVoice } from '@/lib/kokoro-voices';
 import { createLogger, toError } from '@/lib/logger';
@@ -102,29 +102,40 @@ export class Speech {
 }
 
 /**
- * Synthesize chunk by chunk, keeping the next request in flight while the
- * current one is awaited, so each call's fixed provider latency overlaps the
- * previous call rather than adding to it. Runs to completion even if every
- * listener leaves; the result stays cached for a replay.
+ * Requests kept in flight ahead of the chunk being awaited. Chunks are single
+ * sentences (a few seconds of audio) while a hosted provider takes seconds per
+ * call whatever the length, so one request at a time would stall between sentences.
+ */
+const MAX_IN_FLIGHT = 4;
+
+/**
+ * Synthesize sentence by sentence, in order, with up to {@link MAX_IN_FLIGHT}
+ * requests running. Runs to completion even if every listener leaves; the
+ * result stays cached for a replay.
  */
 async function synthesizeInto(
   speech: Speech,
   params: SpeechParams,
   synthesize: SynthesizeChunk
 ): Promise<void> {
-  const texts = splitTextIntoChunks(params.text);
-  const start = (text: string) => {
-    const promise = synthesize(text, params.voice, params.speed);
-    // Awaited below; this only keeps a failure behind an earlier one from going unhandled.
-    promise.catch(() => {});
-    return promise;
+  const texts = splitIntoSpeechChunks(params.text);
+  const pending: Promise<Uint8Array>[] = [];
+  let started = 0;
+  const fill = () => {
+    while (started < texts.length && pending.length < MAX_IN_FLIGHT) {
+      const promise = synthesize(texts[started++], params.voice, params.speed);
+      // Awaited in order below; this only keeps a failure behind an earlier one from going unhandled.
+      promise.catch(() => {});
+      pending.push(promise);
+    }
   };
   try {
-    let next = start(texts[0]);
-    for (let i = 0; i < texts.length; i++) {
-      const current = next;
-      if (i + 1 < texts.length) next = start(texts[i + 1]);
-      speech.push(stripMp3Metadata(await current));
+    fill();
+    while (pending.length > 0) {
+      const audio = await pending[0];
+      pending.shift();
+      fill();
+      speech.push(stripMp3Metadata(audio));
     }
     speech.finish();
   } catch (err) {
