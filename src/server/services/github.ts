@@ -88,8 +88,15 @@ export class ConditionalGetCache<T> {
     conditionalGetCaches.add(this);
   }
 
-  async fetch(path: string, token: string, parse: (response: Response) => Promise<T>): Promise<T> {
-    const cached = this.entries.get(path);
+  /** `canReplay` rejects a cached value whose 304 wouldn't prove it's still correct. */
+  async fetch(
+    path: string,
+    token: string,
+    parse: (response: Response) => Promise<T>,
+    canReplay: (value: T) => boolean = () => true
+  ): Promise<T> {
+    const entry = this.entries.get(path);
+    const cached = entry && canReplay(entry.value) ? entry : undefined;
     const response = await githubFetchResponse(
       path,
       token,
@@ -181,9 +188,10 @@ export async function githubFetchAllPages<T>(
   pageCache: ConditionalGetCache<ListPage<T>>
 ): Promise<{ items: T[]; truncated: boolean }> {
   const pageSchema = z.array(itemSchema);
-  const fetchPage = (page: number) =>
+  const perPage = 100;
+  const fetchPage = (page: number, canReplay?: (cached: ListPage<T>) => boolean) =>
     pageCache.fetch(
-      `${path}${path.includes('?') ? '&' : '?'}per_page=100&page=${page}`,
+      `${path}${path.includes('?') ? '&' : '?'}per_page=${perPage}&page=${page}`,
       token,
       async (response) => {
         const parsed = pageSchema.safeParse(await response.json());
@@ -192,10 +200,14 @@ export async function githubFetchAllPages<T>(
           throw new GitHubApiError(502, path, 'Unexpected response from GitHub');
         }
         return { items: parsed.data, links: parseLinkHeader(response.headers.get('link')) };
-      }
+      },
+      canReplay
     );
 
-  const first = await fetchPage(1);
+  // A 304 vouches for the body, not the Link header: if page 1 is full, later
+  // pages could have grown while page 1 stayed the same, so refetch it for an
+  // accurate page count. A partial page 1 is the whole list, so its 304 is exact.
+  const first = await fetchPage(1, (cached) => cached.items.length < perPage);
   const { links } = first;
   // Without `last` the page count is unknown; keep page 1 and admit the gap.
   const lastPage = links.last ? Number(links.last) : links.next ? Infinity : 1;

@@ -233,6 +233,32 @@ describe('githubRouter', () => {
   });
 
   describe('listBranches', () => {
+    it('refetches a full first page so growth past it is noticed', async () => {
+      const fullPage = Array.from({ length: 100 }, (_, i) => ({ name: `b${i}` }));
+      mockFetch.mockImplementation(async (url: string) =>
+        url.includes('/branches')
+          ? createMockResponse(fullPage, 200, { etag: '"p1"' })
+          : createMockResponse({ default_branch: 'b0' })
+      );
+      const caller = createCaller('auth-session-id');
+      await caller.github.listBranches({ repoFullName: 'owner/repo' });
+
+      const lastLink =
+        '<https://api.github.com/repos/owner/repo/branches?per_page=100&page=2>; rel="last"';
+      mockFetch.mockImplementation(
+        async (url: string, init: { headers: Record<string, string> }) => {
+          if (!url.includes('/branches')) return createMockResponse({ default_branch: 'b0' });
+          if (init.headers['If-None-Match']) return createMockResponse(null, 304);
+          return url.endsWith('&page=1')
+            ? createMockResponse(fullPage, 200, { etag: '"p1"', link: lastLink })
+            : createMockResponse([{ name: 'zz-new' }]);
+        }
+      );
+      const result = await caller.github.listBranches({ repoFullName: 'owner/repo' });
+
+      expect(result.branches).toContain('zz-new');
+    });
+
     it('should list branches for a repository', async () => {
       const mockRepo = {
         default_branch: 'main',

@@ -28,7 +28,7 @@ const defaultBranchSchema = z.object({ default_branch: z.string() });
 
 // The pickers refetch these every time they open. Zod strips unknown keys, so
 // cached pages hold only the fields above, not GitHub's full objects.
-const repoPageCache = new ConditionalGetCache<ListPage<GitHubRepo>>(20);
+const repoPageCache = new ConditionalGetCache<ListPage<GitHubRepo>>(10);
 const branchPageCache = new ConditionalGetCache<ListPage<z.infer<typeof branchSchema>>>(200);
 const defaultBranchCache = new ConditionalGetCache<string>(100);
 

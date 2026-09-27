@@ -90,6 +90,13 @@ describe('github service', () => {
         apiMessage: undefined,
       });
     });
+
+    it('treats a 304 nobody asked for as an error', async () => {
+      mockFetch.mockResolvedValue(createMockResponse(null, 304));
+      await expect(githubFetchResponse('/repos/owner/repo', 'token')).rejects.toThrow(
+        GitHubApiError
+      );
+    });
   });
 
   describe('ConditionalGetCache', () => {
@@ -187,13 +194,6 @@ describe('github service', () => {
       mockFetch.mockResolvedValueOnce(createMockResponse(null, 304));
       expect((await fetchPullRequestForBranch('owner/repo', 'feature'))?.state).toBe('merged');
       expect(sentHeaders(2)['If-None-Match']).toBe('"v2"');
-    });
-
-    it('treats a 304 nobody asked for as an error', async () => {
-      mockFetch.mockResolvedValue(createMockResponse(null, 304));
-      await expect(githubFetchResponse('/repos/owner/repo', 'token')).rejects.toThrow(
-        GitHubApiError
-      );
     });
 
     it('caches "no PR" too, and keys the cache by branch', async () => {
