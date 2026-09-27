@@ -169,6 +169,30 @@ journalctl --user -u clawed-abode.service -f
 
 This pulls the latest code, installs dependencies, applies database migrations, rebuilds, and restarts the service. A plain `git pull` + restart is **not** enough — `next start` serves the prebuilt `.next` bundle, so without a rebuild you keep running the old code. If your service isn't named `clawed-abode.service`, set `CLAWED_ABODE_SERVICE`.
 
+### Read-aloud with local Kokoro (optional)
+
+Read-aloud needs a Kokoro speech server (see `TTS_BASE_URL` below). Hosted OpenRouter works, but its latency varies from about 1 to 10 s per request. A local [Kokoro-FastAPI](https://github.com/remsky/Kokoro-FastAPI) on the CPU synthesizes a sentence in about 0.5 s, roughly 5× faster than playback, so audio starts in under a second. We use the CPU image: the GPU is faster, but it would hold 0.4–1.3 GB of VRAM permanently to save about half a second.
+
+[`scripts/kokoro.container`](scripts/kokoro.container) runs it as a podman Quadlet user service on `127.0.0.1:8880`, started at boot. It relies on the lingering enabled in step 1. The first start pulls the image, about 3 GB.
+
+```bash
+mkdir -p ~/.config/containers/systemd
+cp scripts/kokoro.container ~/.config/containers/systemd/
+systemctl --user daemon-reload   # Quadlet generates kokoro.service; its [Install] section enables it
+systemctl --user start kokoro.service
+curl http://127.0.0.1:8880/health
+```
+
+Then add the following to `.env` and restart `clawed-abode.service`:
+
+```bash
+TTS_BASE_URL="http://127.0.0.1:8880/v1"
+TTS_MODEL="kokoro"
+TTS_MAX_CONCURRENCY=1   # one request at a time, so they don't compete for CPU cores
+```
+
+Logs: `journalctl --user -u kokoro.service`.
+
 ## Remote Access with Tailscale
 
 ### Tailscale Serve (within your Tailnet)
@@ -208,6 +232,7 @@ The schema in [`src/lib/env.ts`](src/lib/env.ts) is authoritative; it is validat
 | `TTS_BASE_URL`                           | OpenAI-compatible speech API serving Kokoro (OpenRouter or a local Kokoro-FastAPI); enables read-aloud                                             | None                 |
 | `TTS_API_KEY`                            | Bearer key for `TTS_BASE_URL`, if it needs one                                                                                                     | None                 |
 | `TTS_MODEL`                              | Model name sent to `TTS_BASE_URL` (`kokoro` for Kokoro-FastAPI)                                                                                    | `hexgrad/kokoro-82m` |
+| `TTS_MAX_CONCURRENCY`                    | Speech requests per message run at once; use `1` for a local CPU server                                                                            | `4`                  |
 | `LOG_LEVEL`                              | Minimum server log level: `debug`, `info`, `warn`, or `error`                                                                                      | `info`               |
 
 ## Development

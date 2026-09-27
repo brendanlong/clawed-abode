@@ -1,0 +1,16 @@
+# Podman Quadlet unit for local Kokoro TTS (CPU); see "Read-aloud with local Kokoro" in README.md.
+[Unit]
+Description=Kokoro-FastAPI text-to-speech (CPU)
+
+[Container]
+ContainerName=kokoro
+Image=ghcr.io/remsky/kokoro-fastapi-cpu:latest
+PublishPort=127.0.0.1:8880:8880
+
+[Service]
+Restart=always
+# The first start may pull the image (~3 GB).
+TimeoutStartSec=900
+
+[Install]
+WantedBy=default.target
