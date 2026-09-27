@@ -8,10 +8,11 @@ global.fetch = mockFetch;
 vi.mock('@/lib/logger', async () => (await import('@/test/mock-logger')).mockLoggerModule());
 
 import {
-  _clearPrLookupCache,
+  _clearConditionalGetCaches,
+  ConditionalGetCache,
   fetchPullRequestForBranch,
   GitHubApiError,
-  githubFetch,
+  githubFetchResponse,
   parseLinkHeader,
 } from './github';
 
@@ -31,20 +32,20 @@ describe('github service', () => {
     vi.clearAllMocks();
     process.env.GITHUB_TOKEN = 'test-token';
     resetEnvCache();
-    _clearPrLookupCache();
+    _clearConditionalGetCaches();
   });
 
   afterEach(() => {
     vi.resetAllMocks();
   });
 
-  describe('githubFetch', () => {
-    it('should fetch and parse JSON from GitHub API', async () => {
+  describe('githubFetchResponse', () => {
+    it('should fetch from the GitHub API with the token', async () => {
       const mockData = { id: 1, name: 'test' };
       mockFetch.mockResolvedValue(createMockResponse(mockData));
 
-      const result = await githubFetch<{ id: number; name: string }>('/repos/owner/repo', 'token');
-      expect(result).toEqual(mockData);
+      const result = await githubFetchResponse('/repos/owner/repo', 'token');
+      expect(await result.json()).toEqual(mockData);
       expect(mockFetch).toHaveBeenCalledWith(
         'https://api.github.com/repos/owner/repo',
         expect.objectContaining({
@@ -58,7 +59,9 @@ describe('github service', () => {
     it('should throw GitHubApiError on non-ok response', async () => {
       mockFetch.mockResolvedValue(createMockResponse({}, 404));
 
-      await expect(githubFetch('/repos/owner/repo', 'token')).rejects.toThrow(GitHubApiError);
+      await expect(githubFetchResponse('/repos/owner/repo', 'token')).rejects.toThrow(
+        GitHubApiError
+      );
     });
 
     it("should carry GitHub's error message on the thrown error", async () => {
@@ -66,7 +69,9 @@ describe('github service', () => {
         createMockResponse({ message: 'Resource not accessible by personal access token' }, 403)
       );
 
-      await expect(githubFetch('/repos/owner/repo/branches', 'token')).rejects.toMatchObject({
+      await expect(
+        githubFetchResponse('/repos/owner/repo/branches', 'token')
+      ).rejects.toMatchObject({
         status: 403,
         apiMessage: 'Resource not accessible by personal access token',
       });
@@ -80,10 +85,55 @@ describe('github service', () => {
         headers: { get: () => null },
       });
 
-      await expect(githubFetch('/repos/owner/repo', 'token')).rejects.toMatchObject({
+      await expect(githubFetchResponse('/repos/owner/repo', 'token')).rejects.toMatchObject({
         status: 502,
         apiMessage: undefined,
       });
+    });
+
+    it('treats a 304 nobody asked for as an error', async () => {
+      mockFetch.mockResolvedValue(createMockResponse(null, 304));
+      await expect(githubFetchResponse('/repos/owner/repo', 'token')).rejects.toThrow(
+        GitHubApiError
+      );
+    });
+  });
+
+  describe('ConditionalGetCache', () => {
+    const sentHeaders = (call: number): Record<string, string> =>
+      mockFetch.mock.calls[call][1].headers;
+    const parseName = async (response: Response) =>
+      ((await response.json()) as { name: string }).name;
+
+    it('does not remember a response without an ETag', async () => {
+      const cache = new ConditionalGetCache<string>(10);
+      mockFetch.mockResolvedValueOnce(createMockResponse({ name: 'a' }, 200, '"v1"'));
+      await cache.fetch('/x', 'token', parseName);
+
+      mockFetch.mockResolvedValueOnce(createMockResponse({ name: 'b' }));
+      expect(await cache.fetch('/x', 'token', parseName)).toBe('b');
+
+      mockFetch.mockResolvedValueOnce(createMockResponse({ name: 'c' }));
+      await cache.fetch('/x', 'token', parseName);
+      expect(sentHeaders(2)['If-None-Match']).toBeUndefined();
+    });
+
+    it('evicts the least recently used path past its capacity', async () => {
+      const cache = new ConditionalGetCache<string>(2);
+      for (const path of ['/a', '/b']) {
+        mockFetch.mockResolvedValueOnce(createMockResponse({ name: path }, 200, `"${path}"`));
+        await cache.fetch(path, 'token', parseName);
+      }
+      mockFetch.mockResolvedValueOnce(createMockResponse(null, 304));
+      await cache.fetch('/a', 'token', parseName);
+      mockFetch.mockResolvedValueOnce(createMockResponse({ name: '/c' }, 200, '"/c"'));
+      await cache.fetch('/c', 'token', parseName);
+
+      mockFetch.mockResolvedValue(createMockResponse({ name: 'fresh' }));
+      await cache.fetch('/a', 'token', parseName);
+      await cache.fetch('/b', 'token', parseName);
+      expect(sentHeaders(4)['If-None-Match']).toBe('"/a"');
+      expect(sentHeaders(5)['If-None-Match']).toBeUndefined();
     });
   });
 
@@ -144,11 +194,6 @@ describe('github service', () => {
       mockFetch.mockResolvedValueOnce(createMockResponse(null, 304));
       expect((await fetchPullRequestForBranch('owner/repo', 'feature'))?.state).toBe('merged');
       expect(sentHeaders(2)['If-None-Match']).toBe('"v2"');
-    });
-
-    it('treats a 304 nobody asked for as an error', async () => {
-      mockFetch.mockResolvedValue(createMockResponse(null, 304));
-      await expect(githubFetch('/repos/owner/repo', 'token')).rejects.toThrow(GitHubApiError);
     });
 
     it('caches "no PR" too, and keys the cache by branch', async () => {

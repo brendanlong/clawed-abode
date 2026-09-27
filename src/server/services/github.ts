@@ -72,9 +72,66 @@ async function readApiMessage(response: Response): Promise<string | undefined> {
   }
 }
 
-export async function githubFetch<T>(path: string, token?: string): Promise<T> {
-  const response = await githubFetchResponse(path, token);
-  return response.json();
+const conditionalGetCaches = new Set<ConditionalGetCache<unknown>>();
+
+/**
+ * Last parsed answer per path, revalidated with `If-None-Match` and replayed on
+ * a 304. GitHub doesn't count an authorized conditional request that comes back
+ * 304 against the rate limit. Only use this for lookups that repeat: it stores
+ * the parsed value (not the raw body) so entries stay small. Map order is
+ * insertion order, so evicting the first key drops the least recently used.
+ */
+export class ConditionalGetCache<T> {
+  private readonly entries = new Map<string, { etag: string; value: T }>();
+
+  constructor(private readonly maxEntries: number) {
+    conditionalGetCaches.add(this);
+  }
+
+  /** `canReplay` rejects a cached value whose 304 wouldn't prove it's still correct. */
+  async fetch(
+    path: string,
+    token: string,
+    parse: (response: Response) => Promise<T>,
+    canReplay: (value: T) => boolean = () => true
+  ): Promise<T> {
+    const entry = this.entries.get(path);
+    const cached = entry && canReplay(entry.value) ? entry : undefined;
+    const response = await githubFetchResponse(
+      path,
+      token,
+      cached ? { 'If-None-Match': cached.etag } : undefined
+    );
+    if (response.status === 304 && cached) {
+      this.remember(path, cached);
+      return cached.value;
+    }
+
+    const value = await parse(response);
+    const etag = response.headers.get('etag');
+    if (etag) {
+      this.remember(path, { etag, value });
+    } else {
+      this.entries.delete(path);
+    }
+    return value;
+  }
+
+  private remember(path: string, entry: { etag: string; value: T }): void {
+    this.entries.delete(path);
+    this.entries.set(path, entry);
+    if (this.entries.size > this.maxEntries) {
+      this.entries.delete(this.entries.keys().next().value!);
+    }
+  }
+
+  clear(): void {
+    this.entries.clear();
+  }
+}
+
+export function _clearConditionalGetCaches(): void {
+  for (const cache of conditionalGetCaches) cache.clear();
 }
 
 export class GitHubApiError extends Error {
@@ -113,6 +170,11 @@ export function parseLinkHeader(header: string | null): { next?: string; last?: 
 /** Bounds {@link githubFetchAllPages}: at 100 items a page, 1000 items. */
 const MAX_LIST_PAGES = 10;
 
+export interface ListPage<T> {
+  items: T[];
+  links: { next?: string; last?: string };
+}
+
 /**
  * Every item of a paginated GitHub list endpoint, for pickers that search the
  * whole list locally (GitHub's search API can't express "everything I can
@@ -122,61 +184,47 @@ const MAX_LIST_PAGES = 10;
 export async function githubFetchAllPages<T>(
   path: string,
   itemSchema: z.ZodType<T>,
-  token: string
+  token: string,
+  pageCache: ConditionalGetCache<ListPage<T>>
 ): Promise<{ items: T[]; truncated: boolean }> {
   const pageSchema = z.array(itemSchema);
-  const pageUrl = (page: number) =>
-    `${path}${path.includes('?') ? '&' : '?'}per_page=100&page=${page}`;
+  const perPage = 100;
+  const fetchPage = (page: number, canReplay?: (cached: ListPage<T>) => boolean) =>
+    pageCache.fetch(
+      `${path}${path.includes('?') ? '&' : '?'}per_page=${perPage}&page=${page}`,
+      token,
+      async (response) => {
+        const parsed = pageSchema.safeParse(await response.json());
+        if (!parsed.success) {
+          log.error('Unexpected GitHub list response', parsed.error, { path });
+          throw new GitHubApiError(502, path, 'Unexpected response from GitHub');
+        }
+        return { items: parsed.data, links: parseLinkHeader(response.headers.get('link')) };
+      },
+      canReplay
+    );
 
-  const first = await githubFetchResponse(pageUrl(1), token);
-  const links = parseLinkHeader(first.headers.get('link'));
+  // A 304 vouches for the body, not the Link header: if page 1 is full, later
+  // pages could have grown while page 1 stayed the same, so refetch it for an
+  // accurate page count. A partial page 1 is the whole list, so its 304 is exact.
+  const first = await fetchPage(1, (cached) => cached.items.length < perPage);
+  const { links } = first;
   // Without `last` the page count is unknown; keep page 1 and admit the gap.
   const lastPage = links.last ? Number(links.last) : links.next ? Infinity : 1;
   const pageCount = links.last ? Math.min(lastPage, MAX_LIST_PAGES) : 1;
-  const rest = await Promise.all(
-    Array.from({ length: pageCount - 1 }, (_, i) => githubFetch<unknown>(pageUrl(i + 2), token))
-  );
+  const rest = await Promise.all(Array.from({ length: pageCount - 1 }, (_, i) => fetchPage(i + 2)));
 
-  const items = [await first.json(), ...rest].flatMap((page) => {
-    const parsed = pageSchema.safeParse(page);
-    if (!parsed.success) {
-      log.error('Unexpected GitHub list response', parsed.error, { path });
-      throw new GitHubApiError(502, path, 'Unexpected response from GitHub');
-    }
-    return parsed.data;
-  });
-  return { items, truncated: lastPage > MAX_LIST_PAGES };
+  return {
+    items: [first, ...rest].flatMap((page) => page.items),
+    truncated: lastPage > MAX_LIST_PAGES,
+  };
 }
 
 // =============================================================================
 // PR lookup
 // =============================================================================
 
-interface CachedPrLookup {
-  etag: string;
-  pullRequest: PullRequestInfo | null;
-}
-
-/**
- * Last answer per lookup URL, replayed on a 304. GitHub doesn't count an
- * authorized conditional request that comes back 304 against the rate limit, so
- * this is what makes a short PR snapshot TTL affordable. Map order is insertion
- * order, so evicting the first key drops the least recently refreshed lookup.
- */
-const prLookupCache = new Map<string, CachedPrLookup>();
-const MAX_CACHED_PR_LOOKUPS = 500;
-
-function cachePrLookup(path: string, entry: CachedPrLookup): void {
-  prLookupCache.delete(path);
-  prLookupCache.set(path, entry);
-  if (prLookupCache.size > MAX_CACHED_PR_LOOKUPS) {
-    prLookupCache.delete(prLookupCache.keys().next().value!);
-  }
-}
-
-export function _clearPrLookupCache(): void {
-  prLookupCache.clear();
-}
+const prLookupCache = new ConditionalGetCache<PullRequestInfo | null>(500);
 
 function toPullRequestInfo(pr: GitHubPullRequest): PullRequestInfo {
   return {
@@ -207,24 +255,12 @@ export async function fetchPullRequestForBranch(
   const [owner] = repoFullName.split('/');
   const headFilter = `${owner}:${branch}`;
   const path = `/repos/${repoFullName}/pulls?head=${encodeURIComponent(headFilter)}&state=all&per_page=1&sort=updated&direction=desc`;
-  const cached = prLookupCache.get(path);
 
   try {
-    const response = await githubFetchResponse(
-      path,
-      token,
-      cached ? { 'If-None-Match': cached.etag } : undefined
-    );
-    if (response.status === 304 && cached) {
-      cachePrLookup(path, cached);
-      return cached.pullRequest;
-    }
-
-    const pulls: GitHubPullRequest[] = await response.json();
-    const pullRequest = pulls.length > 0 ? toPullRequestInfo(pulls[0]) : null;
-    const etag = response.headers.get('etag');
-    if (etag) cachePrLookup(path, { etag, pullRequest });
-    return pullRequest;
+    return await prLookupCache.fetch(path, token, async (response) => {
+      const pulls: GitHubPullRequest[] = await response.json();
+      return pulls.length > 0 ? toPullRequestInfo(pulls[0]) : null;
+    });
   } catch (err) {
     log.error('Failed to fetch PR for branch', toError(err), {
       repoFullName,
