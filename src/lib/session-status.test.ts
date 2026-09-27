@@ -5,6 +5,7 @@ import {
   removeBackgroundTask,
   backgroundActive,
   taskHasEndState,
+  modelBackgroundTasks,
   INITIAL_LIVE_STATUS,
   type LiveStatus,
   type BackgroundTask,
@@ -323,6 +324,25 @@ describe('backgroundActive — daemon-only sets read as idle', () => {
     s = reduceSessionMessage(s, taskNotification('agent1')).status;
     expect(s.backgroundTasks.has('bash1')).toBe(true);
     expect(backgroundActive(s)).toBe(false);
+  });
+});
+
+describe('modelBackgroundTasks — what a rate-limit pause stops', () => {
+  it('selects subagents and workflows, leaving shells, monitors and unknown kinds', () => {
+    let s = INITIAL_LIVE_STATUS;
+    for (const [id, taskType] of [
+      ['agent', 'local_agent'],
+      ['remote', 'remote_agent'],
+      ['workflow', 'local_workflow'],
+      ['bash', 'local_bash'],
+      ['monitor', 'monitor'],
+      ['future', 'some_future_kind'],
+    ]) {
+      s = reduceSessionMessage(s, taskStarted(id, { task_type: taskType })).status;
+    }
+    s = reduceSessionMessage(s, taskStarted('untyped')).status;
+
+    expect(modelBackgroundTasks(s).map((t) => t.taskId)).toEqual(['agent', 'remote', 'workflow']);
   });
 });
 

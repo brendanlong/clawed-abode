@@ -74,7 +74,8 @@ export function RateLimitPauseCard() {
             onValueChange={([threshold]) => setDraft({ ...value, threshold })}
           />
           <p className="text-muted-foreground text-sm">
-            Pausing before the window is exhausted avoids turns being cut off mid-task. Weekly
+            A pause interrupts running turns and subagents, and tells them to continue once the
+            window resets. Pausing before the window is exhausted avoids spending overage. Weekly
             limits ignore this threshold and only pause once the API actually refuses a request, so
             a week&apos;s allowance is always spent in full. 100% is effectively &ldquo;only when
             refused&rdquo;.
