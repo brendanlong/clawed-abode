@@ -12,6 +12,7 @@ import { getModelSuggestions } from '../services/anthropic-models';
 import { SUGGESTED_ADVISOR_MODEL } from '@/lib/advisor';
 import { settingSourceFlagsFromRow, settingSourceFlagsSchema } from '@/lib/setting-sources';
 import { mcpOAuthRedirectUri } from '@/lib/mcp-oauth-urls';
+import { kokoroVoiceSchema } from '@/lib/kokoro-voices';
 import type { Prisma } from '@/generated/prisma/client';
 
 const log = createLogger('globalSettings');
@@ -53,6 +54,8 @@ export const globalSettingsRouter = router({
       advisorModel: settings?.advisorModel ?? null,
       hasClaudeApiKey: settings?.claudeApiKey !== null && settings?.claudeApiKey !== undefined,
       ttsSpeed: settings?.ttsSpeed ?? null,
+      ttsVoice: settings?.ttsVoice ?? null,
+      ttsEnabled: !!env.TTS_BASE_URL,
       voiceAutoSend: settings?.voiceAutoSend ?? true,
       settingSources: settingSourceFlagsFromRow(settings),
       defaultClaudeModel: env.CLAUDE_MODEL,
@@ -164,6 +167,15 @@ export const globalSettingsRouter = router({
     .mutation(async ({ input }) => {
       await patchGlobalSettings(input);
       log.info('Set TTS speed', input);
+      return { success: true };
+    }),
+
+  /** Kokoro voice for read-aloud; null resets to the default. */
+  setTtsVoice: protectedProcedure
+    .input(z.object({ ttsVoice: kokoroVoiceSchema.nullable() }))
+    .mutation(async ({ input }) => {
+      await patchGlobalSettings(input);
+      log.info('Set TTS voice', input);
       return { success: true };
     }),
 

@@ -1,60 +1,54 @@
 /**
- * Pure helpers for browser text-to-speech (SpeechSynthesis). Kept out of the
- * playback hook so the quirk-driven logic is unit-testable.
+ * Characters per speech request. Each request costs ~3-10 s of provider latency
+ * whatever its length (measured on OpenRouter), and the next chunk is fetched
+ * while one plays, so chunks are as long as a request comfortably takes.
  */
-
-import { capMatches, matchesAllTerms, type CappedMatches } from './search';
-
-/**
- * Chrome kills utterances over ~15 seconds (https://issues.chromium.org/issues/41294170),
- * so text is split into chunks of at most this many characters and spoken in sequence.
- */
-export const CHUNK_MAX_LENGTH = 200;
+export const CHUNK_MAX_LENGTH = 1000;
 
 const SENTENCE_ENDERS = ['. ', '! ', '? ', '.\n', '!\n', '?\n'];
 
 /**
- * Split text into chunks of at most {@link CHUNK_MAX_LENGTH} characters, preferring
+ * Split text into chunks of at most `maxLength` characters, preferring
  * to break at a sentence end, then a comma/semicolon, then a space, and only as a
  * last resort mid-word. Concatenating the chunks reproduces the input exactly.
  */
-export function splitTextIntoChunks(text: string): string[] {
-  if (text.length <= CHUNK_MAX_LENGTH) return [text];
+export function splitTextIntoChunks(text: string, maxLength = CHUNK_MAX_LENGTH): string[] {
+  if (text.length <= maxLength) return [text];
 
   const chunks: string[] = [];
   let remaining = text;
 
   while (remaining.length > 0) {
-    if (remaining.length <= CHUNK_MAX_LENGTH) {
+    if (remaining.length <= maxLength) {
       chunks.push(remaining);
       break;
     }
 
-    // Every search starts at `CHUNK_MAX_LENGTH - delimiter.length` so the whole
-    // delimiter lands inside the chunk; starting at CHUNK_MAX_LENGTH lets a match
+    // Every search starts at `maxLength - delimiter.length` so the whole
+    // delimiter lands inside the chunk; starting at maxLength lets a match
     // begin at the cap and pushes the chunk past it.
     let bestEnder = { index: -1, length: 0 };
     for (const ender of SENTENCE_ENDERS) {
       // Compare raw indices; the offset is applied once, after the best one is known.
-      const idx = remaining.lastIndexOf(ender, CHUNK_MAX_LENGTH - ender.length);
+      const idx = remaining.lastIndexOf(ender, maxLength - ender.length);
       if (idx > 0 && idx > bestEnder.index) bestEnder = { index: idx, length: ender.length };
     }
     let splitIndex = bestEnder.index > 0 ? bestEnder.index + bestEnder.length : -1;
 
     if (splitIndex <= 0) {
-      const commaIdx = remaining.lastIndexOf(', ', CHUNK_MAX_LENGTH - 2);
-      const semiIdx = remaining.lastIndexOf('; ', CHUNK_MAX_LENGTH - 2);
+      const commaIdx = remaining.lastIndexOf(', ', maxLength - 2);
+      const semiIdx = remaining.lastIndexOf('; ', maxLength - 2);
       splitIndex = Math.max(commaIdx, semiIdx);
       if (splitIndex > 0) splitIndex += 2;
     }
 
     if (splitIndex <= 0) {
-      splitIndex = remaining.lastIndexOf(' ', CHUNK_MAX_LENGTH - 1);
+      splitIndex = remaining.lastIndexOf(' ', maxLength - 1);
       if (splitIndex > 0) splitIndex += 1;
     }
 
     if (splitIndex <= 0) {
-      splitIndex = CHUNK_MAX_LENGTH;
+      splitIndex = maxLength;
     }
 
     chunks.push(remaining.slice(0, splitIndex));
@@ -62,82 +56,4 @@ export function splitTextIntoChunks(text: string): string[] {
   }
 
   return chunks;
-}
-
-/** Voice fields the selection logic reads; a real SpeechSynthesisVoice satisfies it. */
-export interface VoiceLike {
-  voiceURI: string;
-  lang: string;
-  localService: boolean;
-}
-
-/** A voice with a display name; a real SpeechSynthesisVoice satisfies it. */
-export type NamedVoice = VoiceLike & { name: string };
-
-/** Normalize `en_US` to `en-US`; some engines report underscores. Headless browsers can leave `navigator.language` undefined. */
-function normalizeLang(lang: string | undefined): string {
-  return (lang ?? '').replace('_', '-');
-}
-
-function primaryLang(lang: string | undefined): string {
-  return normalizeLang(lang).split('-')[0];
-}
-
-/**
- * Pick the voice to speak with, in order: the user's explicit preference; a local
- * voice matching the full locale (e.g. `en-US`); a local voice matching the primary
- * language (`en`); any voice matching the primary language; the first voice. Null
- * only when no voices are loaded, in which case the browser default is used.
- */
-export function selectVoice<V extends VoiceLike>(
-  voices: readonly V[],
-  preferredVoiceURI: string | null,
-  locale: string
-): V | null {
-  const wanted = primaryLang(locale);
-  return (
-    (preferredVoiceURI ? voices.find((v) => v.voiceURI === preferredVoiceURI) : undefined) ??
-    voices.find((v) => v.localService && normalizeLang(v.lang).startsWith(locale)) ??
-    voices.find((v) => v.localService && primaryLang(v.lang) === wanted) ??
-    voices.find((v) => primaryLang(v.lang) === wanted) ??
-    voices[0] ??
-    null
-  );
-}
-
-/**
- * Voices for a picker: deduplicated by URI (some platforms report duplicates) and
- * sorted by language, then name.
- */
-export function dedupeAndSortVoices<V extends NamedVoice>(voices: readonly V[]): V[] {
-  const seen = new Set<string>();
-  return voices
-    .filter((v) => !seen.has(v.voiceURI) && seen.add(v.voiceURI))
-    .sort((a, b) => a.lang.localeCompare(b.lang) || a.name.localeCompare(b.name));
-}
-
-/** Most voices a picker renders at once; see {@link searchVoices}. */
-export const VOICE_PICKER_LIMIT = 50;
-
-/**
- * Voices whose name or language matches `query` ({@link matchesAllTerms}), with
- * those for the primary language of `locale` first, capped at `limit`. The cap
- * matters because some browsers report ~15,000 voices. A matching `pinnedURI`
- * (the current selection) is kept in the result even when it falls past the cap.
- */
-export function searchVoices<V extends NamedVoice>(
-  voices: readonly V[],
-  query: string,
-  locale: string | undefined,
-  pinnedURI: string | null = null,
-  limit: number = VOICE_PICKER_LIMIT
-): CappedMatches<V> {
-  const wanted = primaryLang(locale);
-  const preferred: V[] = [];
-  const rest: V[] = [];
-  for (const voice of voices) {
-    if (!matchesAllTerms(`${voice.name} ${voice.lang}`, query)) continue;
-    (primaryLang(voice.lang) === wanted ? preferred : rest).push(voice);
-  }
-  return capMatches(preferred.concat(rest), limit, (v) => v.voiceURI === pinnedURI);
 }

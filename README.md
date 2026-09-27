@@ -15,7 +15,7 @@ Read more: [Clawed Abode: Claude Code is Too Cloudy](https://www.brendanlong.com
 - Session tracking with IP addresses and login history
 - Clean session lifecycle management
 - Mobile-friendly interface
-- Voice input/output using browser Web Speech APIs
+- Voice input (browser speech recognition) and read-aloud with Kokoro TTS
 
 ## Security Warning
 
@@ -205,6 +205,9 @@ The schema in [`src/lib/env.ts`](src/lib/env.ts) is authoritative; it is validat
 | `APP_URL`                                | Public URL the browser reaches this app on; only used to build the MCP OAuth redirect URI                                                          | Derived from request |
 | `CODE_SERVER_URL`                        | Base URL of a code-server instance; enables the "Open in VS Code" button (see `scripts/setup-code-server.sh`)                                      | None                 |
 | `PUBLIC_FILES_PORT` / `PUBLIC_FILES_URL` | Loopback port and browser URL for serving each session's `public/` directory; set both or neither (see `scripts/expose-public-files-tailscale.sh`) | None                 |
+| `TTS_BASE_URL`                           | OpenAI-compatible speech API serving Kokoro (OpenRouter or a local Kokoro-FastAPI); enables read-aloud                                             | None                 |
+| `TTS_API_KEY`                            | Bearer key for `TTS_BASE_URL`, if it needs one                                                                                                     | None                 |
+| `TTS_MODEL`                              | Model name sent to `TTS_BASE_URL` (`kokoro` for Kokoro-FastAPI)                                                                                    | `hexgrad/kokoro-82m` |
 | `LOG_LEVEL`                              | Minimum server log level: `debug`, `info`, `warn`, or `error`                                                                                      | `info`               |
 
 ## Development

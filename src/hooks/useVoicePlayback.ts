@@ -1,45 +1,32 @@
 'use client';
 
+import { useState, useRef, useCallback, useEffect, createContext, useContext } from 'react';
+import { z } from 'zod';
+import { getAuthToken } from '@/lib/auth-token';
 import {
-  useState,
-  useRef,
-  useCallback,
-  useEffect,
-  useMemo,
-  createContext,
-  useContext,
-} from 'react';
-import { splitTextIntoChunks, selectVoice } from '@/lib/tts';
-import { useSpeechSynthesisVoices } from './useSpeechSynthesisVoices';
+  IDLE_SPEECH_STATE,
+  SpeechPlayer,
+  type SpeechItem,
+  type SpeechPlayerState,
+} from '@/lib/speech-player';
 
-/** Item in the sequential playback queue */
-interface PlaybackQueueItem {
-  messageId: string;
-  text: string;
-}
-
-export interface VoicePlaybackState {
+export interface VoicePlaybackState extends SpeechPlayerState {
   enabled: boolean;
-  isPlaying: boolean;
-  currentMessageId: string | null;
-  supportsPause: boolean;
-  play: (messageId: string, text: string) => Promise<void>;
-  enqueue: (item: PlaybackQueueItem) => void;
+  play: (messageId: string, text: string) => void;
+  enqueue: (item: SpeechItem) => void;
   pause: () => void;
   stop: () => void;
-  restart: () => Promise<void>;
+  restart: () => void;
 }
 
 export const defaultPlaybackState: VoicePlaybackState = {
+  ...IDLE_SPEECH_STATE,
   enabled: false,
-  isPlaying: false,
-  currentMessageId: null,
-  supportsPause: false,
-  play: async () => {},
+  play: () => {},
   enqueue: () => {},
   pause: () => {},
   stop: () => {},
-  restart: async () => {},
+  restart: () => {},
 };
 
 export const VoicePlaybackContext = createContext<VoicePlaybackState>(defaultPlaybackState);
@@ -48,288 +35,95 @@ export function useVoicePlaybackContext() {
   return useContext(VoicePlaybackContext);
 }
 
-/**
- * Returns a promise that resolves once speechSynthesis voices are available.
- * Chrome loads voices asynchronously; calling speak() before they're ready
- * causes "synthesis-failed". This waits for the voiceschanged event with a timeout.
- */
-function waitForVoices(synth: SpeechSynthesis): Promise<SpeechSynthesisVoice[]> {
-  const voices = synth.getVoices();
-  if (voices.length > 0) return Promise.resolve(voices);
+const speechResponseSchema = z.union([
+  z.object({ url: z.string() }),
+  z.object({ error: z.string() }),
+]);
 
-  return new Promise((resolve) => {
-    const onChanged = () => {
-      const v = synth.getVoices();
-      if (v.length > 0) {
-        synth.removeEventListener('voiceschanged', onChanged);
-        clearTimeout(timer);
-        resolve(v);
-      }
-    };
-    // Timeout after 2s — if no voices, resolve empty and let speak() fail gracefully
-    const timer = setTimeout(() => {
-      synth.removeEventListener('voiceschanged', onChanged);
-      resolve(synth.getVoices());
-    }, 2000);
-    synth.addEventListener('voiceschanged', onChanged);
+/** Ask the server to synthesize `text`; resolves to the URL its audio streams from. */
+async function requestSpeechUrl(text: string, signal?: AbortSignal): Promise<string> {
+  const token = getAuthToken();
+  const res = await fetch('/api/tts', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ text }),
+    signal,
   });
+  const body = speechResponseSchema.safeParse(await res.json().catch(() => null));
+  if (res.ok && body.success && 'url' in body.data) return body.data.url;
+  throw new Error(
+    body.success && 'error' in body.data ? body.data.error : `Speech request failed (${res.status})`
+  );
+}
+
+const MEDIA_TITLE_LENGTH = 80;
+
+function setMediaMetadata(item: SpeechItem | null): void {
+  if (!('mediaSession' in navigator)) return;
+  navigator.mediaSession.metadata = item
+    ? new MediaMetadata({
+        title: item.text.replace(/\s+/g, ' ').slice(0, MEDIA_TITLE_LENGTH),
+        artist: 'Claude',
+        artwork: [{ src: '/favicon-512x512.png', sizes: '512x512', type: 'image/png' }],
+      })
+    : null;
 }
 
 /**
- * TTS playback state via the browser's SpeechSynthesis API (no server calls or keys).
- *
- * SpeechSynthesis is uneven across engines. Quirks handled below: Chrome's utterance
- * length limit (chunking), async voice loading (waitForVoices), broken pause/resume on
- * Firefox and Android (supportsPause), and platforms that fail with an explicit voice
- * (one retry with the default). Known and not worked around: backgrounded tabs may
- * silence or cancel synthesis, and iOS needs a user activation before speak() sounds.
+ * Read-aloud through the server's Kokoro TTS (see SpeechPlayer), wired to the
+ * OS media controls. `enabled` is false when the server has no TTS configured.
+ * `autoRead` makes taps prime the player for unprompted playback; it's off
+ * otherwise because on iOS even silent playback pauses other apps' audio.
  */
-export function useVoicePlayback(
-  ttsSpeed: number = 1.0,
-  preferredVoiceURI: string | null = null
-): VoicePlaybackState {
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [currentMessageId, setCurrentMessageId] = useState<string | null>(null);
+export function useVoicePlayback(enabled: boolean, autoRead = false): VoicePlaybackState {
+  const [state, setState] = useState<SpeechPlayerState>(IDLE_SPEECH_STATE);
+  const playerRef = useRef<SpeechPlayer | null>(null);
 
-  // Track the current text for restart functionality
-  const currentTextRef = useRef<string | null>(null);
-
-  // Keep a ref to the current utterance to prevent Chrome from garbage-collecting it.
-  // Chrome GCs unreferenced utterances, causing onend to fire immediately.
-  // See https://bugs.chromium.org/p/chromium/issues/detail?id=509488
-  const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
-
-  // Voices load asynchronously; mirrored into a ref so speakText's closure stays fresh.
-  const voices = useSpeechSynthesisVoices();
-  const voicesRef = useRef<SpeechSynthesisVoice[]>(voices);
   useEffect(() => {
-    voicesRef.current = voices;
-  }, [voices]);
+    if (!enabled) return;
+    const player = new SpeechPlayer(new Audio(), requestSpeechUrl, setState);
+    playerRef.current = player;
 
-  // Sequential playback queue
-  const queueRef = useRef<PlaybackQueueItem[]>([]);
-  const playNextFromQueueRef = useRef<() => void>(() => {});
-  const isActiveRef = useRef(false);
+    const handlers: [MediaSessionAction, MediaSessionActionHandler][] = [
+      ['play', () => player.resume()],
+      ['pause', () => player.pause()],
+      ['stop', () => player.stop()],
+      ['nexttrack', () => player.next()],
+      ['previoustrack', () => player.restart()],
+    ];
+    const mediaSession = 'mediaSession' in navigator ? navigator.mediaSession : null;
+    for (const [action, handler] of handlers) mediaSession?.setActionHandler(action, handler);
 
-  // Pause/resume is broken on Firefox (pause acts as cancel) and Android (resume doesn't work)
-  const supportsPause = useMemo(() => {
-    if (typeof navigator === 'undefined') return false;
-    const ua = navigator.userAgent;
-    if (ua.includes('Firefox')) return false;
-    if (ua.includes('Android')) return false;
-    return true;
-  }, []);
-
-  // TTS speed ref (avoid stale closures)
-  const ttsSpeedRef = useRef(ttsSpeed);
-  useEffect(() => {
-    ttsSpeedRef.current = ttsSpeed;
-  }, [ttsSpeed]);
-
-  // Preferred voice URI ref
-  const preferredVoiceURIRef = useRef(preferredVoiceURI);
-  useEffect(() => {
-    preferredVoiceURIRef.current = preferredVoiceURI;
-  }, [preferredVoiceURI]);
-
-  // --- Core speak function ---
-
-  const speakText = useCallback(async (messageId: string, text: string) => {
-    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
-
-    const synth = window.speechSynthesis;
-
-    // Cancel any ongoing speech, but only if actually speaking/pending
-    if (synth.speaking || synth.pending) {
-      synth.cancel();
-    }
-
-    isActiveRef.current = true;
-    setCurrentMessageId(messageId);
-    setIsPlaying(true);
-    currentTextRef.current = text;
-
-    // Ensure voices are loaded — Chrome loads them asynchronously and
-    // speak() fails with "synthesis-failed" if called before they're ready
-    if (voicesRef.current.length === 0) {
-      voicesRef.current = await waitForVoices(synth);
-    }
-
-    // Null when no voices loaded, in which case the browser picks its default.
-    const selectedVoice = selectVoice(
-      voicesRef.current,
-      preferredVoiceURIRef.current,
-      navigator.language
-    );
-
-    const chunks = splitTextIntoChunks(text);
-    let currentChunk = 0;
-    let stopped = false;
-    let retriedWithoutVoice = false;
-
-    const speakNextChunk = () => {
-      if (stopped) return;
-
-      if (currentChunk >= chunks.length) {
-        // All chunks done
-        utteranceRef.current = null;
-        setIsPlaying(false);
-        setCurrentMessageId(null);
-        currentTextRef.current = null;
-        playNextFromQueueRef.current();
-        return;
-      }
-
-      const utterance = new SpeechSynthesisUtterance(chunks[currentChunk]);
-      utterance.rate = ttsSpeedRef.current;
-      // Only set voice if we have one and haven't failed with it already
-      if (selectedVoice && !retriedWithoutVoice) {
-        utterance.voice = selectedVoice;
-      }
-
-      // Store in ref to prevent Chrome from garbage-collecting the utterance
-      utteranceRef.current = utterance;
-
-      utterance.onend = () => {
-        currentChunk++;
-        speakNextChunk();
-      };
-
-      utterance.onerror = (event) => {
-        if (event.error === 'interrupted' || event.error === 'canceled') {
-          // Expected when stopping/switching — don't reset state here,
-          // the stop() function handles that.
-          return;
-        }
-        // On synthesis-failed, retry once without setting an explicit voice.
-        // Some platforms (especially Android) fail when a voice is explicitly set.
-        if (event.error === 'synthesis-failed' && selectedVoice && !retriedWithoutVoice) {
-          retriedWithoutVoice = true;
-          speakNextChunk();
-          return;
-        }
-        stopped = true;
-        utteranceRef.current = null;
-        queueRef.current = [];
-        isActiveRef.current = false;
-        setIsPlaying(false);
-        setCurrentMessageId(null);
-        currentTextRef.current = null;
-      };
-
-      synth.speak(utterance);
-    };
-
-    speakNextChunk();
-  }, []);
-
-  // Wire up playNextFromQueue
-  useEffect(() => {
-    playNextFromQueueRef.current = () => {
-      const next = queueRef.current.shift();
-      if (next) {
-        speakText(next.messageId, next.text);
-      } else {
-        isActiveRef.current = false;
-        setIsPlaying(false);
-        setCurrentMessageId(null);
-      }
-    };
-  }, [speakText]);
-
-  const stop = useCallback(() => {
-    utteranceRef.current = null;
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-    }
-    queueRef.current = [];
-    isActiveRef.current = false;
-    setIsPlaying(false);
-    setCurrentMessageId(null);
-    currentTextRef.current = null;
-  }, []);
-
-  const pause = useCallback(() => {
-    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
-
-    if (!supportsPause) {
-      // Firefox: pause() acts as cancel() — https://bugzilla.mozilla.org/show_bug.cgi?id=1038508
-      // Android: resume() doesn't work — https://issues.chromium.org/issues/40459219
-      stop();
-      return;
-    }
-
-    window.speechSynthesis.pause();
-    setIsPlaying(false);
-  }, [stop, supportsPause]);
-
-  const restart = useCallback(async () => {
-    const text = currentTextRef.current;
-    const msgId = currentMessageId;
-    if (text && msgId) {
-      speakText(msgId, text);
-    }
-  }, [currentMessageId, speakText]);
-
-  // --- Main play function ---
-
-  const play = useCallback(
-    async (messageId: string, text: string) => {
-      // Clear any pending queue when user manually plays a message
-      queueRef.current = [];
-
-      // If we're playing the same message, toggle pause/play
-      if (currentMessageId === messageId) {
-        if (isPlaying) {
-          pause();
-        } else if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-          // Resume (only reachable on platforms where supportsPause is true,
-          // since pause() calls stop() on unsupported platforms which clears currentMessageId)
-          window.speechSynthesis.resume();
-          setIsPlaying(true);
-        }
-        return;
-      }
-
-      speakText(messageId, text);
-    },
-    [currentMessageId, isPlaying, speakText, pause]
-  );
-
-  // --- Enqueue ---
-
-  const enqueue = useCallback(
-    (item: PlaybackQueueItem) => {
-      if (isActiveRef.current) {
-        queueRef.current.push(item);
-        return;
-      }
-      speakText(item.messageId, item.text);
-    },
-    [speakText]
-  );
-
-  // Clean up on unmount
-  useEffect(() => {
     return () => {
-      utteranceRef.current = null;
-      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-        window.speechSynthesis.cancel();
-      }
-      queueRef.current = [];
-      isActiveRef.current = false;
+      for (const [action] of handlers) mediaSession?.setActionHandler(action, null);
+      setMediaMetadata(null);
+      player.destroy();
+      playerRef.current = null;
     };
-  }, []);
+  }, [enabled]);
 
-  return {
-    enabled: true,
-    isPlaying,
-    currentMessageId,
-    supportsPause,
-    play,
-    enqueue,
-    pause,
-    stop,
-    restart,
-  };
+  useEffect(() => {
+    const player = playerRef.current;
+    if (!enabled || !autoRead || !player) return;
+    const prime = () => player.prime();
+    document.addEventListener('pointerdown', prime, { capture: true });
+    return () => document.removeEventListener('pointerdown', prime, { capture: true });
+  }, [enabled, autoRead]);
+
+  useEffect(() => {
+    setMediaMetadata(playerRef.current?.currentItem ?? null);
+  }, [state.currentMessageId]);
+
+  const play = useCallback((messageId: string, text: string) => {
+    playerRef.current?.play({ messageId, text });
+  }, []);
+  const enqueue = useCallback((item: SpeechItem) => playerRef.current?.enqueue(item), []);
+  const pause = useCallback(() => playerRef.current?.pause(), []);
+  const stop = useCallback(() => playerRef.current?.stop(), []);
+  const restart = useCallback(() => playerRef.current?.restart(), []);
+
+  return { ...state, enabled, play, enqueue, pause, stop, restart };
 }

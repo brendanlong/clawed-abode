@@ -2,6 +2,7 @@
 
 import { useCallback, useMemo, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
+import { Spinner } from '@/components/ui/spinner';
 import { X, Mic, Square, Play, Pause, SkipBack, SkipForward, Send } from 'lucide-react';
 import { useVoicePlaybackContext } from '@/hooks/useVoicePlayback';
 import { useVoiceRecording } from '@/hooks/useVoiceRecording';
@@ -147,14 +148,12 @@ export function VoiceControlPanel({
     }
   }, [currentIndex, assistantTextMessages, playback]);
 
-  // Play/pause/stop toggle
+  // Play/pause toggle; while audio is still being prepared, a tap cancels it.
   const handlePlayPause = useCallback(() => {
-    if (playback.isPlaying) {
-      if (playback.supportsPause) {
-        playback.pause();
-      } else {
-        playback.stop();
-      }
+    if (playback.isLoading) {
+      playback.stop();
+    } else if (playback.isPlaying) {
+      playback.pause();
     } else if (playback.currentMessageId) {
       // Resume the current message
       const entry = assistantTextMessages.find((m) => m.id === playback.currentMessageId);
@@ -241,50 +240,48 @@ export function VoiceControlPanel({
       {sendError && <p className="text-center text-sm text-destructive px-4 pb-2">{sendError}</p>}
 
       {/* Playback controls row */}
-      <div className="px-4 py-2">
-        <div className="flex items-center justify-center gap-3">
-          <Button
-            variant="outline"
-            size="icon"
-            className="h-12 w-12 rounded-full"
-            onClick={handlePrev}
-            disabled={!hasPrev}
-            title="Previous message"
-          >
-            <SkipBack className="h-5 w-5" />
-          </Button>
+      {playback.enabled && (
+        <div className="px-4 py-2">
+          <div className="flex items-center justify-center gap-3">
+            <Button
+              variant="outline"
+              size="icon"
+              className="h-12 w-12 rounded-full"
+              onClick={handlePrev}
+              disabled={!hasPrev}
+              title="Previous message"
+            >
+              <SkipBack className="h-5 w-5" />
+            </Button>
 
-          <Button
-            variant={playback.isPlaying ? 'secondary' : 'default'}
-            size="icon"
-            className="h-12 w-12 rounded-full"
-            onClick={handlePlayPause}
-            disabled={!hasPlayableContent && !playback.isPlaying}
-            title={playback.isPlaying ? (playback.supportsPause ? 'Pause' : 'Stop') : 'Play'}
-          >
-            {playback.isPlaying ? (
-              playback.supportsPause ? (
+            <Button
+              variant={playback.isPlaying ? 'secondary' : 'default'}
+              size="icon"
+              className="h-12 w-12 rounded-full"
+              onClick={handlePlayPause}
+              disabled={!hasPlayableContent && !playback.currentMessageId}
+              title={playback.isLoading ? 'Cancel' : playback.isPlaying ? 'Pause' : 'Play'}
+            >
+              {playback.isLoading ? (
+                <Spinner size="sm" className="h-5 w-5" />
+              ) : playback.isPlaying ? (
                 <Pause className="h-5 w-5" />
               ) : (
-                <Square className="h-5 w-5" />
-              )
-            ) : (
-              <Play className="h-5 w-5" />
-            )}
-          </Button>
+                <Play className="h-5 w-5" />
+              )}
+            </Button>
 
-          <Button
-            variant="outline"
-            size="icon"
-            className="h-12 w-12 rounded-full"
-            onClick={handleNext}
-            disabled={!hasNext}
-            title="Next message"
-          >
-            <SkipForward className="h-5 w-5" />
-          </Button>
+            <Button
+              variant="outline"
+              size="icon"
+              className="h-12 w-12 rounded-full"
+              onClick={handleNext}
+              disabled={!hasNext}
+              title="Next message"
+            >
+              <SkipForward className="h-5 w-5" />
+            </Button>
 
-          {playback.supportsPause && (
             <Button
               variant="outline"
               size="icon"
@@ -295,9 +292,14 @@ export function VoiceControlPanel({
             >
               <Square className="h-5 w-5" />
             </Button>
+          </div>
+          {playback.error && (
+            <p className="text-center text-sm text-destructive pt-2">
+              Read aloud failed: {playback.error.message}
+            </p>
           )}
         </div>
-      </div>
+      )}
 
       {/* Large mic button + interrupt */}
       <div className="px-4 py-3">

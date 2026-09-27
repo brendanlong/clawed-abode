@@ -79,7 +79,12 @@ Opt-in (`PUBLIC_FILES_PORT` + `PUBLIC_FILES_URL`): a second HTTP server in the s
 
 ## Voice
 
-Speech input/output uses the browser's Web Speech APIs only (no keys, no server audio). Auto-read (speak replies aloud) is a per-session, per-device preference in `localStorage`; Voice Auto-Send (send a transcript immediately vs. land it in the composer for editing) and TTS speed are global server settings. Hooks: [`useVoiceRecording`](../src/hooks/useVoiceRecording.ts), [`useVoicePlayback`](../src/hooks/useVoicePlayback.ts) (which documents the browser quirks the playback code works around), [`useVoiceConfig`](../src/hooks/useVoiceConfig.ts); UI in [`src/components/voice/`](../src/components/voice/).
+Speech input uses the browser's `SpeechRecognition` ([`useVoiceRecording`](../src/hooks/useVoiceRecording.ts)). Read-aloud is Kokoro only, through any OpenAI-compatible `/audio/speech` API (OpenRouter or a local Kokoro-FastAPI; opt-in with `TTS_BASE_URL`). There is deliberately no browser-voice fallback: two playback engines weren't worth it for a provider this cheap in an app that needs the network anyway.
+
+- The server ([`speech-store.ts`](../src/server/services/speech-store.ts)) synthesizes a message in chunks and streams them as one MP3, cached in memory so replays are free. Because an `<audio>` element can't send the bearer token, the authenticated `POST /api/tts` mints an unguessable `/api/tts/{id}` for it (see [`security.md`](security.md)).
+- The client ([`SpeechPlayer`](../src/lib/speech-player.ts), wired by [`useVoicePlayback`](../src/hooks/useVoicePlayback.ts)) plays every message through one long-lived `<audio>` element with Media Session metadata, so OS media controls and the lock screen work. Plain `<audio src>` rather than MSE: iOS MSE support for MP3 is uncertain and a stream needs nothing more.
+
+Voice, speed, and Voice Auto-Send are global server settings. Auto-read is a per-session, per-device preference in `localStorage`.
 
 ## Remote File Editing
 
