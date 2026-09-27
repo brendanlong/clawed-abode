@@ -12,6 +12,7 @@ vi.mock('@/lib/prisma', () => ({ prisma: {} }));
 
 // Import the router after mocks are set up
 import { githubRouter } from './github';
+import { _clearConditionalGetCaches } from '../services/github';
 import { router } from '../trpc';
 
 // Create a test caller with proper context
@@ -39,6 +40,7 @@ describe('githubRouter', () => {
     vi.clearAllMocks();
     process.env.GITHUB_TOKEN = 'test-github-token';
     resetEnvCache();
+    _clearConditionalGetCaches();
   });
 
   afterEach(() => {
@@ -181,6 +183,52 @@ describe('githubRouter', () => {
       await expect(caller.github.listRepos()).rejects.toMatchObject({
         code: 'UNAUTHORIZED',
       });
+    });
+  });
+
+  describe('conditional requests', () => {
+    const sentHeaders = (call: number): Record<string, string> =>
+      mockFetch.mock.calls[call][1].headers;
+    const repo = {
+      id: 1,
+      full_name: 'owner/repo1',
+      name: 'repo1',
+      owner: { login: 'owner' },
+      description: null,
+      private: false,
+      default_branch: 'main',
+    };
+
+    it('replays the repo list on a 304', async () => {
+      mockFetch.mockResolvedValueOnce(createMockResponse([repo], 200, { etag: '"r1"' }));
+      const caller = createCaller('auth-session-id');
+      const first = await caller.github.listRepos();
+
+      mockFetch.mockResolvedValueOnce(createMockResponse(null, 304));
+      const second = await caller.github.listRepos();
+
+      expect(sentHeaders(1)['If-None-Match']).toBe('"r1"');
+      expect(second).toEqual(first);
+    });
+
+    it('replays the default branch and branch pages on a 304', async () => {
+      mockFetch.mockImplementation(async (url: string) =>
+        url.includes('/branches')
+          ? createMockResponse([{ name: 'dev' }, { name: 'main' }], 200, { etag: '"b1"' })
+          : createMockResponse({ default_branch: 'main' }, 200, { etag: '"m1"' })
+      );
+      const caller = createCaller('auth-session-id');
+      const first = await caller.github.listBranches({ repoFullName: 'owner/repo' });
+
+      mockFetch.mockResolvedValue(createMockResponse(null, 304));
+      const second = await caller.github.listBranches({ repoFullName: 'owner/repo' });
+
+      expect(second).toEqual(first);
+      expect(second.branches).toEqual(['main', 'dev']);
+      expect([sentHeaders(2)['If-None-Match'], sentHeaders(3)['If-None-Match']].sort()).toEqual([
+        '"b1"',
+        '"m1"',
+      ]);
     });
   });
 

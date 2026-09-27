@@ -4,11 +4,12 @@ import { TRPCError } from '@trpc/server';
 import { env } from '@/lib/env';
 import { defaultBranchFirst } from '@/lib/branch-list';
 import {
-  githubFetch,
+  ConditionalGetCache,
   githubFetchResponse,
   githubFetchAllPages,
   parseLinkHeader,
   GitHubApiError,
+  type ListPage,
 } from '../services/github';
 
 const repoSchema = z.object({
@@ -23,6 +24,13 @@ const repoSchema = z.object({
 type GitHubRepo = z.infer<typeof repoSchema>;
 
 const branchSchema = z.object({ name: z.string() });
+const defaultBranchSchema = z.object({ default_branch: z.string() });
+
+// The pickers refetch these every time they open. Zod strips unknown keys, so
+// cached pages hold only the fields above, not GitHub's full objects.
+const repoPageCache = new ConditionalGetCache<ListPage<GitHubRepo>>(20);
+const branchPageCache = new ConditionalGetCache<ListPage<z.infer<typeof branchSchema>>>(200);
+const defaultBranchCache = new ConditionalGetCache<string>(100);
 
 interface GitHubIssue {
   id: number;
@@ -84,7 +92,8 @@ export const githubRouter = router({
     const { items, truncated } = await githubFetchAllPages(
       '/user/repos?sort=updated',
       repoSchema,
-      ctx.githubToken
+      ctx.githubToken,
+      repoPageCache
     );
 
     // Pages are fetched in parallel, so a repo updated mid-walk can appear on two.
@@ -112,17 +121,26 @@ export const githubRouter = router({
     )
     .query(async ({ ctx, input }) => {
       const token = ctx.githubToken;
-      const [repo, { items, truncated }] = await Promise.all([
-        githubFetch<GitHubRepo>(`/repos/${input.repoFullName}`, token),
-        githubFetchAllPages(`/repos/${input.repoFullName}/branches`, branchSchema, token),
+      const [defaultBranch, { items, truncated }] = await Promise.all([
+        defaultBranchCache.fetch(
+          `/repos/${input.repoFullName}`,
+          token,
+          async (response) => defaultBranchSchema.parse(await response.json()).default_branch
+        ),
+        githubFetchAllPages(
+          `/repos/${input.repoFullName}/branches`,
+          branchSchema,
+          token,
+          branchPageCache
+        ),
       ]);
 
       return {
         branches: defaultBranchFirst(
           items.map((b) => b.name),
-          repo.default_branch
+          defaultBranch
         ),
-        defaultBranch: repo.default_branch,
+        defaultBranch,
         truncated,
       };
     }),
