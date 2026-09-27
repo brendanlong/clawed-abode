@@ -6,6 +6,7 @@ import type {
   ToolResultMap,
 } from './types';
 import { formatAsJson, buildToolMessages } from './types';
+import { getParentToolUseId } from '@/lib/claude-messages';
 import { isPlanFile, reconstructPlansByToolUseId, type PlanEvent } from './plan-utils';
 
 /**
@@ -140,16 +141,6 @@ export function isToolCallOnlyMessage(content: MessageContent): boolean {
     blocks.some((block) => block.type === 'tool_use') &&
     blocks.every((block) => block.type === 'tool_use' || !isRenderableBlock(block))
   );
-}
-
-/**
- * The tool_use id of the Task that spawned this message, or null for a top-level
- * (main-agent) message. Subagent messages carry `parent_tool_use_id`.
- */
-export function getParentToolUseId(content: unknown): string | null {
-  if (!content || typeof content !== 'object') return null;
-  const parent = (content as Record<string, unknown>).parent_tool_use_id;
-  return typeof parent === 'string' ? parent : null;
 }
 
 /**

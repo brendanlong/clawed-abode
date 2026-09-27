@@ -8,9 +8,9 @@
  *   stream concurrently, so there is one partial per stream, keyed by
  *   `parent_tool_use_id`; each new snapshot replaces its stream's previous one. They
  *   sit after the complete messages on the newest page.
- * - **Complete** messages are persisted. A complete assistant message supersedes its
- *   own stream's partial, and a turn `result` supersedes them all (a stream cut
- *   off by an interrupt never completes). It is inserted by `sequence`, deduped by id — a re-delivered id is
+ * - **Complete** messages are persisted. An assistant or user message supersedes
+ *   its own stream's partial; a turn `result` or an error supersedes them all (a
+ *   stream cut off by an interrupt, crash, or stop never completes). It is inserted by `sequence`, deduped by id — a re-delivered id is
  *   ignored rather than merged, so the cache never reconciles an edit. The one way
  *   a complete message leaves is {@link removeMessageFromCache}, when the server
  *   deletes the row outright.
@@ -21,6 +21,8 @@
  * persisted messages out of order; the message list relies on that ordering
  * instead of re-sorting.
  */
+
+import { getParentToolUseId } from './claude-messages';
 
 /** Prefix for transient streaming (partial) message ids. */
 export const PARTIAL_MESSAGE_ID_PREFIX = 'partial-';
@@ -42,10 +44,16 @@ export interface MessageLike {
 }
 
 function supersedesPartial(message: MessageLike, partialId: string): boolean {
-  if (message.type === 'result') return true;
-  if (message.type !== 'assistant') return false;
-  const content = message.content as { parent_tool_use_id?: string | null } | null | undefined;
-  return partialId === partialMessageId(content?.parent_tool_use_id ?? null);
+  if (message.type === 'result' || isErrorMessage(message)) return true;
+  if (message.type !== 'assistant' && message.type !== 'user') return false;
+  return partialId === partialMessageId(getParentToolUseId(message.content));
+}
+
+function isErrorMessage(message: MessageLike): boolean {
+  return (
+    message.type === 'system' &&
+    (message.content as { subtype?: unknown } | null | undefined)?.subtype === 'error'
+  );
 }
 
 interface MessagePage<M extends MessageLike> {

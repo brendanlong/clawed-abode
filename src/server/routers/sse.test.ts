@@ -138,14 +138,14 @@ describe('createEventQueue', () => {
     type Ev = { id: string; partial: boolean; n: number };
     const coalesceKey = (e: Ev) => (e.partial ? e.id : undefined);
 
-    it('replaces a buffered event with the same key in place instead of appending', () => {
+    it('drops a buffered event with the same key and appends its replacement', () => {
       const h = harness<Ev>({ coalesceKey });
       h.push({ id: 'p1', partial: true, n: 1 });
       h.push({ id: 'c1', partial: false, n: 2 });
       h.push({ id: 'p1', partial: true, n: 3 });
       expect(h.queue).toEqual([
-        { id: 'p1', partial: true, n: 3 },
         { id: 'c1', partial: false, n: 2 },
+        { id: 'p1', partial: true, n: 3 },
       ]);
     });
 

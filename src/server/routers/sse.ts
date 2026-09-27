@@ -28,10 +28,10 @@ export const MAX_QUEUED_EVENTS = 1000;
 interface EventQueueOptions<T> {
   maxQueued?: number;
   /**
-   * Events with the same key supersede each other: a new one replaces the buffered
-   * one in place instead of appending. Used for partial-message snapshots, which
-   * each carry the whole accumulated message, so a stalled consumer holds one
-   * snapshot per streaming message rather than one per delta.
+   * Events with the same key supersede each other: a new one drops the buffered one
+   * and is appended, so it stays ordered after anything pushed in between. Used for
+   * partial-message snapshots, which each carry the whole accumulated message, so a
+   * stalled consumer holds one snapshot per stream rather than one per delta.
    */
   coalesceKey?: (event: T) => string | undefined;
 }
@@ -56,7 +56,8 @@ export function createEventQueue<T>(
     const key = coalesceKey?.(event);
     const existing = key === undefined ? -1 : queue.findIndex((e) => coalesceKey?.(e) === key);
     if (existing !== -1) {
-      queue[existing] = event;
+      queue.splice(existing, 1);
+      queue.push(event);
     } else if (queue.length < maxQueued) {
       queue.push(event);
     } else {

@@ -265,3 +265,13 @@ export function classifyMessage(message: SDKMessage): MessageHandling {
       return assertNeverFallback(message, { kind: 'persist', dbType: 'system' });
   }
 }
+
+/**
+ * The tool_use id of the Task that spawned this message, or null for a top-level
+ * (main-agent) message. Subagent messages carry `parent_tool_use_id`.
+ */
+export function getParentToolUseId(content: unknown): string | null {
+  if (!content || typeof content !== 'object') return null;
+  const parent = (content as Record<string, unknown>).parent_tool_use_id;
+  return typeof parent === 'string' ? parent : null;
+}

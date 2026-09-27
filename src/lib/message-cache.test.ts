@@ -105,6 +105,24 @@ describe('mergeMessageIntoCache', () => {
     ]);
   });
 
+  it('drops the main partial when a user prompt arrives after a stopped stream', () => {
+    const result = mergeMessageIntoCache(cache([[complete('a', 0), partial(null, 1)]]), {
+      id: 'u',
+      sequence: 1,
+      type: 'user',
+      content: { type: 'user', parent_tool_use_id: null },
+    });
+    expect(result.pages[0].messages.map((m) => m.id)).toEqual(['a', 'u']);
+  });
+
+  it('drops every partial when the query dies with an error', () => {
+    const result = mergeMessageIntoCache(
+      cache([[complete('a', 0), partial(null, 1), partial('task-1', 1)]]),
+      { id: 'e', sequence: 1, type: 'system', content: { type: 'system', subtype: 'error' } }
+    );
+    expect(result.pages[0].messages.map((m) => m.id)).toEqual(['a', 'e']);
+  });
+
   it('keeps partials after a complete non-assistant message', () => {
     const result = mergeMessageIntoCache(
       cache([[complete('a', 0), partial(null, 1)]]),

@@ -12,7 +12,6 @@ import {
   isHiddenSystemMessage,
   isToolCallOnlyMessage,
   isVisibleTranscriptMessage,
-  getParentToolUseId,
   groupSubagentMessages,
   computeSubagentPlacements,
   toolUseBlocks,
@@ -634,19 +633,6 @@ describe('isVisibleTranscriptMessage', () => {
         new Set()
       )
     ).toBe(false);
-  });
-});
-
-describe('getParentToolUseId', () => {
-  it('returns the parent id for a subagent message', () => {
-    expect(getParentToolUseId({ parent_tool_use_id: 'task-1' })).toBe('task-1');
-  });
-
-  it('returns null for top-level messages and non-objects', () => {
-    expect(getParentToolUseId({ parent_tool_use_id: null })).toBeNull();
-    expect(getParentToolUseId({})).toBeNull();
-    expect(getParentToolUseId(undefined)).toBeNull();
-    expect(getParentToolUseId('string')).toBeNull();
   });
 });
 

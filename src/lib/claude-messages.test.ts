@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import {
   classifyMessage,
+  getParentToolUseId,
   parseCommandLifecycle,
   isIgnoredSystemMessage,
   parseRetryState,
@@ -241,5 +242,18 @@ describe('claude-messages', () => {
       expect(initSessionId({ type: 'system', subtype: 'status', session_id: 's' })).toBeNull();
       expect(initSessionId(null)).toBeNull();
     });
+  });
+});
+
+describe('getParentToolUseId', () => {
+  it('returns the parent id for a subagent message', () => {
+    expect(getParentToolUseId({ parent_tool_use_id: 'task-1' })).toBe('task-1');
+  });
+
+  it('returns null for top-level messages and non-objects', () => {
+    expect(getParentToolUseId({ parent_tool_use_id: null })).toBeNull();
+    expect(getParentToolUseId({})).toBeNull();
+    expect(getParentToolUseId(undefined)).toBeNull();
+    expect(getParentToolUseId('string')).toBeNull();
   });
 });
