@@ -16,7 +16,7 @@ export function RawJsonDisplay({ content, label }: { content: unknown; label?: s
   const getJsonText = useCallback(() => formatAsJson(content), [content]);
 
   return (
-    <div className="group">
+    <div>
       <Collapsible open={expanded} onOpenChange={setExpanded}>
         <Card className="border-dashed border-amber-300 dark:border-amber-700">
           <CollapsibleTrigger className="w-full px-3 py-2 text-left flex items-center justify-between text-sm hover:bg-muted/50 rounded-t-xl">

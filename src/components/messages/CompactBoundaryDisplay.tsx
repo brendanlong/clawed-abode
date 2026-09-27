@@ -25,7 +25,7 @@ export function CompactBoundaryDisplay({ content }: { content: CompactBoundaryCo
   const preTokens = content.compact_metadata?.pre_tokens;
 
   return (
-    <div className="group">
+    <div>
       <div className="flex items-center gap-2 text-sm p-2">
         <div className="flex-1 border-t border-dashed border-border" />
         <Badge variant="secondary" className="shrink-0">

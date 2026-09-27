@@ -73,7 +73,7 @@ export function MainMessageBubble({
   }, [isAssistant, isPartial, messageId, playback.enabled, content, category, toolCalls]);
 
   return (
-    <div className="group max-w-[85%]">
+    <div className="max-w-[85%]">
       <div
         className={cn('rounded-lg p-4', {
           'bg-primary text-primary-foreground ml-auto': isUser,
@@ -126,7 +126,7 @@ export function MainMessageBubble({
             <MessagePlayButton
               messageId={messageId}
               text={textForPlayback}
-              className="h-6 px-2 text-xs opacity-0 group-hover:opacity-100 transition-opacity"
+              className="h-6 px-2 text-xs"
             />
           )}
           {isUser && <MessageTimestamp createdAt={createdAt} />}
