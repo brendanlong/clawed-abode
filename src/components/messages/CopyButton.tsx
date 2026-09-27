@@ -27,12 +27,7 @@ export function CopyButton({ getText }: { getText: () => string }) {
   }, [getText]);
 
   return (
-    <Button
-      variant="ghost"
-      size="sm"
-      onClick={handleCopy}
-      className="h-6 px-2 text-xs opacity-0 group-hover:opacity-100 transition-opacity"
-    >
+    <Button variant="ghost" size="sm" onClick={handleCopy} className="h-6 px-2 text-xs">
       {copied ? 'Copied!' : 'Copy'}
     </Button>
   );

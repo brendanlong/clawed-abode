@@ -29,7 +29,7 @@ export function ToolResultDisplay({ results }: { results: ContentBlock[] }) {
     .filter((info): info is NonNullable<typeof info> => info !== null);
 
   return (
-    <div className="group">
+    <div>
       {sanitizations.length > 0 && (
         <div className="mb-1 flex flex-wrap gap-1">
           {sanitizations.map((info, index) => (

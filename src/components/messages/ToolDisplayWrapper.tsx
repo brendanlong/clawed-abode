@@ -79,7 +79,7 @@ export function ToolDisplayWrapper({
   const resolvedDoneBadge = doneBadge === undefined ? defaultDoneBadge : doneBadge;
 
   return (
-    <div className="group">
+    <div>
       <Collapsible open={expanded} onOpenChange={onOpenChange}>
         <Card
           className={cn(

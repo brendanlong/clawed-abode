@@ -112,7 +112,7 @@ export function ResultDisplay({
   const resultText = content.result;
 
   return (
-    <div className="group">
+    <div>
       <Collapsible open={expanded} onOpenChange={setExpanded}>
         <CollapsibleTrigger className="w-full text-left flex items-center gap-2 text-sm hover:bg-muted/50 rounded p-2">
           <Badge

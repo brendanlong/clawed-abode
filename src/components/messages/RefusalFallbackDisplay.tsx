@@ -27,7 +27,7 @@ export function RefusalFallbackDisplay({ content }: { content: MessageContent })
     undefined;
 
   return (
-    <div className="group w-full">
+    <div className="w-full">
       <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100">
         <div className="flex items-center gap-2">
           <ShieldAlert className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
