@@ -28,7 +28,7 @@ interface GitHubPullRequest {
 // GitHub API helpers
 // =============================================================================
 
-/** A 304 passes through (it's only possible when the caller sent `If-None-Match`). */
+/** A 304 is returned rather than thrown only when the caller asked for one with `If-None-Match`. */
 export async function githubFetchResponse(
   path: string,
   token?: string,
@@ -46,7 +46,8 @@ export async function githubFetchResponse(
 
   const response = await fetch(`${GITHUB_API}${path}`, { headers });
 
-  if (!response.ok && response.status !== 304) {
+  const notModified = response.status === 304 && extraHeaders?.['If-None-Match'] !== undefined;
+  if (!response.ok && !notModified) {
     throw new GitHubApiError(response.status, path, await readApiMessage(response));
   }
 

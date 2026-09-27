@@ -112,6 +112,10 @@ describe('mayChangeBranchOrPr', () => {
     'gh pr create --title T --body B',
     'gh pr merge 12 --squash',
     'gh pr ready',
+    'gh pr new',
+    'gh pr checkout 12',
+    'gh -R owner/repo pr create --fill',
+    'git branch -m renamed',
   ])('matches %s', (command) => {
     expect(bash(command)).toBe(true);
   });
@@ -124,6 +128,7 @@ describe('mayChangeBranchOrPr', () => {
     'gh pr checks',
     'pnpm test:run',
     'echo git; push',
+    'git branch -a',
   ])('ignores %s', (command) => {
     expect(bash(command)).toBe(false);
   });
@@ -133,6 +138,12 @@ describe('mayChangeBranchOrPr', () => {
     expect(mayChangeBranchOrPr('mcp__github__merge_pull_request', {})).toBe(true);
     expect(mayChangeBranchOrPr('mcp__GitHub__update_pull_request_branch', {})).toBe(true);
     expect(mayChangeBranchOrPr('mcp__GitHub__pull_request_read', {})).toBe(false);
+  });
+
+  it('ignores backgrounded Bash, whose hook fires before the command runs', () => {
+    expect(mayChangeBranchOrPr('Bash', { command: 'git push', run_in_background: true })).toBe(
+      false
+    );
   });
 
   it('ignores non-Bash tools and malformed Bash input', () => {

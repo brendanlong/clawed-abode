@@ -33,8 +33,7 @@ export function serializePullRequest(pullRequest: PullRequestInfo | null): strin
 
 /**
  * How long a `Session.pullRequest` snapshot is trusted before it's re-fetched.
- * Short because unchanged re-fetches are conditional requests that cost no rate
- * limit (see `fetchPullRequestForBranch`).
+ * Short because unchanged re-fetches are free (see `fetchPullRequestForBranch`).
  */
 export const PR_SNAPSHOT_TTL_MS = 60 * 1000;
 
@@ -70,20 +69,32 @@ export function isPrSnapshotStale(session: PrRefreshCandidate, now: number): boo
   return session.prCheckedAt === null || now - session.prCheckedAt.getTime() >= ttlMs;
 }
 
-const BRANCH_OR_PR_COMMAND =
-  /\bgit\b[^;&|\n]*\s(?:checkout|switch|push|merge)\b|\bgh\s+pr\s+(?:create|merge|close|reopen|ready|edit)\b/;
+const BRANCH_OR_PR_COMMAND = new RegExp(
+  [
+    String.raw`\bgit\b[^;&|\n]*\s(?:checkout|switch|push|merge|branch\s+-[mM])\b`,
+    String.raw`\bgh\b[^;&|\n]*\spr\s+(?:create|new|checkout|merge|close|reopen|ready|edit)\b`,
+  ].join('|')
+);
 const PR_MCP_TOOL = /^mcp__.+__(?:create|merge|update)_pull_request/;
 
-const bashInputSchema = z.object({ command: z.string() });
+const bashInputSchema = z.object({
+  command: z.string(),
+  run_in_background: z.boolean().optional(),
+});
 
 /**
  * Whether a finished tool call may have moved the session's branch or changed
  * its PR, so the snapshot should be refreshed now rather than at turn end. False
- * positives only cost one (usually 304) lookup.
+ * positives only cost one (usually free) lookup. Backgrounded Bash is skipped:
+ * its hook fires at launch, before the command has done anything.
  */
 export function mayChangeBranchOrPr(toolName: string, toolInput: unknown): boolean {
   if (PR_MCP_TOOL.test(toolName)) return true;
   if (toolName !== 'Bash') return false;
   const parsed = bashInputSchema.safeParse(toolInput);
-  return parsed.success && BRANCH_OR_PR_COMMAND.test(parsed.data.command);
+  return (
+    parsed.success &&
+    !parsed.data.run_in_background &&
+    BRANCH_OR_PR_COMMAND.test(parsed.data.command)
+  );
 }

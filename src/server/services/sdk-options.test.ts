@@ -184,5 +184,9 @@ describe('buildSdkOptions', () => {
 
     await runHooks('Bash', 'git push -u origin HEAD');
     expect(mockScheduleRefresh).toHaveBeenCalledWith('sid', '/w');
+
+    mockScheduleRefresh.mockClear();
+    await runHooks('mcp__GitHub__merge_pull_request', '');
+    expect(mockScheduleRefresh).toHaveBeenCalledWith('sid', '/w');
   });
 });

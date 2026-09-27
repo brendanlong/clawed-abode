@@ -146,6 +146,11 @@ describe('github service', () => {
       expect(sentHeaders(2)['If-None-Match']).toBe('"v2"');
     });
 
+    it('treats a 304 nobody asked for as an error', async () => {
+      mockFetch.mockResolvedValue(createMockResponse(null, 304));
+      await expect(githubFetch('/repos/owner/repo', 'token')).rejects.toThrow(GitHubApiError);
+    });
+
     it('caches "no PR" too, and keys the cache by branch', async () => {
       mockFetch.mockResolvedValueOnce(createMockResponse([], 200, '"empty"'));
       expect(await fetchPullRequestForBranch('owner/repo', 'a')).toBeNull();

@@ -33,13 +33,19 @@ const prSnapshotSelect = {
  *
  * The write is conditional on `currentBranch` still being what `session` said,
  * so a turn that switches branches mid-fetch wins and we never pin one branch's
- * PR onto another's row.
+ * PR onto another's row. It's also conditional on no lookup that *started* later
+ * having written first — turn ends, tool calls and list polls overlap, and a slow
+ * pre-merge answer must not overwrite a post-merge one. Archived rows are
+ * read-only history (a refresh can be in flight when the session is deleted).
  */
 async function persistPrSnapshot(
   session: SessionRow,
   branch: string | null,
   branchUpdate?: { currentBranch: string }
 ): Promise<void> {
+  if (session.status === 'archived') return;
+  const startedAt = new Date();
+
   // A snapshot belongs to one branch: never carry it over to a new one.
   let pullRequest = branchUpdate ? null : session.pullRequest;
   if (session.repoUrl && branch) {
@@ -53,8 +59,13 @@ async function persistPrSnapshot(
     ...(pullRequest !== session.pullRequest ? { pullRequest } : {}),
   };
   const [updated] = await prisma.session.updateManyAndReturn({
-    where: { id: session.id, currentBranch: session.currentBranch },
-    data: { ...visibleChanges, prCheckedAt: new Date() },
+    where: {
+      id: session.id,
+      status: { not: 'archived' },
+      currentBranch: session.currentBranch,
+      OR: [{ prCheckedAt: null }, { prCheckedAt: { lt: startedAt } }],
+    },
+    data: { ...visibleChanges, prCheckedAt: startedAt },
   });
   if (updated && Object.keys(visibleChanges).length > 0) {
     sseEvents.emitSessionUpdate(session.id, updated);
@@ -63,7 +74,7 @@ async function persistPrSnapshot(
 
 /**
  * Detect a branch change and refresh the persisted PR status for the session
- * (fire-and-forget, called at each turn end). PR status lives on the Session row
+ * (fire-and-forget, called at each turn end and after branch/PR tool calls). PR status lives on the Session row
  * so the list never has to ask GitHub per row; one `session` event carries both
  * fields.
  */
