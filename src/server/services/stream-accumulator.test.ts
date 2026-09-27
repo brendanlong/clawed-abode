@@ -4,11 +4,11 @@ import { StreamAccumulator } from './stream-accumulator';
 /**
  * Helper to wrap a raw stream event in the message envelope the accumulator expects.
  */
-function event(e: Record<string, unknown>) {
+function event(e: Record<string, unknown>, parentToolUseId: string | null = null) {
   return {
     type: 'stream_event' as const,
     event: e as { type: string; [key: string]: unknown },
-    parent_tool_use_id: null,
+    parent_tool_use_id: parentToolUseId,
     uuid: 'uuid-1',
     session_id: 'session-1',
   };
@@ -118,5 +118,59 @@ describe('StreamAccumulator', () => {
       event({ type: 'content_block_start', index: 0, content_block: { type: 'redacted_thinking' } })
     );
     expect(partial).toBeNull();
+  });
+
+  describe('interleaved subagent streams', () => {
+    const start = (parent: string | null) =>
+      event({ type: 'message_start', message: { model: 'opus' } }, parent);
+    const textBlock = (parent: string | null) =>
+      event({ type: 'content_block_start', index: 0, content_block: { type: 'text' } }, parent);
+    const text = (t: string, parent: string | null) =>
+      event(
+        { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: t } },
+        parent
+      );
+
+    it('accumulates each agent into its own partial', () => {
+      const acc = new StreamAccumulator();
+      acc.accumulate(start(null));
+      acc.accumulate(textBlock(null));
+      acc.accumulate(text('main ', null));
+      acc.accumulate(start('task-1'));
+      acc.accumulate(textBlock('task-1'));
+      const sub = acc.accumulate(text('sub', 'task-1'));
+      const main = acc.accumulate(text('agent', null));
+
+      expect(main?.parent_tool_use_id).toBeNull();
+      expect(main?.message.content).toEqual([{ type: 'text', text: 'main agent' }]);
+      expect(sub?.parent_tool_use_id).toBe('task-1');
+      expect(sub?.message.content).toEqual([{ type: 'text', text: 'sub' }]);
+    });
+
+    it("keeps streaming the main agent after a subagent's message completes", () => {
+      const acc = new StreamAccumulator();
+      acc.accumulate(start(null));
+      acc.accumulate(textBlock(null));
+      acc.accumulate(start('task-1'));
+      acc.accumulate(textBlock('task-1'));
+      acc.accumulate(text('sub', 'task-1'));
+      acc.completeMessage('task-1');
+
+      const main = acc.accumulate(text('still streaming', null));
+      expect(main?.message.content).toEqual([{ type: 'text', text: 'still streaming' }]);
+      expect(acc.accumulate(text('late', 'task-1'))).toBeNull();
+    });
+
+    it('discards every stream on resetAll', () => {
+      const acc = new StreamAccumulator();
+      acc.accumulate(start(null));
+      acc.accumulate(textBlock(null));
+      acc.accumulate(start('task-1'));
+      acc.accumulate(textBlock('task-1'));
+      acc.resetAll();
+
+      expect(acc.accumulate(text('x', null))).toBeNull();
+      expect(acc.accumulate(text('x', 'task-1'))).toBeNull();
+    });
   });
 });

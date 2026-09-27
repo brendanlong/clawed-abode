@@ -3,20 +3,29 @@ import {
   mergeMessageIntoCache,
   removeMessageFromCache,
   isPartialMessageId,
-  PARTIAL_MESSAGE_ID_PREFIX,
+  partialMessageId,
   type MessageInfiniteCache,
 } from './message-cache';
 
 interface Msg {
   id: string;
   sequence: number;
+  type?: string;
+  content?: unknown;
 }
 
-const partial = (uuid: string, seq: number): Msg => ({
-  id: `${PARTIAL_MESSAGE_ID_PREFIX}${uuid}`,
+const partial = (parentToolUseId: string | null, seq: number): Msg => ({
+  id: partialMessageId(parentToolUseId),
   sequence: seq,
+  type: 'assistant',
 });
 const complete = (id: string, seq: number): Msg => ({ id, sequence: seq });
+const assistant = (id: string, seq: number, parentToolUseId: string | null): Msg => ({
+  id,
+  sequence: seq,
+  type: 'assistant',
+  content: { type: 'assistant', parent_tool_use_id: parentToolUseId },
+});
 
 function cache(pages: Msg[][]): MessageInfiniteCache<Msg> {
   return {
@@ -45,14 +54,14 @@ describe('mergeMessageIntoCache', () => {
   });
 
   it('appends a partial when none exists on the newest page', () => {
-    const result = mergeMessageIntoCache(cache([[complete('a', 0)]]), partial('p', 1));
-    expect(result.pages[0].messages).toEqual([complete('a', 0), partial('p', 1)]);
+    const result = mergeMessageIntoCache(cache([[complete('a', 0)]]), partial(null, 1));
+    expect(result.pages[0].messages).toEqual([complete('a', 0), partial(null, 1)]);
   });
 
   it('replaces an existing partial instead of appending a second one', () => {
     const result = mergeMessageIntoCache(
-      cache([[complete('a', 0), partial('p', 1)]]),
-      partial('p', 1)
+      cache([[complete('a', 0), partial(null, 1)]]),
+      partial(null, 1)
     );
     const partials = result.pages[0].messages.filter((m) => isPartialMessageId(m.id));
     expect(partials).toHaveLength(1);
@@ -60,17 +69,63 @@ describe('mergeMessageIntoCache', () => {
 
   it('only touches the newest page when handling partials', () => {
     const older = [complete('a', 0)];
-    const result = mergeMessageIntoCache(cache([[complete('b', 1)], older]), partial('p', 2));
+    const result = mergeMessageIntoCache(cache([[complete('b', 1)], older]), partial(null, 2));
     // page[1] (older) is returned by reference, unchanged
     expect(result.pages[1].messages).toBe(older);
   });
 
-  it('drops partials and appends when a complete message arrives', () => {
+  it("replaces a complete assistant message's own partial and appends", () => {
     const result = mergeMessageIntoCache(
-      cache([[complete('a', 0), partial('p', 1)]]),
+      cache([[complete('a', 0), partial(null, 1)]]),
+      assistant('b', 1, null)
+    );
+    expect(result.pages[0].messages).toEqual([complete('a', 0), assistant('b', 1, null)]);
+  });
+
+  it('keeps one partial per stream when the main agent and a subagent interleave', () => {
+    let result = mergeMessageIntoCache(cache([[complete('a', 0)]]), partial(null, 1));
+    result = mergeMessageIntoCache(result, partial('task-1', 1));
+    result = mergeMessageIntoCache(result, partial(null, 1));
+    expect(result.pages[0].messages.map((m) => m.id)).toEqual([
+      'a',
+      partialMessageId(null),
+      partialMessageId('task-1'),
+    ]);
+  });
+
+  it("a subagent's complete message supersedes only the subagent's partial", () => {
+    const result = mergeMessageIntoCache(
+      cache([[complete('a', 0), partial(null, 1), partial('task-1', 1)]]),
+      assistant('b', 1, 'task-1')
+    );
+    expect(result.pages[0].messages).toEqual([
+      complete('a', 0),
+      assistant('b', 1, 'task-1'),
+      partial(null, 1),
+    ]);
+  });
+
+  it('keeps partials after a complete non-assistant message', () => {
+    const result = mergeMessageIntoCache(
+      cache([[complete('a', 0), partial(null, 1)]]),
       complete('b', 1)
     );
-    expect(result.pages[0].messages).toEqual([complete('a', 0), complete('b', 1)]);
+    expect(result.pages[0].messages).toEqual([
+      complete('a', 0),
+      complete('b', 1),
+      partial(null, 1),
+    ]);
+  });
+
+  it('drops every partial when the turn result arrives', () => {
+    const result = mergeMessageIntoCache(
+      cache([[complete('a', 0), partial(null, 1), partial('task-1', 1)]]),
+      { id: 'r', sequence: 1, type: 'result' }
+    );
+    expect(result.pages[0].messages).toEqual([
+      complete('a', 0),
+      { id: 'r', sequence: 1, type: 'result' },
+    ]);
   });
 
   it('inserts a complete message that arrives out of sequence order at its position', () => {

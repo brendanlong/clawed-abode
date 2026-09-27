@@ -7,6 +7,7 @@
  * turn, two-axis status emission, sequence integrity, and clean teardown.
  */
 
+import { isDeepStrictEqual } from 'node:util';
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi, afterEach } from 'vitest';
 import type { Query, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { setupTestDb, teardownTestDb, testPrisma, clearTestDb } from '@/test/setup-test-db';
@@ -90,6 +91,8 @@ vi.mock('./session-cgroup', () => ({
 
 import { createPushable } from '@/lib/pushable';
 import { sessionScopeUnitName } from '@/lib/session-scope';
+import { partialMessageId } from '@/lib/message-cache';
+import type { PartialAssistantMessage } from './stream-accumulator';
 
 // Imported dynamically in beforeAll (after setupTestDb sets DATABASE_URL), since
 // claude-runner pulls in @/lib/prisma at module load.
@@ -218,6 +221,22 @@ function messageDelta(stopReason: string | null, parent: string | null = null): 
     uuid: nextUuid(),
   } as unknown as SDKMessage;
 }
+function streamEvent(event: Record<string, unknown>, parent: string | null = null): SDKMessage {
+  return {
+    type: 'stream_event',
+    parent_tool_use_id: parent,
+    event,
+    session_id: 's',
+    uuid: nextUuid(),
+  } as unknown as SDKMessage;
+}
+const textBlockStart = (parent: string | null = null) =>
+  streamEvent({ type: 'content_block_start', index: 0, content_block: { type: 'text' } }, parent);
+const textDelta = (text: string, parent: string | null = null) =>
+  streamEvent(
+    { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text } },
+    parent
+  );
 // The CLI's per-message delivery report. Not in the SDK's SDKMessage union, so
 // it is built (and parsed) structurally — see parseCommandLifecycle.
 function commandLifecycle(commandUuid: string, state: string): SDKMessage {
@@ -525,6 +544,33 @@ describe('claude-runner persistent streaming loop', () => {
     await createRunningSession();
     await reapOrphanedSessionScopes();
     expect(mockReapSessionScopes).not.toHaveBeenCalled();
+  });
+
+  it('streams main-agent partials through an interleaved subagent message', async () => {
+    const fake = makeFakeQuery();
+    _setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+    await sendUserMessage(sessionId, 'hello');
+
+    fake.emit(messageStart());
+    fake.emit(textBlockStart());
+    fake.emit(textDelta('main '));
+    fake.emit(messageStart('task-1'));
+    fake.emit(textBlockStart('task-1'));
+    fake.emit(textDelta('sub', 'task-1'));
+    fake.emit(assistant('sub', 'task-1'));
+    fake.emit(textDelta('agent'));
+
+    const latestPartialContent = (parent: string | null) =>
+      mockSseEvents.emitNewMessage.mock.calls
+        .map(([, m]) => m as { id: string; content: PartialAssistantMessage })
+        .filter((m) => m.id === partialMessageId(parent))
+        .at(-1)?.content.message.content;
+    const mainText = [{ type: 'text', text: 'main agent' }];
+    await waitFor(() => isDeepStrictEqual(latestPartialContent(null), mainText));
+    expect(latestPartialContent('task-1')).toEqual([{ type: 'text', text: 'sub' }]);
+
+    stopSession(sessionId);
   });
 
   it('bumps lastActivityAt on user sends but not on assistant traffic', async () => {

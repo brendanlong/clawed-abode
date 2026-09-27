@@ -29,7 +29,7 @@ import type { CancelledPrompt } from '@/lib/cancelled-prompt';
 import { extractRepoFullName } from '@/lib/utils';
 import { createLogger, toError } from '@/lib/logger';
 import { attachToolResultSanitizations } from '@/lib/message-sanitization';
-import { PARTIAL_MESSAGE_ID_PREFIX } from '@/lib/message-cache';
+import { partialMessageId } from '@/lib/message-cache';
 import { sseEvents } from './events';
 import { ensureGithubCredentialHelper, getSessionWorkingDir } from './worktree-manager';
 import {
@@ -288,7 +288,7 @@ async function runSessionLoop(sessionId: string, state: SessionState, q: Query):
         );
         if (partial) {
           sseEvents.emitNewMessage(sessionId, {
-            id: PARTIAL_MESSAGE_ID_PREFIX + partial.uuid,
+            id: partialMessageId(partial.parent_tool_use_id),
             sessionId,
             sequence: nextPartialSequence,
             type: 'assistant',
@@ -300,7 +300,9 @@ async function runSessionLoop(sessionId: string, state: SessionState, q: Query):
       }
 
       if (message.type === 'assistant') {
-        accumulator.reset();
+        accumulator.completeMessage(message.parent_tool_use_id);
+      } else if (message.type === 'result') {
+        accumulator.resetAll();
       }
 
       mergeInitCommands(sessionId, state, message);

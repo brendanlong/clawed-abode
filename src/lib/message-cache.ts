@@ -3,11 +3,14 @@
  * cache used by the session message list.
  *
  * Two kinds of messages arrive over the stream:
- * - **Partial** messages (id prefixed with {@link PARTIAL_MESSAGE_ID_PREFIX}) are
- *   transient streaming snapshots of the in-progress assistant turn. At most one
- *   lives in the cache at a time; each new one replaces it.
- * - **Complete** messages are persisted. When one arrives it removes any lingering
- *   partials and is inserted by `sequence`, deduped by id — a re-delivered id is
+ * - **Partial** messages (id from {@link partialMessageId}) are transient streaming
+ *   snapshots of an in-progress assistant message. The main agent and each subagent
+ *   stream concurrently, so there is one partial per stream, keyed by
+ *   `parent_tool_use_id`; each new snapshot replaces its stream's previous one. They
+ *   sit after the complete messages on the newest page.
+ * - **Complete** messages are persisted. A complete assistant message supersedes its
+ *   own stream's partial, and a turn `result` supersedes them all (a stream cut
+ *   off by an interrupt never completes). It is inserted by `sequence`, deduped by id — a re-delivered id is
  *   ignored rather than merged, so the cache never reconciles an edit. The one way
  *   a complete message leaves is {@link removeMessageFromCache}, when the server
  *   deletes the row outright.
@@ -26,9 +29,23 @@ export function isPartialMessageId(id: string): boolean {
   return id.startsWith(PARTIAL_MESSAGE_ID_PREFIX);
 }
 
+/** The id of the one live partial for the main agent (`null`) or a subagent. */
+export function partialMessageId(parentToolUseId: string | null): string {
+  return PARTIAL_MESSAGE_ID_PREFIX + (parentToolUseId ?? 'main');
+}
+
 export interface MessageLike {
   id: string;
   sequence: number;
+  type?: string;
+  content?: unknown;
+}
+
+function supersedesPartial(message: MessageLike, partialId: string): boolean {
+  if (message.type === 'result') return true;
+  if (message.type !== 'assistant') return false;
+  const content = message.content as { parent_tool_use_id?: string | null } | null | undefined;
+  return partialId === partialMessageId(content?.parent_tool_use_id ?? null);
 }
 
 interface MessagePage<M extends MessageLike> {
@@ -60,14 +77,13 @@ export function mergeMessageIntoCache<M extends MessageLike, P = unknown>(
   }
 
   if (isPartial) {
-    // Replace the existing partial on the newest page, or append if none exists.
+    // Replace this stream's partial on the newest page, or append if none exists.
     const newPages = old.pages.map((page, pageIndex) => {
       if (pageIndex !== 0) return page;
-      const hasExistingPartial = page.messages.some((m) => isPartialMessageId(m.id));
-      if (hasExistingPartial) {
+      if (page.messages.some((m) => m.id === message.id)) {
         return {
           ...page,
-          messages: page.messages.map((m) => (isPartialMessageId(m.id) ? message : m)),
+          messages: page.messages.map((m) => (m.id === message.id ? message : m)),
         };
       }
       return { ...page, messages: [...page.messages, message] };
@@ -82,16 +98,20 @@ export function mergeMessageIntoCache<M extends MessageLike, P = unknown>(
     }
   }
 
-  // Drop any partials from the newest page (they are now superseded) and insert
-  // at the sequence position. Scans from the end: the common case is an append.
+  // Insert at the sequence position among the newest page's complete messages,
+  // keeping the partials this message doesn't supersede after them. Scans from the
+  // end: the common case is an append.
   const newPages = [...old.pages];
   const firstPageMessages = newPages[0].messages.filter((m) => !isPartialMessageId(m.id));
+  const livePartials = newPages[0].messages.filter(
+    (m) => isPartialMessageId(m.id) && !supersedesPartial(message, m.id)
+  );
   let insertAt = firstPageMessages.length;
   while (insertAt > 0 && firstPageMessages[insertAt - 1].sequence > message.sequence) {
     insertAt--;
   }
   firstPageMessages.splice(insertAt, 0, message);
-  newPages[0] = { ...newPages[0], messages: firstPageMessages };
+  newPages[0] = { ...newPages[0], messages: [...firstPageMessages, ...livePartials] };
   return { ...old, pages: newPages };
 }
 
