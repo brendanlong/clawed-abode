@@ -1,59 +1,67 @@
-/**
- * Characters per speech request. Each request costs ~3-10 s of provider latency
- * whatever its length (measured on OpenRouter), and the next chunk is fetched
- * while one plays, so chunks are as long as a request comfortably takes.
- */
-export const CHUNK_MAX_LENGTH = 1000;
-
-const SENTENCE_ENDERS = ['. ', '! ', '? ', '.\n', '!\n', '?\n'];
+import { split, SentenceSplitterSyntax } from 'sentence-splitter';
 
 /**
- * Split text into chunks of at most `maxLength` characters, preferring
- * to break at a sentence end, then a comma/semicolon, then a space, and only as a
- * last resort mid-word. Concatenating the chunks reproduces the input exactly.
+ * Longest speech request. Ordinary sentences stay whole; run-ons are broken at
+ * clauses so no single request (and so no wait before its audio) grows long.
  */
-export function splitTextIntoChunks(text: string, maxLength = CHUNK_MAX_LENGTH): string[] {
-  if (text.length <= maxLength) return [text];
+export const MAX_CHUNK_CHARS = 300;
 
+/** Split after clause punctuation (keeping it with the clause before). */
+function splitAtClauseBoundaries(text: string): string[] {
+  return text
+    .split(/(?<=[,;:—–])\s+/)
+    .map((clause) => clause.trim())
+    .filter((clause) => clause.length > 0);
+}
+
+/** Greedily join `pieces` with spaces into chunks of at most `maxChars`. */
+function pack(pieces: string[], maxChars: number): string[] {
   const chunks: string[] = [];
-  let remaining = text;
-
-  while (remaining.length > 0) {
-    if (remaining.length <= maxLength) {
-      chunks.push(remaining);
-      break;
+  let current = '';
+  for (const piece of pieces) {
+    if (current && current.length + 1 + piece.length > maxChars) {
+      chunks.push(current);
+      current = piece;
+    } else {
+      current = current ? `${current} ${piece}` : piece;
     }
-
-    // Every search starts at `maxLength - delimiter.length` so the whole
-    // delimiter lands inside the chunk; starting at maxLength lets a match
-    // begin at the cap and pushes the chunk past it.
-    let bestEnder = { index: -1, length: 0 };
-    for (const ender of SENTENCE_ENDERS) {
-      // Compare raw indices; the offset is applied once, after the best one is known.
-      const idx = remaining.lastIndexOf(ender, maxLength - ender.length);
-      if (idx > 0 && idx > bestEnder.index) bestEnder = { index: idx, length: ender.length };
-    }
-    let splitIndex = bestEnder.index > 0 ? bestEnder.index + bestEnder.length : -1;
-
-    if (splitIndex <= 0) {
-      const commaIdx = remaining.lastIndexOf(', ', maxLength - 2);
-      const semiIdx = remaining.lastIndexOf('; ', maxLength - 2);
-      splitIndex = Math.max(commaIdx, semiIdx);
-      if (splitIndex > 0) splitIndex += 2;
-    }
-
-    if (splitIndex <= 0) {
-      splitIndex = remaining.lastIndexOf(' ', maxLength - 1);
-      if (splitIndex > 0) splitIndex += 1;
-    }
-
-    if (splitIndex <= 0) {
-      splitIndex = maxLength;
-    }
-
-    chunks.push(remaining.slice(0, splitIndex));
-    remaining = remaining.slice(splitIndex);
   }
-
+  if (current) chunks.push(current);
   return chunks;
+}
+
+/**
+ * Break a sentence over `maxChars` at clause boundaries, falling back to word
+ * boundaries for a clause that is still too long. A single word longer than
+ * `maxChars` is kept whole.
+ */
+export function splitLongSentence(text: string, maxChars = MAX_CHUNK_CHARS): string[] {
+  if (text.length <= maxChars) return [text];
+  const pieces = splitAtClauseBoundaries(text).flatMap((clause) =>
+    clause.length > maxChars ? pack(clause.split(/\s+/).filter(Boolean), maxChars) : [clause]
+  );
+  return pack(pieces, maxChars);
+}
+
+function splitSentences(line: string): string[] {
+  const sentences = split(line)
+    .filter((node) => node.type === SentenceSplitterSyntax.Sentence)
+    .map((node) => line.slice(node.range[0], node.range[1]).trim())
+    .filter((sentence) => sentence.length > 0);
+  return sentences.length > 0 ? sentences : [line];
+}
+
+/**
+ * Split text into speech requests of one sentence each (abbreviations like
+ * "Dr." don't end one), with over-long sentences split further. Line breaks
+ * also end a request, since in model output each line is a paragraph, list
+ * item, or heading, usually without closing punctuation.
+ */
+export function splitIntoSpeechChunks(text: string, maxChars = MAX_CHUNK_CHARS): string[] {
+  return text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .flatMap(splitSentences)
+    .flatMap((sentence) => splitLongSentence(sentence, maxChars));
 }

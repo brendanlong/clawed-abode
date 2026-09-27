@@ -1,5 +1,4 @@
 import { describe, it, expect, vi } from 'vitest';
-import { CHUNK_MAX_LENGTH } from '@/lib/tts';
 import type { KokoroVoice } from '@/lib/kokoro-voices';
 import { SpeechStore, type Speech, type SynthesizeChunk } from './speech-store';
 
@@ -41,17 +40,32 @@ async function readAll(speech: Speech): Promise<number[]> {
   }
 }
 
-/** Two sentences that {@link CHUNK_MAX_LENGTH} forces into separate chunks. */
-const twoChunkText = `${'a'.repeat(CHUNK_MAX_LENGTH - 2)}. ${'b'.repeat(10)}.`;
+const twoChunkText = 'First sentence. Second one.';
 
 describe('SpeechStore', () => {
-  it('requests the next chunk before the current one finishes', async () => {
+  it('synthesizes each sentence with the voice and speed', async () => {
     const { calls, synthesize } = controllableSynth();
     makeStore(synthesize).open({ text: twoChunkText, voice, speed: 1.5 });
 
     await vi.waitFor(() => expect(calls).toHaveLength(2));
-    expect(synthesize).toHaveBeenNthCalledWith(1, expect.stringMatching(/^a+\. $/), voice, 1.5);
-    expect(synthesize).toHaveBeenNthCalledWith(2, 'bbbbbbbbbb.', voice, 1.5);
+    expect(synthesize).toHaveBeenNthCalledWith(1, 'First sentence.', voice, 1.5);
+    expect(synthesize).toHaveBeenNthCalledWith(2, 'Second one.', voice, 1.5);
+  });
+
+  it('keeps four requests in flight, starting another as the oldest finishes', async () => {
+    const { calls, synthesize } = controllableSynth();
+    const text = 'One. Two. Three. Four. Five. Six.';
+    const { speech } = makeStore(synthesize).open({ text, voice, speed: 1 });
+
+    await vi.waitFor(() => expect(calls).toHaveLength(4));
+    calls[1].resolve(bytes(1));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(calls).toHaveLength(4);
+
+    calls[0].resolve(bytes(0));
+    await vi.waitFor(() => expect(calls).toHaveLength(6));
+    calls.slice(2).forEach((call, i) => call.resolve(bytes(i + 2)));
+    await vi.waitFor(() => expect([...(speech.complete() ?? [])]).toEqual([0, 1, 2, 3, 4, 5]));
   });
 
   it('streams chunks in order as they arrive, even when they finish out of order', async () => {

@@ -1,90 +1,73 @@
 import { describe, it, expect } from 'vitest';
-import { CHUNK_MAX_LENGTH, splitTextIntoChunks } from './tts';
+import { MAX_CHUNK_CHARS, splitIntoSpeechChunks, splitLongSentence } from './tts';
 
-const LIMIT = 200;
-const split = (text: string) => splitTextIntoChunks(text, LIMIT);
-
-describe('splitTextIntoChunks', () => {
-  it('returns short text as a single chunk', () => {
-    expect(split('Hello world.')).toEqual(['Hello world.']);
-    expect(split('')).toEqual(['']);
+describe('splitIntoSpeechChunks', () => {
+  it('makes each sentence its own chunk', () => {
+    expect(splitIntoSpeechChunks('It works. Did it? Yes!')).toEqual([
+      'It works.',
+      'Did it?',
+      'Yes!',
+    ]);
   });
 
-  it('never produces a chunk over the limit and reassembles to the input', () => {
-    const text = Array.from({ length: 40 }, (_, i) => `Sentence number ${i} is here.`).join(' ');
-    const chunks = split(text);
+  it('does not end a sentence at an abbreviation or a version number', () => {
+    expect(
+      splitIntoSpeechChunks('Dr. Smith visited the U.S. yesterday. Version 1.2.3 is out.')
+    ).toEqual(['Dr. Smith visited the U.S. yesterday.', 'Version 1.2.3 is out.']);
+  });
+
+  it('ends a chunk at each line, for headings and list items without punctuation', () => {
+    const text =
+      "## Summary\nHere's what changed:\n\n- **Server**: a route\n- **Client**: a hook\n";
+    expect(splitIntoSpeechChunks(text)).toEqual([
+      '## Summary',
+      "Here's what changed:",
+      '- **Server**: a route',
+      '- **Client**: a hook',
+    ]);
+  });
+
+  it('keeps text without sentence punctuation whole', () => {
+    expect(splitIntoSpeechChunks('  no punctuation here  ')).toEqual(['no punctuation here']);
+  });
+
+  it('returns nothing for blank text', () => {
+    expect(splitIntoSpeechChunks('')).toEqual([]);
+    expect(splitIntoSpeechChunks(' \n\n ')).toEqual([]);
+  });
+
+  it('splits sentences over the limit', () => {
+    const clause = 'word '.repeat(10).trim();
+    const sentence = `${Array.from({ length: 20 }, () => clause).join(', ')}.`;
+    const chunks = splitIntoSpeechChunks(sentence);
     expect(chunks.length).toBeGreaterThan(1);
-    for (const chunk of chunks) expect(chunk.length).toBeLessThanOrEqual(LIMIT);
-    expect(chunks.join('')).toBe(text);
+    for (const chunk of chunks) expect(chunk.length).toBeLessThanOrEqual(MAX_CHUNK_CHARS);
+  });
+});
+
+describe('splitLongSentence', () => {
+  it('returns a sentence within the limit unchanged', () => {
+    expect(splitLongSentence('Short, sweet.', 20)).toEqual(['Short, sweet.']);
   });
 
-  it('prefers sentence boundaries', () => {
-    const first = 'A'.repeat(150) + '. ';
-    const second = 'B'.repeat(100) + '.';
-    const chunks = split(first + second);
-    expect(chunks).toEqual([first, second]);
+  it('breaks at clause punctuation and packs clauses that fit together', () => {
+    expect(splitLongSentence('one two, three four; five six: seven eight.', 20)).toEqual([
+      'one two, three four;',
+      'five six:',
+      'seven eight.',
+    ]);
   });
 
-  it('treats a newline after punctuation as a sentence boundary', () => {
-    const first = 'A'.repeat(150) + '?\n';
-    const second = 'B'.repeat(100);
-    expect(split(first + second)).toEqual([first, second]);
+  it('falls back to word boundaries for a clause that is still too long', () => {
+    expect(splitLongSentence('alpha beta gamma delta epsilon', 12)).toEqual([
+      'alpha beta',
+      'gamma delta',
+      'epsilon',
+    ]);
   });
 
-  it('breaks at the last sentence end that fits, not an earlier one', () => {
-    const first = 'A'.repeat(100) + '. ? ';
-    const second = 'B'.repeat(150);
-    expect(split(first + second)).toEqual([first, second]);
-  });
-
-  it('keeps a sentence end inside the chunk rather than overflowing the limit', () => {
-    const fits = 'A'.repeat(LIMIT - 2) + '. ';
-    expect(split(fits + 'B'.repeat(100))).toEqual([fits, 'B'.repeat(100)]);
-
-    // The '. ' starts exactly at LIMIT, so it cannot fit in this chunk.
-    const overflowing = 'A'.repeat(LIMIT) + '. ' + 'B'.repeat(100);
-    const chunks = split(overflowing);
-    for (const chunk of chunks) expect(chunk.length).toBeLessThanOrEqual(LIMIT);
-    expect(chunks.join('')).toBe(overflowing);
-  });
-
-  it('keeps a comma or semicolon inside the chunk rather than overflowing the limit', () => {
-    for (const delimiter of [', ', '; ']) {
-      const text = 'A'.repeat(LIMIT) + delimiter + 'B'.repeat(100);
-      const chunks = split(text);
-      for (const chunk of chunks) expect(chunk.length).toBeLessThanOrEqual(LIMIT);
-      expect(chunks.join('')).toBe(text);
-    }
-  });
-
-  it('keeps a space inside the chunk rather than overflowing the limit', () => {
-    const text = 'A'.repeat(LIMIT) + ' ' + 'B'.repeat(100);
-    const chunks = split(text);
-    for (const chunk of chunks) expect(chunk.length).toBeLessThanOrEqual(LIMIT);
-    expect(chunks.join('')).toBe(text);
-  });
-
-  it('falls back to a comma or semicolon when there is no sentence end', () => {
-    const first = 'a'.repeat(120) + ', ';
-    const second = 'b'.repeat(150);
-    expect(split(first + second)).toEqual([first, second]);
-  });
-
-  it('falls back to a space when there is no punctuation', () => {
-    const words = Array.from({ length: 60 }, () => 'word').join(' ');
-    const chunks = split(words);
-    for (const chunk of chunks.slice(0, -1)) expect(chunk.endsWith(' ')).toBe(true);
-    expect(chunks.join('')).toBe(words);
-  });
-
-  it('hard-splits a single unbroken token', () => {
-    const token = 'x'.repeat(LIMIT * 2 + 10);
-    const chunks = split(token);
-    expect(chunks.map((c) => c.length)).toEqual([LIMIT, LIMIT, 10]);
-  });
-
-  it('defaults to CHUNK_MAX_LENGTH', () => {
-    const text = 'x'.repeat(CHUNK_MAX_LENGTH + 1);
-    expect(splitTextIntoChunks(text).map((c) => c.length)).toEqual([CHUNK_MAX_LENGTH, 1]);
+  it('keeps a single word longer than the limit whole', () => {
+    const word = 'x'.repeat(30);
+    expect(splitLongSentence(`${word} end`, 10)).toEqual([word, 'end']);
   });
 });
