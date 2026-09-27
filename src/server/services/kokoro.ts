@@ -47,6 +47,7 @@ export function getSpeechStore(): SpeechStore {
     synthesize: synthesizeMp3,
     maxBytes: MAX_CACHED_BYTES,
     ttlMs: SPEECH_TTL_MS,
+    maxInFlight: env.TTS_MAX_CONCURRENCY,
   });
   return store;
 }

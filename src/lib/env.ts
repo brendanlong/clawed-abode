@@ -63,6 +63,11 @@ const envSchema = z
     TTS_API_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
     // Kokoro-FastAPI calls the model "kokoro".
     TTS_MODEL: z.preprocess(emptyToUndefined, z.string().default('hexgrad/kokoro-82m')),
+    // Speech requests per message run at once; 1 suits a local CPU server.
+    TTS_MAX_CONCURRENCY: z.preprocess(
+      emptyToUndefined,
+      z.coerce.number().int().min(1).max(16).default(4)
+    ),
     // Minimum level the server logger writes (see src/lib/logger.ts).
     LOG_LEVEL: z.enum(LOG_LEVELS).default('info'),
   })
