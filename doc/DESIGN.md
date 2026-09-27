@@ -79,11 +79,10 @@ Opt-in (`PUBLIC_FILES_PORT` + `PUBLIC_FILES_URL`): a second HTTP server in the s
 
 ## Voice
 
-Speech input uses the browser's `SpeechRecognition` ([`useVoiceRecording`](../src/hooks/useVoiceRecording.ts)). Read-aloud is Kokoro only, via any OpenAI-compatible `/audio/speech` API (OpenRouter or a local Kokoro-FastAPI; opt-in with `TTS_BASE_URL`). Browser voices were dropped rather than kept as a fallback: two playback engines weren't worth it when Kokoro costs ~$1–4 per million characters and the app needs the network anyway.
+Speech input uses the browser's `SpeechRecognition` ([`useVoiceRecording`](../src/hooks/useVoiceRecording.ts)). Read-aloud is Kokoro only, through any OpenAI-compatible `/audio/speech` API (OpenRouter or a local Kokoro-FastAPI; opt-in with `TTS_BASE_URL`). There is deliberately no browser-voice fallback: two playback engines weren't worth it for a provider this cheap in an app that needs the network anyway.
 
-- **Server** ([`speech-store.ts`](../src/server/services/speech-store.ts)): the text is split into chunks, the next chunk is requested while the current one plays (each provider call has seconds of fixed latency), and the chunks' MP3 frames are concatenated into one stream (the per-chunk Xing header is stripped, since a player honoring it would stop after chunk one). Audio is cached in memory and shared, so replays and a browser's repeated range requests don't re-synthesize.
-- **URLs**: an `<audio>` element can't send the bearer token, so the authenticated `POST /api/tts` mints an unguessable `/api/tts/{id}` that the element streams from (see [`security.md`](security.md)).
-- **Client** ([`SpeechPlayer`](../src/lib/speech-player.ts), wired up by [`useVoicePlayback`](../src/hooks/useVoicePlayback.ts)): one long-lived `<audio>` element plays each message's stream (not MSE, which can't be relied on for MP3 on iOS), so the OS media controls and lock screen work through the Media Session API. iOS only allows unprompted playback on an element that has already played during a tap, so the first tap anywhere plays a moment of silence.
+- The server ([`speech-store.ts`](../src/server/services/speech-store.ts)) synthesizes a message in chunks and streams them as one MP3, cached in memory so replays are free. Because an `<audio>` element can't send the bearer token, the authenticated `POST /api/tts` mints an unguessable `/api/tts/{id}` for it (see [`security.md`](security.md)).
+- The client ([`SpeechPlayer`](../src/lib/speech-player.ts), wired by [`useVoicePlayback`](../src/hooks/useVoicePlayback.ts)) plays every message through one long-lived `<audio>` element with Media Session metadata, so OS media controls and the lock screen work. Plain `<audio src>` rather than MSE: iOS MSE support for MP3 is uncertain and a stream needs nothing more.
 
 Voice, speed, and Voice Auto-Send are global server settings. Auto-read is a per-session, per-device preference in `localStorage`.
 

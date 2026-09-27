@@ -96,7 +96,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
 
   // Voice features
   const voiceConfig = useVoiceConfig(sessionId);
-  const voicePlayback = useVoicePlayback(voiceConfig.ttsEnabled);
+  const voicePlayback = useVoicePlayback(voiceConfig.ttsEnabled, voiceConfig.autoRead);
   const [voiceOverlayOpen, setVoiceOverlayOpen] = useState(false);
 
   // Auto-read: stream TTS as assistant messages arrive during a turn

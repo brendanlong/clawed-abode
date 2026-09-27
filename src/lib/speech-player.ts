@@ -68,8 +68,11 @@ export class SpeechPlayer {
   private current: SpeechItem | null = null;
   private url: string | null = null;
   private request: AbortController | null = null;
+  /** The element has played during a tap, so iOS lets it play unprompted. */
   private primed = false;
   private priming = false;
+  /** The current message is loaded but autoplay was refused. */
+  private blocked = false;
 
   // Events for the silence prime() plays arrive with no current message and are ignored.
   private readonly listeners: [keyof HTMLMediaElementEventMap, () => void][] = [
@@ -91,10 +94,15 @@ export class SpeechPlayer {
     return this.current;
   }
 
-  /** Play `item` now, dropping the queue; the current message toggles pause instead. */
+  /**
+   * Play `item` now, dropping the queue; the current message toggles pause
+   * instead. Call from a tap: the audio URL arrives after the tap's activation
+   * has lapsed, so the element is unlocked with silence first.
+   */
   play(item: SpeechItem): void {
     this.queue = [];
     if (this.current?.messageId !== item.messageId) {
+      this.playSilence();
       void this.start(item);
     } else if (!this.url) {
       this.stop();
@@ -138,11 +146,21 @@ export class SpeechPlayer {
   }
 
   /**
-   * iOS only lets an element play without a tap once it has played during one,
-   * so auto-read plays silence on the first tap anywhere.
+   * Call on any tap while auto-read is on. iOS only lets an element play
+   * without a tap once it has played during one, so this resumes a message
+   * whose autoplay was refused, or else unlocks the element with silence.
    */
   prime(): void {
-    if (this.primed || this.current) return;
+    if (this.blocked) {
+      this.blocked = false;
+      this.resume();
+    } else if (!this.current) {
+      this.playSilence();
+    }
+  }
+
+  private playSilence(): void {
+    if (this.primed) return;
     this.primed = true;
     this.priming = true;
     this.audio.src = silentWavDataUri();
@@ -191,10 +209,12 @@ export class SpeechPlayer {
     const url = this.url;
     try {
       await this.audio.play();
+      this.primed = true;
     } catch (err) {
       if (this.url !== url) return; // Superseded by another message or stop.
       // Autoplay refused (no tap yet on iOS): stay loaded and paused so a tap resumes.
       if (err instanceof DOMException && err.name === 'NotAllowedError') {
+        this.blocked = true;
         this.update({ isLoading: false, isPlaying: false });
         return;
       }
@@ -227,6 +247,7 @@ export class SpeechPlayer {
     this.current = null;
     this.url = null;
     this.priming = false;
+    this.blocked = false;
     this.clearAudio();
   }
 

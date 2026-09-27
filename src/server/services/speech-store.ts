@@ -29,6 +29,7 @@ export class Speech {
   private state: 'running' | 'done' | 'failed' = 'running';
   private error: Error | null = null;
   private waiters: (() => void)[] = [];
+  private whole: Uint8Array<ArrayBuffer> | null = null;
   bytes = 0;
 
   get running(): boolean {
@@ -46,6 +47,12 @@ export class Speech {
   }
 
   finish(): void {
+    this.whole = new Uint8Array(this.bytes);
+    let offset = 0;
+    for (const chunk of this.chunks) {
+      this.whole.set(chunk, offset);
+      offset += chunk.length;
+    }
     this.state = 'done';
     this.notify();
   }
@@ -64,14 +71,7 @@ export class Speech {
 
   /** The whole file once synthesis is done, else null. */
   complete(): Uint8Array<ArrayBuffer> | null {
-    if (this.state !== 'done') return null;
-    const out = new Uint8Array(this.bytes);
-    let offset = 0;
-    for (const chunk of this.chunks) {
-      out.set(chunk, offset);
-      offset += chunk.length;
-    }
-    return out;
+    return this.whole;
   }
 
   stream(): ReadableStream<Uint8Array> {
@@ -102,8 +102,10 @@ export class Speech {
 }
 
 /**
- * Synthesize chunk by chunk, requesting the next chunk while the current one
- * is awaited so a chunk's fixed provider latency overlaps the previous one's playback.
+ * Synthesize chunk by chunk, keeping the next request in flight while the
+ * current one is awaited, so each call's fixed provider latency overlaps the
+ * previous call rather than adding to it. Runs to completion even if every
+ * listener leaves; the result stays cached for a replay.
  */
 async function synthesizeInto(
   speech: Speech,

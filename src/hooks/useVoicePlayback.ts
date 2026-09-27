@@ -41,7 +41,7 @@ const speechResponseSchema = z.union([
 ]);
 
 /** Ask the server to synthesize `text`; resolves to the URL its audio streams from. */
-export async function requestSpeechUrl(text: string, signal?: AbortSignal): Promise<string> {
+async function requestSpeechUrl(text: string, signal?: AbortSignal): Promise<string> {
   const token = getAuthToken();
   const res = await fetch('/api/tts', {
     method: 'POST',
@@ -75,8 +75,10 @@ function setMediaMetadata(item: SpeechItem | null): void {
 /**
  * Read-aloud through the server's Kokoro TTS (see SpeechPlayer), wired to the
  * OS media controls. `enabled` is false when the server has no TTS configured.
+ * `autoRead` makes taps prime the player for unprompted playback; it's off
+ * otherwise because on iOS even silent playback pauses other apps' audio.
  */
-export function useVoicePlayback(enabled: boolean): VoicePlaybackState {
+export function useVoicePlayback(enabled: boolean, autoRead = false): VoicePlaybackState {
   const [state, setState] = useState<SpeechPlayerState>(IDLE_SPEECH_STATE);
   const playerRef = useRef<SpeechPlayer | null>(null);
 
@@ -84,9 +86,6 @@ export function useVoicePlayback(enabled: boolean): VoicePlaybackState {
     if (!enabled) return;
     const player = new SpeechPlayer(new Audio(), requestSpeechUrl, setState);
     playerRef.current = player;
-
-    const prime = () => player.prime();
-    document.addEventListener('pointerdown', prime, { capture: true, once: true });
 
     const handlers: [MediaSessionAction, MediaSessionActionHandler][] = [
       ['play', () => player.resume()],
@@ -99,13 +98,20 @@ export function useVoicePlayback(enabled: boolean): VoicePlaybackState {
     for (const [action, handler] of handlers) mediaSession?.setActionHandler(action, handler);
 
     return () => {
-      document.removeEventListener('pointerdown', prime, { capture: true });
       for (const [action] of handlers) mediaSession?.setActionHandler(action, null);
       setMediaMetadata(null);
       player.destroy();
       playerRef.current = null;
     };
   }, [enabled]);
+
+  useEffect(() => {
+    const player = playerRef.current;
+    if (!enabled || !autoRead || !player) return;
+    const prime = () => player.prime();
+    document.addEventListener('pointerdown', prime, { capture: true });
+    return () => document.removeEventListener('pointerdown', prime, { capture: true });
+  }, [enabled, autoRead]);
 
   useEffect(() => {
     setMediaMetadata(playerRef.current?.currentItem ?? null);

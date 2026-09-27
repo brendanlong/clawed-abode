@@ -16,7 +16,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { trpc } from '@/lib/trpc';
-import { requestSpeechUrl } from '@/hooks/useVoicePlayback';
+import { useVoicePlayback } from '@/hooks/useVoicePlayback';
 import {
   DEFAULT_KOKORO_VOICE,
   groupKokoroVoices,
@@ -74,6 +74,8 @@ export function AudioTab() {
   );
 }
 
+const TEST_TEXT = 'This is a test of the selected voice.';
+
 function TtsVoiceSection({
   currentVoice,
   onUpdate,
@@ -82,26 +84,15 @@ function TtsVoiceSection({
   onUpdate: () => void;
 }) {
   const mutation = trpc.globalSettings.setTtsVoice.useMutation({ onSuccess: onUpdate });
-  const [testing, setTesting] = useState(false);
-  const [testError, setTestError] = useState<string | null>(null);
+  // The shared player, because Safari refuses play() once the tap that asked for it
+  // has waited seconds for synthesis; the player unlocks its element during the tap.
+  const playback = useVoicePlayback(true);
+  // Re-keyed per voice: identical text for the same message id would toggle pause.
+  const testId = `voice-test-${currentVoice ?? DEFAULT_KOKORO_VOICE}`;
 
   const handleChange = (value: string) => {
     const voice = kokoroVoiceSchema.parse(value);
     mutation.mutate({ ttsVoice: voice === DEFAULT_KOKORO_VOICE ? null : voice });
-  };
-
-  // Synthesizes with the saved voice and speed, which a selection has already saved.
-  const handleTest = async () => {
-    setTesting(true);
-    setTestError(null);
-    try {
-      const url = await requestSpeechUrl('This is a test of the selected voice.');
-      await new Audio(url).play();
-    } catch (err) {
-      setTestError(err instanceof Error ? err.message : 'Test failed');
-    } finally {
-      setTesting(false);
-    }
   };
 
   return (
@@ -131,15 +122,15 @@ function TtsVoiceSection({
         <Button
           variant="outline"
           size="sm"
-          onClick={handleTest}
-          disabled={testing || mutation.isPending}
+          // Synthesizes with the saved voice and speed, which a selection has already saved.
+          onClick={() => playback.play(testId, TEST_TEXT)}
+          disabled={mutation.isPending}
         >
-          {testing ? <Spinner size="sm" /> : 'Test'}
+          {playback.isLoading ? <Spinner size="sm" /> : playback.isPlaying ? 'Pause' : 'Test'}
         </Button>
       </div>
-      {(mutation.error || testError) && (
-        <p className="text-sm text-destructive">{mutation.error?.message ?? testError}</p>
-      )}
+      {mutation.error && <p className="text-sm text-destructive">{mutation.error.message}</p>}
+      {playback.error && <p className="text-sm text-destructive">{playback.error.message}</p>}
     </div>
   );
 }

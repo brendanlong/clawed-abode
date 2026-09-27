@@ -12,7 +12,13 @@ class FakeAudio extends EventTarget {
   src = '';
   paused = true;
   playResult: () => Promise<void> = () => Promise.resolve();
+  /** Every src play() was called with, including the unlocking silence. */
   readonly played: string[] = [];
+
+  /** The speech URLs played, without the silence. */
+  get streams(): string[] {
+    return this.played.filter((src) => !src.startsWith('data:'));
+  }
 
   play = vi.fn(() => {
     this.played.push(this.src);
@@ -71,7 +77,7 @@ describe('SpeechPlayer', () => {
     expect(requests[0].text).toBe('Message 1.');
 
     await answer(0, '/api/tts/a');
-    expect(audio.played).toEqual(['/api/tts/a']);
+    expect(audio.streams).toEqual(['/api/tts/a']);
     audio.fire('playing');
     expect(latest()).toMatchObject({ currentMessageId: 'm1', isLoading: false, isPlaying: true });
   });
@@ -87,7 +93,7 @@ describe('SpeechPlayer', () => {
     expect(latest()).toMatchObject({ currentMessageId: 'm1', isPlaying: false });
 
     player.play(item(1));
-    expect(audio.played).toEqual(['/api/tts/a', '/api/tts/a']);
+    expect(audio.streams).toEqual(['/api/tts/a', '/api/tts/a']);
     expect(requests).toHaveLength(1);
   });
 
@@ -105,7 +111,7 @@ describe('SpeechPlayer', () => {
 
     await answer(0, '/api/tts/stale');
     await answer(1, '/api/tts/b');
-    expect(audio.played).toEqual(['/api/tts/b']);
+    expect(audio.streams).toEqual(['/api/tts/b']);
     expect(latest().currentMessageId).toBe('m2');
   });
 
@@ -120,7 +126,7 @@ describe('SpeechPlayer', () => {
     await answer(1, '/api/tts/b');
     audio.fire('ended');
 
-    expect(audio.played).toEqual(['/api/tts/a', '/api/tts/b']);
+    expect(audio.streams).toEqual(['/api/tts/a', '/api/tts/b']);
     expect(latest()).toEqual(IDLE_SPEECH_STATE);
   });
 
@@ -175,7 +181,7 @@ describe('SpeechPlayer', () => {
     audio.playResult = () => Promise.resolve();
     audio.paused = true;
     player.play(item(1));
-    expect(audio.played).toEqual(['/api/tts/a', '/api/tts/a']);
+    expect(audio.streams).toEqual(['/api/tts/a', '/api/tts/a']);
   });
 
   it('restart() reloads the current stream', async () => {
@@ -183,7 +189,29 @@ describe('SpeechPlayer', () => {
     await answer(0, '/api/tts/a');
     audio.src = 'http://localhost/api/tts/a';
     player.restart();
-    expect(audio.played).toEqual(['/api/tts/a', '/api/tts/a']);
+    expect(audio.streams).toEqual(['/api/tts/a', '/api/tts/a']);
+  });
+
+  it('play() unlocks the element with silence during the tap, once', async () => {
+    player.play(item(1));
+    expect(audio.played).toHaveLength(1);
+    expect(audio.played[0]).toMatch(/^data:audio\/wav;base64,UklGR/);
+    await answer(0, '/api/tts/a');
+    player.play(item(2));
+    await answer(1, '/api/tts/b');
+    expect(audio.played).toHaveLength(3);
+  });
+
+  it('prime() resumes a message whose autoplay was refused, and otherwise leaves it alone', async () => {
+    audio.playResult = () => Promise.reject(new DOMException('no gesture', 'NotAllowedError'));
+    player.enqueue(item(1));
+    await answer(0, '/api/tts/a');
+    audio.playResult = () => Promise.resolve();
+
+    player.prime();
+    expect(audio.streams).toEqual(['/api/tts/a', '/api/tts/a']);
+    player.prime();
+    expect(audio.played).toHaveLength(2);
   });
 
   it('prime() plays silence once, ignores its events, and clears it afterwards', async () => {
@@ -198,7 +226,7 @@ describe('SpeechPlayer', () => {
     expect(states).toEqual([]);
   });
 
-  it('prime() leaves a message that started meanwhile alone', async () => {
+  it('silence that is still starting leaves a message that started meanwhile alone', async () => {
     let finishPrime: () => void = () => {};
     audio.playResult = () => new Promise((resolve) => (finishPrime = resolve));
     player.prime();
