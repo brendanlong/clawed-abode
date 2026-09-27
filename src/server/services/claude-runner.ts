@@ -745,9 +745,10 @@ async function pauseSessionForRateLimit(
   }
 
   // A rejection may already have killed the turn before we got here, so it goes
-  // by the pre-await snapshot; otherwise only a turn we actually cut short needs
-  // a nudge to continue once the window resets.
-  if (interrupted || (hold.reason === 'rejected' && hadActiveTurn)) {
+  // by the pre-await snapshot (unless an interrupt is already underway); otherwise
+  // only a turn we actually cut short needs a nudge once the window resets.
+  const rejectedMidTurn = hold.reason === 'rejected' && hadActiveTurn && !state?.interruptRequested;
+  if (interrupted || rejectedMidTurn) {
     try {
       await prisma.session.updateMany({
         where: { id: sessionId },
@@ -773,8 +774,9 @@ async function interruptTurnForRateLimit(
   q: Query
 ): Promise<boolean> {
   if (!state.status.turnActive || state.optimisticTurnActive || state.query !== q) return false;
-  // Already on its way down; the flag clears when the turn-end arrives.
-  if (state.interruptRequested) return true;
+  // Already on its way down. Whoever asked owns the resume flag: an earlier
+  // pause already set it, and a user's Stop must not have it set back.
+  if (state.interruptRequested) return false;
   state.interruptRequested = true;
   try {
     await q.interrupt();

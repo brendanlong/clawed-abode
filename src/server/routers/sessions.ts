@@ -338,9 +338,11 @@ export const sessionsRouter = router({
       return { session: toSessionView(session) };
     }
 
+    // Stopping also withdraws a pending rate-limit resume nudge, or Start would
+    // have the session pick the cut-short work back up on its own.
     const updatedSession = await prisma.session.update({
       where: { id: session.id },
-      data: { status: 'stopped' },
+      data: { status: 'stopped', resumeAfterRateLimit: false },
     });
 
     sseEvents.emitSessionUpdate(input.sessionId, updatedSession);

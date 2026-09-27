@@ -367,6 +367,36 @@ describe('rate-limit pause', () => {
     runner.stopSession(sessionId);
   });
 
+  it('does not re-arm the resume nudge after the user stops a turn the pause interrupted', async () => {
+    const fake = makeFakeQuery();
+    runner._setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession({ rateLimitPauseThreshold: 50 });
+
+    await sendAndDeliver(fake, sessionId, 'long job', { settle: false });
+    fake.emit(
+      rateLimitEvent({
+        status: 'allowed',
+        rateLimitType: 'five_hour',
+        resetsAt: (NOW + HOUR_MS) / 1000,
+        unifiedWindows: { five_hour: { utilization: 0.6, resetsAt: (NOW + HOUR_MS) / 1000 } },
+      })
+    );
+    await waitFor(async () => (await testPrisma.rateLimitWindow.count()) > 0);
+    await runner.recomputeRateLimitHolds();
+
+    // The turn hasn't ended yet, so the user presses Stop; then another reading
+    // triggers a recompute before the turn-end arrives.
+    await runner.interruptClaude(sessionId);
+    await runner.recomputeRateLimitHolds();
+
+    expect(
+      (await testPrisma.session.findUniqueOrThrow({ where: { id: sessionId } }))
+        .resumeAfterRateLimit
+    ).toBe(false);
+
+    runner.stopSession(sessionId);
+  });
+
   it('does not interrupt or nudge an idle session at the threshold', async () => {
     const fake = makeFakeQuery();
     runner._setQueryFactory(fake.factory);

@@ -69,7 +69,8 @@ leaving it alone meant a pause changed nothing for the session that was actually
 spending. And a rejection doesn't reliably end the turn either: with overage
 credits available the CLI carries on. Recall comes before the interrupt, because
 the interrupt wakes the CLI's command loop and anything still queued would run as
-its own turn. Background tasks are not stopped.
+its own turn. Background tasks are not stopped; one finishing can start a new
+turn, which the next reading's recompute interrupts in turn.
 
 Recalling a push that the CLI never read has to undo the optimistic `turnActive`
 that push set (`clearOptimisticTurn`), or the composer reads "working" for the
@@ -104,7 +105,7 @@ interaction, just an earlier one.
 
 **Stop is the way out.** `interruptClaude` empties the queue, deletes those bubbles
 and returns the text to the composer (the same recall path Stop already used for
-in-flight prompts), and withdraws a pending resume nudge — a user stopping is a
+in-flight prompts), and withdraws a pending resume nudge (as does the header Stop) — a user stopping is a
 clear signal they don't want the session picking work back up on its own. This
 matters because a paused session has no live turn for Stop to act on otherwise.
 Archiving clears the queue for the same reason: archiving keeps the session row,
