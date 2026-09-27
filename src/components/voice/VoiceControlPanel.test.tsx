@@ -30,8 +30,9 @@ vi.mock('@/hooks/useVoicePlayback', () => ({
   useVoicePlaybackContext: () => ({
     enabled: true,
     isPlaying: false,
+    isLoading: false,
     currentMessageId: null,
-    supportsPause: false,
+    error: null,
     play: vi.fn(),
     enqueue: vi.fn(),
     pause: vi.fn(),

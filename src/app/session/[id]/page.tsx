@@ -96,7 +96,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
 
   // Voice features
   const voiceConfig = useVoiceConfig(sessionId);
-  const voicePlayback = useVoicePlayback(voiceConfig.ttsSpeed, voiceConfig.voiceURI);
+  const voicePlayback = useVoicePlayback(voiceConfig.ttsEnabled);
   const [voiceOverlayOpen, setVoiceOverlayOpen] = useState(false);
 
   // Auto-read: stream TTS as assistant messages arrive during a turn
@@ -153,7 +153,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
     const shouldEnqueue =
       (isClaudeRunning || (wasRunning && !isClaudeRunning)) &&
       voiceConfig.autoRead &&
-      voiceConfig.enabled &&
+      voiceConfig.ttsEnabled &&
       !autoReadStoppedRef.current;
 
     if (shouldEnqueue) {
@@ -163,7 +163,13 @@ function SessionView({ sessionId }: { sessionId: string }) {
         voicePlayback.enqueue({ messageId: msg.id, text: msg.text });
       }
     }
-  }, [isClaudeRunning, messages, voiceConfig.autoRead, voiceConfig.enabled, voicePlayback.enqueue]);
+  }, [
+    isClaudeRunning,
+    messages,
+    voiceConfig.autoRead,
+    voiceConfig.ttsEnabled,
+    voicePlayback.enqueue,
+  ]);
 
   if (sessionLoading) {
     return (
@@ -257,7 +263,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
           isArchiving={isArchiving}
           voiceEnabled={voiceConfig.enabled}
           autoRead={voiceConfig.autoRead}
-          onAutoReadToggle={voiceConfig.setAutoRead}
+          onAutoReadToggle={voiceConfig.ttsEnabled ? voiceConfig.setAutoRead : undefined}
           onToggleVoiceMode={() => setVoiceOverlayOpen((prev) => !prev)}
           voiceModeActive={voiceOverlayOpen}
         />

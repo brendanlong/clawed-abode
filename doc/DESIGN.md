@@ -79,7 +79,13 @@ Opt-in (`PUBLIC_FILES_PORT` + `PUBLIC_FILES_URL`): a second HTTP server in the s
 
 ## Voice
 
-Speech input/output uses the browser's Web Speech APIs only (no keys, no server audio). Auto-read (speak replies aloud) is a per-session, per-device preference in `localStorage`; Voice Auto-Send (send a transcript immediately vs. land it in the composer for editing) and TTS speed are global server settings. Hooks: [`useVoiceRecording`](../src/hooks/useVoiceRecording.ts), [`useVoicePlayback`](../src/hooks/useVoicePlayback.ts) (which documents the browser quirks the playback code works around), [`useVoiceConfig`](../src/hooks/useVoiceConfig.ts); UI in [`src/components/voice/`](../src/components/voice/).
+Speech input uses the browser's `SpeechRecognition` ([`useVoiceRecording`](../src/hooks/useVoiceRecording.ts)). Read-aloud is Kokoro only, via any OpenAI-compatible `/audio/speech` API (OpenRouter or a local Kokoro-FastAPI; opt-in with `TTS_BASE_URL`). Browser voices were dropped rather than kept as a fallback: two playback engines weren't worth it when Kokoro costs ~$1–4 per million characters and the app needs the network anyway.
+
+- **Server** ([`speech-store.ts`](../src/server/services/speech-store.ts)): the text is split into chunks, the next chunk is requested while the current one plays (each provider call has seconds of fixed latency), and the chunks' MP3 frames are concatenated into one stream (the per-chunk Xing header is stripped, since a player honoring it would stop after chunk one). Audio is cached in memory and shared, so replays and a browser's repeated range requests don't re-synthesize.
+- **URLs**: an `<audio>` element can't send the bearer token, so the authenticated `POST /api/tts` mints an unguessable `/api/tts/{id}` that the element streams from (see [`security.md`](security.md)).
+- **Client** ([`SpeechPlayer`](../src/lib/speech-player.ts), wired up by [`useVoicePlayback`](../src/hooks/useVoicePlayback.ts)): one long-lived `<audio>` element plays each message's stream (not MSE, which can't be relied on for MP3 on iOS), so the OS media controls and lock screen work through the Media Session API. iOS only allows unprompted playback on an element that has already played during a tap, so the first tap anywhere plays a moment of silence.
+
+Voice, speed, and Voice Auto-Send are global server settings. Auto-read is a per-session, per-device preference in `localStorage`.
 
 ## Remote File Editing
 

@@ -1,17 +1,31 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { CenteredSpinner, Spinner } from '@/components/ui/spinner';
 import { Slider } from '@/components/ui/slider';
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { trpc } from '@/lib/trpc';
-import { useVoiceConfig } from '@/hooks/useVoiceConfig';
-import { useSpeechSynthesisVoices } from '@/hooks/useSpeechSynthesisVoices';
-import { dedupeAndSortVoices } from '@/lib/tts';
+import { requestSpeechUrl } from '@/hooks/useVoicePlayback';
+import {
+  DEFAULT_KOKORO_VOICE,
+  groupKokoroVoices,
+  kokoroVoiceSchema,
+  resolveKokoroVoice,
+} from '@/lib/kokoro-voices';
 import { SettingsCard } from './shared/SettingsCard';
-import { VoicePicker } from './VoicePicker';
+
+const VOICE_GROUPS = groupKokoroVoices();
 
 export function AudioTab() {
   const { data: settings, isLoading, refetch } = trpc.globalSettings.get.useQuery();
@@ -22,19 +36,33 @@ export function AudioTab() {
 
   return (
     <div className="space-y-6">
-      <SettingsCard
-        title="TTS Voice"
-        description="Select the voice for text-to-speech playback. Available voices depend on your device and browser. This preference is stored per-device."
-      >
-        <TtsVoiceSection />
-      </SettingsCard>
+      {settings?.ttsEnabled ? (
+        <>
+          <SettingsCard
+            title="Read-Aloud Voice"
+            description="The Kokoro voice used to read messages aloud."
+          >
+            <TtsVoiceSection currentVoice={settings.ttsVoice} onUpdate={refetch} />
+          </SettingsCard>
 
-      <SettingsCard
-        title="TTS Speed"
-        description="Controls how fast the browser text-to-speech voice speaks (using the Web Speech API). Range: 0.25x (very slow) to 4.0x (very fast). Default is 1.0x."
-      >
-        <TtsSpeedSection currentSpeed={settings?.ttsSpeed ?? null} onUpdate={refetch} />
-      </SettingsCard>
+          <SettingsCard
+            title="Read-Aloud Speed"
+            description="How fast Kokoro speaks, from 0.25x to 4.0x. Default is 1.0x."
+          >
+            <TtsSpeedSection currentSpeed={settings.ttsSpeed} onUpdate={refetch} />
+          </SettingsCard>
+        </>
+      ) : (
+        <SettingsCard
+          title="Read Aloud"
+          description="Reading messages aloud uses Kokoro text-to-speech on the server."
+        >
+          <p className="text-sm text-muted-foreground">
+            Not configured. Set <code>TTS_BASE_URL</code> (and <code>TTS_API_KEY</code> for
+            OpenRouter) in the server environment; see <code>.env.example</code>.
+          </p>
+        </SettingsCard>
+      )}
 
       <SettingsCard
         title="Auto-Send Voice Input"
@@ -46,54 +74,72 @@ export function AudioTab() {
   );
 }
 
-function TtsVoiceSection() {
-  const { voiceURI, setVoiceURI } = useVoiceConfig();
-  const availableVoices = useSpeechSynthesisVoices();
-  const voices = useMemo(() => dedupeAndSortVoices(availableVoices), [availableVoices]);
+function TtsVoiceSection({
+  currentVoice,
+  onUpdate,
+}: {
+  currentVoice: string | null;
+  onUpdate: () => void;
+}) {
+  const mutation = trpc.globalSettings.setTtsVoice.useMutation({ onSuccess: onUpdate });
+  const [testing, setTesting] = useState(false);
+  const [testError, setTestError] = useState<string | null>(null);
 
-  const handleTest = () => {
-    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
-
-    const synth = window.speechSynthesis;
-    synth.cancel();
-
-    const utterance = new SpeechSynthesisUtterance('This is a test of the selected voice.');
-    const selectedVoice = voiceURI ? voices.find((v) => v.voiceURI === voiceURI) : null;
-    if (selectedVoice) {
-      utterance.voice = selectedVoice;
-    }
-    synth.speak(utterance);
+  const handleChange = (value: string) => {
+    const voice = kokoroVoiceSchema.parse(value);
+    mutation.mutate({ ttsVoice: voice === DEFAULT_KOKORO_VOICE ? null : voice });
   };
 
-  if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
-    return (
-      <p className="text-sm text-muted-foreground">
-        Text-to-speech is not supported in this browser.
-      </p>
-    );
-  }
-
-  if (voices.length === 0) {
-    return (
-      <p className="text-sm text-muted-foreground">
-        No voices available. Your browser may still be loading them.
-      </p>
-    );
-  }
+  // Synthesizes with the saved voice and speed, which a selection has already saved.
+  const handleTest = async () => {
+    setTesting(true);
+    setTestError(null);
+    try {
+      const url = await requestSpeechUrl('This is a test of the selected voice.');
+      await new Audio(url).play();
+    } catch (err) {
+      setTestError(err instanceof Error ? err.message : 'Test failed');
+    } finally {
+      setTesting(false);
+    }
+  };
 
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2">
-        <VoicePicker
-          voices={voices}
-          value={voiceURI}
-          onChange={setVoiceURI}
-          locale={navigator.language}
-        />
-        <Button variant="outline" size="sm" onClick={handleTest}>
-          Test
+        <Select
+          value={resolveKokoroVoice(currentVoice)}
+          onValueChange={handleChange}
+          disabled={mutation.isPending}
+        >
+          <SelectTrigger aria-label="Read-aloud voice" className="w-full sm:w-[260px]">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {VOICE_GROUPS.map((group) => (
+              <SelectGroup key={group.language}>
+                <SelectLabel>{group.language}</SelectLabel>
+                {group.voices.map((voice) => (
+                  <SelectItem key={voice.id} value={voice.id}>
+                    {voice.label}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            ))}
+          </SelectContent>
+        </Select>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleTest}
+          disabled={testing || mutation.isPending}
+        >
+          {testing ? <Spinner size="sm" /> : 'Test'}
         </Button>
       </div>
+      {(mutation.error || testError) && (
+        <p className="text-sm text-destructive">{mutation.error?.message ?? testError}</p>
+      )}
     </div>
   );
 }

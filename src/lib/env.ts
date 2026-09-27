@@ -57,6 +57,12 @@ const envSchema = z
         .refine((url) => new URL(url).pathname === '/', 'must be an origin, with no path')
         .optional()
     ),
+    // OpenAI-compatible speech API that serves Kokoro, e.g. https://openrouter.ai/api/v1
+    // or a local Kokoro-FastAPI at http://localhost:8880/v1. When unset, TTS is hidden.
+    TTS_BASE_URL: z.preprocess(emptyToUndefined, z.string().url().optional()),
+    TTS_API_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
+    // Kokoro-FastAPI calls the model "kokoro".
+    TTS_MODEL: z.preprocess(emptyToUndefined, z.string().default('hexgrad/kokoro-82m')),
     // Minimum level the server logger writes (see src/lib/logger.ts).
     LOG_LEVEL: z.enum(LOG_LEVELS).default('info'),
   })

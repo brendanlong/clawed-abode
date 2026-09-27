@@ -47,6 +47,8 @@ describe('globalSettings router', () => {
         advisorModel: null,
         hasClaudeApiKey: false,
         ttsSpeed: null,
+        ttsVoice: null,
+        ttsEnabled: false,
         voiceAutoSend: true,
         settingSources: { user: false, project: true, local: false },
         defaultClaudeModel: 'opus[1m]',
