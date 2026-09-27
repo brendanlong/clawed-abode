@@ -23,6 +23,8 @@ vi.mock('./session-cgroup', () => ({
   sessionScopeNonce: () => 'nonce',
 }));
 vi.mock('./input-sanitizer', () => ({ sanitizeToolOutputHook: vi.fn() }));
+const mockScheduleRefresh = vi.hoisted(() => vi.fn());
+vi.mock('./session-branch-pr', () => ({ scheduleBranchPrRefresh: mockScheduleRefresh }));
 
 const settings = (overrides: Partial<MergedSessionSettings> = {}): MergedSessionSettings => ({
   systemPrompt: 'prompt',
@@ -152,5 +154,39 @@ describe('buildSdkOptions', () => {
     expect(state.pendingInput).toMatchObject({ toolName: 'AskUserQuestion', toolUseId: 't2' });
     state.pendingInput!.resolve({ behavior: 'deny', message: 'no' });
     expect(await parked).toEqual({ behavior: 'deny', message: 'no' });
+  });
+
+  it('schedules a branch/PR refresh after a tool call that may change them', async () => {
+    const { options } = await build(settings());
+    const hooks = options.hooks!.PostToolUse![0].hooks;
+    const runHooks = (tool_name: string, command: string) =>
+      Promise.all(
+        hooks.map((hook) =>
+          hook(
+            {
+              hook_event_name: 'PostToolUse',
+              tool_name,
+              tool_input: { command },
+              tool_response: '',
+              tool_use_id: 't1',
+              session_id: 'sid',
+              transcript_path: '',
+              cwd: '/w',
+            },
+            't1',
+            { signal: new AbortController().signal }
+          )
+        )
+      );
+
+    await runHooks('Bash', 'git status');
+    expect(mockScheduleRefresh).not.toHaveBeenCalled();
+
+    await runHooks('Bash', 'git push -u origin HEAD');
+    expect(mockScheduleRefresh).toHaveBeenCalledWith('sid', '/w');
+
+    mockScheduleRefresh.mockClear();
+    await runHooks('mcp__GitHub__merge_pull_request', '');
+    expect(mockScheduleRefresh).toHaveBeenCalledWith('sid', '/w');
   });
 });

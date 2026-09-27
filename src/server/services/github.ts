@@ -28,10 +28,16 @@ interface GitHubPullRequest {
 // GitHub API helpers
 // =============================================================================
 
-export async function githubFetchResponse(path: string, token?: string): Promise<Response> {
+/** A 304 is returned rather than thrown only when the caller asked for one with `If-None-Match`. */
+export async function githubFetchResponse(
+  path: string,
+  token?: string,
+  extraHeaders?: Record<string, string>
+): Promise<Response> {
   const headers: Record<string, string> = {
     Accept: 'application/vnd.github+json',
     'X-GitHub-Api-Version': '2022-11-28',
+    ...extraHeaders,
   };
 
   if (token) {
@@ -40,7 +46,8 @@ export async function githubFetchResponse(path: string, token?: string): Promise
 
   const response = await fetch(`${GITHUB_API}${path}`, { headers });
 
-  if (!response.ok) {
+  const notModified = response.status === 304 && extraHeaders?.['If-None-Match'] !== undefined;
+  if (!response.ok && !notModified) {
     throw new GitHubApiError(response.status, path, await readApiMessage(response));
   }
 
@@ -145,10 +152,48 @@ export async function githubFetchAllPages<T>(
 // PR lookup
 // =============================================================================
 
+interface CachedPrLookup {
+  etag: string;
+  pullRequest: PullRequestInfo | null;
+}
+
+/**
+ * Last answer per lookup URL, replayed on a 304. GitHub doesn't count an
+ * authorized conditional request that comes back 304 against the rate limit, so
+ * this is what makes a short PR snapshot TTL affordable. Map order is insertion
+ * order, so evicting the first key drops the least recently refreshed lookup.
+ */
+const prLookupCache = new Map<string, CachedPrLookup>();
+const MAX_CACHED_PR_LOOKUPS = 500;
+
+function cachePrLookup(path: string, entry: CachedPrLookup): void {
+  prLookupCache.delete(path);
+  prLookupCache.set(path, entry);
+  if (prLookupCache.size > MAX_CACHED_PR_LOOKUPS) {
+    prLookupCache.delete(prLookupCache.keys().next().value!);
+  }
+}
+
+export function _clearPrLookupCache(): void {
+  prLookupCache.clear();
+}
+
+function toPullRequestInfo(pr: GitHubPullRequest): PullRequestInfo {
+  return {
+    number: pr.number,
+    title: pr.title,
+    state: pr.merged_at ? 'merged' : pr.state,
+    draft: pr.draft,
+    url: pr.html_url,
+    author: pr.user?.login || 'unknown',
+    updatedAt: pr.updated_at,
+  };
+}
+
 /**
  * Fetch the most recent pull request for a given branch.
  * Returns null if no PR exists for the branch.
- * Returns undefined if the GitHub token is not configured.
+ * Returns undefined if the GitHub token is not configured or the lookup failed.
  */
 export async function fetchPullRequestForBranch(
   repoFullName: string,
@@ -161,27 +206,25 @@ export async function fetchPullRequestForBranch(
 
   const [owner] = repoFullName.split('/');
   const headFilter = `${owner}:${branch}`;
+  const path = `/repos/${repoFullName}/pulls?head=${encodeURIComponent(headFilter)}&state=all&per_page=1&sort=updated&direction=desc`;
+  const cached = prLookupCache.get(path);
 
   try {
-    const pulls = await githubFetch<GitHubPullRequest[]>(
-      `/repos/${repoFullName}/pulls?head=${encodeURIComponent(headFilter)}&state=all&per_page=1&sort=updated&direction=desc`,
-      token
+    const response = await githubFetchResponse(
+      path,
+      token,
+      cached ? { 'If-None-Match': cached.etag } : undefined
     );
-
-    if (pulls.length === 0) {
-      return null;
+    if (response.status === 304 && cached) {
+      cachePrLookup(path, cached);
+      return cached.pullRequest;
     }
 
-    const pr = pulls[0];
-    return {
-      number: pr.number,
-      title: pr.title,
-      state: pr.merged_at ? 'merged' : pr.state,
-      draft: pr.draft,
-      url: pr.html_url,
-      author: pr.user?.login || 'unknown',
-      updatedAt: pr.updated_at,
-    };
+    const pulls: GitHubPullRequest[] = await response.json();
+    const pullRequest = pulls.length > 0 ? toPullRequestInfo(pulls[0]) : null;
+    const etag = response.headers.get('etag');
+    if (etag) cachePrLookup(path, { etag, pullRequest });
+    return pullRequest;
   } catch (err) {
     log.error('Failed to fetch PR for branch', toError(err), {
       repoFullName,

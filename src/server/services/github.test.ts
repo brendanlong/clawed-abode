@@ -7,15 +7,21 @@ global.fetch = mockFetch;
 
 vi.mock('@/lib/logger', async () => (await import('@/test/mock-logger')).mockLoggerModule());
 
-import { fetchPullRequestForBranch, GitHubApiError, githubFetch, parseLinkHeader } from './github';
+import {
+  _clearPrLookupCache,
+  fetchPullRequestForBranch,
+  GitHubApiError,
+  githubFetch,
+  parseLinkHeader,
+} from './github';
 
-function createMockResponse(data: unknown, status = 200) {
+function createMockResponse(data: unknown, status = 200, etag: string | null = null) {
   return {
     ok: status >= 200 && status < 300,
     status,
     json: vi.fn().mockResolvedValue(data),
     headers: {
-      get: () => null,
+      get: (name: string) => (name.toLowerCase() === 'etag' ? etag : null),
     },
   };
 }
@@ -25,6 +31,7 @@ describe('github service', () => {
     vi.clearAllMocks();
     process.env.GITHUB_TOKEN = 'test-token';
     resetEnvCache();
+    _clearPrLookupCache();
   });
 
   afterEach(() => {
@@ -98,6 +105,65 @@ describe('github service', () => {
   });
 
   describe('fetchPullRequestForBranch', () => {
+    const openPull = {
+      id: 1,
+      number: 42,
+      title: 'Add feature X',
+      state: 'open',
+      draft: false,
+      merged_at: null,
+      html_url: 'https://github.com/owner/repo/pull/42',
+      user: { login: 'author' },
+      created_at: '2024-01-01T00:00:00Z',
+      updated_at: '2024-01-02T00:00:00Z',
+    };
+    const sentHeaders = (call: number): Record<string, string> =>
+      mockFetch.mock.calls[call][1].headers;
+
+    it('revalidates with the last ETag and replays the cached answer on a 304', async () => {
+      mockFetch.mockResolvedValueOnce(createMockResponse([openPull], 200, '"v1"'));
+      const first = await fetchPullRequestForBranch('owner/repo', 'feature');
+      expect(sentHeaders(0)['If-None-Match']).toBeUndefined();
+
+      mockFetch.mockResolvedValueOnce(createMockResponse(null, 304));
+      const second = await fetchPullRequestForBranch('owner/repo', 'feature');
+
+      expect(sentHeaders(1)['If-None-Match']).toBe('"v1"');
+      expect(second).toEqual(first);
+      expect(second?.number).toBe(42);
+    });
+
+    it('replaces the cached answer when the PR changed', async () => {
+      mockFetch.mockResolvedValueOnce(createMockResponse([openPull], 200, '"v1"'));
+      await fetchPullRequestForBranch('owner/repo', 'feature');
+
+      const merged = { ...openPull, state: 'closed', merged_at: '2024-01-03T00:00:00Z' };
+      mockFetch.mockResolvedValueOnce(createMockResponse([merged], 200, '"v2"'));
+      expect((await fetchPullRequestForBranch('owner/repo', 'feature'))?.state).toBe('merged');
+
+      mockFetch.mockResolvedValueOnce(createMockResponse(null, 304));
+      expect((await fetchPullRequestForBranch('owner/repo', 'feature'))?.state).toBe('merged');
+      expect(sentHeaders(2)['If-None-Match']).toBe('"v2"');
+    });
+
+    it('treats a 304 nobody asked for as an error', async () => {
+      mockFetch.mockResolvedValue(createMockResponse(null, 304));
+      await expect(githubFetch('/repos/owner/repo', 'token')).rejects.toThrow(GitHubApiError);
+    });
+
+    it('caches "no PR" too, and keys the cache by branch', async () => {
+      mockFetch.mockResolvedValueOnce(createMockResponse([], 200, '"empty"'));
+      expect(await fetchPullRequestForBranch('owner/repo', 'a')).toBeNull();
+
+      mockFetch.mockResolvedValueOnce(createMockResponse([openPull], 200, '"b1"'));
+      await fetchPullRequestForBranch('owner/repo', 'b');
+      expect(sentHeaders(1)['If-None-Match']).toBeUndefined();
+
+      mockFetch.mockResolvedValueOnce(createMockResponse(null, 304));
+      expect(await fetchPullRequestForBranch('owner/repo', 'a')).toBeNull();
+      expect(sentHeaders(2)['If-None-Match']).toBe('"empty"');
+    });
+
     it('should return PR info when a PR exists', async () => {
       const mockPulls = [
         {

@@ -1,3 +1,7 @@
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { setupTestDb, teardownTestDb, testPrisma, clearTestDb } from '@/test/setup-test-db';
 import { waitFor } from '@/test/wait-for';
@@ -21,6 +25,8 @@ const pr: PullRequestInfo = {
 // Imported after setupTestDb: both modules reach @/lib/prisma at load time.
 let fetchPullRequestForBranch: typeof import('./github').fetchPullRequestForBranch;
 let refreshStalePullRequests: typeof import('./session-branch-pr').refreshStalePullRequests;
+let scheduleBranchPrRefresh: typeof import('./session-branch-pr').scheduleBranchPrRefresh;
+let detectBranchAndPr: typeof import('./session-branch-pr').detectBranchAndPr;
 
 const staleCheck = new Date(Date.now() - PR_SNAPSHOT_TTL_MS - 1000);
 
@@ -48,23 +54,24 @@ async function storedPr(id: string): Promise<PullRequestInfo | null> {
   return parsePullRequestJson((await sessionRow(id)).pullRequest);
 }
 
+beforeAll(async () => {
+  await setupTestDb();
+  ({ fetchPullRequestForBranch } = await import('./github'));
+  ({ refreshStalePullRequests, scheduleBranchPrRefresh, detectBranchAndPr } =
+    await import('./session-branch-pr'));
+});
+
+afterAll(async () => {
+  await teardownTestDb();
+});
+
+beforeEach(async () => {
+  await clearTestDb();
+  vi.clearAllMocks();
+  vi.mocked(fetchPullRequestForBranch).mockResolvedValue(pr);
+});
+
 describe('refreshStalePullRequests', () => {
-  beforeAll(async () => {
-    await setupTestDb();
-    ({ fetchPullRequestForBranch } = await import('./github'));
-    ({ refreshStalePullRequests } = await import('./session-branch-pr'));
-  });
-
-  afterAll(async () => {
-    await teardownTestDb();
-  });
-
-  beforeEach(async () => {
-    await clearTestDb();
-    vi.clearAllMocks();
-    vi.mocked(fetchPullRequestForBranch).mockResolvedValue(pr);
-  });
-
   it('fetches and stores a PR for a session that has never been checked', async () => {
     const { id } = await createSession();
 
@@ -200,5 +207,66 @@ describe('refreshStalePullRequests', () => {
     }
     await waitFor(async () => (await storedPr(sessions[9].id)) !== null, 5000);
     expect(fetchPullRequestForBranch).toHaveBeenCalledTimes(10);
+  });
+});
+
+describe('scheduleBranchPrRefresh', () => {
+  let repoDir: string;
+
+  beforeAll(() => {
+    repoDir = mkdtempSync(join(tmpdir(), 'branch-pr-'));
+    execFileSync('git', ['init', '-q', '-b', 'feat-a', repoDir]);
+  });
+
+  afterAll(() => {
+    rmSync(repoDir, { recursive: true, force: true });
+  });
+
+  it('picks up a mid-turn branch switch and its PR, once per burst of tool calls', async () => {
+    const { id } = await createSession();
+    execFileSync('git', ['-C', repoDir, 'switch', '-q', '-c', 'feat-b']);
+
+    scheduleBranchPrRefresh(id, repoDir);
+    scheduleBranchPrRefresh(id, repoDir);
+
+    await waitFor(async () => (await sessionRow(id)).currentBranch === 'feat-b', 5000);
+    expect(await storedPr(id)).toEqual(pr);
+    expect(fetchPullRequestForBranch).toHaveBeenCalledTimes(1);
+    expect(fetchPullRequestForBranch).toHaveBeenCalledWith('o/r', 'feat-b');
+  });
+});
+
+describe('detectBranchAndPr', () => {
+  // No git repo here, so the branch falls back to the stored one.
+  const noRepo = '/nonexistent-worktree';
+
+  it('never writes to an archived session, e.g. when a refresh lands after delete', async () => {
+    const { id } = await createSession({ status: 'archived' });
+
+    await detectBranchAndPr(id, noRepo);
+
+    expect(fetchPullRequestForBranch).not.toHaveBeenCalled();
+    expect((await sessionRow(id)).prCheckedAt).toBeNull();
+  });
+
+  it('keeps the answer of the lookup that started last, whatever order they finish in', async () => {
+    const { id } = await createSession();
+    const merged: PullRequestInfo = { ...pr, state: 'merged' };
+    let releaseSlow!: () => void;
+    vi.mocked(fetchPullRequestForBranch)
+      .mockImplementationOnce(async () => {
+        await new Promise<void>((r) => (releaseSlow = r));
+        return pr;
+      })
+      .mockResolvedValueOnce(merged);
+
+    const slow = detectBranchAndPr(id, noRepo);
+    await waitFor(() => releaseSlow !== undefined);
+    await detectBranchAndPr(id, noRepo);
+    expect((await storedPr(id))?.state).toBe('merged');
+
+    releaseSlow();
+    await slow;
+    expect((await storedPr(id))?.state).toBe('merged');
   });
 });

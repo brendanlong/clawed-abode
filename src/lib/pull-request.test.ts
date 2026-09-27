@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   isPrSnapshotStale,
+  mayChangeBranchOrPr,
   parsePullRequestJson,
   serializePullRequest,
   MERGED_PR_SNAPSHOT_TTL_MS,
@@ -38,7 +39,7 @@ describe('pull-request JSON column', () => {
 
 describe('isPrSnapshotStale', () => {
   const now = new Date('2024-01-01T12:00:00Z').getTime();
-  const fresh = new Date(now - 60 * 1000);
+  const fresh = new Date(now - PR_SNAPSHOT_TTL_MS + 1000);
   const old = new Date(now - 60 * 60 * 1000);
 
   const candidate = (overrides: Partial<PrRefreshCandidate> = {}): PrRefreshCandidate => ({
@@ -95,5 +96,58 @@ describe('isPrSnapshotStale', () => {
     expect(isPrSnapshotStale(candidate({ currentBranch: null, prCheckedAt: old }), now)).toBe(
       false
     );
+  });
+});
+
+describe('mayChangeBranchOrPr', () => {
+  const bash = (command: string) => mayChangeBranchOrPr('Bash', { command });
+
+  it.each([
+    'git checkout -b feature',
+    'git switch main',
+    'git push -u origin HEAD',
+    'git -C repo push',
+    'git add . && git commit -m x && git push',
+    'git merge origin/main',
+    'gh pr create --title T --body B',
+    'gh pr merge 12 --squash',
+    'gh pr ready',
+    'gh pr new',
+    'gh pr checkout 12',
+    'gh -R owner/repo pr create --fill',
+    'git branch -m renamed',
+  ])('matches %s', (command) => {
+    expect(bash(command)).toBe(true);
+  });
+
+  it.each([
+    'git status',
+    'git diff HEAD',
+    'git log --oneline',
+    'gh pr view 12',
+    'gh pr checks',
+    'pnpm test:run',
+    'echo git; push',
+    'git branch -a',
+  ])('ignores %s', (command) => {
+    expect(bash(command)).toBe(false);
+  });
+
+  it('matches GitHub MCP tools that change a PR', () => {
+    expect(mayChangeBranchOrPr('mcp__GitHub__create_pull_request', {})).toBe(true);
+    expect(mayChangeBranchOrPr('mcp__github__merge_pull_request', {})).toBe(true);
+    expect(mayChangeBranchOrPr('mcp__GitHub__update_pull_request_branch', {})).toBe(true);
+    expect(mayChangeBranchOrPr('mcp__GitHub__pull_request_read', {})).toBe(false);
+  });
+
+  it('ignores backgrounded Bash, whose hook fires before the command runs', () => {
+    expect(mayChangeBranchOrPr('Bash', { command: 'git push', run_in_background: true })).toBe(
+      false
+    );
+  });
+
+  it('ignores non-Bash tools and malformed Bash input', () => {
+    expect(mayChangeBranchOrPr('Read', { command: 'git push' })).toBe(false);
+    expect(mayChangeBranchOrPr('Bash', { cmd: 'git push' })).toBe(false);
   });
 });
