@@ -490,6 +490,20 @@ describe('sessionsRouter integration', () => {
       expect(dbSession!.status).toBe('stopped');
     });
 
+    it('should withdraw a pending rate-limit resume nudge', async () => {
+      const session = await createTestSession({ name: 'Paused Session' });
+      await testPrisma.session.update({
+        where: { id: session.id },
+        data: { resumeAfterRateLimit: true },
+      });
+
+      const caller = createCaller('auth-session-id');
+      await caller.sessions.stop({ sessionId: session.id });
+
+      const dbSession = await testPrisma.session.findUniqueOrThrow({ where: { id: session.id } });
+      expect(dbSession.resumeAfterRateLimit).toBe(false);
+    });
+
     it('should tear down the query but leave an archived session archived', async () => {
       const session = await createNoRepoSession({
         name: 'Archived Session',
