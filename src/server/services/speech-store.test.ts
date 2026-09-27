@@ -22,9 +22,15 @@ function controllableSynth() {
 
 function makeStore(
   synthesize: SynthesizeChunk,
-  overrides: { maxBytes?: number; now?: () => number } = {}
+  overrides: { maxBytes?: number; maxInFlight?: number; now?: () => number } = {}
 ) {
-  return new SpeechStore({ synthesize, maxBytes: 1_000_000, ttlMs: 60_000, ...overrides });
+  return new SpeechStore({
+    synthesize,
+    maxBytes: 1_000_000,
+    ttlMs: 60_000,
+    maxInFlight: 4,
+    ...overrides,
+  });
 }
 
 const voice: KokoroVoice = 'af_heart';
@@ -43,6 +49,23 @@ async function readAll(speech: Speech): Promise<number[]> {
 const twoChunkText = 'First sentence. Second one.';
 
 describe('SpeechStore', () => {
+  it('runs one request at a time when maxInFlight is 1', async () => {
+    const { calls, synthesize } = controllableSynth();
+    const { speech } = makeStore(synthesize, { maxInFlight: 1 }).open({
+      text: 'One. Two. Three.',
+      voice,
+      speed: 1,
+    });
+
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    calls[0].resolve(bytes(1));
+    await vi.waitFor(() => expect(calls).toHaveLength(2));
+    calls[1].resolve(bytes(2));
+    await vi.waitFor(() => expect(calls).toHaveLength(3));
+    calls[2].resolve(bytes(3));
+    await vi.waitFor(() => expect([...(speech.complete() ?? [])]).toEqual([1, 2, 3]));
+  });
+
   it('synthesizes each sentence with the voice and speed', async () => {
     const { calls, synthesize } = controllableSynth();
     makeStore(synthesize).open({ text: twoChunkText, voice, speed: 1.5 });

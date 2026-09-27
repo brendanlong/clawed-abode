@@ -208,6 +208,7 @@ The schema in [`src/lib/env.ts`](src/lib/env.ts) is authoritative; it is validat
 | `TTS_BASE_URL`                           | OpenAI-compatible speech API serving Kokoro (OpenRouter or a local Kokoro-FastAPI); enables read-aloud                                             | None                 |
 | `TTS_API_KEY`                            | Bearer key for `TTS_BASE_URL`, if it needs one                                                                                                     | None                 |
 | `TTS_MODEL`                              | Model name sent to `TTS_BASE_URL` (`kokoro` for Kokoro-FastAPI)                                                                                    | `hexgrad/kokoro-82m` |
+| `TTS_MAX_CONCURRENCY`                    | Speech requests per message run at once; use `1` for a local CPU server                                                                            | `4`                  |
 | `LOG_LEVEL`                              | Minimum server log level: `debug`, `info`, `warn`, or `error`                                                                                      | `info`               |
 
 ## Development
