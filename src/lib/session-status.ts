@@ -112,6 +112,25 @@ export function taskHasEndState(task: BackgroundTask): boolean {
   return task.taskType !== BACKGROUND_BASH_TASK_TYPE && !task.persistent;
 }
 
+/** Task kinds that run a model, and so draw on the subscription's usage window. */
+const MODEL_TASK_TYPES: ReadonlySet<string> = new Set([
+  'local_agent',
+  'remote_agent',
+  'local_workflow',
+]);
+
+/**
+ * Background tasks a rate-limit pause must stop: the subagents and workflows that
+ * keep spending usage after the main turn is interrupted. Shell commands and
+ * Monitor watches cost nothing to leave running (and may be a GPU job the user
+ * cares about), and an unknown kind is left alone for the same reason.
+ */
+export function modelBackgroundTasks(status: LiveStatus): BackgroundTask[] {
+  return [...status.backgroundTasks.values()].filter(
+    (task) => task.taskType !== undefined && MODEL_TASK_TYPES.has(task.taskType)
+  );
+}
+
 /**
  * Whether any background task with a knowable end state is currently running (see
  * {@link taskHasEndState}). Permanently-backgroundable Bash daemons are ignored, so

@@ -2,8 +2,9 @@
  * Integration test for the subscription rate-limit pause, driving the real runner
  * with an injected fake SDK query against a real SQLite DB.
  *
- * What it pins down: a rejection parks work instead of failing it, sends during a
- * pause queue rather than reaching the SDK, a session's own policy overrides the
+ * What it pins down: a rejection parks work instead of failing it, a pause stops a
+ * turn and subagents still spending usage, sends during a pause queue rather than
+ * reaching the SDK, a session's own policy overrides the
  * global one, the window resetting releases the queue in order, and Stop is the
  * way back out.
  */
@@ -81,6 +82,8 @@ function makeFakeQuery() {
   const out = createPushable<SDKMessage>();
   const inputs: SDKUserMessage[] = [];
   const cancelAsyncMessage = vi.fn(async (_uuid: string) => true);
+  const interrupt = vi.fn(async () => {});
+  const stopTask = vi.fn(async (_taskId: string) => {});
 
   const factory = (params: { prompt: AsyncIterable<SDKUserMessage>; options: unknown }): Query => {
     void (async () => {
@@ -88,17 +91,24 @@ function makeFakeQuery() {
     })();
     return {
       [Symbol.asyncIterator]: () => out.iterable[Symbol.asyncIterator](),
-      interrupt: vi.fn(async () => {}),
+      interrupt,
       close: vi.fn(() => out.close()),
       supportedCommands: vi.fn(async () => []),
-      stopTask: vi.fn(async () => {}),
+      stopTask,
       setModel: vi.fn(async () => {}),
       setMcpServers: vi.fn(async () => {}),
       cancelAsyncMessage,
     } as unknown as Query;
   };
 
-  return { factory, emit: (m: SDKMessage) => out.push(m), inputs, cancelAsyncMessage };
+  return {
+    factory,
+    emit: (m: SDKMessage) => out.push(m),
+    inputs,
+    cancelAsyncMessage,
+    interrupt,
+    stopTask,
+  };
 }
 
 let uuidCounter = 0;
@@ -184,6 +194,31 @@ async function sendAndDeliver(
   if (!settle) return;
   fake.emit({ type: 'result', subtype: 'success', session_id: 's' } as unknown as SDKMessage);
   await waitFor(() => !runner.isClaudeRunning(sessionId));
+}
+
+function taskStarted(taskId: string, taskType: string): SDKMessage {
+  return {
+    type: 'system',
+    subtype: 'task_started',
+    task_id: taskId,
+    task_type: taskType,
+    session_id: 's',
+    uuid: nextUuid(),
+  } as unknown as SDKMessage;
+}
+
+/** Push a 5-hour reading past the global 95% threshold, without a rejection. */
+async function crossFiveHourThreshold(fake: ReturnType<typeof makeFakeQuery>): Promise<void> {
+  fake.emit(
+    rateLimitEvent({
+      status: 'allowed_warning',
+      rateLimitType: 'five_hour',
+      resetsAt: (NOW + HOUR_MS) / 1000,
+      utilization: 0.97,
+    })
+  );
+  await waitFor(async () => (await testPrisma.rateLimitWindow.count()) > 0);
+  await runner.recomputeRateLimitHolds();
 }
 
 /** Push a rejection for the 5-hour window through a live session's stream. */
@@ -305,6 +340,83 @@ describe('rate-limit pause', () => {
       runner.RATE_LIMIT_RESUME_PROMPT,
       'and then this',
     ]);
+    expect(
+      (await testPrisma.session.findUniqueOrThrow({ where: { id: sessionId } }))
+        .resumeAfterRateLimit
+    ).toBe(false);
+
+    runner.stopSession(sessionId);
+  });
+
+  it('interrupts a turn still running at the threshold and resumes it after the reset', async () => {
+    const fake = makeFakeQuery();
+    runner._setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+
+    await sendAndDeliver(fake, sessionId, 'long task', { settle: false });
+    await crossFiveHourThreshold(fake);
+
+    expect(fake.interrupt).toHaveBeenCalledTimes(1);
+    expect(
+      (await testPrisma.session.findUniqueOrThrow({ where: { id: sessionId } }))
+        .resumeAfterRateLimit
+    ).toBe(true);
+
+    // The interrupted turn winding down is not "Claude finished".
+    fake.emit({
+      type: 'result',
+      subtype: 'error_during_execution',
+      session_id: 's',
+    } as unknown as SDKMessage);
+    await waitFor(() => !runner.isClaudeRunning(sessionId));
+    expect(mockSseEvents.emitClaudeFinished).not.toHaveBeenCalled();
+
+    vi.setSystemTime(NOW + HOUR_MS + 1000);
+    await runner.recomputeRateLimitHolds();
+
+    expect(fake.inputs.map((i) => i.message.content)).toEqual([
+      'long task',
+      runner.RATE_LIMIT_RESUME_PROMPT,
+    ]);
+
+    runner.stopSession(sessionId);
+  });
+
+  it('stops background subagents but leaves shell tasks running', async () => {
+    const fake = makeFakeQuery();
+    runner._setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+
+    await sendAndDeliver(fake, sessionId, 'fan out');
+    fake.emit(taskStarted('agent-1', 'local_agent'));
+    fake.emit(taskStarted('training-run', 'local_bash'));
+    await waitFor(() => runner.getSessionBackgroundTasks(sessionId).length === 2);
+
+    await crossFiveHourThreshold(fake);
+
+    // Idle main turn: nothing to interrupt, only the subagent is spending usage.
+    expect(fake.interrupt).not.toHaveBeenCalled();
+    expect(fake.stopTask.mock.calls).toEqual([['agent-1']]);
+    expect(runner.getSessionBackgroundTasks(sessionId).map((t) => t.taskId)).toEqual([
+      'training-run',
+    ]);
+    expect(
+      (await testPrisma.session.findUniqueOrThrow({ where: { id: sessionId } }))
+        .resumeAfterRateLimit
+    ).toBe(true);
+
+    runner.stopSession(sessionId);
+  });
+
+  it('leaves an idle session alone at the threshold', async () => {
+    const fake = makeFakeQuery();
+    runner._setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+
+    await sendAndDeliver(fake, sessionId, 'hello');
+    await crossFiveHourThreshold(fake);
+
+    expect(fake.interrupt).not.toHaveBeenCalled();
     expect(
       (await testPrisma.session.findUniqueOrThrow({ where: { id: sessionId } }))
         .resumeAfterRateLimit

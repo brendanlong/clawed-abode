@@ -62,10 +62,14 @@ It runs on a new reading, on a window resetting (a single timer armed for the
 earliest active reset), on a policy change, and at startup. It is serialized —
 two concurrent runs would race to push the same queued prompt twice.
 
-**Pausing** does not interrupt anything. The live turn is left alone: under a
-threshold pause it can still finish, and under a rejection it is already dying.
-All the pause does is stop feeding the session — everything the CLI has queued but
-not read is recalled into the durable queue, and new sends go there instead.
+**Pausing** stops the session spending usage. Everything the CLI has queued but
+not read is recalled into the durable queue (first — the interrupt below wakes the
+CLI's command drain), new sends go there instead, and the live turn is interrupted
+and background subagents/workflows stopped. Letting the turn finish is not enough:
+one long turn fanning out to subagents runs for hours, straight through the
+threshold, and past a rejection too when overage credits keep it alive (#530).
+Shell and Monitor tasks are left running — they cost no usage, and a backgrounded
+shell may be a GPU job. The turn-end the interrupt causes is not "Claude finished".
 
 Recalling a push that the CLI never read has to undo the optimistic `turnActive`
 that push set (`clearOptimisticTurn`), or the composer reads "working" for the
@@ -78,10 +82,10 @@ they sent, badged "queued") but never establishes a query. Only the payload need
 to push it later lives in `QueuedPrompt`; that is why release re-pushes rather than
 re-persists.
 
-**Releasing** nudges before draining. A rejection cuts a turn off wherever it was,
-so a session that was mid-turn when one landed is flagged `resumeAfterRateLimit`
-and sent `RATE_LIMIT_RESUME_PROMPT` first; then its queued prompts are re-pushed in
-order. The nudge is not user-initiated, so it must not bump `lastActivityAt` — a
+**Releasing** nudges before draining. A session whose turn or subagents the pause
+stopped — or whose turn a rejection cut off before the pause got to it — is flagged
+`resumeAfterRateLimit` and sent `RATE_LIMIT_RESUME_PROMPT` first; then its queued
+prompts are re-pushed in order. The nudge is not user-initiated, so it must not bump `lastActivityAt` — a
 window resetting would otherwise reshuffle the whole session list with no user
 involved.
 
