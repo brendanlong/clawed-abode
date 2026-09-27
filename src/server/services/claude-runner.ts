@@ -599,13 +599,13 @@ export async function sendUserMessage(
 }
 
 /**
- * Prompt sent to a session whose turn was cut short by a rate-limit rejection,
- * once the window resets. Phrased so an agent that had already finished can say so
+ * Prompt sent to a session whose turn a rate-limit pause cut short, once the
+ * window resets. Phrased so an agent that had already finished can say so
  * cheaply rather than redoing work.
  */
 export const RATE_LIMIT_RESUME_PROMPT =
   'The subscription usage window has reset. Continue the work you were doing when the ' +
-  'rate limit interrupted you. If you had already finished, just say so briefly.';
+  'usage limit paused you. If you had already finished, just say so briefly.';
 
 /** Last hold emitted per session, so only real transitions hit the SSE channel. */
 const emittedHolds = new Map<string, RateLimitHold>();
@@ -703,19 +703,51 @@ async function runRecompute(): Promise<void> {
 }
 
 /**
- * Hold a session's work: pull back everything the CLI has queued but not read and
- * move it to the durable queue. The live turn is deliberately left alone — under a
- * threshold pause it can still finish, and under a rejection it is already dying.
+ * Hold a session's work: pull back everything the CLI has queued but not read into
+ * the durable queue, then interrupt the live turn so it stops spending — a long
+ * turn (subagents especially) can otherwise run on for hours past the limit.
  */
 async function pauseSessionForRateLimit(
   sessionId: string,
   hold: RateLimitHold,
   hadActiveTurn: boolean
 ): Promise<void> {
-  // A rejection cuts the turn off wherever it was, so remember to nudge the agent
-  // to continue once the window resets. A threshold pause doesn't interrupt
-  // anything, so it never sets this.
-  if (hold.reason === 'rejected' && hadActiveTurn) {
+  const state = sessions.get(sessionId);
+  const q = state?.query;
+  let interrupted = false;
+  if (state && q) {
+    // Recall first: the interrupt wakes the CLI's drain loop, and anything still
+    // queued at that moment would run as its own turn.
+    const recalled = await recallUnstartedCommands(sessionId, state, q);
+    if (recalled.length > 0) {
+      await enqueuePrompts(
+        sessionId,
+        recalled.map((command) => ({
+          messageId: command.messageId,
+          content: command.content,
+          text: command.text,
+          attachments: command.attachments,
+        }))
+      );
+      await emitQueuedPrompts(sessionId);
+    }
+    interrupted = await interruptTurnForRateLimit(sessionId, state, q);
+    if (recalled.length > 0 || interrupted) {
+      log.info('Paused session for rate limit', {
+        sessionId,
+        limitType: hold.limitType,
+        reason: hold.reason,
+        requeued: recalled.length,
+        interrupted,
+        resumesAt: new Date(hold.untilMs).toISOString(),
+      });
+    }
+  }
+
+  // A rejection may already have killed the turn before we got here, so it goes
+  // by the pre-await snapshot; otherwise only a turn we actually cut short needs
+  // a nudge to continue once the window resets.
+  if (interrupted || (hold.reason === 'rejected' && hadActiveTurn)) {
     try {
       await prisma.session.updateMany({
         where: { id: sessionId },
@@ -728,30 +760,33 @@ async function pauseSessionForRateLimit(
       });
     }
   }
+}
 
-  const state = sessions.get(sessionId);
-  if (!state?.query) return;
-
-  const recalled = await recallUnstartedCommands(sessionId, state, state.query);
-  if (recalled.length === 0) return;
-
-  await enqueuePrompts(
-    sessionId,
-    recalled.map((command) => ({
-      messageId: command.messageId,
-      content: command.content,
-      text: command.text,
-      attachments: command.attachments,
-    }))
-  );
-  await emitQueuedPrompts(sessionId);
-  log.info('Paused session for rate limit', {
-    sessionId,
-    limitType: hold.limitType,
-    reason: hold.reason,
-    requeued: recalled.length,
-    resumesAt: new Date(hold.untilMs).toISOString(),
-  });
+/**
+ * Abort a genuinely running main turn. The coming turn-end is flagged as an
+ * interrupt so it doesn't fire a "Claude finished" notification for work that
+ * isn't finished.
+ */
+async function interruptTurnForRateLimit(
+  sessionId: string,
+  state: SessionState,
+  q: Query
+): Promise<boolean> {
+  if (!state.status.turnActive || state.optimisticTurnActive || state.query !== q) return false;
+  // Already on its way down; the flag clears when the turn-end arrives.
+  if (state.interruptRequested) return true;
+  state.interruptRequested = true;
+  try {
+    await q.interrupt();
+    return true;
+  } catch (err) {
+    state.interruptRequested = false;
+    log.warn('Failed to interrupt turn for rate limit', {
+      sessionId,
+      error: toError(err).message,
+    });
+    return false;
+  }
 }
 
 /**

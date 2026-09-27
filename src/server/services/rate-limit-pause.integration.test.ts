@@ -2,8 +2,8 @@
  * Integration test for the subscription rate-limit pause, driving the real runner
  * with an injected fake SDK query against a real SQLite DB.
  *
- * What it pins down: a rejection parks work instead of failing it, sends during a
- * pause queue rather than reaching the SDK, a session's own policy overrides the
+ * What it pins down: a rejection parks work instead of failing it, a pause
+ * interrupts the live turn, sends during a pause queue rather than reaching the SDK, a session's own policy overrides the
  * global one, the window resetting releases the queue in order, and Stop is the
  * way back out.
  */
@@ -81,6 +81,7 @@ function makeFakeQuery() {
   const out = createPushable<SDKMessage>();
   const inputs: SDKUserMessage[] = [];
   const cancelAsyncMessage = vi.fn(async (_uuid: string) => true);
+  const interrupt = vi.fn(async () => {});
 
   const factory = (params: { prompt: AsyncIterable<SDKUserMessage>; options: unknown }): Query => {
     void (async () => {
@@ -88,7 +89,7 @@ function makeFakeQuery() {
     })();
     return {
       [Symbol.asyncIterator]: () => out.iterable[Symbol.asyncIterator](),
-      interrupt: vi.fn(async () => {}),
+      interrupt,
       close: vi.fn(() => out.close()),
       supportedCommands: vi.fn(async () => []),
       stopTask: vi.fn(async () => {}),
@@ -98,7 +99,13 @@ function makeFakeQuery() {
     } as unknown as Query;
   };
 
-  return { factory, emit: (m: SDKMessage) => out.push(m), inputs, cancelAsyncMessage };
+  return {
+    factory,
+    emit: (m: SDKMessage) => out.push(m),
+    inputs,
+    cancelAsyncMessage,
+    interrupt,
+  };
 }
 
 let uuidCounter = 0;
@@ -305,6 +312,79 @@ describe('rate-limit pause', () => {
       runner.RATE_LIMIT_RESUME_PROMPT,
       'and then this',
     ]);
+    expect(
+      (await testPrisma.session.findUniqueOrThrow({ where: { id: sessionId } }))
+        .resumeAfterRateLimit
+    ).toBe(false);
+
+    runner.stopSession(sessionId);
+  });
+
+  it('interrupts a live turn at the threshold and resumes it once the window resets', async () => {
+    const fake = makeFakeQuery();
+    runner._setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession({ rateLimitPauseThreshold: 50 });
+
+    await sendAndDeliver(fake, sessionId, 'long job', { settle: false });
+    fake.emit(
+      rateLimitEvent({
+        status: 'allowed',
+        rateLimitType: 'five_hour',
+        resetsAt: (NOW + HOUR_MS) / 1000,
+        unifiedWindows: { five_hour: { utilization: 0.6, resetsAt: (NOW + HOUR_MS) / 1000 } },
+      })
+    );
+    await waitFor(async () => (await testPrisma.rateLimitWindow.count()) > 0);
+    await runner.recomputeRateLimitHolds();
+
+    expect(fake.interrupt).toHaveBeenCalledTimes(1);
+    expect(
+      (await testPrisma.session.findUniqueOrThrow({ where: { id: sessionId } }))
+        .resumeAfterRateLimit
+    ).toBe(true);
+
+    // The interrupted turn ending is not Claude finishing.
+    fake.emit({
+      type: 'result',
+      subtype: 'error_during_execution',
+      session_id: 's',
+    } as unknown as SDKMessage);
+    await waitFor(() => !runner.isClaudeRunning(sessionId));
+    expect(mockSseEvents.emitClaudeFinished).not.toHaveBeenCalled();
+
+    // Later recomputes during the same pause find no turn left to interrupt.
+    await runner.recomputeRateLimitHolds();
+    expect(fake.interrupt).toHaveBeenCalledTimes(1);
+
+    vi.setSystemTime(NOW + HOUR_MS + 1000);
+    await runner.recomputeRateLimitHolds();
+
+    expect(fake.inputs.map((i) => i.message.content)).toEqual([
+      'long job',
+      runner.RATE_LIMIT_RESUME_PROMPT,
+    ]);
+
+    runner.stopSession(sessionId);
+  });
+
+  it('does not interrupt or nudge an idle session at the threshold', async () => {
+    const fake = makeFakeQuery();
+    runner._setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession({ rateLimitPauseThreshold: 50 });
+
+    await sendAndDeliver(fake, sessionId, 'done already');
+    fake.emit(
+      rateLimitEvent({
+        status: 'allowed',
+        rateLimitType: 'five_hour',
+        resetsAt: (NOW + HOUR_MS) / 1000,
+        unifiedWindows: { five_hour: { utilization: 0.6, resetsAt: (NOW + HOUR_MS) / 1000 } },
+      })
+    );
+    await waitFor(async () => (await testPrisma.rateLimitWindow.count()) > 0);
+    await runner.recomputeRateLimitHolds();
+
+    expect(fake.interrupt).not.toHaveBeenCalled();
     expect(
       (await testPrisma.session.findUniqueOrThrow({ where: { id: sessionId } }))
         .resumeAfterRateLimit
