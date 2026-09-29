@@ -330,7 +330,7 @@ export const sessionsRouter = router({
     // runs even for an archived session: a concurrent send can re-establish a
     // query in the window between delete's cleanupSession and its archive
     // write, and stop has to stay the way out of that. No-op when idle.
-    stopSession(input.sessionId);
+    void stopSession(input.sessionId);
 
     // Archived sessions keep their status — the workspace is already gone, and
     // 'stopped' would let start() revive the session with nothing on disk.
@@ -356,8 +356,9 @@ export const sessionsRouter = router({
       return { success: true };
     }
 
-    // Stop any running query and clean up all in-memory state
-    cleanupSession(input.sessionId);
+    // Wait for the session's processes to die before removing the workspace, or
+    // a daemon it left running (e.g. `next dev`) recreates files after the rm.
+    await cleanupSession(input.sessionId);
 
     // Archiving keeps the session row, so the QueuedPrompt cascade never fires
     // and nothing drains an archived session — clear the queue here or it waits

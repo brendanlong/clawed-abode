@@ -19,11 +19,12 @@ vi.mock('../services/worktree-manager', () => ({
 const mockRefreshSessionSettings = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const mockSendUserMessage = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const mockStopSession = vi.hoisted(() => vi.fn());
+const mockCleanupSession = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 
 vi.mock('../services/claude-runner', () => ({
   sendUserMessage: mockSendUserMessage,
   stopSession: mockStopSession,
-  cleanupSession: vi.fn(),
+  cleanupSession: mockCleanupSession,
   isClaudeRunning: vi.fn().mockReturnValue(false),
   isSessionBackgroundActive: vi.fn().mockReturnValue(false),
   isSessionRateLimitPaused: vi.fn().mockReturnValue(false),
@@ -700,6 +701,22 @@ describe('sessionsRouter integration', () => {
       // Verify messages were preserved
       const messages = await testPrisma.message.findMany({ where: { sessionId: session.id } });
       expect(messages).toHaveLength(1);
+    });
+
+    it('removes the workspace only after the session processes are stopped', async () => {
+      const session = await createTestSession({ name: 'Session with a daemon' });
+      let releaseStop!: () => void;
+      mockCleanupSession.mockReturnValueOnce(new Promise<void>((r) => (releaseStop = r)));
+      mockRemoveWorkspace.mockResolvedValue(undefined);
+
+      const caller = createCaller('auth-session-id');
+      const deleting = caller.sessions.delete({ sessionId: session.id });
+      await vi.waitFor(() => expect(mockCleanupSession).toHaveBeenCalledWith(session.id));
+      expect(mockRemoveWorkspace).not.toHaveBeenCalled();
+
+      releaseStop();
+      await deleting;
+      expect(mockRemoveWorkspace).toHaveBeenCalledWith(session.id);
     });
 
     it('should be idempotent for already archived sessions', async () => {
