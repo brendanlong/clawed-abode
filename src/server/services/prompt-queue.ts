@@ -13,11 +13,9 @@
  * `@@unique([sessionId, position])` with no read-then-insert.
  */
 
+import { z } from 'zod';
 import { prisma } from '@/lib/prisma';
-import { createLogger } from '@/lib/logger';
 import { sseEvents } from './events';
-
-const log = createLogger('prompt-queue');
 
 /** A prompt waiting for the session's rate-limit hold to release. */
 export interface QueuedPrompt {
@@ -41,17 +39,7 @@ function toQueuedPrompt(row: {
   text: string;
   attachments: string;
 }): QueuedPrompt {
-  let attachments: string[] = [];
-  try {
-    const parsed: unknown = JSON.parse(row.attachments);
-    if (Array.isArray(parsed))
-      attachments = parsed.filter((a): a is string => typeof a === 'string');
-  } catch {
-    // A row written by an older/other writer with unparseable attachments still
-    // carries a usable prompt; dropping the files beats dropping the work.
-    log.warn('Ignoring unparseable queued-prompt attachments', { queuedPromptId: row.id });
-  }
-  return { ...row, attachments };
+  return { ...row, attachments: z.array(z.string()).parse(JSON.parse(row.attachments)) };
 }
 
 const QUEUE_SELECT = {
@@ -112,12 +100,7 @@ export async function listQueuedPrompts(sessionId: string): Promise<QueuedPrompt
  * badges "queued". Streams live over the `queued` SSE channel.
  */
 export async function queuedMessageIds(sessionId: string): Promise<string[]> {
-  const rows = await prisma.queuedPrompt.findMany({
-    where: { sessionId },
-    orderBy: { position: 'asc' },
-    select: { messageId: true },
-  });
-  return rows.map((r) => r.messageId);
+  return (await listQueuedPrompts(sessionId)).map((q) => q.messageId);
 }
 
 /** Emit the session's current queued transcript ids over SSE. */

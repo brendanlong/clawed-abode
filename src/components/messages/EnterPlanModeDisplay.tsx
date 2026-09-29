@@ -1,6 +1,6 @@
 'use client';
 
-import { Badge } from '@/components/ui/badge';
+import { ColorBadge } from './ColorBadge';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
 import type { ToolCall } from './types';
 
@@ -41,16 +41,7 @@ export function EnterPlanModeDisplay({ tool }: { tool: ToolCall }) {
           Claude is exploring the codebase and designing an implementation approach
         </div>
       }
-      doneBadge={
-        hasOutput ? (
-          <Badge
-            variant="outline"
-            className="text-xs border-purple-500 text-purple-700 dark:text-purple-400"
-          >
-            Planning
-          </Badge>
-        ) : null
-      }
+      doneBadge={hasOutput ? <ColorBadge color="purple">Planning</ColorBadge> : null}
     >
       <div className="text-muted-foreground text-xs py-1">
         Claude will explore the codebase and present a plan for your approval before making changes.

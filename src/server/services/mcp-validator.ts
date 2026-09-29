@@ -38,15 +38,20 @@ async function connectAndListTools(transport: Transport): Promise<McpValidationR
   }
 }
 
+/** Every validation request carries the configured headers (if any) and a timeout. */
+function validationRequestInit(headers: Record<string, string>): RequestInit {
+  return {
+    ...(Object.keys(headers).length > 0 && { headers }),
+    signal: AbortSignal.timeout(VALIDATION_TIMEOUT_MS),
+  };
+}
+
 function createStreamableHttpTransport(
   url: string,
   headers: Record<string, string>
 ): StreamableHTTPClientTransport {
   return new StreamableHTTPClientTransport(new URL(url), {
-    requestInit:
-      Object.keys(headers).length > 0
-        ? { headers, signal: AbortSignal.timeout(VALIDATION_TIMEOUT_MS) }
-        : { signal: AbortSignal.timeout(VALIDATION_TIMEOUT_MS) },
+    requestInit: validationRequestInit(headers),
     reconnectionOptions: {
       maxRetries: 0,
       initialReconnectionDelay: 1000,
@@ -58,10 +63,7 @@ function createStreamableHttpTransport(
 
 function createSseTransport(url: string, headers: Record<string, string>): SSEClientTransport {
   return new SSEClientTransport(new URL(url), {
-    requestInit:
-      Object.keys(headers).length > 0
-        ? { headers, signal: AbortSignal.timeout(VALIDATION_TIMEOUT_MS) }
-        : { signal: AbortSignal.timeout(VALIDATION_TIMEOUT_MS) },
+    requestInit: validationRequestInit(headers),
     eventSourceInit:
       Object.keys(headers).length > 0
         ? {

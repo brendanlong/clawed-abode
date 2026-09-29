@@ -33,7 +33,7 @@ const messageStart = (parent: string | null = null) =>
 const result = () => ({ type: 'result' }) as unknown as SDKMessage;
 
 function stateWith(commands: Record<string, { started?: boolean }>) {
-  const state = createSessionState('/w', []);
+  const state = createSessionState([]);
   for (const [uuid, c] of Object.entries(commands)) {
     state.inFlightCommands.set(uuid, {
       messageId: `m-${uuid}`,
@@ -66,12 +66,10 @@ describe('running derivation', () => {
 });
 
 describe('handleCommandLifecycle', () => {
-  it('ignores non-lifecycle messages and records that the CLI reports lifecycles', () => {
+  it('ignores non-lifecycle messages; "queued" changes nothing', () => {
     const state = stateWith({ a: {} });
     expect(handleCommandLifecycle('s', state, { type: 'assistant' })).toBe(false);
-    expect(state.commandLifecycleSeen).toBe(false);
     expect(handleCommandLifecycle('s', state, lifecycle('a', 'queued'))).toBe(true);
-    expect(state.commandLifecycleSeen).toBe(true);
     expect(pendingMessageIds(state)).toEqual(['m-a']);
   });
 
@@ -89,29 +87,18 @@ describe('handleCommandLifecycle', () => {
 describe('retireInFlightCommands', () => {
   it('a top-level message_start retires entries the agent has read, not unread ones', () => {
     const state = stateWith({ read: { started: true }, unread: {} });
-    state.commandLifecycleSeen = true;
     retireInFlightCommands('s', state, messageStart('subagent-tool-use'));
     expect(state.inFlightCommands.size).toBe(2);
     retireInFlightCommands('s', state, messageStart());
     expect([...state.inFlightCommands.keys()]).toEqual(['unread']);
   });
 
-  it('with lifecycle reports, an entry may survive one result boundary and no more', () => {
+  it('an entry may survive one result boundary and no more', () => {
     const state = stateWith({ a: {} });
-    state.commandLifecycleSeen = true;
     retireInFlightCommands('s', state, result());
     expect(state.inFlightCommands.size).toBe(1);
     retireInFlightCommands('s', state, result());
     expect(state.inFlightCommands.size).toBe(0);
-  });
-
-  it('without any lifecycle reports, the first boundary retires everything', () => {
-    const state = stateWith({ a: {}, b: {} });
-    retireInFlightCommands('s', state, result());
-    expect(state.inFlightCommands.size).toBe(0);
-    const state2 = stateWith({ a: {} });
-    retireInFlightCommands('s', state2, messageStart());
-    expect(state2.inFlightCommands.size).toBe(0);
   });
 });
 
@@ -145,7 +132,7 @@ describe('cancelInFlightCommands', () => {
     expect([...state.inFlightCommands.keys()]).toEqual(['read']);
   });
 
-  it('leaves a command alone when the CLI reports it already dequeued, and does nothing without cancel support', async () => {
+  it('leaves a command alone when the CLI reports it already dequeued', async () => {
     const state = stateWith({ a: {} });
     expect(
       await cancelInFlightCommands(
@@ -155,7 +142,6 @@ describe('cancelInFlightCommands', () => {
       )
     ).toEqual([]);
     expect(state.inFlightCommands.size).toBe(1);
-    expect(await cancelInFlightCommands('s', state, {} as Query)).toEqual([]);
     expect(mockRemoveMessages).not.toHaveBeenCalled();
   });
 });

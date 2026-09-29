@@ -62,7 +62,6 @@ export interface CloneConfig {
   sessionId: string;
   repoFullName: string;
   branch: string;
-  githubToken?: string;
 }
 
 export interface CloneResult {
@@ -101,12 +100,8 @@ export function buildCloneCommand(params: {
   };
 }
 
-/**
- * Point a clone's credential helper at the environment. Idempotent, and
- * `--replace-all` collapses whatever was there before — which is how clones
- * made before this helper existed shed the plaintext token they persisted.
- */
-export async function ensureGithubCredentialHelper(clonePath: string): Promise<void> {
+/** Point a clone's credential helper at the environment. Idempotent. */
+async function ensureGithubCredentialHelper(clonePath: string): Promise<void> {
   await run('git', [
     '-C',
     clonePath,
@@ -124,7 +119,7 @@ export async function ensureGithubCredentialHelper(clonePath: string): Promise<v
  * configures credentials, and creates a session-specific branch.
  */
 export async function cloneRepo(config: CloneConfig): Promise<CloneResult> {
-  const { sessionId, repoFullName, branch, githubToken } = config;
+  const { sessionId, repoFullName, branch } = config;
   const repoName = repoFullName.split('/')[1];
   const workspacePath = getSessionWorkspacePath(sessionId);
   const clonePath = join(workspacePath, repoName);
@@ -133,7 +128,12 @@ export async function cloneRepo(config: CloneConfig): Promise<CloneResult> {
 
   await mkdir(workspacePath, { recursive: true });
 
-  const clone = buildCloneCommand({ repoFullName, branch, clonePath, githubToken });
+  const clone = buildCloneCommand({
+    repoFullName,
+    branch,
+    clonePath,
+    githubToken: env.GITHUB_TOKEN,
+  });
   await run('git', clone.args, { env: clone.env });
 
   // Widen fetch refspec to track all remote branches

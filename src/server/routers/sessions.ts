@@ -52,8 +52,7 @@ async function setupSessionBackground(
   sessionId: string,
   repoFullName: string | null,
   branch: string | null,
-  initialPrompt: string | undefined,
-  githubToken?: string
+  initialPrompt: string | undefined
 ): Promise<void> {
   log.info('Starting session setup', { sessionId, repoFullName, branch });
 
@@ -71,12 +70,7 @@ async function setupSessionBackground(
     if (repoFullName && branch) {
       // Set up a git worktree for this session
       await updateStatus('Cloning repository...');
-      const result = await cloneRepo({
-        sessionId,
-        repoFullName,
-        branch,
-        githubToken,
-      });
+      const result = await cloneRepo({ sessionId, repoFullName, branch });
       repoPath = result.repoPath;
       log.info('Worktree created', { sessionId, repoPath });
     } else {
@@ -136,7 +130,6 @@ export const sessionsRouter = router({
       })
     )
     .mutation(async ({ input }) => {
-      const githubToken = env.GITHUB_TOKEN;
       const hasRepo = !!input.repoFullName && !!input.branch;
 
       const session = await prisma.session.create({
@@ -155,8 +148,7 @@ export const sessionsRouter = router({
         session.id,
         input.repoFullName ?? null,
         input.branch ?? null,
-        input.initialPrompt,
-        githubToken
+        input.initialPrompt
       ).catch((error) => {
         log.error('Unhandled error in session setup', toError(error), { sessionId: session.id });
       });
@@ -267,10 +259,6 @@ export const sessionsRouter = router({
       return { session: toSessionView(updatedSession) };
     }),
 
-  // Set the per-session Claude model override (highest precedence — see
-  // resolveClaudeModel). Pass null/empty to clear (reverts to repo/global/env
-  // model). Persisted, so it survives restarts; applied live to a running query
-  // on the next turn (refreshSessionSettings applies it now if idle).
   /**
    * Per-session rate-limit pause overrides; null on either field inherits the
    * global default (see resolvePausePolicy). Recomputes holds immediately so a

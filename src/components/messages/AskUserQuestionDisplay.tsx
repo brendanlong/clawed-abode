@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { useState, useMemo, useCallback } from 'react';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
+import { ColorBadge } from './ColorBadge';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
 import { useMessageListContext } from './MessageListContext';
 import { lenient, lenientString, parseToolInput } from './tool-input';
@@ -212,14 +213,7 @@ export function AskUserQuestionDisplay({ tool }: { tool: ToolCall }) {
           'border-purple-300 dark:border-purple-700 bg-purple-50/50 dark:bg-purple-950/30',
         !isPending && !isRealError && 'border-green-300 dark:border-green-700'
       )}
-      doneBadge={
-        <Badge
-          variant="outline"
-          className="text-xs border-green-500 text-green-700 dark:text-green-400"
-        >
-          Answered
-        </Badge>
-      }
+      doneBadge={<ColorBadge color="green">Answered</ColorBadge>}
     >
       {questions.map((question, qIndex) => (
         <div key={qIndex} className="space-y-2">

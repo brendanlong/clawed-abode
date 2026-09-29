@@ -26,14 +26,14 @@ import { createLogger, toError } from '@/lib/logger';
 import { attachToolResultSanitizations } from '@/lib/message-sanitization';
 import { partialMessageId } from '@/lib/message-cache';
 import { sseEvents } from './events';
-import { ensureGithubCredentialHelper, getSessionWorkingDir } from './worktree-manager';
+import { getSessionWorkingDir } from './worktree-manager';
 import {
   loadMergedSessionSettings,
   mcpServersEqual,
   type MergedSessionSettings,
 } from './settings-merger';
 import { StreamAccumulator } from './stream-accumulator';
-import { stopSessionScope, reapSessionScopes } from './session-cgroup';
+import { stopSessionScope } from './session-cgroup';
 import { createSessionState, type SessionState } from './session-state';
 import {
   createErrorMessage,
@@ -370,17 +370,6 @@ async function establishSessionQuery(
   const settings = await loadMergedSessionSettings(sessionId, settingsKey, session.claudeModel);
   const workingDir = getSessionWorkingDir(sessionId, session.repoPath);
 
-  if (session.repoPath) {
-    // Clones made before the credential helper read the token from the
-    // environment persisted it in plaintext; rewriting on revive retires those.
-    await ensureGithubCredentialHelper(workingDir).catch((err) => {
-      log.warn('Failed to refresh git credential helper', {
-        sessionId,
-        error: toError(err).message,
-      });
-    });
-  }
-
   // Only a conversation the CLI announced has a transcript to resume; app-side
   // messages alone (a rate-limit-queued first prompt, an error from a query that
   // died before init) don't mean one was ever written.
@@ -443,7 +432,7 @@ function ensureSessionQuery(sessionId: string): Promise<SessionState> {
   if (existing?.query) return Promise.resolve(existing);
   if (existing?.establishing) return existing.establishing;
 
-  const state = existing ?? createSessionState('', getSessionCommands(sessionId));
+  const state = existing ?? createSessionState(getSessionCommands(sessionId));
   sessions.set(sessionId, state);
   // Establish against THIS state object; the promise is identity-checked on clear
   // so a stop+revive race never nulls a newer establishment's promise.
@@ -1119,7 +1108,7 @@ export async function reapOrphanedSessionScopes(): Promise<void> {
   if (scopes.length === 0) return;
 
   log.info('Reaping orphaned session scopes on startup', { count: scopes.length });
-  await reapSessionScopes(scopes);
+  await Promise.allSettled(scopes.map((scope) => stopSessionScope(scope)));
 
   // Clear exactly the names just reaped, not a blanket `sessionScope != null`: if a
   // session recorded a fresh live scope between the findMany and here, a blanket

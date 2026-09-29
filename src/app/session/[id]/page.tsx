@@ -12,7 +12,6 @@ import { ConnectionStatusIndicator } from '@/components/ConnectionStatusIndicato
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
 import { useWorkingIndicator } from '@/hooks/useWorkingIndicator';
-import { useWorkingContext } from '@/lib/working-context';
 import { useSessionState } from '@/hooks/useSessionState';
 import { useSessionMessages } from '@/hooks/useSessionMessages';
 import { useClaudeState } from '@/hooks/useClaudeState';
@@ -80,15 +79,8 @@ function SessionView({ sessionId }: { sessionId: string }) {
   // there's nothing for the client to bridge here.
   const isWorking = isClaudeRunning || backgroundActive;
 
-  // Working indicator: page title and favicon
+  // Working indicator: page title, favicon, and the header logo
   useWorkingIndicator(session?.name, isWorking);
-
-  // Update global working state for the header logo
-  const { setWorking } = useWorkingContext();
-  useEffect(() => {
-    setWorking(isWorking);
-    return () => setWorking(false);
-  }, [isWorking, setWorking]);
 
   // Work-complete notifications are handled app-wide by <WorkCompleteNotifier>
   // (mounted in Providers), so they fire for every session — not just this one —
@@ -198,13 +190,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
   ) {
     return (
       <div className="flex-1 flex flex-col min-h-0">
-        <SessionHeader
-          session={session}
-          onStart={() => {}}
-          onStop={() => {}}
-          isStarting={false}
-          isStopping={false}
-        />
+        <SessionHeader session={session} />
         {session.status === 'creating' && (
           <div className="flex-1 flex flex-col items-center justify-center gap-4">
             <Spinner size="lg" />

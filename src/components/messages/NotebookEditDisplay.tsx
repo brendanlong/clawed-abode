@@ -3,6 +3,7 @@
 import { z } from 'zod';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
+import { ColorBadge } from './ColorBadge';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
 import { ToolOutputBlock } from './ToolOutputBlock';
 import { lenient, parseToolInput } from './tool-input';
@@ -56,11 +57,7 @@ export function NotebookEditDisplay({ tool }: { tool: ToolCall }) {
     delete: 'Delete',
   }[editMode];
 
-  const editModeColor = {
-    replace: 'border-blue-500 text-blue-700 dark:text-blue-400',
-    insert: 'border-green-500 text-green-700 dark:text-green-400',
-    delete: 'border-red-500 text-red-700 dark:text-red-400',
-  }[editMode];
+  const editModeColor = ({ replace: 'blue', insert: 'green', delete: 'red' } as const)[editMode];
 
   return (
     <ToolDisplayWrapper
@@ -70,9 +67,7 @@ export function NotebookEditDisplay({ tool }: { tool: ToolCall }) {
       headerContent={
         <>
           <span className="text-muted-foreground font-mono text-xs truncate">{fileName}</span>
-          <Badge variant="outline" className={cn('text-xs', editModeColor)}>
-            {editModeLabel}
-          </Badge>
+          <ColorBadge color={editModeColor}>{editModeLabel}</ColorBadge>
           <Badge variant="outline" className="text-xs">
             {cellType}
           </Badge>

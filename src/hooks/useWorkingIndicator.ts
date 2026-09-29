@@ -1,15 +1,23 @@
 'use client';
 
 import { useEffect } from 'react';
+import { useWorkingContext } from '@/lib/working-context';
 
 /**
  * Hook for managing working state indicators.
- * Updates the page title and favicon when Claude is working.
+ * Updates the page title, favicon, and global working state (the header logo)
+ * when Claude is working.
  *
  * @param sessionName - The name of the current session (optional)
  * @param isWorking - Whether Claude is currently working
  */
 export function useWorkingIndicator(sessionName: string | undefined, isWorking: boolean) {
+  const { setWorking } = useWorkingContext();
+  useEffect(() => {
+    setWorking(isWorking);
+    return () => setWorking(false);
+  }, [isWorking, setWorking]);
+
   // Dynamic page title based on Claude running state
   useEffect(() => {
     if (!sessionName) return;

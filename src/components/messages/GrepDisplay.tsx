@@ -2,7 +2,7 @@
 
 import { z } from 'zod';
 import { useMemo } from 'react';
-import { Badge } from '@/components/ui/badge';
+import { ColorBadge } from './ColorBadge';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
 import { ToolOutputBlock } from './ToolOutputBlock';
 import { lenient, parseToolInput } from './tool-input';
@@ -104,12 +104,9 @@ export function GrepDisplay({ tool }: { tool: ToolCall }) {
         </div>
       }
       doneBadge={
-        <Badge
-          variant="outline"
-          className="text-xs border-purple-500 text-purple-700 dark:text-purple-400"
-        >
+        <ColorBadge color="purple">
           {resultCount} {resultCount === 1 ? 'match' : 'matches'}
-        </Badge>
+        </ColorBadge>
       }
     >
       <div>
