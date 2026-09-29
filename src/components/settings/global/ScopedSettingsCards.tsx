@@ -49,8 +49,7 @@ export function GlobalEnvVarsCard() {
         envVars={data?.envVars ?? []}
         mutations={mutations}
         onUpdate={refetch}
-        emptyMessage="No global environment variables configured."
-        deleteDescriptionPrefix="This will delete the global environment variable"
+        scope="global"
       />
     </SettingsCard>
   );
@@ -70,8 +69,7 @@ export function GlobalMcpServersCard() {
         mcpServers={data?.mcpServers ?? []}
         mutations={mutations}
         onUpdate={refetch}
-        emptyMessage="No global MCP servers configured."
-        deleteDescriptionPrefix="This will delete the global MCP server"
+        scope="global"
       />
     </SettingsCard>
   );

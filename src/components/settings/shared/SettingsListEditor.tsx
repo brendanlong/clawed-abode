@@ -1,26 +1,26 @@
 'use client';
 
-import type { ReactNode } from 'react';
+import { Fragment, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { Plus, Trash2 } from 'lucide-react';
 import { DeleteConfirmDialog } from './DeleteConfirmDialog';
-import type { SettingsListState, SettingsListAction } from './settings-list-reducer';
 
 interface SettingsListItem {
   id: string;
   name: string;
 }
 
+/** Global lists say so in their copy; repo lists are the unqualified default. */
+export type SettingsScope = 'global' | 'repo';
+
 interface SettingsListEditorProps<T extends SettingsListItem> {
   title: string;
+  /** Singular, lower-case item name used in the copy, e.g. "MCP server". */
+  itemNoun: string;
+  scope: SettingsScope;
   items: T[];
-  state: SettingsListState;
-  dispatch: (action: SettingsListAction) => void;
   onDelete: (name: string) => Promise<unknown>;
   onUpdate: () => void;
-  emptyMessage: string;
-  deleteDialogTitle: string;
-  deleteDescriptionPrefix: string;
   renderItem: (item: T) => ReactNode;
   renderForm: (props: {
     existingItem: T | undefined;
@@ -31,30 +31,36 @@ interface SettingsListEditorProps<T extends SettingsListItem> {
   renderItemExtra?: (item: T) => ReactNode;
 }
 
+/** Which form is open: the add form, the edit form for an item id, or none. */
+type Editing = 'new' | string | null;
+
 export function SettingsListEditor<T extends SettingsListItem>({
   title,
+  itemNoun,
+  scope,
   items,
-  state,
-  dispatch,
   onDelete,
   onUpdate,
-  emptyMessage,
-  deleteDialogTitle,
-  deleteDescriptionPrefix,
   renderItem,
   renderForm,
   extraItemActions,
   renderItemExtra,
 }: SettingsListEditorProps<T>) {
+  const [editing, setEditing] = useState<Editing>(null);
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+
+  const scopedNoun = scope === 'global' ? `global ${itemNoun}` : itemNoun;
+  const editingItem =
+    editing !== null && editing !== 'new' ? items.find((item) => item.id === editing) : undefined;
+  const formOpen = editing === 'new' || editingItem !== undefined;
+
   const handleDelete = async () => {
-    if (!state.deleteTarget) return;
-    dispatch({ type: 'startDeleting' });
+    if (!deleteTarget) return;
     try {
-      await onDelete(state.deleteTarget);
-      dispatch({ type: 'finishDeleting' });
+      await onDelete(deleteTarget);
       onUpdate();
     } catch {
-      dispatch({ type: 'finishDeleting' });
+      // Nothing was deleted, so there's nothing to refetch.
     }
   };
 
@@ -62,14 +68,14 @@ export function SettingsListEditor<T extends SettingsListItem>({
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h3 className="font-medium">{title}</h3>
-        <Button variant="outline" size="sm" onClick={() => dispatch({ type: 'openForm' })}>
+        <Button variant="outline" size="sm" onClick={() => setEditing('new')}>
           <Plus className="h-4 w-4 mr-1" />
           Add
         </Button>
       </div>
 
-      {items.length === 0 && !state.showForm ? (
-        <p className="text-sm text-muted-foreground">{emptyMessage}</p>
+      {items.length === 0 && !formOpen ? (
+        <p className="text-sm text-muted-foreground">No {scopedNoun}s configured.</p>
       ) : (
         <ul className="space-y-2">
           {items.map((item) => (
@@ -77,17 +83,13 @@ export function SettingsListEditor<T extends SettingsListItem>({
               <div className="flex items-center gap-2 p-2 rounded-md bg-muted/50">
                 <div className="flex-1 min-w-0">{renderItem(item)}</div>
                 {extraItemActions?.(item)}
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => dispatch({ type: 'startEditing', id: item.id })}
-                >
+                <Button variant="ghost" size="sm" onClick={() => setEditing(item.id)}>
                   Edit
                 </Button>
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => dispatch({ type: 'setDeleteTarget', name: item.name })}
+                  onClick={() => setDeleteTarget(item.name)}
                   className="text-destructive hover:text-destructive"
                   aria-label={`Delete ${item.name}`}
                 >
@@ -100,29 +102,31 @@ export function SettingsListEditor<T extends SettingsListItem>({
         </ul>
       )}
 
-      {(state.showForm || state.editingId) &&
-        renderForm({
-          existingItem: state.editingId
-            ? items.find((item) => item.id === state.editingId)
-            : undefined,
-          onClose: () => dispatch({ type: 'closeForm' }),
-          onSuccess: () => {
-            dispatch({ type: 'formSuccess' });
-            onUpdate();
-          },
-        })}
+      {/* Keyed by the target: the forms seed their state from existingItem on
+          mount, so switching targets must remount rather than reuse the form. */}
+      {formOpen && (
+        <Fragment key={editing}>
+          {renderForm({
+            existingItem: editingItem,
+            onClose: () => setEditing(null),
+            onSuccess: () => {
+              setEditing(null);
+              onUpdate();
+            },
+          })}
+        </Fragment>
+      )}
 
       <DeleteConfirmDialog
-        open={!!state.deleteTarget}
-        onClose={() => dispatch({ type: 'setDeleteTarget', name: null })}
+        open={deleteTarget !== null}
+        onClose={() => setDeleteTarget(null)}
         onConfirm={handleDelete}
-        title={deleteDialogTitle}
+        title={`Delete ${itemNoun}?`}
         description={
           <>
-            {deleteDescriptionPrefix} <strong>{state.deleteTarget}</strong>.
+            This will delete the {scopedNoun} <strong>{deleteTarget}</strong>.
           </>
         }
-        isPending={state.isDeleting}
       />
     </div>
   );

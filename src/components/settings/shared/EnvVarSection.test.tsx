@@ -25,7 +25,9 @@ describe('EnvVarSection', () => {
   it('submits an empty value for an untouched secret so the server keeps the stored one', async () => {
     const user = userEvent.setup();
     const m = mutations();
-    render(<EnvVarSection envVars={[MASKED_SECRET]} mutations={m} onUpdate={vi.fn()} />);
+    render(
+      <EnvVarSection envVars={[MASKED_SECRET]} mutations={m} onUpdate={vi.fn()} scope="repo" />
+    );
 
     await user.click(screen.getByRole('button', { name: 'Edit' }));
     expect(screen.getByLabelText('Value')).toHaveValue('');
@@ -38,7 +40,9 @@ describe('EnvVarSection', () => {
   it('submits a retyped secret verbatim', async () => {
     const user = userEvent.setup();
     const m = mutations();
-    render(<EnvVarSection envVars={[MASKED_SECRET]} mutations={m} onUpdate={vi.fn()} />);
+    render(
+      <EnvVarSection envVars={[MASKED_SECRET]} mutations={m} onUpdate={vi.fn()} scope="repo" />
+    );
 
     await user.click(screen.getByRole('button', { name: 'Edit' }));
     await user.type(screen.getByLabelText('Value'), 'new-token');
@@ -50,7 +54,9 @@ describe('EnvVarSection', () => {
   it('requires a value when demoting a secret to plain text', async () => {
     const user = userEvent.setup();
     const m = mutations();
-    render(<EnvVarSection envVars={[MASKED_SECRET]} mutations={m} onUpdate={vi.fn()} />);
+    render(
+      <EnvVarSection envVars={[MASKED_SECRET]} mutations={m} onUpdate={vi.fn()} scope="repo" />
+    );
 
     await user.click(screen.getByRole('button', { name: 'Edit' }));
     await user.click(screen.getByRole('switch'));
@@ -74,7 +80,7 @@ describe('EnvVarSection', () => {
   it('requires a value for a brand new secret, which has nothing stored to keep', async () => {
     const user = userEvent.setup();
     const m = mutations();
-    render(<EnvVarSection envVars={[]} mutations={m} onUpdate={vi.fn()} />);
+    render(<EnvVarSection envVars={[]} mutations={m} onUpdate={vi.fn()} scope="repo" />);
 
     await user.click(screen.getByRole('button', { name: 'Add' }));
     await user.type(screen.getByLabelText('Name'), 'NEW_TOKEN');
@@ -91,7 +97,7 @@ describe('EnvVarSection', () => {
     const user = userEvent.setup();
     const m = mutations();
     const plain: EnvVar = { id: 'e2', name: 'PLAIN', value: 'v1', isSecret: false };
-    render(<EnvVarSection envVars={[plain]} mutations={m} onUpdate={vi.fn()} />);
+    render(<EnvVarSection envVars={[plain]} mutations={m} onUpdate={vi.fn()} scope="repo" />);
 
     await user.click(screen.getByRole('button', { name: 'Edit' }));
     await user.click(screen.getByRole('switch'));
@@ -104,7 +110,7 @@ describe('EnvVarSection', () => {
     const user = userEvent.setup();
     const m = mutations();
     const plain: EnvVar = { id: 'e2', name: 'PLAIN', value: 'v1', isSecret: false };
-    render(<EnvVarSection envVars={[plain]} mutations={m} onUpdate={vi.fn()} />);
+    render(<EnvVarSection envVars={[plain]} mutations={m} onUpdate={vi.fn()} scope="repo" />);
 
     await user.click(screen.getByRole('button', { name: 'Edit' }));
     await user.clear(screen.getByLabelText('Value'));
@@ -117,7 +123,9 @@ describe('EnvVarSection', () => {
   it('reveals and re-hides a secret through the labelled toggle', async () => {
     const user = userEvent.setup();
     const m = mutations();
-    render(<EnvVarSection envVars={[MASKED_SECRET]} mutations={m} onUpdate={vi.fn()} />);
+    render(
+      <EnvVarSection envVars={[MASKED_SECRET]} mutations={m} onUpdate={vi.fn()} scope="repo" />
+    );
 
     await user.click(screen.getByRole('button', { name: 'Show value' }));
     expect(await screen.findByText('shh')).toBeInTheDocument();
@@ -126,11 +134,44 @@ describe('EnvVarSection', () => {
     expect(screen.queryByText('shh')).not.toBeInTheDocument();
   });
 
+  it('saves the second item when switching straight from editing one to another', async () => {
+    const user = userEvent.setup();
+    const m = mutations();
+    const first: EnvVar = { id: 'e2', name: 'FIRST', value: 'one', isSecret: false };
+    const second: EnvVar = { id: 'e3', name: 'SECOND', value: 'two', isSecret: false };
+    render(
+      <EnvVarSection envVars={[first, second]} mutations={m} onUpdate={vi.fn()} scope="repo" />
+    );
+
+    const [editFirst, editSecond] = screen.getAllByRole('button', { name: 'Edit' });
+    await user.click(editFirst);
+    await user.click(editSecond);
+    expect(screen.getByLabelText('Name')).toHaveValue('SECOND');
+    await user.click(screen.getByRole('button', { name: 'Update' }));
+
+    expect(m.setEnvVar).toHaveBeenCalledWith({ name: 'SECOND', value: 'two', isSecret: false });
+  });
+
+  it('can save an item opened for editing while the add form was showing', async () => {
+    const user = userEvent.setup();
+    const m = mutations();
+    const plain: EnvVar = { id: 'e2', name: 'PLAIN', value: 'v1', isSecret: false };
+    render(<EnvVarSection envVars={[plain]} mutations={m} onUpdate={vi.fn()} scope="repo" />);
+
+    await user.click(screen.getByRole('button', { name: 'Add' }));
+    await user.click(screen.getByRole('button', { name: 'Edit' }));
+    await user.click(screen.getByRole('button', { name: 'Update' }));
+
+    expect(m.setEnvVar).toHaveBeenCalledWith({ name: 'PLAIN', value: 'v1', isSecret: false });
+  });
+
   it('notifies the parent once after a confirmed delete', async () => {
     const user = userEvent.setup();
     const onUpdate = vi.fn();
     const m = mutations();
-    render(<EnvVarSection envVars={[MASKED_SECRET]} mutations={m} onUpdate={onUpdate} />);
+    render(
+      <EnvVarSection envVars={[MASKED_SECRET]} mutations={m} onUpdate={onUpdate} scope="repo" />
+    );
 
     await user.click(screen.getByRole('button', { name: 'Delete TOKEN' }));
     await user.click(screen.getByRole('button', { name: 'Delete' }));
