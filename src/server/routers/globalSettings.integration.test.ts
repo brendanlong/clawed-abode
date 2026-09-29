@@ -142,111 +142,88 @@ describe('globalSettings router', () => {
       expect(result.systemPromptOverride).toBeNull();
       expect(result.systemPromptOverrideEnabled).toBe(false);
     });
-  });
 
-  describe('setSystemPromptAppend', () => {
-    it('should set the system prompt append', async () => {
-      const caller = createCaller();
-      const appendContent = 'Always use TypeScript strict mode.';
-
-      await caller.globalSettings.setSystemPromptAppend({
-        systemPromptAppend: appendContent,
-      });
-
-      const result = await caller.globalSettings.get();
-      expect(result.systemPromptAppend).toBe(appendContent);
-    });
-
-    it('should clear the append when set to null', async () => {
+    it('should toggle enabled while keeping the override text', async () => {
       const caller = createCaller();
 
-      // First set an append
-      await caller.globalSettings.setSystemPromptAppend({
-        systemPromptAppend: 'Some append',
-      });
-
-      // Then clear it
-      await caller.globalSettings.setSystemPromptAppend({
-        systemPromptAppend: null,
-      });
-
-      const result = await caller.globalSettings.get();
-      expect(result.systemPromptAppend).toBeNull();
-    });
-  });
-
-  describe('toggleSystemPromptOverrideEnabled', () => {
-    it('should toggle override enabled state', async () => {
-      const caller = createCaller();
-
-      // First set an override
       await caller.globalSettings.setSystemPromptOverride({
         systemPromptOverride: 'My override',
         systemPromptOverrideEnabled: true,
       });
-
-      // Toggle off
-      await caller.globalSettings.toggleSystemPromptOverrideEnabled({
-        enabled: false,
-      });
-
-      let result = await caller.globalSettings.get();
-      expect(result.systemPromptOverrideEnabled).toBe(false);
-      expect(result.systemPromptOverride).toBe('My override'); // Override still exists
-
-      // Toggle back on
-      await caller.globalSettings.toggleSystemPromptOverrideEnabled({
-        enabled: true,
-      });
-
-      result = await caller.globalSettings.get();
-      expect(result.systemPromptOverrideEnabled).toBe(true);
-    });
-
-    it('should create settings if they do not exist', async () => {
-      const caller = createCaller();
-
-      await caller.globalSettings.toggleSystemPromptOverrideEnabled({
-        enabled: true,
+      await caller.globalSettings.setSystemPromptOverride({
+        systemPromptOverride: 'My override',
+        systemPromptOverrideEnabled: false,
       });
 
       const result = await caller.globalSettings.get();
-      expect(result.systemPromptOverrideEnabled).toBe(true);
+      expect(result.systemPromptOverrideEnabled).toBe(false);
+      expect(result.systemPromptOverride).toBe('My override');
     });
   });
 
-  describe('setClaudeModel', () => {
-    it('should set the Claude model', async () => {
+  describe('update', () => {
+    it('should set the given fields, creating settings if they do not exist', async () => {
       const caller = createCaller();
 
-      await caller.globalSettings.setClaudeModel({ claudeModel: 'sonnet' });
+      await caller.globalSettings.update({
+        systemPromptAppend: 'Always use TypeScript strict mode.',
+        claudeModel: 'sonnet',
+        advisorModel: 'claude-opus-4-8',
+        ttsSpeed: 1.5,
+        ttsVoice: 'af_bella',
+        voiceAutoSend: false,
+      });
+
+      const result = await caller.globalSettings.get();
+      expect(result).toMatchObject({
+        systemPromptAppend: 'Always use TypeScript strict mode.',
+        claudeModel: 'sonnet',
+        advisorModel: 'claude-opus-4-8',
+        ttsSpeed: 1.5,
+        ttsVoice: 'af_bella',
+        voiceAutoSend: false,
+      });
+    });
+
+    it('should leave omitted fields untouched', async () => {
+      const caller = createCaller();
+
+      await caller.globalSettings.update({ claudeModel: 'sonnet', voiceAutoSend: false });
+      await caller.globalSettings.update({ advisorModel: 'claude-opus-4-8' });
 
       const result = await caller.globalSettings.get();
       expect(result.claudeModel).toBe('sonnet');
-    });
-
-    it('should clear the model when set to null', async () => {
-      const caller = createCaller();
-
-      await caller.globalSettings.setClaudeModel({ claudeModel: 'sonnet' });
-      await caller.globalSettings.setClaudeModel({ claudeModel: null });
-
-      const result = await caller.globalSettings.get();
-      expect(result.claudeModel).toBeNull();
-    });
-  });
-
-  describe('setAdvisorModel', () => {
-    it('should set the advisor model', async () => {
-      const caller = createCaller();
-
-      await caller.globalSettings.setAdvisorModel({ advisorModel: 'claude-opus-4-8' });
-
-      const result = await caller.globalSettings.get();
+      expect(result.voiceAutoSend).toBe(false);
       expect(result.advisorModel).toBe('claude-opus-4-8');
     });
 
-    it('should default to null (advisor disabled) when unset', async () => {
+    it('should revert fields set to null to their defaults', async () => {
+      const caller = createCaller();
+
+      await caller.globalSettings.update({
+        systemPromptAppend: 'Some append',
+        claudeModel: 'sonnet',
+        advisorModel: 'claude-opus-4-8',
+        ttsSpeed: 2,
+        ttsVoice: 'af_bella',
+      });
+      await caller.globalSettings.update({
+        systemPromptAppend: null,
+        claudeModel: null,
+        advisorModel: null,
+        ttsSpeed: null,
+        ttsVoice: null,
+      });
+
+      const result = await caller.globalSettings.get();
+      expect(result.systemPromptAppend).toBeNull();
+      expect(result.claudeModel).toBeNull();
+      expect(result.advisorModel).toBeNull();
+      expect(result.ttsSpeed).toBeNull();
+      expect(result.ttsVoice).toBeNull();
+    });
+
+    it('should default the advisor to disabled when unset', async () => {
       const caller = createCaller();
 
       const result = await caller.globalSettings.get();
@@ -254,24 +231,25 @@ describe('globalSettings router', () => {
       expect(result.suggestedAdvisorModel).toBe('claude-fable-5');
     });
 
-    it('should clear the model when set to null', async () => {
+    it('should trim whitespace and treat blank text as cleared', async () => {
       const caller = createCaller();
 
-      await caller.globalSettings.setAdvisorModel({ advisorModel: 'claude-opus-4-8' });
-      await caller.globalSettings.setAdvisorModel({ advisorModel: null });
-
-      const result = await caller.globalSettings.get();
-      expect(result.advisorModel).toBeNull();
-    });
-
-    it('should trim whitespace and treat blank as cleared', async () => {
-      const caller = createCaller();
-
-      await caller.globalSettings.setAdvisorModel({ advisorModel: '  claude-sonnet-4-6  ' });
+      await caller.globalSettings.update({ advisorModel: '  claude-sonnet-4-6  ' });
       expect((await caller.globalSettings.get()).advisorModel).toBe('claude-sonnet-4-6');
 
-      await caller.globalSettings.setAdvisorModel({ advisorModel: '  ' });
+      await caller.globalSettings.update({ advisorModel: '  ' });
       expect((await caller.globalSettings.get()).advisorModel).toBeNull();
+    });
+
+    it('should reject out-of-range speeds and unknown voices', async () => {
+      const caller = createCaller();
+
+      await expect(caller.globalSettings.update({ ttsSpeed: 5 })).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+      });
+      await expect(
+        caller.globalSettings.update({ ttsVoice: 'not-a-voice' as 'af_bella' })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     });
   });
 

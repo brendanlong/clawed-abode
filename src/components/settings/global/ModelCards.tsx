@@ -15,7 +15,7 @@ export function ClaudeModelCard({
   settings: GlobalSettings;
   onUpdate: () => void;
 }) {
-  const mutation = trpc.globalSettings.setClaudeModel.useMutation({ onSuccess: onUpdate });
+  const mutation = trpc.globalSettings.update.useMutation({ onSuccess: onUpdate });
 
   return (
     <SettingsCard
@@ -39,7 +39,7 @@ export function AdvisorModelCard({
   settings: GlobalSettings;
   onUpdate: () => void;
 }) {
-  const mutation = trpc.globalSettings.setAdvisorModel.useMutation({ onSuccess: onUpdate });
+  const mutation = trpc.globalSettings.update.useMutation({ onSuccess: onUpdate });
 
   return (
     <SettingsCard

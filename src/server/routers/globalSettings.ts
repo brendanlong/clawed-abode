@@ -30,6 +30,23 @@ async function patchGlobalSettings(patch: GlobalSettingsPatch): Promise<void> {
   });
 }
 
+/** Plain global settings, each validated on its own; see `update`. */
+const globalSettingsUpdateSchema = z
+  .object({
+    systemPromptAppend: nullableTextSchema(50000),
+    /** Claude model override; null reverts to CLAUDE_MODEL. */
+    claudeModel: nullableTextSchema(200),
+    /** Model for the server-side advisor tool; null disables it (the default). */
+    advisorModel: nullableTextSchema(200),
+    /** TTS playback speed; null resets to the default (1.0). */
+    ttsSpeed: z.number().min(0.25).max(4.0).nullable(),
+    /** Kokoro voice for read-aloud; null resets to the default. */
+    ttsVoice: kokoroVoiceSchema.nullable(),
+    /** When true, speech-to-text transcripts are sent as prompts immediately. */
+    voiceAutoSend: z.boolean(),
+  })
+  .partial();
+
 // Typed as `object` (not z.object({})'s Record<string, never>) so the shared
 // procedures' inputs intersect cleanly with their own fields.
 const noScopeInput: z.ZodType<object, object> = z.object({});
@@ -95,44 +112,21 @@ export const globalSettingsRouter = router({
       return { success: true };
     }),
 
-  setSystemPromptAppend: protectedProcedure
-    .input(z.object({ systemPromptAppend: nullableTextSchema(50000) }))
-    .mutation(async ({ input }) => {
-      await patchGlobalSettings(input);
-      log.info('Set system prompt append', { hasAppend: input.systemPromptAppend !== null });
-      return { success: true };
-    }),
-
-  toggleSystemPromptOverrideEnabled: protectedProcedure
-    .input(z.object({ enabled: z.boolean() }))
-    .mutation(async ({ input }) => {
-      await patchGlobalSettings({ systemPromptOverrideEnabled: input.enabled });
-      log.info('Toggled system prompt override', { enabled: input.enabled });
-      return { success: true };
-    }),
-
   /** Global env vars and MCP servers (masked secrets): rows where repoSettingsId IS NULL. */
   getWithSettings: protectedProcedure.query(() => listScopeSettings(GLOBAL_SCOPE)),
 
   ...scopedSettingsProcedures(noScopeInput, async () => GLOBAL_SCOPE),
 
-  /** Global Claude model override; null/blank reverts to CLAUDE_MODEL. */
-  setClaudeModel: protectedProcedure
-    .input(z.object({ claudeModel: nullableTextSchema(200) }))
-    .mutation(async ({ input }) => {
-      await patchGlobalSettings(input);
-      log.info('Set Claude model', input);
-      return { success: true };
-    }),
-
-  /** Advisor model for the server-side advisor tool; null/blank disables it (the default). */
-  setAdvisorModel: protectedProcedure
-    .input(z.object({ advisorModel: nullableTextSchema(200) }))
-    .mutation(async ({ input }) => {
-      await patchGlobalSettings(input);
-      log.info('Set advisor model', input);
-      return { success: true };
-    }),
+  /**
+   * Set any subset of the plain global settings; omitted fields are untouched.
+   * A null (or, for text, blank) value reverts that field to its default.
+   */
+  update: protectedProcedure.input(globalSettingsUpdateSchema).mutation(async ({ input }) => {
+    await patchGlobalSettings(input);
+    // Field names only: the prompt append can be tens of KB.
+    log.info('Updated global settings', { fields: Object.keys(input) });
+    return { success: true };
+  }),
 
   /**
    * Which Claude Code scopes the SDK loads filesystem config from (CLAUDE.md,
@@ -158,33 +152,6 @@ export const globalSettingsRouter = router({
       if (key) requireEncryptionForSecrets(true);
       await patchGlobalSettings({ claudeApiKey: key ? encrypt(key) : null });
       log.info(key ? 'Set Claude API key' : 'Cleared Claude API key');
-      return { success: true };
-    }),
-
-  /** TTS playback speed, 0.25–4.0; null resets to the default (1.0). */
-  setTtsSpeed: protectedProcedure
-    .input(z.object({ ttsSpeed: z.number().min(0.25).max(4.0).nullable() }))
-    .mutation(async ({ input }) => {
-      await patchGlobalSettings(input);
-      log.info('Set TTS speed', input);
-      return { success: true };
-    }),
-
-  /** Kokoro voice for read-aloud; null resets to the default. */
-  setTtsVoice: protectedProcedure
-    .input(z.object({ ttsVoice: kokoroVoiceSchema.nullable() }))
-    .mutation(async ({ input }) => {
-      await patchGlobalSettings(input);
-      log.info('Set TTS voice', input);
-      return { success: true };
-    }),
-
-  /** When true, speech-to-text transcripts are sent as prompts immediately. */
-  setVoiceAutoSend: protectedProcedure
-    .input(z.object({ voiceAutoSend: z.boolean() }))
-    .mutation(async ({ input }) => {
-      await patchGlobalSettings(input);
-      log.info('Set voice auto-send', input);
       return { success: true };
     }),
 });
