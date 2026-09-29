@@ -124,9 +124,7 @@ export async function startMcpOAuthFlow(params: {
 
   const flow = {
     issuer: metadata.issuer,
-    authorizationEndpoint: metadata.authorization_endpoint,
     tokenEndpoint: metadata.token_endpoint,
-    registrationEndpoint: metadata.registration_endpoint ?? null,
     resource: discovered.resource,
     scope,
     clientId: client.clientId,

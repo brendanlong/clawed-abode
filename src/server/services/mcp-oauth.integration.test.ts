@@ -651,9 +651,9 @@ describe('MCP OAuth', () => {
     await expect(
       scope.startScopeMcpOAuth(scope.GLOBAL_SCOPE, 'remote', APP_ORIGIN)
     ).rejects.toThrow();
-    // The document was discarded, so discovery fell through to the origin-root
-    // guess and nothing hostile was ever stored or handed to the browser.
-    expect((await credential()).authorizationEndpoint).toBeNull();
+    // The document was discarded and no flow was started, so nothing hostile
+    // was ever handed to the browser.
+    expect((await credential()).flowState).toBeNull();
   });
 
   it('cascades the grant away with the server row', async () => {
