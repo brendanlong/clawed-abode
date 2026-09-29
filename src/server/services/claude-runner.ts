@@ -31,7 +31,7 @@ import { createLogger, toError } from '@/lib/logger';
 import { attachToolResultSanitizations } from '@/lib/message-sanitization';
 import { partialMessageId } from '@/lib/message-cache';
 import { sseEvents } from './events';
-import { ensureGithubCredentialHelper, getSessionWorkingDir } from './worktree-manager';
+import { getSessionWorkingDir } from './worktree-manager';
 import {
   loadMergedSessionSettings,
   mcpServersEqual,
@@ -373,17 +373,6 @@ async function establishSessionQuery(
   const settingsKey = repoFullName ?? '__no_repo__';
   const settings = await loadMergedSessionSettings(sessionId, settingsKey, session.claudeModel);
   const workingDir = getSessionWorkingDir(sessionId, session.repoPath);
-
-  if (session.repoPath) {
-    // Clones made before the credential helper read the token from the
-    // environment persisted it in plaintext; rewriting on revive retires those.
-    await ensureGithubCredentialHelper(workingDir).catch((err) => {
-      log.warn('Failed to refresh git credential helper', {
-        sessionId,
-        error: toError(err).message,
-      });
-    });
-  }
 
   // Only a conversation the CLI announced has a transcript to resume; app-side
   // messages alone (a rate-limit-queued first prompt, an error from a query that

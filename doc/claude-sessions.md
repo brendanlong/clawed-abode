@@ -35,13 +35,13 @@ The only wait left is the CLI's own, and it reports it: each pushed message carr
 
 The `running` event is `turnActive || inFlightCommands.size > 0` (`effectiveRunning`). The second clause exists because a message the CLI _can't_ fold into the running turn gets a fresh turn instead, and the whole `result` → `started` → `message_start` stretch in between — full model latency — would otherwise blip the composer idle and fire a "Claude finished" notification for work about to continue. That is also why an entry outlives `started`: it is retired at the turn's `message_start`, once `turnActive` can carry the state (`retireInFlightCommands`).
 
-**No in-flight entry may linger forever** — one that does pins the composer "working" with no way back. Retirement is therefore never conditional on the CLI reporting anything: a top-level `result` retires an entry that has already survived one turn boundary, and on a CLI that reports no lifecycle at all (`commandLifecycleSeen`) the first boundary retires it, since there is nothing to wait for. Deliberately not time-based.
+**No in-flight entry may linger forever** — one that does pins the composer "working" with no way back. Retirement is therefore never conditional on the CLI reporting anything: a top-level `result` retires an entry that has already survived one turn boundary. Deliberately not time-based.
 
 **Stop cancels what the agent hasn't read.** `interrupt()` alone is not enough: the SDK runs a still-queued message as its own turn the instant the interrupt lands. `interruptClaude` therefore calls `query.cancelAsyncMessage` per un-started uuid **before** interrupting — the abort is what wakes the CLI's drain loop, so cancelling afterwards loses the race every time (observed end-to-end; the SDK's own `still_queued` docs say a post-interrupt probe "always loses the race against the drain loop"). A command the CLI already dequeued reports `cancelled: false` and is left alone, bubble included, because the agent did read it.
 
 A recalled message's bubble is **deleted** (`message_removed`) — it describes something that never happened. That makes the composer the only surviving copy, so the recalled text and attachments are returned to the caller and merged into it ahead of anything typed since (`mergeCancelledText`); both `PromptInput` and `VoiceControlPanel` must do this. Contrast the send-_failure_ path, which leaves a newer draft alone — there the message is still in the transcript, so skipping the restore loses nothing.
 
-`cancelAsyncMessage` exists at runtime but is missing from the SDK's `Query` type, so it is feature-detected; an SDK without it degrades to "Stop doesn't cancel".
+`cancelAsyncMessage` exists at runtime but is missing from the SDK's `Query` type, so it is reached through a type cast.
 
 Known limitation: `message_removed` is live-only — it carries no sequence, so it isn't replayed on SSE resume and the client doesn't refetch history on reconnect. A client that is disconnected while a _different_ tab hits Stop keeps showing the deleted bubble until it reloads. The DB stays correct; only that client's cache is stale.
 

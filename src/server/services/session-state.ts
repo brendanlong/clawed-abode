@@ -90,13 +90,6 @@ export interface SessionState {
    */
   emittedRunning: boolean;
   /**
-   * Whether this session's CLI has ever emitted a `command_lifecycle` message.
-   * A supporting CLI reports `queued` within milliseconds of a push, so this
-   * doubles as a feature check deciding how many turns an in-flight entry may
-   * survive without a report (see retireInFlightCommands).
-   */
-  commandLifecycleSeen: boolean;
-  /**
    * Set by interruptClaude so the turn-end it triggers is not reported as Claude
    * *finishing*. Consumed by the turn-end in applyStatus.
    */
@@ -136,7 +129,6 @@ export function createSessionState(workingDir: string, commands: SlashCommand[])
     toolSanitizations: new Map(),
     inFlightCommands: new Map(),
     emittedRunning: false,
-    commandLifecycleSeen: false,
     interruptRequested: false,
     optimisticTurnActive: false,
     sessionScope: null,

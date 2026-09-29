@@ -101,12 +101,8 @@ export function buildCloneCommand(params: {
   };
 }
 
-/**
- * Point a clone's credential helper at the environment. Idempotent, and
- * `--replace-all` collapses whatever was there before — which is how clones
- * made before this helper existed shed the plaintext token they persisted.
- */
-export async function ensureGithubCredentialHelper(clonePath: string): Promise<void> {
+/** Point a clone's credential helper at the environment. Idempotent. */
+async function ensureGithubCredentialHelper(clonePath: string): Promise<void> {
   await run('git', [
     '-C',
     clonePath,

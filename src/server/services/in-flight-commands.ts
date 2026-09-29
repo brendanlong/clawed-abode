@@ -59,7 +59,6 @@ export function handleCommandLifecycle(
 ): boolean {
   const lifecycle = parseCommandLifecycle(message);
   if (!lifecycle) return false;
-  state.commandLifecycleSeen = true;
   if (lifecycle.state === 'queued') return true;
 
   const command = state.inFlightCommands.get(lifecycle.command_uuid);
@@ -94,8 +93,7 @@ export function isTopLevelMessageStart(message: SDKMessage): boolean {
  *
  * - A top-level `message_start` retires every entry the agent has already read.
  * - A top-level `result` is the safety valve: an entry may survive one turn
- *   boundary (the fold-after-turn-end case) and no more; on a CLI that reports no
- *   lifecycle at all the first boundary retires it.
+ *   boundary (the fold-after-turn-end case) and no more.
  */
 export function retireInFlightCommands(
   sessionId: string,
@@ -106,11 +104,9 @@ export function retireInFlightCommands(
   const isResult = message.type === 'result';
   if (!isResult && !isTopLevelMessageStart(message)) return;
 
-  const maxTurnsWithoutReport = state.commandLifecycleSeen ? 2 : 1;
   let changed = false;
   for (const [commandUuid, command] of state.inFlightCommands) {
-    const readByAgent = command.started || !state.commandLifecycleSeen;
-    const retire = isResult ? ++command.resultsSeen >= maxTurnsWithoutReport : readByAgent;
+    const retire = isResult ? ++command.resultsSeen >= 2 : command.started;
     if (!retire) continue;
     state.inFlightCommands.delete(commandUuid);
     changed = true;
@@ -118,20 +114,10 @@ export function retireInFlightCommands(
   if (changed) sseEvents.emitPendingMessages(sessionId, pendingMessageIds(state));
 }
 
-/**
- * `Query.cancelAsyncMessage` exists at runtime but is missing from the SDK's `Query`
- * type, so it is feature-detected; an SDK without it degrades to "Stop doesn't cancel".
- */
-interface CancelCapableQuery {
+/** `Query.cancelAsyncMessage` exists at runtime but is missing from the SDK's `Query` type. */
+type CancelCapableQuery = Query & {
   cancelAsyncMessage(messageUuid: string): Promise<boolean>;
-}
-
-function asCancelCapable(query: Query): CancelCapableQuery | null {
-  const candidate = query as Partial<CancelCapableQuery>;
-  return typeof candidate.cancelAsyncMessage === 'function'
-    ? (candidate as CancelCapableQuery)
-    : null;
-}
+};
 
 /**
  * Pull back every message we pushed that the agent hasn't read yet, in push order.
@@ -148,8 +134,8 @@ export async function recallUnstartedCommands(
   query: Query
 ): Promise<InFlightCommand[]> {
   const recallable = [...state.inFlightCommands].filter(([, c]) => !c.started);
-  const canceller = recallable.length > 0 ? asCancelCapable(query) : null;
-  if (!canceller) return [];
+  if (recallable.length === 0) return [];
+  const canceller = query as CancelCapableQuery;
 
   const recalled: InFlightCommand[] = [];
   for (const [commandUuid, command] of recallable) {
