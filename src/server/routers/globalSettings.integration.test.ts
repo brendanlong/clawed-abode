@@ -150,10 +150,7 @@ describe('globalSettings router', () => {
         systemPromptOverride: 'My override',
         systemPromptOverrideEnabled: true,
       });
-      await caller.globalSettings.setSystemPromptOverride({
-        systemPromptOverride: 'My override',
-        systemPromptOverrideEnabled: false,
-      });
+      await caller.globalSettings.update({ systemPromptOverrideEnabled: false });
 
       const result = await caller.globalSettings.get();
       expect(result.systemPromptOverrideEnabled).toBe(false);

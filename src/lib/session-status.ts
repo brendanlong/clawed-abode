@@ -187,7 +187,8 @@ function parseBackgroundTaskSet(
  *   terminal `message_delta` arrives; without partials only the `result` backstop
  *   would clear it.
  * - background tasks: each `background_tasks_changed` replaces the set. The
- *   `task_started` / `task_notification` edges only maintain `subagentTypes`.
+ *   `task_started` / `task_notification` edges only maintain `subagentTypes`,
+ *   which each set also prunes to its members.
  * - retry: an `api_retry` message sets it; any other TOP-LEVEL message clears it
  *   (the main request recovered). Background traffic leaves retry untouched, so a
  *   subagent's messages can't prematurely clear a main-turn retry indicator.
@@ -220,7 +221,15 @@ export function reduceSessionMessage(prev: LiveStatus, message: SDKMessage): Red
       subagentTypes = next;
     }
   }
-  backgroundTasks = parseBackgroundTaskSet(message, subagentTypes) ?? backgroundTasks;
+  const taskSet = parseBackgroundTaskSet(message, subagentTypes);
+  if (taskSet) {
+    backgroundTasks = taskSet;
+    // Foreground subagents never enter the set and may never send a
+    // task_notification, so forget any type the latest set doesn't list.
+    if ([...subagentTypes.keys()].some((id) => !taskSet.has(id))) {
+      subagentTypes = new Map([...subagentTypes].filter(([id]) => taskSet.has(id)));
+    }
+  }
 
   // --- turnActive (main agent only) ---
   if (topLevel) {

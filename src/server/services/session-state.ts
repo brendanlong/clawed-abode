@@ -90,6 +90,14 @@ export interface SessionState {
    */
   emittedRunning: boolean;
   /**
+   * Whether this session's CLI has ever emitted a `command_lifecycle` message.
+   * That message is undocumented (absent from the SDK's types), so this guards
+   * against a CLI that stops sending it: a supporting CLI reports `queued` within
+   * milliseconds of a push, and without it an in-flight entry would pin the
+   * composer "working" (see retireInFlightCommands).
+   */
+  commandLifecycleSeen: boolean;
+  /**
    * Set by interruptClaude so the turn-end it triggers is not reported as Claude
    * *finishing*. Consumed by the turn-end in applyStatus.
    */
@@ -129,6 +137,7 @@ export function createSessionState(commands: SlashCommand[]): SessionState {
     toolSanitizations: new Map(),
     inFlightCommands: new Map(),
     emittedRunning: false,
+    commandLifecycleSeen: false,
     interruptRequested: false,
     optimisticTurnActive: false,
     sessionScope: null,

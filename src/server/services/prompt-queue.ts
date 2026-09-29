@@ -100,7 +100,12 @@ export async function listQueuedPrompts(sessionId: string): Promise<QueuedPrompt
  * badges "queued". Streams live over the `queued` SSE channel.
  */
 export async function queuedMessageIds(sessionId: string): Promise<string[]> {
-  return (await listQueuedPrompts(sessionId)).map((q) => q.messageId);
+  const rows = await prisma.queuedPrompt.findMany({
+    where: { sessionId },
+    orderBy: { position: 'asc' },
+    select: { messageId: true },
+  });
+  return rows.map((r) => r.messageId);
 }
 
 /** Emit the session's current queued transcript ids over SSE. */

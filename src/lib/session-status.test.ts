@@ -281,6 +281,15 @@ describe('reduceSessionMessage — subagentType from task_started', () => {
     s = reduceSessionMessage(s, taskNotification('t1')).status;
     expect(s.subagentTypes.size).toBe(0);
   });
+
+  it('is forgotten when a level payload no longer lists the task (foreground subagent)', () => {
+    let s = reduceSessionMessage(
+      INITIAL_LIVE_STATUS,
+      taskStarted('fg', { subagent_type: 'Explore' })
+    ).status;
+    s = reduceSessionMessage(s, backgroundTasksChanged('t2')).status;
+    expect(s.subagentTypes.has('fg')).toBe(false);
+  });
 });
 
 describe('taskHasEndState', () => {

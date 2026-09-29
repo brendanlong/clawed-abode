@@ -44,6 +44,7 @@ const globalSettingsUpdateSchema = z
     ttsVoice: kokoroVoiceSchema.nullable(),
     /** When true, speech-to-text transcripts are sent as prompts immediately. */
     voiceAutoSend: z.boolean(),
+    systemPromptOverrideEnabled: z.boolean(),
   })
   .partial();
 

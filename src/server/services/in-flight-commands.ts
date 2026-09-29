@@ -59,6 +59,7 @@ export function handleCommandLifecycle(
 ): boolean {
   const lifecycle = parseCommandLifecycle(message);
   if (!lifecycle) return false;
+  state.commandLifecycleSeen = true;
   if (lifecycle.state === 'queued') return true;
 
   const command = state.inFlightCommands.get(lifecycle.command_uuid);
@@ -93,7 +94,8 @@ export function isTopLevelMessageStart(message: SDKMessage): boolean {
  *
  * - A top-level `message_start` retires every entry the agent has already read.
  * - A top-level `result` is the safety valve: an entry may survive one turn
- *   boundary (the fold-after-turn-end case) and no more.
+ *   boundary (the fold-after-turn-end case) and no more; on a CLI that reports no
+ *   lifecycle at all the first boundary retires it.
  */
 export function retireInFlightCommands(
   sessionId: string,
@@ -104,9 +106,11 @@ export function retireInFlightCommands(
   const isResult = message.type === 'result';
   if (!isResult && !isTopLevelMessageStart(message)) return;
 
+  const maxTurnsWithoutReport = state.commandLifecycleSeen ? 2 : 1;
   let changed = false;
   for (const [commandUuid, command] of state.inFlightCommands) {
-    const retire = isResult ? ++command.resultsSeen >= 2 : command.started;
+    const readByAgent = command.started || !state.commandLifecycleSeen;
+    const retire = isResult ? ++command.resultsSeen >= maxTurnsWithoutReport : readByAgent;
     if (!retire) continue;
     state.inFlightCommands.delete(commandUuid);
     changed = true;

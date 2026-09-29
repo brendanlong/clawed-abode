@@ -24,7 +24,7 @@ export function SystemPromptOverrideCard({
   const saveMutation = trpc.globalSettings.setSystemPromptOverride.useMutation({
     onSuccess: onUpdate,
   });
-  const toggleMutation = trpc.globalSettings.setSystemPromptOverride.useMutation({
+  const toggleMutation = trpc.globalSettings.update.useMutation({
     onSuccess: onUpdate,
   });
 
@@ -39,10 +39,7 @@ export function SystemPromptOverrideCard({
             id="override-enabled"
             checked={overrideEnabled && currentOverride !== null}
             onCheckedChange={(enabled) =>
-              toggleMutation.mutate({
-                systemPromptOverride: currentOverride,
-                systemPromptOverrideEnabled: enabled,
-              })
+              toggleMutation.mutate({ systemPromptOverrideEnabled: enabled })
             }
             disabled={toggleMutation.isPending || currentOverride === null}
           />
