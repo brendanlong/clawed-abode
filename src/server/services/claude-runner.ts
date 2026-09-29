@@ -193,20 +193,20 @@ function clearLiveStatus(sessionId: string, state: SessionState): void {
 /**
  * Detach a session's dead (or closing) query: reject its parked interactive tool
  * call and stop its systemd scope, reaping anything the CLI left running. Call
- * after {@link clearLiveStatus}.
+ * after {@link clearLiveStatus}. Resolves once the scope's processes are dead.
  */
-function releaseQuery(sessionId: string, state: SessionState, reason: string): void {
+function releaseQuery(sessionId: string, state: SessionState, reason: string): Promise<void> {
   state.query = null;
   state.input = null;
   if (state.pendingInput) {
     state.pendingInput.reject(new Error(reason));
     state.pendingInput = null;
   }
-  if (state.sessionScope) {
-    void stopSessionScope(state.sessionScope);
-    void persistSessionScope(sessionId, null);
-    state.sessionScope = null;
-  }
+  if (!state.sessionScope) return Promise.resolve();
+  const stopped = stopSessionScope(state.sessionScope);
+  void persistSessionScope(sessionId, null);
+  state.sessionScope = null;
+  return stopped;
 }
 
 /**
@@ -344,7 +344,7 @@ async function runSessionLoop(sessionId: string, state: SessionState, q: Query):
     // Drop the live query handle so the next interaction re-establishes (resume).
     // The state record stays in the map (commands etc. persist); only stop/delete
     // remove it. The `=== q` guard skips this when stopSession already released it.
-    if (state.query === q) releaseQuery(sessionId, state, 'Query ended');
+    if (state.query === q) void releaseQuery(sessionId, state, 'Query ended');
   }
 }
 
@@ -1031,11 +1031,13 @@ export function isSessionBackgroundActive(sessionId: string): boolean {
 
 /**
  * Stop a session's query and clear in-memory state. Removes the session from the
- * active map (no lazy revive until the next explicit interaction).
+ * active map (no lazy revive until the next explicit interaction). The in-memory
+ * teardown is synchronous; the returned promise resolves once the session's
+ * scope (and every process in it) is gone.
  */
-export function stopSession(sessionId: string): void {
+export function stopSession(sessionId: string): Promise<void> {
   const state = sessions.get(sessionId);
-  if (!state) return;
+  if (!state) return Promise.resolve();
 
   state.input?.close();
   try {
@@ -1046,14 +1048,20 @@ export function stopSession(sessionId: string): void {
   clearLiveStatus(sessionId, state);
   // Closing the query kills the launcher, but stopping the scope is what
   // cgroup-kills the whole tree (incl. daemons the agent backgrounded).
-  releaseQuery(sessionId, state, 'Session stopped');
+  const stopped = releaseQuery(sessionId, state, 'Session stopped');
   sessions.delete(sessionId);
+  return stopped;
 }
 
-/** Clean up all in-memory state for a session, including its slash commands (archive/delete). */
-export function cleanupSession(sessionId: string): void {
-  stopSession(sessionId);
+/**
+ * Clean up all in-memory state for a session, including its slash commands
+ * (archive/delete). Resolves once its processes are dead, so the caller can
+ * remove the workspace without a daemon recreating files behind it.
+ */
+export async function cleanupSession(sessionId: string): Promise<void> {
+  const stopped = stopSession(sessionId);
   forgetSessionCommands(sessionId);
+  await stopped;
 }
 
 /** Stop all active Claude queries (graceful shutdown). */
@@ -1062,16 +1070,13 @@ export async function stopAllSessions(): Promise<void> {
   if (sessionIds.length === 0) return;
 
   log.info('Stopping all active sessions for shutdown', { count: sessionIds.length });
-  // Capture scope names before stopSession clears them, then AWAIT the cgroup
-  // stops and the DB clear (stopSession's are fire-and-forget, which shutdown
-  // would exit before), so a graceful restart leaves no scopes running or recorded.
+  // Capture scope names before stopSession clears them so the DB clear can be
+  // awaited too (stopSession's is fire-and-forget, which shutdown would exit
+  // before): a graceful restart leaves no scopes running or recorded.
   const scopes = sessionIds
     .map((id) => sessions.get(id)?.sessionScope)
     .filter((s): s is string => Boolean(s));
-  for (const id of sessionIds) {
-    stopSession(id);
-  }
-  await Promise.allSettled(scopes.map((scope) => stopSessionScope(scope)));
+  await Promise.allSettled(sessionIds.map((id) => stopSession(id)));
   if (scopes.length > 0) await clearRecordedScopes(scopes);
 }
 

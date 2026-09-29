@@ -511,6 +511,27 @@ describe('claude-runner persistent streaming loop', () => {
     expect(mockStopSessionScope).toHaveBeenCalledWith(sessionScopeUnitName(sessionId, 'testnonce'));
   });
 
+  it('stopSession resolves only once the session cgroup scope is stopped', async () => {
+    const fake = makeFakeQuery();
+    _setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+    await sendUserMessage(sessionId, 'hello');
+    await waitFor(() => fake.inputs.length > 0);
+
+    let releaseScope!: () => void;
+    mockStopSessionScope.mockReturnValueOnce(new Promise<void>((r) => (releaseScope = r)));
+    let resolved = false;
+    const stopping = stopSession(sessionId).then(() => {
+      resolved = true;
+    });
+
+    await new Promise((r) => setTimeout(r, 20));
+    expect(resolved).toBe(false);
+    releaseScope();
+    await stopping;
+    expect(resolved).toBe(true);
+  });
+
   it('stops the session cgroup scope when the query loop exits on its own', async () => {
     const fake = makeFakeQuery();
     _setQueryFactory(fake.factory);
