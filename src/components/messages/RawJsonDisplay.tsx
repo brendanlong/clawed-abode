@@ -3,7 +3,7 @@
 import { useState, useCallback } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { Badge } from '@/components/ui/badge';
+import { ColorBadge } from './ColorBadge';
 import { CopyButton } from './CopyButton';
 import { formatAsJson } from './types';
 
@@ -21,12 +21,7 @@ export function RawJsonDisplay({ content, label }: { content: unknown; label?: s
         <Card className="border-dashed border-amber-300 dark:border-amber-700">
           <CollapsibleTrigger className="w-full px-3 py-2 text-left flex items-center justify-between text-sm hover:bg-muted/50 rounded-t-xl">
             <div className="flex items-center gap-2">
-              <Badge
-                variant="outline"
-                className="text-xs border-amber-500 text-amber-700 dark:text-amber-400"
-              >
-                {label || 'Raw Message'}
-              </Badge>
+              <ColorBadge color="amber">{label || 'Raw Message'}</ColorBadge>
               <span className="text-muted-foreground text-xs">Click to expand JSON</span>
             </div>
             <span className="text-muted-foreground">{expanded ? '−' : '+'}</span>

@@ -1,7 +1,7 @@
 'use client';
 
 import { z } from 'zod';
-import { Badge } from '@/components/ui/badge';
+import { ColorBadge } from './ColorBadge';
 import { MarkdownContent } from '@/components/MarkdownContent';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
 import { ToolOutputBlock } from './ToolOutputBlock';
@@ -59,14 +59,7 @@ export function WebFetchDisplay({ tool }: { tool: ToolCall }) {
       pendingText="Fetching..."
       headerContent={<span className="text-muted-foreground text-xs truncate">{hostname}</span>}
       subtitle={<div className="text-muted-foreground text-xs mt-1 truncate">{prompt}</div>}
-      doneBadge={
-        <Badge
-          variant="outline"
-          className="text-xs border-cyan-500 text-cyan-700 dark:text-cyan-400"
-        >
-          Done
-        </Badge>
-      }
+      doneBadge={<ColorBadge color="cyan">Done</ColorBadge>}
     >
       <div>
         <div className="text-muted-foreground mb-1">URL:</div>

@@ -1,9 +1,8 @@
 'use client';
 
 import { useState, useCallback, useMemo } from 'react';
-import { cn } from '@/lib/utils';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { Badge } from '@/components/ui/badge';
+import { ColorBadge } from './ColorBadge';
 import { MarkdownContent } from '@/components/MarkdownContent';
 import { CopyButton } from './CopyButton';
 import { MessageTimestamp } from './MessageTimestamp';
@@ -115,16 +114,7 @@ export function ResultDisplay({
     <div>
       <Collapsible open={expanded} onOpenChange={setExpanded}>
         <CollapsibleTrigger className="w-full text-left flex items-center gap-2 text-sm hover:bg-muted/50 rounded p-2">
-          <Badge
-            variant="outline"
-            className={cn(
-              isError
-                ? 'border-red-500 text-red-700 dark:text-red-400'
-                : 'border-green-500 text-green-700 dark:text-green-400'
-            )}
-          >
-            {label}
-          </Badge>
+          <ColorBadge color={isError ? 'red' : 'green'}>{label}</ColorBadge>
           <span className="text-muted-foreground text-xs">
             {formatCost(content.total_cost_usd)} total · {content.num_turns} turn
             {content.num_turns !== 1 ? 's' : ''} · {formatDuration(content.duration_ms)}
@@ -269,12 +259,7 @@ export function ResultDisplay({
                 <div className="bg-yellow-50 dark:bg-yellow-950/50 border border-yellow-200 dark:border-yellow-800 rounded p-2 space-y-1">
                   {permissionDenials.map((denial, i) => (
                     <div key={i} className="flex items-center gap-2">
-                      <Badge
-                        variant="outline"
-                        className="text-xs border-yellow-500 text-yellow-700 dark:text-yellow-400"
-                      >
-                        {denial.tool_name ?? 'Unknown'}
-                      </Badge>
+                      <ColorBadge color="yellow">{denial.tool_name ?? 'Unknown'}</ColorBadge>
                       {denial.tool_use_id && (
                         <span className="text-muted-foreground font-mono text-xs truncate">
                           {denial.tool_use_id}

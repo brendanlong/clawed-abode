@@ -3,7 +3,7 @@
 import { z } from 'zod';
 import { useMemo } from 'react';
 import { cn } from '@/lib/utils';
-import { Badge } from '@/components/ui/badge';
+import { ColorBadge } from './ColorBadge';
 import { FileIcon } from './FileIcon';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
 import { ToolOutputBlock } from './ToolOutputBlock';
@@ -98,12 +98,9 @@ export function GlobDisplay({ tool }: { tool: ToolCall }) {
         <div className="text-muted-foreground text-xs mt-1 truncate font-mono">{pattern}</div>
       }
       doneBadge={
-        <Badge
-          variant="outline"
-          className="text-xs border-green-500 text-green-700 dark:text-green-400"
-        >
+        <ColorBadge color="green">
           {files.length} {files.length === 1 ? 'file' : 'files'}
-        </Badge>
+        </ColorBadge>
       }
     >
       <div>

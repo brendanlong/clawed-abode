@@ -3,6 +3,7 @@
 import { z } from 'zod';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
+import { ColorBadge } from './ColorBadge';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { MarkdownContent } from '@/components/MarkdownContent';
@@ -128,14 +129,7 @@ export function ExitPlanModeDisplay({ tool }: { tool: ToolCall }) {
           Claude has finished planning and is ready for your review
         </div>
       }
-      doneBadge={
-        <Badge
-          variant="outline"
-          className="text-xs border-purple-500 text-purple-700 dark:text-purple-400"
-        >
-          Ready for review
-        </Badge>
-      }
+      doneBadge={<ColorBadge color="purple">Ready for review</ColorBadge>}
     >
       {/* Full plan content rendered as Markdown */}
       {planContent && (

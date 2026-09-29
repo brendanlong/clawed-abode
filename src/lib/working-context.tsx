@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useContext, useState, useCallback, type ReactNode } from 'react';
+import { createContext, useContext, useState, type ReactNode } from 'react';
 
 interface WorkingContextValue {
   /** Whether Claude is currently working */
@@ -20,11 +20,7 @@ interface WorkingProviderProps {
  * Used to share whether Claude is currently working across components.
  */
 export function WorkingProvider({ children }: WorkingProviderProps) {
-  const [isWorking, setIsWorking] = useState(false);
-
-  const setWorking = useCallback((working: boolean) => {
-    setIsWorking(working);
-  }, []);
+  const [isWorking, setWorking] = useState(false);
 
   return (
     <WorkingContext.Provider value={{ isWorking, setWorking }}>{children}</WorkingContext.Provider>

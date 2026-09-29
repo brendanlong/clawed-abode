@@ -26,12 +26,12 @@ interface SessionHeaderProps {
     rateLimitPauseThreshold?: number | null;
     pullRequest?: PullRequestInfo | null;
   };
-  onStart: () => void;
-  onStop: () => void;
+  onStart?: () => void;
+  onStop?: () => void;
   onArchive?: () => void;
   onRename?: (name: string) => void;
-  isStarting: boolean;
-  isStopping: boolean;
+  isStarting?: boolean;
+  isStopping?: boolean;
   isArchiving?: boolean;
   voiceEnabled?: boolean;
   autoRead?: boolean;
