@@ -11,7 +11,7 @@ import {
   SESSION_SCOPE_LAUNCHER,
   sessionScopeUnitName,
 } from '@/lib/session-scope';
-import { getSessionScopeConfig, stopSessionScope, reapSessionScopes } from './session-cgroup';
+import { getSessionScopeConfig, stopSessionScope } from './session-cgroup';
 
 const execFileAsync = promisify(execFile);
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -124,7 +124,7 @@ describe('session cgroup launcher + teardown (real processes)', () => {
     }
   }, 30000);
 
-  it('reapSessionScopes reaps only the named scope, leaving others alive', async (ctx) => {
+  it('stopSessionScope reaps only the named scope, leaving others alive', async (ctx) => {
     if (!(await userScopeAvailable())) ctx.skip('systemd user scope unavailable');
     // Two scoped sessions running concurrently: one is the crash orphan we reap
     // by exact name, the other stands in for a co-tenant's live session that the
@@ -155,7 +155,7 @@ describe('session cgroup launcher + teardown (real processes)', () => {
       expect(daemonB).not.toBeNull();
 
       // Reap ONLY scope A by exact name.
-      await reapSessionScopes([unitA]);
+      await stopSessionScope(unitA);
 
       expect(await waitFor(() => !isAlive(daemonA!), 10000)).toBe(true);
       // B was never named, so it (and its daemon) survives.

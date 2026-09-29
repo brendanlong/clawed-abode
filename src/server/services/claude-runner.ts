@@ -38,7 +38,7 @@ import {
   type MergedSessionSettings,
 } from './settings-merger';
 import { StreamAccumulator } from './stream-accumulator';
-import { stopSessionScope, reapSessionScopes } from './session-cgroup';
+import { stopSessionScope } from './session-cgroup';
 import { createSessionState, type SessionState } from './session-state';
 import {
   createErrorMessage,
@@ -436,7 +436,7 @@ function ensureSessionQuery(sessionId: string): Promise<SessionState> {
   if (existing?.query) return Promise.resolve(existing);
   if (existing?.establishing) return existing.establishing;
 
-  const state = existing ?? createSessionState('', getSessionCommands(sessionId));
+  const state = existing ?? createSessionState(getSessionCommands(sessionId));
   sessions.set(sessionId, state);
   // Establish against THIS state object; the promise is identity-checked on clear
   // so a stop+revive race never nulls a newer establishment's promise.
@@ -1121,7 +1121,7 @@ export async function reapOrphanedSessionScopes(): Promise<void> {
   if (scopes.length === 0) return;
 
   log.info('Reaping orphaned session scopes on startup', { count: scopes.length });
-  await reapSessionScopes(scopes);
+  await Promise.allSettled(scopes.map((scope) => stopSessionScope(scope)));
 
   // Clear exactly the names just reaped, not a blanket `sessionScope != null`: if a
   // session recorded a fresh live scope between the findMany and here, a blanket

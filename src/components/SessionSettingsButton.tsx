@@ -28,7 +28,7 @@ interface SessionSettingsButtonProps {
 /**
  * Per-session gear button in the session header. Opens a panel of overrides that
  * apply to this session alone and take precedence over the repo/global settings:
- * the Claude model (see resolveClaudeModel) and the rate-limit pause (see
+ * the Claude model (see loadMergedSessionSettings) and the rate-limit pause (see
  * resolvePausePolicy).
  */
 export function SessionSettingsButton({

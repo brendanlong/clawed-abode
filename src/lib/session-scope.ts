@@ -22,8 +22,8 @@ export const CLAUDE_BIN_ENV = 'CLAWED_CLAUDE_BIN';
 /**
  * Transient systemd scope unit name for one query establishment. A per-establish
  * `nonce` keeps a stop→start (or resume) from colliding with a not-yet-torn-down
- * scope of the same session; the exact name is stored on session state so
- * teardown stops precisely this scope, while the glob above sweeps orphans.
+ * scope of the same session; the exact name is recorded so teardown and the
+ * startup orphan reap stop precisely this scope, never a glob.
  */
 export function sessionScopeUnitName(sessionId: string, nonce: string): string {
   return `clawed-session-${sessionId}-${nonce}.scope`;

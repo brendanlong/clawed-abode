@@ -77,7 +77,6 @@ vi.mock('./settings-merger', async (importOriginal) => {
 // (so buildSdkOptions sets state.sessionScope), the nonce is fixed for a
 // deterministic unit name, and stopSessionScope is a spy.
 const mockStopSessionScope = vi.hoisted(() => vi.fn(async (_unit: string) => {}));
-const mockReapSessionScopes = vi.hoisted(() => vi.fn(async (_units: string[]) => {}));
 vi.mock('./session-cgroup', () => ({
   getSessionScopeConfig: vi.fn(async () => ({
     launcherPath: '/fake/launcher.sh',
@@ -85,7 +84,6 @@ vi.mock('./session-cgroup', () => ({
   })),
   sessionScopeNonce: vi.fn(() => 'testnonce'),
   stopSessionScope: mockStopSessionScope,
-  reapSessionScopes: mockReapSessionScopes,
 }));
 
 import { createPushable } from '@/lib/pushable';
@@ -551,8 +549,7 @@ describe('claude-runner persistent streaming loop', () => {
     await reapOrphanedSessionScopes();
 
     // Only the recorded scope is reaped — no glob, so the clean session is untouched.
-    expect(mockReapSessionScopes).toHaveBeenCalledTimes(1);
-    expect(mockReapSessionScopes).toHaveBeenCalledWith(['clawed-session-orphan-abc123.scope']);
+    expect(mockStopSessionScope.mock.calls).toEqual([['clawed-session-orphan-abc123.scope']]);
 
     // The recorded name is cleared so a clean next boot reaps nothing.
     expect(
@@ -566,7 +563,7 @@ describe('claude-runner persistent streaming loop', () => {
   it('reapOrphanedSessionScopes is a no-op when no scopes are recorded', async () => {
     await createRunningSession();
     await reapOrphanedSessionScopes();
-    expect(mockReapSessionScopes).not.toHaveBeenCalled();
+    expect(mockStopSessionScope).not.toHaveBeenCalled();
   });
 
   it('streams main-agent partials through an interleaved subagent message', async () => {

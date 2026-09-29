@@ -62,7 +62,6 @@ export interface CloneConfig {
   sessionId: string;
   repoFullName: string;
   branch: string;
-  githubToken?: string;
 }
 
 export interface CloneResult {
@@ -120,7 +119,7 @@ async function ensureGithubCredentialHelper(clonePath: string): Promise<void> {
  * configures credentials, and creates a session-specific branch.
  */
 export async function cloneRepo(config: CloneConfig): Promise<CloneResult> {
-  const { sessionId, repoFullName, branch, githubToken } = config;
+  const { sessionId, repoFullName, branch } = config;
   const repoName = repoFullName.split('/')[1];
   const workspacePath = getSessionWorkspacePath(sessionId);
   const clonePath = join(workspacePath, repoName);
@@ -129,7 +128,12 @@ export async function cloneRepo(config: CloneConfig): Promise<CloneResult> {
 
   await mkdir(workspacePath, { recursive: true });
 
-  const clone = buildCloneCommand({ repoFullName, branch, clonePath, githubToken });
+  const clone = buildCloneCommand({
+    repoFullName,
+    branch,
+    clonePath,
+    githubToken: env.GITHUB_TOKEN,
+  });
   await run('git', clone.args, { env: clone.env });
 
   // Widen fetch refspec to track all remote branches

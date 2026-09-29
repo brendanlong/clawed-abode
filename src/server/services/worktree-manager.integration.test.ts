@@ -5,6 +5,7 @@ import { tmpdir } from 'os';
 import path from 'path';
 import { promisify } from 'util';
 import { v4 as uuid } from 'uuid';
+import { resetEnvCache } from '@/lib/env';
 import { GITHUB_TOKEN_ENV } from '@/lib/git-credentials';
 import { cloneRepo, getSessionWorkspacePath, removeWorkspace } from './worktree-manager';
 
@@ -44,6 +45,7 @@ describe('cloneRepo', () => {
   // Serve github.com URLs from a local bare repo, so the real clone runs offline.
   const sessionId = `worktree-manager-test-${uuid()}`;
   let originalGlobalConfig: string | undefined;
+  let originalToken: string | undefined;
 
   beforeEach(async () => {
     const originDir = path.join(workDir, 'owner', 'repo.git');
@@ -62,10 +64,16 @@ describe('cloneRepo', () => {
     );
     originalGlobalConfig = process.env.GIT_CONFIG_GLOBAL;
     process.env.GIT_CONFIG_GLOBAL = globalConfig;
+    originalToken = process.env.GITHUB_TOKEN;
+    process.env.GITHUB_TOKEN = TOKEN;
+    resetEnvCache();
   });
 
   afterAll(async () => {
     process.env.GIT_CONFIG_GLOBAL = originalGlobalConfig;
+    if (originalToken === undefined) delete process.env.GITHUB_TOKEN;
+    else process.env.GITHUB_TOKEN = originalToken;
+    resetEnvCache();
     await removeWorkspace(sessionId);
   });
 
@@ -74,7 +82,6 @@ describe('cloneRepo', () => {
       sessionId,
       repoFullName: 'owner/repo',
       branch: 'main',
-      githubToken: TOKEN,
     });
 
     expect(workingDir).toBe(path.join(getSessionWorkspacePath(sessionId), 'repo'));

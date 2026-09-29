@@ -92,7 +92,7 @@ export interface MergedSessionSettings {
   envVars: ResolvedEnvVar[];
   mcpServers: ResolvedMcpServer[];
   claudeModel: string | undefined;
-  /** Effective advisor model, or null when the advisor tool is disabled — see {@link resolveAdvisorModel}. */
+  /** Effective advisor model, or null when the advisor tool is disabled. */
   advisorModel: string | null;
   claudeApiKey: string | undefined;
   /** Claude Code scopes the SDK loads filesystem config from — see {@link resolveSettingSources}. */
@@ -136,40 +136,13 @@ export async function loadMergedSessionSettings(
     systemPrompt,
     envVars,
     mcpServers,
-    claudeModel: resolveClaudeModel(
-      sessionModel,
-      repoSettings?.claudeModel,
-      globalSettings.claudeModel,
-      env.CLAUDE_MODEL
-    ),
-    advisorModel: resolveAdvisorModel(globalSettings.advisorModel),
+    claudeModel:
+      sessionModel ?? repoSettings?.claudeModel ?? globalSettings.claudeModel ?? env.CLAUDE_MODEL,
+    // No default advisor: the tool is opt-in, and a blank setting disables it.
+    advisorModel: globalSettings.advisorModel?.trim() || null,
     claudeApiKey: globalSettings.claudeApiKey ?? undefined,
     settingSources: resolveSettingSources(globalSettings.settingSources),
   };
-}
-
-/**
- * Resolve the effective Claude model, in precedence order:
- * per-session override → per-repo override → global override → CLAUDE_MODEL env var.
- */
-export function resolveClaudeModel(
-  sessionModel: string | null | undefined,
-  repoModel: string | null | undefined,
-  globalModel: string | null | undefined,
-  envModel: string | undefined
-): string | undefined {
-  return sessionModel ?? repoModel ?? globalModel ?? envModel;
-}
-
-/**
- * Resolve the effective advisor model from the global setting. Returns the
- * trimmed model when one is set, or null when unset/blank — null disables the
- * advisor tool for the session (there is no default; the tool is opt-in).
- */
-export function resolveAdvisorModel(globalModel: string | null | undefined): string | null {
-  // Normalize an empty/whitespace value to null so the caller has a single
-  // "disabled" signal regardless of how the value got there.
-  return globalModel?.trim() || null;
 }
 
 /** Per-repo entries take precedence over global ones with the same name. */

@@ -115,14 +115,14 @@ export interface SessionState {
   claudeSessionId: string | null;
 }
 
-export function createSessionState(workingDir: string, commands: SlashCommand[]): SessionState {
+export function createSessionState(commands: SlashCommand[]): SessionState {
   return {
     query: null,
     input: null,
     establishing: null,
     status: INITIAL_LIVE_STATUS,
     pendingInput: null,
-    workingDir,
+    workingDir: '',
     commands,
     boundSettings: null,
     settingsKey: '',

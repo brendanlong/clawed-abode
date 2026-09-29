@@ -44,7 +44,6 @@ vi.mock('./session-cgroup', () => ({
   getSessionScopeConfig: vi.fn(async () => null),
   sessionScopeNonce: vi.fn(() => 'testnonce'),
   stopSessionScope: vi.fn(async () => {}),
-  reapSessionScopes: vi.fn(async () => {}),
 }));
 vi.mock('./settings-merger', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./settings-merger')>();

@@ -40,33 +40,12 @@ export async function registerNode() {
     log.error('Error purging inactive auth sessions', toError(err));
   }
 
-  // Reap session cgroup scopes orphaned by a previous crash (which never ran
-  // teardown) before sessions revive into fresh scopes. Best-effort. Reaps
-  // EXACTLY the scope names recorded on this instance's own session rows (no
-  // glob), so — unlike the old broad sweep — it can only touch scopes named in
-  // this instance's DB. That's why it no longer needs the production gate: a
-  // `pnpm dev` instance with its OWN DATABASE_URL has its own session ids and
-  // scope names, so it can never reach a co-tenant production instance's
-  // sessions (the old glob could, regardless of DB — the mass-kill bug).
-  // Caveat: this safety rests on instances not SHARING a DATABASE_URL. Two live
-  // instances on one DB would have this reap stop the other's live scopes by
-  // exact name — but a shared DB already breaks the app's single-instance model
-  // (in-memory-vs-DB session state, message-sequence counters), so "don't share
-  // a DB across concurrent instances" is a pre-existing invariant, not a new one.
-  try {
-    await reapOrphanedSessionScopes();
-  } catch (err) {
-    log.error('Error reaping orphaned session scopes', toError(err));
-  }
-
-  // Restore the subscription rate-limit pause before anything can revive: a
-  // restart mid-pause must not release queued prompts into a window that is still
-  // exhausted (see doc/rate-limit-pause.md).
-  try {
-    await initRateLimitPause();
-  } catch (err) {
-    log.error('Error restoring rate-limit pause state', toError(err));
-  }
+  // Before anything can revive: reap scopes a crash left behind (see
+  // reapOrphanedSessionScopes), and restore the rate-limit pause so a restart
+  // mid-pause doesn't release queued prompts into a still-exhausted window.
+  // Both are best-effort and log their own failures.
+  await reapOrphanedSessionScopes();
+  await initRateLimitPause();
 
   // Fatal like a bad env: the system prompt would otherwise hand out dead links.
   if (env.PUBLIC_FILES_PORT !== undefined) {
@@ -76,15 +55,6 @@ export async function registerNode() {
       log.error('Refusing to start: the public files server could not listen', toError(err));
       process.exit(1);
     }
-  }
-
-  // Sessions left `running` by a previous process are revived lazily with
-  // `resume` on their next interaction, so startup only reports how many there are.
-  try {
-    const runningSessionsToRevive = await prisma.session.count({ where: { status: 'running' } });
-    log.info('Startup complete', { runningSessionsToRevive });
-  } catch (err) {
-    log.error('Error counting running sessions', toError(err));
   }
 
   registerShutdownHandler();

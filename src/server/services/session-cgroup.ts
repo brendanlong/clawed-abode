@@ -133,8 +133,3 @@ export async function stopSessionScope(unitName: string): Promise<void> {
     // reset-failed is cleanup only.
   }
 }
-
-/** Stop each named scope concurrently; see stopSessionScope for the contract. */
-export async function reapSessionScopes(unitNames: string[]): Promise<void> {
-  await Promise.allSettled(unitNames.map((unit) => stopSessionScope(unit)));
-}
