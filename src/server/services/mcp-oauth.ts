@@ -77,7 +77,7 @@ function oauthErrorMessage(error: unknown): string {
   return message.slice(0, 500);
 }
 
-export function accessTokenExpiry(expiresIn: number | undefined, now: Date): Date | null {
+function accessTokenExpiry(expiresIn: number | undefined, now: Date): Date | null {
   return expiresIn === undefined ? null : new Date(now.getTime() + expiresIn * 1000);
 }
 

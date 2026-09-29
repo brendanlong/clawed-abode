@@ -1,7 +1,7 @@
 import { describe, it, expect, afterAll } from 'vitest';
 import { rm, readFile, stat } from 'fs/promises';
 import path from 'path';
-import { v4 as uuid } from 'uuid';
+import { randomUUID as uuid } from 'node:crypto';
 import {
   writeSessionMcpConfig,
   removeSessionMcpConfig,

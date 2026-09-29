@@ -27,7 +27,7 @@ export interface PublicDirInfo {
   url: string;
 }
 
-export function buildPublicDirNote({ path, url }: PublicDirInfo): string {
+function buildPublicDirNote({ path, url }: PublicDirInfo): string {
   return `To show the user something in their browser (HTML reports, plots, small demos), write it to \`${path}\` (create the directory if needed) instead of starting your own HTTP server. It is served at ${url}; directories serve \`index.html\` or a file listing, and relative links between files work.`;
 }
 

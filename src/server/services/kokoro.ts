@@ -5,11 +5,7 @@ import { SpeechStore } from './speech-store';
 const REQUEST_TIMEOUT_MS = 60_000;
 
 /** Synthesize text with the configured OpenAI-compatible `/audio/speech` endpoint. */
-export async function synthesizeMp3(
-  text: string,
-  voice: KokoroVoice,
-  speed: number
-): Promise<Uint8Array> {
+async function synthesizeMp3(text: string, voice: KokoroVoice, speed: number): Promise<Uint8Array> {
   const baseUrl = env.TTS_BASE_URL;
   if (!baseUrl) throw new Error('TTS_BASE_URL is not configured');
 

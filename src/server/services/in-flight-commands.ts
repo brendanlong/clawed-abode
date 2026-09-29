@@ -181,7 +181,7 @@ export async function recallUnstartedCommands(
  * ({@link SessionState.optimisticTurnActive}) — a turn that genuinely started
  * must be left to the message stream to end.
  */
-export function clearOptimisticTurn(state: SessionState): void {
+function clearOptimisticTurn(state: SessionState): void {
   if (!state.optimisticTurnActive || state.inFlightCommands.size > 0) return;
   state.optimisticTurnActive = false;
   if (state.status.turnActive) state.status = { ...state.status, turnActive: false };

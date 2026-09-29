@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import path from 'path';
 import { promisify } from 'util';
-import { v4 as uuid } from 'uuid';
+import { randomUUID as uuid } from 'node:crypto';
 import { GITHUB_CREDENTIAL_CONFIG_KEY, GITHUB_TOKEN_ENV } from '@/lib/git-credentials';
 import {
   cloneRepo,
