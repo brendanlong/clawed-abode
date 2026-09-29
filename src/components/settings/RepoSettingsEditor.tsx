@@ -121,6 +121,7 @@ export function RepoSettingsEditor({ repoFullName, onClose }: RepoSettingsEditor
               envVars={data?.envVars ?? []}
               mutations={envVarMutations}
               onUpdate={refetch}
+              scope="repo"
             />
 
             <Separator />
@@ -129,6 +130,7 @@ export function RepoSettingsEditor({ repoFullName, onClose }: RepoSettingsEditor
               mcpServers={data?.mcpServers ?? []}
               mutations={mcpServerMutations}
               onUpdate={refetch}
+              scope="repo"
             />
           </div>
         )}

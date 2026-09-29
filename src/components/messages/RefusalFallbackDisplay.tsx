@@ -3,7 +3,7 @@
 import { useCallback } from 'react';
 import { ShieldAlert } from 'lucide-react';
 
-import { Badge } from '@/components/ui/badge';
+import { ColorBadge } from './ColorBadge';
 import { CopyButton } from './CopyButton';
 import { formatAsJson } from './types';
 import type { MessageContent } from './types';
@@ -32,14 +32,7 @@ export function RefusalFallbackDisplay({ content }: { content: MessageContent })
         <div className="flex items-center gap-2">
           <ShieldAlert className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
           <span className="font-medium">Model switched after refusal</span>
-          {category && (
-            <Badge
-              variant="outline"
-              className="border-amber-500 text-amber-700 dark:text-amber-300"
-            >
-              {category}
-            </Badge>
-          )}
+          {category && <ColorBadge color="amber">{category}</ColorBadge>}
         </div>
         <div className="mt-1 font-mono text-xs text-amber-800 dark:text-amber-200">
           {from} → {to}

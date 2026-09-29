@@ -166,11 +166,11 @@ export function formatEnvVarsForDisplay(envVars: DbEnvVar[]) {
  */
 export function formatMcpServersForDisplay(mcpServers: DbMcpServer[]): DisplayMcpServer[] {
   return mcpServers.map((mcp) => {
-    const authType = (mcp.authType || 'headers') as McpAuthType;
+    const authType = mcp.authType as McpAuthType;
     return {
       id: mcp.id,
       name: mcp.name,
-      type: (mcp.type || 'stdio') as 'stdio' | 'http' | 'sse',
+      type: mcp.type as McpServerType,
       command: mcp.command,
       args: mcp.args ? (JSON.parse(mcp.args) as string[]) : [],
       env: parseMaskedMcpEnv(mcp.env),
@@ -209,7 +209,7 @@ function decryptSecretRecord(json: string | null): Record<string, string> | unde
 
 export function decryptMcpServers(mcpServers: DbMcpServer[]): ResolvedMcpServer[] {
   return mcpServers.map((mcp) => {
-    const serverType = (mcp.type || 'stdio') as McpServerType;
+    const serverType = mcp.type as McpServerType;
 
     if (serverType === 'http' || serverType === 'sse') {
       return {

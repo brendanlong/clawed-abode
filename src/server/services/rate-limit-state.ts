@@ -138,7 +138,6 @@ async function persistReadings(incoming: RateLimitReading[]): Promise<void> {
           rejected: reading.rejected,
           utilization: reading.utilization,
           resetsAt: new Date(reading.resetsAtMs),
-          observedAt: new Date(),
         };
         return prisma.rateLimitWindow.upsert({
           where: { limitType: reading.limitType },

@@ -33,7 +33,7 @@ const messageStart = (parent: string | null = null) =>
 const result = () => ({ type: 'result' }) as unknown as SDKMessage;
 
 function stateWith(commands: Record<string, { started?: boolean }>) {
-  const state = createSessionState('/w', []);
+  const state = createSessionState([]);
   for (const [uuid, c] of Object.entries(commands)) {
     state.inFlightCommands.set(uuid, {
       messageId: `m-${uuid}`,
@@ -145,7 +145,7 @@ describe('cancelInFlightCommands', () => {
     expect([...state.inFlightCommands.keys()]).toEqual(['read']);
   });
 
-  it('leaves a command alone when the CLI reports it already dequeued, and does nothing without cancel support', async () => {
+  it('leaves a command alone when the CLI reports it already dequeued', async () => {
     const state = stateWith({ a: {} });
     expect(
       await cancelInFlightCommands(
@@ -155,7 +155,6 @@ describe('cancelInFlightCommands', () => {
       )
     ).toEqual([]);
     expect(state.inFlightCommands.size).toBe(1);
-    expect(await cancelInFlightCommands('s', state, {} as Query)).toEqual([]);
     expect(mockRemoveMessages).not.toHaveBeenCalled();
   });
 });

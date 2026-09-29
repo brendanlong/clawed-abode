@@ -25,7 +25,7 @@ const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
  * Strip the date suffix from a model ID to infer the alias.
  * e.g., "claude-sonnet-4-5-20250929" -> "claude-sonnet-4-5"
  */
-function inferAlias(modelId: string): string | null {
+export function inferAlias(modelId: string): string | null {
   // Match pattern: anything followed by -YYYYMMDD
   const match = modelId.match(/^(.+)-(\d{8})$/);
   if (match) {
@@ -73,40 +73,14 @@ export async function getModelSuggestions(): Promise<string[]> {
 
   const apiModels = await fetchModelsFromApi();
 
-  // Build deduplicated set: aliases first, then inferred aliases, then full model IDs
-  const seen = new Set<string>();
-  const result: string[] = [];
-
-  // 1. Well-known aliases first
-  for (const alias of WELL_KNOWN_ALIASES) {
-    if (!seen.has(alias)) {
-      seen.add(alias);
-      result.push(alias);
-    }
-  }
-
-  // 2. Inferred aliases from API models (e.g., "claude-sonnet-4-5" from "claude-sonnet-4-5-20250929")
-  for (const modelId of apiModels) {
-    const alias = inferAlias(modelId);
-    if (alias && !seen.has(alias)) {
-      seen.add(alias);
-      result.push(alias);
-    }
-  }
-
-  // 3. Full model IDs from API
-  for (const modelId of apiModels) {
-    if (!seen.has(modelId)) {
-      seen.add(modelId);
-      result.push(modelId);
-    }
-  }
+  // Well-known aliases, then aliases inferred from API models (e.g.
+  // "claude-sonnet-4-5" from "claude-sonnet-4-5-20250929"), then full IDs; the
+  // Set keeps each name's first position.
+  const inferredAliases = apiModels.map(inferAlias).filter((alias) => alias !== null);
+  const result = [...new Set([...WELL_KNOWN_ALIASES, ...inferredAliases, ...apiModels])];
 
   cachedModels = result;
   cacheTimestamp = now;
 
   return result;
 }
-
-/** Exported for testing */
-export { inferAlias };

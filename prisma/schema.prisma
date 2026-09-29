@@ -83,7 +83,6 @@ model RateLimitWindow {
   rejected    Boolean // The API was refusing requests against this window when observed
   utilization Float? // Percent of the window consumed, when reported
   resetsAt    DateTime
-  observedAt  DateTime @default(now())
 }
 
 model Message {
@@ -181,9 +180,7 @@ model McpOAuth {
   // Client registration: discovered endpoints plus the client we authenticate as
   // (registered via DCR, or entered by hand when the server has no DCR).
   issuer                String?
-  authorizationEndpoint String?
   tokenEndpoint         String?
-  registrationEndpoint  String?
   resource              String? // RFC 8707 resource indicator (the canonical MCP URL)
   scope                 String? // Scope requested at /authorize; null = whatever the server defaults to
   clientId              String?

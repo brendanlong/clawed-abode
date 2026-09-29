@@ -7,25 +7,17 @@ type NotificationPermission = 'default' | 'granted' | 'denied';
 interface UseNotificationResult {
   /** Current notification permission status */
   permission: NotificationPermission;
-  /** Whether notifications are supported by the browser */
-  isSupported: boolean;
   /** Request permission to show notifications */
   requestPermission: () => Promise<NotificationPermission>;
   /** Show a notification (will request permission if not already granted) */
   showNotification: (title: string, options?: NotificationOptions) => Promise<void>;
 }
 
-// Check if notifications are supported (safe for SSR)
-function getInitialSupported(): boolean {
-  return typeof window !== 'undefined' && 'Notification' in window;
-}
+// Safe for SSR: false on the server.
+const isSupported = (): boolean => typeof window !== 'undefined' && 'Notification' in window;
 
-// Get initial permission status (safe for SSR)
 function getInitialPermission(): NotificationPermission {
-  if (typeof window !== 'undefined' && 'Notification' in window) {
-    return Notification.permission;
-  }
-  return 'default';
+  return isSupported() ? Notification.permission : 'default';
 }
 
 /**
@@ -34,10 +26,9 @@ function getInitialPermission(): NotificationPermission {
  */
 export function useNotification(): UseNotificationResult {
   const [permission, setPermission] = useState<NotificationPermission>(getInitialPermission);
-  const [isSupported] = useState<boolean>(getInitialSupported);
 
   const requestPermission = useCallback(async (): Promise<NotificationPermission> => {
-    if (!isSupported) {
+    if (!isSupported()) {
       return 'denied';
     }
 
@@ -48,11 +39,11 @@ export function useNotification(): UseNotificationResult {
     } catch {
       return 'denied';
     }
-  }, [isSupported]);
+  }, []);
 
   const showNotification = useCallback(
     async (title: string, options?: NotificationOptions) => {
-      if (!isSupported) {
+      if (!isSupported()) {
         return;
       }
 
@@ -89,12 +80,11 @@ export function useNotification(): UseNotificationResult {
         // Notification creation failed (e.g., on iOS where Notifications API exists but doesn't work)
       }
     },
-    [isSupported, permission, requestPermission]
+    [permission, requestPermission]
   );
 
   return {
     permission,
-    isSupported,
     requestPermission,
     showNotification,
   };

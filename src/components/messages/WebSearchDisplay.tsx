@@ -2,7 +2,7 @@
 
 import { z } from 'zod';
 import { useMemo } from 'react';
-import { Badge } from '@/components/ui/badge';
+import { ColorBadge } from './ColorBadge';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
 import { ToolOutputBlock } from './ToolOutputBlock';
 import { lenient, parseToolInput } from './tool-input';
@@ -141,12 +141,9 @@ export function WebSearchDisplay({ tool }: { tool: ToolCall }) {
       subtitle={<div className="text-muted-foreground text-xs mt-1 truncate">{query}</div>}
       doneBadge={
         parsed ? (
-          <Badge
-            variant="outline"
-            className="text-xs border-blue-500 text-blue-700 dark:text-blue-400"
-          >
+          <ColorBadge color="blue">
             {parsed.links.length} {parsed.links.length === 1 ? 'source' : 'sources'}
-          </Badge>
+          </ColorBadge>
         ) : null
       }
     >

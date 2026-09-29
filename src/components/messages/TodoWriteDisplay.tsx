@@ -3,7 +3,7 @@
 import { z } from 'zod';
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
-import { Badge } from '@/components/ui/badge';
+import { ColorBadge } from './ColorBadge';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
 import { useMessageListContext } from './MessageListContext';
 import { lenient, parseToolInput } from './tool-input';
@@ -114,25 +114,10 @@ export function TodoWriteDisplay({ tool }: { tool: ToolCall }) {
       expandedOverride={{ expanded, onOpenChange: handleOpenChange }}
       headerContent={
         <>
-          <Badge
-            variant="outline"
-            className={cn(
-              'text-xs',
-              completedCount === totalCount
-                ? 'border-green-500 text-green-700 dark:text-green-400'
-                : 'border-blue-500 text-blue-700 dark:text-blue-400'
-            )}
-          >
+          <ColorBadge color={completedCount === totalCount ? 'green' : 'blue'}>
             {completedCount}/{totalCount} done
-          </Badge>
-          {inProgressCount > 0 && (
-            <Badge
-              variant="outline"
-              className="text-xs border-blue-500 text-blue-700 dark:text-blue-400"
-            >
-              {inProgressCount} active
-            </Badge>
-          )}
+          </ColorBadge>
+          {inProgressCount > 0 && <ColorBadge color="blue">{inProgressCount} active</ColorBadge>}
         </>
       }
       isPendingOverride={false}

@@ -55,8 +55,9 @@ export type MessageHandling =
  * - `thinking_tokens`: live token-count estimates while Claude is thinking; the
  *   actual reasoning arrives in the assistant message's thinking content blocks.
  * - `task_progress`: cumulative progress ticks for a running subagent.
- * - `task_updated`: subagent state-merge patches; the live-status reducer ignores
- *   them (only `task_notification` settles a background task).
+ * - `task_updated`: subagent state-merge patches.
+ * - `background_tasks_changed`: the live background-task set, surfaced over the
+ *   `background` SSE channel (see `reduceSessionMessage`).
  * - `hook_progress`: streaming hook output between `hook_started`/`hook_response`.
  * - `status`, `session_state_changed`: transient session/run state.
  * - `files_persisted`, `elicitation_complete`: internal bookkeeping events.
@@ -72,6 +73,7 @@ const IGNORED_SYSTEM_SUBTYPES = [
   'thinking_tokens',
   'task_progress',
   'task_updated',
+  'background_tasks_changed',
   'hook_progress',
   'status',
   'session_state_changed',

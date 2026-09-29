@@ -6,10 +6,11 @@ import { deriveSessionDisplayStatus } from '@/lib/session-display-status';
 
 interface SessionStatusToggleProps {
   status: string;
-  onStart: () => void;
-  onStop: () => void;
-  isStarting: boolean;
-  isStopping: boolean;
+  /** Omitted where the session can't be toggled; the status then renders as a badge. */
+  onStart?: () => void;
+  onStop?: () => void;
+  isStarting?: boolean;
+  isStopping?: boolean;
 }
 
 /**
@@ -21,15 +22,15 @@ export function SessionStatusToggle({
   status,
   onStart,
   onStop,
-  isStarting,
-  isStopping,
+  isStarting = false,
+  isStopping = false,
 }: SessionStatusToggleProps) {
-  if (status === 'running') {
+  if (status === 'running' && onStop) {
     return (
       <SessionActionButton action="stop" label="Running" onClick={onStop} isPending={isStopping} />
     );
   }
-  if (status === 'stopped') {
+  if (status === 'stopped' && onStart) {
     return (
       <SessionActionButton
         action="start"

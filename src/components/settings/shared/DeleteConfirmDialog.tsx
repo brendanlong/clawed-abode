@@ -1,7 +1,6 @@
 'use client';
 
 import type { ReactNode } from 'react';
-import { Spinner } from '@/components/ui/spinner';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -19,7 +18,6 @@ interface DeleteConfirmDialogProps {
   onConfirm: () => void;
   title: string;
   description: ReactNode;
-  isPending?: boolean;
 }
 
 export function DeleteConfirmDialog({
@@ -28,7 +26,6 @@ export function DeleteConfirmDialog({
   onConfirm,
   title,
   description,
-  isPending = false,
 }: DeleteConfirmDialogProps) {
   return (
     <AlertDialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
@@ -41,10 +38,9 @@ export function DeleteConfirmDialog({
           <AlertDialogCancel>Cancel</AlertDialogCancel>
           <AlertDialogAction
             onClick={onConfirm}
-            disabled={isPending}
             className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
           >
-            {isPending ? <Spinner size="sm" /> : 'Delete'}
+            Delete
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

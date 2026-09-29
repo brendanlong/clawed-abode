@@ -46,6 +46,7 @@ describe('claude-messages', () => {
         'thinking_tokens',
         'task_progress',
         'task_updated',
+        'background_tasks_changed',
         'hook_progress',
         'status',
         'session_state_changed',

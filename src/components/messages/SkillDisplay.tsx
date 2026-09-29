@@ -1,7 +1,7 @@
 'use client';
 
 import { z } from 'zod';
-import { Badge } from '@/components/ui/badge';
+import { ColorBadge } from './ColorBadge';
 import { MarkdownContent } from '@/components/MarkdownContent';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
 import { ToolOutputBlock } from './ToolOutputBlock';
@@ -44,14 +44,7 @@ export function SkillDisplay({ tool }: { tool: ToolCall }) {
       tool={tool}
       icon={<SkillIcon />}
       title="Skill"
-      headerContent={
-        <Badge
-          variant="outline"
-          className="text-xs border-indigo-500 text-indigo-700 dark:text-indigo-400"
-        >
-          /{skillName}
-        </Badge>
-      }
+      headerContent={<ColorBadge color="indigo">/{skillName}</ColorBadge>}
       subtitle={
         args ? (
           <div className="text-muted-foreground text-xs mt-1 truncate font-mono">{args}</div>

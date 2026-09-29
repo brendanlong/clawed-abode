@@ -14,6 +14,7 @@ import type { inferRouterOutputs } from '@trpc/server';
 import type { AppRouter } from '@/server/routers';
 
 type SessionGetOutput = inferRouterOutputs<AppRouter>['sessions']['get'];
+type LiveState = inferRouterOutputs<AppRouter>['claude']['getLiveState'];
 
 const MESSAGE_PAGE_SIZE = 20;
 
@@ -64,6 +65,11 @@ export function useSessionStream(sessionId: string, options: UseSessionStreamOpt
     setAnchor({ captured: true, afterSequence: options.newestSequence });
   }
 
+  // Patch one field of the live-state cache. Before the initial fetch lands
+  // there's nothing to patch; that fetch returns current values anyway.
+  const patchLiveState = (patch: Partial<LiveState>) =>
+    utils.claude.getLiveState.setData({ sessionId }, (old) => (old ? { ...old, ...patch } : old));
+
   const subscription = trpc.sse.onSessionEvents.useSubscription(
     { sessionId, afterSequence: anchor.afterSequence },
     {
@@ -83,15 +89,11 @@ export function useSessionStream(sessionId: string, options: UseSessionStreamOpt
             break;
           }
           case 'running': {
-            utils.claude.isRunning.setData({ sessionId }, { running: event.running });
-            // When Claude stops, new slash commands may have been discovered.
-            if (!event.running) {
-              void utils.claude.getCommands.refetch({ sessionId });
-            }
+            patchLiveState({ running: event.running });
             break;
           }
           case 'commands': {
-            utils.claude.getCommands.setData({ sessionId }, { commands: event.commands });
+            patchLiveState({ commands: event.commands });
             break;
           }
           case 'session': {
@@ -102,11 +104,11 @@ export function useSessionStream(sessionId: string, options: UseSessionStreamOpt
             break;
           }
           case 'retry': {
-            utils.claude.getRetryState.setData({ sessionId }, { retry: event.retry });
+            patchLiveState({ retry: event.retry });
             break;
           }
           case 'background': {
-            utils.claude.getBackgroundTasks.setData({ sessionId }, { tasks: event.tasks });
+            patchLiveState({ backgroundTasks: event.tasks });
             break;
           }
           case 'message_removed': {
@@ -117,21 +119,15 @@ export function useSessionStream(sessionId: string, options: UseSessionStreamOpt
             break;
           }
           case 'pending': {
-            utils.claude.getPendingMessageIds.setData(
-              { sessionId },
-              { messageIds: event.messageIds }
-            );
+            patchLiveState({ pendingMessageIds: event.messageIds });
             break;
           }
           case 'queued': {
-            utils.claude.getQueuedMessageIds.setData(
-              { sessionId },
-              { messageIds: event.messageIds }
-            );
+            patchLiveState({ queuedMessageIds: event.messageIds });
             break;
           }
           case 'rate_limit': {
-            utils.claude.getRateLimitHold.setData({ sessionId }, { hold: event.hold });
+            patchLiveState({ rateLimitHold: event.hold });
             break;
           }
           case 'resync': {

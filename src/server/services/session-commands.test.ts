@@ -47,7 +47,7 @@ describe('mergeInitCommands', () => {
     }) as never;
 
   it('folds new names from a system init message into state, persistence and SSE', () => {
-    const state = createSessionState('/w', [rich]);
+    const state = createSessionState([rich]);
     mergeInitCommands('s2', state, init(['commit', 'compact']));
     expect(state.commands).toEqual([rich, bare('compact')]);
     expect(getSessionCommands('s2')).toEqual([rich, bare('compact')]);
@@ -57,7 +57,7 @@ describe('mergeInitCommands', () => {
 
   it('is silent when nothing is new or the message is not an init', () => {
     mockEmitCommands.mockClear();
-    const state = createSessionState('/w', [rich]);
+    const state = createSessionState([rich]);
     mergeInitCommands('s3', state, init(['commit']));
     mergeInitCommands('s3', state, { type: 'assistant' } as never);
     expect(mockEmitCommands).not.toHaveBeenCalled();

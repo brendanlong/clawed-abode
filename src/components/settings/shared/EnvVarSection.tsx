@@ -1,19 +1,13 @@
 'use client';
 
-import { useId, useReducer } from 'react';
+import { useId, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Spinner } from '@/components/ui/spinner';
 import { Eye, EyeOff } from 'lucide-react';
-import { SettingsListEditor } from './SettingsListEditor';
-import {
-  envVarSectionReducer,
-  initialEnvVarSectionState,
-  envVarFormReducer,
-  createInitialEnvVarFormState,
-} from './env-var-reducer';
+import { SettingsListEditor, type SettingsScope } from './SettingsListEditor';
 import { keepsStoredSecret } from '@/lib/key-value-entries';
 import type { EnvVar } from '@/lib/settings-types';
 
@@ -27,62 +21,59 @@ interface EnvVarSectionProps {
   envVars: EnvVar[];
   mutations: EnvVarMutations;
   onUpdate: () => void;
-  emptyMessage?: string;
-  deleteDescriptionPrefix?: string;
+  scope: SettingsScope;
 }
 
-export function EnvVarSection({
-  envVars,
-  mutations,
-  onUpdate,
-  emptyMessage = 'No environment variables configured.',
-  deleteDescriptionPrefix = 'This will delete the environment variable',
-}: EnvVarSectionProps) {
-  const [state, dispatch] = useReducer(envVarSectionReducer, initialEnvVarSectionState);
+export function EnvVarSection({ envVars, mutations, onUpdate, scope }: EnvVarSectionProps) {
+  const [revealedSecrets, setRevealedSecrets] = useState<ReadonlyMap<string, string>>(new Map());
+  const [loadingSecret, setLoadingSecret] = useState<string | null>(null);
 
   const toggleSecretVisibility = async (name: string) => {
-    if (state.revealedSecrets.has(name)) {
-      dispatch({ type: 'hideSecret', name });
-    } else {
-      dispatch({ type: 'startLoadingSecret', name });
-      try {
-        const result = await mutations.getSecretValue(name);
-        dispatch({ type: 'revealSecret', name, value: result.value });
-      } catch {
-        dispatch({ type: 'finishLoadingSecret' });
-      }
+    if (revealedSecrets.has(name)) {
+      setRevealedSecrets((prev) => {
+        const next = new Map(prev);
+        next.delete(name);
+        return next;
+      });
+      return;
+    }
+    setLoadingSecret(name);
+    try {
+      const { value } = await mutations.getSecretValue(name);
+      setRevealedSecrets((prev) => new Map(prev).set(name, value));
+    } catch {
+      // Stays masked; the toggle can be retried.
+    } finally {
+      setLoadingSecret(null);
     }
   };
 
   return (
     <SettingsListEditor
       title="Environment Variables"
+      itemNoun="environment variable"
+      scope={scope}
       items={envVars}
-      state={state}
-      dispatch={dispatch}
       onDelete={mutations.deleteEnvVar}
       onUpdate={onUpdate}
-      emptyMessage={emptyMessage}
-      deleteDialogTitle="Delete environment variable?"
-      deleteDescriptionPrefix={deleteDescriptionPrefix}
       renderItem={(envVar) => {
-        const revealed = state.revealedSecrets.has(envVar.name);
+        const revealed = revealedSecrets.has(envVar.name);
         return (
           <>
             <div className="font-mono text-sm">{envVar.name}</div>
             <div className="text-xs text-muted-foreground flex items-center gap-1">
               {envVar.isSecret ? (
                 <>
-                  <span>{revealed ? state.revealedSecrets.get(envVar.name) : '••••••••'}</span>
+                  <span>{revealed ? revealedSecrets.get(envVar.name) : '••••••••'}</span>
                   <Button
                     variant="ghost"
                     size="sm"
                     className="h-5 w-5 p-0"
                     onClick={() => toggleSecretVisibility(envVar.name)}
-                    disabled={state.loadingSecret === envVar.name}
+                    disabled={loadingSecret === envVar.name}
                     aria-label={revealed ? 'Hide value' : 'Show value'}
                   >
-                    {state.loadingSecret === envVar.name ? (
+                    {loadingSecret === envVar.name ? (
                       <Spinner size="sm" className="h-3 w-3" />
                     ) : revealed ? (
                       <EyeOff className="h-3 w-3" />
@@ -122,38 +113,38 @@ function EnvVarForm({
   setEnvVar: EnvVarMutations['setEnvVar'];
 }) {
   const id = useId();
-  const [form, dispatch] = useReducer(envVarFormReducer, existingEnvVar, (existing) =>
-    createInitialEnvVarFormState(existing)
-  );
+  const [name, setName] = useState(existingEnvVar?.name ?? '');
+  // A stored secret arrives masked; start blank so an untouched field means "keep".
+  const [value, setValue] = useState(existingEnvVar?.isSecret ? '' : (existingEnvVar?.value ?? ''));
+  const [isSecret, setIsSecret] = useState(existingEnvVar?.isSecret ?? false);
+  const [error, setError] = useState<string | null>(null);
+  const [isPending, setIsPending] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!form.name.match(/^[A-Za-z_][A-Za-z0-9_]*$/)) {
-      dispatch({
-        type: 'setError',
-        error:
-          'Name must start with a letter or underscore and contain only alphanumeric characters and underscores',
-      });
+    if (!name.match(/^[A-Za-z_][A-Za-z0-9_]*$/)) {
+      setError(
+        'Name must start with a letter or underscore and contain only alphanumeric characters and underscores'
+      );
       return;
     }
 
-    if (!form.value && !keepsStoredSecret(existingEnvVar, form.isSecret)) {
-      dispatch({ type: 'setError', error: 'Value is required' });
+    if (!value && !keepsStoredSecret(existingEnvVar, isSecret)) {
+      setError('Value is required');
       return;
     }
 
-    dispatch({ type: 'startSubmit' });
+    setError(null);
+    setIsPending(true);
     try {
       // An empty value for a secret is the server's "keep the stored ciphertext"
       // protocol — never substitute `existingEnvVar.value`, which is the mask.
-      await setEnvVar({ name: form.name, value: form.value, isSecret: form.isSecret });
+      await setEnvVar({ name, value, isSecret });
       onSuccess();
     } catch (err) {
-      dispatch({
-        type: 'submitError',
-        error: err instanceof Error ? err.message : 'An error occurred',
-      });
+      setError(err instanceof Error ? err.message : 'An error occurred');
+      setIsPending(false);
     }
   };
 
@@ -163,8 +154,8 @@ function EnvVarForm({
         <Label htmlFor={`${id}-name`}>Name</Label>
         <Input
           id={`${id}-name`}
-          value={form.name}
-          onChange={(e) => dispatch({ type: 'setName', name: e.target.value.toUpperCase() })}
+          value={name}
+          onChange={(e) => setName(e.target.value.toUpperCase())}
           placeholder="MY_API_KEY"
           disabled={!!existingEnvVar}
         />
@@ -174,32 +165,26 @@ function EnvVarForm({
         <Label htmlFor={`${id}-value`}>Value</Label>
         <Input
           id={`${id}-value`}
-          type={form.isSecret ? 'password' : 'text'}
-          value={form.value}
-          onChange={(e) => dispatch({ type: 'setValue', value: e.target.value })}
-          placeholder={
-            keepsStoredSecret(existingEnvVar, form.isSecret) ? '(unchanged)' : 'Enter value'
-          }
+          type={isSecret ? 'password' : 'text'}
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder={keepsStoredSecret(existingEnvVar, isSecret) ? '(unchanged)' : 'Enter value'}
         />
       </div>
 
       <div className="flex items-center gap-2">
-        <Switch
-          id={`${id}-secret`}
-          checked={form.isSecret}
-          onCheckedChange={(isSecret) => dispatch({ type: 'setIsSecret', isSecret })}
-        />
+        <Switch id={`${id}-secret`} checked={isSecret} onCheckedChange={setIsSecret} />
         <Label htmlFor={`${id}-secret`}>Secret (encrypted at rest)</Label>
       </div>
 
-      {form.error && <p className="text-sm text-destructive">{form.error}</p>}
+      {error && <p className="text-sm text-destructive">{error}</p>}
 
       <div className="flex justify-end gap-2">
         <Button type="button" variant="outline" onClick={onClose}>
           Cancel
         </Button>
-        <Button type="submit" disabled={form.isPending}>
-          {form.isPending ? <Spinner size="sm" /> : existingEnvVar ? 'Update' : 'Add'}
+        <Button type="submit" disabled={isPending}>
+          {isPending ? <Spinner size="sm" /> : existingEnvVar ? 'Update' : 'Add'}
         </Button>
       </div>
     </form>

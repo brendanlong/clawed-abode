@@ -19,7 +19,6 @@ import { BranchSelector } from '@/components/BranchSelector';
 import { IssueSelector } from '@/components/IssueSelector';
 import { ModelCombobox } from '@/components/settings/shared/ModelCombobox';
 import { Cpu } from 'lucide-react';
-import type { Repo } from '@/components/RepoSelector';
 import type { Issue } from '@/lib/types';
 import { SESSION_NAME_MAX_LENGTH } from '@/lib/types';
 import { formReducer, initialFormState } from './form-reducer';
@@ -80,34 +79,6 @@ function NewSessionForm() {
     [form.selectedRepo, dispatch]
   );
 
-  const handleRepoSelect = useCallback(
-    (repo: Repo) => {
-      dispatch({ type: 'selectRepo', repo });
-    },
-    [dispatch]
-  );
-
-  const handleBranchSelect = useCallback(
-    (branch: string) => {
-      dispatch({ type: 'selectBranch', branch });
-    },
-    [dispatch]
-  );
-
-  const handleNameChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      dispatch({ type: 'editName', name: e.target.value });
-    },
-    [dispatch]
-  );
-
-  const handlePromptChange = useCallback(
-    (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-      dispatch({ type: 'editPrompt', prompt: e.target.value });
-    },
-    [dispatch]
-  );
-
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -145,14 +116,17 @@ function NewSessionForm() {
         </Alert>
       )}
 
-      <RepoSelector selectedRepo={form.selectedRepo} onSelect={handleRepoSelect} />
+      <RepoSelector
+        selectedRepo={form.selectedRepo}
+        onSelect={(repo) => dispatch({ type: 'selectRepo', repo })}
+      />
 
       {form.selectedRepo && !isNoRepo && (
         <>
           <BranchSelector
             repoFullName={form.selectedRepo.fullName}
             selectedBranch={form.selectedBranch}
-            onSelect={handleBranchSelect}
+            onSelect={(branch) => dispatch({ type: 'selectBranch', branch })}
           />
 
           <IssueSelector
@@ -171,7 +145,7 @@ function NewSessionForm() {
               id="sessionName"
               type="text"
               value={form.sessionName}
-              onChange={handleNameChange}
+              onChange={(e) => dispatch({ type: 'editName', name: e.target.value })}
               maxLength={SESSION_NAME_MAX_LENGTH}
               placeholder={
                 isNoRepo
@@ -186,7 +160,7 @@ function NewSessionForm() {
             <Textarea
               id="initialPrompt"
               value={form.initialPrompt}
-              onChange={handlePromptChange}
+              onChange={(e) => dispatch({ type: 'editPrompt', prompt: e.target.value })}
               placeholder="What should Claude work on?"
               rows={6}
             />

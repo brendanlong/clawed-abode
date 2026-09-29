@@ -13,16 +13,11 @@ import {
   type SDKUserMessage,
   type SDKMessage,
 } from '@anthropic-ai/claude-agent-sdk';
-import { v4 as uuid } from 'uuid';
+import { randomUUID as uuid } from 'node:crypto';
 import { prisma } from '@/lib/prisma';
 import { classifyMessage, initSessionId, type RetryState } from '@/lib/claude-messages';
 import { holdsEqual, parseRateLimitEvent, type RateLimitHold } from '@/lib/rate-limit';
-import {
-  reduceSessionMessage,
-  removeBackgroundTask,
-  backgroundActive,
-  type BackgroundTask,
-} from '@/lib/session-status';
+import { reduceSessionMessage, backgroundActive, type BackgroundTask } from '@/lib/session-status';
 import { createPushable } from '@/lib/pushable';
 import type { ToolResponse } from '@/lib/tool-response';
 import type { CancelledPrompt } from '@/lib/cancelled-prompt';
@@ -31,14 +26,14 @@ import { createLogger, toError } from '@/lib/logger';
 import { attachToolResultSanitizations } from '@/lib/message-sanitization';
 import { partialMessageId } from '@/lib/message-cache';
 import { sseEvents } from './events';
-import { ensureGithubCredentialHelper, getSessionWorkingDir } from './worktree-manager';
+import { getSessionWorkingDir } from './worktree-manager';
 import {
   loadMergedSessionSettings,
   mcpServersEqual,
   type MergedSessionSettings,
 } from './settings-merger';
 import { StreamAccumulator } from './stream-accumulator';
-import { stopSessionScope, reapSessionScopes } from './session-cgroup';
+import { stopSessionScope } from './session-cgroup';
 import { createSessionState, type SessionState } from './session-state';
 import {
   createErrorMessage,
@@ -184,10 +179,11 @@ function clearLiveStatus(sessionId: string, state: SessionState): void {
     state.status = { ...state.status, turnActive: false };
   }
   syncRunning(sessionId, state);
-  if (state.status.backgroundTasks.size > 0) {
-    state.status = { ...state.status, backgroundTasks: new Map() };
-    sseEvents.emitBackgroundTasks(sessionId, []);
-  }
+  // The SDK's background-task level is per CLI process and sends nothing at
+  // startup, so the set must start empty for the next process.
+  const hadBackgroundTasks = state.status.backgroundTasks.size > 0;
+  state.status = { ...state.status, backgroundTasks: new Map(), subagentTypes: new Map() };
+  if (hadBackgroundTasks) sseEvents.emitBackgroundTasks(sessionId, []);
   if (state.status.retry) {
     state.status = { ...state.status, retry: null };
     sseEvents.emitClaudeRetry(sessionId, null);
@@ -374,17 +370,6 @@ async function establishSessionQuery(
   const settings = await loadMergedSessionSettings(sessionId, settingsKey, session.claudeModel);
   const workingDir = getSessionWorkingDir(sessionId, session.repoPath);
 
-  if (session.repoPath) {
-    // Clones made before the credential helper read the token from the
-    // environment persisted it in plaintext; rewriting on revive retires those.
-    await ensureGithubCredentialHelper(workingDir).catch((err) => {
-      log.warn('Failed to refresh git credential helper', {
-        sessionId,
-        error: toError(err).message,
-      });
-    });
-  }
-
   // Only a conversation the CLI announced has a transcript to resume; app-side
   // messages alone (a rate-limit-queued first prompt, an error from a query that
   // died before init) don't mean one was ever written.
@@ -447,7 +432,7 @@ function ensureSessionQuery(sessionId: string): Promise<SessionState> {
   if (existing?.query) return Promise.resolve(existing);
   if (existing?.establishing) return existing.establishing;
 
-  const state = existing ?? createSessionState('', getSessionCommands(sessionId));
+  const state = existing ?? createSessionState(getSessionCommands(sessionId));
   sessions.set(sessionId, state);
   // Establish against THIS state object; the promise is identity-checked on clear
   // so a stop+revive race never nulls a newer establishment's promise.
@@ -999,33 +984,24 @@ async function discardQueuedPrompts(sessionId: string): Promise<CancelledPrompt[
 }
 
 /**
- * Stop a background task via the SDK, then optimistically drop it from the live
- * set so the ✕ is reliable whether or not the task is still alive: the SDK's
- * terminal `task_notification` can be dropped, and a phantom (already-dropped
- * notification) has nothing for `stopTask` to settle. Idempotent — `true` means
- * the task is not (or no longer) tracked for a session we could act on; `false`
- * only when there is no live session state at all. Emits only on actual removal.
+ * Stop a background task via the SDK. The indicator clears when the SDK's next
+ * `background_tasks_changed` drops the task. `false` when there is no live query
+ * or the SDK rejected the stop.
  */
 export async function stopBackgroundTask(sessionId: string, taskId: string): Promise<boolean> {
-  const state = sessions.get(sessionId);
-  if (!state) return false;
-
+  const query = sessions.get(sessionId)?.query;
+  if (!query) return false;
   try {
-    await state.query?.stopTask(taskId);
+    await query.stopTask(taskId);
+    return true;
   } catch (err) {
-    log.warn('stopBackgroundTask: stopTask failed; clearing indicator anyway', {
+    log.warn('stopBackgroundTask: stopTask failed', {
       sessionId,
       taskId,
       error: toError(err).message,
     });
+    return false;
   }
-
-  if (state.status.backgroundTasks.has(taskId)) {
-    const next = removeBackgroundTask(state.status.backgroundTasks, taskId);
-    state.status = { ...state.status, backgroundTasks: next };
-    sseEvents.emitBackgroundTasks(sessionId, [...next.values()]);
-  }
-  return true;
 }
 
 /** Whether the session is working from the composer's point of view. */
@@ -1137,7 +1113,7 @@ export async function reapOrphanedSessionScopes(): Promise<void> {
   if (scopes.length === 0) return;
 
   log.info('Reaping orphaned session scopes on startup', { count: scopes.length });
-  await reapSessionScopes(scopes);
+  await Promise.allSettled(scopes.map((scope) => stopSessionScope(scope)));
 
   // Clear exactly the names just reaped, not a blanket `sessionScope != null`: if a
   // session recorded a fresh live scope between the findMany and here, a blanket

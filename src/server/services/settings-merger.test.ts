@@ -1,55 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import {
-  mergeByName,
-  mcpServersEqual,
-  resolveClaudeModel,
-  resolveAdvisorModel,
-} from './settings-merger';
+import { mergeByName, mcpServersEqual } from './settings-merger';
 import type { ResolvedEnvVar, ResolvedMcpServer } from '@/lib/settings-types';
-
-describe('resolveClaudeModel', () => {
-  it('prefers the per-session model over repo, global, and env', () => {
-    expect(resolveClaudeModel('session-model', 'repo-model', 'global-model', 'env-model')).toBe(
-      'session-model'
-    );
-  });
-
-  it('falls back to the per-repo model when no session override', () => {
-    expect(resolveClaudeModel(null, 'repo-model', 'global-model', 'env-model')).toBe('repo-model');
-    expect(resolveClaudeModel(undefined, 'repo-model', 'global-model', 'env-model')).toBe(
-      'repo-model'
-    );
-  });
-
-  it('falls back to the global model when no session or repo override', () => {
-    expect(resolveClaudeModel(null, null, 'global-model', 'env-model')).toBe('global-model');
-  });
-
-  it('falls back to the env model when neither session, repo, nor global is set', () => {
-    expect(resolveClaudeModel(null, null, null, 'env-model')).toBe('env-model');
-  });
-
-  it('returns undefined when nothing is set', () => {
-    expect(resolveClaudeModel(null, null, null, undefined)).toBeUndefined();
-  });
-});
-
-describe('resolveAdvisorModel', () => {
-  it('uses the global model when set', () => {
-    expect(resolveAdvisorModel('claude-opus-4-8')).toBe('claude-opus-4-8');
-  });
-
-  it('returns null (advisor disabled) when unset or blank', () => {
-    expect(resolveAdvisorModel(null)).toBeNull();
-    expect(resolveAdvisorModel(undefined)).toBeNull();
-    expect(resolveAdvisorModel('')).toBeNull();
-    expect(resolveAdvisorModel('   ')).toBeNull();
-  });
-
-  it('trims a surrounding-whitespace model', () => {
-    expect(resolveAdvisorModel('  claude-opus-4-8  ')).toBe('claude-opus-4-8');
-  });
-});
 
 describe('mergeByName', () => {
   it('should return empty array when both inputs are empty', () => {

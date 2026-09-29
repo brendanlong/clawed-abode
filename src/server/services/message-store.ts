@@ -1,4 +1,5 @@
-import { v4 as uuid, v5 as uuidv5 } from 'uuid';
+import { randomUUID } from 'node:crypto';
+import { v5 as uuidv5 } from 'uuid';
 import { prisma } from '@/lib/prisma';
 import { createLogger, toError } from '@/lib/logger';
 import { buildSyntheticToolResultContent } from '@/lib/tool-response';
@@ -87,7 +88,7 @@ export async function bumpSessionActivity(sessionId: string): Promise<void> {
 
 /** Persist a system error message for display to the user. */
 export async function createErrorMessage(sessionId: string, errorText: string): Promise<void> {
-  const errorId = uuidv5(`${sessionId}:error:${Date.now()}:${errorText}`, MESSAGE_ID_NAMESPACE);
+  const errorId = randomUUID();
   const errorContent = {
     type: 'system',
     subtype: 'error',
@@ -174,7 +175,7 @@ export async function markLastMessageAsInterrupted(sessionId: string): Promise<v
 
   await insertMessage({
     sessionId,
-    id: uuid(),
+    id: randomUUID(),
     type: 'user',
     content: { type: 'user', subtype: 'interrupt', content: 'Interrupted' },
   });

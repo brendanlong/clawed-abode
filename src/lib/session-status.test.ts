@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import {
   reduceSessionMessage,
-  removeBackgroundTask,
   backgroundActive,
   taskHasEndState,
   INITIAL_LIVE_STATUS,
@@ -17,32 +16,6 @@ function assistant(parentToolUseId: string | null = null): SDKMessage {
     type: 'assistant',
     parent_tool_use_id: parentToolUseId,
     message: { role: 'assistant', content: [] },
-    session_id: 's',
-    uuid: 'u',
-  } as unknown as SDKMessage;
-}
-
-/** Assistant message whose content includes a Monitor tool_use block. */
-function monitorCall(
-  toolUseId: string,
-  persistent: boolean,
-  parentToolUseId: string | null = null
-): SDKMessage {
-  return {
-    type: 'assistant',
-    parent_tool_use_id: parentToolUseId,
-    message: {
-      role: 'assistant',
-      content: [
-        { type: 'text', text: 'Watching…' },
-        {
-          type: 'tool_use',
-          id: toolUseId,
-          name: 'Monitor',
-          input: { description: 'watch CI', persistent, timeout_ms: 300000 },
-        },
-      ],
-    },
     session_id: 's',
     uuid: 'u',
   } as unknown as SDKMessage;
@@ -110,12 +83,19 @@ function taskNotification(taskId: string, status = 'completed'): SDKMessage {
   } as unknown as SDKMessage;
 }
 
-function taskUpdated(taskId: string, status: string | undefined): SDKMessage {
+interface LevelTask {
+  task_id: string;
+  task_type?: string;
+  ambient?: boolean;
+}
+
+function backgroundTasksChanged(...tasks: (string | LevelTask)[]): SDKMessage {
   return {
     type: 'system',
-    subtype: 'task_updated',
-    task_id: taskId,
-    patch: { status },
+    subtype: 'background_tasks_changed',
+    tasks: tasks
+      .map((t) => (typeof t === 'string' ? { task_id: t } : t))
+      .map((t) => ({ task_type: 'local_agent', description: `task ${t.task_id}`, ...t })),
     session_id: 's',
     uuid: 'u',
   } as unknown as SDKMessage;
@@ -205,212 +185,158 @@ describe('reduceSessionMessage — turnActive', () => {
 });
 
 describe('reduceSessionMessage — background tasks', () => {
-  it('task_started adds a background task', () => {
-    const { status, changed } = reduceSessionMessage(INITIAL_LIVE_STATUS, taskStarted('t1'));
-    expect(backgroundActive(status)).toBe(true);
+  it('background_tasks_changed replaces the set', () => {
+    let s = reduceSessionMessage(INITIAL_LIVE_STATUS, backgroundTasksChanged('t1', 't2')).status;
+    expect([...s.backgroundTasks.keys()]).toEqual(['t1', 't2']);
+    expect(s.backgroundTasks.get('t1')).toEqual({
+      taskId: 't1',
+      taskType: 'local_agent',
+      description: 'task t1',
+      subagentType: undefined,
+      ambient: false,
+    });
+
+    const { status, changed } = reduceSessionMessage(s, backgroundTasksChanged('t2'));
+    s = status;
+    expect([...s.backgroundTasks.keys()]).toEqual(['t2']);
     expect(changed.background).toBe(true);
-    expect(status.backgroundTasks.get('t1')?.description).toBe('do a thing');
   });
 
-  it('task_notification removes the matching task', () => {
-    const started = reduceSessionMessage(INITIAL_LIVE_STATUS, taskStarted('t1')).status;
-    const { status, changed } = reduceSessionMessage(started, taskNotification('t1'));
+  it('an empty payload clears the set even without task_notification edges', () => {
+    const s = reduceSessionMessage(INITIAL_LIVE_STATUS, backgroundTasksChanged('t1')).status;
+    const { status } = reduceSessionMessage(s, backgroundTasksChanged());
+    expect(status.backgroundTasks.size).toBe(0);
     expect(backgroundActive(status)).toBe(false);
-    expect(changed.background).toBe(true);
   });
 
-  it('task_notification for an unknown id is a no-op', () => {
-    const { status, changed } = reduceSessionMessage(
-      INITIAL_LIVE_STATUS,
-      taskNotification('ghost')
-    );
-    expect(backgroundActive(status)).toBe(false);
+  it('task_started / task_notification edges do not change membership', () => {
+    let r = reduceSessionMessage(INITIAL_LIVE_STATUS, taskStarted('t1'));
+    expect(r.status.backgroundTasks.size).toBe(0);
+    expect(r.changed.background).toBe(false);
+
+    const withTask = reduceSessionMessage(INITIAL_LIVE_STATUS, backgroundTasksChanged('t1')).status;
+    r = reduceSessionMessage(withTask, taskNotification('t1'));
+    expect(r.status.backgroundTasks.has('t1')).toBe(true);
+    expect(r.changed.background).toBe(false);
+  });
+
+  it('an unparseable payload leaves the set untouched', () => {
+    const s = reduceSessionMessage(INITIAL_LIVE_STATUS, backgroundTasksChanged('t1')).status;
+    const bad = { type: 'system', subtype: 'background_tasks_changed' } as unknown as SDKMessage;
+    const { status, changed } = reduceSessionMessage(s, bad);
+    expect(status.backgroundTasks).toBe(s.backgroundTasks);
     expect(changed.background).toBe(false);
   });
 
-  it('tracks multiple concurrent background tasks', () => {
-    let s = reduceSessionMessage(INITIAL_LIVE_STATUS, taskStarted('t1')).status;
-    s = reduceSessionMessage(s, taskStarted('t2')).status;
-    expect(s.backgroundTasks.size).toBe(2);
-    s = reduceSessionMessage(s, taskNotification('t1')).status;
-    expect(s.backgroundTasks.size).toBe(1);
-    expect(s.backgroundTasks.has('t2')).toBe(true);
+  it('carries the ambient flag', () => {
+    const { status } = reduceSessionMessage(
+      INITIAL_LIVE_STATUS,
+      backgroundTasksChanged({ task_id: 'a1', task_type: 'dream', ambient: true })
+    );
+    expect(status.backgroundTasks.get('a1')?.ambient).toBe(true);
   });
 
   it('background activity does not affect turnActive', () => {
-    const { status } = reduceSessionMessage(INITIAL_LIVE_STATUS, taskStarted('t1'));
+    const { status } = reduceSessionMessage(INITIAL_LIVE_STATUS, backgroundTasksChanged('t1'));
     expect(status.turnActive).toBe(false);
-  });
-
-  // task_updated no longer settles a task — only task_notification does. The
-  // terminal-status backstop was removed (its only value was clearing a cosmetic
-  // stale count on a `killed` task with no notification; for a single-user
-  // indicator that lingering count is an accepted tradeoff).
-  it.each(['completed', 'failed', 'killed', 'pending', 'running', 'paused'])(
-    'task_updated with status %s is ignored and leaves the task running',
-    (status) => {
-      const started = reduceSessionMessage(INITIAL_LIVE_STATUS, taskStarted('t1')).status;
-      const { status: next, changed } = reduceSessionMessage(started, taskUpdated('t1', status));
-      expect(next.backgroundTasks.has('t1')).toBe(true);
-      expect(changed.background).toBe(false);
-    }
-  );
-
-  it('task_updated with no status patch is a no-op', () => {
-    const started = reduceSessionMessage(INITIAL_LIVE_STATUS, taskStarted('t1')).status;
-    const { changed } = reduceSessionMessage(started, taskUpdated('t1', undefined));
-    expect(changed.background).toBe(false);
-  });
-
-  it('a terminal task_updated leaves the task running; only the task_notification settles it', () => {
-    let s = reduceSessionMessage(INITIAL_LIVE_STATUS, taskStarted('t1')).status;
-    s = reduceSessionMessage(s, taskUpdated('t1', 'completed')).status;
-    expect(backgroundActive(s)).toBe(true);
-    const { status, changed } = reduceSessionMessage(s, taskNotification('t1'));
-    expect(backgroundActive(status)).toBe(false);
-    expect(changed.background).toBe(true);
   });
 });
 
-describe('taskHasEndState (daemon exclusion)', () => {
-  const make = (taskType?: string, persistent = false): BackgroundTask => ({
-    taskId: 't',
-    taskType,
-    persistent,
+describe('reduceSessionMessage — subagentType from task_started', () => {
+  it('applies to a task the level lists later', () => {
+    let s = reduceSessionMessage(
+      INITIAL_LIVE_STATUS,
+      taskStarted('t1', { subagent_type: 'Explore' })
+    ).status;
+    s = reduceSessionMessage(s, backgroundTasksChanged('t1')).status;
+    expect(s.backgroundTasks.get('t1')?.subagentType).toBe('Explore');
   });
 
-  it('excludes backgrounded Bash daemons (local_bash)', () => {
+  it('patches a task the level listed first', () => {
+    let s = reduceSessionMessage(INITIAL_LIVE_STATUS, backgroundTasksChanged('t1')).status;
+    const { status, changed } = reduceSessionMessage(
+      s,
+      taskStarted('t1', { subagent_type: 'Explore' })
+    );
+    s = status;
+    expect(s.backgroundTasks.get('t1')?.subagentType).toBe('Explore');
+    expect(changed.background).toBe(true);
+  });
+
+  it('survives later level payloads', () => {
+    let s = reduceSessionMessage(
+      INITIAL_LIVE_STATUS,
+      taskStarted('t1', { subagent_type: 'Explore' })
+    ).status;
+    s = reduceSessionMessage(s, backgroundTasksChanged('t1')).status;
+    s = reduceSessionMessage(s, backgroundTasksChanged('t1', 't2')).status;
+    expect(s.backgroundTasks.get('t1')?.subagentType).toBe('Explore');
+  });
+
+  it('is forgotten at the task_notification', () => {
+    let s = reduceSessionMessage(
+      INITIAL_LIVE_STATUS,
+      taskStarted('t1', { subagent_type: 'Explore' })
+    ).status;
+    s = reduceSessionMessage(s, taskNotification('t1')).status;
+    expect(s.subagentTypes.size).toBe(0);
+  });
+
+  it('is forgotten when a level payload no longer lists the task (foreground subagent)', () => {
+    let s = reduceSessionMessage(
+      INITIAL_LIVE_STATUS,
+      taskStarted('fg', { subagent_type: 'Explore' })
+    ).status;
+    s = reduceSessionMessage(s, backgroundTasksChanged('t2')).status;
+    expect(s.subagentTypes.has('fg')).toBe(false);
+  });
+});
+
+describe('taskHasEndState', () => {
+  const make = (taskType: string, ambient = false): BackgroundTask => ({
+    taskId: 't',
+    taskType,
+    description: 'd',
+    ambient,
+  });
+
+  it('excludes local_bash (backgrounded Bash and every Monitor watch)', () => {
     expect(taskHasEndState(make('local_bash'))).toBe(false);
   });
 
-  it('excludes persistent Monitor watches', () => {
-    expect(taskHasEndState(make('monitor', true))).toBe(false);
+  it('excludes ambient tasks', () => {
+    expect(taskHasEndState(make('local_agent', true))).toBe(false);
   });
 
-  it.each(['local_agent', 'remote_agent', 'monitor', 'local_workflow'])(
-    'counts %s (settles on its own)',
+  it.each(['local_agent', 'remote_agent', 'local_workflow', 'some_future_kind'])(
+    'counts non-ambient %s',
     (taskType) => {
       expect(taskHasEndState(make(taskType))).toBe(true);
     }
   );
-
-  it('counts a task with an unknown/absent task_type (safe default)', () => {
-    expect(taskHasEndState(make(undefined))).toBe(true);
-    expect(taskHasEndState(make('some_future_kind'))).toBe(true);
-  });
 });
 
 describe('backgroundActive — daemon-only sets read as idle', () => {
-  it('a lone backgrounded Bash daemon does not count as background-active', () => {
+  it('a set of only local_bash / ambient tasks is not background-active', () => {
     const { status } = reduceSessionMessage(
       INITIAL_LIVE_STATUS,
-      taskStarted('bash1', { task_type: 'local_bash' })
+      backgroundTasksChanged(
+        { task_id: 'bash1', task_type: 'local_bash' },
+        { task_id: 'amb1', ambient: true }
+      )
     );
     // Still tracked (visible/stoppable in the indicator)...
-    expect(status.backgroundTasks.has('bash1')).toBe(true);
+    expect(status.backgroundTasks.size).toBe(2);
     // ...but does not gate the background-vs-waiting badge / notification.
     expect(backgroundActive(status)).toBe(false);
   });
 
-  it('a subagent alongside a daemon still reads background-active', () => {
-    let s = reduceSessionMessage(
-      INITIAL_LIVE_STATUS,
-      taskStarted('bash1', { task_type: 'local_bash' })
-    ).status;
-    s = reduceSessionMessage(s, taskStarted('agent1', { task_type: 'local_agent' })).status;
-    expect(backgroundActive(s)).toBe(true);
-    // When the subagent settles, the lingering daemon no longer keeps it active.
-    s = reduceSessionMessage(s, taskNotification('agent1')).status;
-    expect(s.backgroundTasks.has('bash1')).toBe(true);
-    expect(backgroundActive(s)).toBe(false);
-  });
-});
-
-describe('persistent Monitor detection (tool_use → task_started linkage)', () => {
-  it('flags a task whose tool_use_id links back to a persistent: true Monitor call', () => {
-    let s = reduceSessionMessage(INITIAL_LIVE_STATUS, monitorCall('tu1', true)).status;
-    expect(s.persistentMonitorToolUseIds.has('tu1')).toBe(true);
-    s = reduceSessionMessage(
-      s,
-      taskStarted('m1', { task_type: 'monitor', tool_use_id: 'tu1' })
-    ).status;
-    // Tracked (visible/stoppable) but excluded from the busy axis…
-    expect(s.backgroundTasks.get('m1')?.persistent).toBe(true);
-    expect(backgroundActive(s)).toBe(false);
-    // …and the linkage id is consumed.
-    expect(s.persistentMonitorToolUseIds.has('tu1')).toBe(false);
-  });
-
-  it('a persistent: false Monitor call leaves the task counted', () => {
-    let s = reduceSessionMessage(INITIAL_LIVE_STATUS, monitorCall('tu1', false)).status;
-    expect(s.persistentMonitorToolUseIds.size).toBe(0);
-    s = reduceSessionMessage(
-      s,
-      taskStarted('m1', { task_type: 'monitor', tool_use_id: 'tu1' })
-    ).status;
-    expect(s.backgroundTasks.get('m1')?.persistent).toBe(false);
-    expect(backgroundActive(s)).toBe(true);
-  });
-
-  it('a monitor task with no matching call counts (safe default)', () => {
+  it('a subagent alongside a daemon reads background-active', () => {
     const { status } = reduceSessionMessage(
       INITIAL_LIVE_STATUS,
-      taskStarted('m1', { task_type: 'monitor', tool_use_id: 'unseen' })
+      backgroundTasksChanged({ task_id: 'bash1', task_type: 'local_bash' }, 'agent1')
     );
-    expect(status.backgroundTasks.get('m1')?.persistent).toBe(false);
     expect(backgroundActive(status)).toBe(true);
-  });
-
-  it('links a persistent Monitor started by a subagent (non-top-level call)', () => {
-    let s = reduceSessionMessage(INITIAL_LIVE_STATUS, monitorCall('tu1', true, 'parent1')).status;
-    s = reduceSessionMessage(
-      s,
-      taskStarted('m1', { task_type: 'monitor', tool_use_id: 'tu1' })
-    ).status;
-    expect(s.backgroundTasks.get('m1')?.persistent).toBe(true);
-    expect(backgroundActive(s)).toBe(false);
-  });
-
-  it('a persistent Monitor settling via task_notification still clears normally', () => {
-    let s = reduceSessionMessage(INITIAL_LIVE_STATUS, monitorCall('tu1', true)).status;
-    s = reduceSessionMessage(
-      s,
-      taskStarted('m1', { task_type: 'monitor', tool_use_id: 'tu1' })
-    ).status;
-    s = reduceSessionMessage(s, taskNotification('m1')).status;
-    expect(s.backgroundTasks.has('m1')).toBe(false);
-  });
-
-  it('an assistant message without Monitor calls leaves the id set untouched', () => {
-    const withId = reduceSessionMessage(INITIAL_LIVE_STATUS, monitorCall('tu1', true)).status;
-    const { status } = reduceSessionMessage(withId, assistant());
-    expect(status.persistentMonitorToolUseIds).toBe(withId.persistentMonitorToolUseIds);
-  });
-});
-
-describe('removeBackgroundTask (optimistic ✕ removal)', () => {
-  function withTasks(...taskIds: string[]): ReadonlyMap<string, BackgroundTask> {
-    return new Map(taskIds.map((id) => [id, { taskId: id, persistent: false }]));
-  }
-
-  it('removes a present task and returns a new map without it', () => {
-    const tasks = withTasks('t1', 't2');
-    const next = removeBackgroundTask(tasks, 't1');
-    expect(next).not.toBe(tasks);
-    expect(next.has('t1')).toBe(false);
-    expect(next.has('t2')).toBe(true);
-  });
-
-  it('returns a new map without the id when the task is absent (harmless no-op)', () => {
-    const tasks = withTasks('t1');
-    const next = removeBackgroundTask(tasks, 'ghost');
-    expect(next.has('ghost')).toBe(false);
-    expect(next.has('t1')).toBe(true);
-  });
-
-  it('removing the last task yields an empty set', () => {
-    const next = removeBackgroundTask(withTasks('t1'), 't1');
-    expect(next.size).toBe(0);
   });
 });
 

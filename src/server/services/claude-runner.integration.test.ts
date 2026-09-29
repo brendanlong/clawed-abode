@@ -40,7 +40,6 @@ vi.mock('./github', () => ({
 vi.mock('./worktree-manager', () => ({
   getCurrentBranch: vi.fn().mockResolvedValue(null),
   getSessionWorkingDir: vi.fn(() => '/tmp/spike-runner-test'),
-  ensureGithubCredentialHelper: vi.fn().mockResolvedValue(undefined),
 }));
 
 const baseSettings = {
@@ -78,7 +77,6 @@ vi.mock('./settings-merger', async (importOriginal) => {
 // (so buildSdkOptions sets state.sessionScope), the nonce is fixed for a
 // deterministic unit name, and stopSessionScope is a spy.
 const mockStopSessionScope = vi.hoisted(() => vi.fn(async (_unit: string) => {}));
-const mockReapSessionScopes = vi.hoisted(() => vi.fn(async (_units: string[]) => {}));
 vi.mock('./session-cgroup', () => ({
   getSessionScopeConfig: vi.fn(async () => ({
     launcherPath: '/fake/launcher.sh',
@@ -86,7 +84,6 @@ vi.mock('./session-cgroup', () => ({
   })),
   sessionScopeNonce: vi.fn(() => 'testnonce'),
   stopSessionScope: mockStopSessionScope,
-  reapSessionScopes: mockReapSessionScopes,
 }));
 
 import { createPushable } from '@/lib/pushable';
@@ -138,9 +135,30 @@ function makeFakeQuery() {
     } as unknown as Query;
   };
 
+  // Commands reported via `deliver()`, completed after the next top-level result —
+  // the real CLI's queued → started → … → result → completed order.
+  let delivered = 0;
+  const awaitingCompletion: string[] = [];
+
   return {
     factory,
-    emit: (m: SDKMessage) => out.push(m),
+    emit: (m: SDKMessage) => {
+      out.push(m);
+      if (m.type !== 'result') return;
+      for (const uuid of awaitingCompletion.splice(0)) {
+        out.push(commandLifecycle(uuid, 'completed'));
+      }
+    },
+    /** Report every message pushed so far as read by the agent, as the CLI does. */
+    deliver: async () => {
+      await waitFor(() => inputs.length > delivered);
+      for (const { uuid } of inputs.slice(delivered)) {
+        out.push(commandLifecycle(uuid!, 'queued'));
+        out.push(commandLifecycle(uuid!, 'started'));
+        awaitingCompletion.push(uuid!);
+      }
+      delivered = inputs.length;
+    },
     end: () => out.close(),
     inputs,
     setModel,
@@ -280,6 +298,20 @@ function taskNotification(taskId: string): SDKMessage {
     uuid: nextUuid(),
   } as unknown as SDKMessage;
 }
+/** The SDK's level signal: the full live background-task set (REPLACE semantics). */
+function backgroundTasksChanged(...taskIds: string[]): SDKMessage {
+  return {
+    type: 'system',
+    subtype: 'background_tasks_changed',
+    tasks: taskIds.map((task_id) => ({
+      task_id,
+      task_type: 'local_agent',
+      description: 'background work',
+    })),
+    session_id: 's',
+    uuid: nextUuid(),
+  } as unknown as SDKMessage;
+}
 async function createRunningSession(): Promise<string> {
   const session = await testPrisma.session.create({
     data: { name: 'Test', repoPath: '', status: 'running' },
@@ -325,8 +357,10 @@ describe('claude-runner persistent streaming loop', () => {
     const sessionId = await createRunningSession();
 
     await sendUserMessage(sessionId, 'hello');
+    await fake.deliver();
     expect(isClaudeRunning(sessionId)).toBe(true); // optimistic
 
+    fake.emit(messageStart());
     fake.emit(assistant('hi there'));
     fake.emit(result());
 
@@ -370,6 +404,7 @@ describe('claude-runner persistent streaming loop', () => {
       const fake = makeFakeQuery();
       _setQueryFactory(fake.factory);
       await sendUserMessage(sessionId, 'go');
+      await fake.deliver();
       fake.emit(result());
       await waitFor(() => !isClaudeRunning(sessionId));
       return fake;
@@ -549,8 +584,7 @@ describe('claude-runner persistent streaming loop', () => {
     await reapOrphanedSessionScopes();
 
     // Only the recorded scope is reaped — no glob, so the clean session is untouched.
-    expect(mockReapSessionScopes).toHaveBeenCalledTimes(1);
-    expect(mockReapSessionScopes).toHaveBeenCalledWith(['clawed-session-orphan-abc123.scope']);
+    expect(mockStopSessionScope.mock.calls).toEqual([['clawed-session-orphan-abc123.scope']]);
 
     // The recorded name is cleared so a clean next boot reaps nothing.
     expect(
@@ -564,7 +598,7 @@ describe('claude-runner persistent streaming loop', () => {
   it('reapOrphanedSessionScopes is a no-op when no scopes are recorded', async () => {
     await createRunningSession();
     await reapOrphanedSessionScopes();
-    expect(mockReapSessionScopes).not.toHaveBeenCalled();
+    expect(mockStopSessionScope).not.toHaveBeenCalled();
   });
 
   it('streams main-agent partials through an interleaved subagent message', async () => {
@@ -633,7 +667,9 @@ describe('claude-runner persistent streaming loop', () => {
 
     // Turn 1
     await sendUserMessage(sessionId, 'start a background job');
+    await fake.deliver();
     fake.emit(assistant('starting'));
+    fake.emit(backgroundTasksChanged('task-1'));
     fake.emit(taskStarted('task-1'));
     fake.emit(result()); // main turn ends, but the query stays alive
 
@@ -645,6 +681,7 @@ describe('claude-runner persistent streaming loop', () => {
     ]);
 
     // The background task settles later, and the agent autonomously continues.
+    fake.emit(backgroundTasksChanged());
     fake.emit(taskNotification('task-1'));
     fake.emit(assistant('background job done'));
     fake.emit(result());
@@ -669,8 +706,10 @@ describe('claude-runner persistent streaming loop', () => {
     const sessionId = await createRunningSession();
 
     await sendUserMessage(sessionId, 'start a background job');
+    await fake.deliver();
     fake.emit(messageStart());
     await waitFor(() => isClaudeRunning(sessionId));
+    fake.emit(backgroundTasksChanged('bg-1'));
     fake.emit(taskStarted('bg-1'));
 
     mockSseEvents.emitClaudeFinished.mockClear();
@@ -685,6 +724,7 @@ describe('claude-runner persistent streaming loop', () => {
 
     // The task settles; draining it alone does NOT fire a completion — the main agent
     // autonomously continues in a new turn, and that turn's end is the real finish.
+    fake.emit(backgroundTasksChanged());
     fake.emit(taskNotification('bg-1'));
     await waitFor(() => getSessionBackgroundTasks(sessionId).length === 0);
     expect(mockSseEvents.emitClaudeFinished).not.toHaveBeenCalled();
@@ -700,63 +740,56 @@ describe('claude-runner persistent streaming loop', () => {
     stopSession(sessionId);
   });
 
-  it('stopBackgroundTask clears a tracked task, emits [], and calls the SDK', async () => {
+  it('stopBackgroundTask asks the SDK to stop; the next level signal clears the task', async () => {
     const fake = makeFakeQuery();
     _setQueryFactory(fake.factory);
     const sessionId = await createRunningSession();
 
     await sendUserMessage(sessionId, 'start a background job');
-    fake.emit(taskStarted('task-1'));
+    fake.emit(backgroundTasksChanged('task-1'));
     fake.emit(result());
     await waitFor(() => getSessionBackgroundTasks(sessionId).length === 1);
-    mockSseEvents.emitBackgroundTasks.mockClear();
 
-    const removed = await stopBackgroundTask(sessionId, 'task-1');
-
-    expect(removed).toBe(true);
+    expect(await stopBackgroundTask(sessionId, 'task-1')).toBe(true);
     expect(fake.stopTask).toHaveBeenCalledWith('task-1');
-    expect(getSessionBackgroundTasks(sessionId)).toEqual([]);
+
+    mockSseEvents.emitBackgroundTasks.mockClear();
+    fake.emit(backgroundTasksChanged());
+    await waitFor(() => getSessionBackgroundTasks(sessionId).length === 0);
     expect(mockSseEvents.emitBackgroundTasks).toHaveBeenCalledWith(sessionId, []);
 
     stopSession(sessionId);
   });
 
-  it('stopBackgroundTask clears the indicator even when stopTask rejects (phantom)', async () => {
-    const fake = makeFakeQuery();
-    _setQueryFactory(fake.factory);
-    const sessionId = await createRunningSession();
-
-    await sendUserMessage(sessionId, 'start a background job');
-    fake.emit(taskStarted('task-1'));
-    fake.emit(result());
-    await waitFor(() => getSessionBackgroundTasks(sessionId).length === 1);
-
-    // Simulate a phantom: the SDK no longer knows the task, so stopTask throws.
-    fake.stopTask.mockRejectedValueOnce(new Error('no such task'));
-
-    const removed = await stopBackgroundTask(sessionId, 'task-1');
-
-    expect(removed).toBe(true);
-    expect(getSessionBackgroundTasks(sessionId)).toEqual([]);
-    expect(mockSseEvents.emitBackgroundTasks).toHaveBeenCalledWith(sessionId, []);
-
-    stopSession(sessionId);
-  });
-
-  it('returns true (without emitting) for an untracked id on a live session, false with no session', async () => {
+  it('stopBackgroundTask returns false when the SDK rejects or there is no live query', async () => {
     const fake = makeFakeQuery();
     _setQueryFactory(fake.factory);
     const sessionId = await createRunningSession();
 
     await sendUserMessage(sessionId, 'hi');
-    fake.emit(result());
-    await waitFor(() => !isClaudeRunning(sessionId));
+    await waitFor(() => fake.inputs.length > 0);
 
-    // Live session, task never tracked → post-condition already holds → true.
-    expect(await stopBackgroundTask(sessionId, 'ghost')).toBe(true);
-    expect(mockSseEvents.emitBackgroundTasks).not.toHaveBeenCalled();
-    // No live session state to act on → false.
+    fake.stopTask.mockRejectedValueOnce(new Error('no such task'));
+    expect(await stopBackgroundTask(sessionId, 'ghost')).toBe(false);
     expect(await stopBackgroundTask('00000000-0000-0000-0000-000000000000', 'task-1')).toBe(false);
+
+    stopSession(sessionId);
+  });
+
+  it('resets the background-task set when the CLI process exits', async () => {
+    const fake = makeFakeQuery();
+    _setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+
+    await sendUserMessage(sessionId, 'start a background job');
+    fake.emit(backgroundTasksChanged('task-1'));
+    await waitFor(() => getSessionBackgroundTasks(sessionId).length === 1);
+
+    // The level is per-process and a new CLI sends nothing at startup, so a stale
+    // set must not survive into the next process.
+    fake.end();
+    await waitFor(() => getSessionBackgroundTasks(sessionId).length === 0);
+    expect(mockSseEvents.emitBackgroundTasks).toHaveBeenLastCalledWith(sessionId, []);
 
     stopSession(sessionId);
   });
@@ -805,6 +838,7 @@ describe('claude-runner persistent streaming loop', () => {
     const sessionId = await createRunningSession();
 
     await sendUserMessage(sessionId, 'hi');
+    await fake.deliver();
     fake.emit(systemInit(sessionId));
     fake.emit(result());
     await waitFor(() => !isClaudeRunning(sessionId));
@@ -863,6 +897,7 @@ describe('claude-runner persistent streaming loop', () => {
     const sessionId = await createRunningSession();
 
     await sendUserMessage(sessionId, 'hello');
+    await fake.deliver();
     // Secrets go to a file path, never onto argv via options.mcpServers.
     expect(mockWriteSessionMcpConfig).toHaveBeenCalledWith(
       sessionId,
@@ -894,6 +929,7 @@ describe('claude-runner persistent streaming loop', () => {
     const sessionId = await createRunningSession();
 
     await sendUserMessage(sessionId, 'hello');
+    await fake.deliver();
     expect(options?.settingSources).toEqual(['user', 'project']);
 
     fake.emit(result());
@@ -1065,6 +1101,7 @@ describe('claude-runner persistent streaming loop', () => {
 
     // Establish the query, then kill it while the next send is preparing.
     await sendUserMessage(sessionId, 'first');
+    await fake.deliver();
     await waitFor(() => fake.inputs.length >= 1);
     fake.emit(result());
     await waitFor(() => !isClaudeRunning(sessionId));
@@ -1096,7 +1133,6 @@ describe('claude-runner persistent streaming loop', () => {
 
     await sendUserMessage(sessionId, 'first');
     await waitFor(() => fake.inputs.length >= 1);
-    // Prove this CLI *does* report lifecycle, so the lenient budget applies.
     fake.emit(commandLifecycle(fake.inputs[0].uuid!, 'started'));
     fake.emit(messageStart());
     await waitFor(() => isClaudeRunning(sessionId));
@@ -1199,6 +1235,7 @@ describe('claude-runner persistent streaming loop', () => {
 
     // Turn 1 with the default (no model override).
     await sendUserMessage(sessionId, 'first');
+    await fake.deliver();
     fake.emit(result());
     await waitFor(() => !isClaudeRunning(sessionId));
     expect(fake.setModel).not.toHaveBeenCalled();
@@ -1206,6 +1243,7 @@ describe('claude-runner persistent streaming loop', () => {
     // The user changes the model; the next send applies it live.
     mockLoadSettings.mockResolvedValue({ ...baseSettings, claudeModel: 'opus' });
     await sendUserMessage(sessionId, 'second');
+    await fake.deliver();
     expect(fake.setModel).toHaveBeenCalledWith('opus');
 
     fake.emit(result());
@@ -1227,6 +1265,7 @@ describe('claude-runner persistent streaming loop', () => {
     const sessionId = await createRunningSession();
 
     await sendUserMessage(sessionId, 'run a command');
+    await fake.deliver();
 
     // Fire the real hook with tool output containing an invisible zero-width char,
     // exactly as the SDK would post-tool. This records the finding in the map.
@@ -1316,6 +1355,7 @@ describe('claude-runner persistent streaming loop', () => {
     const second = makeFakeQuery();
     _setQueryFactory(second.factory);
     await sendUserMessage(sessionId, 'again');
+    await second.deliver();
     second.emit(toolResultMsg('toolu_orphan', 'value hidden'));
     second.emit(result());
 
@@ -1346,6 +1386,7 @@ describe('claude-runner persistent streaming loop', () => {
     const sessionId = await createRunningSession();
 
     await sendUserMessage(sessionId, 'run a command');
+    await fake.deliver();
 
     // Clean output → hook records nothing → no badge on the tool_result.
     await firePostToolUse(options, 'toolu_clean', 'all good');

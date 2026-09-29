@@ -83,7 +83,7 @@ function TtsVoiceSection({
   currentVoice: string | null;
   onUpdate: () => void;
 }) {
-  const mutation = trpc.globalSettings.setTtsVoice.useMutation({ onSuccess: onUpdate });
+  const mutation = trpc.globalSettings.update.useMutation({ onSuccess: onUpdate });
   // The shared player, because Safari refuses play() once the tap that asked for it
   // has waited seconds for synthesis; the player unlocks its element during the tap.
   const playback = useVoicePlayback(true);
@@ -144,7 +144,7 @@ function TtsSpeedSection({
 }) {
   const [editValue, setEditValue] = useState(currentSpeed ?? 1.0);
 
-  const mutation = trpc.globalSettings.setTtsSpeed.useMutation({ onSuccess: onUpdate });
+  const mutation = trpc.globalSettings.update.useMutation({ onSuccess: onUpdate });
 
   const handleChange = (value: number[]) => {
     setEditValue(value[0]);
@@ -201,7 +201,7 @@ function TtsSpeedSection({
 }
 
 function VoiceAutoSendSection({ autoSend, onUpdate }: { autoSend: boolean; onUpdate: () => void }) {
-  const mutation = trpc.globalSettings.setVoiceAutoSend.useMutation({ onSuccess: onUpdate });
+  const mutation = trpc.globalSettings.update.useMutation({ onSuccess: onUpdate });
 
   return (
     <div className="space-y-3">

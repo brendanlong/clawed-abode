@@ -23,7 +23,7 @@ export type SessionListStreamEvent = SessionListEvent | ResyncEvent;
  * stream has capacity, so a stalled SSE consumer would otherwise grow the buffer
  * without limit.
  */
-export const MAX_QUEUED_EVENTS = 1000;
+const MAX_QUEUED_EVENTS = 1000;
 
 interface EventQueueOptions<T> {
   maxQueued?: number;
@@ -94,6 +94,27 @@ export function createEventQueue<T>(
 
 const RESYNC: ResyncEvent = { kind: 'resync' };
 
+/**
+ * Yield buffered events until the subscription aborts, substituting one `resync`
+ * for anything the queue dropped. Dropped persisted messages are not replayed
+ * here: the client's history refetch covers them, and a later reconnect replays
+ * from the (now lagging) watermark, which the client dedupes by id.
+ */
+async function* drainEventQueue<T>(
+  { queue, takeOverflow, waitForEvent }: ReturnType<typeof createEventQueue<T>>,
+  signal: AbortSignal | undefined
+): AsyncGenerator<T | ResyncEvent> {
+  while (!signal?.aborted) {
+    if (takeOverflow()) {
+      yield RESYNC;
+    } else if (queue.length > 0) {
+      yield queue.shift()!;
+    } else {
+      await waitForEvent(signal);
+    }
+  }
+}
+
 const partialMessageKey = (event: SessionStreamEvent) =>
   event.kind === 'message' && isPartialMessageId(event.message.id) ? event.message.id : undefined;
 
@@ -148,11 +169,10 @@ export const sseRouter = router({
       };
 
       // Subscribe before any awaits so we don't miss live events during replay.
-      const { queue, takeOverflow, waitForEvent, unsubscribe } =
-        createEventQueue<SessionStreamEvent>(
-          (push) => sseEvents.onSessionEvents(input.sessionId, push),
-          { coalesceKey: partialMessageKey }
-        );
+      const events = createEventQueue<SessionStreamEvent>(
+        (push) => sseEvents.onSessionEvents(input.sessionId, push),
+        { coalesceKey: partialMessageKey }
+      );
 
       try {
         if (replayFloor !== undefined) {
@@ -170,20 +190,9 @@ export const sseRouter = router({
           watermark = last?.sequence ?? EMPTY_WATERMARK;
         }
 
-        while (!signal?.aborted) {
-          if (takeOverflow()) {
-            // Dropped persisted messages are not replayed here: the client's
-            // history refetch covers them, and a later reconnect replays from the
-            // (now lagging) watermark, which the client dedupes by id.
-            yield track(RESYNC);
-          } else if (queue.length > 0) {
-            yield track(queue.shift()!);
-          } else {
-            await waitForEvent(signal);
-          }
-        }
+        for await (const event of drainEventQueue(events, signal)) yield track(event);
       } finally {
-        unsubscribe();
+        events.unsubscribe();
       }
     }),
 
@@ -200,22 +209,13 @@ export const sseRouter = router({
       let counter = Number.isInteger(seeded) ? seeded + 1 : 0;
       const track = (event: SessionListStreamEvent) => tracked(String(counter++), event);
 
-      const { queue, takeOverflow, waitForEvent, unsubscribe } = createEventQueue<SessionListEvent>(
-        (push) => sseEvents.onSessionListChanged(push)
+      const events = createEventQueue<SessionListEvent>((push) =>
+        sseEvents.onSessionListChanged(push)
       );
-
       try {
-        while (!signal?.aborted) {
-          if (takeOverflow()) {
-            yield track(RESYNC);
-          } else if (queue.length > 0) {
-            yield track(queue.shift()!);
-          } else {
-            await waitForEvent(signal);
-          }
-        }
+        for await (const event of drainEventQueue(events, signal)) yield track(event);
       } finally {
-        unsubscribe();
+        events.unsubscribe();
       }
     }),
 });

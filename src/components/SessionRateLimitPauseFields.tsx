@@ -54,7 +54,7 @@ export function SessionRateLimitPauseFields({
     onSuccess: () => {
       setDraft(null);
       void utils.sessions.get.invalidate({ sessionId });
-      void utils.claude.getRateLimitHold.invalidate({ sessionId });
+      void utils.claude.getLiveState.invalidate({ sessionId });
     },
   });
 

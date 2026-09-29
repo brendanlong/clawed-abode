@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils';
 import { Card, CardContent } from '@/components/ui/card';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Badge } from '@/components/ui/badge';
+import { ColorBadge } from './ColorBadge';
 import type { ToolCall } from './types';
 
 interface ToolDisplayWrapperProps {
@@ -67,14 +68,7 @@ export function ToolDisplayWrapper({
   const isError = isErrorOverride ?? !!tool.is_error;
 
   // Default done badge: green "Done" text
-  const defaultDoneBadge = (
-    <Badge
-      variant="outline"
-      className="text-xs border-green-500 text-green-700 dark:text-green-400"
-    >
-      Done
-    </Badge>
-  );
+  const defaultDoneBadge = <ColorBadge color="green">Done</ColorBadge>;
 
   const resolvedDoneBadge = doneBadge === undefined ? defaultDoneBadge : doneBadge;
 
@@ -95,14 +89,7 @@ export function ToolDisplayWrapper({
                 {icon}
                 <span className="font-mono text-primary">{title}</span>
                 {headerContent}
-                {isPending && (
-                  <Badge
-                    variant="outline"
-                    className="text-xs border-yellow-500 text-yellow-700 dark:text-yellow-400"
-                  >
-                    {pendingText}
-                  </Badge>
-                )}
+                {isPending && <ColorBadge color="yellow">{pendingText}</ColorBadge>}
                 {isError && (
                   <Badge variant="destructive" className="text-xs">
                     Error

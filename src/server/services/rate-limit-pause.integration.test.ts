@@ -44,7 +44,6 @@ vi.mock('./session-cgroup', () => ({
   getSessionScopeConfig: vi.fn(async () => null),
   sessionScopeNonce: vi.fn(() => 'testnonce'),
   stopSessionScope: vi.fn(async () => {}),
-  reapSessionScopes: vi.fn(async () => {}),
 }));
 vi.mock('./settings-merger', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./settings-merger')>();
@@ -130,6 +129,16 @@ function rateLimitEvent(info: {
   } as unknown as SDKMessage;
 }
 
+function commandStarted(commandUuid: string): SDKMessage {
+  return {
+    type: 'command_lifecycle',
+    command_uuid: commandUuid,
+    state: 'started',
+    session_id: 's',
+    uuid: nextUuid(),
+  } as unknown as SDKMessage;
+}
+
 function messageStart(): SDKMessage {
   return {
     type: 'stream_event',
@@ -185,7 +194,10 @@ async function sendAndDeliver(
   text: string,
   { settle = true } = {}
 ): Promise<void> {
+  const pushed = fake.inputs.length;
   await runner.sendUserMessage(sessionId, text);
+  await waitFor(() => fake.inputs.length > pushed);
+  fake.emit(commandStarted(fake.inputs[pushed].uuid!));
   fake.emit(messageStart());
   await waitFor(() => runner.getPendingMessageIds(sessionId).length === 0);
   if (!settle) return;

@@ -3,6 +3,7 @@
 import { z } from 'zod';
 import { useMemo } from 'react';
 import { Badge } from '@/components/ui/badge';
+import { ColorBadge } from './ColorBadge';
 import { getFileType } from '@/lib/syntax-highlight';
 import { FileIcon } from './FileIcon';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
@@ -52,12 +53,9 @@ export function WriteDisplay({ tool }: { tool: ToolCall }) {
       }
       subtitle={<div className="text-muted-foreground text-xs mt-1 truncate">{filePath}</div>}
       doneBadge={
-        <Badge
-          variant="outline"
-          className="text-xs border-green-500 text-green-700 dark:text-green-400"
-        >
+        <ColorBadge color="green">
           {lineCount} {lineCount === 1 ? 'line' : 'lines'}
-        </Badge>
+        </ColorBadge>
       }
     >
       {fileType !== 'text' && (

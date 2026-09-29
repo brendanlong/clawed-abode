@@ -20,7 +20,7 @@ export interface Context {
 }
 
 /** Tailscale Serve/Funnel and other reverse proxies put the real client IP first in X-Forwarded-For. */
-export function getClientIp(headers: Headers): string | undefined {
+function getClientIp(headers: Headers): string | undefined {
   const forwarded = headers.get('x-forwarded-for');
   const first = forwarded?.split(',')[0]?.trim();
   return first || headers.get('x-real-ip')?.trim() || undefined;

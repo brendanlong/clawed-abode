@@ -38,7 +38,7 @@ const settings = (overrides: Partial<MergedSessionSettings> = {}): MergedSession
 });
 
 const build = (s: MergedSessionSettings, resumeId: string | null = null) => {
-  const state = createSessionState('/w', []);
+  const state = createSessionState([]);
   return buildSdkOptions({
     sessionId: 'sid',
     workingDir: '/w',

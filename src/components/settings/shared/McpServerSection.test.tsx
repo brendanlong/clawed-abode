@@ -43,7 +43,9 @@ function mutations(overrides: Partial<McpServerMutations> = {}): McpServerMutati
 
 async function openEditForm(m: McpServerMutations) {
   const user = userEvent.setup();
-  render(<McpServerSection mcpServers={[HTTP_SERVER]} mutations={m} onUpdate={vi.fn()} />);
+  render(
+    <McpServerSection mcpServers={[HTTP_SERVER]} mutations={m} onUpdate={vi.fn()} scope="repo" />
+  );
   await user.click(screen.getByRole('button', { name: 'Edit' }));
   return user;
 }
@@ -120,6 +122,45 @@ describe('McpServerSection', () => {
 
     expect(screen.getByText('Every header needs a name')).toBeInTheDocument();
     expect(m.setMcpServer).not.toHaveBeenCalled();
+  });
+
+  it('shows why an OAuth connect failed and clears it on retry', async () => {
+    const user = userEvent.setup();
+    const oauthServer: McpServer = {
+      ...HTTP_SERVER,
+      headers: {},
+      authType: 'oauth',
+      oauth: {
+        state: 'connected',
+        clientId: null,
+        clientIdIsManual: false,
+        scope: null,
+        authorizedAt: null,
+        error: null,
+      },
+    };
+    let rejectRetry: (err: Error) => void = () => {};
+    const m = mutations({
+      startMcpOAuth: vi
+        .fn()
+        .mockRejectedValueOnce(new Error('discovery failed'))
+        .mockReturnValueOnce(
+          new Promise((_, reject) => {
+            rejectRetry = reject;
+          })
+        ),
+    });
+    render(
+      <McpServerSection mcpServers={[oauthServer]} mutations={m} onUpdate={vi.fn()} scope="repo" />
+    );
+
+    await user.click(screen.getByTitle('Re-authorize with OAuth'));
+    expect(await screen.findByText('discovery failed')).toBeInTheDocument();
+
+    await user.click(screen.getByTitle('Re-authorize with OAuth'));
+    expect(screen.queryByText('discovery failed')).not.toBeInTheDocument();
+    rejectRetry(new Error('still broken'));
+    expect(await screen.findByText('still broken')).toBeInTheDocument();
   });
 
   it('drops a header row that was added and never filled in', async () => {
