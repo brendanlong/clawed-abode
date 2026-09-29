@@ -96,8 +96,8 @@ describe('sseEvents', () => {
     const l = listen('session-1');
 
     const tasks = [
-      { taskId: 't1', persistent: false },
-      { taskId: 't2', persistent: false },
+      { taskId: 't1', taskType: 'local_agent', description: 'a', ambient: false },
+      { taskId: 't2', taskType: 'local_agent', description: 'b', ambient: false },
     ];
     sseEvents.emitBackgroundTasks('session-1', tasks);
     expect(l.session).toHaveBeenCalledWith({ kind: 'background', tasks });
@@ -117,12 +117,12 @@ describe('sseEvents', () => {
       active: false,
     });
 
-    // A set holding only no-end-state tasks (a Bash daemon, a persistent Monitor)
-    // also signals idle — they don't count toward the busy axis (taskHasEndState).
+    // A set holding only no-end-state tasks (a Bash daemon or Monitor, an ambient
+    // task) also signals idle — they don't count toward the busy axis (taskHasEndState).
     l.list.mockClear();
     sseEvents.emitBackgroundTasks('session-1', [
-      { taskId: 'd1', persistent: false, taskType: 'local_bash' },
-      { taskId: 'm1', persistent: true, taskType: 'monitor' },
+      { taskId: 'd1', taskType: 'local_bash', description: 'dev server', ambient: false },
+      { taskId: 'a1', taskType: 'dream', description: 'housekeeping', ambient: true },
     ]);
     expect(l.list).toHaveBeenCalledWith({
       kind: 'background',

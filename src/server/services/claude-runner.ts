@@ -17,12 +17,7 @@ import { v4 as uuid } from 'uuid';
 import { prisma } from '@/lib/prisma';
 import { classifyMessage, initSessionId, type RetryState } from '@/lib/claude-messages';
 import { holdsEqual, parseRateLimitEvent, type RateLimitHold } from '@/lib/rate-limit';
-import {
-  reduceSessionMessage,
-  removeBackgroundTask,
-  backgroundActive,
-  type BackgroundTask,
-} from '@/lib/session-status';
+import { reduceSessionMessage, backgroundActive, type BackgroundTask } from '@/lib/session-status';
 import { createPushable } from '@/lib/pushable';
 import type { ToolResponse } from '@/lib/tool-response';
 import type { CancelledPrompt } from '@/lib/cancelled-prompt';
@@ -184,10 +179,11 @@ function clearLiveStatus(sessionId: string, state: SessionState): void {
     state.status = { ...state.status, turnActive: false };
   }
   syncRunning(sessionId, state);
-  if (state.status.backgroundTasks.size > 0) {
-    state.status = { ...state.status, backgroundTasks: new Map() };
-    sseEvents.emitBackgroundTasks(sessionId, []);
-  }
+  // The SDK's background-task level is per CLI process and sends nothing at
+  // startup, so the set must start empty for the next process.
+  const hadBackgroundTasks = state.status.backgroundTasks.size > 0;
+  state.status = { ...state.status, backgroundTasks: new Map(), subagentTypes: new Map() };
+  if (hadBackgroundTasks) sseEvents.emitBackgroundTasks(sessionId, []);
   if (state.status.retry) {
     state.status = { ...state.status, retry: null };
     sseEvents.emitClaudeRetry(sessionId, null);
@@ -999,33 +995,24 @@ async function discardQueuedPrompts(sessionId: string): Promise<CancelledPrompt[
 }
 
 /**
- * Stop a background task via the SDK, then optimistically drop it from the live
- * set so the ✕ is reliable whether or not the task is still alive: the SDK's
- * terminal `task_notification` can be dropped, and a phantom (already-dropped
- * notification) has nothing for `stopTask` to settle. Idempotent — `true` means
- * the task is not (or no longer) tracked for a session we could act on; `false`
- * only when there is no live session state at all. Emits only on actual removal.
+ * Stop a background task via the SDK. The indicator clears when the SDK's next
+ * `background_tasks_changed` drops the task. `false` when there is no live query
+ * or the SDK rejected the stop.
  */
 export async function stopBackgroundTask(sessionId: string, taskId: string): Promise<boolean> {
-  const state = sessions.get(sessionId);
-  if (!state) return false;
-
+  const query = sessions.get(sessionId)?.query;
+  if (!query) return false;
   try {
-    await state.query?.stopTask(taskId);
+    await query.stopTask(taskId);
+    return true;
   } catch (err) {
-    log.warn('stopBackgroundTask: stopTask failed; clearing indicator anyway', {
+    log.warn('stopBackgroundTask: stopTask failed', {
       sessionId,
       taskId,
       error: toError(err).message,
     });
+    return false;
   }
-
-  if (state.status.backgroundTasks.has(taskId)) {
-    const next = removeBackgroundTask(state.status.backgroundTasks, taskId);
-    state.status = { ...state.status, backgroundTasks: next };
-    sseEvents.emitBackgroundTasks(sessionId, [...next.values()]);
-  }
-  return true;
 }
 
 /** Whether the session is working from the composer's point of view. */

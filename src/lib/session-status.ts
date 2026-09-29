@@ -16,48 +16,40 @@
  */
 
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import { z } from 'zod';
 import { parseRetryState, type RetryState } from './claude-messages';
 
-/** A background task tracked while it runs (keyed by `task_id`). */
+/** A live background task, as reported by the SDK's `background_tasks_changed`. */
 export interface BackgroundTask {
   taskId: string;
-  toolUseId?: string;
-  description?: string;
-  taskType?: string;
+  taskType: string;
+  description: string;
+  /** From the task's `task_started` (the level payload doesn't carry it). */
   subagentType?: string;
-  /**
-   * A session-length `persistent: true` Monitor watch — no `timeout_ms` deadline,
-   * so it has no knowable end state (see {@link taskHasEndState}). Detected by
-   * linking the task's `tool_use_id` back to its Monitor `tool_use` block's input,
-   * which streams through the reducer before the `task_started`.
-   */
-  persistent: boolean;
+  /** The SDK says this task is not activity (housekeeping, live-update watchers). */
+  ambient: boolean;
 }
 
 export interface LiveStatus {
   /** The main agent is mid-turn generating (gates the composer). */
   turnActive: boolean;
-  /** Running background tasks by `task_id` (indicator only; never gates input). */
+  /** Live background tasks by `task_id` (indicator only; never gates input). */
   backgroundTasks: ReadonlyMap<string, BackgroundTask>;
   /** Current API-retry status, or `null` when not retrying. */
   retry: RetryState | null;
   /**
-   * Bookkeeping for {@link BackgroundTask.persistent}: `tool_use_id`s of Monitor
-   * calls with `persistent: true` whose `task_started` hasn't arrived yet. Ids are
-   * added when the assistant message carrying the `tool_use` block is folded and
-   * consumed by the matching `task_started`. An id whose task never starts (the
-   * tool call errors) lingers harmlessly for the session state's in-memory
-   * lifetime (until stop/delete drops it) — harmless because `tool_use_id`s are
-   * globally unique, so a stale id can never match a future unrelated task.
+   * `subagent_type` by `task_id`, recorded from `task_started` and dropped at the
+   * task's `task_notification`. Kept apart from the set because the level payload
+   * carries ids only and may arrive before or after the `task_started`.
    */
-  persistentMonitorToolUseIds: ReadonlySet<string>;
+  subagentTypes: ReadonlyMap<string, string>;
 }
 
 export const INITIAL_LIVE_STATUS: LiveStatus = {
   turnActive: false,
   backgroundTasks: new Map(),
   retry: null,
-  persistentMonitorToolUseIds: new Set(),
+  subagentTypes: new Map(),
 };
 
 /** Which status axes changed in a {@link reduceSessionMessage} step. */
@@ -73,15 +65,10 @@ export interface ReduceResult {
 }
 
 /**
- * SDK `task_type` for a backgrounded Bash command — the task kind most likely to be
- * a permanently-running daemon (a dev server, a database, a supervisor) with no
- * self-determined end state; the model backgrounds it and it may run until the
- * session is torn down. The other kinds settle on their own and emit a terminal
- * `task_notification`: subagents (`local_agent`/`remote_agent`) and workflows
- * (`local_workflow`) run to completion, and Monitor watches (`monitor`) carry a
- * hard deadline (`timeout_ms`, default 5 min, max 1 h) — except `persistent: true`
- * monitors, which are session-length by design and tracked via
- * {@link BackgroundTask.persistent}.
+ * SDK `task_type` for a backgrounded Bash command — and for every `Monitor` watch,
+ * which the CLI runs as a `local_bash` task. Either may run until the session is
+ * torn down (a dev server, a `persistent: true` Monitor) with no self-determined
+ * end state.
  */
 const BACKGROUND_BASH_TASK_TYPE = 'local_bash';
 
@@ -89,57 +76,29 @@ const BACKGROUND_BASH_TASK_TYPE = 'local_bash';
  * Whether a background task should count toward the "is the agent still working?"
  * status axis — i.e. whether it has a knowable end state.
  *
- * Two kinds are EXCLUDED, because they may never emit a `task_notification` and
- * counting them would pin the session in the "background" state and suppress the
- * "Claude finished" notification forever (until teardown):
- * - a backgrounded Bash command (`local_bash`) — may be a permanent daemon;
- * - a `persistent: true` Monitor watch — session-length by design (its `timeout_ms`
- *   deadline is ignored), detected from the Monitor `tool_use` input.
+ * EXCLUDED, because counting them would pin the session in the "background" state
+ * and suppress the "Claude finished" notification until teardown:
+ * - `ambient` tasks — the SDK's own "not activity" flag;
+ * - `local_bash` tasks — backgrounded Bash and Monitor watches, which may be
+ *   permanent daemons / session-length watches. The SDK does NOT mark a
+ *   `persistent: true` Monitor ambient, so this check is what excludes it.
  *
- * Everything else — subagents, deadline-bounded Monitor watches, workflows, and any
- * task with an unknown/absent `task_type` — counts. This gates ONLY the
- * background-vs-waiting badge and the finished notification; excluded tasks still
- * appear in the stoppable background-task list (`getBackgroundTasks`) so the user
- * can see and ✕-stop them.
- *
- * One accepted imperfection (the `task_type` is the best signal the SDK gives us —
- * a daemon is indistinguishable from a finite command at `task_started` time): a
- * FINITE backgrounded Bash (a long build/test run) is also excluded, so a turn
- * ending while one runs notifies "finished" early. Self-correcting: when the task
- * settles the main agent auto-continues, and that turn's end notifies again.
+ * This gates ONLY the background-vs-waiting badge and the finished notification;
+ * excluded tasks still appear in the stoppable task list. Accepted imperfection: a
+ * FINITE backgrounded Bash is also excluded, so a turn ending while one runs
+ * notifies early — self-correcting, since its settle makes the main agent continue
+ * and that turn's end notifies again.
  */
 export function taskHasEndState(task: BackgroundTask): boolean {
-  return task.taskType !== BACKGROUND_BASH_TASK_TYPE && !task.persistent;
+  return !task.ambient && task.taskType !== BACKGROUND_BASH_TASK_TYPE;
 }
 
-/**
- * Whether any background task with a knowable end state is currently running (see
- * {@link taskHasEndState}). Permanently-backgroundable Bash daemons are ignored, so
- * a session running only a dev server reads as idle for the badge/notification.
- */
+/** Whether any background task with a knowable end state is running (see {@link taskHasEndState}). */
 export function backgroundActive(status: LiveStatus): boolean {
   for (const task of status.backgroundTasks.values()) {
     if (taskHasEndState(task)) return true;
   }
   return false;
-}
-
-/**
- * Remove a task from the background-task set (pure), returning a new map without
- * it. A no-op if the task is absent (the returned map simply won't contain it).
- * Shared by two paths: a `task_notification` settling a task, and the user
- * stopping one via the ✕ button (optimistic removal — see `stopBackgroundTask`
- * in the runner — so the indicator clears even when the SDK never emits the
- * terminal notification). Callers that need to know whether anything changed
- * check membership (`tasks.has(taskId)`) before calling.
- */
-export function removeBackgroundTask(
-  tasks: ReadonlyMap<string, BackgroundTask>,
-  taskId: string
-): ReadonlyMap<string, BackgroundTask> {
-  const next = new Map(tasks);
-  next.delete(taskId);
-  return next;
 }
 
 /**
@@ -171,82 +130,43 @@ function retryEquals(a: RetryState | null, b: RetryState | null): boolean {
  */
 const CONTINUATION_STOP_REASONS = new Set(['tool_use', 'pause_turn']);
 
-type BackgroundEvent =
-  { kind: 'started'; task: BackgroundTask } | { kind: 'settled'; taskId: string };
+const BackgroundTasksChangedSchema = z.object({
+  type: z.literal('system'),
+  subtype: z.literal('background_tasks_changed'),
+  tasks: z.array(
+    z.object({
+      task_id: z.string(),
+      task_type: z.string(),
+      description: z.string(),
+      ambient: z.boolean().optional(),
+    })
+  ),
+});
 
 /**
- * Extract a background-task lifecycle event, or `null`. `task_started` adds and
- * `task_notification` settles a task. The high-frequency `task_progress` ticks
- * and `task_updated` patches are intentionally ignored.
- *
- * A task whose `task_notification` never arrives (e.g. a `killed` one, for which
- * the SDK emits none) lingers until query teardown. Accepted: this axis never
- * gates input, so the cost is a stale count the user can clear with the ✕.
+ * The full live background-task set from a `background_tasks_changed` level
+ * signal, or `null` for any other message. REPLACE semantics: a missed edge can't
+ * leave a stale task behind.
  */
-function parseBackgroundTaskEvent(message: SDKMessage): BackgroundEvent | null {
-  if (message.type !== 'system') return null;
-  const m = message as {
-    subtype?: string;
-    task_id?: string;
-    tool_use_id?: string;
-    description?: string;
-    task_type?: string;
-    subagent_type?: string;
-  };
-  if (typeof m.task_id !== 'string') return null;
-
-  if (m.subtype === 'task_started') {
-    return {
-      kind: 'started',
-      task: {
-        taskId: m.task_id,
-        toolUseId: m.tool_use_id,
-        description: m.description,
-        taskType: m.task_type,
-        subagentType: m.subagent_type,
-        // Overridden in the reducer when the tool_use_id links back to a
-        // persistent Monitor call (see persistentMonitorToolUseIds).
-        persistent: false,
+function parseBackgroundTaskSet(
+  message: SDKMessage,
+  subagentTypes: ReadonlyMap<string, string>
+): ReadonlyMap<string, BackgroundTask> | null {
+  if (message.type !== 'system' || message.subtype !== 'background_tasks_changed') return null;
+  const parsed = BackgroundTasksChangedSchema.safeParse(message);
+  if (!parsed.success) return null;
+  return new Map(
+    parsed.data.tasks.map((t) => [
+      t.task_id,
+      {
+        taskId: t.task_id,
+        taskType: t.task_type,
+        description: t.description,
+        subagentType: subagentTypes.get(t.task_id),
+        ambient: t.ambient === true,
       },
-    };
-  }
-  if (m.subtype === 'task_notification') {
-    return { kind: 'settled', taskId: m.task_id };
-  }
-  return null;
-}
-
-/**
- * `tool_use` ids of `persistent: true` Monitor calls in a complete assistant
- * message, or `null` when there are none. The Monitor's input (where the
- * `persistent` flag lives) only exists on the `tool_use` block — the later
- * `task_started` carries just the `tool_use_id` — so the reducer remembers these
- * ids to flag the task when it starts. Scans ALL assistant messages (not just
- * top-level): a subagent can start a Monitor too, and `tool_use_id`s are globally
- * unique.
- */
-function parsePersistentMonitorCalls(message: SDKMessage): string[] | null {
-  if (message.type !== 'assistant') return null;
-  const content = (message as { message?: { content?: unknown } }).message?.content;
-  if (!Array.isArray(content)) return null;
-  let ids: string[] | null = null;
-  for (const block of content) {
-    const b = block as {
-      type?: string;
-      id?: string;
-      name?: string;
-      input?: { persistent?: unknown };
-    };
-    if (
-      b?.type === 'tool_use' &&
-      b.name === 'Monitor' &&
-      b.input?.persistent === true &&
-      typeof b.id === 'string'
-    ) {
-      (ids ??= []).push(b.id);
-    }
-  }
-  return ids;
+    ])
+  );
 }
 
 /**
@@ -266,14 +186,14 @@ function parsePersistentMonitorCalls(message: SDKMessage): string[] | null {
  *   path relies on `includePartialMessages: true` (the runner hard-enables it) so the
  *   terminal `message_delta` arrives; without partials only the `result` backstop
  *   would clear it.
- * - background tasks: `task_started` adds; a `task_notification` removes (see
- *   `parseBackgroundTaskEvent` for the lingering-task tradeoff).
+ * - background tasks: each `background_tasks_changed` replaces the set. The
+ *   `task_started` / `task_notification` edges only maintain `subagentTypes`.
  * - retry: an `api_retry` message sets it; any other TOP-LEVEL message clears it
  *   (the main request recovered). Background traffic leaves retry untouched, so a
  *   subagent's messages can't prematurely clear a main-turn retry indicator.
  */
 export function reduceSessionMessage(prev: LiveStatus, message: SDKMessage): ReduceResult {
-  let { turnActive, backgroundTasks, retry, persistentMonitorToolUseIds } = prev;
+  let { turnActive, backgroundTasks, retry, subagentTypes } = prev;
   const topLevel = isTopLevel(message);
 
   // --- retry (turn-scoped) ---
@@ -284,31 +204,23 @@ export function reduceSessionMessage(prev: LiveStatus, message: SDKMessage): Red
     retry = null;
   }
 
-  // --- persistent-Monitor calls (remembered until their task_started arrives) ---
-  const persistentCalls = parsePersistentMonitorCalls(message);
-  if (persistentCalls) {
-    const next = new Set(persistentMonitorToolUseIds);
-    for (const id of persistentCalls) next.add(id);
-    persistentMonitorToolUseIds = next;
-  }
-
   // --- background tasks ---
-  const bg = parseBackgroundTaskEvent(message);
-  if (bg?.kind === 'started') {
-    const { toolUseId } = bg.task;
-    const persistent = toolUseId !== undefined && persistentMonitorToolUseIds.has(toolUseId);
-    if (persistent) {
-      // Consume the id — the linkage is one-shot.
-      const next = new Set(persistentMonitorToolUseIds);
-      next.delete(toolUseId);
-      persistentMonitorToolUseIds = next;
+  if (message.type === 'system') {
+    if (message.subtype === 'task_started' && message.subagent_type) {
+      const subagentType = message.subagent_type;
+      subagentTypes = new Map(subagentTypes).set(message.task_id, subagentType);
+      // The level may have listed this task before its task_started arrived.
+      const task = backgroundTasks.get(message.task_id);
+      if (task) {
+        backgroundTasks = new Map(backgroundTasks).set(task.taskId, { ...task, subagentType });
+      }
+    } else if (message.subtype === 'task_notification' && subagentTypes.has(message.task_id)) {
+      const next = new Map(subagentTypes);
+      next.delete(message.task_id);
+      subagentTypes = next;
     }
-    const next = new Map(backgroundTasks);
-    next.set(bg.task.taskId, { ...bg.task, persistent });
-    backgroundTasks = next;
-  } else if (bg?.kind === 'settled' && backgroundTasks.has(bg.taskId)) {
-    backgroundTasks = removeBackgroundTask(backgroundTasks, bg.taskId);
   }
+  backgroundTasks = parseBackgroundTaskSet(message, subagentTypes) ?? backgroundTasks;
 
   // --- turnActive (main agent only) ---
   if (topLevel) {
@@ -331,7 +243,7 @@ export function reduceSessionMessage(prev: LiveStatus, message: SDKMessage): Red
   }
 
   return {
-    status: { turnActive, backgroundTasks, retry, persistentMonitorToolUseIds },
+    status: { turnActive, backgroundTasks, retry, subagentTypes },
     changed: {
       turnActive: turnActive !== prev.turnActive,
       background: backgroundTasks !== prev.backgroundTasks,
