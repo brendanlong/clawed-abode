@@ -99,7 +99,7 @@ const BACKGROUND_BASH_TASK_TYPE = 'local_bash';
  * Everything else — subagents, deadline-bounded Monitor watches, workflows, and any
  * task with an unknown/absent `task_type` — counts. This gates ONLY the
  * background-vs-waiting badge and the finished notification; excluded tasks still
- * appear in the stoppable background-task list (`getBackgroundTasks`) so the user
+ * appear in the stoppable background-task list (`getLiveState`) so the user
  * can see and ✕-stop them.
  *
  * One accepted imperfection (the `task_type` is the best signal the SDK gives us —

@@ -6,43 +6,12 @@ import { LIVE_QUERY_OPTIONS } from '@/lib/live-query';
 /**
  * Hook for managing Claude process state: running status, send prompts, interrupt, and commands.
  *
- * Every query here is seeded once and then kept current by the multiplexed SSE
- * stream (useSessionStream), which writes into these caches directly; see
+ * The live state is seeded by one query and then kept current by the multiplexed
+ * SSE stream (useSessionStream), which patches fields of its cache directly; see
  * LIVE_QUERY_OPTIONS for the focus/reconnect resync policy.
  */
 export function useClaudeState(sessionId: string) {
-  const { data: runningData } = trpc.claude.isRunning.useQuery({ sessionId }, LIVE_QUERY_OPTIONS);
-
-  const { data: commandsData } = trpc.claude.getCommands.useQuery(
-    { sessionId },
-    LIVE_QUERY_OPTIONS
-  );
-
-  // Ephemeral API-retry status (rate limit / overload).
-  const { data: retryData } = trpc.claude.getRetryState.useQuery({ sessionId }, LIVE_QUERY_OPTIONS);
-
-  // Running background tasks. These never gate input — indicator only.
-  const { data: backgroundData } = trpc.claude.getBackgroundTasks.useQuery(
-    { sessionId },
-    LIVE_QUERY_OPTIONS
-  );
-
-  // Ids of messages the SDK has accepted but not yet handed to the agent.
-  const { data: pendingData } = trpc.claude.getPendingMessageIds.useQuery(
-    { sessionId },
-    LIVE_QUERY_OPTIONS
-  );
-
-  // Prompts held back by a subscription rate-limit pause, and the pause itself.
-  const { data: queuedData } = trpc.claude.getQueuedMessageIds.useQuery(
-    { sessionId },
-    LIVE_QUERY_OPTIONS
-  );
-
-  const { data: rateLimitData } = trpc.claude.getRateLimitHold.useQuery(
-    { sessionId },
-    LIVE_QUERY_OPTIONS
-  );
+  const { data: live } = trpc.claude.getLiveState.useQuery({ sessionId }, LIVE_QUERY_OPTIONS);
 
   const sendMutation = trpc.claude.send.useMutation();
   const interruptMutation = trpc.claude.interrupt.useMutation();
@@ -89,32 +58,31 @@ export function useClaudeState(sessionId: string) {
 
   // `isRunning` means a main-agent turn is active (gates the composer). Background
   // tasks are tracked separately and never gate input.
-  const isRunning = runningData?.running ?? false;
-  const commands = commandsData?.commands ?? [];
-  const retry = retryData?.retry ?? null;
-  const backgroundTasks = backgroundData?.tasks ?? [];
-  const pendingMessageIds = pendingData?.messageIds ?? [];
-  const queuedMessageIds = queuedData?.messageIds ?? [];
-  const rateLimitHold = rateLimitData?.hold ?? null;
+  const isRunning = live?.running ?? false;
+  // Running background tasks. These never gate input — indicator only.
+  const backgroundTasks = live?.backgroundTasks ?? [];
 
   return {
     isRunning,
-    retry,
+    // Ephemeral API-retry status (rate limit / overload).
+    retry: live?.retry ?? null,
     backgroundTasks,
     // Only tasks with a knowable end state gate the background-vs-waiting status;
     // a permanently-backgrounded Bash daemon (dev server) shouldn't read as "busy".
     backgroundActive: backgroundTasks.some(taskHasEndState),
-    pendingMessageIds,
-    queuedMessageIds,
+    // Ids of messages the SDK has accepted but not yet handed to the agent.
+    pendingMessageIds: live?.pendingMessageIds ?? [],
+    // Prompts held back by a subscription rate-limit pause.
+    queuedMessageIds: live?.queuedMessageIds ?? [],
     // The session's subscription rate-limit pause, or null. Sends still succeed
     // while paused — the server queues them — so this never gates the composer.
-    rateLimitHold,
+    rateLimitHold: live?.rateLimitHold ?? null,
     send,
     interrupt,
     isInterrupting: interruptMutation.isPending,
     answerQuestion,
     respondToPlan,
     stopBackgroundTask,
-    commands,
+    commands: live?.commands ?? [],
   };
 }

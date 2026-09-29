@@ -428,34 +428,71 @@ describe('claudeRouter integration', () => {
     });
   });
 
-  describe('isRunning', () => {
-    it('should return running status', async () => {
-      mockIsClaudeRunning.mockReturnValue(true);
-
-      const caller = createCaller('auth-session-id');
-      const result = await caller.claude.isRunning({
-        sessionId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',
-      });
-
-      expect(result).toEqual({ running: true });
-    });
-
-    it('should return not running status', async () => {
+  describe('getLiveState', () => {
+    it('returns idle defaults for a session with no live state', async () => {
+      const session = await createTestSession({ name: 'Idle Session' });
       mockIsClaudeRunning.mockReturnValue(false);
 
       const caller = createCaller('auth-session-id');
-      const result = await caller.claude.isRunning({
-        sessionId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',
+      const result = await caller.claude.getLiveState({ sessionId: session.id });
+
+      expect(result).toEqual({
+        running: false,
+        commands: [],
+        retry: null,
+        backgroundTasks: [],
+        pendingMessageIds: [],
+        queuedMessageIds: [],
+        rateLimitHold: null,
+      });
+    });
+
+    it('reports whether a turn is running', async () => {
+      const session = await createTestSession({ name: 'Running Session' });
+      mockIsClaudeRunning.mockReturnValue(true);
+
+      const caller = createCaller('auth-session-id');
+      const result = await caller.claude.getLiveState({ sessionId: session.id });
+
+      expect(result.running).toBe(true);
+      expect(mockIsClaudeRunning).toHaveBeenCalledWith(session.id);
+    });
+
+    it('returns queued prompt ids in queue order', async () => {
+      const session = await createTestSession({ name: 'Queued Session' });
+      mockIsClaudeRunning.mockReturnValue(false);
+      await testPrisma.queuedPrompt.createMany({
+        data: [
+          {
+            sessionId: session.id,
+            position: 1,
+            messageId: 'second',
+            content: 'b',
+            text: 'b',
+            attachments: '[]',
+          },
+          {
+            sessionId: session.id,
+            position: 0,
+            messageId: 'first',
+            content: 'a',
+            text: 'a',
+            attachments: '[]',
+          },
+        ],
       });
 
-      expect(result).toEqual({ running: false });
+      const caller = createCaller('auth-session-id');
+      const result = await caller.claude.getLiveState({ sessionId: session.id });
+
+      expect(result.queuedMessageIds).toEqual(['first', 'second']);
     });
 
     it('should require authentication', async () => {
       const caller = createCaller(null);
 
       await expect(
-        caller.claude.isRunning({ sessionId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' })
+        caller.claude.getLiveState({ sessionId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' })
       ).rejects.toMatchObject({
         code: 'UNAUTHORIZED',
       });

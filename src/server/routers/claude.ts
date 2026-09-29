@@ -164,14 +164,6 @@ export const claudeRouter = router({
       return { messages: parsedMessages.reverse(), hasMore };
     }),
 
-  isRunning: protectedProcedure
-    .input(z.object({ sessionId: z.string().uuid() }))
-    .query(async ({ input }) => {
-      return {
-        running: isClaudeRunning(input.sessionId),
-      };
-    }),
-
   getTokenUsage: sessionProcedure.query(async ({ input }) => {
     // The context-% calculation needs the latest top-level (main-agent)
     // assistant message; subagent messages (parent_tool_use_id set) run in
@@ -205,54 +197,34 @@ export const claudeRouter = router({
     return estimateTokenUsage(parsedMessages);
   }),
 
-  getCommands: protectedProcedure
+  // Initial value of every live per-session field; each then streams over its
+  // own SSE channel (`running`, `commands`, `retry`, `background`, `pending`,
+  // `queued`, `rate_limit`), and this is refetched to resync on mount, focus,
+  // reconnect, and stream error. All but `queuedMessageIds` and `rateLimitHold`
+  // are in-memory only (lost on restart).
+  getLiveState: protectedProcedure
     .input(z.object({ sessionId: z.string().uuid() }))
     .query(async ({ input }) => {
-      return { commands: getSessionCommands(input.sessionId) };
-    }),
-
-  // Ephemeral API-retry status (rate limit / overload). Updates stream live over
-  // the `retry` SSE channel; this query seeds the initial value and resyncs on
-  // reconnect.
-  getRetryState: protectedProcedure
-    .input(z.object({ sessionId: z.string().uuid() }))
-    .query(async ({ input }) => {
-      return { retry: getSessionRetry(input.sessionId) };
-    }),
-
-  // Running background tasks (run_in_background subagents / Monitor / backgrounded
-  // Bash). Updates stream live over the `background` SSE channel; this seeds the
-  // initial value and resyncs on reconnect. In-memory only (lost on restart).
-  getBackgroundTasks: protectedProcedure
-    .input(z.object({ sessionId: z.string().uuid() }))
-    .query(async ({ input }) => {
-      return { tasks: getSessionBackgroundTasks(input.sessionId) };
-    }),
-
-  // Transcript ids of messages the SDK has accepted but not yet handed to the
-  // agent. Updates stream live over the `pending` SSE channel; this seeds the
-  // initial value and resyncs on reconnect. In-memory only (lost on restart).
-  getPendingMessageIds: protectedProcedure
-    .input(z.object({ sessionId: z.string().uuid() }))
-    .query(({ input }) => {
-      return { messageIds: getPendingMessageIds(input.sessionId) };
-    }),
-
-  // This session's subscription rate-limit pause, or null when it may work.
-  // Updates stream live over the `rate_limit` SSE channel; this seeds the initial
-  // value and resyncs on reconnect.
-  getRateLimitHold: protectedProcedure
-    .input(z.object({ sessionId: z.string().uuid() }))
-    .query(async ({ input }) => {
-      return { hold: await resolveSessionHold(input.sessionId) };
-    }),
-
-  // Transcript ids of prompts held back by a rate-limit pause, in queue order.
-  // Updates stream live over the `queued` SSE channel.
-  getQueuedMessageIds: protectedProcedure
-    .input(z.object({ sessionId: z.string().uuid() }))
-    .query(async ({ input }) => {
-      return { messageIds: await queuedMessageIds(input.sessionId) };
+      const { sessionId } = input;
+      const [queuedIds, rateLimitHold] = await Promise.all([
+        queuedMessageIds(sessionId),
+        resolveSessionHold(sessionId),
+      ]);
+      return {
+        // A main-agent turn is active (gates the composer).
+        running: isClaudeRunning(sessionId),
+        commands: getSessionCommands(sessionId),
+        // Ephemeral API-retry status (rate limit / overload).
+        retry: getSessionRetry(sessionId),
+        // run_in_background subagents / Monitor / backgrounded Bash.
+        backgroundTasks: getSessionBackgroundTasks(sessionId),
+        // Transcript ids the SDK has accepted but not yet handed to the agent.
+        pendingMessageIds: getPendingMessageIds(sessionId),
+        // Transcript ids held back by a rate-limit pause, in queue order.
+        queuedMessageIds: queuedIds,
+        // This session's subscription rate-limit pause, or null when it may work.
+        rateLimitHold,
+      };
     }),
 
   // Stop a single running background task.
