@@ -68,8 +68,7 @@ export function SystemPromptOverrideCard({
           placeholder="Enter your custom system prompt..."
           addLabel="Create Override"
           editLabel="Edit Override"
-          emptyDraft={defaultPrompt}
-          resetTo={{ label: 'Custom System Prompt', value: defaultPrompt }}
+          defaultValue={{ label: 'Custom System Prompt', value: defaultPrompt }}
           textareaClassName="min-h-[200px]"
           previewClassName="max-h-[200px]"
         />

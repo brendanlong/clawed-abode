@@ -113,7 +113,6 @@ export function RepositoriesTab() {
             variables and MCP server configurations. This action cannot be undone.
           </>
         }
-        isPending={deleteMutation.isPending}
       />
     </>
   );

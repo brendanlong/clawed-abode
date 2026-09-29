@@ -51,7 +51,7 @@ describe('EditableTextSetting', () => {
     expect(onSave.mock.calls[0][0]).toBeNull();
   });
 
-  it('opens with emptyDraft and can reset the draft to the default', async () => {
+  it('opens with the default and can reset the draft to it', async () => {
     const user = userEvent.setup();
     render(
       <EditableTextSetting
@@ -60,8 +60,7 @@ describe('EditableTextSetting', () => {
         mutation={idleMutation()}
         placeholder="Type here"
         addLabel="Create"
-        emptyDraft="default text"
-        resetTo={{ label: 'Custom', value: 'default text' }}
+        defaultValue={{ label: 'Custom', value: 'default text' }}
       />
     );
 

@@ -20,13 +20,11 @@ interface EditableTextSettingProps {
   addLabel: string;
   /** Button label shown when a value is saved. */
   editLabel?: string;
-  /** What the editor opens with when no value is saved. Defaults to empty. */
-  emptyDraft?: string;
   /**
-   * When set, the editor shows a labelled "Reset to Default" action that replaces the
-   * draft with this text.
+   * What the editor opens with when no value is saved (otherwise empty). Also shown as
+   * a labelled "Reset to Default" action that replaces the draft with this text.
    */
-  resetTo?: { label: string; value: string };
+  defaultValue?: { label: string; value: string };
   textareaClassName?: string;
   previewClassName?: string;
 }
@@ -38,8 +36,7 @@ export function EditableTextSetting({
   placeholder,
   addLabel,
   editLabel = 'Edit',
-  emptyDraft = '',
-  resetTo,
+  defaultValue,
   textareaClassName,
   previewClassName,
 }: EditableTextSettingProps) {
@@ -47,7 +44,7 @@ export function EditableTextSetting({
   const [draft, setDraft] = useState('');
 
   const startEditing = () => {
-    setDraft(value ?? emptyDraft);
+    setDraft(value ?? defaultValue?.value ?? '');
     setIsEditing(true);
     mutation.reset();
   };
@@ -64,14 +61,14 @@ export function EditableTextSetting({
   if (isEditing) {
     return (
       <div className="space-y-3">
-        {resetTo && (
+        {defaultValue && (
           <div className="flex items-center justify-between">
-            <Label>{resetTo.label}</Label>
+            <Label>{defaultValue.label}</Label>
             <Button
               type="button"
               variant="ghost"
               size="sm"
-              onClick={() => setDraft(resetTo.value)}
+              onClick={() => setDraft(defaultValue.value)}
               className="text-xs"
             >
               <RotateCcw className="h-3 w-3 mr-1" />

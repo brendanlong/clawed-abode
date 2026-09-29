@@ -1,6 +1,6 @@
 'use client';
 
-import { useId, useReducer } from 'react';
+import { useId, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -13,16 +13,11 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Plug, Check, X, KeyRound, TriangleAlert, Unplug } from 'lucide-react';
-import { SettingsListEditor } from './SettingsListEditor';
+import { SettingsListEditor, type SettingsScope } from './SettingsListEditor';
 import { KeyValueListEditor } from './KeyValueListEditor';
 import { buildKeyValueRecord } from '@/lib/key-value-entries';
 import { trpc } from '@/lib/trpc';
-import {
-  mcpServerSectionReducer,
-  initialMcpServerSectionState,
-  mcpServerFormReducer,
-  createInitialMcpServerFormState,
-} from './mcp-server-reducer';
+import { initialMcpServerForm, type McpServerFormFields } from './mcp-server-form';
 import type { McpAuthType, McpServer, McpServerType, ValidationResult } from '@/lib/settings-types';
 import type { McpServerInput } from '@/server/services/settings-helpers';
 
@@ -38,78 +33,83 @@ interface McpServerSectionProps {
   mcpServers: McpServer[];
   mutations: McpServerMutations;
   onUpdate: () => void;
-  emptyMessage?: string;
-  deleteDescriptionPrefix?: string;
+  scope: SettingsScope;
 }
 
 export function McpServerSection({
   mcpServers,
   mutations,
   onUpdate,
-  emptyMessage = 'No MCP servers configured.',
-  deleteDescriptionPrefix = 'This will delete the MCP server',
+  scope,
 }: McpServerSectionProps) {
-  const [state, dispatch] = useReducer(mcpServerSectionReducer, initialMcpServerSectionState);
+  const [validationResults, setValidationResults] = useState<ReadonlyMap<string, ValidationResult>>(
+    new Map()
+  );
+  const [validatingServer, setValidatingServer] = useState<string | null>(null);
+  /** Server whose OAuth flow is being prepared (discovery + registration happen server-side). */
+  const [connectingServer, setConnectingServer] = useState<string | null>(null);
+  /** Why starting an OAuth flow failed, by server name. */
+  const [connectErrors, setConnectErrors] = useState<ReadonlyMap<string, string>>(new Map());
 
   const handleValidate = async (name: string) => {
-    dispatch({ type: 'startValidating', name });
+    setValidatingServer(name);
+    let result: ValidationResult;
     try {
-      const result = await mutations.validateMcpServer(name);
-      dispatch({ type: 'setValidationResult', name, result });
+      result = await mutations.validateMcpServer(name);
     } catch (err) {
-      dispatch({
-        type: 'setValidationResult',
-        name,
-        result: {
-          success: false,
-          error: err instanceof Error ? err.message : 'Validation failed',
-        },
-      });
+      result = { success: false, error: err instanceof Error ? err.message : 'Validation failed' };
     }
+    setValidationResults((prev) => new Map(prev).set(name, result));
+    setValidatingServer(null);
+  };
+
+  const startConnecting = (name: string) => {
+    setConnectingServer(name);
+    setConnectErrors((prev) => {
+      const next = new Map(prev);
+      next.delete(name);
+      return next;
+    });
+  };
+
+  const connectFailed = (name: string, err: unknown, fallback: string) => {
+    setConnectingServer(null);
+    setConnectErrors((prev) =>
+      new Map(prev).set(name, err instanceof Error ? err.message : fallback)
+    );
   };
 
   // The authorization server has to talk to the user's browser, so the flow is a
   // full navigation away and back through /api/mcp/oauth/callback.
   const handleConnect = async (name: string) => {
-    dispatch({ type: 'startConnecting', name });
+    startConnecting(name);
     try {
       const { authorizeUrl } = await mutations.startMcpOAuth(name);
       window.location.assign(authorizeUrl);
     } catch (err) {
-      dispatch({
-        type: 'connectFailed',
-        name,
-        error: err instanceof Error ? err.message : 'Could not start authorization',
-      });
+      connectFailed(name, err, 'Could not start authorization');
     }
   };
 
   const handleDisconnect = async (name: string) => {
-    dispatch({ type: 'startConnecting', name });
+    startConnecting(name);
     try {
       await mutations.disconnectMcpOAuth(name);
-      dispatch({ type: 'connectFinished', name });
+      setConnectingServer(null);
       onUpdate();
     } catch (err) {
-      dispatch({
-        type: 'connectFailed',
-        name,
-        error: err instanceof Error ? err.message : 'Could not disconnect',
-      });
+      connectFailed(name, err, 'Could not disconnect');
     }
   };
 
   return (
     <SettingsListEditor
       title="MCP Servers"
+      itemNoun="MCP server"
+      scope={scope}
       items={mcpServers}
-      state={state}
-      dispatch={dispatch}
       onDelete={mutations.deleteMcpServer}
       onUpdate={onUpdate}
-      emptyMessage={emptyMessage}
-      deleteDialogTitle="Delete MCP server?"
-      deleteDescriptionPrefix={deleteDescriptionPrefix}
       renderItem={(server) => (
         <>
           <div className="font-mono text-sm flex items-center gap-2">
@@ -122,8 +122,8 @@ export function McpServerSection({
         </>
       )}
       extraItemActions={(server) => {
-        const isTesting = state.validatingServer === server.name;
-        const isConnecting = state.connectingServer === server.name;
+        const isTesting = validatingServer === server.name;
+        const isConnecting = connectingServer === server.name;
         return (
           <>
             {server.authType === 'oauth' && (
@@ -173,8 +173,8 @@ export function McpServerSection({
         );
       }}
       renderItemExtra={(server) => {
-        const result = state.validationResults.get(server.name);
-        const connectError = state.connectErrors.get(server.name);
+        const result = validationResults.get(server.name);
+        const connectError = connectErrors.get(server.name);
         return (
           <>
             {server.oauth && <OAuthStatusBadge status={server.oauth} />}
@@ -268,9 +268,10 @@ function McpServerForm({
   setMcpServer: McpServerMutations['setMcpServer'];
 }) {
   const id = useId();
-  const [form, dispatch] = useReducer(mcpServerFormReducer, existingServer, (existing) =>
-    createInitialMcpServerFormState(existing)
-  );
+  const [form, setForm] = useState(() => initialMcpServerForm(existingServer));
+  const [error, setError] = useState<string | null>(null);
+  const [isPending, setIsPending] = useState(false);
+  const update = (fields: Partial<McpServerFormFields>) => setForm((f) => ({ ...f, ...fields }));
   const redirectUri = trpc.globalSettings.getMcpOAuthRedirectUri.useQuery(undefined, {
     enabled: form.authType === 'oauth',
   }).data?.redirectUri;
@@ -278,22 +279,28 @@ function McpServerForm({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
+    const fail = (message: string) => {
+      setError(message);
+      setIsPending(false);
+    };
+
     if (!form.name) {
-      dispatch({ type: 'setError', error: 'Name is required' });
+      fail('Name is required');
       return;
     }
 
-    dispatch({ type: 'startSubmit' });
+    setError(null);
+    setIsPending(true);
     try {
       if (form.serverType === 'stdio') {
         if (!form.command) {
-          dispatch({ type: 'submitError', error: 'Command is required' });
+          fail('Command is required');
           return;
         }
 
         const env = buildKeyValueRecord(form.envVars, existingServer?.env, 'environment variable');
         if (!env.ok) {
-          dispatch({ type: 'submitError', error: env.error });
+          fail(env.error);
           return;
         }
 
@@ -306,13 +313,13 @@ function McpServerForm({
         });
       } else {
         if (!form.url) {
-          dispatch({ type: 'submitError', error: 'URL is required' });
+          fail('URL is required');
           return;
         }
 
         const headers = buildKeyValueRecord(form.headers, existingServer?.headers, 'header');
         if (!headers.ok) {
-          dispatch({ type: 'submitError', error: headers.error });
+          fail(headers.error);
           return;
         }
 
@@ -334,10 +341,7 @@ function McpServerForm({
       }
       onSuccess();
     } catch (err) {
-      dispatch({
-        type: 'submitError',
-        error: err instanceof Error ? err.message : 'An error occurred',
-      });
+      fail(err instanceof Error ? err.message : 'An error occurred');
     }
   };
 
@@ -348,7 +352,7 @@ function McpServerForm({
         <Input
           id={`${id}-name`}
           value={form.name}
-          onChange={(e) => dispatch({ type: 'setName', name: e.target.value })}
+          onChange={(e) => update({ name: e.target.value })}
           placeholder="memory"
           disabled={!!existingServer}
         />
@@ -358,9 +362,7 @@ function McpServerForm({
         <Label htmlFor={`${id}-type`}>Type</Label>
         <Select
           value={form.serverType}
-          onValueChange={(value) =>
-            dispatch({ type: 'setServerType', serverType: value as McpServerType })
-          }
+          onValueChange={(value) => update({ serverType: value as McpServerType })}
           disabled={!!existingServer}
         >
           <SelectTrigger id={`${id}-type`}>
@@ -381,7 +383,7 @@ function McpServerForm({
             <Input
               id={`${id}-command`}
               value={form.command}
-              onChange={(e) => dispatch({ type: 'setCommand', command: e.target.value })}
+              onChange={(e) => update({ command: e.target.value })}
               placeholder="npx"
             />
           </div>
@@ -391,7 +393,7 @@ function McpServerForm({
             <Input
               id={`${id}-args`}
               value={form.args}
-              onChange={(e) => dispatch({ type: 'setArgs', args: e.target.value })}
+              onChange={(e) => update({ args: e.target.value })}
               placeholder="@anthropic/mcp-server-memory"
             />
           </div>
@@ -400,8 +402,7 @@ function McpServerForm({
             label="Environment Variables"
             entries={form.envVars}
             existingEntries={existingServer?.env}
-            onChange={(envVars) => dispatch({ type: 'setEnvVars', envVars })}
-            keyPlaceholder="KEY"
+            onChange={(envVars) => update({ envVars })}
             keyTransform={(key) => key.toUpperCase()}
           />
         </>
@@ -412,7 +413,7 @@ function McpServerForm({
             <Input
               id={`${id}-url`}
               value={form.url}
-              onChange={(e) => dispatch({ type: 'setUrl', url: e.target.value })}
+              onChange={(e) => update({ url: e.target.value })}
               placeholder="https://mcp.example.com/sse"
             />
           </div>
@@ -421,9 +422,7 @@ function McpServerForm({
             <Label htmlFor={`${id}-auth`}>Authentication</Label>
             <Select
               value={form.authType}
-              onValueChange={(value) =>
-                dispatch({ type: 'setAuthType', authType: value as McpAuthType })
-              }
+              onValueChange={(value) => update({ authType: value as McpAuthType })}
             >
               <SelectTrigger id={`${id}-auth`}>
                 <SelectValue />
@@ -448,7 +447,7 @@ function McpServerForm({
                 <Input
                   id={`${id}-oauth-client-id`}
                   value={form.oauthClientId}
-                  onChange={(e) => dispatch({ type: 'setOauthClientId', clientId: e.target.value })}
+                  onChange={(e) => update({ oauthClientId: e.target.value })}
                   placeholder="Leave blank to register automatically"
                 />
                 <p className="text-xs text-muted-foreground">
@@ -464,9 +463,7 @@ function McpServerForm({
                   id={`${id}-oauth-client-secret`}
                   type="password"
                   value={form.oauthClientSecret}
-                  onChange={(e) =>
-                    dispatch({ type: 'setOauthClientSecret', clientSecret: e.target.value })
-                  }
+                  onChange={(e) => update({ oauthClientSecret: e.target.value })}
                   placeholder={
                     existingServer?.oauth?.clientId ? 'Leave blank to keep the stored secret' : ''
                   }
@@ -478,7 +475,7 @@ function McpServerForm({
                 <Input
                   id={`${id}-oauth-scope`}
                   value={form.oauthScope}
-                  onChange={(e) => dispatch({ type: 'setOauthScope', scope: e.target.value })}
+                  onChange={(e) => update({ oauthScope: e.target.value })}
                   placeholder="Leave blank to use the scopes the server advertises"
                 />
               </div>
@@ -489,20 +486,20 @@ function McpServerForm({
             label={form.authType === 'oauth' ? 'Additional Headers' : 'Headers'}
             entries={form.headers}
             existingEntries={existingServer?.headers}
-            onChange={(headers) => dispatch({ type: 'setHeaders', headers })}
+            onChange={(headers) => update({ headers })}
             keyPlaceholder="Header-Name"
           />
         </>
       )}
 
-      {form.error && <p className="text-sm text-destructive">{form.error}</p>}
+      {error && <p className="text-sm text-destructive">{error}</p>}
 
       <div className="flex justify-end gap-2">
         <Button type="button" variant="outline" onClick={onClose}>
           Cancel
         </Button>
-        <Button type="submit" disabled={form.isPending}>
-          {form.isPending ? <Spinner size="sm" /> : existingServer ? 'Update' : 'Add'}
+        <Button type="submit" disabled={isPending}>
+          {isPending ? <Spinner size="sm" /> : existingServer ? 'Update' : 'Add'}
         </Button>
       </div>
     </form>
