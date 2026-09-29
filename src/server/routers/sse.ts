@@ -23,7 +23,7 @@ export type SessionListStreamEvent = SessionListEvent | ResyncEvent;
  * stream has capacity, so a stalled SSE consumer would otherwise grow the buffer
  * without limit.
  */
-export const MAX_QUEUED_EVENTS = 1000;
+const MAX_QUEUED_EVENTS = 1000;
 
 interface EventQueueOptions<T> {
   maxQueued?: number;

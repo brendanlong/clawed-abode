@@ -13,7 +13,7 @@ import {
   type SDKUserMessage,
   type SDKMessage,
 } from '@anthropic-ai/claude-agent-sdk';
-import { v4 as uuid } from 'uuid';
+import { randomUUID as uuid } from 'node:crypto';
 import { prisma } from '@/lib/prisma';
 import { classifyMessage, initSessionId, type RetryState } from '@/lib/claude-messages';
 import { holdsEqual, parseRateLimitEvent, type RateLimitHold } from '@/lib/rate-limit';

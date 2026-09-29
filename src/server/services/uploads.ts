@@ -1,6 +1,6 @@
 import { mkdir, writeFile, access } from 'fs/promises';
 import path from 'path';
-import { v4 as uuid } from 'uuid';
+import { randomBytes } from 'node:crypto';
 import { sanitizeFileName, type UploadedAttachment } from '@/lib/attachments';
 import { getSessionWorkspacePath } from './worktree-manager';
 import { createLogger } from '@/lib/logger';
@@ -38,7 +38,7 @@ export async function saveUploadedFile(
   await mkdir(dir, { recursive: true });
 
   const safeName = sanitizeFileName(originalName);
-  const storedName = `${uuid().slice(0, 8)}-${safeName}`;
+  const storedName = `${randomBytes(4).toString('hex')}-${safeName}`;
   const filePath = path.join(dir, storedName);
 
   await writeFile(filePath, data);

@@ -25,7 +25,7 @@ const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
  * Strip the date suffix from a model ID to infer the alias.
  * e.g., "claude-sonnet-4-5-20250929" -> "claude-sonnet-4-5"
  */
-function inferAlias(modelId: string): string | null {
+export function inferAlias(modelId: string): string | null {
   // Match pattern: anything followed by -YYYYMMDD
   const match = modelId.match(/^(.+)-(\d{8})$/);
   if (match) {
@@ -107,6 +107,3 @@ export async function getModelSuggestions(): Promise<string[]> {
 
   return result;
 }
-
-/** Exported for testing */
-export { inferAlias };

@@ -1,5 +1,5 @@
 #!/usr/bin/env tsx
-import * as argon2 from 'argon2';
+import { hashPassword } from '@/lib/auth';
 
 async function main() {
   const password = process.argv[2];
@@ -14,7 +14,7 @@ async function main() {
     process.exit(1);
   }
 
-  const hash = await argon2.hash(password);
+  const hash = await hashPassword(password);
   const base64Hash = Buffer.from(hash).toString('base64');
   console.log(base64Hash);
 }
