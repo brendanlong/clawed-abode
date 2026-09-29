@@ -356,25 +356,24 @@ export const sessionsRouter = router({
       return { success: true };
     }
 
-    // Wait for the session's processes to die before removing the workspace, or
-    // a daemon it left running (e.g. `next dev`) recreates files after the rm.
-    await cleanupSession(input.sessionId);
+    // The in-memory teardown is synchronous; the scope stop is awaited below.
+    const stopped = cleanupSession(input.sessionId);
 
-    // Archiving keeps the session row, so the QueuedPrompt cascade never fires
-    // and nothing drains an archived session — clear the queue here or it waits
-    // forever, counted in the paused banner and badged in a read-only transcript.
-    await clearQueuedPrompts(session.id);
-
-    // Remove workspace directory
-    await removeWorkspace(session.id);
-
-    // Archive session (keep messages for viewing)
-    const updatedSession = await prisma.session.update({
-      where: { id: session.id },
-      data: { status: 'archived' },
-    });
-
+    // Archive (keeping messages for viewing) and clear the queue before waiting
+    // on the stop: while the row still reads `running` with prompts queued, a
+    // send or rate-limit drain would revive the session into a fresh scope. The
+    // QueuedPrompt cascade never fires for a kept row, so the queue must be
+    // cleared here or it waits forever, badged in a read-only transcript.
+    const [updatedSession] = await Promise.all([
+      prisma.session.update({ where: { id: session.id }, data: { status: 'archived' } }),
+      clearQueuedPrompts(session.id),
+    ]);
     sseEvents.emitSessionUpdate(input.sessionId, updatedSession);
+
+    // Remove the workspace only once the session's processes are dead, or a
+    // daemon it left running (e.g. `next dev`) recreates files after the rm.
+    await stopped;
+    await removeWorkspace(session.id);
     return { success: true };
   }),
 });

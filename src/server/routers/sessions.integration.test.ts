@@ -711,7 +711,12 @@ describe('sessionsRouter integration', () => {
 
       const caller = createCaller('auth-session-id');
       const deleting = caller.sessions.delete({ sessionId: session.id });
-      await vi.waitFor(() => expect(mockCleanupSession).toHaveBeenCalledWith(session.id));
+      // Archived (so nothing can revive it) before the stop finishes, but the
+      // workspace is kept until then.
+      await vi.waitFor(async () => {
+        const row = await testPrisma.session.findUnique({ where: { id: session.id } });
+        expect(row?.status).toBe('archived');
+      });
       expect(mockRemoveWorkspace).not.toHaveBeenCalled();
 
       releaseStop();
