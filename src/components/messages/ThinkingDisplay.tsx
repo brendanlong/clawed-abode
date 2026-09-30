@@ -5,6 +5,10 @@ import { Brain } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { MarkdownContent } from '@/components/MarkdownContent';
 
+// Summarized thinking is usually a few sentences, so it's worth showing inline;
+// anything longer than this would dominate the transcript and starts collapsed.
+const EXPAND_BY_DEFAULT_MAX_CHARS = 1500;
+
 /**
  * Collapsible display for Claude's extended-thinking content.
  *
@@ -19,7 +23,9 @@ export function ThinkingDisplay({
   thinking: string;
   redacted?: boolean;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(
+    !redacted && thinking.length <= EXPAND_BY_DEFAULT_MAX_CHARS
+  );
 
   return (
     <Collapsible open={expanded} onOpenChange={setExpanded} className="mt-2">

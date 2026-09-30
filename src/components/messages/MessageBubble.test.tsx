@@ -143,6 +143,35 @@ describe('MessageBubble', () => {
       expect(screen.queryByText('System')).not.toBeInTheDocument();
     });
 
+    it('expands short thinking by default', () => {
+      const message = {
+        type: 'assistant',
+        content: {
+          message: { content: [{ type: 'thinking', thinking: 'Short reasoning.' }] },
+        } as MessageContent,
+      };
+
+      render(<MessageBubble message={message} />);
+
+      expect(screen.getByText('Short reasoning.')).toBeInTheDocument();
+    });
+
+    it('collapses long thinking by default and expands it on click', () => {
+      const longThinking = 'Long reasoning. '.repeat(200).trim();
+      const message = {
+        type: 'assistant',
+        content: {
+          message: { content: [{ type: 'thinking', thinking: longThinking }] },
+        } as MessageContent,
+      };
+
+      render(<MessageBubble message={message} />);
+
+      expect(screen.queryByText(longThinking)).not.toBeInTheDocument();
+      fireEvent.click(screen.getByText('Thinking'));
+      expect(screen.getByText(longThinking)).toBeInTheDocument();
+    });
+
     it('coalesces multiple thinking blocks into a single Thinking section', () => {
       const message = {
         type: 'assistant',
