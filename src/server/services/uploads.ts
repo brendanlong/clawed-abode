@@ -7,12 +7,6 @@ import { createLogger } from '@/lib/logger';
 
 const log = createLogger('uploads');
 
-/** Per-file size cap. Large enough for images/docs, small enough to bound disk use. */
-export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024; // 25 MB
-
-/** Aggregate cap across all files in a single upload request (bounds memory). */
-export const MAX_TOTAL_UPLOAD_BYTES = 100 * 1024 * 1024; // 100 MB
-
 /**
  * Directory for a session's uploaded files: an `uploads/` folder inside the
  * session's workspace (a sibling of the repo clone, not inside it — so uploads

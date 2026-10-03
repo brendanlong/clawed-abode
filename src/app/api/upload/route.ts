@@ -1,11 +1,7 @@
 import { z } from 'zod';
 import { createContext } from '@/server/trpc';
 import { prisma } from '@/lib/prisma';
-import {
-  saveUploadedFile,
-  MAX_UPLOAD_BYTES,
-  MAX_TOTAL_UPLOAD_BYTES,
-} from '@/server/services/uploads';
+import { saveUploadedFile } from '@/server/services/uploads';
 import { MAX_ATTACHMENTS, type UploadedAttachment } from '@/lib/attachments';
 import { createLogger, toError } from '@/lib/logger';
 
@@ -26,18 +22,6 @@ export async function POST(request: Request): Promise<Response> {
   const ctx = await createContext({ headers: request.headers });
   if (!ctx.sessionId) {
     return Response.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  // A cheap early-out for oversized requests (App Router route handlers have no
-  // built-in body-size limit). It only fires when the client sent a
-  // content-length, so it is not the bound — the per-file/total check below
-  // runs before anything is written to disk.
-  const contentLength = Number(request.headers.get('content-length'));
-  if (Number.isFinite(contentLength) && contentLength > MAX_TOTAL_UPLOAD_BYTES) {
-    return Response.json(
-      { error: `Upload exceeds the maximum total size of ${MAX_TOTAL_UPLOAD_BYTES} bytes` },
-      { status: 413 }
-    );
   }
 
   let formData: FormData;
@@ -73,24 +57,6 @@ export async function POST(request: Request): Promise<Response> {
   if (files.length > MAX_ATTACHMENTS) {
     return Response.json(
       { error: `Too many files (max ${MAX_ATTACHMENTS} per upload)` },
-      { status: 413 }
-    );
-  }
-
-  // Validate sizes up front so we never write a partial batch.
-  let total = 0;
-  for (const file of files) {
-    if (file.size > MAX_UPLOAD_BYTES) {
-      return Response.json(
-        { error: `File "${file.name}" exceeds the maximum size of ${MAX_UPLOAD_BYTES} bytes` },
-        { status: 413 }
-      );
-    }
-    total += file.size;
-  }
-  if (total > MAX_TOTAL_UPLOAD_BYTES) {
-    return Response.json(
-      { error: `Upload exceeds the maximum total size of ${MAX_TOTAL_UPLOAD_BYTES} bytes` },
       { status: 413 }
     );
   }
