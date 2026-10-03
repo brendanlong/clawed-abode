@@ -1,4 +1,8 @@
-import { mkdir, writeFile, access } from 'fs/promises';
+import { mkdir, access } from 'fs/promises';
+import { createWriteStream } from 'fs';
+import { Readable } from 'stream';
+import { pipeline } from 'stream/promises';
+import type { ReadableStream as NodeReadableStream } from 'stream/web';
 import path from 'path';
 import { randomBytes } from 'node:crypto';
 import { sanitizeFileName, type UploadedAttachment } from '@/lib/attachments';
@@ -23,22 +27,21 @@ export function getSessionUploadDir(sessionId: string): string {
  * prefixed with a short random token so re-uploading the same filename never
  * overwrites an earlier upload (no check-then-set).
  */
-export async function saveUploadedFile(
-  sessionId: string,
-  originalName: string,
-  data: Buffer
-): Promise<UploadedAttachment> {
+export async function saveUploadedFile(sessionId: string, file: File): Promise<UploadedAttachment> {
   const dir = getSessionUploadDir(sessionId);
   await mkdir(dir, { recursive: true });
 
-  const safeName = sanitizeFileName(originalName);
+  const safeName = sanitizeFileName(file.name);
   const storedName = `${randomBytes(4).toString('hex')}-${safeName}`;
   const filePath = path.join(dir, storedName);
 
-  await writeFile(filePath, data);
-  log.info('Saved uploaded file', { sessionId, storedName, bytes: data.length });
+  await pipeline(
+    Readable.fromWeb(file.stream() as NodeReadableStream<Uint8Array>),
+    createWriteStream(filePath)
+  );
+  log.info('Saved uploaded file', { sessionId, storedName, bytes: file.size });
 
-  return { name: originalName, storedName, path: filePath };
+  return { name: file.name, storedName, path: filePath };
 }
 
 /**

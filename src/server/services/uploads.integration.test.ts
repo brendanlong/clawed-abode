@@ -15,7 +15,7 @@ afterAll(async () => {
 
 describe('uploads service', () => {
   it('saves a file under the session workspace uploads dir and returns its path', async () => {
-    const attachment = await saveUploadedFile(sessionId, 'notes.md', Buffer.from('hello world'));
+    const attachment = await saveUploadedFile(sessionId, new File(['hello world'], 'notes.md'));
 
     expect(attachment.name).toBe('notes.md');
     expect(attachment.storedName).toMatch(/^[a-f0-9]{8}-notes\.md$/);
@@ -26,8 +26,8 @@ describe('uploads service', () => {
   });
 
   it('does not overwrite when the same filename is uploaded twice', async () => {
-    const a = await saveUploadedFile(sessionId, 'dup.txt', Buffer.from('first'));
-    const b = await saveUploadedFile(sessionId, 'dup.txt', Buffer.from('second'));
+    const a = await saveUploadedFile(sessionId, new File(['first'], 'dup.txt'));
+    const b = await saveUploadedFile(sessionId, new File(['second'], 'dup.txt'));
 
     expect(a.storedName).not.toBe(b.storedName);
     expect(await readFile(a.path, 'utf8')).toBe('first');
@@ -35,14 +35,14 @@ describe('uploads service', () => {
   });
 
   it('sanitizes unsafe file names on disk', async () => {
-    const attachment = await saveUploadedFile(sessionId, '../../etc/passwd', Buffer.from('x'));
+    const attachment = await saveUploadedFile(sessionId, new File(['x'], '../../etc/passwd'));
     // Directory traversal is stripped: stored under the uploads dir as "passwd".
     expect(attachment.storedName).toMatch(/^[a-f0-9]{8}-passwd$/);
     expect(path.dirname(attachment.path)).toBe(getSessionUploadDir(sessionId));
   });
 
   it('resolves existing stored names to absolute paths', async () => {
-    const attachment = await saveUploadedFile(sessionId, 'x.md', Buffer.from('x'));
+    const attachment = await saveUploadedFile(sessionId, new File(['x'], 'x.md'));
     const resolved = await resolveUploadPaths(sessionId, [attachment.storedName]);
     expect(resolved).toEqual([attachment.path]);
   });

@@ -63,8 +63,7 @@ export async function POST(request: Request): Promise<Response> {
 
   const attachments: UploadedAttachment[] = [];
   for (const file of files) {
-    const buffer = Buffer.from(await file.arrayBuffer());
-    attachments.push(await saveUploadedFile(sessionId, file.name, buffer));
+    attachments.push(await saveUploadedFile(sessionId, file));
   }
 
   log.info('Handled file upload', { sessionId, count: attachments.length });
