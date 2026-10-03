@@ -48,4 +48,10 @@ describe('sanitizeFileName', () => {
     expect(sanitizeFileName('')).toBe('file');
     expect(sanitizeFileName('...')).toBe('file');
   });
+
+  it('truncates long names from the front, keeping the extension', () => {
+    const result = sanitizeFileName(`${'a'.repeat(300)}.pdf`);
+    expect(result).toHaveLength(200);
+    expect(result.endsWith('.pdf')).toBe(true);
+  });
 });

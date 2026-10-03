@@ -1,4 +1,8 @@
-import { mkdir, writeFile, access } from 'fs/promises';
+import { mkdir, access, rm } from 'fs/promises';
+import { createWriteStream } from 'fs';
+import { Readable } from 'stream';
+import { pipeline } from 'stream/promises';
+import type { ReadableStream as NodeReadableStream } from 'stream/web';
 import path from 'path';
 import { randomBytes } from 'node:crypto';
 import { sanitizeFileName, type UploadedAttachment } from '@/lib/attachments';
@@ -6,12 +10,6 @@ import { getSessionWorkspacePath } from './worktree-manager';
 import { createLogger } from '@/lib/logger';
 
 const log = createLogger('uploads');
-
-/** Per-file size cap. Large enough for images/docs, small enough to bound disk use. */
-export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024; // 25 MB
-
-/** Aggregate cap across all files in a single upload request (bounds memory). */
-export const MAX_TOTAL_UPLOAD_BYTES = 100 * 1024 * 1024; // 100 MB
 
 /**
  * Directory for a session's uploaded files: an `uploads/` folder inside the
@@ -25,14 +23,15 @@ export function getSessionUploadDir(sessionId: string): string {
 }
 
 /**
- * Persist an uploaded file to the session's upload directory. The stored name is
- * prefixed with a short random token so re-uploading the same filename never
- * overwrites an earlier upload (no check-then-set).
+ * Stream an uploaded file body to the session's upload directory. The stored
+ * name is prefixed with a short random token so re-uploading the same filename
+ * never overwrites an earlier upload (no check-then-set). A partially written
+ * file (e.g. the client disconnected) is removed before the error propagates.
  */
 export async function saveUploadedFile(
   sessionId: string,
   originalName: string,
-  data: Buffer
+  body: ReadableStream<Uint8Array> | null
 ): Promise<UploadedAttachment> {
   const dir = getSessionUploadDir(sessionId);
   await mkdir(dir, { recursive: true });
@@ -41,8 +40,20 @@ export async function saveUploadedFile(
   const storedName = `${randomBytes(4).toString('hex')}-${safeName}`;
   const filePath = path.join(dir, storedName);
 
-  await writeFile(filePath, data);
-  log.info('Saved uploaded file', { sessionId, storedName, bytes: data.length });
+  const output = createWriteStream(filePath, { flags: 'wx' });
+  let created = false;
+  output.once('open', () => (created = true));
+  try {
+    await pipeline(
+      body ? Readable.fromWeb(body as NodeReadableStream<Uint8Array>) : Readable.from([]),
+      output
+    );
+  } catch (err) {
+    // Only remove a file this call created; on EEXIST it belongs to another upload.
+    if (created) await rm(filePath, { force: true });
+    throw err;
+  }
+  log.info('Saved uploaded file', { sessionId, storedName, bytes: output.bytesWritten });
 
   return { name: originalName, storedName, path: filePath };
 }

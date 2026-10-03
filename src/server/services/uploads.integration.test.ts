@@ -1,5 +1,5 @@
 import { describe, it, expect, afterAll } from 'vitest';
-import { rm, readFile } from 'fs/promises';
+import { rm, readFile, readdir } from 'fs/promises';
 import path from 'path';
 import { randomUUID as uuid } from 'node:crypto';
 import { saveUploadedFile, resolveUploadPaths, getSessionUploadDir } from './uploads';
@@ -15,7 +15,11 @@ afterAll(async () => {
 
 describe('uploads service', () => {
   it('saves a file under the session workspace uploads dir and returns its path', async () => {
-    const attachment = await saveUploadedFile(sessionId, 'notes.md', Buffer.from('hello world'));
+    const attachment = await saveUploadedFile(
+      sessionId,
+      'notes.md',
+      new Blob(['hello world']).stream()
+    );
 
     expect(attachment.name).toBe('notes.md');
     expect(attachment.storedName).toMatch(/^[a-f0-9]{8}-notes\.md$/);
@@ -26,8 +30,8 @@ describe('uploads service', () => {
   });
 
   it('does not overwrite when the same filename is uploaded twice', async () => {
-    const a = await saveUploadedFile(sessionId, 'dup.txt', Buffer.from('first'));
-    const b = await saveUploadedFile(sessionId, 'dup.txt', Buffer.from('second'));
+    const a = await saveUploadedFile(sessionId, 'dup.txt', new Blob(['first']).stream());
+    const b = await saveUploadedFile(sessionId, 'dup.txt', new Blob(['second']).stream());
 
     expect(a.storedName).not.toBe(b.storedName);
     expect(await readFile(a.path, 'utf8')).toBe('first');
@@ -35,14 +39,38 @@ describe('uploads service', () => {
   });
 
   it('sanitizes unsafe file names on disk', async () => {
-    const attachment = await saveUploadedFile(sessionId, '../../etc/passwd', Buffer.from('x'));
+    const attachment = await saveUploadedFile(
+      sessionId,
+      '../../etc/passwd',
+      new Blob(['x']).stream()
+    );
     // Directory traversal is stripped: stored under the uploads dir as "passwd".
     expect(attachment.storedName).toMatch(/^[a-f0-9]{8}-passwd$/);
     expect(path.dirname(attachment.path)).toBe(getSessionUploadDir(sessionId));
   });
 
+  it('removes the partial file when the body stream fails', async () => {
+    const before = await readdir(getSessionUploadDir(sessionId));
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('partial'));
+        controller.error(new Error('client disconnected'));
+      },
+    });
+
+    await expect(saveUploadedFile(sessionId, 'broken.bin', body)).rejects.toThrow(
+      'client disconnected'
+    );
+    expect(await readdir(getSessionUploadDir(sessionId))).toEqual(before);
+  });
+
+  it('saves an empty file when there is no body', async () => {
+    const attachment = await saveUploadedFile(sessionId, 'empty.txt', null);
+    expect(await readFile(attachment.path, 'utf8')).toBe('');
+  });
+
   it('resolves existing stored names to absolute paths', async () => {
-    const attachment = await saveUploadedFile(sessionId, 'x.md', Buffer.from('x'));
+    const attachment = await saveUploadedFile(sessionId, 'x.md', new Blob(['x']).stream());
     const resolved = await resolveUploadPaths(sessionId, [attachment.storedName]);
     expect(resolved).toEqual([attachment.path]);
   });

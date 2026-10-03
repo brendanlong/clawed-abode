@@ -16,12 +16,6 @@ export interface UploadedAttachment {
 }
 
 /**
- * Max number of files per upload request and per message. Shared by the upload
- * route and the `claude.send` input schema so the two ceilings can't drift.
- */
-export const MAX_ATTACHMENTS = 20;
-
-/**
  * Build the prompt sent to Claude, prefixing a note about any uploaded files.
  * Matches the format requested in issue #75:
  *   [User uploaded file(s): /tmp/.../a.md, /tmp/.../b.png]
@@ -49,14 +43,21 @@ export function displayFileName(storedName: string): string {
   return storedName.replace(/^[0-9a-f]{8}-/, '');
 }
 
+/** Leaves room for the stored-name prefix within the usual 255-byte filename limit. */
+const MAX_SAFE_NAME_LENGTH = 200;
+
 /**
  * Strip directory components and unsafe characters from an uploaded file name,
- * neutralizing path traversal. Returns a safe basename suitable for storage.
+ * neutralizing path traversal. Returns a safe basename suitable for storage;
+ * overlong names keep their tail so the extension survives.
  */
 export function sanitizeFileName(name: string): string {
   const base = name.split(/[/\\]/).pop() ?? '';
   // Collapse anything that isn't alphanumeric, dot, dash, or underscore, and
   // strip leading dots so we never produce a dotfile or "..".
-  const cleaned = base.replace(/[^a-zA-Z0-9._-]/g, '_').replace(/^\.+/, '');
+  const cleaned = base
+    .replace(/[^a-zA-Z0-9._-]/g, '_')
+    .slice(-MAX_SAFE_NAME_LENGTH)
+    .replace(/^\.+/, '');
   return cleaned || 'file';
 }
