@@ -5,11 +5,30 @@ import { getAuthToken } from '@/lib/auth-token';
 import type { UploadedAttachment } from '@/lib/attachments';
 
 interface UploadResponse {
-  attachments: UploadedAttachment[];
+  attachment: UploadedAttachment;
+}
+
+async function uploadFile(sessionId: string, file: File): Promise<UploadedAttachment> {
+  const params = new URLSearchParams({ sessionId, name: file.name });
+  const token = getAuthToken();
+  const res = await fetch(`/api/upload?${params}`, {
+    method: 'POST',
+    headers: token ? { authorization: `Bearer ${token}` } : {},
+    body: file,
+  });
+
+  if (!res.ok) {
+    const data = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(data?.error ?? `Upload failed (${res.status})`);
+  }
+
+  const data = (await res.json()) as UploadResponse;
+  return data.attachment;
 }
 
 /**
- * Uploads files to the session's upload directory via the `/api/upload` route.
+ * Uploads files (one request each, in parallel) to the session's upload directory
+ * via the `/api/upload` route.
  * Returns the saved attachments (name + stored name + absolute path) so the
  * caller can hold them as pending attachments until the next message is sent.
  */
@@ -24,26 +43,7 @@ export function useFileUpload(sessionId: string) {
       setUploading(true);
       setError(null);
       try {
-        const formData = new FormData();
-        formData.append('sessionId', sessionId);
-        for (const file of files) {
-          formData.append('files', file);
-        }
-
-        const token = getAuthToken();
-        const res = await fetch('/api/upload', {
-          method: 'POST',
-          headers: token ? { authorization: `Bearer ${token}` } : {},
-          body: formData,
-        });
-
-        if (!res.ok) {
-          const data = (await res.json().catch(() => null)) as { error?: string } | null;
-          throw new Error(data?.error ?? `Upload failed (${res.status})`);
-        }
-
-        const data = (await res.json()) as UploadResponse;
-        return data.attachments;
+        return await Promise.all(files.map((file) => uploadFile(sessionId, file)));
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Upload failed';
         setError(message);

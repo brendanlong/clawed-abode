@@ -1,4 +1,4 @@
-import { mkdir, access } from 'fs/promises';
+import { mkdir, access, rm } from 'fs/promises';
 import { createWriteStream } from 'fs';
 import { Readable } from 'stream';
 import { pipeline } from 'stream/promises';
@@ -23,25 +23,37 @@ export function getSessionUploadDir(sessionId: string): string {
 }
 
 /**
- * Persist an uploaded file to the session's upload directory. The stored name is
- * prefixed with a short random token so re-uploading the same filename never
- * overwrites an earlier upload (no check-then-set).
+ * Stream an uploaded file body to the session's upload directory. The stored
+ * name is prefixed with a short random token so re-uploading the same filename
+ * never overwrites an earlier upload (no check-then-set). A partially written
+ * file (e.g. the client disconnected) is removed before the error propagates.
  */
-export async function saveUploadedFile(sessionId: string, file: File): Promise<UploadedAttachment> {
+export async function saveUploadedFile(
+  sessionId: string,
+  originalName: string,
+  body: ReadableStream<Uint8Array> | null
+): Promise<UploadedAttachment> {
   const dir = getSessionUploadDir(sessionId);
   await mkdir(dir, { recursive: true });
 
-  const safeName = sanitizeFileName(file.name);
+  const safeName = sanitizeFileName(originalName);
   const storedName = `${randomBytes(4).toString('hex')}-${safeName}`;
   const filePath = path.join(dir, storedName);
 
-  await pipeline(
-    Readable.fromWeb(file.stream() as NodeReadableStream<Uint8Array>),
-    createWriteStream(filePath)
-  );
-  log.info('Saved uploaded file', { sessionId, storedName, bytes: file.size });
+  const output = createWriteStream(filePath, { flags: 'wx' });
+  try {
+    if (body) {
+      await pipeline(Readable.fromWeb(body as NodeReadableStream<Uint8Array>), output);
+    } else {
+      await new Promise<void>((resolve, reject) => output.end(resolve).once('error', reject));
+    }
+  } catch (err) {
+    await rm(filePath, { force: true });
+    throw err;
+  }
+  log.info('Saved uploaded file', { sessionId, storedName, bytes: output.bytesWritten });
 
-  return { name: file.name, storedName, path: filePath };
+  return { name: originalName, storedName, path: filePath };
 }
 
 /**

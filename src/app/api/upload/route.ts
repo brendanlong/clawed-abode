@@ -2,21 +2,23 @@ import { z } from 'zod';
 import { createContext } from '@/server/trpc';
 import { prisma } from '@/lib/prisma';
 import { saveUploadedFile } from '@/server/services/uploads';
-import { MAX_ATTACHMENTS, type UploadedAttachment } from '@/lib/attachments';
 import { createLogger, toError } from '@/lib/logger';
 
 const log = createLogger('upload-route');
 
-const sessionIdSchema = z.string().uuid();
+const querySchema = z.object({
+  sessionId: z.string().uuid(),
+  name: z.string().min(1).max(255),
+});
 
 /**
- * Accepts multipart/form-data uploads (fields: `sessionId`, one or more `files`)
- * and stores them in the session workspace where Claude can read them. Returns
- * the saved attachments; the client holds these and passes their `storedName`s
- * to `claude.send`, which prefixes their paths onto the next user message.
+ * Accepts a single file as the raw request body (`?sessionId=…&name=…`) and
+ * streams it into the session workspace where Claude can read it. Returns the
+ * saved attachment; the client holds these and passes their `storedName`s to
+ * `claude.send`, which prefixes their paths onto the next user message.
  *
- * A dedicated route (rather than a tRPC mutation) is used so binary file bodies
- * stream through `FormData` instead of being base64-inflated through superjson.
+ * A raw body (rather than a tRPC mutation or multipart form) lets the file go
+ * straight to disk without being buffered in memory or base64-inflated.
  */
 export async function POST(request: Request): Promise<Response> {
   const ctx = await createContext({ headers: request.headers });
@@ -24,19 +26,15 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  let formData: FormData;
-  try {
-    formData = await request.formData();
-  } catch (err) {
-    log.warn('Failed to parse upload form data', { error: toError(err).message });
-    return Response.json({ error: 'Invalid form data' }, { status: 400 });
+  const { searchParams } = new URL(request.url);
+  const parsed = querySchema.safeParse({
+    sessionId: searchParams.get('sessionId'),
+    name: searchParams.get('name'),
+  });
+  if (!parsed.success) {
+    return Response.json({ error: 'A valid sessionId and name are required' }, { status: 400 });
   }
-
-  const parsedSessionId = sessionIdSchema.safeParse(formData.get('sessionId'));
-  if (!parsedSessionId.success) {
-    return Response.json({ error: 'A valid sessionId is required' }, { status: 400 });
-  }
-  const sessionId = parsedSessionId.data;
+  const { sessionId, name } = parsed.data;
 
   const session = await prisma.session.findUnique({
     where: { id: sessionId },
@@ -50,22 +48,11 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ error: 'Session is not running' }, { status: 409 });
   }
 
-  const files = formData.getAll('files').filter((f): f is File => f instanceof File);
-  if (files.length === 0) {
-    return Response.json({ error: 'No files provided' }, { status: 400 });
+  try {
+    const attachment = await saveUploadedFile(sessionId, name, request.body);
+    return Response.json({ attachment });
+  } catch (err) {
+    log.error('Failed to save upload', toError(err), { sessionId });
+    return Response.json({ error: 'Upload failed' }, { status: 500 });
   }
-  if (files.length > MAX_ATTACHMENTS) {
-    return Response.json(
-      { error: `Too many files (max ${MAX_ATTACHMENTS} per upload)` },
-      { status: 413 }
-    );
-  }
-
-  const attachments: UploadedAttachment[] = [];
-  for (const file of files) {
-    attachments.push(await saveUploadedFile(sessionId, file));
-  }
-
-  log.info('Handled file upload', { sessionId, count: attachments.length });
-  return Response.json({ attachments });
 }

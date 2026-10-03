@@ -19,7 +19,6 @@ import {
   persistSyntheticToolResult,
 } from '../services/message-store';
 import { getSessionCommands } from '../services/session-commands';
-import { MAX_ATTACHMENTS } from '@/lib/attachments';
 import { estimateTokenUsage } from '@/lib/token-estimation';
 import {
   type ToolResponse,
@@ -78,7 +77,7 @@ async function submitToolResponse(
 const messageInputSchema = z
   .object({
     prompt: z.string().max(100000),
-    attachments: z.array(z.string().min(1).max(255)).max(MAX_ATTACHMENTS).optional(),
+    attachments: z.array(z.string().min(1).max(255)).optional(),
   })
   .refine((v) => v.prompt.trim().length > 0 || (v.attachments?.length ?? 0) > 0, {
     message: 'A prompt or at least one attachment is required',
