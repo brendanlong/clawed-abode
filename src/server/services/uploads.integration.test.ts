@@ -64,6 +64,11 @@ describe('uploads service', () => {
     expect(await readdir(getSessionUploadDir(sessionId))).toEqual(before);
   });
 
+  it('saves an empty file when there is no body', async () => {
+    const attachment = await saveUploadedFile(sessionId, 'empty.txt', null);
+    expect(await readFile(attachment.path, 'utf8')).toBe('');
+  });
+
   it('resolves existing stored names to absolute paths', async () => {
     const attachment = await saveUploadedFile(sessionId, 'x.md', new Blob(['x']).stream());
     const resolved = await resolveUploadPaths(sessionId, [attachment.storedName]);

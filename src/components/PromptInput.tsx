@@ -189,15 +189,11 @@ export function PromptInput({
     async (fileList: FileList | null) => {
       if (!fileList || fileList.length === 0) return;
       const files = Array.from(fileList);
-      try {
-        const uploaded = await upload(files);
-        setDraft((current) => ({
-          ...current,
-          attachments: [...current.attachments, ...uploaded],
-        }));
-      } catch {
-        // Error is surfaced via uploadError; nothing else to do here.
-      }
+      const uploaded = await upload(files);
+      setDraft((current) => ({
+        ...current,
+        attachments: [...current.attachments, ...uploaded],
+      }));
     },
     [upload, setDraft]
   );

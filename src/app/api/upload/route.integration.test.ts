@@ -100,7 +100,7 @@ describe('POST /api/upload', () => {
 
   it('saves an empty file', async () => {
     const sessionId = await createSession('running');
-    const res = await POST(uploadRequest({ sessionId, name: 'empty.txt' }, null));
+    const res = await POST(uploadRequest({ sessionId, name: 'empty.txt' }, ''));
     expect(res.status).toBe(200);
 
     const { attachment } = (await res.json()) as { attachment: { path: string } };

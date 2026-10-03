@@ -41,14 +41,16 @@ export async function saveUploadedFile(
   const filePath = path.join(dir, storedName);
 
   const output = createWriteStream(filePath, { flags: 'wx' });
+  let created = false;
+  output.once('open', () => (created = true));
   try {
-    if (body) {
-      await pipeline(Readable.fromWeb(body as NodeReadableStream<Uint8Array>), output);
-    } else {
-      await new Promise<void>((resolve, reject) => output.end(resolve).once('error', reject));
-    }
+    await pipeline(
+      body ? Readable.fromWeb(body as NodeReadableStream<Uint8Array>) : Readable.from([]),
+      output
+    );
   } catch (err) {
-    await rm(filePath, { force: true });
+    // Only remove a file this call created; on EEXIST it belongs to another upload.
+    if (created) await rm(filePath, { force: true });
     throw err;
   }
   log.info('Saved uploaded file', { sessionId, storedName, bytes: output.bytesWritten });

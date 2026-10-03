@@ -8,7 +8,7 @@ const log = createLogger('upload-route');
 
 const querySchema = z.object({
   sessionId: z.string().uuid(),
-  name: z.string().min(1).max(255),
+  name: z.string().min(1),
 });
 
 /**
@@ -16,9 +16,6 @@ const querySchema = z.object({
  * streams it into the session workspace where Claude can read it. Returns the
  * saved attachment; the client holds these and passes their `storedName`s to
  * `claude.send`, which prefixes their paths onto the next user message.
- *
- * A raw body (rather than a tRPC mutation or multipart form) lets the file go
- * straight to disk without being buffered in memory or base64-inflated.
  */
 export async function POST(request: Request): Promise<Response> {
   const ctx = await createContext({ headers: request.headers });
