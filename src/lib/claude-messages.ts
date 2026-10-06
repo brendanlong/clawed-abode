@@ -287,6 +287,44 @@ export function parseInjectedOrigin(origin: unknown): InjectedMessageOrigin | nu
   };
 }
 
+const TaskNotificationOriginSchema = z.object({ kind: z.literal('task-notification') });
+
+export function isTaskNotificationOrigin(origin: unknown): boolean {
+  return TaskNotificationOriginSchema.safeParse(origin).success;
+}
+
+export interface TaskNotification {
+  summary: string;
+  /** The `<event>` (Monitor) or `<result>` (background task) payload, if any. */
+  detail: string | null;
+}
+
+function unescapeXml(text: string): string {
+  return text
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&');
+}
+
+function xmlElementText(text: string, tag: string): string | null {
+  const match = new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`).exec(text);
+  return match ? unescapeXml(match[1].trim()) : null;
+}
+
+/**
+ * A `<task-notification>` the CLI injects as a user message when a background
+ * task (Monitor event, background command, subagent) reports back to the agent.
+ */
+export function parseTaskNotification(origin: unknown, text: string): TaskNotification | null {
+  if (!isTaskNotificationOrigin(origin)) return null;
+  return {
+    summary: xmlElementText(text, 'summary') ?? 'Background task update',
+    detail: xmlElementText(text, 'event') ?? xmlElementText(text, 'result'),
+  };
+}
+
 /**
  * Decide how to handle a message yielded by the Claude Agent SDK.
  *

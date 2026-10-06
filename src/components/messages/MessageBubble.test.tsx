@@ -102,6 +102,32 @@ describe('MessageBubble', () => {
     });
   });
 
+  describe('task notifications', () => {
+    it('shows a collapsed summary instead of a user prompt', () => {
+      const message = {
+        type: 'user',
+        content: {
+          type: 'user',
+          message: {
+            role: 'user',
+            content:
+              '<task-notification>\n<summary>Monitor event: "compare job"</summary>\n<event>job succeeded</event>\n</task-notification>',
+          },
+          origin: { kind: 'task-notification', producer: 'session-task' },
+        } as MessageContent,
+      };
+
+      render(<MessageBubble message={message} />);
+
+      expect(screen.getByText('Monitor event: "compare job"')).toBeInTheDocument();
+      expect(screen.queryByText('job succeeded')).not.toBeInTheDocument();
+      expect(screen.queryByText(/task-notification/)).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole('button'));
+      expect(screen.getByText('job succeeded')).toBeInTheDocument();
+    });
+  });
+
   describe('assistant messages', () => {
     it('renders text content from assistant message', () => {
       const message = {

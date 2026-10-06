@@ -9,6 +9,7 @@ import { ResultDisplay } from './ResultDisplay';
 import { CompactBoundaryDisplay } from './CompactBoundaryDisplay';
 import { RefusalFallbackDisplay } from './RefusalFallbackDisplay';
 import { InjectedMessageDisplay } from './InjectedMessageDisplay';
+import { TaskNotificationDisplay } from './TaskNotificationDisplay';
 import { MainMessageBubble } from './MainMessageBubble';
 import { MessageTimestamp } from './MessageTimestamp';
 import {
@@ -101,6 +102,14 @@ export function MessageBubble({
     return (
       <div className="w-full max-w-[85%]">
         <InjectedMessageDisplay content={content} createdAt={message.createdAt} />
+      </div>
+    );
+  }
+
+  if (category === 'taskNotification') {
+    return (
+      <div className="w-full max-w-[85%]">
+        <TaskNotificationDisplay content={content} />
       </div>
     );
   }

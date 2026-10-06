@@ -4,6 +4,7 @@ import {
   classifyMessage,
   getParentToolUseId,
   parseCommandLifecycle,
+  parseTaskNotification,
   isIgnoredSystemMessage,
   parseRetryState,
   formatRetryReason,
@@ -292,6 +293,34 @@ describe('getParentToolUseId', () => {
       expect(parseInjectedOrigin(undefined)).toBeNull();
       expect(parseInjectedOrigin({ kind: 'human' })).toBeNull();
       expect(parseInjectedOrigin({ kind: 'peer', name: 5 })).toBeNull();
+    });
+  });
+
+  describe('parseTaskNotification', () => {
+    const origin = { kind: 'task-notification', producer: 'session-task' };
+
+    it('reads the summary and unescapes the Monitor event', () => {
+      const text =
+        '<task-notification>\n<task-id>b1</task-id>\n<summary>Monitor event: "job"</summary>\n<event>&gt;&gt;&gt; job 1 succeeded &amp; done</event>\n</task-notification>';
+      expect(parseTaskNotification(origin, text)).toEqual({
+        summary: 'Monitor event: "job"',
+        detail: '>>> job 1 succeeded & done',
+      });
+    });
+
+    it('falls back to a background task result, then to no detail', () => {
+      expect(
+        parseTaskNotification(origin, '<summary>Agent finished</summary>\n<result>\nok\n</result>')
+      ).toEqual({ summary: 'Agent finished', detail: 'ok' });
+      expect(parseTaskNotification(origin, 'unexpected')).toEqual({
+        summary: 'Background task update',
+        detail: null,
+      });
+    });
+
+    it('ignores messages with any other origin', () => {
+      expect(parseTaskNotification(undefined, '<summary>x</summary>')).toBeNull();
+      expect(parseTaskNotification({ kind: 'peer' }, '<summary>x</summary>')).toBeNull();
     });
   });
 
