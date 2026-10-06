@@ -249,7 +249,8 @@ export function decryptMcpServers(mcpServers: DbMcpServer[]): ResolvedMcpServer[
  */
 function mergeSecretEnv(
   input: Record<string, McpServerEnvValue>,
-  existingJson: string | null
+  existingJson: string | null,
+  itemLabel: string
 ): Record<string, McpServerEnvValue> {
   const existing = existingJson
     ? (JSON.parse(existingJson) as Record<string, McpServerEnvValue>)
@@ -261,7 +262,7 @@ function mergeSecretEnv(
         if (!existing[key]?.isSecret) {
           throw new TRPCError({
             code: 'BAD_REQUEST',
-            message: `"${key}" has no stored secret to keep; provide a value`,
+            message: `The ${itemLabel} "${key}" has no stored secret to keep; provide a value`,
           });
         }
         return [key, existing[key]];
@@ -293,10 +294,14 @@ export function buildMcpServerData(
   const isStdio = server.type === 'stdio';
   const env = isStdio ? (server.env ?? {}) : {};
   const processedEnv =
-    Object.keys(env).length > 0 ? mergeSecretEnv(env, existing?.env ?? null) : null;
+    Object.keys(env).length > 0
+      ? mergeSecretEnv(env, existing?.env ?? null, 'environment variable')
+      : null;
   const headers = !isStdio ? (server.headers ?? {}) : {};
   const processedHeaders =
-    Object.keys(headers).length > 0 ? mergeSecretEnv(headers, existing?.headers ?? null) : null;
+    Object.keys(headers).length > 0
+      ? mergeSecretEnv(headers, existing?.headers ?? null, 'header')
+      : null;
 
   return {
     type: server.type,
