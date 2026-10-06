@@ -12,7 +12,7 @@ import {
   getPendingMessageIds,
 } from '../services/claude-runner';
 import { queuedMessageIds } from '../services/prompt-queue';
-import { resolveSessionHold } from '../services/rate-limit-state';
+import { currentHold } from '../services/rate-limit-pause';
 import {
   loadHistoryPage,
   loadLastTopLevelAssistantContent,
@@ -155,16 +155,13 @@ export const claudeRouter = router({
   // Initial value of every live per-session field; each then streams over its
   // own SSE channel (`running`, `commands`, `retry`, `background`, `pending`,
   // `queued`, `rate_limit`), and this is refetched to resync on mount, focus,
-  // reconnect, and stream error. All but `queuedMessageIds` and `rateLimitHold`
-  // are in-memory only (lost on restart).
+  // reconnect, and stream error. All but `queuedMessageIds` are in-memory only
+  // (lost on restart; `rateLimitHold` is recomputed from persisted readings).
   getLiveState: protectedProcedure
     .input(z.object({ sessionId: z.string().uuid() }))
     .query(async ({ input }) => {
       const { sessionId } = input;
-      const [queuedIds, rateLimitHold] = await Promise.all([
-        queuedMessageIds(sessionId),
-        resolveSessionHold(sessionId),
-      ]);
+      const queuedIds = await queuedMessageIds(sessionId);
       return {
         // A main-agent turn is active (gates the composer).
         running: isClaudeRunning(sessionId),
@@ -178,7 +175,9 @@ export const claudeRouter = router({
         // Transcript ids held back by a rate-limit pause, in queue order.
         queuedMessageIds: queuedIds,
         // This session's subscription rate-limit pause, or null when it may work.
-        rateLimitHold,
+        // The recompute's snapshot, the same source as the `rate_limit` channel
+        // and the session list, so a resync can't contradict them.
+        rateLimitHold: currentHold(sessionId),
       };
     }),
 

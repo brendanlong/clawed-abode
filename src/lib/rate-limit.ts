@@ -365,3 +365,19 @@ export function holdsEqual(a: RateLimitHold | null, b: RateLimitHold | null): bo
   if (!a || !b) return false;
   return a.untilMs === b.untilMs && a.limitType === b.limitType && a.reason === b.reason;
 }
+
+/**
+ * The per-session hold transitions between two snapshots (absent = not held), so
+ * only real changes are applied and emitted. `hold: null` means released.
+ */
+export function diffHolds(
+  prev: ReadonlyMap<string, RateLimitHold>,
+  next: ReadonlyMap<string, RateLimitHold>
+): { sessionId: string; hold: RateLimitHold | null }[] {
+  const changes: { sessionId: string; hold: RateLimitHold | null }[] = [];
+  for (const sessionId of new Set([...prev.keys(), ...next.keys()])) {
+    const hold = next.get(sessionId) ?? null;
+    if (!holdsEqual(prev.get(sessionId) ?? null, hold)) changes.push({ sessionId, hold });
+  }
+  return changes;
+}

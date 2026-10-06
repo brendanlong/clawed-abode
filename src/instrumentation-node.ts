@@ -11,10 +11,11 @@ import { prisma } from '@/lib/prisma';
 import { purgeInactiveAuthSessions } from '@/server/services/auth-sessions';
 import { startPublicFilesServer } from '@/server/services/public-files-server';
 import {
-  initRateLimitPause,
+  rateLimitPauseRunner,
   reapOrphanedSessionScopes,
   stopAllSessions,
 } from '@/server/services/claude-runner';
+import { initRateLimitPause } from '@/server/services/rate-limit-pause';
 
 const log = createLogger('startup');
 
@@ -45,7 +46,7 @@ export async function registerNode() {
   // mid-pause doesn't release queued prompts into a still-exhausted window.
   // Both are best-effort and log their own failures.
   await reapOrphanedSessionScopes();
-  await initRateLimitPause();
+  await initRateLimitPause(rateLimitPauseRunner);
 
   // Fatal like a bad env: the system prompt would otherwise hand out dead links.
   if (env.PUBLIC_FILES_PORT !== undefined) {

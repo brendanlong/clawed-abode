@@ -67,8 +67,8 @@ import { createPushable } from '@/lib/pushable';
 // after setupTestDb has pointed DATABASE_URL at the throwaway database. A static
 // import instantiates the client against the default path at module load, which
 // only works on a machine that happens to have a dev database already.
-type Runner = typeof import('./claude-runner');
-let runner: Runner;
+let runner: typeof import('./claude-runner');
+let pause: typeof import('./rate-limit-pause');
 let resetRateLimitState: typeof import('./rate-limit-state')._resetRateLimitState;
 let resolveSessionHold: typeof import('./rate-limit-state').resolveSessionHold;
 let rateLimitState: typeof import('./rate-limit-state');
@@ -217,13 +217,14 @@ async function rejectFiveHourWindow(fake: ReturnType<typeof makeFakeQuery>): Pro
     })
   );
   await waitFor(async () => (await testPrisma.rateLimitWindow.count()) > 0);
-  await runner.recomputeRateLimitHolds();
+  await pause.recomputeRateLimitHolds();
 }
 
 describe('rate-limit pause', () => {
   beforeAll(async () => {
     await setupTestDb();
     runner = await import('./claude-runner');
+    pause = await import('./rate-limit-pause');
     rateLimitState = await import('./rate-limit-state');
     ({ _resetRateLimitState: resetRateLimitState, resolveSessionHold } = rateLimitState);
     GLOBAL_SETTINGS_ID = (await import('./settings-scope')).GLOBAL_SETTINGS_ID;
@@ -240,7 +241,7 @@ describe('rate-limit pause', () => {
     vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ['Date'] });
     vi.setSystemTime(NOW);
     await setGlobalPause(true);
-    await runner.initRateLimitPause();
+    await pause.initRateLimitPause(runner.rateLimitPauseRunner);
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -295,7 +296,7 @@ describe('rate-limit pause', () => {
     expect(await queuedTexts(sessionId)).toEqual(['second', 'third']);
 
     vi.setSystemTime(NOW + HOUR_MS + 1000);
-    await runner.recomputeRateLimitHolds();
+    await pause.recomputeRateLimitHolds();
 
     expect(await queuedTexts(sessionId)).toEqual([]);
     expect(fake.inputs.map((i) => i.message.content)).toEqual(['first', 'second', 'third']);
@@ -318,11 +319,11 @@ describe('rate-limit pause', () => {
     ).toBe(true);
 
     vi.setSystemTime(NOW + HOUR_MS + 1000);
-    await runner.recomputeRateLimitHolds();
+    await pause.recomputeRateLimitHolds();
 
     expect(fake.inputs.map((i) => i.message.content)).toEqual([
       'do the thing',
-      runner.RATE_LIMIT_RESUME_PROMPT,
+      pause.RATE_LIMIT_RESUME_PROMPT,
       'and then this',
     ]);
     expect(
@@ -348,7 +349,7 @@ describe('rate-limit pause', () => {
       })
     );
     await waitFor(async () => (await testPrisma.rateLimitWindow.count()) > 0);
-    await runner.recomputeRateLimitHolds();
+    await pause.recomputeRateLimitHolds();
 
     expect(fake.interrupt).toHaveBeenCalledTimes(1);
     expect(
@@ -366,15 +367,15 @@ describe('rate-limit pause', () => {
     expect(mockSseEvents.emitClaudeFinished).not.toHaveBeenCalled();
 
     // Later recomputes during the same pause find no turn left to interrupt.
-    await runner.recomputeRateLimitHolds();
+    await pause.recomputeRateLimitHolds();
     expect(fake.interrupt).toHaveBeenCalledTimes(1);
 
     vi.setSystemTime(NOW + HOUR_MS + 1000);
-    await runner.recomputeRateLimitHolds();
+    await pause.recomputeRateLimitHolds();
 
     expect(fake.inputs.map((i) => i.message.content)).toEqual([
       'long job',
-      runner.RATE_LIMIT_RESUME_PROMPT,
+      pause.RATE_LIMIT_RESUME_PROMPT,
     ]);
 
     runner.stopSession(sessionId);
@@ -395,12 +396,12 @@ describe('rate-limit pause', () => {
       })
     );
     await waitFor(async () => (await testPrisma.rateLimitWindow.count()) > 0);
-    await runner.recomputeRateLimitHolds();
+    await pause.recomputeRateLimitHolds();
 
     // The turn hasn't ended yet, so the user presses Stop; then another reading
     // triggers a recompute before the turn-end arrives.
     await runner.interruptClaude(sessionId);
-    await runner.recomputeRateLimitHolds();
+    await pause.recomputeRateLimitHolds();
 
     expect(
       (await testPrisma.session.findUniqueOrThrow({ where: { id: sessionId } }))
@@ -438,7 +439,7 @@ describe('rate-limit pause', () => {
 
     // Nor does the pause, finishing after the Stop, re-arm the resume nudge.
     releaseInterrupt();
-    await runner.recomputeRateLimitHolds();
+    await pause.recomputeRateLimitHolds();
     expect(
       (await testPrisma.session.findUniqueOrThrow({ where: { id: sessionId } }))
         .resumeAfterRateLimit
@@ -446,7 +447,7 @@ describe('rate-limit pause', () => {
 
     // Once the window resets, nothing the user took back runs.
     vi.setSystemTime(NOW + HOUR_MS + 1000);
-    await runner.recomputeRateLimitHolds();
+    await pause.recomputeRateLimitHolds();
     await new Promise((r) => setTimeout(r, 20));
     expect(fake.inputs.map((i) => i.message.content)).toEqual(['long job', 'unread']);
 
@@ -468,7 +469,7 @@ describe('rate-limit pause', () => {
       })
     );
     await waitFor(async () => (await testPrisma.rateLimitWindow.count()) > 0);
-    await runner.recomputeRateLimitHolds();
+    await pause.recomputeRateLimitHolds();
 
     expect(fake.interrupt).not.toHaveBeenCalled();
     expect(
@@ -532,7 +533,7 @@ describe('rate-limit pause', () => {
       })
     );
     await waitFor(async () => (await testPrisma.rateLimitWindow.count()) > 0);
-    await runner.recomputeRateLimitHolds();
+    await pause.recomputeRateLimitHolds();
 
     // 60% is past the low-priority session's 50% but short of the global 95%.
     expect(await resolveSessionHold(patient)).toMatchObject({ reason: 'threshold' });
@@ -557,7 +558,7 @@ describe('rate-limit pause', () => {
       })
     );
     await waitFor(async () => (await testPrisma.rateLimitWindow.count()) > 0);
-    await runner.recomputeRateLimitHolds();
+    await pause.recomputeRateLimitHolds();
 
     expect(await resolveSessionHold(sessionId)).toBeNull();
 
@@ -601,7 +602,7 @@ describe('rate-limit pause', () => {
     resetRateLimitState();
     expect(await resolveSessionHold(sessionId)).toBeNull();
 
-    await runner.initRateLimitPause();
+    await pause.initRateLimitPause(runner.rateLimitPauseRunner);
 
     expect(await resolveSessionHold(sessionId)).toMatchObject({ reason: 'rejected' });
     expect(await queuedTexts(sessionId)).toEqual(['queued']);
@@ -640,7 +641,7 @@ describe('rate-limit pause', () => {
       })
     );
     await waitFor(async () => (await testPrisma.rateLimitWindow.count()) > 0);
-    await runner.recomputeRateLimitHolds();
+    await pause.recomputeRateLimitHolds();
     expect(await resolveSessionHold(sessionId)).toMatchObject({ reason: 'rejected' });
 
     await runner.sendUserMessage(sessionId, 'queued behind the week');
@@ -659,7 +660,7 @@ describe('rate-limit pause', () => {
       })
     );
     await waitFor(async () => (await testPrisma.rateLimitWindow.count()) > 1);
-    await runner.recomputeRateLimitHolds();
+    await pause.recomputeRateLimitHolds();
 
     expect(await resolveSessionHold(sessionId)).toMatchObject({ reason: 'rejected' });
     expect(await queuedTexts(sessionId)).toEqual(['queued behind the week']);
@@ -701,9 +702,9 @@ describe('rate-limit pause', () => {
       .lastActivityAt;
 
     vi.setSystemTime(NOW + HOUR_MS + 1000);
-    await runner.recomputeRateLimitHolds();
+    await pause.recomputeRateLimitHolds();
 
-    expect(fake.inputs.at(-1)?.message.content).toBe(runner.RATE_LIMIT_RESUME_PROMPT);
+    expect(fake.inputs.at(-1)?.message.content).toBe(pause.RATE_LIMIT_RESUME_PROMPT);
     const after = (await testPrisma.session.findUniqueOrThrow({ where: { id: sessionId } }))
       .lastActivityAt;
     expect(after).toEqual(before);

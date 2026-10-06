@@ -27,9 +27,11 @@ vi.mock('../services/claude-runner', () => ({
   cleanupSession: mockCleanupSession,
   isClaudeRunning: vi.fn().mockReturnValue(false),
   isSessionBackgroundActive: vi.fn().mockReturnValue(false),
+  refreshSessionSettings: mockRefreshSessionSettings,
+}));
+vi.mock('../services/rate-limit-pause', () => ({
   isSessionRateLimitPaused: vi.fn().mockReturnValue(false),
   recomputeRateLimitHolds: vi.fn().mockResolvedValue(undefined),
-  refreshSessionSettings: mockRefreshSessionSettings,
 }));
 
 // Mock settings-merger

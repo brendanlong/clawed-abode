@@ -9,12 +9,12 @@ import { sseEvents } from './events';
 import { cloneRepo, createEmptyWorkspace, removeWorkspace } from './worktree-manager';
 import {
   cleanupSession,
-  recomputeRateLimitHolds,
   refreshSessionSettings,
   sendUserMessage,
   stopSession,
 } from './claude-runner';
 import { clearQueuedPrompts } from './prompt-queue';
+import { recomputeRateLimitHolds } from './rate-limit-pause';
 
 const log = createLogger('session-lifecycle');
 
