@@ -6,7 +6,7 @@ import { createTestSession } from '@/test/fixtures';
 import { EMPTY_SESSION_USAGE_TOTALS } from '@/lib/token-estimation';
 
 let getSessionUsageTotals: (typeof import('./session-usage'))['getSessionUsageTotals'];
-let recordMessageUsage: (typeof import('./session-usage'))['recordMessageUsage'];
+let messageUsageStatement: (typeof import('./session-usage'))['messageUsageStatement'];
 
 type TestMessage = { type: 'system' | 'user' | 'assistant' | 'result'; content: unknown };
 
@@ -21,7 +21,7 @@ const init = (model: string): TestMessage => ({
 
 async function record(sessionId: string, messages: TestMessage[]) {
   for (const m of messages) {
-    await recordMessageUsage(sessionId, m.type, m.content);
+    await messageUsageStatement(sessionId, m.type, m.content);
   }
 }
 
@@ -29,7 +29,7 @@ describe('session-usage', () => {
   beforeAll(async () => {
     await setupTestDb();
     // After setupTestDb, so @/lib/prisma binds to the test database.
-    ({ getSessionUsageTotals, recordMessageUsage } = await import('./session-usage'));
+    ({ getSessionUsageTotals, messageUsageStatement } = await import('./session-usage'));
   });
 
   afterAll(async () => {

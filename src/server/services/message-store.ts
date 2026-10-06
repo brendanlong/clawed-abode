@@ -8,7 +8,7 @@ import type { SanitizationInfo } from '@/lib/sanitization';
 import { sseEvents } from './events';
 import { sanitizeUntrustedInput } from './input-sanitizer';
 import { resolveUploadPaths } from './uploads';
-import { recordMessageUsage } from './session-usage';
+import { messageUsageStatement } from './session-usage';
 
 const log = createLogger('message-store');
 
@@ -25,8 +25,8 @@ const MESSAGE_ID_NAMESPACE = '6ba7b810-9dad-11d1-80b4-00c04fd430c8';
  *
  * A duplicate `id` (e.g. an idempotent synthetic tool_result) is a no-op returning
  * `inserted: false`; the reserved sequence is skipped, a harmless gap since
- * pagination never assumes contiguity. On a real insert, folds the message into the
- * session's usage totals and emits a `message` event.
+ * pagination never assumes contiguity. A real insert folds the message into the
+ * session's usage totals in the same batch and emits a `message` event.
  * Throws if the session does not exist.
  */
 export async function insertMessage(params: {
@@ -51,9 +51,12 @@ export async function insertMessage(params: {
 
   let createdAt: Date;
   try {
-    const message = await prisma.message.create({
+    const create = prisma.message.create({
       data: { id, sessionId, sequence, type, content: contentJson },
     });
+    const usage = messageUsageStatement(sessionId, type, content);
+    // A batch (not interactive) transaction: a duplicate id rolls back the usage fold too.
+    const message = usage ? (await prisma.$transaction([create, usage]))[0] : await create;
     createdAt = message.createdAt;
   } catch (err) {
     // The only unique key left to violate is the primary-key `id` (the sequence is race-free).
@@ -62,13 +65,6 @@ export async function insertMessage(params: {
       return { inserted: false };
     }
     throw err;
-  }
-
-  // Before the event, so a client refetching usage on it sees this message folded in.
-  try {
-    await recordMessageUsage(sessionId, type, content);
-  } catch (err) {
-    log.error('Failed to record message usage', toError(err), { sessionId, id });
   }
 
   sseEvents.emitNewMessage(sessionId, { id, sessionId, sequence, type, content, createdAt });

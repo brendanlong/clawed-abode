@@ -503,8 +503,11 @@ describe('claudeRouter integration', () => {
     it('should combine the running totals with the latest top-level assistant message', async () => {
       const session = await createTestSession({ name: 'Session with usage' });
       const { insertMessage } = await import('../services/message-store');
-      const insert = (type: 'system' | 'assistant' | 'result', content: unknown) =>
-        insertMessage({ sessionId: session.id, id: crypto.randomUUID(), type, content });
+      const insert = (
+        type: 'system' | 'assistant' | 'result',
+        content: unknown,
+        id: string = crypto.randomUUID()
+      ) => insertMessage({ sessionId: session.id, id, type, content });
 
       await insert('system', { type: 'system', subtype: 'init', model: 'claude-opus-4-5' });
       await insert('assistant', {
@@ -528,11 +531,14 @@ describe('claudeRouter integration', () => {
         parent_tool_use_id: 'toolu_1',
         message: { usage: { input_tokens: 5, output_tokens: 5 } },
       });
-      await insert('result', {
+      const lastResult = {
         type: 'result',
         total_cost_usd: 0.5,
         usage: { input_tokens: 2000, output_tokens: 800 },
-      });
+      };
+      await insert('result', lastResult, 'result-2');
+      // A replayed duplicate is not inserted, so it must not be counted again.
+      expect(await insert('result', lastResult, 'result-2')).toEqual({ inserted: false });
 
       const caller = createCaller('auth-session-id');
       const result = await caller.claude.getTokenUsage({ sessionId: session.id });
