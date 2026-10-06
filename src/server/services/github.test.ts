@@ -307,6 +307,12 @@ describe('github service', () => {
       expect(mockFetch).not.toHaveBeenCalled();
     });
 
+    it('should return undefined when GitHub sends an unexpected shape', async () => {
+      mockFetch.mockResolvedValue(createMockResponse([{ number: 'not a PR' }]));
+
+      expect(await fetchPullRequestForBranch('owner/repo', 'branch')).toBeUndefined();
+    });
+
     it('should return undefined on API errors', async () => {
       mockFetch.mockResolvedValue(createMockResponse({}, 500));
 

@@ -3,10 +3,12 @@ import { router, protectedProcedure } from '../trpc';
 import { TRPCError } from '@trpc/server';
 import { env } from '@/lib/env';
 import { defaultBranchFirst } from '@/lib/branch-list';
+import type { Issue } from '@/lib/types';
 import {
   ConditionalGetCache,
   githubFetchResponse,
   githubFetchAllPages,
+  parseGitHubResponse,
   parseLinkHeader,
   GitHubApiError,
   type ListPage,
@@ -32,13 +34,28 @@ const repoPageCache = new ConditionalGetCache<ListPage<GitHubRepo>>(10);
 const branchPageCache = new ConditionalGetCache<ListPage<z.infer<typeof branchSchema>>>(200);
 const defaultBranchCache = new ConditionalGetCache<string>(100);
 
-interface GitHubIssue {
-  id: number;
-  number: number;
-  title: string;
-  body: string | null;
-  labels: Array<{ name: string; color: string }>;
-  comments: number;
+// The issues endpoint lists pull requests too, marked by `pull_request`.
+const issueSchema = z.object({
+  id: z.number(),
+  number: z.number(),
+  title: z.string(),
+  body: z.string().nullable(),
+  labels: z.array(z.object({ name: z.string(), color: z.string() })),
+  comments: z.number(),
+  pull_request: z.unknown().optional(),
+});
+const issueListSchema = z.array(issueSchema);
+const issueSearchSchema = z.object({ items: issueListSchema });
+
+function toIssue(issue: z.infer<typeof issueSchema>): Issue {
+  return {
+    id: issue.id,
+    number: issue.number,
+    title: issue.title,
+    body: issue.body,
+    labels: issue.labels,
+    comments: issue.comments,
+  };
 }
 
 /** Map the shared service's {@link GitHubApiError} to the router's tRPC error surface. */
@@ -125,7 +142,14 @@ export const githubRouter = router({
         defaultBranchCache.fetch(
           `/repos/${input.repoFullName}`,
           token,
-          async (response) => defaultBranchSchema.parse(await response.json()).default_branch
+          async (response) =>
+            (
+              await parseGitHubResponse(
+                response,
+                defaultBranchSchema,
+                `/repos/${input.repoFullName}`
+              )
+            ).default_branch
         ),
         githubFetchAllPages(
           `/repos/${input.repoFullName}/branches`,
@@ -158,7 +182,7 @@ export const githubRouter = router({
       const token = ctx.githubToken;
       const page = input.cursor ? parseInt(input.cursor, 10) : 1;
 
-      let issues: GitHubIssue[];
+      let issues: z.infer<typeof issueListSchema>;
       let response: Response;
 
       if (input.search) {
@@ -168,29 +192,18 @@ export const githubRouter = router({
         const url = `/search/issues?q=${query}&per_page=${input.perPage}&page=${page}`;
 
         response = await githubFetchResponse(url, token);
-        const data = await response.json();
-        issues = data.items;
+        issues = (await parseGitHubResponse(response, issueSearchSchema, url)).items;
       } else {
         const url = `/repos/${input.repoFullName}/issues?state=open&per_page=${input.perPage}&page=${page}&sort=updated&direction=desc`;
 
         response = await githubFetchResponse(url, token);
-        issues = await response.json();
+        issues = await parseGitHubResponse(response, issueListSchema, url);
       }
-
-      // Filter out pull requests (GitHub returns them in issues endpoint)
-      issues = issues.filter((issue) => !('pull_request' in issue));
 
       const links = parseLinkHeader(response.headers.get('link'));
 
       return {
-        issues: issues.map((i) => ({
-          id: i.id,
-          number: i.number,
-          title: i.title,
-          body: i.body,
-          labels: i.labels.map((l) => ({ name: l.name, color: l.color })),
-          comments: i.comments,
-        })),
+        issues: issues.filter((issue) => issue.pull_request === undefined).map(toIssue),
         nextCursor: links.next,
       };
     }),

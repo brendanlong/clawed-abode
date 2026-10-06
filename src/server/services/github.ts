@@ -8,23 +8,6 @@ const log = createLogger('github');
 const GITHUB_API = 'https://api.github.com';
 
 // =============================================================================
-// Shared types
-// =============================================================================
-
-interface GitHubPullRequest {
-  id: number;
-  number: number;
-  title: string;
-  state: 'open' | 'closed';
-  draft: boolean;
-  merged_at: string | null;
-  html_url: string;
-  user: { login: string } | null;
-  created_at: string;
-  updated_at: string;
-}
-
-// =============================================================================
 // GitHub API helpers
 // =============================================================================
 
@@ -70,6 +53,20 @@ async function readApiMessage(response: Response): Promise<string | undefined> {
     // Non-JSON error body — the status is all we have.
     return undefined;
   }
+}
+
+/** Parse a response body, treating an unexpected shape like any other API failure. */
+export async function parseGitHubResponse<T>(
+  response: Response,
+  schema: z.ZodType<T>,
+  path: string
+): Promise<T> {
+  const parsed = schema.safeParse(await response.json());
+  if (!parsed.success) {
+    log.error('Unexpected GitHub response', parsed.error, { path });
+    throw new GitHubApiError(502, path, 'Unexpected response from GitHub');
+  }
+  return parsed.data;
 }
 
 const conditionalGetCaches = new Set<ConditionalGetCache<unknown>>();
@@ -193,14 +190,10 @@ export async function githubFetchAllPages<T>(
     pageCache.fetch(
       `${path}${path.includes('?') ? '&' : '?'}per_page=${perPage}&page=${page}`,
       token,
-      async (response) => {
-        const parsed = pageSchema.safeParse(await response.json());
-        if (!parsed.success) {
-          log.error('Unexpected GitHub list response', parsed.error, { path });
-          throw new GitHubApiError(502, path, 'Unexpected response from GitHub');
-        }
-        return { items: parsed.data, links: parseLinkHeader(response.headers.get('link')) };
-      },
+      async (response) => ({
+        items: await parseGitHubResponse(response, pageSchema, path),
+        links: parseLinkHeader(response.headers.get('link')),
+      }),
       canReplay
     );
 
@@ -226,7 +219,19 @@ export async function githubFetchAllPages<T>(
 
 const prLookupCache = new ConditionalGetCache<PullRequestInfo | null>(500);
 
-function toPullRequestInfo(pr: GitHubPullRequest): PullRequestInfo {
+const pullRequestSchema = z.object({
+  number: z.number(),
+  title: z.string(),
+  state: z.enum(['open', 'closed']),
+  draft: z.boolean(),
+  merged_at: z.string().nullable(),
+  html_url: z.string(),
+  user: z.object({ login: z.string() }).nullable(),
+  updated_at: z.string(),
+});
+const pullRequestListSchema = z.array(pullRequestSchema);
+
+function toPullRequestInfo(pr: z.infer<typeof pullRequestSchema>): PullRequestInfo {
   return {
     number: pr.number,
     title: pr.title,
@@ -258,7 +263,7 @@ export async function fetchPullRequestForBranch(
 
   try {
     return await prLookupCache.fetch(path, token, async (response) => {
-      const pulls: GitHubPullRequest[] = await response.json();
+      const pulls = await parseGitHubResponse(response, pullRequestListSchema, path);
       return pulls.length > 0 ? toPullRequestInfo(pulls[0]) : null;
     });
   } catch (err) {

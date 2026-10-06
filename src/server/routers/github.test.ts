@@ -532,6 +532,19 @@ describe('githubRouter', () => {
       expect(result.nextCursor).toBe('3');
     });
 
+    it('fails instead of returning garbage when GitHub sends an unexpected shape', async () => {
+      mockFetch.mockResolvedValue(createMockResponse({ message: 'not a list' }));
+
+      const caller = createCaller('auth-session-id');
+
+      await expect(caller.github.listIssues({ repoFullName: 'owner/repo' })).rejects.toMatchObject({
+        code: 'INTERNAL_SERVER_ERROR',
+      });
+      await expect(
+        caller.github.listIssues({ repoFullName: 'owner/repo', search: 'x' })
+      ).rejects.toMatchObject({ code: 'INTERNAL_SERVER_ERROR' });
+    });
+
     it('should reject a non-numeric cursor', async () => {
       const caller = createCaller('auth-session-id');
 
