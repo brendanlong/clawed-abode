@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useReducer } from 'react';
+import { useCallback, useReducer } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { AuthGuard } from '@/components/AuthGuard';
@@ -16,56 +16,34 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Spinner } from '@/components/ui/spinner';
 import { RepoSelector } from '@/components/RepoSelector';
 import { NO_REPO_SENTINEL } from '@/lib/repo-full-name';
-import { BranchSelector } from '@/components/BranchSelector';
+import { BranchSelector, useBranchList } from '@/components/BranchSelector';
 import { IssueSelector } from '@/components/IssueSelector';
 import { ModelCombobox } from '@/components/settings/shared/ModelCombobox';
 import { Cpu } from 'lucide-react';
 import type { Issue } from '@/lib/types';
 import { SESSION_NAME_MAX_LENGTH } from '@/lib/types';
+import { generateIssuePrompt } from '@/lib/issue-prompt';
 import { formReducer, initialFormState } from './form-reducer';
-
-function generateIssuePrompt(issue: Issue, repoFullName: string): string {
-  const issueUrl = `https://github.com/${repoFullName}/issues/${issue.number}`;
-  const labels = issue.labels.map((l) => l.name).join(', ');
-
-  let prompt = `Please fix the following GitHub issue and commit and push your changes:\n\n`;
-  prompt += `## Issue #${issue.number}: ${issue.title}\n`;
-  prompt += `URL: ${issueUrl}\n`;
-  if (labels) {
-    prompt += `Labels: ${labels}\n`;
-  }
-  prompt += `\n### Description\n\n`;
-  prompt += issue.body || '(No description provided)';
-  if (issue.comments > 0) {
-    prompt += `\n\nThis issue has ${issue.comments} comment${issue.comments === 1 ? '' : 's'} which may contain useful context. Read them with \`gh issue view ${issue.number} --repo ${repoFullName} --comments\`.`;
-  }
-  prompt += `\n\n---\n\n`;
-  prompt += `Please:\n`;
-  prompt += `1. Analyze the issue and understand what needs to be fixed\n`;
-  prompt += `2. Make the necessary code changes\n`;
-  prompt += `3. Commit your changes with a descriptive message\n`;
-  prompt += `4. Push the changes to the remote repository`;
-
-  return prompt;
-}
+import { buildCreateSessionInput, defaultSessionName, resolveBranch } from './create-session-input';
 
 function NewSessionForm() {
   const router = useRouter();
   const [form, dispatch] = useReducer(formReducer, initialFormState);
-  const [error, setError] = useState('');
 
   const isNoRepo = form.selectedRepo?.fullName === NO_REPO_SENTINEL;
-  const hasRepo = form.selectedRepo && !isNoRepo;
 
   const { data: globalSettings } = trpc.globalSettings.get.useQuery();
   const fallbackModel = fallbackClaudeModel(globalSettings);
 
+  const { data: branchList } = useBranchList(
+    form.selectedRepo && !isNoRepo ? form.selectedRepo.fullName : ''
+  );
+  const branch = resolveBranch(form.selectedBranch, branchList);
+  const input = buildCreateSessionInput(form, branch);
+
   const createMutation = trpc.sessions.create.useMutation({
     onSuccess: (data) => {
       router.replace(`/session/${data.session.id}`);
-    },
-    onError: (err) => {
-      setError(err.message);
     },
   });
 
@@ -80,40 +58,18 @@ function NewSessionForm() {
     [form.selectedRepo, dispatch]
   );
 
+  // Submit stays disabled until the form is valid, so a validation error never
+  // needs showing; the only error to report is the server's.
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    setError('');
-
-    if (!form.selectedRepo) {
-      setError('Please select a repository or "No Repository"');
-      return;
-    }
-
-    if (hasRepo && !form.selectedBranch) {
-      setError('Please select a branch');
-      return;
-    }
-
-    const defaultName = (
-      isNoRepo ? 'Workspace' : `${form.selectedRepo.name} - ${form.selectedBranch}`
-    ).slice(0, SESSION_NAME_MAX_LENGTH);
-
-    createMutation.mutate({
-      name: form.sessionName || defaultName,
-      repoFullName: isNoRepo ? undefined : form.selectedRepo.fullName,
-      branch: isNoRepo ? undefined : form.selectedBranch,
-      initialPrompt: form.initialPrompt.trim() || undefined,
-      claudeModel: form.claudeModel?.trim() || undefined,
-    });
+    if (input) createMutation.mutate(input);
   };
-
-  const canSubmit = isNoRepo || (hasRepo && !!form.selectedBranch);
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
-      {error && (
+      {createMutation.error && (
         <Alert variant="destructive">
-          <AlertDescription>{error}</AlertDescription>
+          <AlertDescription>{createMutation.error.message}</AlertDescription>
         </Alert>
       )}
 
@@ -126,8 +82,8 @@ function NewSessionForm() {
         <>
           <BranchSelector
             repoFullName={form.selectedRepo.fullName}
-            selectedBranch={form.selectedBranch}
-            onSelect={(branch) => dispatch({ type: 'selectBranch', branch })}
+            selectedBranch={branch}
+            onSelect={(picked) => dispatch({ type: 'selectBranch', branch: picked })}
           />
 
           <IssueSelector
@@ -148,11 +104,7 @@ function NewSessionForm() {
               value={form.sessionName}
               onChange={(e) => dispatch({ type: 'editName', name: e.target.value })}
               maxLength={SESSION_NAME_MAX_LENGTH}
-              placeholder={
-                isNoRepo
-                  ? 'Workspace'
-                  : `${form.selectedRepo.name} - ${form.selectedBranch || 'branch'}`
-              }
+              placeholder={defaultSessionName(form.selectedRepo, branch || 'branch')}
             />
           </div>
 
@@ -193,7 +145,7 @@ function NewSessionForm() {
         <Button variant="outline" asChild>
           <Link href="/">Cancel</Link>
         </Button>
-        <Button type="submit" disabled={!canSubmit || createMutation.isPending}>
+        <Button type="submit" disabled={!input || createMutation.isPending}>
           {createMutation.isPending ? (
             <span className="flex items-center gap-2">
               <Spinner size="sm" className="text-primary-foreground" />
