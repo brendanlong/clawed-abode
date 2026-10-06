@@ -19,7 +19,6 @@ export interface SessionListItemProps {
  */
 export function SessionListItem({ session }: SessionListItemProps) {
   const repoName = session.repoUrl ? extractRepoFullName(session.repoUrl) : null;
-  const isArchived = session.status === 'archived';
 
   const startMutation = trpc.sessions.start.useMutation();
   const stopMutation = trpc.sessions.stop.useMutation();
@@ -61,33 +60,30 @@ export function SessionListItem({ session }: SessionListItemProps) {
           />
 
           <div className="flex items-center gap-2">
-            {/* No controls for archived sessions - they're read-only */}
-            {!isArchived && (
-              <>
-                {session.status === 'stopped' && (
-                  <SessionActionButton
-                    action="start"
-                    onClick={() => startMutation.mutate({ sessionId: session.id })}
-                    isPending={startMutation.isPending}
-                    variant="ghost"
-                  />
-                )}
-                {session.status === 'running' && (
-                  <SessionActionButton
-                    action="stop"
-                    onClick={() => stopMutation.mutate({ sessionId: session.id })}
-                    isPending={stopMutation.isPending}
-                    variant="ghost"
-                  />
-                )}
-                <SessionActionButton
-                  action="archive"
-                  onClick={() => archiveMutation.mutate({ sessionId: session.id })}
-                  isPending={archiveMutation.isPending}
-                  variant="ghost"
-                  sessionName={session.name}
-                />
-              </>
+            {session.canStart && (
+              <SessionActionButton
+                action="start"
+                onClick={() => startMutation.mutate({ sessionId: session.id })}
+                isPending={startMutation.isPending}
+                variant="ghost"
+              />
+            )}
+            {session.canStop && (
+              <SessionActionButton
+                action="stop"
+                onClick={() => stopMutation.mutate({ sessionId: session.id })}
+                isPending={stopMutation.isPending}
+                variant="ghost"
+              />
+            )}
+            {session.canArchive && (
+              <SessionActionButton
+                action="archive"
+                onClick={() => archiveMutation.mutate({ sessionId: session.id })}
+                isPending={archiveMutation.isPending}
+                variant="ghost"
+                sessionName={session.name}
+              />
             )}
           </div>
         </div>

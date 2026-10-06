@@ -161,7 +161,7 @@ function logSetupAbandoned(sessionId: string, session: Session): void {
 }
 
 /**
- * Mark a stopped or errored session running; its query is established lazily
+ * Mark a stopped session running; its query is established lazily
  * on the next prompt. Already running is a no-op; any other status can't start
  * (archived has no workspace, creating is still being set up).
  */
@@ -182,7 +182,7 @@ export async function startSession(sessionId: string): Promise<Session> {
 
 /**
  * Close the session's query and mark it stopped (the worktree stays, so Start
- * can revive it). An archived or still-creating session keeps its status.
+ * can revive it). Any other session (archived, creating, failed setup) keeps its status.
  */
 export async function shutDownSession(sessionId: string): Promise<Session> {
   // Stop any running Claude query (synchronous: closes input + query). This
