@@ -411,6 +411,77 @@ describe('rate-limit pause', () => {
     runner.stopSession(sessionId);
   });
 
+  describe('the composer Stop racing a pause (the session stays running)', () => {
+    // Drive the pause against a stub runner so the Stop can be placed exactly.
+    const rejection = () =>
+      rateLimitState.recordRateLimitReadings([
+        {
+          limitType: 'five_hour',
+          rejected: true,
+          authoritative: true,
+          utilization: 100,
+          resetsAtMs: NOW + HOUR_MS,
+        },
+      ]);
+    const resumeFlag = async (sessionId: string) =>
+      (await testPrisma.session.findUniqueOrThrow({ where: { id: sessionId } }))
+        .resumeAfterRateLimit;
+
+    function stubRunner(sessionId: string, abortTurn: runnerPort['abortTurn']): runnerPort {
+      return {
+        turnActiveSessionIds: () => new Set([sessionId]),
+        abortTurn,
+        sendUserMessage: vi.fn(async () => {}),
+        openQuery: vi.fn(async () => ({ isLive: () => false, push: () => {} })),
+      };
+    }
+    type runnerPort = Parameters<typeof pause.initRateLimitPause>[0];
+
+    it('skips the late flag for a rejected turn that had already ended', async () => {
+      const sessionId = await createRunningSession();
+      let stopped = false;
+      await pause.initRateLimitPause(
+        stubRunner(sessionId, async (_id, steps) => {
+          // The turn ended on its own and the user hit Stop before the pause got here.
+          if (!stopped) {
+            stopped = true;
+            await pause.withdrawQueuedWork(sessionId);
+          }
+          return { disposed: await steps.dispose([]), interrupted: false, interruptPending: false };
+        })
+      );
+
+      await rejection();
+      await pause.recomputeRateLimitHolds();
+
+      expect(stopped).toBe(true);
+      expect(await resumeFlag(sessionId)).toBe(false);
+    });
+
+    it('clears a flag the pause wrote just before its interrupt', async () => {
+      const sessionId = await createRunningSession();
+      let stop: Promise<unknown> | null = null;
+      await pause.initRateLimitPause(
+        stubRunner(sessionId, async (_id, steps) => {
+          const disposed = await steps.dispose([]);
+          if (!stop) {
+            // Stop lands while the flag write is still in flight.
+            const flagging = steps.beforeInterrupt();
+            stop = pause.withdrawQueuedWork(sessionId);
+            await flagging;
+          }
+          return { disposed, interrupted: true, interruptPending: true };
+        })
+      );
+
+      await rejection();
+      await pause.recomputeRateLimitHolds();
+      await stop;
+
+      expect(await resumeFlag(sessionId)).toBe(false);
+    });
+  });
+
   it('does not re-arm the resume nudge when the header Stop lands mid-pause', async () => {
     const fake = makeFakeQuery();
     runner._setQueryFactory(fake.factory);

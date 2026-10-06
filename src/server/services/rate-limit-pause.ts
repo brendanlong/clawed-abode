@@ -117,6 +117,7 @@ async function runRecompute(): Promise<void> {
   // there is nothing to continue, and the prompt is recalled into the queue where
   // it will run again in full.
   const turnActiveSessionIds = runner.turnActiveSessionIds();
+  const withdrawalsAtStart = new Map(withdrawals);
 
   let holds: Map<string, RateLimitHold>;
   try {
@@ -134,7 +135,10 @@ async function runRecompute(): Promise<void> {
 
   for (const [sessionId, hold] of holds) {
     try {
-      await pauseSession(runner, sessionId, hold, turnActiveSessionIds.has(sessionId));
+      await pauseSession(runner, sessionId, hold, {
+        hadActiveTurn: turnActiveSessionIds.has(sessionId),
+        withdrawalsAtStart: withdrawalsAtStart.get(sessionId) ?? 0,
+      });
     } catch (err) {
       // One session failing to park must not skip the drain phase for the rest.
       log.error('Failed to pause session for rate limit', toError(err), { sessionId });
@@ -170,7 +174,7 @@ async function pauseSession(
   runner: PauseRunner,
   sessionId: string,
   hold: RateLimitHold,
-  hadActiveTurn: boolean
+  { hadActiveTurn, withdrawalsAtStart }: { hadActiveTurn: boolean; withdrawalsAtStart: number }
 ): Promise<void> {
   const aborted = await runner.abortTurn(sessionId, {
     // Durable before the interrupt, so a Stop landing during it can take them back.
@@ -182,7 +186,7 @@ async function pauseSession(
     },
     // Flag before interrupting, not after: a Stop landing while the interrupt is
     // in flight withdraws the nudge, and must not have it set back.
-    beforeInterrupt: () => flagForResume(sessionId),
+    beforeInterrupt: () => flagForResume(sessionId, withdrawalsAtStart),
   });
   const interrupted = aborted?.interrupted ?? false;
   if (aborted && (aborted.disposed > 0 || interrupted)) {
@@ -202,28 +206,49 @@ async function pauseSession(
   // a nudge once the window resets.
   const rejectedMidTurn =
     hold.reason === 'rejected' && hadActiveTurn && !(aborted?.interruptPending ?? false);
-  if (!interrupted && rejectedMidTurn) await flagForResume(sessionId);
+  if (!interrupted && rejectedMidTurn) await flagForResume(sessionId, withdrawalsAtStart);
 }
+
+/**
+ * Per-session count of composer Stops (see {@link withdrawQueuedWork}). A
+ * recompute snapshots it before its first await and flags only sessions whose
+ * count is unchanged, so a Stop anywhere during the pause wins.
+ */
+const withdrawals = new Map<string, number>();
+/** Flag writes already issued, which a Stop waits out before clearing the flag. */
+const flagWrites = new Map<string, Promise<void>>();
 
 /**
  * Mark a session to be nudged to continue once the window resets. Best-effort.
  * Set even when the interrupt then fails: the nudge is phrased so an agent that
- * had finished just says so. Only while the session is running, in the same
- * statement: the header Stop clears the flag as it stops, and a pause write
- * landing after it must not re-arm the nudge for the next Start.
+ * had finished just says so.
+ *
+ * Never re-arms a nudge the user withdrew. The header Stop clears the flag as it
+ * stops, so the write only applies while the session is still running (same
+ * statement). The composer Stop leaves it running, so a pause also skips the
+ * write if a Stop came after `withdrawalsAtStart` was taken; the count check and
+ * registering the write are synchronous, and the Stop bumps the count, then waits
+ * out any write already registered before clearing.
  */
-async function flagForResume(sessionId: string): Promise<void> {
-  try {
-    await prisma.session.updateMany({
+async function flagForResume(sessionId: string, withdrawalsAtStart: number): Promise<void> {
+  if ((withdrawals.get(sessionId) ?? 0) !== withdrawalsAtStart) return;
+  const write = prisma.session
+    .updateMany({
       where: { id: sessionId, status: 'running' },
       data: { resumeAfterRateLimit: true },
-    });
-  } catch (err) {
-    log.warn('Failed to flag session for post-rate-limit resume', {
-      sessionId,
-      error: toError(err).message,
-    });
-  }
+    })
+    .then(
+      () => {},
+      (err: unknown) => {
+        log.warn('Failed to flag session for post-rate-limit resume', {
+          sessionId,
+          error: toError(err).message,
+        });
+      }
+    );
+  flagWrites.set(sessionId, write);
+  await write;
+  if (flagWrites.get(sessionId) === write) flagWrites.delete(sessionId);
 }
 
 /**
@@ -278,6 +303,9 @@ async function drainSession(runner: PauseRunner, sessionId: string): Promise<voi
  * don't want the session picking work back up on its own.
  */
 export async function withdrawQueuedWork(sessionId: string): Promise<CancelledPrompt[]> {
+  // Before any await: a pause checking after this point won't flag (see flagForResume).
+  withdrawals.set(sessionId, (withdrawals.get(sessionId) ?? 0) + 1);
+  await flagWrites.get(sessionId);
   const queued = await clearQueuedPrompts(sessionId);
   await prisma.session.updateMany({
     where: { id: sessionId, resumeAfterRateLimit: true },
