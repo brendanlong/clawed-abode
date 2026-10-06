@@ -42,12 +42,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // Links to the public files server can't carry the bearer header, so mirror it into a cookie.
+  // Not cleared just for lacking a token: a browser signed in only to public files
+  // keeps that cookie until login upgrades it (see doc/security.md).
   useEffect(() => {
-    if (authState.isLoading) return;
     const token = authState.token;
+    if (authState.isLoading || !token) return;
     fetch('/api/auth/public-cookie', {
-      method: token ? 'POST' : 'DELETE',
-      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
     }).catch(() => {
       // Best-effort: only public-file links depend on it.
     });
@@ -66,6 +68,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const clearLocally = () => {
       clearAuthToken();
       setAuthState({ token: null, isLoading: false });
+      fetch('/api/auth/public-cookie', { method: 'DELETE' }).catch(() => {
+        // Best-effort: the session behind it is revoked anyway.
+      });
     };
     const fallback = setTimeout(clearLocally, LOGOUT_LOCAL_CLEAR_TIMEOUT_MS);
     revokeServerSession(undefined, {

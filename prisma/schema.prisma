@@ -7,9 +7,12 @@ datasource db {
   provider = "sqlite"
 }
 
+// Has CHECK constraints (see McpServer): scope.
 model AuthSession {
   id             String    @id @default(uuid())
   token          String    @unique
+  // "full", or "public_files": accepted only by the public files server (see doc/security.md)
+  scope          String    @default("full")
   expiresAt      DateTime
   lastActivityAt DateTime  @default(now())
   createdAt      DateTime  @default(now())

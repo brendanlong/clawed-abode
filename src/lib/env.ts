@@ -29,7 +29,8 @@ const envSchema = z
     ENCRYPTION_KEY: z.string().min(32).optional(),
     // Public base URL the browser reaches this app on (e.g. https://host.tailnet.ts.net).
     // Used to build the OAuth redirect URI for MCP servers; when unset it is derived
-    // from the request's forwarded host/proto (see src/lib/app-origin.ts).
+    // from the request's forwarded host/proto (see src/lib/app-origin.ts). The public
+    // files server links here to sign in; unset, it assumes its own host's default port.
     // Validated (unlike CODE_SERVER_URL) because a typo here doesn't degrade — it
     // produces a redirect_uri the authorization server rejects.
     APP_URL: z.string().url().optional(),

@@ -1,13 +1,25 @@
 import { z } from 'zod';
 import { router, publicProcedure, protectedProcedure } from '../trpc';
 import { prisma } from '@/lib/prisma';
-import { verifyPassword, loginSchema, effectiveExpiry } from '@/lib/auth';
+import {
+  verifyPassword,
+  loginSchema,
+  effectiveExpiry,
+  SESSION_DURATION_MS,
+  authScopeSchema,
+} from '@/lib/auth';
 import { loginRateLimiter } from '@/lib/rate-limiter';
 import { env } from '@/lib/env';
 import { TRPCError } from '@trpc/server';
 import { createLogger, toError } from '@/lib/logger';
 import { keysetPage, keysetPageInputSchema } from '@/lib/keyset-page';
-import { createAuthSession, purgeInactiveAuthSessions } from '../services/auth-sessions';
+import {
+  createAuthSession,
+  purgeInactiveAuthSessions,
+  upgradePublicFilesSession,
+} from '../services/auth-sessions';
+import { mintPublicLoginCode } from '../services/public-login-codes';
+import { publicAuthCookie, publicLoginUrl, safeNextPath } from '@/lib/public-files';
 
 const log = createLogger('auth');
 
@@ -65,10 +77,35 @@ export const authRouter = router({
       log.error('Failed to purge inactive auth sessions', toError(error));
     }
 
-    const token = await createAuthSession(ctx.ipAddress, ctx.userAgent);
+    const token =
+      (await upgradePublicFilesSession(ctx.publicAuthTokens ?? [], ctx)) ??
+      (await createAuthSession(ctx, 'full'));
+    // Set here rather than waiting for the client's mirror call, so a redirect to
+    // the public files server right after login already carries it.
+    if (env.PUBLIC_FILES_URL) {
+      ctx.resHeaders?.append('Set-Cookie', publicAuthCookie(token, SESSION_DURATION_MS / 1000));
+    }
 
     return { token };
   }),
+
+  publicFilesUrl: protectedProcedure.query(() => ({ url: env.PUBLIC_FILES_URL ?? null })),
+
+  /**
+   * A link that signs whichever browser opens it into the public files server,
+   * then lands on `next`. The PWA can't hand its cookie to the browser Android
+   * opens links in, but it can put a one-time code in the URL.
+   */
+  createPublicLoginUrl: protectedProcedure
+    .input(z.object({ next: z.string() }))
+    .mutation(({ input }) => {
+      if (!env.PUBLIC_FILES_URL) {
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'Public files are not configured' });
+      }
+      return {
+        url: publicLoginUrl(env.PUBLIC_FILES_URL, mintPublicLoginCode(), safeNextPath(input.next)),
+      };
+    }),
 
   logout: protectedProcedure.mutation(async ({ ctx }) => {
     await prisma.authSession.update({
@@ -93,6 +130,7 @@ export const authRouter = router({
         revokedAt: true,
         ipAddress: true,
         userAgent: true,
+        scope: true,
       },
       orderBy: page.orderBy,
       take: page.take,
@@ -102,6 +140,7 @@ export const authRouter = router({
     return {
       sessions: items.map((s) => ({
         ...s,
+        scope: authScopeSchema.parse(s.scope),
         effectiveExpiresAt: effectiveExpiry(s),
         isCurrent: s.id === ctx.sessionId,
       })),

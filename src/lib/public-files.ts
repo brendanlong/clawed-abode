@@ -7,6 +7,81 @@ import { z } from 'zod';
  */
 export const PUBLIC_AUTH_COOKIE = 'public_auth';
 
+/**
+ * `Set-Cookie` value for the public auth cookie; a null token clears it. HttpOnly
+ * keeps it from the agent-written pages it unlocks.
+ */
+export function publicAuthCookie(token: string | null, maxAgeSeconds: number): string {
+  const maxAge = token === null ? 0 : Math.floor(maxAgeSeconds);
+  return `${PUBLIC_AUTH_COOKIE}=${token ?? ''}; Path=/; Max-Age=${maxAge}; HttpOnly; Secure; SameSite=Lax`;
+}
+
+/**
+ * The public files server's login endpoint, which trades a one-time `code` from
+ * the app for the cookie. Session ids are UUIDs, so it can't collide.
+ */
+export const PUBLIC_LOGIN_PATH = '/_login';
+
+const NEXT_BASE = 'http://next.invalid';
+
+/**
+ * Where to send the browser after login: a same-origin path. Parsed rather than
+ * prefix-checked, since browsers strip tabs and newlines and treat `\` as `/`
+ * when resolving, and serialized so it is safe in a Location header.
+ */
+export function safeNextPath(raw: string | null | undefined): string {
+  if (!raw?.startsWith('/')) return '/';
+  try {
+    const url = new URL(raw, NEXT_BASE);
+    return url.origin === NEXT_BASE ? url.pathname + url.search + url.hash : '/';
+  } catch {
+    return '/';
+  }
+}
+
+/** Query parameter on the app's login page carrying the public path to return to. */
+export const PUBLIC_NEXT_PARAM = 'public';
+
+/**
+ * The app's login page, set to bounce back to `next` on the public files server.
+ * Passwords are only typed on the app's origin, never on the one serving
+ * agent-written pages. The app is assumed to be on the public files server's
+ * host at the default port (`tailscale serve`) unless APP_URL says otherwise.
+ */
+export function appSignInUrl(
+  appUrl: string | undefined,
+  publicBaseUrl: string,
+  next: string
+): string {
+  const origin = new URL(appUrl ?? publicBaseUrl);
+  if (!appUrl) origin.port = '';
+  const url = new URL('/login', origin.origin);
+  url.searchParams.set(PUBLIC_NEXT_PARAM, next);
+  return url.toString();
+}
+
+export function publicLoginUrl(baseUrl: string, code: string, next: string): string {
+  const url = new URL(PUBLIC_LOGIN_PATH, baseUrl);
+  url.searchParams.set('code', code);
+  url.searchParams.set('next', next);
+  return url.toString();
+}
+
+/**
+ * The path (with query and fragment) of a link into the public files server, or
+ * null for links anywhere else — including its login endpoint, which needs no login.
+ */
+export function publicLinkPath(href: string, baseUrl: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(href);
+  } catch {
+    return null;
+  }
+  if (url.origin !== new URL(baseUrl).origin || url.pathname === PUBLIC_LOGIN_PATH) return null;
+  return url.pathname + url.search + url.hash;
+}
+
 const sessionIdSchema = z.string().uuid();
 
 export function publicFilesUrl(baseUrl: string, sessionId: string): string {
@@ -46,14 +121,21 @@ export function parsePublicRequestPath(pathname: string): PublicRequestPath | nu
   return { sessionId: parsedSessionId.data, segments, trailingSlash };
 }
 
-export function parseCookie(header: string | undefined, name: string): string | null {
+/**
+ * Every non-empty value of a named cookie. There can be several: script on the
+ * public origin can't overwrite the HttpOnly one, but can add one on a narrower
+ * path, which browsers send first. Callers try each rather than trusting the first.
+ */
+export function parseCookies(header: string | undefined, name: string): string[] {
+  const values: string[] = [];
   for (const pair of header?.split(';') ?? []) {
     const eq = pair.indexOf('=');
     if (eq !== -1 && pair.slice(0, eq).trim() === name) {
-      return pair.slice(eq + 1).trim() || null;
+      const value = pair.slice(eq + 1).trim();
+      if (value) values.push(value);
     }
   }
-  return null;
+  return values;
 }
 
 function isSafeSegment(segment: string): boolean {

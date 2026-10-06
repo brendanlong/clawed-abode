@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { Suspense, useCallback, useState, useEffect, useRef } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { trpc } from '@/lib/trpc';
 import { useAuth } from '@/lib/auth-context';
 import { Button } from '@/components/ui/button';
@@ -10,28 +10,68 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Spinner } from '@/components/ui/spinner';
+import { PUBLIC_NEXT_PARAM } from '@/lib/public-files';
+import { claimAutomaticReturn, releaseAutomaticReturn } from '@/lib/public-login-loop';
 
 export default function LoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <LoginForm />
+    </Suspense>
+  );
+}
+
+function LoginForm() {
   const router = useRouter();
-  const { login, isAuthenticated } = useAuth();
+  // The public files server sends browsers here to sign in, then back to this path.
+  const publicNext = useSearchParams().get(PUBLIC_NEXT_PARAM);
+  const { login, isAuthenticated, isLoading } = useAuth();
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+
+  const { mutate: openPublicFiles } = trpc.auth.createPublicLoginUrl.useMutation({
+    onSuccess: ({ url }) => window.location.replace(url),
+    onError: (err) => {
+      // Never reached the public files server, so it can't be a redirect loop.
+      releaseAutomaticReturn(window.sessionStorage);
+      setError(err.message);
+    },
+  });
+
+  const leave = useCallback(() => {
+    if (publicNext === null) router.push('/');
+    else openPublicFiles({ next: publicNext });
+  }, [publicNext, router, openPublicFiles]);
 
   const loginMutation = trpc.auth.login.useMutation({
     onSuccess: (data) => {
       login(data.token);
-      router.push('/');
+      leave();
     },
     onError: (err) => {
       setError(err.message);
     },
   });
 
+  // Leave right away if this browser arrived signed in. Only on arrival: a stored
+  // token may be stale (rejected without clearing auth state), so a later sign-in
+  // leaves from onSuccess rather than waiting for isAuthenticated to change.
+  const arrivalHandled = useRef(false);
   useEffect(() => {
-    if (isAuthenticated) {
-      router.push('/');
+    if (isLoading || arrivalHandled.current) return;
+    arrivalHandled.current = true;
+    if (!isAuthenticated) return;
+    if (publicNext !== null && !claimAutomaticReturn(window.sessionStorage, publicNext)) {
+      // Deferred: setState directly in an effect cascades renders (React 19 lint rule).
+      queueMicrotask(() =>
+        setError(
+          "This browser didn't keep the public files sign-in. Check that it allows cookies and that PUBLIC_FILES_URL is https."
+        )
+      );
+      return;
     }
-  }, [isAuthenticated, router]);
+    leave();
+  }, [isLoading, isAuthenticated, publicNext, leave]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();

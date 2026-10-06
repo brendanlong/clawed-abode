@@ -99,6 +99,11 @@ export function AuthSessionListItem({ session, onRevoke }: AuthSessionListItemPr
                 Current session
               </Badge>
             )}
+            {session.scope === 'public_files' && (
+              <Badge variant="outline" className="text-xs">
+                Public files only
+              </Badge>
+            )}
             {isRevoked && (
               <Badge variant="outline" className="text-xs text-muted-foreground">
                 Revoked

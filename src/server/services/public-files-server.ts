@@ -3,18 +3,32 @@ import { open } from 'fs/promises';
 import { pipeline } from 'stream/promises';
 import { prisma } from '@/lib/prisma';
 import { createLogger, toError } from '@/lib/logger';
+import { SESSION_DURATION_MS } from '@/lib/auth';
+import { getClientIp } from '@/lib/client-ip';
 import {
   PUBLIC_AUTH_COOKIE,
+  PUBLIC_LOGIN_PATH,
   contentTypeFor,
   parseByteRange,
-  parseCookie,
+  parseCookies,
   parsePublicRequestPath,
+  publicAuthCookie,
+  appSignInUrl,
   renderDirectoryListing,
+  safeNextPath,
 } from '@/lib/public-files';
-import { resolveAuthSessionId } from './auth-sessions';
+import { createAuthSession, resolveAuthSessionId } from './auth-sessions';
+import { consumePublicLoginCode } from './public-login-codes';
 import { resolvePublicTarget } from './public-dir';
 
 const log = createLogger('public-files');
+
+export interface PublicFilesUrls {
+  /** Where browsers reach this server (PUBLIC_FILES_URL). */
+  baseUrl: string;
+  /** Where browsers reach the app, when it isn't this host's default port (APP_URL). */
+  appUrl?: string;
+}
 
 /**
  * Serves each session's `public/` directory at `/{sessionId}/…` on its own port.
@@ -22,9 +36,9 @@ const log = createLogger('public-files');
  * they pull in) can't read the app's localStorage token, without sandboxing
  * that would break `fetch()` and module scripts.
  */
-export function createPublicFilesServer(): Server {
+export function createPublicFilesServer(urls: PublicFilesUrls): Server {
   return createServer((req, res) => {
-    handleRequest(req, res).catch((err) => {
+    handleRequest(req, res, urls).catch((err) => {
       // Clients abort mid-stream all the time (video seeking, navigating away).
       if (res.destroyed) {
         log.debug('Public file response aborted', { url: req.url });
@@ -38,8 +52,8 @@ export function createPublicFilesServer(): Server {
 }
 
 /** Loopback only: Tailscale Serve is the ingress, as for the app itself. */
-export async function startPublicFilesServer(port: number): Promise<Server> {
-  const server = createPublicFilesServer();
+export async function startPublicFilesServer(port: number, urls: PublicFilesUrls): Promise<Server> {
+  const server = createPublicFilesServer(urls);
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
     server.listen(port, '127.0.0.1', () => {
@@ -59,19 +73,24 @@ const BASE_HEADERS = {
   'Cache-Control': 'no-cache',
 };
 
-async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
+async function handleRequest(
+  req: IncomingMessage,
+  res: ServerResponse,
+  urls: PublicFilesUrls
+): Promise<void> {
+  const url = new URL(req.url ?? '/', 'http://localhost');
+  const { pathname } = url;
+  if (pathname === PUBLIC_LOGIN_PATH) return handleLogin(req, res, url, urls);
+
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     res.writeHead(405, { ...BASE_HEADERS, Allow: 'GET, HEAD' }).end();
     return;
   }
 
-  const token = parseCookie(req.headers.cookie, PUBLIC_AUTH_COOKIE);
-  if (!token || !(await resolveAuthSessionId(token))) {
-    sendText(res, 401, 'Open Clawed Abode and sign in on this browser, then reload this page.\n');
-    return;
+  if (!(await hasValidAuthCookie(req))) {
+    return redirectToSignIn(res, urls, safeNextPath(pathname + url.search));
   }
 
-  const pathname = new URL(req.url ?? '/', 'http://localhost').pathname;
   const parsed = parsePublicRequestPath(pathname);
   if (!parsed) return sendText(res, 404, 'Not found\n');
 
@@ -97,6 +116,67 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       res.writeHead(200, { ...BASE_HEADERS, 'Content-Type': 'text/html; charset=utf-8' });
       res.end(req.method === 'HEAD' ? undefined : renderDirectoryListing(pathname, target.entries));
   }
+}
+
+/**
+ * Trades a one-time code from the app for this browser's own auth session and
+ * redirects to `next`. The browser may not share the app's cookies, as when an
+ * Android PWA opens links in a different browser.
+ */
+async function handleLogin(
+  req: IncomingMessage,
+  res: ServerResponse,
+  url: URL,
+  urls: PublicFilesUrls
+): Promise<void> {
+  // Only GET spends the code: HEAD comes from link previewers, not the browser that will keep the cookie.
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    res.writeHead(405, { ...BASE_HEADERS, Allow: 'GET, HEAD' }).end();
+    return;
+  }
+  const next = safeNextPath(url.searchParams.get('next'));
+  const code = url.searchParams.get('code');
+  // Spent even when unneeded, so no live code is left in this browser's history.
+  const codeValid = req.method === 'GET' && code !== null && consumePublicLoginCode(code);
+  // A browser that already shares the app's cookie needs no new auth session.
+  if (await hasValidAuthCookie(req)) return redirect(res, next);
+
+  if (codeValid) {
+    const client = {
+      ipAddress: getClientIp((name) => firstHeader(req.headers[name])),
+      userAgent: req.headers['user-agent'],
+    };
+    // Read-only: a code that leaks from history can't reach the app itself.
+    return redirect(res, next, await createAuthSession(client, 'public_files'));
+  }
+  return redirectToSignIn(res, urls, next);
+}
+
+/** Passwords are typed only on the app's origin, never on this one, which runs agent-written pages. */
+function redirectToSignIn(res: ServerResponse, urls: PublicFilesUrls, next: string): void {
+  redirect(res, appSignInUrl(urls.appUrl, urls.baseUrl, next));
+}
+
+async function hasValidAuthCookie(req: IncomingMessage): Promise<boolean> {
+  for (const token of parseCookies(req.headers.cookie, PUBLIC_AUTH_COOKIE)) {
+    if ((await resolveAuthSessionId(token, 'public_files')) !== null) return true;
+  }
+  return false;
+}
+
+function firstHeader(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+/** Sets the auth cookie when given a token. */
+function redirect(res: ServerResponse, location: string, token?: string): void {
+  res
+    .writeHead(303, {
+      ...BASE_HEADERS,
+      Location: location,
+      ...(token ? { 'Set-Cookie': publicAuthCookie(token, SESSION_DURATION_MS / 1000) } : {}),
+    })
+    .end();
 }
 
 async function serveFile(

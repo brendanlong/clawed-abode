@@ -7,6 +7,8 @@ import { prisma } from '@/lib/prisma';
 import { createLogger } from '@/lib/logger';
 import { originHeadersFrom, resolveAppOrigin } from '@/lib/app-origin';
 import { env } from '@/lib/env';
+import { getClientIp } from '@/lib/client-ip';
+import { PUBLIC_AUTH_COOKIE, parseCookies } from '@/lib/public-files';
 
 const log = createLogger('trpc');
 
@@ -17,23 +19,28 @@ export interface Context {
   userAgent?: string;
   /** Origin the browser reached this request on, when derivable. Used for OAuth redirect URIs. */
   appOrigin?: string | null;
+  /** Values of the public files cookie, which reaches the app too (cookies ignore ports). Read only by login, to upgrade one. */
+  publicAuthTokens?: string[];
+  /** Response headers, where the fetch adapter provides them. */
+  resHeaders?: Headers;
 }
 
-/** Tailscale Serve/Funnel and other reverse proxies put the real client IP first in X-Forwarded-For. */
-function getClientIp(headers: Headers): string | undefined {
-  const forwarded = headers.get('x-forwarded-for');
-  const first = forwarded?.split(',')[0]?.trim();
-  return first || headers.get('x-real-ip')?.trim() || undefined;
-}
-
-export async function createContext(opts: { headers: Headers }): Promise<Context> {
+export async function createContext(opts: {
+  headers: Headers;
+  resHeaders?: Headers;
+}): Promise<Context> {
   const clientInfo = {
-    ipAddress: getClientIp(opts.headers),
+    ipAddress: getClientIp((name) => opts.headers.get(name)),
     userAgent: opts.headers.get('user-agent') ?? undefined,
     appOrigin: resolveAppOrigin(env.APP_URL, originHeadersFrom(opts.headers)),
   };
   const token = parseAuthHeader(opts.headers.get('authorization'));
-  return { sessionId: token ? await resolveAuthSessionId(token) : null, ...clientInfo };
+  return {
+    sessionId: token ? await resolveAuthSessionId(token, 'full') : null,
+    publicAuthTokens: parseCookies(opts.headers.get('cookie') ?? undefined, PUBLIC_AUTH_COOKIE),
+    resHeaders: opts.resHeaders,
+    ...clientInfo,
+  };
 }
 
 const t = initTRPC.context<Context>().create({

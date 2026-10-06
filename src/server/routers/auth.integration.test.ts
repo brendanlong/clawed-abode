@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { TRPCError } from '@trpc/server';
 import { setupTestDb, teardownTestDb, testPrisma, clearTestDb } from '@/test/setup-test-db';
 import { hashPassword, IDLE_TIMEOUT_MS } from '@/lib/auth';
@@ -18,13 +18,29 @@ let router: Awaited<typeof import('../trpc')>['router'];
 
 const createCaller = (
   sessionId: string | null,
-  client?: { ipAddress: string; userAgent: string }
+  client?: {
+    ipAddress?: string;
+    userAgent?: string;
+    publicAuthTokens?: string[];
+    resHeaders?: Headers;
+  }
 ) => {
   const testRouter = router({
     auth: authRouter,
   });
   return testRouter.createCaller({ sessionId, ...client });
 };
+
+function setPublicFiles(enabled: boolean) {
+  if (enabled) {
+    process.env.PUBLIC_FILES_PORT = '18444';
+    process.env.PUBLIC_FILES_URL = 'https://h.ts.net:8444';
+  } else {
+    delete process.env.PUBLIC_FILES_PORT;
+    delete process.env.PUBLIC_FILES_URL;
+  }
+  resetEnvCache();
+}
 
 const TEST_PASSWORD = 'test-password-123';
 
@@ -119,6 +135,74 @@ describe('authRouter integration', () => {
       // Should have 3 sessions in database
       const sessions = await testPrisma.authSession.findMany();
       expect(sessions).toHaveLength(3);
+    });
+
+    describe('with public files enabled', () => {
+      beforeEach(() => setPublicFiles(true));
+      afterEach(() => setPublicFiles(false));
+
+      it('sets the public files cookie in the login response', async () => {
+        const resHeaders = new Headers();
+        const { token } = await createCaller(null, { resHeaders }).auth.login({
+          password: TEST_PASSWORD,
+        });
+        expect(resHeaders.get('set-cookie')).toMatch(new RegExp(`^public_auth=${token};`));
+      });
+
+      it("upgrades this browser's public-files-only session instead of opening another", async () => {
+        const publicOnly = await testPrisma.authSession.create({
+          data: {
+            token: 'public-only',
+            scope: 'public_files',
+            expiresAt: new Date(Date.now() + 60_000),
+          },
+        });
+
+        const { token } = await createCaller(null, {
+          publicAuthTokens: ['public-only'],
+        }).auth.login({
+          password: TEST_PASSWORD,
+        });
+
+        const rows = await testPrisma.authSession.findMany();
+        expect(rows).toHaveLength(1);
+        expect(rows[0]).toMatchObject({ id: publicOnly.id, token, scope: 'full' });
+      });
+
+      it('does not upgrade on a wrong password', async () => {
+        await testPrisma.authSession.create({
+          data: {
+            token: 'public-only',
+            scope: 'public_files',
+            expiresAt: new Date(Date.now() + 60_000),
+          },
+        });
+
+        await expect(
+          createCaller(null, { publicAuthTokens: ['public-only'] }).auth.login({
+            password: 'wrong',
+          })
+        ).rejects.toThrow();
+        expect(
+          await testPrisma.authSession.findUnique({ where: { token: 'public-only' } })
+        ).toMatchObject({ scope: 'public_files' });
+      });
+    });
+
+    it('rejects a public-files-only session for app procedures', async () => {
+      // createContext is what maps a bearer token to ctx.sessionId.
+      const { createContext } = await import('../trpc');
+      await testPrisma.authSession.create({
+        data: {
+          token: 'public-only',
+          scope: 'public_files',
+          expiresAt: new Date(Date.now() + 60_000),
+        },
+      });
+      const ctx = await createContext({
+        headers: new Headers({ authorization: 'Bearer public-only' }),
+      });
+      expect(ctx.sessionId).toBeNull();
     });
   });
 

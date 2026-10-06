@@ -10,6 +10,7 @@ import { setupTestDb, teardownTestDb, testPrisma, clearTestDb } from '@/test/set
 // The server imports @/lib/prisma at module load, so import it only after the test DB is configured.
 let getSessionPublicDir: typeof import('./public-dir').getSessionPublicDir;
 let getSessionWorkspacePath: typeof import('./worktree-manager').getSessionWorkspacePath;
+let mintPublicLoginCode: typeof import('./public-login-codes').mintPublicLoginCode;
 let server: Server;
 let baseUrl: string;
 
@@ -44,8 +45,9 @@ beforeAll(async () => {
   await setupTestDb();
   ({ getSessionPublicDir } = await import('./public-dir'));
   ({ getSessionWorkspacePath } = await import('./worktree-manager'));
+  ({ mintPublicLoginCode } = await import('./public-login-codes'));
   const { createPublicFilesServer } = await import('./public-files-server');
-  server = createPublicFilesServer();
+  server = createPublicFilesServer({ baseUrl: 'https://h.ts.net:8444' });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 
@@ -69,12 +71,41 @@ afterAll(async () => {
 });
 
 describe('public files server', () => {
-  it('requires a valid auth cookie', async () => {
+  it("sends a browser without a valid auth cookie to the app's login", async () => {
     const id = await createSession();
     await writePublic(id, 'a.txt', 'secret');
+    const signIn = `https://h.ts.net/login?public=${encodeURIComponent(`/${id}/a.txt?v=1`)}`;
 
-    expect((await get(`/${id}/a.txt`, null)).status).toBe(401);
-    expect((await get(`/${id}/a.txt`, 'bogus')).status).toBe(401);
+    for (const token of [null, 'bogus']) {
+      const res = await get(`/${id}/a.txt?v=1`, token);
+      expect(res.status).toBe(303);
+      expect(res.headers.get('location')).toBe(signIn);
+      expect(await res.text()).toBe('');
+    }
+  });
+
+  it('accepts the real auth cookie even when a narrower-path one shadows it', async () => {
+    const id = await createSession();
+    await writePublic(id, 'a.txt', 'ok');
+    const res = await fetch(`${baseUrl}/${id}/a.txt`, {
+      redirect: 'manual',
+      headers: { cookie: `public_auth=planted; public_auth=${TOKEN}` },
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it('accepts a public-files-only session', async () => {
+    const id = await createSession();
+    await writePublic(id, 'a.txt', 'ok');
+    await testPrisma.authSession.create({
+      data: {
+        token: 'public-only',
+        scope: 'public_files',
+        expiresAt: new Date(Date.now() + 60_000),
+      },
+    });
+
+    expect((await get(`/${id}/a.txt`, 'public-only')).status).toBe(200);
   });
 
   it('rejects non-read methods', async () => {
@@ -222,5 +253,86 @@ describe('public files server', () => {
     const res = await get(`/${id}/alias.txt`);
     expect(res.status).toBe(200);
     expect(await res.text()).toBe('real');
+  });
+});
+
+describe('public files login', () => {
+  function cookieToken(res: Response): string | null {
+    return res.headers.get('set-cookie')?.match(/^public_auth=([^;]+)/)?.[1] ?? null;
+  }
+
+  it('exchanges a one-time code for a public-files-only auth session and redirects to next', async () => {
+    const id = await createSession();
+    const next = `/${id}/a.html?x=1`;
+
+    const res = await get(
+      `/_login?code=${mintPublicLoginCode()}&next=${encodeURIComponent(next)}`,
+      null,
+      { 'user-agent': 'custom-tab', 'x-forwarded-for': '100.64.0.9' }
+    );
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toBe(next);
+    const token = cookieToken(res);
+    expect(token).not.toBeNull();
+    expect(token).not.toBe(TOKEN);
+    const row = await testPrisma.authSession.findUnique({ where: { token: token! } });
+    expect(row).toMatchObject({
+      scope: 'public_files',
+      userAgent: 'custom-tab',
+      ipAddress: '100.64.0.9',
+    });
+
+    await writePublic(id, 'a.html', 'hi');
+    expect((await get(next, token)).status).toBe(200);
+  });
+
+  it('accepts a code only once', async () => {
+    const code = mintPublicLoginCode();
+    await get(`/_login?code=${code}&next=/`, null);
+
+    const res = await get(`/_login?code=${code}&next=/`, null);
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toBe('https://h.ts.net/login?public=%2F');
+    expect(cookieToken(res)).toBeNull();
+  });
+
+  it('does not spend the code on HEAD', async () => {
+    const code = mintPublicLoginCode();
+    const head = await fetch(`${baseUrl}/_login?code=${code}&next=/`, {
+      method: 'HEAD',
+      redirect: 'manual',
+    });
+    expect(cookieToken(head)).toBeNull();
+
+    expect(cookieToken(await get(`/_login?code=${code}&next=/`, null))).not.toBeNull();
+  });
+
+  it('does not open another auth session for a browser that is already signed in, but spends the code', async () => {
+    const before = await testPrisma.authSession.count();
+
+    const code = mintPublicLoginCode();
+    const res = await get(`/_login?code=${code}&next=/x`);
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toBe('/x');
+    expect(res.headers.get('set-cookie')).toBeNull();
+    expect(await testPrisma.authSession.count()).toBe(before);
+
+    // Still spent, so it can't be replayed from this browser's history.
+    expect(cookieToken(await get(`/_login?code=${code}&next=/x`, null))).toBeNull();
+  });
+
+  it('never redirects off-origin', async () => {
+    for (const next of ['//evil.example/', '/%09/evil.example/', '/%5Cevil.example/']) {
+      const res = await get(`/_login?next=${next}`);
+      expect(res.headers.get('location')).toBe('/');
+    }
+    const crlf = await get('/_login?next=/a%0D%0ASet-Cookie:%20x=1');
+    expect(crlf.status).toBe(303);
+    expect(crlf.headers.get('set-cookie')).toBeNull();
+  });
+
+  it('only accepts GET and HEAD', async () => {
+    const res = await fetch(`${baseUrl}/_login`, { method: 'POST', body: 'password=x' });
+    expect(res.status).toBe(405);
   });
 });

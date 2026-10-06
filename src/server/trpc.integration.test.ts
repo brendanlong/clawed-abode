@@ -61,6 +61,7 @@ describe('createContext - activity tracking', () => {
       expect(ctx).toEqual({
         sessionId: null,
         appOrigin: null,
+        publicAuthTokens: [],
         ipAddress: '100.64.0.7',
         userAgent: 'test-agent',
       });
@@ -70,6 +71,12 @@ describe('createContext - activity tracking', () => {
 
       headers.delete('x-real-ip');
       expect((await createContext({ headers })).ipAddress).toBeUndefined();
+    });
+
+    it('reads the public files cookie so login can upgrade it', async () => {
+      const headers = createHeaders(null);
+      headers.set('cookie', 'a=1; public_auth=tok');
+      expect((await createContext({ headers })).publicAuthTokens).toEqual(['tok']);
     });
   });
 
