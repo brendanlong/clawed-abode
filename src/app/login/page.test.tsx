@@ -58,6 +58,7 @@ beforeEach(() => {
   mocks.auth.isAuthenticated = false;
   mocks.auth.isLoading = false;
   mocks.search = new URLSearchParams();
+  window.sessionStorage.clear();
 });
 
 describe('LoginPage', () => {
@@ -92,5 +93,16 @@ describe('LoginPage', () => {
 
     await signIn();
     expect(mocks.publicMutate).toHaveBeenCalledTimes(2);
+  });
+
+  it('stops instead of bouncing again when the public sign-in did not stick', async () => {
+    mocks.search = new URLSearchParams({ public: NEXT });
+    mocks.auth.isAuthenticated = true;
+    render(<LoginPage />).unmount();
+    expect(mocks.publicMutate).toHaveBeenCalledTimes(1);
+
+    render(<LoginPage />);
+    expect(mocks.publicMutate).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText(/didn't keep the public files sign-in/)).toBeTruthy();
   });
 });

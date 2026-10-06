@@ -226,28 +226,6 @@ function escapeHtml(text: string): string {
     .replace(/'/g, '&#39;');
 }
 
-const PAGE_HEAD =
-  '<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">';
-
-/** Shown in place of any page the browser isn't signed in for. */
-export function renderSignInPage(options: { signInUrl: string; expired?: boolean }): string {
-  const message = options.expired
-    ? 'That link has expired. Sign in to continue.'
-    : 'Sign in to view this page.';
-  return `<!doctype html>
-<html>
-<head>${PAGE_HEAD}<title>Sign in - Clawed Abode</title>
-<style>body{font-family:system-ui,sans-serif;max-width:22rem;margin:4rem auto;padding:0 1rem;color-scheme:light dark}</style>
-</head>
-<body>
-<h1>Clawed Abode</h1>
-<p>${message}</p>
-<p><a href="${escapeHtml(options.signInUrl)}">Sign in</a></p>
-</body>
-</html>
-`;
-}
-
 /** Minimal HTML index for a directory without an `index.html`. Links are relative, so the URL must end in `/`. */
 export function renderDirectoryListing(title: string, entries: DirectoryEntry[]): string {
   const sorted = [...entries].sort(
@@ -263,7 +241,7 @@ export function renderDirectoryListing(title: string, entries: DirectoryEntry[])
   const body = items ? `<ul>\n${items}\n</ul>` : '<p>This directory is empty.</p>';
   return `<!doctype html>
 <html>
-<head>${PAGE_HEAD}<title>${escapeHtml(title)}</title></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(title)}</title></head>
 <body>
 <h1>${escapeHtml(title)}</h1>
 ${body}

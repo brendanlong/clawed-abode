@@ -15,7 +15,6 @@ import {
   publicAuthCookie,
   appSignInUrl,
   renderDirectoryListing,
-  renderSignInPage,
   safeNextPath,
 } from '@/lib/public-files';
 import { createAuthSession, resolveAuthSessionId } from './auth-sessions';
@@ -89,7 +88,7 @@ async function handleRequest(
   }
 
   if (!(await hasValidAuthCookie(req))) {
-    return sendSignInPage(res, 401, urls, safeNextPath(pathname + url.search));
+    return redirectToSignIn(res, urls, safeNextPath(pathname + url.search));
   }
 
   const parsed = parsePublicRequestPath(pathname);
@@ -143,28 +142,24 @@ async function handleLogin(
   if (await hasValidAuthCookie(req)) return redirect(res, next);
 
   if (codeValid) {
-    const ipAddress = getClientIp((name) => firstHeader(req.headers[name]));
-    return redirect(res, next, await createAuthSession(ipAddress, req.headers['user-agent']));
+    const client = {
+      ipAddress: getClientIp((name) => firstHeader(req.headers[name])),
+      userAgent: req.headers['user-agent'],
+    };
+    // Read-only: a code that leaks from history can't reach the app itself.
+    return redirect(res, next, await createAuthSession(client, 'public_files'));
   }
-  return sendSignInPage(res, 200, urls, next, code !== null);
+  return redirectToSignIn(res, urls, next);
 }
 
 /** Passwords are typed only on the app's origin, never on this one, which runs agent-written pages. */
-function sendSignInPage(
-  res: ServerResponse,
-  status: number,
-  urls: PublicFilesUrls,
-  next: string,
-  expired = false
-): void {
-  const signInUrl = appSignInUrl(urls.appUrl, urls.baseUrl, next);
-  res.writeHead(status, { ...BASE_HEADERS, 'Content-Type': 'text/html; charset=utf-8' });
-  res.end(renderSignInPage({ signInUrl, expired }));
+function redirectToSignIn(res: ServerResponse, urls: PublicFilesUrls, next: string): void {
+  redirect(res, appSignInUrl(urls.appUrl, urls.baseUrl, next));
 }
 
 async function hasValidAuthCookie(req: IncomingMessage): Promise<boolean> {
   const token = parseCookie(req.headers.cookie, PUBLIC_AUTH_COOKIE);
-  return token !== null && (await resolveAuthSessionId(token)) !== null;
+  return token !== null && (await resolveAuthSessionId(token, 'public_files')) !== null;
 }
 
 function firstHeader(value: string | string[] | undefined): string | undefined {

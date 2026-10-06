@@ -7,6 +7,7 @@ import { PrismaBetterSqlite3 } from '@prisma/adapter-better-sqlite3';
 import { PrismaClient } from '@/generated/prisma/client';
 import { setupTestDb, teardownTestDb, testPrisma, clearTestDb } from '@/test/setup-test-db';
 import { createTestSession } from '@/test/fixtures';
+import { authScopeSchema } from '@/lib/auth';
 import {
   mcpAuthTypeSchema,
   mcpServerTypeSchema,
@@ -159,6 +160,17 @@ describe('database CHECK constraints', () => {
     await insert('{"m": 200000}');
     await expect(insert('not json')).rejects.toThrow(CHECK_FAILED);
     await expect(insert('[]')).rejects.toThrow(CHECK_FAILED);
+  });
+  it('AuthSession.scope must be a scope the Zod schema allows', async () => {
+    const insert = (id: string, scope: string) =>
+      exec(
+        `INSERT INTO "AuthSession" ("id", "token", "expiresAt", "scope") VALUES (?, ?, CURRENT_TIMESTAMP, ?)`,
+        id,
+        id,
+        scope
+      );
+    for (const scope of authScopeSchema.options) await insert(scope, scope);
+    await expect(insert('bad', 'admin')).rejects.toThrow(CHECK_FAILED);
   });
 });
 

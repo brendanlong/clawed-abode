@@ -18,6 +18,14 @@ export function effectiveExpiry(session: { lastActivityAt: Date; expiresAt: Date
   return idleExpiresAt < session.expiresAt ? idleExpiresAt : session.expiresAt;
 }
 
+/**
+ * What an auth session may reach. `public_files` sessions come from the public
+ * files server's one-time-code login and are accepted only there; signing in
+ * with the password from the same browser upgrades one to `full`.
+ */
+export const authScopeSchema = z.enum(['full', 'public_files']);
+export type AuthScope = z.infer<typeof authScopeSchema>;
+
 export const loginSchema = z.object({
   password: z.string().min(1, 'Password is required'),
 });

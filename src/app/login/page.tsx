@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useState, useEffect, useRef } from 'react';
+import { Suspense, useCallback, useState, useEffect, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { trpc } from '@/lib/trpc';
 import { useAuth } from '@/lib/auth-context';
@@ -11,6 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Spinner } from '@/components/ui/spinner';
 import { PUBLIC_NEXT_PARAM } from '@/lib/public-files';
+import { claimAutomaticReturn } from '@/lib/public-login-loop';
 
 export default function LoginPage() {
   return (
@@ -35,10 +36,10 @@ function LoginForm() {
     },
   });
 
-  const leave = () => {
+  const leave = useCallback(() => {
     if (publicNext === null) router.push('/');
     else openPublicFiles({ next: publicNext });
-  };
+  }, [publicNext, router, openPublicFiles]);
 
   const loginMutation = trpc.auth.login.useMutation({
     onSuccess: (data) => {
@@ -57,8 +58,18 @@ function LoginForm() {
   useEffect(() => {
     if (isLoading || arrivalHandled.current) return;
     arrivalHandled.current = true;
-    if (isAuthenticated) leave();
-  });
+    if (!isAuthenticated) return;
+    if (publicNext !== null && !claimAutomaticReturn(window.sessionStorage, publicNext)) {
+      // Deferred: setState directly in an effect cascades renders (React 19 lint rule).
+      queueMicrotask(() =>
+        setError(
+          "This browser didn't keep the public files sign-in. Check that PUBLIC_FILES_URL uses this app's hostname."
+        )
+      );
+      return;
+    }
+    leave();
+  }, [isLoading, isAuthenticated, publicNext, leave]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();

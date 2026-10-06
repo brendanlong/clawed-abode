@@ -71,17 +71,31 @@ afterAll(async () => {
 });
 
 describe('public files server', () => {
-  it('requires a valid auth cookie', async () => {
+  it("sends a browser without a valid auth cookie to the app's login", async () => {
     const id = await createSession();
     await writePublic(id, 'a.txt', 'secret');
+    const signIn = `https://h.ts.net/login?public=${encodeURIComponent(`/${id}/a.txt?v=1`)}`;
 
-    const res = await get(`/${id}/a.txt?v=1`, null);
-    expect(res.status).toBe(401);
-    const html = await res.text();
-    expect(html).toContain(
-      `href="https://h.ts.net/login?public=${encodeURIComponent(`/${id}/a.txt?v=1`)}"`
-    );
-    expect((await get(`/${id}/a.txt`, 'bogus')).status).toBe(401);
+    for (const token of [null, 'bogus']) {
+      const res = await get(`/${id}/a.txt?v=1`, token);
+      expect(res.status).toBe(303);
+      expect(res.headers.get('location')).toBe(signIn);
+      expect(await res.text()).toBe('');
+    }
+  });
+
+  it('accepts a public-files-only session', async () => {
+    const id = await createSession();
+    await writePublic(id, 'a.txt', 'ok');
+    await testPrisma.authSession.create({
+      data: {
+        token: 'public-only',
+        scope: 'public_files',
+        expiresAt: new Date(Date.now() + 60_000),
+      },
+    });
+
+    expect((await get(`/${id}/a.txt`, 'public-only')).status).toBe(200);
   });
 
   it('rejects non-read methods', async () => {
@@ -237,7 +251,7 @@ describe('public files login', () => {
     return res.headers.get('set-cookie')?.match(/^public_auth=([^;]+)/)?.[1] ?? null;
   }
 
-  it('exchanges a one-time code for a new auth session and redirects to next', async () => {
+  it('exchanges a one-time code for a public-files-only auth session and redirects to next', async () => {
     const id = await createSession();
     const next = `/${id}/a.html?x=1`;
 
@@ -252,7 +266,11 @@ describe('public files login', () => {
     expect(token).not.toBeNull();
     expect(token).not.toBe(TOKEN);
     const row = await testPrisma.authSession.findUnique({ where: { token: token! } });
-    expect(row).toMatchObject({ userAgent: 'custom-tab', ipAddress: '100.64.0.9' });
+    expect(row).toMatchObject({
+      scope: 'public_files',
+      userAgent: 'custom-tab',
+      ipAddress: '100.64.0.9',
+    });
 
     await writePublic(id, 'a.html', 'hi');
     expect((await get(next, token)).status).toBe(200);
@@ -263,9 +281,9 @@ describe('public files login', () => {
     await get(`/_login?code=${code}&next=/`, null);
 
     const res = await get(`/_login?code=${code}&next=/`, null);
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toBe('https://h.ts.net/login?public=%2F');
     expect(cookieToken(res)).toBeNull();
-    expect(await res.text()).toContain('That link has expired');
   });
 
   it('does not spend the code on HEAD', async () => {

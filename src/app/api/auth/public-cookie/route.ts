@@ -16,7 +16,7 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ error: 'Public files are not configured' }, { status: 404 });
   }
   const token = parseAuthHeader(request.headers.get('authorization'));
-  if (!token || !(await resolveAuthSessionId(token))) {
+  if (!token || !(await resolveAuthSessionId(token, 'full'))) {
     return Response.json({ error: 'Unauthorized' }, { status: 401 });
   }
   return new Response(null, {

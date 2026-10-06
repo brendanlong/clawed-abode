@@ -9,7 +9,6 @@ import {
   publicLinkPath,
   publicLoginUrl,
   renderDirectoryListing,
-  renderSignInPage,
   appSignInUrl,
   safeNextPath,
 } from './public-files';
@@ -213,18 +212,5 @@ describe('appSignInUrl', () => {
     const url = new URL(appSignInUrl('https://app.ts.net:3000/x', 'https://h.ts.net:8444', '/'));
     expect(url.origin).toBe('https://app.ts.net:3000');
     expect(url.pathname).toBe('/login');
-  });
-});
-
-describe('renderSignInPage', () => {
-  it('links to the escaped sign-in URL and has no password field', () => {
-    const html = renderSignInPage({ signInUrl: 'https://h/login?public="><script>' });
-    expect(html).toContain('href="https://h/login?public=&quot;&gt;&lt;script&gt;"');
-    expect(html).not.toContain('<script>');
-    expect(html).not.toContain('password');
-  });
-
-  it('says when a link has expired', () => {
-    expect(renderSignInPage({ signInUrl: '/', expired: true })).toContain('expired');
   });
 });

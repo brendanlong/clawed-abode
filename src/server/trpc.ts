@@ -8,6 +8,7 @@ import { createLogger } from '@/lib/logger';
 import { originHeadersFrom, resolveAppOrigin } from '@/lib/app-origin';
 import { env } from '@/lib/env';
 import { getClientIp } from '@/lib/client-ip';
+import { PUBLIC_AUTH_COOKIE, parseCookie } from '@/lib/public-files';
 
 const log = createLogger('trpc');
 
@@ -18,16 +19,28 @@ export interface Context {
   userAgent?: string;
   /** Origin the browser reached this request on, when derivable. Used for OAuth redirect URIs. */
   appOrigin?: string | null;
+  /** The public files cookie, which reaches the app too (cookies ignore ports). Read only by login, to upgrade it. */
+  publicAuthToken?: string | null;
+  /** Response headers, where the fetch adapter provides them. */
+  resHeaders?: Headers;
 }
 
-export async function createContext(opts: { headers: Headers }): Promise<Context> {
+export async function createContext(opts: {
+  headers: Headers;
+  resHeaders?: Headers;
+}): Promise<Context> {
   const clientInfo = {
     ipAddress: getClientIp((name) => opts.headers.get(name)),
     userAgent: opts.headers.get('user-agent') ?? undefined,
     appOrigin: resolveAppOrigin(env.APP_URL, originHeadersFrom(opts.headers)),
   };
   const token = parseAuthHeader(opts.headers.get('authorization'));
-  return { sessionId: token ? await resolveAuthSessionId(token) : null, ...clientInfo };
+  return {
+    sessionId: token ? await resolveAuthSessionId(token, 'full') : null,
+    publicAuthToken: parseCookie(opts.headers.get('cookie') ?? undefined, PUBLIC_AUTH_COOKIE),
+    resHeaders: opts.resHeaders,
+    ...clientInfo,
+  };
 }
 
 const t = initTRPC.context<Context>().create({
