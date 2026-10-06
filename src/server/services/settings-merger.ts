@@ -10,7 +10,7 @@ import {
 import { env } from '@/lib/env';
 import { publicFilesUrl } from '@/lib/public-files';
 import type { ResolvedEnvVar, ResolvedMcpServer } from '@/lib/settings-types';
-import { decryptEnvVars, decryptMcpServers } from './settings-helpers';
+import { MCP_SERVER_INCLUDE, decryptEnvVars, decryptMcpServers } from './settings-helpers';
 import { GLOBAL_SCOPE, GLOBAL_SETTINGS_ID } from './settings-scope';
 import { applyMcpOAuthHeaders } from './mcp-oauth';
 import { getSessionPublicDir } from './public-dir';
@@ -41,7 +41,7 @@ export async function loadResolvedRepoSettings(
 ): Promise<ResolvedRepoSettings | null> {
   const settings = await prisma.repoSettings.findUnique({
     where: { repoFullName },
-    include: { envVars: true, mcpServers: { include: { oauth: true } } },
+    include: { envVars: true, mcpServers: { include: MCP_SERVER_INCLUDE } },
   });
   if (!settings) return null;
   return {
@@ -56,7 +56,7 @@ export async function loadResolvedGlobalSettings(): Promise<ResolvedGlobalSettin
   const [settings, envVarRows, mcpServerRows] = await Promise.all([
     prisma.globalSettings.findUnique({ where: { id: GLOBAL_SETTINGS_ID } }),
     prisma.envVar.findMany({ where: GLOBAL_SCOPE }),
-    prisma.mcpServer.findMany({ where: GLOBAL_SCOPE, include: { oauth: true } }),
+    prisma.mcpServer.findMany({ where: GLOBAL_SCOPE, include: MCP_SERVER_INCLUDE }),
   ]);
   return {
     systemPromptOverride: settings?.systemPromptOverride ?? null,

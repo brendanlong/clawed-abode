@@ -5,6 +5,7 @@ import { createLogger } from '@/lib/logger';
 import {
   formatEnvVarsForDisplay,
   formatMcpServersForDisplay,
+  MCP_SERVER_INCLUDE,
   nullableTextSchema,
 } from '../services/settings-helpers';
 import { scopedSettingsProcedures, type ResolveScope } from './scoped-settings';
@@ -41,7 +42,7 @@ export const repoSettingsRouter = router({
       where: { repoFullName: input.repoFullName },
       include: {
         envVars: { orderBy: { name: 'asc' } },
-        mcpServers: { orderBy: { name: 'asc' }, include: { oauth: true } },
+        mcpServers: { orderBy: { name: 'asc' }, include: MCP_SERVER_INCLUDE },
       },
     });
     if (!settings) return null;

@@ -5,11 +5,12 @@ import { Prisma } from '@/generated/prisma/client';
 import { encrypt, decrypt } from '@/lib/crypto';
 import { createLogger } from '@/lib/logger';
 import {
-  buildMcpServerData,
+  MCP_SERVER_INCLUDE,
   decryptMcpServers,
   formatEnvVarsForDisplay,
   formatMcpServersForDisplay,
   mcpServerHasSecrets,
+  planMcpServerWrite,
   requireEncryptionForSecrets,
   type EnvVarInput,
   type McpServerInput,
@@ -18,6 +19,7 @@ import { validateMcpServer } from './mcp-validator';
 import {
   applyMcpOAuthHeaders,
   disconnectMcpOAuth,
+  invalidateMcpOAuthOnUrlChange,
   startMcpOAuthFlow,
   syncMcpOAuthConfig,
 } from './mcp-oauth';
@@ -55,7 +57,7 @@ export async function listScopeSettings(scope: SettingsScope) {
     prisma.mcpServer.findMany({
       where: scope,
       orderBy: { name: 'asc' },
-      include: { oauth: true },
+      include: MCP_SERVER_INCLUDE,
     }),
   ]);
   return {
@@ -65,28 +67,12 @@ export async function listScopeSettings(scope: SettingsScope) {
 }
 
 /**
- * Create or update an env var. An empty secret value means "unchanged", which is
- * a conditional UPDATE of an existing secret rather than an upsert, so there is
- * no read-then-write; if no stored secret matched, the input is rejected rather
- * than storing an empty secret.
+ * Create or update an env var. An empty secret value means "unchanged", so the
+ * stored row is left as it is — including whatever another writer made of it.
  */
 export async function upsertEnvVar(scope: SettingsScope, envVar: EnvVarInput): Promise<void> {
   requireEncryptionForSecrets(envVar.isSecret);
-
-  if (envVar.isSecret && envVar.value === '') {
-    const { count } = await prisma.envVar.updateMany({
-      where: { ...scope, name: envVar.name, isSecret: true },
-      data: { updatedAt: new Date() },
-    });
-    if (count === 0) {
-      throw new TRPCError({
-        code: 'BAD_REQUEST',
-        message: `Environment variable "${envVar.name}" has no stored secret to keep; provide a value`,
-      });
-    }
-    log.info('Kept env var secret', { ...scope, name: envVar.name });
-    return;
-  }
+  if (envVar.isSecret && envVar.value === '') return;
 
   const value = envVar.isSecret ? encrypt(envVar.value) : envVar.value;
   const now = new Date().toISOString();
@@ -117,39 +103,58 @@ export async function getEnvVarValue(scope: SettingsScope, name: string): Promis
 }
 
 /**
- * Create or update an MCP server. Unchanged secrets (empty value + isSecret) are
- * carried over from the existing row's JSON, which needs a read; the write itself
- * is still a single ON CONFLICT statement.
+ * Create or update an MCP server. Each env var/header is its own row, so an
+ * unchanged secret (empty value + isSecret) is simply not written, and not deleted
+ * either — whatever another writer made of it stands.
+ *
+ * Deliberately not a transaction: the better-sqlite3 adapter shares one connection,
+ * so other requests' queries would run inside it. Each row is last-writer-wins.
  */
 export async function upsertMcpServer(scope: SettingsScope, server: McpServerInput): Promise<void> {
   requireEncryptionForSecrets(mcpServerHasSecrets(server));
-  const existing = await prisma.mcpServer.findFirst({
-    where: { ...scope, name: server.name },
-    select: { id: true, env: true, headers: true, url: true },
-  });
-  const data = buildMcpServerData(server, existing);
-  const now = new Date().toISOString();
+  const plan = planMcpServerWrite(server);
+  const serverKey = { ...scope, name: server.name };
 
-  // RETURNING gives the OAuth grant the server's id without a second read, whether
-  // the statement inserted a new row or updated the existing one.
+  // A stdio save deletes the grant outright in syncMcpOAuthConfig.
+  if (plan.row.url !== null) await invalidateMcpOAuthOnUrlChange(serverKey, plan.row.url);
+
+  const now = new Date().toISOString();
+  // RETURNING gives the values and OAuth grant the server's id without a second
+  // read, whether the statement inserted a new row or updated the existing one.
   const [{ id }] = await prisma.$queryRaw<[{ id: string }]>`
-    INSERT INTO "McpServer" ("id", "repoSettingsId", "name", "type", "command", "args", "env", "url", "headers", "authType", "createdAt", "updatedAt")
-    VALUES (${randomUUID()}, ${scope.repoSettingsId}, ${server.name}, ${data.type}, ${data.command}, ${data.args}, ${data.env}, ${data.url}, ${data.headers}, ${data.authType}, ${now}, ${now})
+    INSERT INTO "McpServer" ("id", "repoSettingsId", "name", "type", "command", "args", "url", "authType", "createdAt", "updatedAt")
+    VALUES (${randomUUID()}, ${scope.repoSettingsId}, ${server.name}, ${plan.row.type}, ${plan.row.command}, ${plan.row.args}, ${plan.row.url}, ${plan.row.authType}, ${now}, ${now})
     ${conflictTarget(scope)} DO UPDATE SET
       "type" = excluded."type",
       "command" = excluded."command",
       "args" = excluded."args",
-      "env" = excluded."env",
       "url" = excluded."url",
-      "headers" = excluded."headers",
       "authType" = excluded."authType",
       "updatedAt" = excluded."updatedAt"
     RETURNING "id"`;
 
+  if (plan.values.length > 0) {
+    const rows = plan.values.map(
+      (v) =>
+        Prisma.sql`(${randomUUID()}, ${id}, ${plan.kind}, ${v.name}, ${v.value}, ${v.isSecret ? 1 : 0}, ${now}, ${now})`
+    );
+    await prisma.$executeRaw`
+      INSERT INTO "McpServerValue" ("id", "mcpServerId", "kind", "name", "value", "isSecret", "createdAt", "updatedAt")
+      VALUES ${Prisma.join(rows)}
+      ON CONFLICT("mcpServerId", "kind", "name") DO UPDATE SET
+        "value" = excluded."value",
+        "isSecret" = excluded."isSecret",
+        "updatedAt" = excluded."updatedAt"`;
+  }
+
+  const submitted = [...plan.values.map((v) => v.name), ...plan.keep];
+  await prisma.mcpServerValue.deleteMany({
+    where: { mcpServerId: id, NOT: { kind: plan.kind, name: { in: submitted } } },
+  });
+
   await syncMcpOAuthConfig({
     mcpServerId: id,
     isOAuth: server.type !== 'stdio' && server.authType === 'oauth',
-    urlChanged: !!existing && existing.url !== data.url,
     clientId: server.type === 'stdio' ? '' : (server.oauth?.clientId ?? ''),
     clientSecret: server.type === 'stdio' ? '' : (server.oauth?.clientSecret ?? ''),
     scope: server.type === 'stdio' ? '' : (server.oauth?.scope ?? ''),
@@ -161,7 +166,7 @@ export async function upsertMcpServer(scope: SettingsScope, server: McpServerInp
 async function requireMcpServer(scope: SettingsScope, name: string) {
   const row = await prisma.mcpServer.findFirst({
     where: { ...scope, name },
-    include: { oauth: true },
+    include: MCP_SERVER_INCLUDE,
   });
   if (!row) {
     throw new TRPCError({ code: 'NOT_FOUND', message: `MCP server "${name}" not found` });

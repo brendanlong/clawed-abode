@@ -1,13 +1,13 @@
 import { resetEnvCache } from '@/lib/env';
 import { describe, it, expect, beforeAll } from 'vitest';
-import { encrypt } from '@/lib/crypto';
+import { decrypt, encrypt } from '@/lib/crypto';
 import {
-  buildMcpServerData,
   decryptEnvVars,
   decryptMcpServers,
   formatEnvVarsForDisplay,
   formatMcpServersForDisplay,
   mcpServerHasSecrets,
+  planMcpServerWrite,
 } from './settings-helpers';
 
 const MASK = '••••••••';
@@ -30,7 +30,7 @@ describe('settings-helpers', () => {
       ]);
     });
 
-    it('parses MCP server JSON columns, masking secret env and header values', () => {
+    it('groups MCP server values into env and headers, masking secrets', () => {
       const [stdio, http] = formatMcpServersForDisplay([
         {
           id: '1',
@@ -38,13 +38,12 @@ describe('settings-helpers', () => {
           type: 'stdio',
           command: 'node',
           args: JSON.stringify(['a.js']),
-          env: JSON.stringify({
-            K: { value: encrypt('x'), isSecret: true },
-            D: { value: '1', isSecret: false },
-          }),
           url: null,
-          headers: null,
           authType: 'headers',
+          values: [
+            { kind: 'env', name: 'K', value: encrypt('x'), isSecret: true },
+            { kind: 'env', name: 'D', value: '1', isSecret: false },
+          ],
           oauth: null,
         },
         {
@@ -53,10 +52,9 @@ describe('settings-helpers', () => {
           type: 'http',
           command: '',
           args: null,
-          env: null,
           url: 'https://x',
-          headers: JSON.stringify({ Authorization: { value: encrypt('t'), isSecret: true } }),
           authType: 'headers',
+          values: [{ kind: 'header', name: 'Authorization', value: encrypt('t'), isSecret: true }],
           oauth: null,
         },
       ]);
@@ -95,10 +93,9 @@ describe('settings-helpers', () => {
           type: 'stdio',
           command: 'node',
           args: JSON.stringify(['a']),
-          env: JSON.stringify({ K: { value: encrypt('x'), isSecret: true } }),
           url: null,
-          headers: null,
           authType: 'headers',
+          values: [{ kind: 'env', name: 'K', value: encrypt('x'), isSecret: true }],
           oauth: null,
         },
         {
@@ -107,10 +104,9 @@ describe('settings-helpers', () => {
           type: 'sse',
           command: '',
           args: null,
-          env: null,
           url: 'https://x',
-          headers: JSON.stringify({ A: { value: 'plain', isSecret: false } }),
           authType: 'headers',
+          values: [{ kind: 'header', name: 'A', value: 'plain', isSecret: false }],
           oauth: null,
         },
         {
@@ -119,10 +115,9 @@ describe('settings-helpers', () => {
           type: 'http',
           command: '',
           args: null,
-          env: null,
           url: 'https://y',
-          headers: null,
           authType: 'headers',
+          values: [],
           oauth: null,
         },
       ]);
@@ -138,70 +133,51 @@ describe('settings-helpers', () => {
     });
   });
 
-  describe('buildMcpServerData', () => {
-    it('encrypts new secrets and keeps an unchanged secret (empty value) from the existing row', () => {
-      const existing = {
-        env: JSON.stringify({ TOKEN: { value: encrypt('old'), isSecret: true } }),
-        headers: null,
-      };
-      const data = buildMcpServerData(
-        {
-          name: 's',
-          type: 'stdio',
-          command: 'node',
-          env: {
-            TOKEN: { value: '', isSecret: true },
-            NEW: { value: 'n', isSecret: true },
-            PLAIN: { value: 'p', isSecret: false },
-          },
+  describe('planMcpServerWrite', () => {
+    it('encrypts secrets and keeps empty secrets out of the values to write', () => {
+      const plan = planMcpServerWrite({
+        name: 's',
+        type: 'stdio',
+        command: 'node',
+        env: {
+          TOKEN: { value: '', isSecret: true },
+          NEW: { value: 'n', isSecret: true },
+          PLAIN: { value: 'p', isSecret: false },
+          BLANK: { value: '', isSecret: false },
         },
-        existing
-      );
-      const env = JSON.parse(data.env!) as Record<string, { value: string; isSecret: boolean }>;
-      expect(env.TOKEN).toEqual(JSON.parse(existing.env!).TOKEN);
-      expect(env.NEW.value).not.toBe('n');
-      expect(env.PLAIN).toEqual({ value: 'p', isSecret: false });
-      expect(data).toMatchObject({ type: 'stdio', url: null, headers: null, args: null });
+      });
+      expect(plan.kind).toBe('env');
+      expect(plan.keep).toEqual(['TOKEN']);
+      expect(plan.values.map((v) => v.name)).toEqual(['NEW', 'PLAIN', 'BLANK']);
+      expect(plan.values[0].isSecret).toBe(true);
+      expect(decrypt(plan.values[0].value)).toBe('n');
+      expect(plan.values.slice(1)).toEqual([
+        { name: 'PLAIN', value: 'p', isSecret: false },
+        { name: 'BLANK', value: '', isSecret: false },
+      ]);
+      expect(plan.row).toEqual({
+        type: 'stdio',
+        command: 'node',
+        args: null,
+        url: null,
+        authType: 'headers',
+      });
     });
 
-    it('clears stdio fields for http', () => {
-      const data = buildMcpServerData({
+    it('writes headers for http and clears the stdio fields', () => {
+      const plan = planMcpServerWrite({
         name: 'h',
         type: 'http',
         url: 'https://x',
-        authType: 'headers',
+        authType: 'oauth',
         headers: { A: { value: 'v', isSecret: false } },
       });
-      expect(JSON.parse(data.headers!)).toEqual({ A: { value: 'v', isSecret: false } });
-      expect(data).toMatchObject({
-        type: 'http',
-        command: '',
-        args: null,
-        env: null,
-        url: 'https://x',
+      expect(plan).toEqual({
+        row: { type: 'http', command: '', args: null, url: 'https://x', authType: 'oauth' },
+        kind: 'header',
+        values: [{ name: 'A', value: 'v', isSecret: false }],
+        keep: [],
       });
-    });
-
-    it.each([
-      [
-        'the stored value is plaintext',
-        JSON.stringify({ A: { value: 'was-plain', isSecret: false } }),
-      ],
-      ['there is no stored value', JSON.stringify({ B: { value: encrypt('b'), isSecret: true } })],
-      ['there is no existing row', null],
-    ])('rejects an empty secret when %s', (_label, headers) => {
-      expect(() =>
-        buildMcpServerData(
-          {
-            name: 'h',
-            type: 'http',
-            url: 'https://x',
-            authType: 'headers',
-            headers: { A: { value: '', isSecret: true } },
-          },
-          headers === null ? null : { env: null, headers }
-        )
-      ).toThrow(expect.objectContaining({ code: 'BAD_REQUEST' }));
     });
   });
 
