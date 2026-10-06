@@ -1,4 +1,4 @@
-import { randomBytes } from 'crypto';
+import { randomBytes, randomUUID } from 'crypto';
 import { TRPCError } from '@trpc/server';
 import {
   exchangeAuthorization,
@@ -8,6 +8,7 @@ import {
 } from '@modelcontextprotocol/sdk/client/auth.js';
 import { InvalidGrantError, OAuthError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
 import { prisma } from '@/lib/prisma';
+import { Prisma } from '@/generated/prisma/client';
 import { decrypt, encrypt } from '@/lib/crypto';
 import { createLogger, toError } from '@/lib/logger';
 import { isAccessTokenFresh, isFlowExpired, mcpOAuthRedirectUri } from '@/lib/mcp-oauth-urls';
@@ -271,57 +272,72 @@ export async function invalidateMcpOAuthOnUrlChange(
  * Persist the OAuth client configuration a user typed into the server form, and
  * keep the grant consistent with it: switching a server away from OAuth (or to a
  * different client) invalidates any token we hold.
+ *
+ * `server` is what this save just wrote to the server row (for an http/sse row,
+ * every column that varies). The sync only applies while the row still holds it,
+ * so two interleaved saves end up as if they ran one after the other, never with
+ * the server row from one and the client config from the other. It is one
+ * statement (no read-then-write) so "blank secret means unchanged" and the
+ * client-changed check are resolved against the row as it is when written.
  */
 export async function syncMcpOAuthConfig(params: {
   mcpServerId: string;
-  isOAuth: boolean;
+  server: { type: string; url: string | null; authType: string };
   clientId: string;
   /** Blank means "unchanged" (the field is masked in the UI). */
   clientSecret: string;
   scope: string;
 }): Promise<void> {
-  if (!params.isOAuth) {
-    await prisma.mcpOAuth.deleteMany({ where: { mcpServerId: params.mcpServerId } });
+  const { server } = params;
+  if (server.authType !== 'oauth' || server.url === null) {
+    await prisma.mcpOAuth.deleteMany({
+      where: { mcpServerId: params.mcpServerId, mcpServer: { authType: { not: 'oauth' } } },
+    });
     return;
   }
 
-  const existing = await prisma.mcpOAuth.findUnique({
-    where: { mcpServerId: params.mcpServerId },
-  });
   const clientId = params.clientId.trim() || null;
-  // A blank field is only a deliberate "clear" for a client the user typed; for a
-  // dynamically registered one it just means the form had nothing to show.
-  const clearingManualClient = !clientId && !!existing?.clientIdIsManual;
-  const client = clientId
-    ? { clientId, clientIdIsManual: true }
-    : clearingManualClient
-      ? { clientId: null, clientIdIsManual: false }
-      : {};
+  const clientSecret = params.clientSecret ? encrypt(params.clientSecret) : null;
+  const now = new Date().toISOString();
 
-  const clientSecret = clearingManualClient
-    ? null
-    : params.clientSecret
-      ? encrypt(params.clientSecret)
-      : (existing?.clientSecret ?? null);
+  // A blank client ID is only a deliberate "clear" for a client the user typed;
+  // for a dynamically registered one it just means the form had nothing to show.
+  const clearingManualClient = Prisma.sql`(excluded."clientId" IS NULL AND "McpOAuth"."clientIdIsManual")`;
+  // Tokens are bound to the client they were issued for, so changing it means
+  // what we hold can no longer work.
+  const invalidate = Prisma.sql`(${clearingManualClient} OR (excluded."clientId" IS NOT NULL AND excluded."clientId" IS NOT "McpOAuth"."clientId"))`;
+  const clearIfInvalidated = (column: string) =>
+    Prisma.sql`${Prisma.raw(`"${column}"`)} = CASE WHEN ${invalidate} THEN NULL ELSE ${Prisma.raw(`"McpOAuth"."${column}"`)} END`;
 
-  // Tokens are bound to both the resource and the client they were issued for, so
-  // either changing means what we hold can no longer work.
-  const clientChanged = clientId !== null && clientId !== existing?.clientId;
-  const invalidated =
-    clientChanged || clearingManualClient ? { ...CLEARED_TOKENS, lastError: null } : {};
-
-  const config = {
-    scope: params.scope.trim() || null,
-    clientSecret,
-    ...client,
-    ...invalidated,
-  };
-
-  await prisma.mcpOAuth.upsert({
-    where: { mcpServerId: params.mcpServerId },
-    create: { mcpServerId: params.mcpServerId, ...config },
-    update: config,
-  });
+  const written = await prisma.$executeRaw`
+    INSERT INTO "McpOAuth" ("id", "mcpServerId", "clientId", "clientIdIsManual", "clientSecret", "scope", "createdAt", "updatedAt")
+    SELECT ${randomUUID()}, "id", ${clientId}, ${clientId !== null ? 1 : 0}, ${clientSecret}, ${params.scope.trim() || null}, ${now}, ${now}
+    FROM "McpServer"
+    WHERE "id" = ${params.mcpServerId} AND "type" = ${server.type} AND "url" = ${server.url} AND "authType" = 'oauth'
+    ON CONFLICT("mcpServerId") DO UPDATE SET
+      "clientId" = CASE
+        WHEN excluded."clientId" IS NOT NULL THEN excluded."clientId"
+        WHEN ${clearingManualClient} THEN NULL
+        ELSE "McpOAuth"."clientId"
+      END,
+      "clientIdIsManual" = excluded."clientIdIsManual",
+      "clientSecret" = CASE
+        WHEN ${clearingManualClient} THEN NULL
+        ELSE COALESCE(excluded."clientSecret", "McpOAuth"."clientSecret")
+      END,
+      "scope" = excluded."scope",
+      ${Prisma.join(
+        ['accessToken', 'refreshToken', 'expiresAt', 'authorizedAt', 'lastError'].map(
+          clearIfInvalidated
+        ),
+        ',\n      '
+      )},
+      "updatedAt" = excluded."updatedAt"`;
+  if (written === 0) {
+    log.info('Skipped MCP OAuth config sync superseded by a later save', {
+      mcpServerId: params.mcpServerId,
+    });
+  }
 }
 
 export async function disconnectMcpOAuth(mcpServerId: string): Promise<void> {
