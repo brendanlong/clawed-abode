@@ -89,6 +89,17 @@ export const sessionsRouter = router({
     return { session: toSessionView(ctx.session) };
   }),
 
+  // Resolves the sender of a message from another session. Archived sessions
+  // are included: their transcripts are still viewable.
+  byAgentName: protectedProcedure
+    .input(z.object({ agentName: z.string().min(1).max(200) }))
+    .query(async ({ input }) => ({
+      session: await prisma.session.findFirst({
+        where: { agentName: input.agentName },
+        select: { id: true, name: true },
+      }),
+    })),
+
   // Deep link into a self-hosted code-server (browser VS Code) instance opened
   // on this session's worktree folder. Returns { url: null } when the editor is
   // not configured (CODE_SERVER_URL unset) or the session has no workspace on

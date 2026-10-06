@@ -61,6 +61,7 @@ model Session {
 
   @@index([lastActivityAt, id]) // sessions.list default keyset order (status != 'archived')
   @@index([status, lastActivityAt, id]) // sessions.list keyset order filtered by status
+  @@index([agentName]) // sessions.byAgentName: linking a message to the session that sent it
 }
 
 // A user prompt held back while the session is paused for a subscription rate

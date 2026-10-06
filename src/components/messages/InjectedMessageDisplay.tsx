@@ -1,10 +1,12 @@
 'use client';
 
 import { useCallback } from 'react';
+import Link from 'next/link';
 import { MessagesSquare } from 'lucide-react';
 
 import { MarkdownContent } from '@/components/MarkdownContent';
 import { parseInjectedOrigin } from '@/lib/claude-messages';
+import { trpc } from '@/lib/trpc';
 import { CopyButton } from './CopyButton';
 import { MessageTimestamp } from './MessageTimestamp';
 import { extractTextContent } from './messageHelpers';
@@ -32,7 +34,12 @@ export function InjectedMessageDisplay({
         <div className="mb-2 flex items-center gap-1.5 text-xs text-muted-foreground">
           <MessagesSquare className="h-3.5 w-3.5" />
           <span>
-            From <span className="font-mono">{origin?.sender ?? 'another session'}</span>
+            From{' '}
+            {origin?.peerAgentName ? (
+              <PeerSessionLink agentName={origin.peerAgentName} />
+            ) : (
+              <span className="font-mono">{origin?.sender ?? 'another session'}</span>
+            )}
           </span>
         </div>
         <MarkdownContent content={text} />
@@ -42,5 +49,21 @@ export function InjectedMessageDisplay({
         <MessageTimestamp createdAt={createdAt} />
       </div>
     </div>
+  );
+}
+
+/** The sending session's title linked to it; its agent name until (or unless) that resolves. */
+function PeerSessionLink({ agentName }: { agentName: string }) {
+  const { data } = trpc.sessions.byAgentName.useQuery({ agentName }, { staleTime: 60 * 1000 });
+  const session = data?.session;
+  if (!session) return <span className="font-mono">{agentName}</span>;
+  return (
+    <Link
+      href={`/session/${session.id}`}
+      title={`@${agentName}`}
+      className="font-medium text-foreground underline-offset-2 hover:underline"
+    >
+      {session.name}
+    </Link>
   );
 }
