@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { trpc } from '@/lib/trpc';
 import { resolveListQueryState } from '@/lib/list-query-state';
 import { capMatches, matchesAllTerms } from '@/lib/search';
@@ -11,21 +11,30 @@ import { SearchableCombobox } from '@/components/SearchableCombobox';
 /** Most branches the picker renders at once; big repos have hundreds. */
 export const BRANCH_PICKER_LIMIT = 100;
 
+/**
+ * The repo's branch list. The new-session form reads it too, to fall back to the
+ * default branch, so both share this one query (and its cache entry).
+ */
+export function useBranchList(repoFullName: string) {
+  return trpc.github.listBranches.useQuery(
+    { repoFullName },
+    // Listing a big repo walks several GitHub pages; don't redo it on every tab focus.
+    { enabled: !!repoFullName, staleTime: 5 * 60 * 1000 }
+  );
+}
+
 export function BranchSelector({
   repoFullName,
   selectedBranch,
   onSelect,
 }: {
   repoFullName: string;
+  /** The branch to show as chosen; the parent resolves the default before passing it. */
   selectedBranch: string;
   onSelect: (branch: string) => void;
 }) {
   const [query, setQuery] = useState('');
-  const { data, isLoading, error } = trpc.github.listBranches.useQuery(
-    { repoFullName },
-    // Listing a big repo walks several GitHub pages; don't redo it on every tab focus.
-    { enabled: !!repoFullName, staleTime: 5 * 60 * 1000 }
-  );
+  const { data, isLoading, error } = useBranchList(repoFullName);
 
   const branches = useMemo(() => data?.branches ?? [], [data]);
   const state = resolveListQueryState({
@@ -43,12 +52,6 @@ export function BranchSelector({
       ),
     [branches, query, selectedBranch]
   );
-
-  useEffect(() => {
-    if (data && data.branches.length > 0 && !selectedBranch) {
-      onSelect(data.defaultBranch);
-    }
-  }, [data, selectedBranch, onSelect]);
 
   if (state === 'loading') {
     return (

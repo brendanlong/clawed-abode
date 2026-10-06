@@ -3,6 +3,7 @@ import { SESSION_NAME_MAX_LENGTH, type Issue } from '@/lib/types';
 
 export interface FormState {
   selectedRepo: Repo | null;
+  /** The user's explicit pick, or '' for the repo's default (see `resolveBranch`). */
   selectedBranch: string;
   selectedIssue: Issue | null;
   sessionName: string;

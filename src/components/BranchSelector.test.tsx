@@ -65,7 +65,7 @@ describe('BranchSelector', () => {
     expect(screen.queryByText(/Could not load branches/)).not.toBeInTheDocument();
   });
 
-  it('auto-selects the default branch once branches load', () => {
+  it('shows the branch it is given without pushing a selection back', () => {
     const onSelect = vi.fn();
     listBranchesResult.current = {
       isLoading: false,
@@ -76,9 +76,11 @@ describe('BranchSelector', () => {
       },
     };
 
-    render(<BranchSelector repoFullName="owner/repo" selectedBranch="" onSelect={onSelect} />);
+    render(<BranchSelector repoFullName="owner/repo" selectedBranch="main" onSelect={onSelect} />);
 
-    expect(onSelect).toHaveBeenCalledWith('main');
+    expect(screen.getByRole('combobox', { name: 'Branch' })).toHaveTextContent('main');
+    // The parent derives the default; the picker only reports explicit choices.
+    expect(onSelect).not.toHaveBeenCalled();
   });
 
   it('filters branches by search text', async () => {
