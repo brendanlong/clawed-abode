@@ -16,7 +16,6 @@ const init = (terminal_slash_commands?: string[]) => ({
   type: 'system',
   subtype: 'init',
   session_id: 'sid',
-  slash_commands: ['commit', 'exit'],
   ...(terminal_slash_commands && { terminal_slash_commands }),
 });
 
@@ -58,7 +57,14 @@ describe('session commands', () => {
     expect(mockEmitCommands).toHaveBeenLastCalledWith('s', [cmd('commit'), cmd('new-skill')]);
   });
 
-  it('hides terminal-only commands named by init, whichever arrives first', () => {
+  it('hides terminal-only commands when init follows the list', () => {
+    replaceSessionCommands('s', [cmd('commit'), cmd('exit')]);
+    applyCommandMessage('s', init(['exit']));
+    expect(getSessionCommands('s')).toEqual([cmd('commit')]);
+    expect(mockEmitCommands).toHaveBeenLastCalledWith('s', [cmd('commit')]);
+  });
+
+  it('hides terminal-only commands when init precedes the list', () => {
     applyCommandMessage('s', init(['exit']));
     replaceSessionCommands('s', [cmd('commit'), cmd('exit')]);
     expect(getSessionCommands('s')).toEqual([cmd('commit')]);

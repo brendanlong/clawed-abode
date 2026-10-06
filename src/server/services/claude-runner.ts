@@ -401,7 +401,10 @@ async function establishSessionQuery(
 
   void q
     .supportedCommands()
-    .then((commands) => replaceSessionCommands(sessionId, commands))
+    .then((commands) => {
+      // A result landing after Stop/Delete would clobber a newer query's list or resurrect a forgotten one.
+      if (sessions.get(sessionId)?.query === q) replaceSessionCommands(sessionId, commands);
+    })
     .catch((err) => {
       log.debug('Failed to fetch supportedCommands', { sessionId, error: toError(err).message });
     });

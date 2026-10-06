@@ -6,7 +6,7 @@
  */
 
 import { z } from 'zod';
-import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { SDKMessage, SlashCommand } from '@anthropic-ai/claude-agent-sdk';
 
 /**
  * System init message content
@@ -29,7 +29,7 @@ export const CommandsChangedContentSchema = z.object({
       argumentHint: z.string(),
       aliases: z.array(z.string()).optional(),
       builtin: z.boolean().optional(),
-    })
+    }) satisfies z.ZodType<SlashCommand>
   ),
 });
 
