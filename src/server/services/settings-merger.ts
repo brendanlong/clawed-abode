@@ -15,6 +15,7 @@ import { GLOBAL_SCOPE } from './settings-scope';
 import { loadGlobalSettings } from './global-settings';
 import { applyMcpOAuthHeaders } from './mcp-oauth';
 import { getSessionPublicDir } from './public-dir';
+import { resolveBuiltinTools, type BuiltinToolsLevel } from '@/lib/builtin-tools';
 
 /** Per-repo settings with secrets decrypted, ready to merge. */
 export interface ResolvedRepoSettings {
@@ -33,6 +34,7 @@ export interface ResolvedGlobalSettings {
   advisorModel: string | null;
   claudeApiKey: string | null;
   settingSources: SettingSourceFlags;
+  builtinTools: BuiltinToolsLevel | null;
   envVars: ResolvedEnvVar[];
   mcpServers: ResolvedMcpServer[];
 }
@@ -67,6 +69,7 @@ export async function loadResolvedGlobalSettings(): Promise<ResolvedGlobalSettin
     advisorModel: settings.advisorModel,
     claudeApiKey: settings.claudeApiKey ? decrypt(settings.claudeApiKey) : null,
     settingSources: settingSourceFlagsFromRow(settings),
+    builtinTools: resolveBuiltinTools(settings),
     envVars: decryptEnvVars(envVarRows),
     mcpServers: decryptMcpServers(mcpServerRows),
   };
@@ -95,6 +98,8 @@ export interface MergedSessionSettings {
   claudeApiKey: string | undefined;
   /** Claude Code scopes the SDK loads filesystem config from — see {@link resolveSettingSources}. */
   settingSources: SettingSource[];
+  /** Built-in MCP tools the session gets, or null for none. */
+  builtinTools: BuiltinToolsLevel | null;
 }
 
 /**
@@ -140,6 +145,7 @@ export async function loadMergedSessionSettings(
     advisorModel: globalSettings.advisorModel?.trim() || null,
     claudeApiKey: globalSettings.claudeApiKey ?? undefined,
     settingSources: resolveSettingSources(globalSettings.settingSources),
+    builtinTools: globalSettings.builtinTools,
   };
 }
 

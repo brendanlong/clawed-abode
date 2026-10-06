@@ -39,6 +39,7 @@ import { createPushable } from '@/lib/pushable';
 import type { ToolResponse } from '@/lib/tool-response';
 import type { CancelledPrompt } from '@/lib/cancelled-prompt';
 import { extractRepoFullName } from '@/lib/utils';
+import { isDefaultSessionName } from '@/lib/session-name';
 import { createLogger, toError } from '@/lib/logger';
 import { attachToolResultSanitizations } from '@/lib/message-sanitization';
 import { partialMessageId } from '@/lib/message-cache';
@@ -70,7 +71,7 @@ import {
   replaceSessionCommands,
 } from './session-commands';
 import { resolveAgentName } from './agent-name';
-import { buildMcpServersRecord, buildSdkOptions } from './sdk-options';
+import { buildLiveMcpServersRecord, buildSdkOptions } from './sdk-options';
 import { cancelBranchPrRefresh, detectBranchAndPr } from './session-branch-pr';
 
 const log = createLogger('claude-runner');
@@ -306,7 +307,10 @@ async function establishSessionQuery(
     where: { id: sessionId },
     select: {
       status: true,
+      name: true,
       repoUrl: true,
+      branch: true,
+      createdBySessionId: true,
       repoPath: true,
       claudeModel: true,
       claudeSessionId: true,
@@ -333,13 +337,15 @@ async function establishSessionQuery(
   // The SDK only calls these once the query below exists, so `live` is set by then.
   let live: LiveQuery | null = null;
   const toolSanitizations: LiveQuery['toolSanitizations'] = new Map();
-  const { options, sessionScope } = await buildSdkOptions({
+  const { options, sessionScope, builtinMcpServer } = await buildSdkOptions({
     sessionId,
     // Best-effort: without it the CLI derives its own (unstable) name.
     agentName: await resolveAgentName(sessionId).catch((err) => {
       log.warn('Agent name unavailable', { sessionId, error: toError(err).message });
       return null;
     }),
+    sessionNameIsDefault: isDefaultSessionName(session),
+    createdBySessionId: session.createdBySessionId,
     workingDir,
     settings,
     resumeId,
@@ -376,6 +382,7 @@ async function establishSessionQuery(
     sessionScope,
     workingDir,
     boundSettings: settings,
+    builtinMcpServer,
     settingsKey,
     claudeSessionId: null,
     pendingInput: null,
@@ -456,7 +463,9 @@ async function applyLiveSettings(sessionId: string, live: LiveQuery): Promise<vo
       log.info('Applied live model change', { sessionId, model: settings.claudeModel });
     }
     if (!mcpServersEqual(bound.mcpServers, settings.mcpServers)) {
-      await live.query.setMcpServers(buildMcpServersRecord(settings.mcpServers) ?? {});
+      await live.query.setMcpServers(
+        buildLiveMcpServersRecord(settings.mcpServers, live.builtinMcpServer)
+      );
       log.info('Applied live MCP server change', { sessionId });
     }
     live.boundSettings = settings;

@@ -24,7 +24,11 @@ import type { Issue } from '@/lib/types';
 import { SESSION_NAME_MAX_LENGTH } from '@/lib/types';
 import { generateIssuePrompt } from '@/lib/issue-prompt';
 import { formReducer, initialFormState } from './form-reducer';
-import { buildCreateSessionInput, defaultSessionName, resolveBranch } from './create-session-input';
+import {
+  buildCreateSessionInput,
+  formDefaultSessionName,
+  resolveBranch,
+} from './create-session-input';
 
 function NewSessionForm() {
   const router = useRouter();
@@ -104,7 +108,7 @@ function NewSessionForm() {
               value={form.sessionName}
               onChange={(e) => dispatch({ type: 'editName', name: e.target.value })}
               maxLength={SESSION_NAME_MAX_LENGTH}
-              placeholder={defaultSessionName(form.selectedRepo, branch || 'branch')}
+              placeholder={formDefaultSessionName(form.selectedRepo, branch || 'branch')}
             />
           </div>
 

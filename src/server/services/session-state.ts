@@ -1,4 +1,9 @@
-import type { Query, SDKUserMessage, PermissionResult } from '@anthropic-ai/claude-agent-sdk';
+import type {
+  McpSdkServerConfigWithInstance,
+  Query,
+  SDKUserMessage,
+  PermissionResult,
+} from '@anthropic-ai/claude-agent-sdk';
 import type { Pushable } from '@/lib/pushable';
 import { INITIAL_LIVE_TURN, type LiveTurnState } from '@/lib/live-turn';
 import type { SanitizationInfo } from '@/lib/sanitization';
@@ -33,6 +38,8 @@ export interface LiveQuery {
   workingDir: string;
   /** Settings the query was built with (model/MCP can be applied live later). */
   boundSettings: MergedSessionSettings;
+  /** The built-in MCP server bound at establishment (see `SdkOptionsResult`). */
+  builtinMcpServer: McpSdkServerConfigWithInstance | null;
   /** Settings key (repoFullName or '__no_repo__') for reloading merged settings. */
   settingsKey: string;
   /**

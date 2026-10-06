@@ -9,6 +9,7 @@ import { sseEvents } from './events';
 import { cloneRepo, createEmptyWorkspace, removeWorkspace } from './worktree-manager';
 import {
   cleanupSession,
+  isClaudeRunning,
   refreshSessionSettings,
   reviveSession,
   sendUserMessage,
@@ -17,6 +18,7 @@ import {
 import { resolveAgentName } from './agent-name';
 import { clearQueuedPrompts } from './prompt-queue';
 import { recomputeRateLimitHolds } from './rate-limit-pause';
+import type { SessionToolsPort } from './builtin-mcp';
 
 const log = createLogger('session-lifecycle');
 
@@ -66,6 +68,8 @@ interface CreateSessionInput {
   branch?: string;
   initialPrompt?: string;
   claudeModel?: string;
+  /** Set when another session's agent creates this one (see `sessionBuiltinTools`). */
+  createdBySessionId?: string;
 }
 
 /**
@@ -86,6 +90,7 @@ export async function createSession(input: CreateSessionInput): Promise<Session>
       status: 'creating',
       statusMessage: repo ? 'Cloning repository...' : 'Creating workspace...',
       claudeModel: input.claudeModel?.trim() || null,
+      createdBySessionId: input.createdBySessionId ?? null,
     },
   });
 
@@ -252,3 +257,13 @@ export async function setSessionModel(
   await refreshSessionSettings(sessionId);
   return session;
 }
+
+/** The lifecycle as the built-in MCP server's session tools see it; handed over at startup. */
+export const sessionToolsPort: SessionToolsPort = {
+  async renameSession(sessionId, name) {
+    await updateSession(sessionId, { name });
+  },
+  createSession,
+  stopSession: shutDownSession,
+  isTurnActive: isClaudeRunning,
+};

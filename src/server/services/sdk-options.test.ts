@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import type { MergedSessionSettings } from './settings-merger';
-import { buildMcpServersRecord, buildSdkOptions } from './sdk-options';
+import { builtinToolsPrompt } from '@/lib/builtin-tools';
+import { buildLiveMcpServersRecord, buildMcpServersRecord, buildSdkOptions } from './sdk-options';
 
 vi.mock('./agent-env', () => ({
   buildAgentEnv: vi.fn(async (vars: { name: string; value: string }[]) => ({
@@ -34,6 +35,7 @@ const settings = (overrides: Partial<MergedSessionSettings> = {}): MergedSession
   advisorModel: null,
   claudeApiKey: undefined,
   settingSources: ['project'],
+  builtinTools: null,
   ...overrides,
 });
 
@@ -46,11 +48,14 @@ const recordSanitization = vi.fn();
 const build = (
   s: MergedSessionSettings,
   resumeId: string | null = null,
-  agentName: string | null = 'math-fable-d37e'
+  agentName: string | null = 'math-fable-d37e',
+  createdBySessionId: string | null = null
 ) =>
   buildSdkOptions({
     sessionId: 'sid',
     agentName,
+    sessionNameIsDefault: true,
+    createdBySessionId,
     workingDir: '/w',
     settings: s,
     resumeId,
@@ -121,6 +126,44 @@ describe('buildSdkOptions', () => {
     const without = (await build(settings())).options;
     expect(without.extraArgs).toEqual({ 'replay-user-messages': null });
     expect(mockRemoveMcp).toHaveBeenCalledWith('sid');
+  });
+
+  it('appends the built-in tools prompt only when the tools are enabled', async () => {
+    const append = async (s: MergedSessionSettings) => {
+      const { systemPrompt } = (await build(s)).options;
+      return typeof systemPrompt === 'object' && 'append' in systemPrompt
+        ? systemPrompt.append
+        : undefined;
+    };
+    expect(await append(settings({ builtinTools: 'basic' }))).toBe(
+      `prompt\n\n${builtinToolsPrompt('basic', true)}`
+    );
+    expect(await append(settings({ builtinTools: null }))).toBe('prompt');
+  });
+
+  it('gives a session another agent created the basic tools even when management is on', async () => {
+    const { options } = await build(settings({ builtinTools: 'manage' }), null, null, 'creator');
+    const { systemPrompt } = options;
+    expect(
+      typeof systemPrompt === 'object' && 'append' in systemPrompt && systemPrompt.append
+    ).toBe(`prompt\n\n${builtinToolsPrompt('basic', true)}`);
+  });
+
+  it('registers the built-in server in-process only when enabled, keeping configured servers in the file', async () => {
+    const enabled = await build(
+      settings({
+        builtinTools: 'basic',
+        mcpServers: [{ name: 's', type: 'stdio', command: 'node' }],
+      })
+    );
+    expect(Object.keys(enabled.options.mcpServers ?? {})).toEqual(['clawed-abode']);
+    expect(enabled.options.mcpServers?.['clawed-abode']).toMatchObject({ type: 'sdk' });
+    expect(enabled.builtinMcpServer).toBe(enabled.options.mcpServers?.['clawed-abode']);
+    expect(enabled.options.extraArgs?.['mcp-config']).toBe('/ws/sid/mcp-config.json');
+
+    const disabled = await build(settings({ builtinTools: null }));
+    expect(disabled.options.mcpServers).toBeUndefined();
+    expect(disabled.builtinMcpServer).toBeNull();
   });
 
   it('adds the advisor settings arg only when an advisor model is set, alongside the MCP arg', async () => {
@@ -218,5 +261,18 @@ describe('buildSdkOptions', () => {
     mockScheduleRefresh.mockClear();
     await runHooks('mcp__GitHub__merge_pull_request', '');
     expect(mockScheduleRefresh).toHaveBeenCalledWith('sid', '/w');
+  });
+});
+
+describe('buildLiveMcpServersRecord', () => {
+  it('keeps the bound built-in server alongside the configured ones so a live update never drops it', async () => {
+    const { builtinMcpServer } = await build(settings({ builtinTools: 'manage' }));
+    const servers = [{ name: 's', type: 'stdio' as const, command: 'node' }];
+
+    expect(buildLiveMcpServersRecord(servers, builtinMcpServer)).toEqual({
+      s: { command: 'node' },
+      'clawed-abode': builtinMcpServer,
+    });
+    expect(buildLiveMcpServersRecord([], null)).toEqual({});
   });
 });

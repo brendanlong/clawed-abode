@@ -12,6 +12,7 @@ import {
   type ResolvedMcpServer,
 } from '@/lib/settings-types';
 import { formatOAuthStatus, type McpOAuthTokenSnapshot, type OAuthStatusRow } from './mcp-oauth';
+import { BUILTIN_MCP_SERVER_NAME } from '@/lib/builtin-tools';
 
 // ─── Validation Schemas ──────────────────────────────────────────────
 
@@ -39,8 +40,16 @@ export type McpServerEnvValue = z.infer<typeof mcpServerEnvValueSchema>;
 
 const mcpServerEnvSchema = z.record(z.string(), mcpServerEnvValueSchema);
 
+const mcpServerNameSchema = z
+  .string()
+  .min(1)
+  .max(100)
+  .refine((name) => name !== BUILTIN_MCP_SERVER_NAME, {
+    message: `"${BUILTIN_MCP_SERVER_NAME}" is reserved for the built-in server`,
+  });
+
 const mcpServerStdioSchema = z.object({
-  name: z.string().min(1).max(100),
+  name: mcpServerNameSchema,
   type: z.literal('stdio').default('stdio'),
   command: z.string().min(1).max(1000),
   args: z.array(z.string()).optional(),
@@ -62,7 +71,7 @@ const mcpOAuthConfigSchema = z.object({
 export type McpOAuthConfigInput = z.infer<typeof mcpOAuthConfigSchema>;
 
 const mcpServerHttpSchema = z.object({
-  name: z.string().min(1).max(100),
+  name: mcpServerNameSchema,
   type: mcpHttpServerTypeSchema,
   url: z.string().url().max(2000),
   headers: mcpServerEnvSchema.optional(),

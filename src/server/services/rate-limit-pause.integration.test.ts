@@ -57,6 +57,7 @@ vi.mock('./settings-merger', async (importOriginal) => {
       advisorModel: null,
       claudeApiKey: undefined,
       settingSources: ['project'],
+      builtinTools: null,
     }),
   };
 });

@@ -78,6 +78,10 @@ Opt-in (`PUBLIC_FILES_PORT` + `PUBLIC_FILES_URL`): a second HTTP server in the s
 
 `DEFAULT_SYSTEM_PROMPT` in [`src/lib/system-prompt.ts`](../src/lib/system-prompt.ts) — the prompt text states its own rationale: the user has no local file access (so commit/push/PR is mandatory), and every session shares one host user with the app server (so kill by PID or a `--cgroup`-scoped pattern, never by name).
 
+### Built-in Tools
+
+Agents get an in-process MCP server for renaming their own session and finding other sessions' messaging addresses, and optionally (off by default) for managing other sessions — see [`settings.md`](settings.md#built-in-tools).
+
 ## Voice
 
 Speech input uses the browser's `SpeechRecognition` ([`useVoiceRecording`](../src/hooks/useVoiceRecording.ts)). Read-aloud is Kokoro only, through any OpenAI-compatible `/audio/speech` API (OpenRouter or a local Kokoro-FastAPI; opt-in with `TTS_BASE_URL`). There is deliberately no browser-voice fallback: two playback engines weren't worth it for a provider this cheap in an app that needs the network anyway.

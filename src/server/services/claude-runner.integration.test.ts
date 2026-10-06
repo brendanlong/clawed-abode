@@ -53,6 +53,7 @@ const baseSettings = {
   advisorModel: null as string | null,
   claudeApiKey: undefined,
   settingSources: ['project'] as ('user' | 'project' | 'local')[],
+  builtinTools: null,
 };
 
 // Stub the MCP config file writer so the wiring test doesn't touch the real
@@ -923,6 +924,38 @@ describe('claude-runner persistent streaming loop', () => {
 
     fake.emit(result());
     await waitFor(() => !isClaudeRunning(sessionId));
+    stopSession(sessionId);
+  });
+
+  it('keeps the built-in MCP server connected through a live MCP settings change', async () => {
+    const fake = makeFakeQuery();
+    let builtin: unknown;
+    _setQueryFactory((p) => {
+      builtin = (p.options as { mcpServers?: Record<string, unknown> }).mcpServers?.[
+        'clawed-abode'
+      ];
+      return fake.factory(p);
+    });
+    mockLoadSettings.mockResolvedValue({ ...baseSettings, builtinTools: 'basic' });
+    const sessionId = await createRunningSession();
+
+    await sendUserMessage(sessionId, 'hello');
+    await fake.deliver();
+    expect(builtin).toMatchObject({ type: 'sdk' });
+    fake.emit(result());
+    await waitFor(() => !isClaudeRunning(sessionId));
+
+    const added = { name: 'added', type: 'stdio' as const, command: 'node' };
+    mockLoadSettings.mockResolvedValue({
+      ...baseSettings,
+      builtinTools: 'basic',
+      mcpServers: [added],
+    });
+    await sendUserMessage(sessionId, 'again');
+    expect(fake.setMcpServers).toHaveBeenCalledWith({
+      added: { command: 'node' },
+      'clawed-abode': builtin,
+    });
     stopSession(sessionId);
   });
 
