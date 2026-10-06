@@ -3,6 +3,7 @@ import { access, rm } from 'fs/promises';
 import { randomUUID as uuid } from 'node:crypto';
 import { setupTestDb, teardownTestDb, clearTestDb } from '@/test/setup-test-db';
 import { createTestSession } from '@/test/fixtures';
+import { sessionStatusSchema } from '@/lib/session-display-status';
 import { createEmptyWorkspace, getSessionWorkspacePath } from './worktree-manager';
 
 let removeArchivedWorkspaces: (typeof import('./session-lifecycle'))['removeArchivedWorkspaces'];
@@ -39,22 +40,22 @@ describe('removeArchivedWorkspaces', () => {
     await teardownTestDb();
   });
 
-  it('removes archived sessions’ workspaces and keeps live ones', async () => {
+  it('removes archived sessions’ workspaces and keeps every other status’s', async () => {
     const archived = await createTestSession({ status: 'archived' });
-    const running = await createTestSession({ status: 'running' });
-    const stopped = await createTestSession({ status: 'stopped' });
     const archivedDir = await workspaceFor(archived.id);
-    const runningDir = await workspaceFor(running.id);
-    const stoppedDir = await workspaceFor(stopped.id);
+    const keptDirs = await Promise.all(
+      sessionStatusSchema.options
+        .filter((status) => status !== 'archived')
+        .map(async (status) => workspaceFor((await createTestSession({ status })).id))
+    );
 
     await removeArchivedWorkspaces();
 
     expect(await exists(archivedDir)).toBe(false);
-    expect(await exists(runningDir)).toBe(true);
-    expect(await exists(stoppedDir)).toBe(true);
+    for (const dir of keptDirs) expect(await exists(dir)).toBe(true);
   });
 
-  it('never removes a workspace with no session row (it may be a co-tenant instance’s)', async () => {
+  it('keeps a workspace with no session row', async () => {
     const unknownDir = await workspaceFor(uuid());
 
     await removeArchivedWorkspaces();
