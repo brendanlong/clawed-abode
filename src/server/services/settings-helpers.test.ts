@@ -151,6 +151,7 @@ describe('settings-helpers', () => {
       ['an unknown auth type', { authType: 'basic' }],
       ['an http server without a URL', { url: null }],
       ['stdio args that are not a string array', { type: 'stdio', args: '[1]' }],
+      ['stdio args that are not JSON', { type: 'stdio', args: 'not json' }],
     ])('throws on %s, naming the server', (_, patch) => {
       expect(() => formatMcpServersForDisplay([{ ...row, ...patch }])).toThrow(/"bad"/);
       expect(() => decryptMcpServers([{ ...row, ...patch }])).toThrow(/"bad"/);

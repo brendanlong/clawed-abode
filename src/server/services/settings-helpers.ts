@@ -188,15 +188,23 @@ const dbMcpServerFieldsSchema = z.discriminatedUnion('type', [
 ]);
 
 function parseDbMcpServer(mcp: DbMcpServer): z.infer<typeof dbMcpServerFieldsSchema> {
+  const invalid = (reason: string) =>
+    new Error(`Invalid stored MCP server "${mcp.name}": ${reason}`);
+  let args: unknown = null;
+  if (mcp.args !== null) {
+    try {
+      args = JSON.parse(mcp.args);
+    } catch {
+      throw invalid('args is not JSON');
+    }
+  }
   const parsed = dbMcpServerFieldsSchema.safeParse({
     type: mcp.type,
     authType: mcp.authType,
     url: mcp.url,
-    args: mcp.args === null ? null : JSON.parse(mcp.args),
+    args,
   });
-  if (!parsed.success) {
-    throw new Error(`Invalid stored MCP server "${mcp.name}": ${z.prettifyError(parsed.error)}`);
-  }
+  if (!parsed.success) throw invalid(z.prettifyError(parsed.error));
   return parsed.data;
 }
 

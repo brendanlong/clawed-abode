@@ -40,8 +40,20 @@ const issueSchema = z.object({
   id: z.number(),
   number: z.number(),
   title: z.string(),
-  body: z.string().nullable(),
-  labels: z.array(z.object({ name: z.string(), color: z.string() })),
+  // Search results may omit `body`, and GitHub's spec lets a label's color be null.
+  body: z
+    .string()
+    .nullish()
+    .transform((body) => body ?? null),
+  labels: z.array(
+    z.object({
+      name: z.string(),
+      color: z
+        .string()
+        .nullable()
+        .transform((color) => color ?? ''),
+    })
+  ),
   comments: z.number(),
   pull_request: z.unknown().optional(),
 });

@@ -223,7 +223,7 @@ const pullRequestSchema = z.object({
   number: z.number(),
   title: z.string(),
   state: z.enum(['open', 'closed']),
-  draft: z.boolean(),
+  draft: z.boolean().default(false),
   merged_at: z.string().nullable(),
   html_url: z.string(),
   user: z.object({ login: z.string() }).nullable(),

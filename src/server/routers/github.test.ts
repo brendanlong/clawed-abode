@@ -532,6 +532,30 @@ describe('githubRouter', () => {
       expect(result.nextCursor).toBe('3');
     });
 
+    it('accepts a search result with no body and a label with no color', async () => {
+      mockFetch.mockResolvedValue(
+        createMockResponse({
+          items: [
+            { id: 1, number: 7, title: 't', labels: [{ name: 'x', color: null }], comments: 0 },
+          ],
+        })
+      );
+
+      const caller = createCaller('auth-session-id');
+      const result = await caller.github.listIssues({ repoFullName: 'owner/repo', search: 't' });
+
+      expect(result.issues).toEqual([
+        {
+          id: 1,
+          number: 7,
+          title: 't',
+          body: null,
+          labels: [{ name: 'x', color: '' }],
+          comments: 0,
+        },
+      ]);
+    });
+
     it('fails instead of returning garbage when GitHub sends an unexpected shape', async () => {
       mockFetch.mockResolvedValue(createMockResponse({ message: 'not a list' }));
 
