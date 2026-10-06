@@ -411,6 +411,34 @@ describe('rate-limit pause', () => {
     runner.stopSession(sessionId);
   });
 
+  it('does not re-arm the resume nudge when the header Stop lands mid-pause', async () => {
+    const fake = makeFakeQuery();
+    runner._setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+    const { shutDownSession } = await import('./session-lifecycle');
+
+    await sendAndDeliver(fake, sessionId, 'long job', { settle: false });
+    await runner.sendUserMessage(sessionId, 'unread');
+
+    // Hold the pause inside its recall while the user stops the session.
+    let releaseCancel!: () => void;
+    fake.cancelAsyncMessage.mockImplementationOnce(
+      () => new Promise<boolean>((resolve) => (releaseCancel = () => resolve(true)))
+    );
+    const rejection = rejectFiveHourWindow(fake);
+    await waitFor(() => fake.cancelAsyncMessage.mock.calls.length > 0);
+
+    await shutDownSession(sessionId);
+    releaseCancel();
+    await rejection;
+
+    // The rejection landed mid-turn, which would normally earn a nudge — but the
+    // user stopped the session, and the next Start must not resume that work.
+    const row = await testPrisma.session.findUniqueOrThrow({ where: { id: sessionId } });
+    expect(row.status).toBe('stopped');
+    expect(row.resumeAfterRateLimit).toBe(false);
+  });
+
   it('lets Stop take back what a pause recalled while the pause is still interrupting', async () => {
     const fake = makeFakeQuery();
     runner._setQueryFactory(fake.factory);
