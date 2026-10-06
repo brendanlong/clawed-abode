@@ -737,4 +737,123 @@ describe('sessionsRouter integration', () => {
       expect(mockRemoveWorkspace).not.toHaveBeenCalled();
     });
   });
+
+  // A concurrent delete can archive the row after sessionProcedure loaded it.
+  // Simulate that by archiving the row but handing the procedure the stale copy.
+  describe('racing a concurrent archive', () => {
+    const archivedBehindTheLoad = async (status: string) => {
+      const session = await createNoRepoSession({ name: 'Racing', status });
+      vi.spyOn(testPrisma.session, 'findUnique').mockResolvedValueOnce(session);
+      await testPrisma.session.update({ where: { id: session.id }, data: { status: 'archived' } });
+      return session;
+    };
+    const statusOf = async (id: string) =>
+      (await testPrisma.session.findUniqueOrThrow({ where: { id } })).status;
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('stop leaves the session archived', async () => {
+      const session = await archivedBehindTheLoad('running');
+
+      const result = await createCaller('auth-session-id').sessions.stop({
+        sessionId: session.id,
+      });
+
+      expect(result.session.status).toBe('archived');
+      expect(await statusOf(session.id)).toBe('archived');
+      expect(mockStopSession).toHaveBeenCalledWith(session.id);
+    });
+
+    it('start refuses to revive the session', async () => {
+      const session = await archivedBehindTheLoad('stopped');
+
+      await expect(
+        createCaller('auth-session-id').sessions.start({ sessionId: session.id })
+      ).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+      expect(await statusOf(session.id)).toBe('archived');
+    });
+
+    it('setModel refuses to write', async () => {
+      const session = await archivedBehindTheLoad('running');
+
+      await expect(
+        createCaller('auth-session-id').sessions.setModel({
+          sessionId: session.id,
+          claudeModel: 'sonnet',
+        })
+      ).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+      const row = await testPrisma.session.findUniqueOrThrow({ where: { id: session.id } });
+      expect(row.claudeModel).toBeNull();
+    });
+
+    it('a second delete leaves workspace removal to the first', async () => {
+      const session = await archivedBehindTheLoad('running');
+
+      await createCaller('auth-session-id').sessions.delete({ sessionId: session.id });
+
+      expect(mockRemoveWorkspace).not.toHaveBeenCalled();
+      expect(mockSseEvents.emitSessionUpdate).not.toHaveBeenCalled();
+    });
+
+    it('stop leaves a session that is still being set up to its setup', async () => {
+      const session = await createNoRepoSession({ name: 'Creating', status: 'creating' });
+
+      const result = await createCaller('auth-session-id').sessions.stop({
+        sessionId: session.id,
+      });
+
+      expect(result.session.status).toBe('creating');
+      expect(await statusOf(session.id)).toBe('creating');
+    });
+
+    it('a clone that finishes after delete leaves the session archived and cleans up', async () => {
+      let finishClone!: () => void;
+      mockCloneRepo.mockReturnValueOnce(
+        new Promise((resolve) => (finishClone = () => resolve({ repoPath: 'repo' })))
+      );
+      mockRemoveWorkspace.mockResolvedValue(undefined);
+      const caller = createCaller('auth-session-id');
+      const { session } = await caller.sessions.create({
+        name: 'Deleted mid-clone',
+        repoFullName: 'owner/repo',
+        branch: 'main',
+        initialPrompt: 'Do something',
+      });
+      await vi.waitFor(() => expect(mockCloneRepo).toHaveBeenCalled());
+
+      await caller.sessions.delete({ sessionId: session.id });
+      expect(mockRemoveWorkspace).toHaveBeenCalledTimes(1);
+
+      finishClone();
+      // The late clone wrote into the removed workspace, so setup removes it again.
+      await vi.waitFor(() => expect(mockRemoveWorkspace).toHaveBeenCalledTimes(2));
+      expect(await statusOf(session.id)).toBe('archived');
+      expect(mockSendUserMessage).not.toHaveBeenCalled();
+    });
+
+    it('a clone that fails after delete leaves the session archived', async () => {
+      let failClone!: () => void;
+      mockCloneRepo.mockReturnValueOnce(
+        new Promise((_, reject) => (failClone = () => reject(new Error('clone failed'))))
+      );
+      mockRemoveWorkspace.mockResolvedValue(undefined);
+      const caller = createCaller('auth-session-id');
+      const { session } = await caller.sessions.create({
+        name: 'Deleted mid-clone',
+        repoFullName: 'owner/repo',
+        branch: 'main',
+      });
+      await vi.waitFor(() => expect(mockCloneRepo).toHaveBeenCalled());
+
+      await caller.sessions.delete({ sessionId: session.id });
+      failClone();
+
+      await vi.waitFor(() => expect(mockRemoveWorkspace).toHaveBeenCalledTimes(2));
+      const row = await testPrisma.session.findUniqueOrThrow({ where: { id: session.id } });
+      expect(row.status).toBe('archived');
+      expect(row.statusMessage).not.toBe('clone failed');
+    });
+  });
 });

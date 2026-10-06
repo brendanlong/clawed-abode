@@ -1,26 +1,22 @@
 import { z } from 'zod';
 import { router, protectedProcedure, sessionProcedure } from '../trpc';
 import { prisma } from '@/lib/prisma';
-import { TRPCError } from '@trpc/server';
-import {
-  cloneRepo,
-  createEmptyWorkspace,
-  removeWorkspace,
-  getSessionWorkspacePath,
-} from '../services/worktree-manager';
+import { getSessionWorkspacePath } from '../services/worktree-manager';
 import { buildEditorUrl } from '@/lib/editor-url';
 import {
-  sendUserMessage,
-  stopSession,
-  cleanupSession,
   isClaudeRunning,
   isSessionBackgroundActive,
   isSessionRateLimitPaused,
   recomputeRateLimitHolds,
-  refreshSessionSettings,
 } from '../services/claude-runner';
-import { sseEvents } from '../services/events';
-import { createLogger, toError } from '@/lib/logger';
+import {
+  archiveSession,
+  createSession,
+  setSessionModel,
+  shutDownSession,
+  startSession,
+  updateSession,
+} from '../services/session-lifecycle';
 import { env } from '@/lib/env';
 import { SESSION_NAME_MAX_LENGTH } from '@/lib/types';
 import { toSessionView } from '@/lib/session-view';
@@ -29,10 +25,7 @@ import { keysetPage, keysetPageInputSchema } from '@/lib/keyset-page';
 import { sessionStatusSchema } from '@/lib/session-display-status';
 import { thresholdSchema } from '@/lib/rate-limit';
 import { repoFullNameSchema } from '@/lib/repo-full-name';
-import { clearQueuedPrompts } from '../services/prompt-queue';
 import { refreshStalePullRequests } from '../services/session-branch-pr';
-
-const log = createLogger('sessions');
 
 const sessionListSelect = {
   id: true,
@@ -48,74 +41,6 @@ const sessionListSelect = {
   createdAt: true,
 } satisfies Prisma.SessionSelect;
 
-// Background session setup - runs after create mutation returns
-async function setupSessionBackground(
-  sessionId: string,
-  repoFullName: string | null,
-  branch: string | null,
-  initialPrompt: string | undefined
-): Promise<void> {
-  log.info('Starting session setup', { sessionId, repoFullName, branch });
-
-  const updateStatus = async (message: string) => {
-    const session = await prisma.session.update({
-      where: { id: sessionId },
-      data: { statusMessage: message },
-    });
-    sseEvents.emitSessionUpdate(sessionId, session);
-  };
-
-  try {
-    let repoPath = '';
-
-    if (repoFullName && branch) {
-      // Set up a git worktree for this session
-      await updateStatus('Cloning repository...');
-      const result = await cloneRepo({ sessionId, repoFullName, branch });
-      repoPath = result.repoPath;
-      log.info('Worktree created', { sessionId, repoPath });
-    } else {
-      // No-repo session: create an empty workspace directory
-      await updateStatus('Creating workspace...');
-      await createEmptyWorkspace(sessionId);
-    }
-
-    // Session is ready - mark as running
-    const session = await prisma.session.update({
-      where: { id: sessionId },
-      data: {
-        repoPath,
-        status: 'running',
-        statusMessage: null,
-      },
-    });
-    sseEvents.emitSessionUpdate(sessionId, session);
-
-    log.info('Session setup complete', { sessionId });
-
-    // Send the initial prompt if provided. sendUserMessage establishes the
-    // streaming query (loading settings internally) and pushes the prompt.
-    if (initialPrompt?.trim()) {
-      log.info('Sending initial prompt', { sessionId });
-      sendUserMessage(sessionId, initialPrompt.trim()).catch((err) => {
-        log.error('Initial prompt failed', toError(err), { sessionId });
-      });
-    }
-  } catch (error) {
-    log.error('Session setup failed', toError(error), { sessionId, repoFullName, branch });
-
-    const errorMessage = error instanceof Error ? error.message : 'Failed to create session';
-    const session = await prisma.session.update({
-      where: { id: sessionId },
-      data: {
-        status: 'error',
-        statusMessage: errorMessage,
-      },
-    });
-    sseEvents.emitSessionUpdate(sessionId, session);
-  }
-}
-
 export const sessionsRouter = router({
   create: protectedProcedure
     .input(
@@ -127,32 +52,7 @@ export const sessionsRouter = router({
         claudeModel: z.string().max(200).optional(),
       })
     )
-    .mutation(async ({ input }) => {
-      const hasRepo = !!input.repoFullName && !!input.branch;
-
-      const session = await prisma.session.create({
-        data: {
-          name: input.name,
-          repoUrl: hasRepo ? `https://github.com/${input.repoFullName}.git` : null,
-          branch: hasRepo ? input.branch! : null,
-          status: 'creating',
-          statusMessage: hasRepo ? 'Cloning repository...' : 'Creating workspace...',
-          claudeModel: input.claudeModel?.trim() || null,
-        },
-      });
-
-      // Start setup in background
-      setupSessionBackground(
-        session.id,
-        input.repoFullName ?? null,
-        input.branch ?? null,
-        input.initialPrompt
-      ).catch((error) => {
-        log.error('Unhandled error in session setup', toError(error), { sessionId: session.id });
-      });
-
-      return { session: toSessionView(session) };
-    }),
+    .mutation(async ({ input }) => ({ session: toSessionView(await createSession(input)) })),
 
   // Keyset-paginated by (lastActivityAt desc, id desc). Archived sessions are
   // excluded unless `status: 'archived'` is requested explicitly, so the home page
@@ -211,50 +111,18 @@ export const sessionsRouter = router({
     return { url: buildEditorUrl(env.CODE_SERVER_URL, workspaceDir) };
   }),
 
-  start: sessionProcedure.mutation(async ({ ctx, input }) => {
-    const { session } = ctx;
-
-    if (session.status === 'running') {
-      return { session: toSessionView(session) };
-    }
-
-    // Only stopped or error sessions can be started.
-    // Archived sessions have their workspace removed, creating sessions are in progress.
-    if (session.status !== 'stopped' && session.status !== 'error') {
-      throw new TRPCError({
-        code: 'PRECONDITION_FAILED',
-        message: `Cannot start session in '${session.status}' state`,
-      });
-    }
-
-    // Queries run in-process and are established lazily on the next prompt.
-    const updatedSession = await prisma.session.update({
-      where: { id: session.id },
-      data: { status: 'running' },
-    });
-
-    sseEvents.emitSessionUpdate(input.sessionId, updatedSession);
-    // Only running sessions drain, so a session stopped while it held queued
-    // prompts would otherwise strand them until the next reading change.
-    await recomputeRateLimitHolds();
-    return { session: toSessionView(updatedSession) };
-  }),
+  start: sessionProcedure.mutation(async ({ input }) => ({
+    session: toSessionView(await startSession(input.sessionId)),
+  })),
 
   rename: sessionProcedure
     .input(z.object({ name: z.string().trim().min(1).max(SESSION_NAME_MAX_LENGTH) }))
-    .mutation(async ({ ctx, input }) => {
-      const { session } = ctx;
-
+    .mutation(async ({ input }) => {
       // Renaming only changes the display name; the session id and workspace
       // are untouched. lastActivityAt is deliberately not bumped so renaming
       // doesn't reorder the session list.
-      const updatedSession = await prisma.session.update({
-        where: { id: session.id },
-        data: { name: input.name },
-      });
-
-      sseEvents.emitSessionUpdate(input.sessionId, updatedSession);
-      return { session: toSessionView(updatedSession) };
+      const session = await updateSession(input.sessionId, { name: input.name });
+      return { session: toSessionView(session) };
     }),
 
   /**
@@ -269,97 +137,28 @@ export const sessionsRouter = router({
         threshold: thresholdSchema.nullable(),
       })
     )
-    .mutation(async ({ ctx, input }) => {
-      const updatedSession = await prisma.session.update({
-        where: { id: ctx.session.id },
-        data: {
-          rateLimitPauseEnabled: input.enabled,
-          rateLimitPauseThreshold: input.threshold,
-        },
+    .mutation(async ({ input }) => {
+      const session = await updateSession(input.sessionId, {
+        rateLimitPauseEnabled: input.enabled,
+        rateLimitPauseThreshold: input.threshold,
       });
       await recomputeRateLimitHolds();
-      sseEvents.emitSessionUpdate(input.sessionId, updatedSession);
-      return { session: toSessionView(updatedSession) };
+      return { session: toSessionView(session) };
     }),
 
   setModel: sessionProcedure
     .input(z.object({ claudeModel: z.string().max(200).nullable() }))
-    .mutation(async ({ ctx, input }) => {
-      const { session } = ctx;
-
-      // Archived sessions are read-only (workspace removed, no live query).
-      if (session.status === 'archived') {
-        throw new TRPCError({
-          code: 'PRECONDITION_FAILED',
-          message: 'Cannot change the model of an archived session',
-        });
-      }
-
+    .mutation(async ({ input }) => {
       const model = input.claudeModel?.trim() || null;
-
-      const updatedSession = await prisma.session.update({
-        where: { id: session.id },
-        data: { claudeModel: model },
-      });
-
-      // Apply to the live query now (no-op if the session isn't running).
-      await refreshSessionSettings(input.sessionId);
-
-      sseEvents.emitSessionUpdate(input.sessionId, updatedSession);
-      return { session: toSessionView(updatedSession) };
+      return { session: toSessionView(await setSessionModel(input.sessionId, model)) };
     }),
 
-  stop: sessionProcedure.mutation(async ({ ctx, input }) => {
-    const { session } = ctx;
+  stop: sessionProcedure.mutation(async ({ input }) => ({
+    session: toSessionView(await shutDownSession(input.sessionId)),
+  })),
 
-    // Stop any running Claude query (synchronous: closes input + query). This
-    // runs even for an archived session: a concurrent send can re-establish a
-    // query in the window between delete's cleanupSession and its archive
-    // write, and stop has to stay the way out of that. No-op when idle.
-    void stopSession(input.sessionId);
-
-    // Archived sessions keep their status — the workspace is already gone, and
-    // 'stopped' would let start() revive the session with nothing on disk.
-    if (session.status === 'archived') {
-      return { session: toSessionView(session) };
-    }
-
-    // Stopping also withdraws a pending rate-limit resume nudge, or Start would
-    // have the session pick the cut-short work back up on its own.
-    const updatedSession = await prisma.session.update({
-      where: { id: session.id },
-      data: { status: 'stopped', resumeAfterRateLimit: false },
-    });
-
-    sseEvents.emitSessionUpdate(input.sessionId, updatedSession);
-    return { session: toSessionView(updatedSession) };
-  }),
-
-  delete: sessionProcedure.mutation(async ({ ctx, input }) => {
-    const { session } = ctx;
-
-    if (session.status === 'archived') {
-      return { success: true };
-    }
-
-    // The in-memory teardown is synchronous; the scope stop is awaited below.
-    const stopped = cleanupSession(input.sessionId);
-
-    // Archive (keeping messages for viewing) and clear the queue before waiting
-    // on the stop: while the row still reads `running` with prompts queued, a
-    // send or rate-limit drain would revive the session into a fresh scope. The
-    // QueuedPrompt cascade never fires for a kept row, so the queue must be
-    // cleared here or it waits forever, badged in a read-only transcript.
-    const [updatedSession] = await Promise.all([
-      prisma.session.update({ where: { id: session.id }, data: { status: 'archived' } }),
-      clearQueuedPrompts(session.id),
-    ]);
-    sseEvents.emitSessionUpdate(input.sessionId, updatedSession);
-
-    // Remove the workspace only once the session's processes are dead, or a
-    // daemon it left running (e.g. `next dev`) recreates files after the rm.
-    await stopped;
-    await removeWorkspace(session.id);
+  delete: sessionProcedure.mutation(async ({ input }) => {
+    await archiveSession(input.sessionId);
     return { success: true };
   }),
 });
