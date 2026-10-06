@@ -1,6 +1,7 @@
 'use client';
 
-import { useId, useState } from 'react';
+import { useId, useState, type ReactNode } from 'react';
+import { useMutation } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -13,11 +14,14 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Plug, Check, X, KeyRound, TriangleAlert, Unplug } from 'lucide-react';
-import { SettingsListEditor, type SettingsScope } from './SettingsListEditor';
+import { SettingsListEditor, SettingsListRow, type SettingsScope } from './SettingsListEditor';
 import { KeyValueListEditor } from './KeyValueListEditor';
-import { buildKeyValueRecord } from '@/lib/key-value-entries';
 import { trpc } from '@/lib/trpc';
-import { initialMcpServerForm, type McpServerFormFields } from './mcp-server-form';
+import {
+  buildMcpServerInput,
+  initialMcpServerForm,
+  type McpServerFormFields,
+} from './mcp-server-form';
 import {
   mcpAuthTypeSchema,
   mcpServerTypeSchema,
@@ -47,66 +51,6 @@ export function McpServerSection({
   onUpdate,
   scope,
 }: McpServerSectionProps) {
-  const [validationResults, setValidationResults] = useState<ReadonlyMap<string, ValidationResult>>(
-    new Map()
-  );
-  const [validatingServer, setValidatingServer] = useState<string | null>(null);
-  /** Server whose OAuth flow is being prepared (discovery + registration happen server-side). */
-  const [connectingServer, setConnectingServer] = useState<string | null>(null);
-  /** Why starting an OAuth flow failed, by server name. */
-  const [connectErrors, setConnectErrors] = useState<ReadonlyMap<string, string>>(new Map());
-
-  const handleValidate = async (name: string) => {
-    setValidatingServer(name);
-    let result: ValidationResult;
-    try {
-      result = await mutations.validateMcpServer(name);
-    } catch (err) {
-      result = { success: false, error: err instanceof Error ? err.message : 'Validation failed' };
-    }
-    setValidationResults((prev) => new Map(prev).set(name, result));
-    setValidatingServer(null);
-  };
-
-  const startConnecting = (name: string) => {
-    setConnectingServer(name);
-    setConnectErrors((prev) => {
-      const next = new Map(prev);
-      next.delete(name);
-      return next;
-    });
-  };
-
-  const connectFailed = (name: string, err: unknown, fallback: string) => {
-    setConnectingServer(null);
-    setConnectErrors((prev) =>
-      new Map(prev).set(name, err instanceof Error ? err.message : fallback)
-    );
-  };
-
-  // The authorization server has to talk to the user's browser, so the flow is a
-  // full navigation away and back through /api/mcp/oauth/callback.
-  const handleConnect = async (name: string) => {
-    startConnecting(name);
-    try {
-      const { authorizeUrl } = await mutations.startMcpOAuth(name);
-      window.location.assign(authorizeUrl);
-    } catch (err) {
-      connectFailed(name, err, 'Could not start authorization');
-    }
-  };
-
-  const handleDisconnect = async (name: string) => {
-    startConnecting(name);
-    try {
-      await mutations.disconnectMcpOAuth(name);
-      setConnectingServer(null);
-      onUpdate();
-    } catch (err) {
-      connectFailed(name, err, 'Could not disconnect');
-    }
-  };
-
   return (
     <SettingsListEditor
       title="MCP Servers"
@@ -115,79 +59,14 @@ export function McpServerSection({
       items={mcpServers}
       onDelete={mutations.deleteMcpServer}
       onUpdate={onUpdate}
-      renderItem={(server) => (
-        <>
-          <div className="font-mono text-sm flex items-center gap-2">
-            {server.name}
-            <span className="text-xs text-muted-foreground font-sans uppercase">{server.type}</span>
-          </div>
-          <div className="text-xs text-muted-foreground truncate">
-            {server.type === 'stdio' ? `${server.command} ${server.args.join(' ')}` : server.url}
-          </div>
-        </>
+      renderRow={(server, editorActions) => (
+        <McpServerRow
+          server={server}
+          editorActions={editorActions}
+          mutations={mutations}
+          onUpdate={onUpdate}
+        />
       )}
-      extraItemActions={(server) => {
-        const isTesting = validatingServer === server.name;
-        const isConnecting = connectingServer === server.name;
-        return (
-          <>
-            {server.authType === 'oauth' && (
-              <>
-                {/* Always offered, not just when disconnected: a grant whose refresh
-                    is failing needs re-authorizing, not disconnecting first. */}
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => handleConnect(server.name)}
-                  disabled={isConnecting}
-                  title={
-                    server.oauth?.state === 'connected'
-                      ? 'Re-authorize with OAuth'
-                      : 'Connect with OAuth'
-                  }
-                >
-                  {isConnecting ? (
-                    <Spinner size="sm" className="h-4 w-4" />
-                  ) : (
-                    <KeyRound className="h-4 w-4" />
-                  )}
-                </Button>
-                {server.oauth?.state === 'connected' && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => handleDisconnect(server.name)}
-                    disabled={isConnecting}
-                    title="Disconnect"
-                  >
-                    <Unplug className="h-4 w-4" />
-                  </Button>
-                )}
-              </>
-            )}
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => handleValidate(server.name)}
-              disabled={isTesting}
-              title="Test connection"
-            >
-              {isTesting ? <Spinner size="sm" className="h-4 w-4" /> : <Plug className="h-4 w-4" />}
-            </Button>
-          </>
-        );
-      }}
-      renderItemExtra={(server) => {
-        const result = validationResults.get(server.name);
-        const connectError = connectErrors.get(server.name);
-        return (
-          <>
-            {server.oauth && <OAuthStatusBadge status={server.oauth} />}
-            {connectError ? <ErrorBadge message={connectError} /> : null}
-            {result ? <ValidationResultBadge result={result} /> : null}
-          </>
-        );
-      }}
       renderForm={({ existingItem, onClose, onSuccess }) => (
         <McpServerForm
           existingServer={existingItem}
@@ -197,6 +76,113 @@ export function McpServerSection({
         />
       )}
     />
+  );
+}
+
+type OAuthAction = 'connect' | 'disconnect';
+
+function McpServerRow({
+  server,
+  editorActions,
+  mutations,
+  onUpdate,
+}: {
+  server: McpServer;
+  editorActions: ReactNode;
+  mutations: McpServerMutations;
+  onUpdate: () => void;
+}) {
+  const validate = useMutation({ mutationFn: () => mutations.validateMcpServer(server.name) });
+  // One mutation for both directions, so starting either clears the other's error.
+  const oauth = useMutation({
+    mutationFn: async (action: OAuthAction) => {
+      if (action === 'disconnect') {
+        await mutations.disconnectMcpOAuth(server.name);
+        return;
+      }
+      // The authorization server has to talk to the user's browser, so the flow is a
+      // full navigation away and back through /api/mcp/oauth/callback.
+      const { authorizeUrl } = await mutations.startMcpOAuth(server.name);
+      window.location.assign(authorizeUrl);
+    },
+    onSuccess: (_, action) => {
+      if (action === 'disconnect') onUpdate();
+    },
+  });
+  // A successful connect is mid-navigation, so it stays busy rather than flashing idle.
+  const isConnecting = oauth.isPending || (oauth.isSuccess && oauth.variables === 'connect');
+
+  return (
+    <SettingsListRow
+      editorActions={editorActions}
+      actions={
+        <>
+          {server.authType === 'oauth' && (
+            <>
+              {/* Always offered, not just when disconnected: a grant whose refresh
+                  is failing needs re-authorizing, not disconnecting first. */}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => oauth.mutate('connect')}
+                disabled={isConnecting}
+                title={
+                  server.oauth?.state === 'connected'
+                    ? 'Re-authorize with OAuth'
+                    : 'Connect with OAuth'
+                }
+              >
+                {isConnecting ? (
+                  <Spinner size="sm" className="h-4 w-4" />
+                ) : (
+                  <KeyRound className="h-4 w-4" />
+                )}
+              </Button>
+              {server.oauth?.state === 'connected' && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => oauth.mutate('disconnect')}
+                  disabled={isConnecting}
+                  title="Disconnect"
+                >
+                  <Unplug className="h-4 w-4" />
+                </Button>
+              )}
+            </>
+          )}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => validate.mutate()}
+            disabled={validate.isPending}
+            title="Test connection"
+          >
+            {validate.isPending ? (
+              <Spinner size="sm" className="h-4 w-4" />
+            ) : (
+              <Plug className="h-4 w-4" />
+            )}
+          </Button>
+        </>
+      }
+      extra={
+        <>
+          {server.oauth && <OAuthStatusBadge status={server.oauth} />}
+          {oauth.error && <ErrorBadge message={oauth.error.message} />}
+          {validate.data && <ValidationResultBadge result={validate.data} />}
+          {validate.error && <ErrorBadge message={validate.error.message} />}
+        </>
+      }
+    >
+      <div className="font-mono text-sm flex items-center gap-2">
+        {server.name}
+        <span className="text-xs text-muted-foreground font-sans uppercase">{server.type}</span>
+      </div>
+      <div className="text-xs text-muted-foreground truncate">
+        {server.type === 'stdio' ? `${server.command} ${server.args.join(' ')}` : server.url}
+      </div>
+    </SettingsListRow>
   );
 }
 
@@ -274,80 +260,23 @@ function McpServerForm({
 }) {
   const id = useId();
   const [form, setForm] = useState(() => initialMcpServerForm(existingServer));
-  const [error, setError] = useState<string | null>(null);
-  const [isPending, setIsPending] = useState(false);
   const update = (fields: Partial<McpServerFormFields>) => setForm((f) => ({ ...f, ...fields }));
   const redirectUri = trpc.globalSettings.getMcpOAuthRedirectUri.useQuery(undefined, {
     enabled: form.authType === 'oauth',
   }).data?.redirectUri;
+  // Validation failures throw from mutationFn too, so `save.error` is the one error to show.
+  const save = useMutation({
+    mutationFn: async () => {
+      const built = buildMcpServerInput(form, existingServer);
+      if (!built.ok) throw new Error(built.error);
+      await setMcpServer(built.input);
+    },
+    onSuccess,
+  });
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-
-    const fail = (message: string) => {
-      setError(message);
-      setIsPending(false);
-    };
-
-    if (!form.name) {
-      fail('Name is required');
-      return;
-    }
-
-    setError(null);
-    setIsPending(true);
-    try {
-      if (form.serverType === 'stdio') {
-        if (!form.command) {
-          fail('Command is required');
-          return;
-        }
-
-        const env = buildKeyValueRecord(form.envVars, existingServer?.env, 'environment variable');
-        if (!env.ok) {
-          fail(env.error);
-          return;
-        }
-
-        await setMcpServer({
-          name: form.name,
-          type: 'stdio',
-          command: form.command,
-          args: form.args.split(/\s+/).filter(Boolean),
-          env: Object.keys(env.record).length > 0 ? env.record : undefined,
-        });
-      } else {
-        if (!form.url) {
-          fail('URL is required');
-          return;
-        }
-
-        const headers = buildKeyValueRecord(form.headers, existingServer?.headers, 'header');
-        if (!headers.ok) {
-          fail(headers.error);
-          return;
-        }
-
-        await setMcpServer({
-          name: form.name,
-          type: form.serverType,
-          url: form.url,
-          headers: Object.keys(headers.record).length > 0 ? headers.record : undefined,
-          authType: form.authType,
-          oauth:
-            form.authType === 'oauth'
-              ? {
-                  clientId: form.oauthClientId.trim(),
-                  clientSecret: form.oauthClientSecret,
-                  scope: form.oauthScope.trim(),
-                }
-              : undefined,
-        });
-      }
-      onSuccess();
-    } catch (err) {
-      fail(err instanceof Error ? err.message : 'An error occurred');
-    }
+    save.mutate();
   };
 
   return (
@@ -497,14 +426,14 @@ function McpServerForm({
         </>
       )}
 
-      {error && <p className="text-sm text-destructive">{error}</p>}
+      {save.error && <p className="text-sm text-destructive">{save.error.message}</p>}
 
       <div className="flex justify-end gap-2">
         <Button type="button" variant="outline" onClick={onClose}>
           Cancel
         </Button>
-        <Button type="submit" disabled={isPending}>
-          {isPending ? <Spinner size="sm" /> : existingServer ? 'Update' : 'Add'}
+        <Button type="submit" disabled={save.isPending}>
+          {save.isPending ? <Spinner size="sm" /> : existingServer ? 'Update' : 'Add'}
         </Button>
       </div>
     </form>

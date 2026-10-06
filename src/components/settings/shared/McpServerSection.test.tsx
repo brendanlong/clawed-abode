@@ -1,11 +1,15 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import type { ReactElement } from 'react';
+import { render as rtlRender, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { McpServerSection, type McpServerMutations } from './McpServerSection';
 import type { McpServer } from '@/lib/settings-types';
+import { QueryClientWrapper } from '@/test/query-client-wrapper';
+
+const render = (ui: ReactElement) => rtlRender(ui, { wrapper: QueryClientWrapper });
 
 // The form asks the server for the OAuth redirect URI to display; nothing else
-// in this tree talks to tRPC, and the query needs a provider we don't want here.
+// in this tree talks to tRPC, so a tRPC client isn't worth standing up for it.
 vi.mock('@/lib/trpc', () => ({
   trpc: {
     globalSettings: { getMcpOAuthRedirectUri: { useQuery: () => ({ data: undefined }) } },
@@ -161,6 +165,75 @@ describe('McpServerSection', () => {
     expect(screen.queryByText('discovery failed')).not.toBeInTheDocument();
     rejectRetry(new Error('still broken'));
     expect(await screen.findByText('still broken')).toBeInTheDocument();
+  });
+
+  it('clears a connect error when disconnecting, and refetches once disconnected', async () => {
+    const user = userEvent.setup();
+    const onUpdate = vi.fn();
+    const oauthServer: McpServer = {
+      ...HTTP_SERVER,
+      headers: {},
+      authType: 'oauth',
+      oauth: {
+        state: 'connected',
+        clientId: null,
+        clientIdIsManual: false,
+        scope: null,
+        authorizedAt: null,
+        error: null,
+      },
+    };
+    const m = mutations({
+      startMcpOAuth: vi.fn().mockRejectedValue(new Error('discovery failed')),
+    });
+    render(
+      <McpServerSection mcpServers={[oauthServer]} mutations={m} onUpdate={onUpdate} scope="repo" />
+    );
+
+    await user.click(screen.getByTitle('Re-authorize with OAuth'));
+    expect(await screen.findByText('discovery failed')).toBeInTheDocument();
+
+    await user.click(screen.getByTitle('Disconnect'));
+    expect(m.disconnectMcpOAuth).toHaveBeenCalledWith('remote');
+    expect(screen.queryByText('discovery failed')).not.toBeInTheDocument();
+    expect(onUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it('tests each server independently', async () => {
+    const user = userEvent.setup();
+    const other: McpServer = { ...HTTP_SERVER, id: 'm2', name: 'other' };
+    let resolveFirst: (result: { success: boolean; error?: string }) => void = () => {};
+    const m = mutations({
+      validateMcpServer: vi
+        .fn()
+        .mockReturnValueOnce(
+          new Promise((resolve) => {
+            resolveFirst = resolve;
+          })
+        )
+        .mockRejectedValueOnce(new Error('unreachable')),
+    });
+    render(
+      <McpServerSection
+        mcpServers={[HTTP_SERVER, other]}
+        mutations={m}
+        onUpdate={vi.fn()}
+        scope="repo"
+      />
+    );
+
+    const [testFirst, testOther] = screen.getAllByTitle('Test connection');
+    await user.click(testFirst);
+    // One server's test in flight must not block testing another.
+    expect(testFirst).toBeDisabled();
+    expect(testOther).toBeEnabled();
+
+    await user.click(testOther);
+    expect(await screen.findByText('unreachable')).toBeInTheDocument();
+    resolveFirst({ success: false, error: 'bad token' });
+    expect(await screen.findByText('bad token')).toBeInTheDocument();
+    expect(m.validateMcpServer).toHaveBeenNthCalledWith(1, 'remote');
+    expect(m.validateMcpServer).toHaveBeenNthCalledWith(2, 'other');
   });
 
   it('drops a header row that was added and never filled in', async () => {

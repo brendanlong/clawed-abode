@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { SettingsListEditor, type SettingsScope } from './SettingsListEditor';
+import { SettingsListEditor, SettingsListRow, type SettingsScope } from './SettingsListEditor';
 
 interface Item {
   id: string;
@@ -53,7 +53,11 @@ function renderEditor({
       items={list}
       onDelete={onDelete}
       onUpdate={onUpdate}
-      renderItem={(item) => <span>{item.name}</span>}
+      renderRow={(item, editorActions) => (
+        <SettingsListRow editorActions={editorActions}>
+          <span>{item.name}</span>
+        </SettingsListRow>
+      )}
       renderForm={(props) => <SeededForm {...props} />}
     />
   );

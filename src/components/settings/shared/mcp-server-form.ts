@@ -1,5 +1,10 @@
-import type { KeyValueEntry, SecretValueMap } from '@/lib/key-value-entries';
+import {
+  buildKeyValueRecord,
+  type KeyValueEntry,
+  type SecretValueMap,
+} from '@/lib/key-value-entries';
 import type { McpAuthType, McpServer, McpServerType } from '@/lib/settings-types';
+import type { McpServerInput } from '@/server/services/settings-helpers';
 
 /** The editable fields of the MCP server form, seeded from the server being edited. */
 export interface McpServerFormFields {
@@ -40,5 +45,58 @@ export function initialMcpServerForm(existing?: McpServer): McpServerFormFields 
     oauthClientId: existing?.oauth?.clientIdIsManual ? (existing.oauth.clientId ?? '') : '',
     oauthClientSecret: '',
     oauthScope: existing?.oauth?.scope ?? '',
+  };
+}
+
+export type McpServerInputResult =
+  { ok: true; input: McpServerInput } | { ok: false; error: string };
+
+/** Validate the form and build what `setMcpServer` takes, keeping only the fields its type uses. */
+export function buildMcpServerInput(
+  form: McpServerFormFields,
+  existing: McpServer | undefined
+): McpServerInputResult {
+  if (!form.name) return { ok: false, error: 'Name is required' };
+
+  if (form.serverType === 'stdio') {
+    if (!form.command) return { ok: false, error: 'Command is required' };
+
+    const env = buildKeyValueRecord(form.envVars, existing?.env, 'environment variable');
+    if (!env.ok) return env;
+
+    return {
+      ok: true,
+      input: {
+        name: form.name,
+        type: 'stdio',
+        command: form.command,
+        args: form.args.split(/\s+/).filter(Boolean),
+        env: Object.keys(env.record).length > 0 ? env.record : undefined,
+      },
+    };
+  }
+
+  if (!form.url) return { ok: false, error: 'URL is required' };
+
+  const headers = buildKeyValueRecord(form.headers, existing?.headers, 'header');
+  if (!headers.ok) return headers;
+
+  return {
+    ok: true,
+    input: {
+      name: form.name,
+      type: form.serverType,
+      url: form.url,
+      headers: Object.keys(headers.record).length > 0 ? headers.record : undefined,
+      authType: form.authType,
+      oauth:
+        form.authType === 'oauth'
+          ? {
+              clientId: form.oauthClientId.trim(),
+              clientSecret: form.oauthClientSecret,
+              scope: form.oauthScope.trim(),
+            }
+          : undefined,
+    },
   };
 }
