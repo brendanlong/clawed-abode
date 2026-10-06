@@ -154,7 +154,8 @@ export async function upsertMcpServer(scope: SettingsScope, server: McpServerInp
 
   await syncMcpOAuthConfig({
     mcpServerId: id,
-    isOAuth: server.type !== 'stdio' && server.authType === 'oauth',
+    url: plan.row.url,
+    authType: plan.row.authType,
     clientId: server.type === 'stdio' ? '' : (server.oauth?.clientId ?? ''),
     clientSecret: server.type === 'stdio' ? '' : (server.oauth?.clientSecret ?? ''),
     scope: server.type === 'stdio' ? '' : (server.oauth?.scope ?? ''),

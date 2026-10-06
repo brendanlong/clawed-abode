@@ -581,6 +581,73 @@ describe('MCP OAuth', () => {
     expect(kept.accessToken).not.toBeNull();
   });
 
+  it('drops the OAuth config of a save whose server row was overwritten by a later save', async () => {
+    const otherUrl = `${remote.baseUrl}/other/mcp`;
+    await scope.upsertMcpServer(scope.GLOBAL_SCOPE, {
+      name: 'remote',
+      type: 'http',
+      url: otherUrl,
+      authType: 'oauth',
+      oauth: { clientId: 'client-b', clientSecret: 'secret-b', scope: 'b' },
+    });
+    const { id } = await testPrisma.mcpServer.findFirstOrThrow({ where: { name: 'remote' } });
+
+    // A save that wrote its row before the one above, but syncs after it.
+    await oauth.syncMcpOAuthConfig({
+      mcpServerId: id,
+      url: remote.mcpUrl,
+      authType: 'oauth',
+      clientId: 'client-a',
+      clientSecret: 'secret-a',
+      scope: 'a',
+    });
+
+    const row = await credential();
+    expect(row.clientId).toBe('client-b');
+    expect(crypto.decrypt(row.clientSecret!)).toBe('secret-b');
+    expect(row.scope).toBe('b');
+  });
+
+  it('keeps the grant when a stale non-OAuth save syncs after a later OAuth save', async () => {
+    await addOAuthServer();
+    await connect();
+    const { id } = await testPrisma.mcpServer.findFirstOrThrow({ where: { name: 'remote' } });
+
+    await oauth.syncMcpOAuthConfig({
+      mcpServerId: id,
+      url: remote.mcpUrl,
+      authType: 'headers',
+      clientId: '',
+      clientSecret: '',
+      scope: '',
+    });
+
+    expect((await credential()).accessToken).not.toBeNull();
+  });
+
+  it('keeps a manual client secret when a later save leaves it blank', async () => {
+    await scope.upsertMcpServer(scope.GLOBAL_SCOPE, {
+      name: 'remote',
+      type: 'http',
+      url: remote.mcpUrl,
+      authType: 'oauth',
+      oauth: { clientId: 'client-a', clientSecret: 's', scope: '' },
+    });
+    await connect();
+    await scope.upsertMcpServer(scope.GLOBAL_SCOPE, {
+      name: 'remote',
+      type: 'http',
+      url: remote.mcpUrl,
+      authType: 'oauth',
+      oauth: { clientId: 'client-a', clientSecret: '', scope: 'read' },
+    });
+
+    const row = await credential();
+    expect(crypto.decrypt(row.clientSecret!)).toBe('s');
+    expect(row.scope).toBe('read');
+    expect(row.accessToken).not.toBeNull();
+  });
+
   it('exposes the grant to per-repo settings, not just global ones', async () => {
     const repo = await testPrisma.repoSettings.create({ data: { repoFullName: 'o/r' } });
     const repoScope = { repoSettingsId: repo.id };
