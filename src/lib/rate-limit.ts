@@ -43,6 +43,8 @@ export const MIN_PAUSE_THRESHOLD = 1;
 export const MAX_PAUSE_THRESHOLD = 100;
 export const DEFAULT_PAUSE_THRESHOLD = 95;
 
+export const thresholdSchema = z.number().int().min(MIN_PAUSE_THRESHOLD).max(MAX_PAUSE_THRESHOLD);
+
 const LIMIT_TYPE_LABELS: Record<HoldableLimitType, string> = {
   five_hour: '5-hour limit',
   seven_day: 'weekly limit',

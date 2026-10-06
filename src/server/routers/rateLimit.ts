@@ -2,15 +2,13 @@ import { z } from 'zod';
 import { router, protectedProcedure } from '../trpc';
 import { prisma } from '@/lib/prisma';
 import { createLogger } from '@/lib/logger';
-import { MAX_PAUSE_THRESHOLD, MIN_PAUSE_THRESHOLD } from '@/lib/rate-limit';
+import { thresholdSchema } from '@/lib/rate-limit';
 import { GLOBAL_SETTINGS_ID } from '../services/settings-scope';
 import { getRateLimitReadings, loadGlobalPausePolicy } from '../services/rate-limit-state';
 import { recomputeRateLimitHolds } from '../services/claude-runner';
 import { countQueuedPrompts } from '../services/prompt-queue';
 
 const log = createLogger('rateLimit');
-
-export const thresholdSchema = z.number().int().min(MIN_PAUSE_THRESHOLD).max(MAX_PAUSE_THRESHOLD);
 
 export const rateLimitRouter = router({
   /**

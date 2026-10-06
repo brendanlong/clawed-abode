@@ -14,7 +14,7 @@ import { Separator } from '@/components/ui/separator';
 import { trpc } from '@/lib/trpc';
 import { fallbackClaudeModel } from '@/lib/claude-model';
 import { Star, FileText, FolderOpen, Cpu } from 'lucide-react';
-import { NO_REPO_SENTINEL } from '@/components/RepoSelector';
+import { NO_REPO_SENTINEL } from '@/lib/repo-full-name';
 import { EnvVarSection } from './shared/EnvVarSection';
 import { McpServerSection } from './shared/McpServerSection';
 import { ModelOverrideField } from './shared/ModelOverrideField';

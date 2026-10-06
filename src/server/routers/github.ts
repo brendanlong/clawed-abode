@@ -4,6 +4,7 @@ import { TRPCError } from '@trpc/server';
 import { env } from '@/lib/env';
 import { defaultBranchFirst } from '@/lib/branch-list';
 import type { Issue } from '@/lib/types';
+import { repoFullNameSchema } from '@/lib/repo-full-name';
 import {
   ConditionalGetCache,
   githubFetchResponse,
@@ -133,7 +134,7 @@ export const githubRouter = router({
   listBranches: githubProcedure
     .input(
       z.object({
-        repoFullName: z.string().regex(/^[\w-]+\/[\w.-]+$/),
+        repoFullName: repoFullNameSchema,
       })
     )
     .query(async ({ ctx, input }) => {
@@ -172,7 +173,7 @@ export const githubRouter = router({
   listIssues: githubProcedure
     .input(
       z.object({
-        repoFullName: z.string().regex(/^[\w-]+\/[\w.-]+$/),
+        repoFullName: repoFullNameSchema,
         search: z.string().optional(),
         cursor: z.string().regex(/^\d+$/).optional(), // page number as string
         perPage: z.number().int().min(1).max(100).default(30),
