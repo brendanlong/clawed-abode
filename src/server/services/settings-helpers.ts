@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { encrypt, decrypt, isEncryptionConfigured } from '@/lib/crypto';
 import { TRPCError } from '@trpc/server';
+import type { Prisma } from '@/generated/prisma/client';
 import type {
   McpAuthType,
   McpOAuthStatus,
@@ -104,11 +105,43 @@ function maskSecret<T extends { value: string; isSecret: boolean }>(item: T): T 
   return { ...item, value: item.isSecret ? '••••••••' : item.value };
 }
 
-/** Parse a stored MCP env/header JSON column, masking secrets for display. */
-function parseMaskedMcpEnv(json: string | null): Record<string, McpServerEnvValue> {
-  if (!json) return {};
-  const env = JSON.parse(json) as Record<string, McpServerEnvValue>;
-  return Object.fromEntries(Object.entries(env).map(([key, entry]) => [key, maskSecret(entry)]));
+/** Which McpServerValue rows a server type uses: env vars for stdio, headers otherwise. */
+export type McpServerValueKind = 'env' | 'header';
+
+function valueKindFor(type: string): McpServerValueKind {
+  return type === 'stdio' ? 'env' : 'header';
+}
+
+interface DbMcpServerValue {
+  kind: string;
+  name: string;
+  value: string;
+  isSecret: boolean;
+}
+
+/** Every MCP server query must include this so formatting and decryption see the values and grant. */
+export const MCP_SERVER_INCLUDE = {
+  oauth: true,
+  values: { orderBy: { name: 'asc' } },
+} as const satisfies Prisma.McpServerInclude;
+
+function valuesOfKind(
+  values: DbMcpServerValue[],
+  kind: McpServerValueKind,
+  toValue: (row: DbMcpServerValue) => string
+): Record<string, string> {
+  return Object.fromEntries(values.filter((v) => v.kind === kind).map((v) => [v.name, toValue(v)]));
+}
+
+function maskedValuesOfKind(
+  values: DbMcpServerValue[],
+  kind: McpServerValueKind
+): Record<string, McpServerEnvValue> {
+  return Object.fromEntries(
+    values
+      .filter((v) => v.kind === kind)
+      .map(({ name, value, isSecret }) => [name, maskSecret({ value, isSecret })])
+  );
 }
 
 // ─── Display Formatters ──────────────────────────────────────────────
@@ -128,10 +161,9 @@ interface DbMcpServer {
   type: string;
   command: string;
   args: string | null;
-  env: string | null;
   url: string | null;
-  headers: string | null;
   authType: string;
+  values: DbMcpServerValue[];
   /**
    * Required (not optional) so a query that forgets `include: { oauth: true }`
    * fails to compile: a silently-absent grant reads as "not authorized" and would
@@ -173,9 +205,9 @@ export function formatMcpServersForDisplay(mcpServers: DbMcpServer[]): DisplayMc
       type: mcp.type as McpServerType,
       command: mcp.command,
       args: mcp.args ? (JSON.parse(mcp.args) as string[]) : [],
-      env: parseMaskedMcpEnv(mcp.env),
+      env: maskedValuesOfKind(mcp.values, 'env'),
       url: mcp.url ?? undefined,
-      headers: parseMaskedMcpEnv(mcp.headers),
+      headers: maskedValuesOfKind(mcp.values, 'header'),
       authType,
       ...(authType === 'oauth' ? { oauth: formatOAuthStatus(mcp.oauth) } : {}),
     };
@@ -194,17 +226,15 @@ export function decryptEnvVars(
 }
 
 /**
- * Decrypt one stored `{ value, isSecret }` map (an MCP server's headers or env).
- * Returns undefined rather than `{}` so an empty column omits the field entirely.
+ * Decrypt a server's values of one kind. Returns undefined rather than `{}` so a
+ * server with none omits the field entirely.
  */
-function decryptSecretRecord(json: string | null): Record<string, string> | undefined {
-  if (!json) return undefined;
-  const stored = JSON.parse(json) as Record<string, { value: string; isSecret: boolean }>;
-  const entries = Object.entries(stored).map(([key, { value, isSecret }]): [string, string] => [
-    key,
-    isSecret ? decrypt(value) : value,
-  ]);
-  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+function decryptValuesOfKind(
+  values: DbMcpServerValue[],
+  kind: McpServerValueKind
+): Record<string, string> | undefined {
+  const record = valuesOfKind(values, kind, (v) => (v.isSecret ? decrypt(v.value) : v.value));
+  return Object.keys(record).length > 0 ? record : undefined;
 }
 
 export function decryptMcpServers(mcpServers: DbMcpServer[]): ResolvedMcpServer[] {
@@ -216,7 +246,7 @@ export function decryptMcpServers(mcpServers: DbMcpServer[]): ResolvedMcpServer[
         name: mcp.name,
         type: serverType,
         url: mcp.url!,
-        headers: decryptSecretRecord(mcp.headers),
+        headers: decryptValuesOfKind(mcp.values, 'header'),
         ...(mcp.authType === 'oauth' && mcp.oauth
           ? {
               oauth: {
@@ -234,90 +264,60 @@ export function decryptMcpServers(mcpServers: DbMcpServer[]): ResolvedMcpServer[
       type: 'stdio' as const,
       command: mcp.command,
       args: mcp.args ? (JSON.parse(mcp.args) as string[]) : undefined,
-      env: decryptSecretRecord(mcp.env),
+      env: decryptValuesOfKind(mcp.values, 'env'),
     };
   });
 }
 
-// ─── MCP Server Data Builder ─────────────────────────────────────────
+// ─── MCP Server Write Plan ───────────────────────────────────────────
 
-/**
- * Merge secret values from input with existing encrypted values from the DB.
- * An empty secret value means "unchanged" and keeps the stored ciphertext; if
- * there is no stored secret to keep, the input is rejected rather than storing
- * an empty secret.
- */
-function mergeSecretEnv(
-  input: Record<string, McpServerEnvValue>,
-  existingJson: string | null,
-  itemLabel: string
-): Record<string, McpServerEnvValue> {
-  const existing = existingJson
-    ? (JSON.parse(existingJson) as Record<string, McpServerEnvValue>)
-    : {};
-
-  return Object.fromEntries(
-    Object.entries(input).map(([key, entry]) => {
-      if (entry.isSecret && !entry.value) {
-        if (!existing[key]?.isSecret) {
-          throw new TRPCError({
-            code: 'BAD_REQUEST',
-            message: `The ${itemLabel} "${key}" has no stored secret to keep; provide a value`,
-          });
-        }
-        return [key, existing[key]];
-      }
-      // New or changed value: encrypt if secret
-      return [
-        key,
-        { value: entry.isSecret ? encrypt(entry.value) : entry.value, isSecret: entry.isSecret },
-      ];
-    })
-  );
-}
-
-/** Shape of an existing MCP server DB row, used to preserve unchanged secrets */
-interface ExistingMcpServer {
-  env: string | null;
-  headers: string | null;
+/** A value to store as given (encrypted if secret). */
+export interface McpServerValueWrite {
+  name: string;
+  value: string;
+  isSecret: boolean;
 }
 
 /**
- * Build MCP server data object for database upsert from validated input.
- * Unchanged secret values (empty string + isSecret) are preserved from `existing`,
- * and rejected when it has no secret under that key.
+ * What saving an MCP server writes. Values with an empty secret are "unchanged":
+ * they go in `keep` rather than `values`, so their stored row is left alone.
+ * Every other stored value of the server is deleted.
  */
-export function buildMcpServerData(
-  server: z.infer<typeof mcpServerSchema>,
-  existing?: ExistingMcpServer | null
-) {
+export interface McpServerWritePlan {
+  row: { type: string; command: string; args: string | null; url: string | null; authType: string };
+  kind: McpServerValueKind;
+  values: McpServerValueWrite[];
+  keep: string[];
+}
+
+export function planMcpServerWrite(server: McpServerInput): McpServerWritePlan {
   const isStdio = server.type === 'stdio';
-  const env = isStdio ? (server.env ?? {}) : {};
-  const processedEnv =
-    Object.keys(env).length > 0
-      ? mergeSecretEnv(env, existing?.env ?? null, 'environment variable')
-      : null;
-  const headers = !isStdio ? (server.headers ?? {}) : {};
-  const processedHeaders =
-    Object.keys(headers).length > 0
-      ? mergeSecretEnv(headers, existing?.headers ?? null, 'header')
-      : null;
+  const input = (isStdio ? server.env : server.headers) ?? {};
+  const values: McpServerValueWrite[] = [];
+  const keep: string[] = [];
+  for (const [name, { value, isSecret }] of Object.entries(input)) {
+    if (isSecret && value === '') keep.push(name);
+    else values.push({ name, value: isSecret ? encrypt(value) : value, isSecret });
+  }
 
   return {
-    type: server.type,
-    command: isStdio ? server.command : '',
-    args: isStdio && server.args ? JSON.stringify(server.args) : null,
-    env: processedEnv ? JSON.stringify(processedEnv) : null,
-    url: !isStdio ? server.url : null,
-    headers: processedHeaders ? JSON.stringify(processedHeaders) : null,
-    authType: isStdio ? 'headers' : server.authType,
+    row: {
+      type: server.type,
+      command: isStdio ? server.command : '',
+      args: isStdio && server.args ? JSON.stringify(server.args) : null,
+      url: isStdio ? null : server.url,
+      authType: isStdio ? 'headers' : server.authType,
+    },
+    kind: valueKindFor(server.type),
+    values,
+    keep,
   };
 }
 
 /**
  * Check if an MCP server input has any secret values
  */
-export function mcpServerHasSecrets(server: z.infer<typeof mcpServerSchema>): boolean {
+export function mcpServerHasSecrets(server: McpServerInput): boolean {
   if (server.type !== 'stdio' && server.authType === 'oauth') return true;
   const secretEntries = server.type === 'stdio' ? (server.env ?? {}) : (server.headers ?? {});
   return Object.values(secretEntries).some((e) => e.isSecret);

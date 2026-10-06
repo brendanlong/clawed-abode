@@ -75,54 +75,116 @@ describe('settings-scope', () => {
       expect(await scopeModule.getEnvVarValue(scope, 'FLIP')).toBe('plain');
     });
 
-    it('creates and updates MCP servers, preserving unchanged secrets across types', async () => {
-      const scope = await makeScope();
-      await scopeModule.upsertMcpServer(scope, {
+    describe('MCP servers', () => {
+      const httpServer = (headers: Record<string, { value: string; isSecret: boolean }>) => ({
         name: 'srv',
-        type: 'http',
-        url: 'https://mcp.example.com/v1',
-        authType: 'headers',
-        headers: { Authorization: { value: 'Bearer t', isSecret: true } },
+        type: 'http' as const,
+        url: 'https://mcp.example.com',
+        authType: 'headers' as const,
+        headers,
       });
-      const first = await testPrisma.mcpServer.findFirstOrThrow({
-        where: { ...scope, name: 'srv' },
+      const storedValues = (scope: { repoSettingsId: string | null }) =>
+        testPrisma.mcpServerValue.findMany({
+          where: { mcpServer: { ...scope, name: 'srv' } },
+          orderBy: { name: 'asc' },
+        });
+
+      it('leaves an unchanged secret row untouched while other values change', async () => {
+        const scope = await makeScope();
+        await scopeModule.upsertMcpServer(
+          scope,
+          httpServer({
+            Authorization: { value: 'Bearer t', isSecret: true },
+            Old: { value: 'o', isSecret: false },
+          })
+        );
+        const [auth] = await storedValues(scope);
+        expect(crypto.decrypt(auth.value)).toBe('Bearer t');
+
+        await scopeModule.upsertMcpServer(scope, {
+          ...httpServer({
+            Authorization: { value: '', isSecret: true },
+            New: { value: 'n', isSecret: false },
+          }),
+          url: 'https://mcp.example.com/v2',
+        });
+        const values = await storedValues(scope);
+        expect(values.map((v) => [v.name, v.value])).toEqual([
+          ['Authorization', auth.value],
+          ['New', 'n'],
+        ]);
+        expect(values[0].id).toBe(auth.id);
+
+        const { mcpServers, envVars } = await scopeModule.listScopeSettings(scope);
+        expect(envVars).toEqual([]);
+        expect(mcpServers).toEqual([
+          expect.objectContaining({
+            name: 'srv',
+            url: 'https://mcp.example.com/v2',
+            env: {},
+            headers: {
+              Authorization: { value: '••••••••', isSecret: true },
+              New: { value: 'n', isSecret: false },
+            },
+          }),
+        ]);
       });
 
-      await scopeModule.upsertMcpServer(scope, {
-        name: 'srv',
-        type: 'http',
-        url: 'https://mcp.example.com/v2',
-        authType: 'headers',
-        headers: { Authorization: { value: '', isSecret: true } },
-      });
-      const second = await testPrisma.mcpServer.findFirstOrThrow({
-        where: { ...scope, name: 'srv' },
-      });
-      expect(second.id).toBe(first.id);
-      expect(second.url).toBe('https://mcp.example.com/v2');
-      expect(second.headers).toBe(first.headers);
+      it('replaces headers with env vars when switching to stdio', async () => {
+        const scope = await makeScope();
+        await scopeModule.upsertMcpServer(
+          scope,
+          httpServer({ KEY: { value: 'header-secret', isSecret: true } })
+        );
+        // A same-named header secret can't be "kept" as an env var.
+        await expect(
+          scopeModule.upsertMcpServer(scope, {
+            name: 'srv',
+            type: 'stdio',
+            command: 'node',
+            env: { KEY: { value: '', isSecret: true } },
+          })
+        ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
 
-      await scopeModule.upsertMcpServer(scope, {
-        name: 'srv',
-        type: 'stdio',
-        command: 'node',
-        args: ['s.js'],
-        env: { KEY: { value: 'k', isSecret: true } },
-      });
-      const third = await testPrisma.mcpServer.findFirstOrThrow({
-        where: { ...scope, name: 'srv' },
-      });
-      expect(third).toMatchObject({ type: 'stdio', command: 'node', url: null, headers: null });
+        await scopeModule.upsertMcpServer(scope, {
+          name: 'srv',
+          type: 'stdio',
+          command: 'node',
+          args: ['s.js'],
+          env: { KEY: { value: 'k', isSecret: true } },
+        });
+        const server = await testPrisma.mcpServer.findFirstOrThrow({
+          where: { ...scope, name: 'srv' },
+        });
+        expect(server).toMatchObject({ type: 'stdio', command: 'node', url: null });
+        const values = await storedValues(scope);
+        expect(values.map((v) => [v.kind, v.name])).toEqual([['env', 'KEY']]);
+        expect(crypto.decrypt(values[0].value)).toBe('k');
 
-      const { mcpServers, envVars } = await scopeModule.listScopeSettings(scope);
-      expect(envVars).toEqual([]);
-      expect(mcpServers[0]).toMatchObject({
-        name: 'srv',
-        env: { KEY: { value: '••••••••', isSecret: true } },
+        await scopeModule.deleteMcpServer(scope, 'srv');
+        expect(await testPrisma.mcpServer.count({ where: scope })).toBe(0);
+        expect(await testPrisma.mcpServerValue.count()).toBe(0);
       });
 
-      await scopeModule.deleteMcpServer(scope, 'srv');
-      expect(await testPrisma.mcpServer.count({ where: scope })).toBe(0);
+      it('rejects an empty secret with no stored secret to keep, writing nothing', async () => {
+        const scope = await makeScope();
+        await expect(
+          scopeModule.upsertMcpServer(scope, httpServer({ A: { value: '', isSecret: true } }))
+        ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+        expect(await testPrisma.mcpServer.count({ where: scope })).toBe(0);
+
+        // Another tab flipped it to plaintext: the stale "unchanged" submit must not blank it.
+        const plain = httpServer({ A: { value: 'plain', isSecret: false } });
+        await scopeModule.upsertMcpServer(scope, plain);
+        await expect(
+          scopeModule.upsertMcpServer(scope, {
+            ...httpServer({ A: { value: '', isSecret: true } }),
+            url: 'https://elsewhere.example.com',
+          })
+        ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+        const { mcpServers } = await scopeModule.listScopeSettings(scope);
+        expect(mcpServers[0]).toMatchObject({ url: plain.url, headers: plain.headers });
+      });
     });
 
     it('upserts the same name concurrently without a unique violation or duplicate rows', async () => {

@@ -253,15 +253,28 @@ async function clearFlow(id: string, lastError: string | null): Promise<void> {
 }
 
 /**
+ * Drop the tokens of a stored server whose URL is about to become `newUrl`, since
+ * a grant is issued for one resource. Decided in the statement, so it needs no
+ * read of the old URL; call it before writing the new one.
+ */
+export async function invalidateMcpOAuthOnUrlChange(
+  server: { repoSettingsId: string | null; name: string },
+  newUrl: string | null
+): Promise<void> {
+  await prisma.mcpOAuth.updateMany({
+    where: { mcpServer: { ...server, OR: [{ url: null }, { url: { not: newUrl } }] } },
+    data: { ...CLEARED_TOKENS, lastError: null },
+  });
+}
+
+/**
  * Persist the OAuth client configuration a user typed into the server form, and
  * keep the grant consistent with it: switching a server away from OAuth (or to a
- * different remote URL) invalidates any token we hold, because the grant was
- * issued for the old resource.
+ * different client) invalidates any token we hold.
  */
 export async function syncMcpOAuthConfig(params: {
   mcpServerId: string;
   isOAuth: boolean;
-  urlChanged: boolean;
   clientId: string;
   /** Blank means "unchanged" (the field is masked in the UI). */
   clientSecret: string;
@@ -295,9 +308,7 @@ export async function syncMcpOAuthConfig(params: {
   // either changing means what we hold can no longer work.
   const clientChanged = clientId !== null && clientId !== existing?.clientId;
   const invalidated =
-    params.urlChanged || clientChanged || clearingManualClient
-      ? { ...CLEARED_TOKENS, lastError: null }
-      : {};
+    clientChanged || clearingManualClient ? { ...CLEARED_TOKENS, lastError: null } : {};
 
   const config = {
     scope: params.scope.trim() || null,
