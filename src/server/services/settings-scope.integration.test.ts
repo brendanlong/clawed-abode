@@ -60,6 +60,21 @@ describe('settings-scope', () => {
       expect(await testPrisma.envVar.count({ where: scope })).toBe(1);
     });
 
+    it('rejects an empty secret env var with no stored secret to keep', async () => {
+      const scope = await makeScope();
+      await expect(
+        scopeModule.upsertEnvVar(scope, { name: 'NEW', value: '', isSecret: true })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(await testPrisma.envVar.count({ where: scope })).toBe(0);
+
+      // Another tab flipped it to plaintext: the stale "unchanged" submit must not blank it.
+      await scopeModule.upsertEnvVar(scope, { name: 'FLIP', value: 'plain', isSecret: false });
+      await expect(
+        scopeModule.upsertEnvVar(scope, { name: 'FLIP', value: '', isSecret: true })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(await scopeModule.getEnvVarValue(scope, 'FLIP')).toBe('plain');
+    });
+
     it('creates and updates MCP servers, preserving unchanged secrets across types', async () => {
       const scope = await makeScope();
       await scopeModule.upsertMcpServer(scope, {

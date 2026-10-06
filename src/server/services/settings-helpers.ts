@@ -243,8 +243,9 @@ export function decryptMcpServers(mcpServers: DbMcpServer[]): ResolvedMcpServer[
 
 /**
  * Merge secret values from input with existing encrypted values from the DB.
- * When a secret value is empty, it means the user didn't change it, so we
- * preserve the existing encrypted value from the database.
+ * An empty secret value means "unchanged" and keeps the stored ciphertext; if
+ * there is no stored secret to keep, the input is rejected rather than storing
+ * an empty secret.
  */
 function mergeSecretEnv(
   input: Record<string, McpServerEnvValue>,
@@ -256,8 +257,13 @@ function mergeSecretEnv(
 
   return Object.fromEntries(
     Object.entries(input).map(([key, entry]) => {
-      if (entry.isSecret && !entry.value && existing[key]?.isSecret) {
-        // Unchanged secret: preserve existing encrypted value
+      if (entry.isSecret && !entry.value) {
+        if (!existing[key]?.isSecret) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: `"${key}" has no stored secret to keep; provide a value`,
+          });
+        }
         return [key, existing[key]];
       }
       // New or changed value: encrypt if secret
@@ -277,8 +283,8 @@ interface ExistingMcpServer {
 
 /**
  * Build MCP server data object for database upsert from validated input.
- * When `existing` is provided, unchanged secret values (empty string + isSecret)
- * are preserved from the existing DB record rather than being overwritten.
+ * Unchanged secret values (empty string + isSecret) are preserved from `existing`,
+ * and rejected when it has no secret under that key.
  */
 export function buildMcpServerData(
   server: z.infer<typeof mcpServerSchema>,

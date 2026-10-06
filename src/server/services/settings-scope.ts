@@ -65,13 +65,29 @@ export async function listScopeSettings(scope: SettingsScope) {
 }
 
 /**
- * Create or update an env var. An empty secret value means "unchanged": the
- * stored ciphertext is kept, decided inside the statement so there is no
- * read-then-write.
+ * Create or update an env var. An empty secret value means "unchanged", which is
+ * a conditional UPDATE of an existing secret rather than an upsert, so there is
+ * no read-then-write; if no stored secret matched, the input is rejected rather
+ * than storing an empty secret.
  */
 export async function upsertEnvVar(scope: SettingsScope, envVar: EnvVarInput): Promise<void> {
   requireEncryptionForSecrets(envVar.isSecret);
-  const keepExisting = envVar.isSecret && envVar.value === '' ? 1 : 0;
+
+  if (envVar.isSecret && envVar.value === '') {
+    const { count } = await prisma.envVar.updateMany({
+      where: { ...scope, name: envVar.name, isSecret: true },
+      data: { updatedAt: new Date() },
+    });
+    if (count === 0) {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: `Environment variable "${envVar.name}" has no stored secret to keep; provide a value`,
+      });
+    }
+    log.info('Kept env var secret', { ...scope, name: envVar.name });
+    return;
+  }
+
   const value = envVar.isSecret ? encrypt(envVar.value) : envVar.value;
   const now = new Date().toISOString();
 
@@ -79,7 +95,7 @@ export async function upsertEnvVar(scope: SettingsScope, envVar: EnvVarInput): P
     INSERT INTO "EnvVar" ("id", "repoSettingsId", "name", "value", "isSecret", "createdAt", "updatedAt")
     VALUES (${randomUUID()}, ${scope.repoSettingsId}, ${envVar.name}, ${value}, ${envVar.isSecret ? 1 : 0}, ${now}, ${now})
     ${conflictTarget(scope)} DO UPDATE SET
-      "value" = CASE WHEN ${keepExisting} AND "EnvVar"."isSecret" THEN "EnvVar"."value" ELSE excluded."value" END,
+      "value" = excluded."value",
       "isSecret" = excluded."isSecret",
       "updatedAt" = excluded."updatedAt"`;
 
