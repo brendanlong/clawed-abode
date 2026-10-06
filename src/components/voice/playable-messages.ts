@@ -62,9 +62,10 @@ export function getNewAutoReadMessages(
 }
 
 /**
- * Auto-read bookkeeping between renders. `queuedIds` only grows (message ids are
- * unique and `getNewAutoReadMessages` already scopes to the current turn), so a
- * turn whose running flag lands before its prompt can't re-read the last turn.
+ * Auto-read bookkeeping between renders. `queuedIds` (read or deliberately
+ * skipped) only grows — ids are unique and `getNewAutoReadMessages` already
+ * scopes to the current turn — so a turn whose running flag lands before its
+ * prompt can't re-read the last turn.
  */
 export interface AutoReadState {
   wasRunning: boolean;
@@ -116,14 +117,13 @@ export function autoReadStep(
       const stopped = state.stopped && !turnStarted;
       // While running, plus one final pass as the turn ends to catch messages that
       // arrived in the same render as the running flag dropping.
-      const active = (isRunning || state.wasRunning) && enabled && !stopped;
-      const toEnqueue = active ? getNewAutoReadMessages(messages, state.queuedIds) : [];
+      const inTurn = isRunning || state.wasRunning;
+      const fresh = inTurn && enabled ? getNewAutoReadMessages(messages, state.queuedIds) : [];
+      // Messages arriving after a stop are marked as handled too, so a next turn
+      // whose running flag lands before its prompt can't read them out.
+      const toEnqueue = stopped ? [] : fresh;
       return {
-        state: {
-          wasRunning: isRunning,
-          stopped,
-          queuedIds: withQueued(state.queuedIds, toEnqueue),
-        },
+        state: { wasRunning: isRunning, stopped, queuedIds: withQueued(state.queuedIds, fresh) },
         toEnqueue,
       };
     }

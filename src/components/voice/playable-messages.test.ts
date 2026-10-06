@@ -457,6 +457,28 @@ describe('autoReadStep', () => {
     ).toEqual(['a1']);
   });
 
+  it('reads the turn so far when mounted mid-turn', () => {
+    expect(run([update(true, turn1More)])).toEqual(['a1', 'a2']);
+  });
+
+  it("doesn't read a stopped turn's leftovers when the next turn's running flag lands first", () => {
+    const turn2 = [
+      ...turn1More,
+      makeUserPrompt('u2', 4, 'Next'),
+      makeAssistantText('a3', 5, 'Three.'),
+    ];
+    expect(
+      run([
+        update(true, turn1),
+        { type: 'playbackStopped' },
+        update(true, turn1More),
+        update(false, turn1More),
+        update(true, turn1More),
+        update(true, turn2),
+      ])
+    ).toEqual(['a1', 'a3']);
+  });
+
   it("doesn't re-read the last turn when the running flag lands before the new prompt", () => {
     expect(
       run([update(true, turn1More), update(false, turn1More), update(true, turn1More)])
