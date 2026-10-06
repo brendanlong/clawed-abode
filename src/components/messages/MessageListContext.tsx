@@ -5,10 +5,6 @@ import { createContext, useContext, type ReactNode } from 'react';
 interface MessageListContextValue {
   /** The tool ID of the latest TodoWrite call (by sequence), or null */
   latestTodoWriteId: string | null;
-  /** Set of TodoWrite tool IDs that the user has manually toggled */
-  manuallyToggledTodoIds: Set<string>;
-  /** Callback when a TodoWrite is manually toggled by the user */
-  onTodoManualToggle: (toolId: string) => void;
   /** Answer an AskUserQuestion tool call */
   onAnswerQuestion?: (toolUseId: string, answers: Record<string, string>) => void;
   /** Respond to an ExitPlanMode tool call (approve or request changes) */

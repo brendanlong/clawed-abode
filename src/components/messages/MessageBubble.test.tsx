@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { MessageBubble } from './MessageBubble';
 import { MessageListProvider } from './MessageListContext';
@@ -490,9 +490,6 @@ describe('MessageBubble', () => {
 
   describe('TodoWrite tracking', () => {
     it('renders TodoWrite tool display when context is provided', () => {
-      const onTodoManualToggle = vi.fn();
-      const manuallyToggledTodoIds = new Set<string>();
-
       const message = {
         type: 'assistant',
         content: {
@@ -515,8 +512,6 @@ describe('MessageBubble', () => {
         <MessageListProvider
           value={{
             latestTodoWriteId: 'todo-1',
-            manuallyToggledTodoIds,
-            onTodoManualToggle,
             planContentByToolUseId: new Map(),
             renderSubagentTranscript: () => null,
             relocatedSubagentIds: new Set(),
@@ -528,6 +523,66 @@ describe('MessageBubble', () => {
 
       // TodoWriteDisplay should be rendered (check for its specific elements)
       expect(screen.getByText('TodoWrite')).toBeInTheDocument();
+    });
+
+    function renderTodo(latestTodoWriteId: string) {
+      const message = {
+        type: 'assistant',
+        content: {
+          message: {
+            content: [
+              {
+                type: 'tool_use',
+                id: 'todo-1',
+                name: 'TodoWrite',
+                input: {
+                  todos: [{ content: 'Task 1', status: 'pending', activeForm: 'Doing task' }],
+                },
+              },
+            ],
+          },
+        } as MessageContent,
+      };
+      return (
+        <MessageListProvider
+          value={{
+            latestTodoWriteId,
+            planContentByToolUseId: new Map(),
+            renderSubagentTranscript: () => null,
+            relocatedSubagentIds: new Set(),
+          }}
+        >
+          <MessageBubble message={message} />
+        </MessageListProvider>
+      );
+    }
+
+    it('collapses an older todo list when a newer one arrives', () => {
+      const { rerender } = render(renderTodo('todo-1'));
+      expect(screen.getByText('Task 1')).toBeInTheDocument();
+
+      rerender(renderTodo('todo-2'));
+      expect(screen.queryByText('Task 1')).not.toBeInTheDocument();
+    });
+
+    it('keeps a manually toggled todo list as the user left it', () => {
+      const { rerender } = render(renderTodo('todo-2'));
+      expect(screen.queryByText('Task 1')).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByText('TodoWrite'));
+      expect(screen.getByText('Task 1')).toBeInTheDocument();
+
+      rerender(renderTodo('todo-3'));
+      expect(screen.getByText('Task 1')).toBeInTheDocument();
+    });
+
+    it('keeps the latest todo list collapsed once the user collapses it', () => {
+      const { rerender } = render(renderTodo('todo-1'));
+      fireEvent.click(screen.getByText('TodoWrite'));
+      expect(screen.queryByText('Task 1')).not.toBeInTheDocument();
+
+      rerender(renderTodo('todo-1'));
+      expect(screen.queryByText('Task 1')).not.toBeInTheDocument();
     });
   });
 
@@ -558,8 +613,6 @@ describe('MessageBubble', () => {
           <MessageListProvider
             value={{
               latestTodoWriteId: null,
-              manuallyToggledTodoIds: new Set<string>(),
-              onTodoManualToggle: () => {},
               planContentByToolUseId: new Map(),
               renderSubagentTranscript: (id: string) => <div>nested transcript for {id}</div>,
               relocatedSubagentIds: new Set(),

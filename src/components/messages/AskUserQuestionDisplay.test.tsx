@@ -31,8 +31,6 @@ function renderWithContext(
     <MessageListProvider
       value={{
         latestTodoWriteId: null,
-        manuallyToggledTodoIds: new Set(),
-        onTodoManualToggle: vi.fn(),
         planContentByToolUseId: new Map(),
         renderSubagentTranscript: () => null,
         relocatedSubagentIds: new Set(),

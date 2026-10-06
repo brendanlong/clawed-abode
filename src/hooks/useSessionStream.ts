@@ -11,22 +11,12 @@ import {
 } from '@/lib/message-cache';
 import { assertNeverFallback } from '@/lib/claude-messages';
 import { affectsTokenUsage } from '@/lib/token-estimation';
+import { historyQueryInput } from '@/hooks/useSessionMessages';
 import type { inferRouterOutputs } from '@trpc/server';
 import type { AppRouter } from '@/server/routers';
 
 type SessionGetOutput = inferRouterOutputs<AppRouter>['sessions']['get'];
 type LiveState = inferRouterOutputs<AppRouter>['claude']['getLiveState'];
-
-const MESSAGE_PAGE_SIZE = 20;
-
-interface CachedMessage {
-  id: string;
-  sessionId: string;
-  sequence: number;
-  type: string;
-  content: unknown;
-  createdAt: Date;
-}
 
 interface UseSessionStreamOptions {
   /** True once the initial `getHistory` load has completed. */
@@ -79,9 +69,8 @@ export function useSessionStream(sessionId: string, options: UseSessionStreamOpt
         const event = tracked.data;
         switch (event.kind) {
           case 'message': {
-            utils.claude.getHistory.setInfiniteData(
-              { sessionId, limit: MESSAGE_PAGE_SIZE },
-              (old) => mergeMessageIntoCache(old, event.message as CachedMessage)
+            utils.claude.getHistory.setInfiniteData(historyQueryInput(sessionId), (old) =>
+              mergeMessageIntoCache(old, event.message)
             );
             if (
               !isPartialMessageId(event.message.id) &&
@@ -115,9 +104,8 @@ export function useSessionStream(sessionId: string, options: UseSessionStreamOpt
             break;
           }
           case 'message_removed': {
-            utils.claude.getHistory.setInfiniteData(
-              { sessionId, limit: MESSAGE_PAGE_SIZE },
-              (old) => removeMessageFromCache(old, event.messageId)
+            utils.claude.getHistory.setInfiniteData(historyQueryInput(sessionId), (old) =>
+              removeMessageFromCache(old, event.messageId)
             );
             break;
           }

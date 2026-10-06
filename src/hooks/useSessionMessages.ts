@@ -6,6 +6,15 @@ import type { DisplayMessage } from '@/components/messages/types';
 const MESSAGE_PAGE_SIZE = 20;
 
 /**
+ * The `getHistory` cache key. Shared with `useSessionStream`, which writes live
+ * messages into this exact cache — a differing input would land them in one
+ * nobody reads.
+ */
+export function historyQueryInput(sessionId: string) {
+  return { sessionId, limit: MESSAGE_PAGE_SIZE };
+}
+
+/**
  * Hook for reading message history with infinite-scroll pagination and token usage.
  *
  * Live messages are delivered by the single SSE stream in `useSessionStream`, which
@@ -22,30 +31,27 @@ export function useSessionMessages(sessionId: string) {
     isFetchingNextPage,
     hasNextPage,
     fetchNextPage,
-  } = trpc.claude.getHistory.useInfiniteQuery(
-    { sessionId, limit: MESSAGE_PAGE_SIZE },
-    {
-      // Limit stored pages to prevent memory growth
-      // With MESSAGE_PAGE_SIZE messages per page, this keeps up to 10000 messages in memory
-      maxPages: 500,
-      // Message data is immutable - never refetch automatically
-      staleTime: Infinity,
-      // For loading OLDER messages (user scrolls up)
-      getNextPageParam: (lastPage, allPages) => {
-        if (!lastPage.hasMore) return undefined;
-        // Find the oldest sequence across ALL pages (not just lastPage, which might be empty)
-        let oldestSequence: number | undefined;
-        for (const page of allPages) {
-          for (const msg of page.messages) {
-            if (oldestSequence === undefined || msg.sequence < oldestSequence) {
-              oldestSequence = msg.sequence;
-            }
+  } = trpc.claude.getHistory.useInfiniteQuery(historyQueryInput(sessionId), {
+    // Limit stored pages to prevent memory growth
+    // With MESSAGE_PAGE_SIZE messages per page, this keeps up to 10000 messages in memory
+    maxPages: 500,
+    // Message data is immutable - never refetch automatically
+    staleTime: Infinity,
+    // For loading OLDER messages (user scrolls up)
+    getNextPageParam: (lastPage, allPages) => {
+      if (!lastPage.hasMore) return undefined;
+      // Find the oldest sequence across ALL pages (not just lastPage, which might be empty)
+      let oldestSequence: number | undefined;
+      for (const page of allPages) {
+        for (const msg of page.messages) {
+          if (oldestSequence === undefined || msg.sequence < oldestSequence) {
+            oldestSequence = msg.sequence;
           }
         }
-        return oldestSequence;
-      },
-    }
-  );
+      }
+      return oldestSequence;
+    },
+  });
 
   // Fetch token usage stats (computed server-side from all messages).
   // Refetched by useSessionStream when complete messages arrive.

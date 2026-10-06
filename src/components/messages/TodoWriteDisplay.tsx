@@ -83,21 +83,10 @@ function ChecklistIcon() {
 export function TodoWriteDisplay({ tool }: { tool: ToolCall }) {
   const ctx = useMessageListContext();
   const isLatest = ctx ? tool.id === ctx.latestTodoWriteId : false;
-  const wasManuallyToggled = ctx && tool.id ? ctx.manuallyToggledTodoIds.has(tool.id) : false;
-
-  const [manualExpandedState, setManualExpandedState] = useState(true);
-
-  // Conditional expanded state:
-  // - If user hasn't toggled: follow isLatest
-  // - If user has toggled: use local state
-  const expanded = wasManuallyToggled ? manualExpandedState : isLatest;
-
-  const handleOpenChange = (open: boolean) => {
-    if (ctx && tool.id) {
-      ctx.onTodoManualToggle(tool.id);
-    }
-    setManualExpandedState(open);
-  };
+  // Follows isLatest (so older lists collapse as new ones arrive) until the user
+  // toggles it.
+  const [manual, setManual] = useState<boolean | null>(null);
+  const expanded = manual ?? isLatest;
 
   const input = parseToolInput(tool.input, todoWriteInputSchema);
   const todos = input?.todos ?? [];
@@ -111,7 +100,7 @@ export function TodoWriteDisplay({ tool }: { tool: ToolCall }) {
       tool={tool}
       icon={<ChecklistIcon />}
       title="TodoWrite"
-      expandedOverride={{ expanded, onOpenChange: handleOpenChange }}
+      expandedOverride={{ expanded, onOpenChange: setManual }}
       headerContent={
         <>
           <ColorBadge color={completedCount === totalCount ? 'green' : 'blue'}>
