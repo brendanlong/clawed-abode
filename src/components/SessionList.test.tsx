@@ -26,6 +26,8 @@ function session(overrides: Partial<Session> & Pick<Session, 'id' | 'name'>): Se
     repoUrl: 'https://github.com/user/repo.git',
     branch: 'main',
     status: 'running',
+    canStart: false,
+    canStop: true,
     statusMessage: null,
     currentBranch: null,
     pullRequest: null,

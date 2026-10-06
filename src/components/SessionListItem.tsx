@@ -64,7 +64,7 @@ export function SessionListItem({ session }: SessionListItemProps) {
             {/* No controls for archived sessions - they're read-only */}
             {!isArchived && (
               <>
-                {session.status === 'stopped' && (
+                {session.canStart && (
                   <SessionActionButton
                     action="start"
                     onClick={() => startMutation.mutate({ sessionId: session.id })}
@@ -72,7 +72,7 @@ export function SessionListItem({ session }: SessionListItemProps) {
                     variant="ghost"
                   />
                 )}
-                {session.status === 'running' && (
+                {session.canStop && (
                   <SessionActionButton
                     action="stop"
                     onClick={() => stopMutation.mutate({ sessionId: session.id })}

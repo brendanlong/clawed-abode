@@ -20,6 +20,8 @@ interface SessionHeaderProps {
     repoUrl: string | null;
     branch: string | null;
     status: string;
+    canStart: boolean;
+    canStop: boolean;
     statusMessage?: string | null;
     claudeModel?: string | null;
     rateLimitPauseEnabled?: boolean | null;
@@ -110,8 +112,8 @@ export function SessionHeader({
             )}
             <SessionStatusToggle
               status={session.status}
-              onStart={onStart}
-              onStop={onStop}
+              onStart={session.canStart ? onStart : undefined}
+              onStop={session.canStop ? onStop : undefined}
               isStarting={isStarting}
               isStopping={isStopping}
             />

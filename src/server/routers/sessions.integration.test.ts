@@ -471,6 +471,34 @@ describe('sessionsRouter integration', () => {
       });
     });
 
+    it('should refuse to revive a session whose setup failed, even via stop', async () => {
+      mockCloneRepo.mockRejectedValueOnce(new Error('clone failed'));
+      const caller = createCaller('auth-session-id');
+      const { session } = await caller.sessions.create({
+        name: 'Failed setup',
+        repoFullName: 'owner/repo',
+        branch: 'main',
+      });
+      await vi.waitFor(async () => {
+        const row = await testPrisma.session.findUniqueOrThrow({ where: { id: session.id } });
+        expect(row.status).toBe('error');
+      });
+
+      const { session: view } = await caller.sessions.get({ sessionId: session.id });
+      expect(view).toMatchObject({ canStart: false, canStop: false });
+
+      await expect(caller.sessions.start({ sessionId: session.id })).rejects.toMatchObject({
+        code: 'PRECONDITION_FAILED',
+      });
+      expect((await caller.sessions.stop({ sessionId: session.id })).session.status).toBe('error');
+      await expect(caller.sessions.start({ sessionId: session.id })).rejects.toMatchObject({
+        code: 'PRECONDITION_FAILED',
+      });
+
+      const row = await testPrisma.session.findUniqueOrThrow({ where: { id: session.id } });
+      expect(row).toMatchObject({ status: 'error', repoPath: '' });
+    });
+
     it('should reject starting an archived session', async () => {
       const session = await createNoRepoSession({
         name: 'Archived Session',
@@ -506,6 +534,8 @@ describe('sessionsRouter integration', () => {
       const result = await caller.sessions.stop({ sessionId: session.id });
 
       expect(result.session.status).toBe('stopped');
+      // The UI offers Start/Stop from these, not from its own copy of the rule.
+      expect(result.session).toMatchObject({ canStart: true, canStop: false });
 
       // Verify database was updated
       const dbSession = await testPrisma.session.findUnique({ where: { id: session.id } });
