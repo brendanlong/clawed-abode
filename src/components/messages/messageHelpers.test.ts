@@ -91,6 +91,16 @@ describe('extractTextContent', () => {
   });
 });
 
+describe('isOwnPromptMessage', () => {
+  it('excludes task notifications', () => {
+    const content: MessageContent = {
+      message: { role: 'user', content: '<task-notification>…</task-notification>' },
+      origin: { kind: 'task-notification', producer: 'session-task' },
+    };
+    expect(isOwnPromptMessage({ type: 'user', content })).toBe(false);
+  });
+});
+
 describe('isToolResultMessage', () => {
   it('returns true for messages with tool_result content', () => {
     const content: MessageContent = {
@@ -226,7 +236,6 @@ describe('isRecognizedMessage', () => {
       recognized: true,
       category: 'taskNotification',
     });
-    expect(isOwnPromptMessage({ type: 'user', content })).toBe(false);
   });
 
   it('rejects user messages without text content', () => {

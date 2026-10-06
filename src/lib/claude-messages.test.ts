@@ -297,30 +297,41 @@ describe('getParentToolUseId', () => {
   });
 
   describe('parseTaskNotification', () => {
-    const origin = { kind: 'task-notification', producer: 'session-task' };
-
     it('reads the summary and unescapes the Monitor event', () => {
       const text =
         '<task-notification>\n<task-id>b1</task-id>\n<summary>Monitor event: "job"</summary>\n<event>&gt;&gt;&gt; job 1 succeeded &amp; done</event>\n</task-notification>';
-      expect(parseTaskNotification(origin, text)).toEqual({
+      expect(parseTaskNotification(text)).toEqual({
         summary: 'Monitor event: "job"',
         detail: '>>> job 1 succeeded & done',
       });
     });
 
-    it('falls back to a background task result, then to no detail', () => {
+    it('uses a subagent result as the detail', () => {
       expect(
-        parseTaskNotification(origin, '<summary>Agent finished</summary>\n<result>\nok\n</result>')
+        parseTaskNotification('<summary>Agent finished</summary>\n<result>\nok\n</result>')
       ).toEqual({ summary: 'Agent finished', detail: 'ok' });
-      expect(parseTaskNotification(origin, 'unexpected')).toEqual({
+    });
+
+    it('keeps the whole text as the detail when there is no payload', () => {
+      const text =
+        '<task-notification>\n<status>completed</status>\n<summary>Background command "make" completed</summary>\n</task-notification>';
+      expect(parseTaskNotification(text)).toEqual({
+        summary: 'Background command "make" completed',
+        detail: text,
+      });
+      expect(parseTaskNotification('unexpected')).toEqual({
         summary: 'Background task update',
-        detail: null,
+        detail: 'unexpected',
       });
     });
 
-    it('ignores messages with any other origin', () => {
-      expect(parseTaskNotification(undefined, '<summary>x</summary>')).toBeNull();
-      expect(parseTaskNotification({ kind: 'peer' }, '<summary>x</summary>')).toBeNull();
+    it('summarizes several notifications by count and keeps all of them', () => {
+      const text =
+        '<task-notification><summary>a</summary><event>1</event></task-notification>\n<task-notification><summary>b</summary><event>2</event></task-notification>';
+      expect(parseTaskNotification(text)).toEqual({
+        summary: '2 background task updates',
+        detail: text,
+      });
     });
   });
 

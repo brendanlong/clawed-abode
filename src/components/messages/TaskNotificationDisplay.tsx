@@ -14,27 +14,20 @@ import type { MessageContent } from './types';
  */
 export function TaskNotificationDisplay({ content }: { content: MessageContent }) {
   const [expanded, setExpanded] = useState(false);
-  const notification = parseTaskNotification(content.origin, extractTextContent(content) ?? '');
-  if (!notification) return null;
-  const { summary, detail } = notification;
+  const { summary, detail } = parseTaskNotification(extractTextContent(content) ?? '');
 
   return (
     <Collapsible open={expanded} onOpenChange={setExpanded}>
-      <CollapsibleTrigger
-        disabled={!detail}
-        className="flex w-full items-center gap-1.5 text-left text-xs text-muted-foreground hover:text-foreground transition-colors disabled:hover:text-muted-foreground"
-      >
+      <CollapsibleTrigger className="flex w-full items-center gap-1.5 text-left text-xs text-muted-foreground hover:text-foreground transition-colors">
         <BellRing className="h-3.5 w-3.5 shrink-0" />
         <span className="truncate">{summary}</span>
-        {detail && <span className="ml-auto">{expanded ? '−' : '+'}</span>}
+        <span className="ml-auto">{expanded ? '−' : '+'}</span>
       </CollapsibleTrigger>
-      {detail && (
-        <CollapsibleContent>
-          <pre className="mt-1 max-h-80 overflow-auto whitespace-pre-wrap break-words border-l-2 border-muted pl-3 text-xs text-muted-foreground">
-            {detail}
-          </pre>
-        </CollapsibleContent>
-      )}
+      <CollapsibleContent>
+        <pre className="mt-1 max-h-80 overflow-auto whitespace-pre-wrap break-words border-l-2 border-muted pl-3 text-xs text-muted-foreground">
+          {detail}
+        </pre>
+      </CollapsibleContent>
     </Collapsible>
   );
 }

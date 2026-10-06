@@ -295,8 +295,11 @@ export function isTaskNotificationOrigin(origin: unknown): boolean {
 
 export interface TaskNotification {
   summary: string;
-  /** The `<event>` (Monitor) or `<result>` (background task) payload, if any. */
-  detail: string | null;
+  /**
+   * A lone notification's `<event>` (Monitor) or `<result>` (subagent) payload;
+   * otherwise the whole text, so nothing the agent saw is unreachable.
+   */
+  detail: string;
 }
 
 function unescapeXml(text: string): string {
@@ -314,14 +317,17 @@ function xmlElementText(text: string, tag: string): string | null {
 }
 
 /**
- * A `<task-notification>` the CLI injects as a user message when a background
- * task (Monitor event, background command, subagent) reports back to the agent.
+ * The text of a user message whose origin passes {@link isTaskNotificationOrigin}:
+ * one or more `<task-notification>`s a background task (Monitor event,
+ * background command, subagent) sent the agent.
  */
-export function parseTaskNotification(origin: unknown, text: string): TaskNotification | null {
-  if (!isTaskNotificationOrigin(origin)) return null;
+export function parseTaskNotification(text: string): TaskNotification {
+  const raw = unescapeXml(text.trim());
+  const count = text.match(/<task-notification>/g)?.length ?? 0;
+  if (count > 1) return { summary: `${count} background task updates`, detail: raw };
   return {
     summary: xmlElementText(text, 'summary') ?? 'Background task update',
-    detail: xmlElementText(text, 'event') ?? xmlElementText(text, 'result'),
+    detail: xmlElementText(text, 'event') ?? xmlElementText(text, 'result') ?? raw,
   };
 }
 
