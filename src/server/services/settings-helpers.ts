@@ -173,10 +173,10 @@ interface DbMcpServer {
 }
 
 /**
- * The stringly-typed columns of an MCP server row. CHECK constraints (see
- * prisma/schema.prisma) enforce all of this but args' element type, so a mismatch
- * is a bug: throw rather than hand the runner or the settings form a server we'd
- * have to guess about.
+ * The stringly-typed columns of an MCP server row. The table's CHECK constraints
+ * enforce all of this but args' element type, so a mismatch is a bug: throw
+ * rather than hand the runner or the settings form a server we'd have to guess
+ * about.
  */
 const dbMcpServerFieldsSchema = z.discriminatedUnion('type', [
   z.object({
@@ -184,7 +184,7 @@ const dbMcpServerFieldsSchema = z.discriminatedUnion('type', [
     authType: mcpAuthTypeSchema,
     args: z.array(z.string()).nullable(),
   }),
-  z.object({ type: mcpHttpServerTypeSchema, authType: mcpAuthTypeSchema, url: z.string() }),
+  z.object({ type: mcpHttpServerTypeSchema, authType: mcpAuthTypeSchema, url: z.string().min(1) }),
 ]);
 
 function parseDbMcpServer(mcp: DbMcpServer): z.infer<typeof dbMcpServerFieldsSchema> {

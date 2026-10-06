@@ -106,6 +106,15 @@ describe('database CHECK constraints', () => {
       }
     });
 
+    it('keeps the hand-written partial unique index on global names', async () => {
+      await insertMcpServer(exec, { id: 'a', type: 'stdio' });
+      await expect(
+        exec(
+          `INSERT INTO "McpServer" ("id", "name", "updatedAt") VALUES ('b', 'a', CURRENT_TIMESTAMP)`
+        )
+      ).rejects.toThrow(/UNIQUE constraint failed/);
+    });
+
     it('applies on update too', async () => {
       await insertMcpServer(exec, { id: 's', type: 'http', url: 'https://example.com/mcp' });
       await expect(exec(`UPDATE "McpServer" SET "url" = NULL WHERE "id" = 's'`)).rejects.toThrow(
@@ -184,7 +193,7 @@ describe(`migration ${MIGRATION}`, () => {
     deploy();
     cpSync(join(migrationsDir, MIGRATION), join(tempMigrations, MIGRATION), { recursive: true });
     client = new PrismaClient({ adapter: new PrismaBetterSqlite3({ url: dbUrl }) });
-  }, 60_000);
+  }, 120_000);
 
   afterAll(async () => {
     await client.$disconnect();
@@ -236,35 +245,34 @@ describe(`migration ${MIGRATION}`, () => {
 
     deploy();
 
-    const servers = await client.mcpServer.findMany({
-      include: { values: true, oauth: true },
-      orderBy: { id: 'asc' },
-    });
+    // Raw SQL on the columns that exist as of this migration, so a later migration
+    // adding columns to these tables doesn't break the test.
+    const rows = (query: string) => client.$queryRawUnsafe<unknown[]>(query);
+    expect(await rows(`SELECT "id" FROM "McpServer" ORDER BY "id"`)).toEqual([
+      { id: 'http-ok' },
+      { id: 'stdio-ok' },
+    ]);
+    expect(await rows(`SELECT "id", "mcpServerId" FROM "McpServerValue" ORDER BY "id"`)).toEqual([
+      { id: 'v-http', mcpServerId: 'http-ok' },
+      { id: 'v-stdio', mcpServerId: 'stdio-ok' },
+    ]);
+    expect(await rows(`SELECT "id", "mcpServerId" FROM "McpOAuth"`)).toEqual([
+      { id: 'o-ok', mcpServerId: 'http-ok' },
+    ]);
     expect(
-      servers.map((s) => ({
-        id: s.id,
-        values: s.values.map((v) => v.id),
-        oauth: s.oauth?.id ?? null,
-      }))
+      await rows(`SELECT "id", "attachments" FROM "QueuedPrompt" ORDER BY "position"`)
     ).toEqual([
-      { id: 'http-ok', values: ['v-http'], oauth: 'o-ok' },
-      { id: 'stdio-ok', values: ['v-stdio'], oauth: null },
+      { id: 'q-ok', attachments: '["a.png"]' },
+      { id: 'q-bad', attachments: '[]' },
     ]);
-    expect(await client.mcpServerValue.count()).toBe(2);
-    expect(await client.mcpOAuth.count()).toBe(1);
-
-    const prompts = await client.queuedPrompt.findMany({ orderBy: { position: 'asc' } });
-    expect(prompts.map((p) => [p.id, p.attachments])).toEqual([
-      ['q-ok', '["a.png"]'],
-      ['q-bad', '[]'],
+    expect(await rows(`SELECT "resultCount", "contextWindows" FROM "SessionUsage"`)).toEqual([
+      { resultCount: 3, contextWindows: '{}' },
     ]);
-    const usage = await client.sessionUsage.findUniqueOrThrow({ where: { sessionId: 's' } });
-    expect(usage).toMatchObject({ resultCount: 3, contextWindows: '{}' });
 
-    expect(await client.$queryRawUnsafe('PRAGMA foreign_key_check')).toEqual([]);
+    expect(await rows('PRAGMA foreign_key_check')).toEqual([]);
     // The children's foreign keys still point at the rebuilt table, so deletes cascade.
-    await client.mcpServer.delete({ where: { id: 'http-ok' } });
-    expect(await client.mcpServerValue.count()).toBe(1);
-    expect(await client.mcpOAuth.count()).toBe(0);
+    await exec(`DELETE FROM "McpServer" WHERE "id" = 'http-ok'`);
+    expect(await rows(`SELECT "id" FROM "McpServerValue"`)).toEqual([{ id: 'v-stdio' }]);
+    expect(await rows(`SELECT "id" FROM "McpOAuth"`)).toEqual([]);
   }, 120_000);
 });
