@@ -6,7 +6,9 @@ Everything below about turn status, delivery and interrupts is implemented by th
 
 ## Persistent Streaming Query
 
-Each session has **one long-lived `query()` in streaming-input mode** (the prompt is a pushable `AsyncIterable`, [`src/lib/pushable.ts`](../src/lib/pushable.ts)). It is established lazily (`ensureSessionQuery` — idempotent and coalesced; the in-flight promise clears in `finally` so a failed establish can retry), stays alive across turns and idle periods, and is torn down only on stop / delete / shutdown / fatal error.
+Each session has **one long-lived `query()` in streaming-input mode** (the prompt is a pushable `AsyncIterable`, [`src/lib/pushable.ts`](../src/lib/pushable.ts)). It is established by `ensureSessionQuery` (idempotent and coalesced; the in-flight promise clears in `finally` so a failed establish can retry), stays alive across turns and idle periods, and is torn down only on stop / delete / shutdown / fatal error.
+
+**Running means reachable.** A `running` session gets its query without waiting for a prompt — at the end of setup, on Start, when the rate-limit pause releases it, and for all running sessions (concurrently) at boot — because another session can only message a CLI that is up ([Cross-Session Messaging](#cross-session-messaging)). The cost is an idle CLI process (~260 MB) per running session; Stop is how to free one. `reviveSession` skips a held session and one whose workspace is gone (the CLI would only fail into its transcript). Establishment itself refuses a session that is no longer `running`, since Stop and Delete tear down memory before writing the status.
 
 **Why:** background tasks (`run_in_background` subagents, `Monitor` watches, backgrounded `Bash`) deliver their `task_started` / `task_notification` messages later in the same stream — and when a task settles, the main agent autonomously continues in a new turn — but only while the stream stays open. A per-prompt query closed the stream at each `result`, killing every waiter.
 

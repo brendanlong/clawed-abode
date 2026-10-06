@@ -8,6 +8,9 @@
  */
 
 import { isDeepStrictEqual } from 'node:util';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi, afterEach } from 'vitest';
 import type { Query, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { setupTestDb, teardownTestDb, testPrisma, clearTestDb } from '@/test/setup-test-db';
@@ -103,6 +106,7 @@ let stopBackgroundTask: typeof import('./claude-runner').stopBackgroundTask;
 let insertMessage: typeof import('./message-store').insertMessage;
 let reapOrphanedSessionScopes: typeof import('./claude-runner').reapOrphanedSessionScopes;
 let reviveRunningSessions: typeof import('./claude-runner').reviveRunningSessions;
+let reviveSession: typeof import('./claude-runner').reviveSession;
 let _setQueryFactory: typeof import('./claude-runner')._setQueryFactory;
 let mockLoadSettings: ReturnType<
   typeof vi.mocked<typeof import('./settings-merger').loadMergedSessionSettings>
@@ -340,6 +344,7 @@ describe('claude-runner persistent streaming loop', () => {
     insertMessage = (await import('./message-store')).insertMessage;
     reapOrphanedSessionScopes = mod.reapOrphanedSessionScopes;
     reviveRunningSessions = mod.reviveRunningSessions;
+    reviveSession = mod.reviveSession;
     _setQueryFactory = mod._setQueryFactory;
     const sm = await import('./settings-merger');
     mockLoadSettings = vi.mocked(sm.loadMergedSessionSettings);
@@ -969,22 +974,47 @@ describe('claude-runner persistent streaming loop', () => {
     stopSession(sessionId);
   });
 
-  it('revives running sessions without sending a prompt, leaving stopped ones alone', async () => {
-    const fake = makeFakeQuery();
-    const factory = vi.fn(fake.factory);
-    _setQueryFactory(factory);
-    const running = await createRunningSession();
-    const { id: stopped } = await testPrisma.session.create({
-      data: { name: 'Stopped', repoPath: '', status: 'stopped' },
+  describe('reviving without a prompt', () => {
+    let workspace: string;
+    beforeEach(async () => {
+      workspace = await mkdtemp(join(tmpdir(), 'revive-'));
+      const { getSessionWorkingDir } = await import('./worktree-manager');
+      vi.mocked(getSessionWorkingDir).mockReturnValue(workspace);
+    });
+    afterEach(async () => {
+      await rm(workspace, { recursive: true, force: true });
+      const { getSessionWorkingDir } = await import('./worktree-manager');
+      vi.mocked(getSessionWorkingDir).mockReturnValue('/tmp/spike-runner-test');
     });
 
-    await reviveRunningSessions();
+    it('starts every running session without sending a prompt, leaving stopped ones alone', async () => {
+      const fake = makeFakeQuery();
+      const factory = vi.fn(fake.factory);
+      _setQueryFactory(factory);
+      const running = await createRunningSession();
+      await testPrisma.session.create({
+        data: { name: 'Stopped', repoPath: '', status: 'stopped' },
+      });
 
-    expect(factory).toHaveBeenCalledTimes(1);
-    expect(fake.inputs).toHaveLength(0);
-    expect(isClaudeRunning(running)).toBe(false);
-    stopSession(running);
-    stopSession(stopped);
+      await reviveRunningSessions();
+
+      expect(factory).toHaveBeenCalledTimes(1);
+      expect(fake.inputs).toHaveLength(0);
+      expect(isClaudeRunning(running)).toBe(false);
+      stopSession(running);
+    });
+
+    it('skips a session whose workspace is gone', async () => {
+      const fake = makeFakeQuery();
+      const factory = vi.fn(fake.factory);
+      _setQueryFactory(factory);
+      const sessionId = await createRunningSession();
+      await rm(workspace, { recursive: true, force: true });
+
+      await reviveSession(sessionId);
+
+      expect(factory).not.toHaveBeenCalled();
+    });
   });
 
   it('drops the echo of a pushed prompt but persists a message from another session', async () => {

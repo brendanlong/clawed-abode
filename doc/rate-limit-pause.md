@@ -110,9 +110,9 @@ to show for it.
 
 At startup the readings are restored before anything can drain, but the recompute
 itself is not awaited — if the window reset while the server was down the drain
-establishes queries, and a slow one must not stall boot. That drain is the one
-place a session revives without a user interaction; the queued prompt _is_ the
-interaction, just an earlier one.
+establishes queries, and a slow one must not stall boot. Boot's revival of running
+sessions skips held ones, so a session's query doesn't come up (and can't be
+messaged into a turn) inside a window the API is refusing; the release revives it.
 
 **Stop is the way out.** `interruptClaude` empties the queue, deletes those bubbles
 and returns the text to the composer (the same recall path Stop already used for

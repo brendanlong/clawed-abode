@@ -61,6 +61,8 @@ export interface PauseRunner {
    * `isLive` turns false once it is gone, and `push` must then not be called.
    */
   openQuery(sessionId: string): Promise<{ isLive(): boolean; push(prompt: PromptPayload): void }>;
+  /** Bring up a released session's query so other sessions can reach it. Best-effort. */
+  revive(sessionId: string): Promise<void>;
 }
 
 let runner: PauseRunner | null = null;
@@ -131,6 +133,7 @@ async function runRecompute(): Promise<void> {
     if (hold) currentHolds.set(sessionId, hold);
     else currentHolds.delete(sessionId);
     sseEvents.emitRateLimitHold(sessionId, hold);
+    if (!hold) void runner.revive(sessionId);
   }
 
   for (const [sessionId, hold] of holds) {
