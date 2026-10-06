@@ -71,6 +71,7 @@ type Runner = typeof import('./claude-runner');
 let runner: Runner;
 let resetRateLimitState: typeof import('./rate-limit-state')._resetRateLimitState;
 let resolveSessionHold: typeof import('./rate-limit-state').resolveSessionHold;
+let rateLimitState: typeof import('./rate-limit-state');
 let GLOBAL_SETTINGS_ID: string;
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -223,8 +224,8 @@ describe('rate-limit pause', () => {
   beforeAll(async () => {
     await setupTestDb();
     runner = await import('./claude-runner');
-    ({ _resetRateLimitState: resetRateLimitState, resolveSessionHold } =
-      await import('./rate-limit-state'));
+    rateLimitState = await import('./rate-limit-state');
+    ({ _resetRateLimitState: resetRateLimitState, resolveSessionHold } = rateLimitState);
     GLOBAL_SETTINGS_ID = (await import('./settings-scope')).GLOBAL_SETTINGS_ID;
   });
   afterAll(async () => {
@@ -561,6 +562,21 @@ describe('rate-limit pause', () => {
 
     expect(await resolveSessionHold(sessionId)).toMatchObject({ reason: 'rejected' });
     expect(await queuedTexts(sessionId)).toEqual(['queued']);
+  });
+
+  it('skips a stored window of a type it no longer holds for when restoring', async () => {
+    const resetsAt = new Date(NOW + HOUR_MS);
+    await testPrisma.rateLimitWindow.createMany({
+      data: [
+        { limitType: 'five_hour', rejected: true, utilization: 100, resetsAt },
+        { limitType: 'retired_window', rejected: true, utilization: 100, resetsAt },
+      ],
+    });
+
+    resetRateLimitState();
+    await rateLimitState.loadRateLimitReadings();
+
+    expect(rateLimitState.getRateLimitReadings().map((r) => r.limitType)).toEqual(['five_hour']);
   });
 
   it('keeps a weekly hold when an unrelated 5-hour event reports that window', async () => {

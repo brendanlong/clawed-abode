@@ -54,10 +54,12 @@ const LIMIT_TYPE_LABELS: Record<HoldableLimitType, string> = {
 };
 
 export function describeLimitType(limitType: string): string {
-  return LIMIT_TYPE_LABELS[limitType as HoldableLimitType] ?? limitType.replace(/_/g, ' ');
+  return isHoldableLimitType(limitType)
+    ? LIMIT_TYPE_LABELS[limitType]
+    : limitType.replace(/_/g, ' ');
 }
 
-function isHoldableLimitType(value: string): value is HoldableLimitType {
+export function isHoldableLimitType(value: string): value is HoldableLimitType {
   return (HOLDABLE_LIMIT_TYPES as readonly string[]).includes(value);
 }
 
