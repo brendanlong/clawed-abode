@@ -2,8 +2,8 @@ import { prisma } from '@/lib/prisma';
 import {
   ACTIVITY_UPDATE_THROTTLE_MS,
   AUTH_SESSION_RETENTION_MS,
-  IDLE_TIMEOUT_MS,
   SESSION_DURATION_MS,
+  effectiveExpiry,
   generateSessionToken,
 } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
@@ -50,20 +50,16 @@ export async function resolveAuthSessionId(token: string): Promise<string | null
 
   const now = new Date();
 
-  if (session.expiresAt < now) {
-    return null;
-  }
-
-  // Check for idle timeout
-  const idleTime = now.getTime() - session.lastActivityAt.getTime();
-  if (idleTime > IDLE_TIMEOUT_MS) {
-    // Session is idle, reject it (but don't delete - keep for audit/display)
-    log.info('Session rejected due to idle timeout', { sessionId: session.id });
+  // Expired or idle: reject, but keep the row for the audit list.
+  if (effectiveExpiry(session) < now) {
+    if (session.expiresAt >= now) {
+      log.info('Session rejected due to idle timeout', { sessionId: session.id });
+    }
     return null;
   }
 
   // Update last activity (throttled to avoid excessive DB writes)
-  if (idleTime > ACTIVITY_UPDATE_THROTTLE_MS) {
+  if (now.getTime() - session.lastActivityAt.getTime() > ACTIVITY_UPDATE_THROTTLE_MS) {
     prisma.authSession
       .update({
         where: { id: session.id },
