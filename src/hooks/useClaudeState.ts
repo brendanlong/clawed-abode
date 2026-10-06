@@ -13,47 +13,50 @@ import { LIVE_QUERY_OPTIONS } from '@/lib/live-query';
 export function useClaudeState(sessionId: string) {
   const { data: live } = trpc.claude.getLiveState.useQuery({ sessionId }, LIVE_QUERY_OPTIONS);
 
-  const sendMutation = trpc.claude.send.useMutation();
-  const interruptMutation = trpc.claude.interrupt.useMutation();
-  const answerMutation = trpc.claude.answerQuestion.useMutation();
-  const respondToPlanMutation = trpc.claude.respondToPlan.useMutation();
-  const stopBackgroundTaskMutation = trpc.claude.stopBackgroundTask.useMutation();
+  // Callbacks depend on the stable mutate functions, not the mutation result
+  // objects (a new identity every render).
+  const { mutateAsync: sendAsync } = trpc.claude.send.useMutation();
+  const { mutateAsync: interruptAsync, isPending: isInterrupting } =
+    trpc.claude.interrupt.useMutation();
+  const { mutate: answerMutate } = trpc.claude.answerQuestion.useMutation();
+  const { mutate: respondToPlanMutate } = trpc.claude.respondToPlan.useMutation();
+  const { mutate: stopBackgroundTaskMutate } = trpc.claude.stopBackgroundTask.useMutation();
 
   // Returns a promise that rejects if the send fails (e.g. a network blip, or the
   // session no longer running), so the composer can restore the just-typed text
   // instead of losing it to the optimistic clear.
   const send = useCallback(
     (prompt: string, attachments?: string[]) => {
-      return sendMutation.mutateAsync({ sessionId, prompt, attachments });
+      return sendAsync({ sessionId, prompt, attachments });
     },
-    [sessionId, sendMutation]
+    [sessionId, sendAsync]
   );
 
   // Stop the current turn. Resolves with any prompts the server pulled back
   // because the agent hadn't read them yet, so the caller can restore them.
   const interrupt = useCallback(() => {
-    return interruptMutation.mutateAsync({ sessionId });
-  }, [sessionId, interruptMutation]);
+    return interruptAsync({ sessionId });
+  }, [sessionId, interruptAsync]);
 
   const answerQuestion = useCallback(
     (toolUseId: string, answers: Record<string, string>) => {
-      answerMutation.mutate({ sessionId, toolUseId, answers });
+      answerMutate({ sessionId, toolUseId, answers });
     },
-    [sessionId, answerMutation]
+    [sessionId, answerMutate]
   );
 
   const respondToPlan = useCallback(
     (toolUseId: string, approve: boolean, feedback?: string) => {
-      respondToPlanMutation.mutate({ sessionId, toolUseId, approve, feedback });
+      respondToPlanMutate({ sessionId, toolUseId, approve, feedback });
     },
-    [sessionId, respondToPlanMutation]
+    [sessionId, respondToPlanMutate]
   );
 
   const stopBackgroundTask = useCallback(
     (taskId: string) => {
-      stopBackgroundTaskMutation.mutate({ sessionId, taskId });
+      stopBackgroundTaskMutate({ sessionId, taskId });
     },
-    [sessionId, stopBackgroundTaskMutation]
+    [sessionId, stopBackgroundTaskMutate]
   );
 
   // `isRunning` means a main-agent turn is active (gates the composer). Background
@@ -79,7 +82,7 @@ export function useClaudeState(sessionId: string) {
     rateLimitHold: live?.rateLimitHold ?? null,
     send,
     interrupt,
-    isInterrupting: interruptMutation.isPending,
+    isInterrupting,
     answerQuestion,
     respondToPlan,
     stopBackgroundTask,
