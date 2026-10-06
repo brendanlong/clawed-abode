@@ -44,7 +44,8 @@ export interface PushedPrompt {
  *   feeds hasn't produced a `message_start`. Nothing to show the user, yet the
  *   entry must survive: `turnActive` is false across that gap (full model latency
  *   when the previous turn ended before the CLI folded this message in), and
- *   dropping it here would blink the composer idle mid-work.
+ *   dropping it here would blink the composer idle mid-work. It is retired when
+ *   that turn opens, or at its `result` if it ends without opening.
  */
 export interface InFlightCommand extends PushedPrompt {
   /** The CLI reported the agent has read it (`command_lifecycle` left `queued`). */
@@ -124,9 +125,11 @@ export function reduceLiveTurn(state: LiveTurnState, event: LiveEvent): LiveOutc
 
     case 'command_lifecycle': {
       // `queued` is the CLI acknowledging receipt. `started` clears the "Sending…"
-      // marker but the entry lives on until the turn it feeds opens; a terminal
-      // `completed`/`cancelled` retires it outright, covering a `started` that
-      // never arrived.
+      // marker but the entry lives on until the turn it feeds opens or ends; a
+      // terminal `completed`/`cancelled` retires it outright, covering a `started`
+      // that never arrived. A `started` with no turn open means the agent is
+      // beginning a turn for it, so turnActive goes optimistically true, as on a
+      // push to an idle session: that turn may end without a `message_start`.
       const seen = { ...state, commandLifecycleSeen: true };
       const { command_uuid: commandUuid, state: stage } = event.lifecycle;
       const command = state.inFlight.get(commandUuid);
@@ -135,6 +138,14 @@ export function reduceLiveTurn(state: LiveTurnState, event: LiveEvent): LiveOutc
       if (stage === 'started') {
         if (command.started) return settled(seen);
         inFlight.set(commandUuid, { ...command, started: true });
+        if (!state.status.turnActive) {
+          return settled({
+            ...seen,
+            inFlight,
+            status: { ...state.status, turnActive: true },
+            optimisticTurnActive: true,
+          });
+        }
       } else {
         inFlight.delete(commandUuid);
       }
@@ -238,8 +249,11 @@ function reduceMessage(state: LiveTurnState, message: SDKMessage): LiveOutcome {
  * "working"). Never time-based.
  *
  * - A top-level `message_start` retires every entry the agent has already read.
- * - A top-level `result` is the safety valve: an entry may survive one turn
- *   boundary (the fold-after-turn-end case) and no more; on a CLI that reports no
+ * - A top-level `result` does too: this relies on the CLI reporting `started`
+ *   only as a command drains into a turn, so one read before a `result` fed the
+ *   turn that just ended (a CLI that preempts turns on its own would break this).
+ *   For unread entries it is the safety valve: one may survive one turn boundary
+ *   (the fold-after-turn-end case) and no more; on a CLI that reports no
  *   lifecycle at all the first boundary retires it.
  */
 function retire(
@@ -255,6 +269,7 @@ function retire(
   const next = new Map<string, InFlightCommand>();
   for (const [commandUuid, command] of inFlight) {
     if (isResult) {
+      if (command.started) continue;
       const resultsSeen = command.resultsSeen + 1;
       if (resultsSeen < maxTurnsWithoutReport) next.set(commandUuid, { ...command, resultsSeen });
     } else if (!command.started && lifecycleSeen) {
