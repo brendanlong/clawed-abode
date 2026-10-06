@@ -287,6 +287,50 @@ export function parseInjectedOrigin(origin: unknown): InjectedMessageOrigin | nu
   };
 }
 
+const TaskNotificationOriginSchema = z.object({ kind: z.literal('task-notification') });
+
+export function isTaskNotificationOrigin(origin: unknown): boolean {
+  return TaskNotificationOriginSchema.safeParse(origin).success;
+}
+
+export interface TaskNotification {
+  summary: string;
+  /**
+   * A lone notification's `<event>` (Monitor) or `<result>` (subagent) payload;
+   * otherwise the whole text, so nothing the agent saw is unreachable.
+   */
+  detail: string;
+}
+
+function unescapeXml(text: string): string {
+  return text
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&');
+}
+
+function xmlElementText(text: string, tag: string): string | null {
+  const match = new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`).exec(text);
+  return match ? unescapeXml(match[1].trim()) : null;
+}
+
+/**
+ * The text of a user message whose origin passes {@link isTaskNotificationOrigin}:
+ * one or more `<task-notification>`s a background task (Monitor event,
+ * background command, subagent) sent the agent.
+ */
+export function parseTaskNotification(text: string): TaskNotification {
+  const raw = unescapeXml(text.trim());
+  const count = text.match(/<task-notification>/g)?.length ?? 0;
+  if (count > 1) return { summary: `${count} background task updates`, detail: raw };
+  return {
+    summary: xmlElementText(text, 'summary') ?? 'Background task update',
+    detail: xmlElementText(text, 'event') ?? xmlElementText(text, 'result') ?? raw,
+  };
+}
+
 /**
  * Decide how to handle a message yielded by the Claude Agent SDK.
  *

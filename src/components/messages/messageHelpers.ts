@@ -6,7 +6,11 @@ import type {
   ToolResultMap,
 } from './types';
 import { formatAsJson, buildToolMessages } from './types';
-import { getParentToolUseId, parseInjectedOrigin } from '@/lib/claude-messages';
+import {
+  getParentToolUseId,
+  isTaskNotificationOrigin,
+  parseInjectedOrigin,
+} from '@/lib/claude-messages';
 import { isPlanFile, reconstructPlansByToolUseId, type PlanEvent } from './plan-utils';
 
 /**
@@ -23,6 +27,7 @@ export type MessageCategory =
   | 'user'
   | 'userInterrupt'
   | 'injectedMessage'
+  | 'taskNotification'
   | 'toolResult'
   | 'systemError'
   | 'systemCompactBoundary'
@@ -71,7 +76,11 @@ export function isToolResultMessage(content: MessageContent): boolean {
 export function isOwnPromptMessage(message: { type: string; content: unknown }): boolean {
   if (message.type !== 'user') return false;
   const content = message.content as MessageContent;
-  return !isToolResultMessage(content) && !parseInjectedOrigin(content.origin);
+  return (
+    !isToolResultMessage(content) &&
+    !parseInjectedOrigin(content.origin) &&
+    !isTaskNotificationOrigin(content.origin)
+  );
 }
 
 /**
@@ -338,6 +347,8 @@ export function isRecognizedMessage(type: string, content: MessageContent): Reco
     if (content.subtype === 'interrupt') return { recognized: true, category: 'userInterrupt' };
     if (parseInjectedOrigin(content.origin))
       return { recognized: true, category: 'injectedMessage' };
+    if (isTaskNotificationOrigin(content.origin))
+      return { recognized: true, category: 'taskNotification' };
     // Prompts carry text blocks, a string message.content (e.g. /context command
     // output), or a simple content string.
     const inner = content.message?.content;

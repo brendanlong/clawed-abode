@@ -4,6 +4,7 @@ import {
   classifyMessage,
   getParentToolUseId,
   parseCommandLifecycle,
+  parseTaskNotification,
   isIgnoredSystemMessage,
   parseRetryState,
   formatRetryReason,
@@ -292,6 +293,45 @@ describe('getParentToolUseId', () => {
       expect(parseInjectedOrigin(undefined)).toBeNull();
       expect(parseInjectedOrigin({ kind: 'human' })).toBeNull();
       expect(parseInjectedOrigin({ kind: 'peer', name: 5 })).toBeNull();
+    });
+  });
+
+  describe('parseTaskNotification', () => {
+    it('reads the summary and unescapes the Monitor event', () => {
+      const text =
+        '<task-notification>\n<task-id>b1</task-id>\n<summary>Monitor event: "job"</summary>\n<event>&gt;&gt;&gt; job 1 succeeded &amp; done</event>\n</task-notification>';
+      expect(parseTaskNotification(text)).toEqual({
+        summary: 'Monitor event: "job"',
+        detail: '>>> job 1 succeeded & done',
+      });
+    });
+
+    it('uses a subagent result as the detail', () => {
+      expect(
+        parseTaskNotification('<summary>Agent finished</summary>\n<result>\nok\n</result>')
+      ).toEqual({ summary: 'Agent finished', detail: 'ok' });
+    });
+
+    it('keeps the whole text as the detail when there is no payload', () => {
+      const text =
+        '<task-notification>\n<status>completed</status>\n<summary>Background command "make" completed</summary>\n</task-notification>';
+      expect(parseTaskNotification(text)).toEqual({
+        summary: 'Background command "make" completed',
+        detail: text,
+      });
+      expect(parseTaskNotification('unexpected')).toEqual({
+        summary: 'Background task update',
+        detail: 'unexpected',
+      });
+    });
+
+    it('summarizes several notifications by count and keeps all of them', () => {
+      const text =
+        '<task-notification><summary>a</summary><event>1</event></task-notification>\n<task-notification><summary>b</summary><event>2</event></task-notification>';
+      expect(parseTaskNotification(text)).toEqual({
+        summary: '2 background task updates',
+        detail: text,
+      });
     });
   });
 

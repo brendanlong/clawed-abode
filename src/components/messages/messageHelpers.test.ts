@@ -5,6 +5,7 @@ import {
   isToolResultMessage,
   getToolResults,
   isRecognizedMessage,
+  isOwnPromptMessage,
   buildToolCalls,
   getCopyText,
   getDisplayContent,
@@ -87,6 +88,16 @@ describe('extractTextContent', () => {
       },
     };
     expect(extractTextContent(content)).toBe('Some text');
+  });
+});
+
+describe('isOwnPromptMessage', () => {
+  it('excludes task notifications', () => {
+    const content: MessageContent = {
+      message: { role: 'user', content: '<task-notification>…</task-notification>' },
+      origin: { kind: 'task-notification', producer: 'session-task' },
+    };
+    expect(isOwnPromptMessage({ type: 'user', content })).toBe(false);
   });
 });
 
@@ -213,6 +224,17 @@ describe('isRecognizedMessage', () => {
     expect(isRecognizedMessage('user', content)).toEqual({
       recognized: true,
       category: 'user',
+    });
+  });
+
+  it("recognizes task notifications apart from the user's own prompts", () => {
+    const content: MessageContent = {
+      message: { role: 'user', content: '<task-notification>…</task-notification>' },
+      origin: { kind: 'task-notification', producer: 'session-task' },
+    };
+    expect(isRecognizedMessage('user', content)).toEqual({
+      recognized: true,
+      category: 'taskNotification',
     });
   });
 
