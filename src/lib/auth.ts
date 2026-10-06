@@ -19,6 +19,18 @@ export function effectiveExpiry(session: { lastActivityAt: Date; expiresAt: Date
 }
 
 /**
+ * `effectiveExpiry` as a query filter: sessions that are neither revoked nor past
+ * it at `now`. For conditional writes that must check liveness in the same statement.
+ */
+export function liveSessionWhere(now: Date) {
+  return {
+    revokedAt: null,
+    expiresAt: { gt: now },
+    lastActivityAt: { gt: new Date(now.getTime() - IDLE_TIMEOUT_MS) },
+  };
+}
+
+/**
  * What an auth session may reach. `public_files` sessions come from the public
  * files server's one-time-code login and are accepted only there; signing in
  * with the password from the same browser upgrades one to `full`.

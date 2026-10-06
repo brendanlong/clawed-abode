@@ -84,6 +84,16 @@ describe('public files server', () => {
     }
   });
 
+  it('accepts the real auth cookie even when a narrower-path one shadows it', async () => {
+    const id = await createSession();
+    await writePublic(id, 'a.txt', 'ok');
+    const res = await fetch(`${baseUrl}/${id}/a.txt`, {
+      redirect: 'manual',
+      headers: { cookie: `public_auth=planted; public_auth=${TOKEN}` },
+    });
+    expect(res.status).toBe(200);
+  });
+
   it('accepts a public-files-only session', async () => {
     const id = await createSession();
     await writePublic(id, 'a.txt', 'ok');

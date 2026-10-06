@@ -72,7 +72,7 @@ describe('auth session scopes', () => {
     const oldToken = await sessions.createAuthSession({}, 'public_files');
     const { id } = await testPrisma.authSession.findUniqueOrThrow({ where: { token: oldToken } });
 
-    const newToken = await sessions.upgradePublicFilesSession(oldToken, client);
+    const newToken = await sessions.upgradePublicFilesSession(['planted', oldToken], client);
 
     expect(newToken).not.toBeNull();
     expect(newToken).not.toBe(oldToken);
@@ -98,7 +98,7 @@ describe('auth session scopes', () => {
     for (const data of rows) await testPrisma.authSession.create({ data });
 
     for (const token of [...rows.map((r) => r.token), 'unknown']) {
-      expect(await sessions.upgradePublicFilesSession(token, client)).toBeNull();
+      expect(await sessions.upgradePublicFilesSession([token], client)).toBeNull();
     }
     expect(await testPrisma.authSession.count({ where: { scope: 'full' } })).toBe(1);
   });

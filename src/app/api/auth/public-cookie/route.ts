@@ -8,7 +8,7 @@ import { env } from '@/lib/env';
  * (src/server/services/public-files-server.ts) authenticates with. Cookies ignore
  * ports, so one set here reaches that server as long as it shares the app's
  * hostname. The client calls this whenever it holds a token, so logins from
- * before the cookie existed pick it up. The app's own routes ignore the cookie.
+ * before the cookie existed pick it up. The app never authenticates with the cookie; login only reads it to upgrade it.
  * Cookies reach every port on the hostname, so it is only set when the feature is on.
  */
 export async function POST(request: Request): Promise<Response> {

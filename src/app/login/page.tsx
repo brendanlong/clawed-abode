@@ -11,7 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Spinner } from '@/components/ui/spinner';
 import { PUBLIC_NEXT_PARAM } from '@/lib/public-files';
-import { claimAutomaticReturn } from '@/lib/public-login-loop';
+import { claimAutomaticReturn, releaseAutomaticReturn } from '@/lib/public-login-loop';
 
 export default function LoginPage() {
   return (
@@ -32,6 +32,8 @@ function LoginForm() {
   const { mutate: openPublicFiles } = trpc.auth.createPublicLoginUrl.useMutation({
     onSuccess: ({ url }) => window.location.replace(url),
     onError: (err) => {
+      // Never reached the public files server, so it can't be a redirect loop.
+      releaseAutomaticReturn(window.sessionStorage);
       setError(err.message);
     },
   });
@@ -63,7 +65,7 @@ function LoginForm() {
       // Deferred: setState directly in an effect cascades renders (React 19 lint rule).
       queueMicrotask(() =>
         setError(
-          "This browser didn't keep the public files sign-in. Check that PUBLIC_FILES_URL uses this app's hostname."
+          "This browser didn't keep the public files sign-in. Check that it allows cookies and that PUBLIC_FILES_URL is https."
         )
       );
       return;

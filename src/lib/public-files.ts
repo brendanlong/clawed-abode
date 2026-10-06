@@ -121,14 +121,21 @@ export function parsePublicRequestPath(pathname: string): PublicRequestPath | nu
   return { sessionId: parsedSessionId.data, segments, trailingSlash };
 }
 
-export function parseCookie(header: string | undefined, name: string): string | null {
+/**
+ * Every non-empty value of a named cookie. There can be several: script on the
+ * public origin can't overwrite the HttpOnly one, but can add one on a narrower
+ * path, which browsers send first. Callers try each rather than trusting the first.
+ */
+export function parseCookies(header: string | undefined, name: string): string[] {
+  const values: string[] = [];
   for (const pair of header?.split(';') ?? []) {
     const eq = pair.indexOf('=');
     if (eq !== -1 && pair.slice(0, eq).trim() === name) {
-      return pair.slice(eq + 1).trim() || null;
+      const value = pair.slice(eq + 1).trim();
+      if (value) values.push(value);
     }
   }
-  return null;
+  return values;
 }
 
 function isSafeSegment(segment: string): boolean {

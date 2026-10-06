@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { PUBLIC_LOGIN_RETRY_WINDOW_MS, claimAutomaticReturn } from './public-login-loop';
+import {
+  PUBLIC_LOGIN_RETRY_WINDOW_MS,
+  claimAutomaticReturn,
+  releaseAutomaticReturn,
+} from './public-login-loop';
 
 function memoryStorage(): Storage {
   const items = new Map<string, string>();
@@ -27,6 +31,13 @@ describe('claimAutomaticReturn', () => {
     claimAutomaticReturn(storage, '/a', 1000);
     expect(claimAutomaticReturn(storage, '/b', 2000)).toBe(true);
     expect(claimAutomaticReturn(storage, '/b', 2000 + PUBLIC_LOGIN_RETRY_WINDOW_MS)).toBe(true);
+  });
+
+  it('allows an immediate retry after a release', () => {
+    const storage = memoryStorage();
+    claimAutomaticReturn(storage, '/a', 1000);
+    releaseAutomaticReturn(storage);
+    expect(claimAutomaticReturn(storage, '/a', 2000)).toBe(true);
   });
 
   it('ignores corrupt storage', () => {

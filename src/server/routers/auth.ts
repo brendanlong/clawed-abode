@@ -77,9 +77,9 @@ export const authRouter = router({
       log.error('Failed to purge inactive auth sessions', toError(error));
     }
 
-    const upgraded =
-      ctx.publicAuthToken && (await upgradePublicFilesSession(ctx.publicAuthToken, ctx));
-    const token = upgraded || (await createAuthSession(ctx, 'full'));
+    const token =
+      (await upgradePublicFilesSession(ctx.publicAuthTokens ?? [], ctx)) ??
+      (await createAuthSession(ctx, 'full'));
     // Set here rather than waiting for the client's mirror call, so a redirect to
     // the public files server right after login already carries it.
     if (env.PUBLIC_FILES_URL) {

@@ -2,10 +2,10 @@ import { prisma } from '@/lib/prisma';
 import {
   ACTIVITY_UPDATE_THROTTLE_MS,
   AUTH_SESSION_RETENTION_MS,
-  IDLE_TIMEOUT_MS,
   SESSION_DURATION_MS,
   effectiveExpiry,
   generateSessionToken,
+  liveSessionWhere,
   type AuthScope,
 } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
@@ -32,36 +32,33 @@ export async function createAuthSession(client: ClientInfo, scope: AuthScope): P
 }
 
 /**
- * Turn a live `public_files` session into a `full` one after a password login
- * from the same browser, so it stays one entry in the session list. The token is
- * replaced, as on any privilege change. Returns the new token, or null if
- * `token` isn't a live `public_files` session. One conditional statement, so a
- * concurrent revoke can't be overwritten.
+ * Turn the first live `public_files` session among `tokens` (the browser's
+ * public cookie values) into a `full` one after a password login, so it stays
+ * one entry in the session list. The token is replaced, as on any privilege
+ * change. Returns the new token, or null if none qualified. Each attempt is one
+ * conditional statement, so a concurrent revoke can't be overwritten.
  */
 export async function upgradePublicFilesSession(
-  token: string,
+  tokens: string[],
   client: ClientInfo
 ): Promise<string | null> {
-  const now = new Date();
-  const newToken = generateSessionToken();
-  const { count } = await prisma.authSession.updateMany({
-    where: {
-      token,
-      scope: 'public_files',
-      revokedAt: null,
-      expiresAt: { gt: now },
-      lastActivityAt: { gt: new Date(now.getTime() - IDLE_TIMEOUT_MS) },
-    },
-    data: {
-      token: newToken,
-      scope: 'full',
-      expiresAt: new Date(now.getTime() + SESSION_DURATION_MS),
-      lastActivityAt: now,
-      ipAddress: client.ipAddress,
-      userAgent: client.userAgent,
-    },
-  });
-  return count === 1 ? newToken : null;
+  for (const token of tokens) {
+    const now = new Date();
+    const newToken = generateSessionToken();
+    const { count } = await prisma.authSession.updateMany({
+      where: { token, scope: 'public_files', ...liveSessionWhere(now) },
+      data: {
+        token: newToken,
+        scope: 'full',
+        expiresAt: new Date(now.getTime() + SESSION_DURATION_MS),
+        lastActivityAt: now,
+        ipAddress: client.ipAddress,
+        userAgent: client.userAgent,
+      },
+    });
+    if (count === 1) return newToken;
+  }
+  return null;
 }
 
 /**

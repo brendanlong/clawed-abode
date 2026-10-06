@@ -2,8 +2,9 @@ import { z } from 'zod';
 
 /**
  * Guards the automatic login ↔ public files redirect. If the browser won't keep
- * the public cookie (PUBLIC_FILES_URL on a different hostname than the app), every
- * pass would bounce straight back here and mint another session, forever.
+ * the public cookie (cookies blocked, or an http PUBLIC_FILES_URL dropping the
+ * Secure cookie), every pass would bounce straight back here and mint another
+ * session, forever.
  */
 const STORAGE_KEY = 'publicLoginAttempt';
 export const PUBLIC_LOGIN_RETRY_WINDOW_MS = 30 * 1000;
@@ -26,4 +27,9 @@ export function claimAutomaticReturn(storage: Storage, next: string, now = Date.
   if (isRepeatAttempt(last, next, now)) return false;
   storage.setItem(STORAGE_KEY, JSON.stringify({ next, at: now }));
   return true;
+}
+
+/** Forget the last attempt, when it failed before reaching the public files server. */
+export function releaseAutomaticReturn(storage: Storage): void {
+  storage.removeItem(STORAGE_KEY);
 }

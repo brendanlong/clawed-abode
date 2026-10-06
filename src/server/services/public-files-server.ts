@@ -10,7 +10,7 @@ import {
   PUBLIC_LOGIN_PATH,
   contentTypeFor,
   parseByteRange,
-  parseCookie,
+  parseCookies,
   parsePublicRequestPath,
   publicAuthCookie,
   appSignInUrl,
@@ -158,8 +158,10 @@ function redirectToSignIn(res: ServerResponse, urls: PublicFilesUrls, next: stri
 }
 
 async function hasValidAuthCookie(req: IncomingMessage): Promise<boolean> {
-  const token = parseCookie(req.headers.cookie, PUBLIC_AUTH_COOKIE);
-  return token !== null && (await resolveAuthSessionId(token, 'public_files')) !== null;
+  for (const token of parseCookies(req.headers.cookie, PUBLIC_AUTH_COOKIE)) {
+    if ((await resolveAuthSessionId(token, 'public_files')) !== null) return true;
+  }
+  return false;
 }
 
 function firstHeader(value: string | string[] | undefined): string | undefined {

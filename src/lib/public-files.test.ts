@@ -3,7 +3,7 @@ import {
   contentTypeFor,
   parseByteRange,
   parsePublicRequestPath,
-  parseCookie,
+  parseCookies,
   publicAuthCookie,
   publicFilesUrl,
   publicLinkPath,
@@ -75,16 +75,23 @@ describe('publicFilesUrl', () => {
   });
 });
 
-describe('parseCookie', () => {
+describe('parseCookies', () => {
   it('finds a named cookie among others', () => {
-    expect(parseCookie('a=1; public_auth=tok; b=2', 'public_auth')).toBe('tok');
-    expect(parseCookie('public_auth=tok', 'public_auth')).toBe('tok');
+    expect(parseCookies('a=1; public_auth=tok; b=2', 'public_auth')).toEqual(['tok']);
+    expect(parseCookies('public_auth=tok', 'public_auth')).toEqual(['tok']);
   });
 
-  it('returns null when absent or empty', () => {
-    expect(parseCookie(undefined, 'public_auth')).toBeNull();
-    expect(parseCookie('x_public_auth=tok', 'public_auth')).toBeNull();
-    expect(parseCookie('public_auth=', 'public_auth')).toBeNull();
+  it('returns every value, in order, when a cookie is shadowed', () => {
+    expect(parseCookies('public_auth=planted; public_auth=real', 'public_auth')).toEqual([
+      'planted',
+      'real',
+    ]);
+  });
+
+  it('returns nothing when absent or empty', () => {
+    expect(parseCookies(undefined, 'public_auth')).toEqual([]);
+    expect(parseCookies('x_public_auth=tok', 'public_auth')).toEqual([]);
+    expect(parseCookies('public_auth=', 'public_auth')).toEqual([]);
   });
 });
 

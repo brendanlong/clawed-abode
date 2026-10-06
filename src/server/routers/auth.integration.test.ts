@@ -21,7 +21,7 @@ const createCaller = (
   client?: {
     ipAddress?: string;
     userAgent?: string;
-    publicAuthToken?: string;
+    publicAuthTokens?: string[];
     resHeaders?: Headers;
   }
 ) => {
@@ -158,7 +158,9 @@ describe('authRouter integration', () => {
           },
         });
 
-        const { token } = await createCaller(null, { publicAuthToken: 'public-only' }).auth.login({
+        const { token } = await createCaller(null, {
+          publicAuthTokens: ['public-only'],
+        }).auth.login({
           password: TEST_PASSWORD,
         });
 
@@ -177,7 +179,9 @@ describe('authRouter integration', () => {
         });
 
         await expect(
-          createCaller(null, { publicAuthToken: 'public-only' }).auth.login({ password: 'wrong' })
+          createCaller(null, { publicAuthTokens: ['public-only'] }).auth.login({
+            password: 'wrong',
+          })
         ).rejects.toThrow();
         expect(
           await testPrisma.authSession.findUnique({ where: { token: 'public-only' } })
