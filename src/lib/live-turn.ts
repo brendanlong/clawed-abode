@@ -238,9 +238,12 @@ function reduceMessage(state: LiveTurnState, message: SDKMessage): LiveOutcome {
  * "working"). Never time-based.
  *
  * - A top-level `message_start` retires every entry the agent has already read.
- * - A top-level `result` is the safety valve: an entry may survive one turn
- *   boundary (the fold-after-turn-end case) and no more; on a CLI that reports no
- *   lifecycle at all the first boundary retires it.
+ * - A top-level `result` retires every entry the agent has already read: the
+ *   turn it fed (folded into, or opened without a `message_start`) just ended.
+ *   An entry read *after* a result (the fold-after-turn-end gap) is unread at it.
+ * - A top-level `result` is also the safety valve for unread entries: one may
+ *   survive one turn boundary (the fold-after-turn-end case) and no more; on a
+ *   CLI that reports no lifecycle at all the first boundary retires it.
  */
 function retire(
   inFlight: ReadonlyMap<string, InFlightCommand>,
@@ -255,6 +258,7 @@ function retire(
   const next = new Map<string, InFlightCommand>();
   for (const [commandUuid, command] of inFlight) {
     if (isResult) {
+      if (command.started) continue;
       const resultsSeen = command.resultsSeen + 1;
       if (resultsSeen < maxTurnsWithoutReport) next.set(commandUuid, { ...command, resultsSeen });
     } else if (!command.started && lifecycleSeen) {

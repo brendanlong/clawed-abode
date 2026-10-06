@@ -167,6 +167,21 @@ const cases: Case[] = [
     running: false,
   },
   {
+    name: 'with lifecycle reports, a command read after a result outlives it until its turn opens',
+    events: [
+      lifecycle('x', 'queued'),
+      messageStart(),
+      pushed('a'),
+      endTurn,
+      result,
+      lifecycle('a', 'started'),
+      messageStart(),
+      endTurn,
+    ],
+    running: false,
+    finishedAt: [7],
+  },
+  {
     name: 'a CLI without lifecycle messages: the first boundary retires everything',
     events: [messageStart(), pushed('a'), endTurn, result],
     running: false,
@@ -250,12 +265,11 @@ describe('reduceLiveTurn', () => {
     if (c.turnActive !== undefined) expect(state.status.turnActive).toBe(c.turnActive);
   });
 
-  // https://github.com/brendanlong/clawed-abode/issues/604
-  it.skip('a lifecycle-reporting turn that ends with no message_start still finishes', () => {
+  it('a lifecycle-reporting turn that ends with no message_start still finishes', () => {
     const events = [pushed('a'), lifecycle('a', 'started'), result, lifecycle('a', 'completed')];
     const { view, finishedAt } = fold(events);
     expect(view.running).toBe(false);
-    expect(finishedAt).toHaveLength(1);
+    expect(finishedAt).toEqual([2]);
   });
 
   it('reports turnEnded only for a stream-driven end, not a recall or teardown', () => {
