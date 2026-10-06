@@ -1,3 +1,5 @@
+import { z } from 'zod';
+
 export interface EnvVar {
   id: string;
   name: string;
@@ -5,10 +7,13 @@ export interface EnvVar {
   isSecret: boolean;
 }
 
-export type McpServerType = 'stdio' | 'http' | 'sse';
+export const mcpHttpServerTypeSchema = z.enum(['http', 'sse']);
+export const mcpServerTypeSchema = z.enum(['stdio', ...mcpHttpServerTypeSchema.options]);
+export type McpServerType = z.infer<typeof mcpServerTypeSchema>;
 
 /** How an http/sse server authenticates: static headers, or an OAuth grant. */
-export type McpAuthType = 'headers' | 'oauth';
+export const mcpAuthTypeSchema = z.enum(['headers', 'oauth']);
+export type McpAuthType = z.infer<typeof mcpAuthTypeSchema>;
 
 export interface McpOAuthStatus {
   state: 'disconnected' | 'connected' | 'error';
@@ -58,7 +63,7 @@ export interface ResolvedStdioMcpServer {
 
 export interface ResolvedHttpMcpServer {
   name: string;
-  type: 'http' | 'sse';
+  type: z.infer<typeof mcpHttpServerTypeSchema>;
   url: string;
   headers?: Record<string, string>;
   /**

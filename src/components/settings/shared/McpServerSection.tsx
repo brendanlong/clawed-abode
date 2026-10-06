@@ -18,7 +18,12 @@ import { KeyValueListEditor } from './KeyValueListEditor';
 import { buildKeyValueRecord } from '@/lib/key-value-entries';
 import { trpc } from '@/lib/trpc';
 import { initialMcpServerForm, type McpServerFormFields } from './mcp-server-form';
-import type { McpAuthType, McpServer, McpServerType, ValidationResult } from '@/lib/settings-types';
+import {
+  mcpAuthTypeSchema,
+  mcpServerTypeSchema,
+  type McpServer,
+  type ValidationResult,
+} from '@/lib/settings-types';
 import type { McpServerInput } from '@/server/services/settings-helpers';
 
 export interface McpServerMutations {
@@ -362,7 +367,7 @@ function McpServerForm({
         <Label htmlFor={`${id}-type`}>Type</Label>
         <Select
           value={form.serverType}
-          onValueChange={(value) => update({ serverType: value as McpServerType })}
+          onValueChange={(value) => update({ serverType: mcpServerTypeSchema.parse(value) })}
           disabled={!!existingServer}
         >
           <SelectTrigger id={`${id}-type`}>
@@ -422,7 +427,7 @@ function McpServerForm({
             <Label htmlFor={`${id}-auth`}>Authentication</Label>
             <Select
               value={form.authType}
-              onValueChange={(value) => update({ authType: value as McpAuthType })}
+              onValueChange={(value) => update({ authType: mcpAuthTypeSchema.parse(value) })}
             >
               <SelectTrigger id={`${id}-auth`}>
                 <SelectValue />

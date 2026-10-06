@@ -133,6 +133,30 @@ describe('settings-helpers', () => {
     });
   });
 
+  describe('corrupt MCP server rows', () => {
+    const row = {
+      id: '1',
+      name: 'bad',
+      type: 'http',
+      command: '',
+      args: null,
+      url: 'https://x',
+      authType: 'headers',
+      values: [],
+      oauth: null,
+    };
+
+    it.each([
+      ['an unknown type', { type: 'ws' }],
+      ['an unknown auth type', { authType: 'basic' }],
+      ['an http server without a URL', { url: null }],
+      ['stdio args that are not a string array', { type: 'stdio', args: '[1]' }],
+    ])('throws on %s, naming the server', (_, patch) => {
+      expect(() => formatMcpServersForDisplay([{ ...row, ...patch }])).toThrow(/"bad"/);
+      expect(() => decryptMcpServers([{ ...row, ...patch }])).toThrow(/"bad"/);
+    });
+  });
+
   describe('planMcpServerWrite', () => {
     it('encrypts secrets and keeps empty secrets out of the values to write', () => {
       const plan = planMcpServerWrite({
