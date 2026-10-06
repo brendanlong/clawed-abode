@@ -20,6 +20,7 @@ import {
   getLatestTodoWriteId,
   getPendingAskUserQuestions,
   getPlanContentByToolUseId,
+  buildTranscriptLayout,
   type SubagentLifecycle,
 } from './messageHelpers';
 import type { ContentBlock, DisplayMessage, ToolResultMap } from './types';
@@ -1066,5 +1067,105 @@ describe('getPlanContentByToolUseId', () => {
       assistant(4, [toolUse('exit-1', 'ExitPlanMode', {})]),
     ]);
     expect([...plans]).toEqual([['exit-1', 'ok']]);
+  });
+});
+
+describe('buildTranscriptLayout', () => {
+  const text = (t: string): ContentBlock => ({ type: 'text', text: t });
+  const rowKeys = (layout: ReturnType<typeof buildTranscriptLayout>) =>
+    layout.rows.map((row) =>
+      row.kind === 'message' ? row.message.id : `box:${row.toolUseId}@${row.sequence}`
+    );
+
+  // A background subagent spawned at 1, with main-agent output interleaved at 5.
+  const backgroundSubagent = [
+    assistant(1, [toolUse('agent-1', 'Agent', { description: 'x' })]),
+    system(2, 'task_started', 'agent-1'),
+    toolResultMessage(3, [toolResult('agent-1', 'launched')]),
+    assistant(4, [text('child work')], 'agent-1'),
+    assistant(5, [text('main work')]),
+  ];
+
+  it('merges a finished relocated box into the rows at its finish sequence', () => {
+    const layout = buildTranscriptLayout(
+      [
+        ...backgroundSubagent,
+        system(7, 'task_notification', 'agent-1'),
+        assistant(8, [text('after')]),
+      ],
+      true
+    );
+    // Hidden system rows, the paired ack, and the subagent's child stay out of the rows.
+    expect(rowKeys(layout)).toEqual(['m1', 'm5', 'box:agent-1@7', 'm8']);
+    expect(layout.pinnedSubagents).toEqual([]);
+    expect([...layout.relocatedSubagentIds]).toEqual(['agent-1']);
+    expect(layout.pairedMessageIds.has('m3')).toBe(true);
+    expect(layout.subagentMessagesByToolUseId.get('agent-1')?.map((m) => m.id)).toEqual(['m4']);
+    const box = layout.rows[2];
+    expect(box.kind === 'taskbox' && box.tool).toMatchObject({ id: 'agent-1', output: 'launched' });
+  });
+
+  it('pins a running subagent below the rows instead of merging it', () => {
+    const layout = buildTranscriptLayout(backgroundSubagent, true);
+    expect(rowKeys(layout)).toEqual(['m1', 'm5']);
+    expect(layout.pinnedSubagents.map((p) => [p.toolUseId, p.tool.name])).toEqual([
+      ['agent-1', 'Agent'],
+    ]);
+    expect([...layout.relocatedSubagentIds]).toEqual(['agent-1']);
+  });
+
+  it('settles an unfinished background subagent once the session stops', () => {
+    const layout = buildTranscriptLayout(
+      [...backgroundSubagent, assistant(6, [text('more child work')], 'agent-1')],
+      false
+    );
+    expect(rowKeys(layout)).toEqual(['m1', 'm5', 'box:agent-1@6']);
+    expect(layout.pinnedSubagents).toEqual([]);
+  });
+
+  it('places a box after the message row that shares its sequence', () => {
+    // The result message also carries an unpaired result, so it stays visible at
+    // the same sequence the foreground subagent finishes at.
+    const layout = buildTranscriptLayout(
+      [
+        assistant(1, [toolUse('task-1', 'Task')]),
+        assistant(2, [text('main work')]),
+        toolResultMessage(3, [toolResult('task-1', 'done'), toolResult('unknown', 'stray')]),
+      ],
+      true
+    );
+    expect(rowKeys(layout)).toEqual(['m1', 'm2', 'm3', 'box:task-1@3']);
+  });
+
+  it('orders several relocated and pinned boxes', () => {
+    const spawn = (seq: number, id: string) => [
+      assistant(seq, [toolUse(id, 'Agent', { description: id })]),
+      system(seq + 1, 'task_started', id),
+    ];
+    const messages = [
+      ...spawn(1, 'a'),
+      ...spawn(3, 'b'),
+      ...spawn(5, 'c'),
+      ...spawn(7, 'd'),
+      assistant(9, [text('main work')]),
+      // b finishes before a; c and d are still running.
+      system(10, 'task_notification', 'b'),
+      system(11, 'task_notification', 'a'),
+    ];
+    const layout = buildTranscriptLayout(messages, true);
+    expect(rowKeys(layout)).toEqual(['m1', 'm3', 'm5', 'm7', 'm9', 'box:b@10', 'box:a@11']);
+    expect(layout.pinnedSubagents.map((p) => p.toolUseId)).toEqual(['c', 'd']);
+  });
+
+  it('keeps a subagent inline when nothing interleaves', () => {
+    const layout = buildTranscriptLayout(
+      [
+        assistant(1, [toolUse('task-1', 'Task')]),
+        toolResultMessage(2, [toolResult('task-1', 'ok')]),
+      ],
+      true
+    );
+    expect(rowKeys(layout)).toEqual(['m1']);
+    expect(layout.relocatedSubagentIds.size).toBe(0);
   });
 });

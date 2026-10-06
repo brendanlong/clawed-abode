@@ -657,3 +657,89 @@ export function getPlanContentByToolUseId(messages: DisplayMessage[]): Map<strin
   }
   return reconstructPlansByToolUseId(events);
 }
+
+/** One top-level transcript row: a message, or a relocated finished-subagent box. */
+export type TranscriptRow =
+  | { kind: 'message'; sequence: number; message: DisplayMessage }
+  | { kind: 'taskbox'; sequence: number; toolUseId: string; tool: ToolCall };
+
+export interface TranscriptLayout {
+  resultMap: ToolResultMap;
+  pairedMessageIds: Set<string>;
+  subagentMessagesByToolUseId: Map<string, DisplayMessage[]>;
+  /** Top-level rows in sequence order. */
+  rows: TranscriptRow[];
+  /** Running subagent boxes, pinned below the rows in spawn order. */
+  pinnedSubagents: { toolUseId: string; tool: ToolCall }[];
+  /** Subagents whose box renders in `rows` or `pinnedSubagents`, not at the spawn point. */
+  relocatedSubagentIds: Set<string>;
+}
+
+/**
+ * Everything the top-level transcript renders, derived from the chronological
+ * message list: tool results paired onto their calls, subagent messages grouped
+ * under their Task, and subagent boxes placed (see {@link SubagentPlacements}).
+ */
+export function buildTranscriptLayout(
+  messages: DisplayMessage[],
+  isSessionRunning: boolean
+): TranscriptLayout {
+  const { resultMap, pairedMessageIds, resultSequenceByToolUseId } = buildToolResultMap(messages);
+  const subagentMessagesByToolUseId = groupSubagentMessages(messages);
+  const { lifecycles, agentBlockById } = collectSubagentLifecycles(
+    messages,
+    subagentMessagesByToolUseId,
+    resultSequenceByToolUseId
+  );
+
+  // The shared transcript-visibility predicate, plus the top-level-only rule that
+  // subagent messages render nested inside their Task rather than here.
+  const visibleMessages = messages.filter(
+    (msg) =>
+      getParentToolUseId(msg.content) === null && isVisibleTranscriptMessage(msg, pairedMessageIds)
+  );
+
+  // Interleaving is measured against the top-level rows that actually render, so
+  // a plain foreground wait (subagent with no rows between spawn and finish) stays
+  // inline.
+  const placements = computeSubagentPlacements(
+    lifecycles,
+    visibleMessages.map((m) => m.sequence),
+    isSessionRunning
+  );
+
+  // Merge relocated finished-subagent boxes into the message rows by sequence so
+  // each box lands at its finish position. The sort is stable, so a box sharing a
+  // sequence with a message row follows it.
+  const rows: TranscriptRow[] = visibleMessages.map((message) => ({
+    kind: 'message',
+    sequence: message.sequence,
+    message,
+  }));
+  for (const { toolUseId, atSequence } of placements.finished) {
+    const block = agentBlockById.get(toolUseId);
+    if (!block) continue;
+    rows.push({
+      kind: 'taskbox',
+      sequence: atSequence,
+      toolUseId,
+      tool: buildToolCallFromBlock(block, resultMap),
+    });
+  }
+  rows.sort((a, b) => a.sequence - b.sequence);
+
+  const pinnedSubagents: TranscriptLayout['pinnedSubagents'] = [];
+  for (const toolUseId of placements.running) {
+    const block = agentBlockById.get(toolUseId);
+    if (block) pinnedSubagents.push({ toolUseId, tool: buildToolCallFromBlock(block, resultMap) });
+  }
+
+  return {
+    resultMap,
+    pairedMessageIds,
+    subagentMessagesByToolUseId,
+    rows,
+    pinnedSubagents,
+    relocatedSubagentIds: placements.relocatedIds,
+  };
+}
