@@ -10,6 +10,7 @@ import {
   isPartialMessageId,
 } from '@/lib/message-cache';
 import { assertNeverFallback } from '@/lib/claude-messages';
+import { affectsTokenUsage } from '@/lib/token-estimation';
 import type { inferRouterOutputs } from '@trpc/server';
 import type { AppRouter } from '@/server/routers';
 
@@ -82,8 +83,10 @@ export function useSessionStream(sessionId: string, options: UseSessionStreamOpt
               { sessionId, limit: MESSAGE_PAGE_SIZE },
               (old) => mergeMessageIntoCache(old, event.message as CachedMessage)
             );
-            // Complete (persisted) messages affect token totals; partials do not.
-            if (!isPartialMessageId(event.message.id)) {
+            if (
+              !isPartialMessageId(event.message.id) &&
+              affectsTokenUsage(event.message.type, event.message.content)
+            ) {
               void utils.claude.getTokenUsage.refetch({ sessionId });
             }
             break;

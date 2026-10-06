@@ -500,75 +500,60 @@ describe('claudeRouter integration', () => {
   });
 
   describe('getTokenUsage', () => {
-    it('should calculate token usage from messages in the database', async () => {
-      const session = await createTestSession({
-        name: 'Session with usage',
-      });
+    it('should combine the running totals with the latest top-level assistant message', async () => {
+      const session = await createTestSession({ name: 'Session with usage' });
+      const { insertMessage } = await import('../services/message-store');
+      const insert = (
+        type: 'system' | 'assistant' | 'result',
+        content: unknown,
+        id: string = crypto.randomUUID()
+      ) => insertMessage({ sessionId: session.id, id, type, content });
 
-      // Create a result message with usage data
-      await testPrisma.message.create({
-        data: {
-          sessionId: session.id,
-          sequence: 0,
-          type: 'result',
-          content: JSON.stringify({
-            type: 'result',
-            usage: {
-              input_tokens: 1000,
-              output_tokens: 500,
-              cache_read_input_tokens: 100,
-              cache_creation_input_tokens: 50,
-            },
-          }),
+      await insert('system', { type: 'system', subtype: 'init', model: 'claude-opus-4-5' });
+      await insert('assistant', {
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: { usage: { input_tokens: 40_000, output_tokens: 1_000 } },
+      });
+      await insert('result', {
+        type: 'result',
+        total_cost_usd: 0.3,
+        usage: {
+          input_tokens: 1000,
+          output_tokens: 500,
+          cache_read_input_tokens: 100,
+          cache_creation_input_tokens: 50,
         },
+        modelUsage: { 'claude-opus-4-5': { contextWindow: 1_000_000 } },
       });
+      await insert('assistant', {
+        type: 'assistant',
+        parent_tool_use_id: 'toolu_1',
+        message: { usage: { input_tokens: 5, output_tokens: 5 } },
+      });
+      const lastResult = {
+        type: 'result',
+        total_cost_usd: 0.5,
+        usage: { input_tokens: 2000, output_tokens: 800 },
+      };
+      await insert('result', lastResult, 'result-2');
+      // A replayed duplicate is not inserted, so it must not be counted again.
+      expect(await insert('result', lastResult, 'result-2')).toEqual({ inserted: false });
 
       const caller = createCaller('auth-session-id');
       const result = await caller.claude.getTokenUsage({ sessionId: session.id });
 
-      // Uses real token estimation
-      expect(result.inputTokens).toBe(1000);
-      expect(result.outputTokens).toBe(500);
-      expect(result.cacheReadTokens).toBe(100);
-      expect(result.cacheCreationTokens).toBe(50);
-      expect(result.totalTokens).toBe(1500);
-    });
-
-    it('should aggregate usage from multiple result messages', async () => {
-      const session = await createTestSession({
-        name: 'Session with multiple turns',
+      expect(result).toEqual({
+        inputTokens: 3000,
+        outputTokens: 1300,
+        cacheReadTokens: 100,
+        cacheCreationTokens: 50,
+        totalTokens: 4300,
+        contextWindow: 1_000_000,
+        percentUsed: expect.closeTo(4.1, 6),
+        model: 'claude-opus-4-5',
+        totalCostUsd: 0.5,
       });
-
-      // Create multiple result messages (each turn)
-      await testPrisma.message.createMany({
-        data: [
-          {
-            sessionId: session.id,
-            sequence: 0,
-            type: 'result',
-            content: JSON.stringify({
-              type: 'result',
-              usage: { input_tokens: 1000, output_tokens: 500 },
-            }),
-          },
-          {
-            sessionId: session.id,
-            sequence: 1,
-            type: 'result',
-            content: JSON.stringify({
-              type: 'result',
-              usage: { input_tokens: 2000, output_tokens: 800 },
-            }),
-          },
-        ],
-      });
-
-      const caller = createCaller('auth-session-id');
-      const result = await caller.claude.getTokenUsage({ sessionId: session.id });
-
-      expect(result.inputTokens).toBe(3000);
-      expect(result.outputTokens).toBe(1300);
-      expect(result.totalTokens).toBe(4300);
     });
   });
 });

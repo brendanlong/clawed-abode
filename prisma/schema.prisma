@@ -52,6 +52,7 @@ model Session {
 
   messages      Message[]
   queuedPrompts QueuedPrompt[]
+  usage         SessionUsage?
 
   @@index([lastActivityAt, id]) // sessions.list default keyset order (status != 'archived')
   @@index([status, lastActivityAt, id]) // sessions.list keyset order filtered by status
@@ -83,6 +84,24 @@ model RateLimitWindow {
   rejected    Boolean // The API was refusing requests against this window when observed
   utilization Float? // Percent of the window consumed, when reported
   resetsAt    DateTime
+}
+
+// Running token/cost totals, folded in as result and system/init messages are
+// inserted so reading them never rescans the transcript (see src/server/services/session-usage.ts).
+// A separate table so the counters stay out of every Session payload.
+model SessionUsage {
+  sessionId             String  @id
+  resultCount           Int     @default(0)
+  inputTokens           BigInt  @default(0) // Sum of per-turn result usage
+  outputTokens          BigInt  @default(0)
+  cacheReadTokens       BigInt  @default(0)
+  cacheCreationTokens   BigInt  @default(0)
+  closedSegmentsCostUsd Float   @default(0) // Final cumulative cost of each query process that has since reset
+  currentSegmentCostUsd Float   @default(0) // Latest cumulative cost reported by the current query process
+  contextWindows        String  @default("{}") // JSON: model -> latest reported context window
+  model                 String? // From the first system/init
+
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 }
 
 model Message {
