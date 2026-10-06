@@ -9,6 +9,7 @@ import {
   formatRetryReason,
   initSessionId,
   parseInjectedOrigin,
+  isEchoOfPushedPrompt,
 } from './claude-messages';
 
 describe('claude-messages', () => {
@@ -20,18 +21,6 @@ describe('claude-messages', () => {
       expect(msg({ type: 'assistant' })).toEqual({ kind: 'persist', dbType: 'assistant' });
       expect(msg({ type: 'user' })).toEqual({ kind: 'persist', dbType: 'user' });
       expect(msg({ type: 'result' })).toEqual({ kind: 'persist', dbType: 'result' });
-    });
-
-    it('persists replayed messages from other sessions and channels, but not echoes of our prompts', () => {
-      const replay = (origin?: Record<string, unknown>) =>
-        msg({ type: 'user', isReplay: true, ...(origin && { origin }) });
-      expect(replay({ kind: 'peer', from: 'uds:/x.sock' })).toEqual({
-        kind: 'persist',
-        dbType: 'user',
-      });
-      expect(replay({ kind: 'channel', server: 's' })).toEqual({ kind: 'persist', dbType: 'user' });
-      expect(replay()).toEqual({ kind: 'skip' });
-      expect(replay({ kind: 'human' })).toEqual({ kind: 'skip' });
     });
 
     it('persists non-system progress-ish types as system', () => {
@@ -290,16 +279,42 @@ describe('getParentToolUseId', () => {
       });
     });
 
-    it('falls back to a generic sender', () => {
+    it('falls back to the socket address, then a generic sender', () => {
       expect(parseInjectedOrigin({ kind: 'peer', from: 'uds:/x.sock' })?.sender).toBe(
-        'another session'
+        'uds:/x.sock'
       );
+      expect(parseInjectedOrigin({ kind: 'peer' })?.sender).toBe('another session');
     });
 
     it('rejects prompts we sent and anything malformed', () => {
       expect(parseInjectedOrigin(undefined)).toBeNull();
       expect(parseInjectedOrigin({ kind: 'human' })).toBeNull();
       expect(parseInjectedOrigin({ kind: 'peer', name: 5 })).toBeNull();
+    });
+  });
+
+  describe('isEchoOfPushedPrompt', () => {
+    const pushed = new Set(['ours']);
+    const user = (m: Record<string, unknown>) => ({ type: 'user', ...m }) as unknown as SDKMessage;
+
+    it('matches the replay of a prompt we pushed', () => {
+      expect(isEchoOfPushedPrompt(user({ isReplay: true, uuid: 'ours' }), pushed)).toBe(true);
+    });
+
+    it('keeps other replays: slash-command output and messages from other sessions', () => {
+      expect(isEchoOfPushedPrompt(user({ isReplay: true, uuid: 'cli-output' }), pushed)).toBe(
+        false
+      );
+      expect(
+        isEchoOfPushedPrompt(
+          user({ isReplay: true, uuid: 'peer', origin: { kind: 'peer', from: 'x' } }),
+          pushed
+        )
+      ).toBe(false);
+    });
+
+    it('ignores messages that are not replays', () => {
+      expect(isEchoOfPushedPrompt(user({ uuid: 'ours' }), pushed)).toBe(false);
     });
   });
 });

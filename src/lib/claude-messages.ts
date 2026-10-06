@@ -240,15 +240,29 @@ export function assertNeverFallback<T>(_unhandled: never, fallback: T): T {
 }
 
 /**
- * Origin of a user message the CLI injected on its own: another session's
- * SendMessage (`peer`) or an MCP channel. The CLI only reports these as replays
- * (`--replay-user-messages`), which also echo every prompt we sent; those are
- * already persisted when sent.
+ * Whether a message is the CLI's replay of a prompt we pushed. Other replays
+ * (slash-command output, messages from other sessions) are real transcript
+ * content.
  */
+export function isEchoOfPushedPrompt(
+  message: SDKMessage,
+  pushedUuids: ReadonlySet<string>
+): boolean {
+  return (
+    message.type === 'user' &&
+    'isReplay' in message &&
+    message.isReplay === true &&
+    pushedUuids.has(message.uuid)
+  );
+}
+
+/** Origin of a user message another session (`peer`) or an MCP channel injected. */
 const InjectedOriginSchema = z.object({
   kind: z.enum(['peer', 'channel']),
-  /** Peer display name, e.g. the sender's agent name. */
+  /** Sender's display name. */
   name: z.string().optional(),
+  /** Sender's socket address. */
+  from: z.string().optional(),
   /** Channel MCP server name. */
   server: z.string().optional(),
   /** Message text with the CLI's envelope stripped. */
@@ -263,8 +277,8 @@ export interface InjectedMessageOrigin {
 export function parseInjectedOrigin(origin: unknown): InjectedMessageOrigin | null {
   const parsed = InjectedOriginSchema.safeParse(origin);
   if (!parsed.success) return null;
-  const { name, server, body } = parsed.data;
-  return { sender: name ?? server ?? 'another session', body: body ?? null };
+  const { name, from, server, body } = parsed.data;
+  return { sender: name ?? server ?? from ?? 'another session', body: body ?? null };
 }
 
 /**
@@ -286,9 +300,7 @@ export function classifyMessage(message: SDKMessage): MessageHandling {
     case 'assistant':
       return { kind: 'persist', dbType: 'assistant' };
     case 'user':
-      return 'isReplay' in message && message.isReplay && !parseInjectedOrigin(message.origin)
-        ? { kind: 'skip' }
-        : { kind: 'persist', dbType: 'user' };
+      return { kind: 'persist', dbType: 'user' };
     case 'result':
       return { kind: 'persist', dbType: 'result' };
     case 'stream_event':

@@ -2,8 +2,8 @@
 
 import { useMemo } from 'react';
 import { MessageBubble } from './MessageBubble';
-import { isToolResultMessage, isVisibleTranscriptMessage } from './messageHelpers';
-import type { DisplayMessage, MessageContent, ToolResultMap } from './types';
+import { isOwnPromptMessage, isVisibleTranscriptMessage } from './messageHelpers';
+import type { DisplayMessage, ToolResultMap } from './types';
 
 interface SubagentTranscriptProps {
   /** All messages spawned by a single Task (same parent_tool_use_id). */
@@ -38,8 +38,7 @@ export function SubagentTranscript({
       <div className="text-muted-foreground mb-1">Subagent activity:</div>
       <div className="space-y-2 border-l-2 border-muted pl-3">
         {visibleMessages.map((message) => {
-          const isUserMessage =
-            message.type === 'user' && !isToolResultMessage(message.content as MessageContent);
+          const isUserMessage = isOwnPromptMessage(message);
           return (
             <div
               key={message.id}

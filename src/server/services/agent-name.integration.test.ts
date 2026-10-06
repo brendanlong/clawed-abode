@@ -9,6 +9,8 @@ vi.mock('@anthropic-ai/sdk', () => ({
   },
 }));
 vi.mock('./settings-merger', () => ({ loadClaudeCredential: async () => 'sk-ant-oat01-test' }));
+const { mockEmitSessionUpdate } = vi.hoisted(() => ({ mockEmitSessionUpdate: vi.fn() }));
+vi.mock('./events', () => ({ sseEvents: { emitSessionUpdate: mockEmitSessionUpdate } }));
 vi.mock('@/lib/logger', async () => (await import('@/test/mock-logger')).mockLoggerModule());
 
 let resolveAgentName: (typeof import('./agent-name'))['resolveAgentName'];
@@ -35,6 +37,7 @@ describe('resolveAgentName', () => {
   beforeEach(async () => {
     await clearTestDb();
     mockCreate.mockReset();
+    mockEmitSessionUpdate.mockReset();
   });
 
   it('generates a name from the title, repo, and prompt and stores it', async () => {
@@ -46,6 +49,10 @@ describe('resolveAgentName', () => {
 
     expect(name).toBe(`collatz-bound-${prefix}`);
     expect(await storedAgentName(session.id)).toBe(name);
+    expect(mockEmitSessionUpdate).toHaveBeenCalledWith(
+      session.id,
+      expect.objectContaining({ agentName: name })
+    );
     const request = mockCreate.mock.calls[0][0].messages[0].content as string;
     expect(request).toContain('Prove the bound');
     expect(request).toContain('Repository: repo');
@@ -78,6 +85,19 @@ describe('resolveAgentName', () => {
     const prefix = session.id.replace(/-/g, '').slice(0, 4);
 
     expect(await resolveAgentName(session.id)).toBe(`repo-${prefix}`);
+  });
+
+  it('keeps the name another writer stored first', async () => {
+    mockCreate.mockImplementation(async () => {
+      await testPrisma.session.update({
+        where: { id: session.id },
+        data: { agentName: 'first-1' },
+      });
+      return reply('second');
+    });
+    const session = await createTestSession();
+
+    expect(await resolveAgentName(session.id)).toBe('first-1');
   });
 
   it('falls back to a session id prefix with no usable reply and no repo', async () => {

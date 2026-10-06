@@ -10,12 +10,13 @@ import { classifyClaudeCredential } from '@/lib/claude-credential';
 import { createLogger, toError } from '@/lib/logger';
 import { prisma } from '@/lib/prisma';
 import { extractRepoFullName } from '@/lib/utils';
+import { sseEvents } from './events';
 import { loadClaudeCredential } from './settings-merger';
 
 const log = createLogger('agent-name');
 
 const NAMING_MODEL = 'claude-haiku-4-5';
-const NAMING_TIMEOUT_MS = 10_000;
+const NAMING_TIMEOUT_MS = 5_000;
 
 const inFlight = new Map<string, Promise<string>>();
 
@@ -48,23 +49,24 @@ async function loadOrCreateAgentName(sessionId: string, initialPrompt?: string):
   const name = buildAgentName(base, sessionId, repoName);
 
   // First write wins, so the name never changes once any query has used it.
-  const [stored] = await prisma.$queryRaw<{ agentName: string }[]>`
-    UPDATE "Session" SET "agentName" = coalesce("agentName", ${name})
-    WHERE "id" = ${sessionId}
-    RETURNING "agentName"`;
-  return stored?.agentName ?? name;
+  const { count } = await prisma.session.updateMany({
+    where: { id: sessionId, agentName: null },
+    data: { agentName: name },
+  });
+  const row = await prisma.session.findUniqueOrThrow({ where: { id: sessionId } });
+  if (count > 0) sseEvents.emitSessionUpdate(sessionId, row);
+  return row.agentName ?? name;
 }
 
 /** A slug from Haiku, or null (no credential, API failure, unusable reply) to fall back. */
 async function generateAgentNameBase(context: AgentNameContext): Promise<string | null> {
-  const credential = await loadClaudeCredential();
-  if (!credential) return null;
-
   try {
+    const credential = await loadClaudeCredential();
+    if (!credential) return null;
     const client = new Anthropic({
       ...classifyClaudeCredential(credential),
       timeout: NAMING_TIMEOUT_MS,
-      maxRetries: 1,
+      maxRetries: 0,
     });
     const response = await client.messages.create({
       model: NAMING_MODEL,

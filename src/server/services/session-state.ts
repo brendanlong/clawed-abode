@@ -48,6 +48,8 @@ export interface LiveQuery {
    * whose result never streams back (query killed mid-tool) dies with the query.
    */
   toolSanitizations: Map<string, SanitizationInfo>;
+  /** uuids of the prompts pushed into this query, to drop the CLI's replays of them. */
+  pushedUuids: Set<string>;
 }
 
 /** In-memory state for one active session. */

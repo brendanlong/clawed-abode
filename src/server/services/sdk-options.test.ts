@@ -43,10 +43,14 @@ const waitForUserInput = vi.fn(async (): Promise<PermissionResult> => ({
 }));
 const recordSanitization = vi.fn();
 
-const build = (s: MergedSessionSettings, resumeId: string | null = null) =>
+const build = (
+  s: MergedSessionSettings,
+  resumeId: string | null = null,
+  agentName: string | null = 'math-fable-d37e'
+) =>
   buildSdkOptions({
     sessionId: 'sid',
-    agentName: 'math-fable-d37e',
+    agentName,
     workingDir: '/w',
     settings: s,
     resumeId,
@@ -143,6 +147,8 @@ describe('buildSdkOptions', () => {
   it('registers the agent name for cross-session messaging', async () => {
     const { options } = await build(settings());
     expect(options.env).toMatchObject({ CLAUDE_CODE_SESSION_NAME: 'math-fable-d37e' });
+    const unnamed = (await build(settings(), null, null)).options;
+    expect(unnamed.env).not.toHaveProperty('CLAUDE_CODE_SESSION_NAME');
   });
 
   it('wires the systemd scope launcher and returns the unit for the runner to record', async () => {

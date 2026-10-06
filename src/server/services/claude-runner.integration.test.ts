@@ -482,6 +482,8 @@ describe('claude-runner persistent streaming loop', () => {
           repoUrl: 'https://github.com/o/r.git',
           currentBranch: 'feat-a',
           pullRequest: JSON.stringify(pr),
+          // Already named, so establishment announces nothing either.
+          agentName: 'named-1234',
         },
       });
 
@@ -961,6 +963,39 @@ describe('claude-runner persistent streaming loop', () => {
     // Both are persisted as their own bubbles right away — nothing waits for a flush.
     const userMsgs = (await messagesFor(sessionId)).filter((m) => m.type === 'user');
     expect(userMsgs).toHaveLength(2);
+
+    stopSession(sessionId);
+  });
+
+  it('drops the echo of a pushed prompt but persists a message from another session', async () => {
+    const fake = makeFakeQuery();
+    _setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+
+    await sendUserMessage(sessionId, 'hello');
+    await waitFor(() => fake.inputs.length >= 1);
+    const replay = (fields: Record<string, unknown>) =>
+      ({
+        type: 'user',
+        parent_tool_use_id: null,
+        session_id: 's',
+        isReplay: true,
+        ...fields,
+      }) as unknown as SDKMessage;
+    fake.emit(replay({ uuid: fake.inputs[0].uuid, message: { role: 'user', content: 'hello' } }));
+    fake.emit(
+      replay({
+        uuid: nextUuid(),
+        message: { role: 'user', content: '<cross-session-message>hi</cross-session-message>' },
+        origin: { kind: 'peer', from: 'uds:/x.sock', name: 'other-1234', body: 'hi' },
+      })
+    );
+    fake.emit(result());
+
+    await waitFor(async () => (await messagesFor(sessionId)).length >= 3);
+    const msgs = await messagesFor(sessionId);
+    expect(msgs.map((m) => m.type)).toEqual(['user', 'user', 'result']);
+    expect(JSON.parse(msgs[1].content).origin.name).toBe('other-1234');
 
     stopSession(sessionId);
   });

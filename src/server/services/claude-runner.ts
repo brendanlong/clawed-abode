@@ -18,6 +18,7 @@ import { prisma } from '@/lib/prisma';
 import {
   classifyMessage,
   initSessionId,
+  isEchoOfPushedPrompt,
   parseCommandLifecycle,
   type RetryState,
 } from '@/lib/claude-messages';
@@ -214,6 +215,8 @@ async function runSessionLoop(
         continue;
       }
 
+      if (isEchoOfPushedPrompt(message, live.pushedUuids)) continue;
+
       // Every other message, including ones skipped for persistence, since
       // `api_retry`/`task_*` drive status.
       if (dispatch(sessionId, state, { type: 'sdk_message', message }).turnEnded) {
@@ -318,7 +321,11 @@ async function establishSessionQuery(
   const toolSanitizations: LiveQuery['toolSanitizations'] = new Map();
   const { options, sessionScope } = await buildSdkOptions({
     sessionId,
-    agentName: await resolveAgentName(sessionId),
+    // Best-effort: without it the CLI derives its own (unstable) name.
+    agentName: await resolveAgentName(sessionId).catch((err) => {
+      log.warn('Agent name unavailable', { sessionId, error: toError(err).message });
+      return null;
+    }),
     workingDir,
     settings,
     resumeId,
@@ -359,6 +366,7 @@ async function establishSessionQuery(
     claudeSessionId: null,
     pendingInput: null,
     toolSanitizations,
+    pushedUuids: new Set(),
   };
   live = established;
   state.live = established;
@@ -455,6 +463,7 @@ function pushPreparedPrompt(sessionId: string, state: SessionState, prompt: Prom
   if (!live) throw new Error('Session query is not available');
 
   const commandUuid = uuid();
+  live.pushedUuids.add(commandUuid);
   dispatch(sessionId, state, {
     type: 'pushed',
     commandUuid,

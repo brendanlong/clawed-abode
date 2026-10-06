@@ -61,7 +61,7 @@ export function buildMcpServersRecord(
 export async function buildSdkOptions(params: {
   sessionId: string;
   /** Name other Claude sessions address this one by (see doc/claude-sessions.md). */
-  agentName: string;
+  agentName: string | null;
   workingDir: string;
   settings: MergedSessionSettings;
   /** Claude Code conversation to resume, or null to start one under `sessionId`. */
@@ -81,7 +81,7 @@ export async function buildSdkOptions(params: {
     recordSanitization,
   } = params;
   const agentEnv = await buildAgentEnv(settings.envVars, settings.claudeApiKey);
-  agentEnv[AGENT_NAME_ENV] = agentName;
+  if (agentName) agentEnv[AGENT_NAME_ENV] = agentName;
   const mcpServersRecord = buildMcpServersRecord(settings.mcpServers);
 
   const options: Options = {
@@ -104,7 +104,7 @@ export async function buildSdkOptions(params: {
       snapshot: false,
     },
     tools: { type: 'preset', preset: 'claude_code' },
-    // Echo injected user messages (from other sessions) so they can be persisted.
+    // Echo user messages the CLI injected itself, e.g. from other sessions.
     extraArgs: { 'replay-user-messages': null },
     canUseTool: async (
       toolName: string,

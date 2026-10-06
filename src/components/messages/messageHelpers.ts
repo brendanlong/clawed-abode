@@ -67,6 +67,13 @@ export function isToolResultMessage(content: MessageContent): boolean {
   return Array.isArray(innerContent) && innerContent.some((block) => block.type === 'tool_result');
 }
 
+/** Whether a message is the user's own prompt, which renders right-aligned. */
+export function isOwnPromptMessage(message: { type: string; content: unknown }): boolean {
+  if (message.type !== 'user') return false;
+  const content = message.content as MessageContent;
+  return !isToolResultMessage(content) && !parseInjectedOrigin(content.origin);
+}
+
 /**
  * Extract tool result blocks from a message.
  */
