@@ -6,7 +6,8 @@
  * more run, and every caller's promise settles only after a run that began after
  * their call — awaiting it means "my change has been acted on".
  *
- * For idempotent "recompute and converge" jobs.
+ * For idempotent "recompute and converge" jobs. A run's rejection reaches the
+ * callers sharing it, so a job triggered fire-and-forget must not reject.
  */
 export function coalesce(run: () => Promise<void>): () => Promise<void> {
   let current: Promise<void> | null = null;
@@ -17,14 +18,18 @@ export function coalesce(run: () => Promise<void>): () => Promise<void> {
   } | null = null;
 
   const start = (): Promise<void> => {
-    const running = (async () => run())().finally(() => {
+    let adopt!: (run: Promise<void>) => void;
+    const running = new Promise<void>((resolve) => (adopt = resolve)).finally(() => {
       current = null;
       const next = followUp;
       followUp = null;
       // Started synchronously, so no caller can slip a concurrent run in between.
       if (next) start().then(next.resolve, next.reject);
     });
+    // `current` is set before any of `run` executes: a trigger from its
+    // synchronous part must queue, not start a second run.
     current = running;
+    adopt((async () => run())());
     return running;
   };
 

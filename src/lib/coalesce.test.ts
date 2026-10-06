@@ -103,6 +103,27 @@ describe('coalesce', () => {
     await next;
   });
 
+  it('a call from inside a run, before its first await, queues rather than runs concurrently', async () => {
+    let active = 0;
+    let maxActive = 0;
+    let runs = 0;
+    let trigger: () => Promise<void> = async () => {};
+    trigger = coalesce(async () => {
+      runs++;
+      active++;
+      maxActive = Math.max(maxActive, active);
+      if (runs === 1) void trigger();
+      await flush();
+      active--;
+    });
+
+    await trigger();
+    await flush();
+    await flush();
+    expect(runs).toBe(2);
+    expect(maxActive).toBe(1);
+  });
+
   it('a call from a run’s own continuation queues behind the follow-up instead of racing it', async () => {
     const job = controlledJob();
     const trigger = coalesce(job.run);
