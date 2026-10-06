@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import {
+  autoReadStep,
+  INITIAL_AUTO_READ_STATE,
+  type AutoReadEvent,
+  type AutoReadState,
   extractAssistantText,
   getAssistantTextMessages,
   getNewAutoReadMessages,
@@ -343,5 +347,119 @@ describe('getNewAutoReadMessages', () => {
     // a1 is queued from previous turn but is before the turn boundary anyway
     const result = getNewAutoReadMessages(messages, new Set(['a1']));
     expect(result).toEqual([{ id: 'a2', text: 'Response to second.' }]);
+  });
+});
+
+describe('autoReadStep', () => {
+  function run(events: AutoReadEvent[], state: AutoReadState = INITIAL_AUTO_READ_STATE) {
+    const enqueued: string[] = [];
+    for (const event of events) {
+      const result = autoReadStep(state, event);
+      state = result.state;
+      enqueued.push(...result.toEnqueue.map((m) => m.id));
+    }
+    return enqueued;
+  }
+
+  const update = (
+    isRunning: boolean,
+    messages: DisplayMessage[],
+    enabled = true
+  ): AutoReadEvent => ({
+    type: 'update',
+    isRunning,
+    messages,
+    enabled,
+  });
+
+  const turn1 = [makeUserPrompt('u1', 1, 'Go'), makeAssistantText('a1', 2, 'One.')];
+  const turn1More = [...turn1, makeAssistantText('a2', 3, 'Two.')];
+
+  it('enqueues each message once as a turn streams', () => {
+    expect(run([update(true, turn1), update(true, turn1), update(true, turn1More)])).toEqual([
+      'a1',
+      'a2',
+    ]);
+  });
+
+  it('catches messages arriving in the same update the turn ends', () => {
+    expect(run([update(true, turn1), update(false, turn1More)])).toEqual(['a1', 'a2']);
+  });
+
+  it('enqueues nothing while idle or disabled', () => {
+    expect(run([update(false, turn1)])).toEqual([]);
+    expect(run([update(true, turn1, false), update(true, turn1More, false)])).toEqual([]);
+  });
+
+  it('stays quiet for the rest of the turn after the user stops playback', () => {
+    expect(
+      run([
+        update(true, turn1),
+        { type: 'playbackStopped' },
+        update(true, turn1More),
+        update(false, turn1More),
+      ])
+    ).toEqual(['a1']);
+  });
+
+  it('resumes on the next turn after a stop', () => {
+    const turn2 = [
+      ...turn1More,
+      makeUserPrompt('u2', 4, 'Again'),
+      makeAssistantText('a3', 5, 'Three.'),
+    ];
+    expect(
+      run([
+        update(true, turn1),
+        { type: 'playbackStopped' },
+        update(false, turn1More),
+        update(true, turn2),
+      ])
+    ).toEqual(['a1', 'a3']);
+  });
+
+  it('keeps reading replies to a prompt sent mid-turn', () => {
+    const reply = [
+      ...turn1,
+      makeUserPrompt('u2', 3, 'Also this'),
+      makeAssistantText('a3', 4, 'Sure.'),
+    ];
+    expect(
+      run([update(true, turn1), { type: 'promptSent', messages: turn1 }, update(true, reply)])
+    ).toEqual(['a1', 'a3']);
+  });
+
+  it('keeps reading replies to a prompt sent mid-turn after the user stopped playback', () => {
+    const afterSend = [...turn1More, makeUserPrompt('u2', 4, 'Also this')];
+    const reply = [...afterSend, makeAssistantText('a3', 5, 'Sure.')];
+    expect(
+      run([
+        update(true, turn1),
+        { type: 'playbackStopped' },
+        update(true, turn1More),
+        { type: 'promptSent', messages: turn1More },
+        update(true, afterSend),
+        update(true, reply),
+      ])
+    ).toEqual(['a1', 'a3']);
+  });
+
+  it('skips what was on screen at send time, even before the prompt reaches the cache', () => {
+    // a2 arrived while playback was stopped; sending must not start reading it now.
+    expect(
+      run([
+        update(true, turn1),
+        { type: 'playbackStopped' },
+        update(true, turn1More),
+        { type: 'promptSent', messages: turn1More },
+        update(true, turn1More),
+      ])
+    ).toEqual(['a1']);
+  });
+
+  it("doesn't re-read the last turn when the running flag lands before the new prompt", () => {
+    expect(
+      run([update(true, turn1More), update(false, turn1More), update(true, turn1More)])
+    ).toEqual(['a1', 'a2']);
   });
 });

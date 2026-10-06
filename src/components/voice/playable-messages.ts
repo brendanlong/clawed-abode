@@ -60,3 +60,72 @@ export function getNewAutoReadMessages(
     (m) => !queuedIds.has(m.id)
   );
 }
+
+/**
+ * Auto-read bookkeeping between renders. `queuedIds` only grows (message ids are
+ * unique and `getNewAutoReadMessages` already scopes to the current turn), so a
+ * turn whose running flag lands before its prompt can't re-read the last turn.
+ */
+export interface AutoReadState {
+  wasRunning: boolean;
+  queuedIds: ReadonlySet<string>;
+  /** The user stopped playback; nothing more is queued until the next turn or send. */
+  stopped: boolean;
+}
+
+export const INITIAL_AUTO_READ_STATE: AutoReadState = {
+  wasRunning: false,
+  queuedIds: new Set(),
+  stopped: false,
+};
+
+export type AutoReadEvent =
+  /** The transcript or turn state changed. */
+  | { type: 'update'; isRunning: boolean; messages: DisplayMessage[]; enabled: boolean }
+  /** The user stopped playback: stay quiet for the rest of this turn. */
+  | { type: 'playbackStopped' }
+  /**
+   * The user sent a prompt (the caller stops current playback). What's on screen
+   * now is skipped, but auto-read resumes for the replies — a mid-turn send keeps
+   * the session running, so waiting for the next turn start would mute them.
+   */
+  | { type: 'promptSent'; messages: DisplayMessage[] };
+
+function withQueued(ids: ReadonlySet<string>, added: PlayableMessage[]): ReadonlySet<string> {
+  return added.length ? new Set([...ids, ...added.map((m) => m.id)]) : ids;
+}
+
+/** Advance auto-read by one event; `toEnqueue` is what to hand the speech player now. */
+export function autoReadStep(
+  state: AutoReadState,
+  event: AutoReadEvent
+): { state: AutoReadState; toEnqueue: PlayableMessage[] } {
+  switch (event.type) {
+    case 'playbackStopped':
+      return { state: { ...state, stopped: true }, toEnqueue: [] };
+    case 'promptSent': {
+      const skipped = getNewAutoReadMessages(event.messages, state.queuedIds);
+      return {
+        state: { ...state, stopped: false, queuedIds: withQueued(state.queuedIds, skipped) },
+        toEnqueue: [],
+      };
+    }
+    case 'update': {
+      const { isRunning, messages, enabled } = event;
+      const turnStarted = isRunning && !state.wasRunning;
+      const stopped = state.stopped && !turnStarted;
+      // While running, plus one final pass as the turn ends to catch messages that
+      // arrived in the same render as the running flag dropping.
+      const active = (isRunning || state.wasRunning) && enabled && !stopped;
+      const toEnqueue = active ? getNewAutoReadMessages(messages, state.queuedIds) : [];
+      return {
+        state: {
+          wasRunning: isRunning,
+          stopped,
+          queuedIds: withQueued(state.queuedIds, toEnqueue),
+        },
+        toEnqueue,
+      };
+    }
+  }
+}
