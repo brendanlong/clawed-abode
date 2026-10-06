@@ -575,6 +575,15 @@ describe('MessageBubble', () => {
       rerender(renderTodo('todo-3'));
       expect(screen.getByText('Task 1')).toBeInTheDocument();
     });
+
+    it('keeps the latest todo list collapsed once the user collapses it', () => {
+      const { rerender } = render(renderTodo('todo-1'));
+      fireEvent.click(screen.getByText('TodoWrite'));
+      expect(screen.queryByText('Task 1')).not.toBeInTheDocument();
+
+      rerender(renderTodo('todo-1'));
+      expect(screen.queryByText('Task 1')).not.toBeInTheDocument();
+    });
   });
 
   describe('subagent invocation', () => {

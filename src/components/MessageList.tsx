@@ -79,8 +79,6 @@ export function MessageList({
   const { isPlaying: voiceIsPlaying, currentMessageId: voiceCurrentMessageId } =
     useVoicePlaybackContext();
 
-  // Track which TodoWrite components have been manually toggled by the user
-
   // Track which AskUserQuestion IDs we've already notified about (using ref to avoid re-renders)
   const notifiedQuestionIdsRef = useRef<Set<string>>(new Set());
 
