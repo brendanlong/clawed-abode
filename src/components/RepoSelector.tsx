@@ -9,8 +9,7 @@ import { Spinner } from '@/components/ui/spinner';
 import { cn } from '@/lib/utils';
 import { Star, FolderOpen } from 'lucide-react';
 import { buildRepoChoices } from '@/lib/repo-list';
-
-export const NO_REPO_SENTINEL = '__no_repo__';
+import { NO_REPO_SENTINEL } from '@/lib/repo-full-name';
 
 export interface Repo {
   id: number;

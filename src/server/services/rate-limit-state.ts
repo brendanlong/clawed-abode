@@ -16,10 +16,10 @@ import {
   clampThreshold,
   decideHold,
   DEFAULT_PAUSE_THRESHOLD,
+  isHoldableLimitType,
   mergeReading,
   nextReadingExpiry,
   resolvePausePolicy,
-  type HoldableLimitType,
   type PausePolicy,
   type RateLimitHold,
   type RateLimitReading,
@@ -158,14 +158,26 @@ export async function loadRateLimitReadings(): Promise<void> {
   try {
     const rows = await prisma.rateLimitWindow.findMany({ where: { resetsAt: { gt: now } } });
     readings = rows
-      .map((row) => ({
-        limitType: row.limitType as HoldableLimitType,
-        rejected: row.rejected,
-        // What was persisted is the merged state, so it stands on its own.
-        authoritative: true,
-        utilization: row.utilization,
-        resetsAtMs: row.resetsAt.getTime(),
-      }))
+      .flatMap((row): RateLimitReading[] => {
+        // Only holdable readings are persisted; anything else predates a change to
+        // that list, and dropping it only costs the pause across this restart.
+        if (!isHoldableLimitType(row.limitType)) {
+          log.warn('Ignoring stored rate-limit window of unknown type', {
+            limitType: row.limitType,
+          });
+          return [];
+        }
+        return [
+          {
+            limitType: row.limitType,
+            rejected: row.rejected,
+            // What was persisted is the merged state, so it stands on its own.
+            authoritative: true,
+            utilization: row.utilization,
+            resetsAtMs: row.resetsAt.getTime(),
+          },
+        ];
+      })
       .sort((a, b) => a.limitType.localeCompare(b.limitType));
   } catch (err) {
     log.error('Failed to load rate-limit windows', toError(err));

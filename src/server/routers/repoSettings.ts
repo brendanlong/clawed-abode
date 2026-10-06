@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { router, protectedProcedure } from '../trpc';
 import { prisma } from '@/lib/prisma';
 import { createLogger } from '@/lib/logger';
+import { repoSettingsKeySchema } from '@/lib/repo-full-name';
 import {
   formatEnvVarsForDisplay,
   formatMcpServersForDisplay,
@@ -12,11 +13,7 @@ import { scopedSettingsProcedures, type ResolveScope } from './scoped-settings';
 
 const log = createLogger('repoSettings');
 
-const repoFullNameSchema = z.string().regex(/^(?:__no_repo__|[\w.-]+\/[\w.-]+)$/, {
-  message: 'Invalid repository name format. Expected "owner/repo" or "__no_repo__"',
-});
-
-const repoScopeInput = z.object({ repoFullName: repoFullNameSchema });
+const repoScopeInput = z.object({ repoFullName: repoSettingsKeySchema });
 
 /** Writes create the RepoSettings row on first use; reads leave a missing repo missing. */
 const resolveRepoScope: ResolveScope<z.infer<typeof repoScopeInput>> = async (input, mode) => {

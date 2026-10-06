@@ -2,12 +2,13 @@ import { z } from 'zod';
 import { encrypt, decrypt, isEncryptionConfigured } from '@/lib/crypto';
 import { TRPCError } from '@trpc/server';
 import type { Prisma } from '@/generated/prisma/client';
-import type {
-  McpAuthType,
-  McpOAuthStatus,
-  McpServerType,
-  ResolvedEnvVar,
-  ResolvedMcpServer,
+import {
+  mcpAuthTypeSchema,
+  mcpHttpServerTypeSchema,
+  type McpServer,
+  type McpServerType,
+  type ResolvedEnvVar,
+  type ResolvedMcpServer,
 } from '@/lib/settings-types';
 import { formatOAuthStatus, type McpOAuthTokenSnapshot, type OAuthStatusRow } from './mcp-oauth';
 
@@ -61,10 +62,10 @@ export type McpOAuthConfigInput = z.infer<typeof mcpOAuthConfigSchema>;
 
 const mcpServerHttpSchema = z.object({
   name: z.string().min(1).max(100),
-  type: z.enum(['http', 'sse']),
+  type: mcpHttpServerTypeSchema,
   url: z.string().url().max(2000),
   headers: mcpServerEnvSchema.optional(),
-  authType: z.enum(['headers', 'oauth']).default('headers'),
+  authType: mcpAuthTypeSchema.default('headers'),
   oauth: mcpOAuthConfigSchema.optional(),
 });
 
@@ -108,7 +109,7 @@ function maskSecret<T extends { value: string; isSecret: boolean }>(item: T): T 
 /** Which McpServerValue rows a server type uses: env vars for stdio, headers otherwise. */
 export type McpServerValueKind = 'env' | 'header';
 
-function valueKindFor(type: string): McpServerValueKind {
+function valueKindFor(type: McpServerType): McpServerValueKind {
   return type === 'stdio' ? 'env' : 'header';
 }
 
@@ -172,18 +173,39 @@ interface DbMcpServer {
   oauth: (OAuthStatusRow & McpOAuthTokenSnapshot) | null;
 }
 
-/** MCP server formatted for API responses (masked secrets) */
-export interface DisplayMcpServer {
-  id: string;
-  name: string;
-  type: 'stdio' | 'http' | 'sse';
-  command: string;
-  args: string[];
-  env: Record<string, McpServerEnvValue>;
-  url?: string;
-  headers: Record<string, McpServerEnvValue>;
-  authType: McpAuthType;
-  oauth?: McpOAuthStatus;
+/**
+ * The stringly-typed columns of an MCP server row. Rows are only written from
+ * validated input, so a mismatch means a corrupt row: throw rather than hand the
+ * runner or the settings form a server we'd have to guess about.
+ */
+const dbMcpServerFieldsSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('stdio'),
+    authType: mcpAuthTypeSchema,
+    args: z.array(z.string()).nullable(),
+  }),
+  z.object({ type: mcpHttpServerTypeSchema, authType: mcpAuthTypeSchema, url: z.string() }),
+]);
+
+function parseDbMcpServer(mcp: DbMcpServer): z.infer<typeof dbMcpServerFieldsSchema> {
+  const invalid = (reason: string) =>
+    new Error(`Invalid stored MCP server "${mcp.name}": ${reason}`);
+  let args: unknown = null;
+  if (mcp.args !== null) {
+    try {
+      args = JSON.parse(mcp.args);
+    } catch {
+      throw invalid('args is not JSON');
+    }
+  }
+  const parsed = dbMcpServerFieldsSchema.safeParse({
+    type: mcp.type,
+    authType: mcp.authType,
+    url: mcp.url,
+    args,
+  });
+  if (!parsed.success) throw invalid(z.prettifyError(parsed.error));
+  return parsed.data;
 }
 
 /**
@@ -196,20 +218,20 @@ export function formatEnvVarsForDisplay(envVars: DbEnvVar[]) {
 /**
  * Format MCP server DB rows for display (mask secrets, parse JSON)
  */
-export function formatMcpServersForDisplay(mcpServers: DbMcpServer[]): DisplayMcpServer[] {
+export function formatMcpServersForDisplay(mcpServers: DbMcpServer[]): McpServer[] {
   return mcpServers.map((mcp) => {
-    const authType = mcp.authType as McpAuthType;
+    const fields = parseDbMcpServer(mcp);
     return {
       id: mcp.id,
       name: mcp.name,
-      type: mcp.type as McpServerType,
+      type: fields.type,
       command: mcp.command,
-      args: mcp.args ? (JSON.parse(mcp.args) as string[]) : [],
+      args: (fields.type === 'stdio' && fields.args) || [],
       env: maskedValuesOfKind(mcp.values, 'env'),
-      url: mcp.url ?? undefined,
+      url: fields.type === 'stdio' ? undefined : fields.url,
       headers: maskedValuesOfKind(mcp.values, 'header'),
-      authType,
-      ...(authType === 'oauth' ? { oauth: formatOAuthStatus(mcp.oauth) } : {}),
+      authType: fields.authType,
+      ...(fields.authType === 'oauth' ? { oauth: formatOAuthStatus(mcp.oauth) } : {}),
     };
   });
 }
@@ -239,15 +261,15 @@ function decryptValuesOfKind(
 
 export function decryptMcpServers(mcpServers: DbMcpServer[]): ResolvedMcpServer[] {
   return mcpServers.map((mcp) => {
-    const serverType = mcp.type as McpServerType;
+    const fields = parseDbMcpServer(mcp);
 
-    if (serverType === 'http' || serverType === 'sse') {
+    if (fields.type !== 'stdio') {
       return {
         name: mcp.name,
-        type: serverType,
-        url: mcp.url!,
+        type: fields.type,
+        url: fields.url,
         headers: decryptValuesOfKind(mcp.values, 'header'),
-        ...(mcp.authType === 'oauth' && mcp.oauth
+        ...(fields.authType === 'oauth' && mcp.oauth
           ? {
               oauth: {
                 id: mcp.oauth.id,
@@ -263,7 +285,7 @@ export function decryptMcpServers(mcpServers: DbMcpServer[]): ResolvedMcpServer[
       name: mcp.name,
       type: 'stdio' as const,
       command: mcp.command,
-      args: mcp.args ? (JSON.parse(mcp.args) as string[]) : undefined,
+      args: fields.args ?? undefined,
       env: decryptValuesOfKind(mcp.values, 'env'),
     };
   });

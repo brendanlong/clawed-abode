@@ -27,7 +27,8 @@ import { toSessionView } from '@/lib/session-view';
 import type { Prisma } from '@/generated/prisma/client';
 import { keysetPage, keysetPageInputSchema } from '@/lib/keyset-page';
 import { sessionStatusSchema } from '@/lib/session-display-status';
-import { thresholdSchema } from './rateLimit';
+import { thresholdSchema } from '@/lib/rate-limit';
+import { repoFullNameSchema } from '@/lib/repo-full-name';
 import { clearQueuedPrompts } from '../services/prompt-queue';
 import { refreshStalePullRequests } from '../services/session-branch-pr';
 
@@ -120,10 +121,7 @@ export const sessionsRouter = router({
     .input(
       z.object({
         name: z.string().min(1).max(SESSION_NAME_MAX_LENGTH),
-        repoFullName: z
-          .string()
-          .regex(/^[\w-]+\/[\w.-]+$/)
-          .optional(),
+        repoFullName: repoFullNameSchema.optional(),
         branch: z.string().min(1).optional(),
         initialPrompt: z.string().max(100000).optional(),
         claudeModel: z.string().max(200).optional(),
