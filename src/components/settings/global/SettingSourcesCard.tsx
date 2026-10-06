@@ -1,7 +1,5 @@
 'use client';
 
-import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
 import { trpc } from '@/lib/trpc';
 import {
   SETTING_SOURCES,
@@ -9,6 +7,7 @@ import {
   type SettingSourceFlags,
 } from '@/lib/setting-sources';
 import { SettingsCard } from '../shared/SettingsCard';
+import { SwitchSetting } from '../shared/SwitchSetting';
 
 const SETTING_SOURCE_LABELS: Record<SettingSource, { title: string; description: string }> = {
   user: {
@@ -55,22 +54,15 @@ export function SettingSourcesCard({
     >
       <div className="space-y-4">
         {SETTING_SOURCES.map((source) => (
-          <div key={source} className="flex items-start justify-between gap-4">
-            <div className="space-y-0.5">
-              <Label htmlFor={`setting-source-${source}`}>
-                {SETTING_SOURCE_LABELS[source].title}
-              </Label>
-              <p className="text-sm text-muted-foreground">
-                {SETTING_SOURCE_LABELS[source].description}
-              </p>
-            </div>
-            <Switch
-              id={`setting-source-${source}`}
-              checked={current[source]}
-              onCheckedChange={(checked) => mutation.mutate({ ...current, [source]: checked })}
-              disabled={mutation.isPending}
-            />
-          </div>
+          <SwitchSetting
+            key={source}
+            id={`setting-source-${source}`}
+            title={SETTING_SOURCE_LABELS[source].title}
+            description={SETTING_SOURCE_LABELS[source].description}
+            checked={current[source]}
+            onCheckedChange={(checked) => mutation.mutate({ ...current, [source]: checked })}
+            disabled={mutation.isPending}
+          />
         ))}
         {mutation.error && <p className="text-sm text-destructive">{mutation.error.message}</p>}
       </div>

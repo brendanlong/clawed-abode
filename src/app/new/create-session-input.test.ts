@@ -1,9 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { buildCreateSessionInput, defaultSessionName, resolveBranch } from './create-session-input';
+import {
+  buildCreateSessionInput,
+  formDefaultSessionName,
+  resolveBranch,
+} from './create-session-input';
 import { initialFormState, type FormState } from './form-reducer';
 import type { Repo } from '@/components/RepoSelector';
 import { NO_REPO_SENTINEL } from '@/lib/repo-full-name';
-import { SESSION_NAME_MAX_LENGTH } from '@/lib/types';
 
 const repo: Repo = {
   id: 1,
@@ -43,19 +46,10 @@ describe('resolveBranch', () => {
   });
 });
 
-describe('defaultSessionName', () => {
-  it('names a repo session after the repo and branch', () => {
-    expect(defaultSessionName(repo, 'dev')).toBe('repo - dev');
-  });
-
-  it('names a no-repo session "Workspace"', () => {
-    expect(defaultSessionName(noRepo, '')).toBe('Workspace');
-  });
-
-  it('truncates to the maximum session name length', () => {
-    const name = defaultSessionName(repo, 'b'.repeat(SESSION_NAME_MAX_LENGTH));
-    expect(name).toHaveLength(SESSION_NAME_MAX_LENGTH);
-    expect(name.startsWith('repo - b')).toBe(true);
+describe('formDefaultSessionName', () => {
+  it('names a repo session after the repo and branch, and a no-repo session "Workspace"', () => {
+    expect(formDefaultSessionName(repo, 'dev')).toBe('repo - dev');
+    expect(formDefaultSessionName(noRepo, '')).toBe('Workspace');
   });
 });
 

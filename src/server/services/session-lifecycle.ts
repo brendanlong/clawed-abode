@@ -9,6 +9,7 @@ import { sseEvents } from './events';
 import { cloneRepo, createEmptyWorkspace, removeWorkspace } from './worktree-manager';
 import {
   cleanupSession,
+  isClaudeRunning,
   refreshSessionSettings,
   reviveSession,
   sendUserMessage,
@@ -17,6 +18,7 @@ import {
 import { resolveAgentName } from './agent-name';
 import { clearQueuedPrompts } from './prompt-queue';
 import { recomputeRateLimitHolds } from './rate-limit-pause';
+import type { SessionToolsPort } from './builtin-mcp';
 
 const log = createLogger('session-lifecycle');
 
@@ -252,3 +254,15 @@ export async function setSessionModel(
   await refreshSessionSettings(sessionId);
   return session;
 }
+
+/** The lifecycle as the built-in MCP server's session tools see it; handed over at startup. */
+export const sessionToolsPort: SessionToolsPort = {
+  async renameSession(sessionId, name) {
+    await updateSession(sessionId, { name });
+  },
+  createSession,
+  // Not user-initiated: another agent's message shouldn't reorder the session list.
+  sendMessage: (sessionId, text) => sendUserMessage(sessionId, text, [], { userInitiated: false }),
+  stopSession: shutDownSession,
+  isTurnActive: isClaudeRunning,
+};

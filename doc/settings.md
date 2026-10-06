@@ -8,13 +8,20 @@ Env vars and MCP servers are **scope-generic**: one table each, `repoSettingsId`
 
 - **Claude model**: session → repo → global → `CLAUDE_MODEL` env (`loadMergedSessionSettings`). The per-session override lives on `Session.claudeModel` (set at create or via `sessions.setModel`, the gear button in the session header).
 - **Env vars / MCP servers**: global entries apply everywhere; a per-repo entry with the same name wins.
-- **System prompt**: base (default, or the override if enabled) + the session's public-dir note (when public files are configured) + global append + per-repo append, in that order. The note describes the session rather than setting policy, so an override keeps it.
+- **System prompt**: base (default, or the override if enabled) + the session's public-dir note (when public files are configured) + global append + per-repo append + the built-in tools note (when enabled), in that order. The notes describe the session rather than setting policy, so an override keeps them.
 - **Rate-limit pause**: session → global, with the two fields (on/off, threshold) resolving independently so a session can raise its threshold without restating the global on/off (`resolvePausePolicy`; there is no repo layer). Applies immediately, not at the next establishment. See [`rate-limit-pause.md`](rate-limit-pause.md).
 - **Setting sources**: global-only toggles for the SDK's `user` / `project` / `local` filesystem scopes (`resolveSettingSources`, default: only `project`). Widening is a **trust decision** — these scopes load hooks (which execute) and permissions. A settings-file `PostToolUse` hook merges with, not displaces, the app's sanitizer hook.
 
 ## Advisor Model
 
 Global-only and **opt-in**: null means the advisor tool isn't wired into requests at all; setting a model enables it. `SUGGESTED_ADVISOR_MODEL` ([`src/lib/advisor.ts`](../src/lib/advisor.ts), dependency-free so server and client share it) is what an empty Enable→Save adopts — it is _not_ a resolution fallback; only the Disable button reaches the disabled state. There's no dedicated SDK option, so it's passed as an ad-hoc `--settings` source via `Options.extraArgs` (omitted entirely when disabled).
+
+## Built-in Tools
+
+The app's own MCP server, `clawed-abode` ([`builtin-mcp.ts`](../src/server/services/builtin-mcp.ts); prompt text and pure rules in [`src/lib/builtin-tools.ts`](../src/lib/builtin-tools.ts)), runs in-process: it is the one entry in the SDK's `options.mcpServers`, which registers SDK instances over the control channel rather than on argv. A live `setMcpServers` replaces the whole set, so it must re-pass the bound instance (`buildLiveMcpServersRecord`) or the SDK disconnects it. Two global switches, both restart-bound:
+
+- **Built-in tools** (default on): `rename_session` on the agent's own session. The default name the new-session form fills in says nothing about the task, so when a session still has it (`isDefaultSessionName`) the system prompt tells the agent to rename it; otherwise to leave it alone. This lives in the system prompt because agents ignored MCP server instructions in testing, and the prompt never quotes the name: agents can set names, and a prompt must not carry agent-written text.
+- **Session management** (default off, needs the first): list, create, message, read, and stop _other_ sessions — off by default because it lets one agent spend on and interrupt work the user started elsewhere. Agents are told to use these only when the user asks and to prefer subagents. Cross-session text is labeled with the sender (`attributeMessage`) so it's never mistaken for the user, and tells the receiver not to use session tools on the sender's behalf, to discourage chains of sessions. There is deliberately no delete. `read_session` returns a condensed, size-capped transcript ([`session-transcript.ts`](../src/lib/session-transcript.ts)) rather than an LLM summary, which would cost a model call per read.
 
 ## MCP Validation
 
@@ -47,4 +54,4 @@ Values marked secret are encrypted at rest (AES-256-GCM with `ENCRYPTION_KEY`, [
 
 ## Live vs Restart-Bound
 
-Settings bind when the query is established. **Model and MCP servers** re-apply live on the next send when changed (`query.setModel` / `query.setMcpServers`; `sessions.setModel` also refreshes an idle query immediately). **Env vars, system prompt, advisor model, and setting sources** have no live SDK setter and take effect only after Stop→Start. The **rate-limit pause** settings aren't SDK options at all — they're evaluated server-side per send, so they apply at once.
+Settings bind when the query is established. **Model and MCP servers** re-apply live on the next send when changed (`query.setModel` / `query.setMcpServers`; `sessions.setModel` also refreshes an idle query immediately). **Env vars, system prompt, advisor model, setting sources, and built-in tools** have no live SDK setter and take effect only after Stop→Start. The **rate-limit pause** settings aren't SDK options at all — they're evaluated server-side per send, so they apply at once.

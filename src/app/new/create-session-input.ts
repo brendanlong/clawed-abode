@@ -2,7 +2,7 @@ import type { inferRouterInputs } from '@trpc/server';
 import type { AppRouter } from '@/server/routers';
 import type { Repo } from '@/components/RepoSelector';
 import { NO_REPO_SENTINEL } from '@/lib/repo-full-name';
-import { SESSION_NAME_MAX_LENGTH } from '@/lib/types';
+import { defaultSessionName } from '@/lib/session-name';
 import type { FormState } from './form-reducer';
 
 type CreateSessionInput = inferRouterInputs<AppRouter>['sessions']['create'];
@@ -20,9 +20,8 @@ export function resolveBranch(
 }
 
 /** The name used when the user leaves the session name blank. */
-export function defaultSessionName(repo: Repo, branch: string): string {
-  const name = repo.fullName === NO_REPO_SENTINEL ? 'Workspace' : `${repo.name} - ${branch}`;
-  return name.slice(0, SESSION_NAME_MAX_LENGTH);
+export function formDefaultSessionName(repo: Repo, branch: string): string {
+  return defaultSessionName(repo.fullName === NO_REPO_SENTINEL ? null : repo.fullName, branch);
 }
 
 /**
@@ -40,7 +39,7 @@ export function buildCreateSessionInput(
   if (!isNoRepo && !branch) return null;
 
   return {
-    name: form.sessionName || defaultSessionName(repo, branch),
+    name: form.sessionName || formDefaultSessionName(repo, branch),
     repoFullName: isNoRepo ? undefined : repo.fullName,
     branch: isNoRepo ? undefined : branch,
     initialPrompt: form.initialPrompt.trim() || undefined,

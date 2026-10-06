@@ -272,6 +272,8 @@ model GlobalSettings {
   settingSourceLocal          Boolean  @default(false) // Load Claude settings from the local scope (<cwd>/.claude/settings.local.json)
   rateLimitPauseEnabled       Boolean  @default(false) // Default for whether sessions pause when a subscription window fills
   rateLimitPauseThreshold     Int      @default(95) // Default 5-hour-window utilization percent at which sessions pause
+  builtinToolsEnabled         Boolean  @default(true) // Give agents the built-in clawed-abode MCP server (rename own session)
+  sessionToolsEnabled         Boolean  @default(false) // Also give it tools to list, create, message, read, and stop other sessions
   createdAt                   DateTime @default(now())
   updatedAt                   DateTime @updatedAt
 }

@@ -7,6 +7,7 @@ import {
   formatEnvVarsForDisplay,
   formatMcpServersForDisplay,
   mcpServerHasSecrets,
+  mcpServerSchema,
   planMcpServerWrite,
 } from './settings-helpers';
 
@@ -225,5 +226,12 @@ describe('settings-helpers', () => {
         headers: { A: { value: 'v', isSecret: false } },
       })
     ).toBe(false);
+  });
+});
+
+describe('mcpServerSchema', () => {
+  it('reserves the built-in server name', () => {
+    expect(mcpServerSchema.safeParse({ name: 'clawed-abode', command: 'x' }).success).toBe(false);
+    expect(mcpServerSchema.safeParse({ name: 'mine', command: 'x' }).success).toBe(true);
   });
 });

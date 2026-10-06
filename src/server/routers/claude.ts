@@ -21,6 +21,7 @@ import {
 } from '../services/message-store';
 import { getSessionCommands } from '../services/session-commands';
 import { buildTokenUsageStats } from '@/lib/token-estimation';
+import { PROMPT_MAX_LENGTH } from '@/lib/types';
 import { getSessionUsageTotals } from '../services/session-usage';
 import {
   type ToolResponse,
@@ -78,7 +79,7 @@ async function submitToolResponse(
 // present.
 const messageInputSchema = z
   .object({
-    prompt: z.string().max(100000),
+    prompt: z.string().max(PROMPT_MAX_LENGTH),
     attachments: z.array(z.string().min(1).max(255)).optional(),
   })
   .refine((v) => v.prompt.trim().length > 0 || (v.attachments?.length ?? 0) > 0, {
@@ -110,7 +111,7 @@ export const claudeRouter = router({
       z.object({
         toolUseId: z.string().min(1),
         approve: z.boolean(),
-        feedback: z.string().max(100000).optional(),
+        feedback: z.string().max(PROMPT_MAX_LENGTH).optional(),
       })
     )
     .mutation(async ({ input }) => {

@@ -1,10 +1,17 @@
-import type { McpServerConfig, Options, PermissionResult } from '@anthropic-ai/claude-agent-sdk';
+import type {
+  McpSdkServerConfigWithInstance,
+  McpServerConfig,
+  Options,
+  PermissionResult,
+} from '@anthropic-ai/claude-agent-sdk';
 import { AGENT_NAME_ENV } from '@/lib/agent-name';
 import { createLogger } from '@/lib/logger';
 import { mayChangeBranchOrPr } from '@/lib/pull-request';
 import type { SanitizationInfo } from '@/lib/sanitization';
 import { CLAUDE_BIN_ENV, SESSION_SCOPE_ENV, sessionScopeUnitName } from '@/lib/session-scope';
 import { buildAgentEnv } from './agent-env';
+import { BUILTIN_MCP_SERVER_NAME, builtinToolsPrompt } from '@/lib/builtin-tools';
+import { buildBuiltinMcpServer } from './builtin-mcp';
 import { sanitizeToolOutputHook } from './input-sanitizer';
 import { writeSessionMcpConfig, removeSessionMcpConfig } from './mcp-config-file';
 import { scheduleBranchPrRefresh } from './session-branch-pr';
@@ -29,6 +36,22 @@ export interface SdkOptionsResult {
    * so a crash can always reap it by exact name.
    */
   sessionScope: string | null;
+  /**
+   * The in-process built-in server, or null when disabled. A live `setMcpServers`
+   * must pass it again or the SDK disconnects it.
+   */
+  builtinMcpServer: McpSdkServerConfigWithInstance | null;
+}
+
+/** The record for a live `setMcpServers`: the configured servers plus the built-in one. */
+export function buildLiveMcpServersRecord(
+  mcpServers: MergedSessionSettings['mcpServers'],
+  builtinMcpServer: McpSdkServerConfigWithInstance | null
+): Record<string, McpServerConfig> {
+  return {
+    ...buildMcpServersRecord(mcpServers),
+    ...(builtinMcpServer && { [BUILTIN_MCP_SERVER_NAME]: builtinMcpServer }),
+  };
 }
 
 /** Convert merged MCP server settings into the SDK's record shape. */
@@ -62,6 +85,8 @@ export async function buildSdkOptions(params: {
   sessionId: string;
   /** Name other Claude sessions address this one by (see doc/claude-sessions.md). */
   agentName: string | null;
+  /** Whether the session still has its auto-generated name, so the agent is asked to rename it. */
+  sessionNameIsDefault: boolean;
   workingDir: string;
   settings: MergedSessionSettings;
   /** Claude Code conversation to resume, or null to start one under `sessionId`. */
@@ -74,6 +99,7 @@ export async function buildSdkOptions(params: {
   const {
     sessionId,
     agentName,
+    sessionNameIsDefault,
     workingDir,
     settings,
     resumeId,
@@ -100,7 +126,9 @@ export async function buildSdkOptions(params: {
     systemPrompt: {
       type: 'preset',
       preset: 'claude_code',
-      append: settings.systemPrompt,
+      append: settings.builtinTools
+        ? `${settings.systemPrompt}\n\n${builtinToolsPrompt(settings.builtinTools, sessionNameIsDefault)}`
+        : settings.systemPrompt,
       snapshot: false,
     },
     tools: { type: 'preset', preset: 'claude_code' },
@@ -162,6 +190,15 @@ export async function buildSdkOptions(params: {
     await removeSessionMcpConfig(sessionId);
   }
 
+  // The built-in server is the one `options.mcpServers` entry: an in-process SDK
+  // instance is registered over the control channel, never serialized onto argv.
+  const builtinMcpServer = settings.builtinTools
+    ? buildBuiltinMcpServer(sessionId, settings.builtinTools)
+    : null;
+  if (builtinMcpServer) {
+    options.mcpServers = { [BUILTIN_MCP_SERVER_NAME]: builtinMcpServer };
+  }
+
   // The advisor model has no SDK option; it is an ad-hoc `--settings` source,
   // omitted entirely when disabled. Wires up `advisor_20260301` on SDK 0.3.196+
   // (verified by capturing the CLI's outgoing /v1/messages request; re-verify the
@@ -176,11 +213,11 @@ export async function buildSdkOptions(params: {
   // Run the CLI (and everything it spawns) in a transient systemd user scope so the
   // whole tree is reaped on teardown (doc/claude-sessions.md "Process Reaping").
   const scopeConfig = await getSessionScopeConfig();
-  if (!scopeConfig) return { options, sessionScope: null };
+  if (!scopeConfig) return { options, sessionScope: null, builtinMcpServer };
 
   const sessionScope = sessionScopeUnitName(sessionId, sessionScopeNonce());
   options.pathToClaudeCodeExecutable = scopeConfig.launcherPath;
   agentEnv[SESSION_SCOPE_ENV] = sessionScope;
   agentEnv[CLAUDE_BIN_ENV] = scopeConfig.claudeBin;
-  return { options, sessionScope };
+  return { options, sessionScope, builtinMcpServer };
 }

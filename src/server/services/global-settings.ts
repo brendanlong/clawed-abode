@@ -32,6 +32,8 @@ export const GLOBAL_SETTINGS_DEFAULTS: Readonly<GlobalSettingsValues> = Object.f
   settingSourceLocal: DEFAULT_SETTING_SOURCE_FLAGS.local,
   rateLimitPauseEnabled: false,
   rateLimitPauseThreshold: DEFAULT_PAUSE_THRESHOLD,
+  builtinToolsEnabled: true,
+  sessionToolsEnabled: false,
 });
 
 export async function loadGlobalSettings(): Promise<Readonly<GlobalSettingsValues>> {

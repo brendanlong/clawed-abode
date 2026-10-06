@@ -14,7 +14,8 @@ import {
   updateSession,
 } from '../services/session-lifecycle';
 import { env } from '@/lib/env';
-import { SESSION_NAME_MAX_LENGTH } from '@/lib/types';
+import { sessionNameSchema } from '@/lib/session-name';
+import { PROMPT_MAX_LENGTH } from '@/lib/types';
 import { toSessionView } from '@/lib/session-view';
 import type { Prisma } from '@/generated/prisma/client';
 import { keysetPage, keysetPageInputSchema } from '@/lib/keyset-page';
@@ -41,10 +42,10 @@ export const sessionsRouter = router({
   create: protectedProcedure
     .input(
       z.object({
-        name: z.string().min(1).max(SESSION_NAME_MAX_LENGTH),
+        name: sessionNameSchema,
         repoFullName: repoFullNameSchema.optional(),
         branch: z.string().min(1).optional(),
-        initialPrompt: z.string().max(100000).optional(),
+        initialPrompt: z.string().max(PROMPT_MAX_LENGTH).optional(),
         claudeModel: z.string().max(200).optional(),
       })
     )
@@ -112,7 +113,7 @@ export const sessionsRouter = router({
   })),
 
   rename: sessionProcedure
-    .input(z.object({ name: z.string().trim().min(1).max(SESSION_NAME_MAX_LENGTH) }))
+    .input(z.object({ name: sessionNameSchema }))
     .mutation(async ({ input }) => {
       // Renaming only changes the display name; the session id and workspace
       // are untouched. lastActivityAt is deliberately not bumped so renaming
