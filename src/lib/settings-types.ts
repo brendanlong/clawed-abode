@@ -15,6 +15,10 @@ export type McpServerType = z.infer<typeof mcpServerTypeSchema>;
 export const mcpAuthTypeSchema = z.enum(['headers', 'oauth']);
 export type McpAuthType = z.infer<typeof mcpAuthTypeSchema>;
 
+/** What an McpServerValue row holds: an env var (stdio) or a header (http/sse). */
+export const mcpServerValueKindSchema = z.enum(['env', 'header']);
+export type McpServerValueKind = z.infer<typeof mcpServerValueKindSchema>;
+
 export interface McpOAuthStatus {
   state: 'disconnected' | 'connected' | 'error';
   clientId: string | null;

@@ -61,6 +61,7 @@ model Session {
 // A user prompt held back while the session is paused for a subscription rate
 // limit. The transcript bubble is already persisted (messageId); this row is what
 // is pushed into the SDK once the window resets. See doc/rate-limit-pause.md.
+// Has CHECK constraints (see McpServer): attachments.
 model QueuedPrompt {
   id          String   @id @default(uuid())
   sessionId   String
@@ -89,6 +90,7 @@ model RateLimitWindow {
 // Running token/cost totals, folded in as result and system/init messages are
 // inserted so reading them never rescans the transcript (see src/server/services/session-usage.ts).
 // A separate table so the counters stay out of every Session payload.
+// Has CHECK constraints (see McpServer): contextWindows.
 model SessionUsage {
   sessionId             String  @id
   resultCount           Int     @default(0)
@@ -166,6 +168,15 @@ model EnvVar {
 // MCP server configurations for a repository or global
 // When repoSettingsId is null, the MCP server is global (applies to all sessions).
 // Same hand-written partial unique index as EnvVar (McpServer_global_name_key).
+//
+// CHECK constraints (hand-written in migrations; Prisma can't express them and its
+// differ ignores them) mirror the Zod schemas these rows are parsed with, as
+// src/server/services/db-check-constraints.integration.test.ts asserts. They exist
+// on every model marked "Has CHECK constraints". A generated rebuild of such a
+// table silently drops them, so recreate them by hand; changing a Zod enum needs a
+// migration that rebuilds the table with the new list.
+//
+// Has CHECK constraints: type, authType, args, url.
 model McpServer {
   id             String        @id @default(uuid())
   repoSettingsId String?
@@ -189,6 +200,7 @@ model McpServer {
 // One env var (stdio) or header (http/sse) of an MCP server. A row per value,
 // rather than a JSON column, so a save can leave an unchanged secret untouched
 // instead of reading it back to rewrite it.
+// Has CHECK constraints (see McpServer): kind.
 model McpServerValue {
   id          String    @id @default(uuid())
   mcpServerId String
