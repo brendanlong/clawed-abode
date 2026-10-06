@@ -16,7 +16,8 @@
  * Cost is therefore aggregated by segmenting the result messages into query
  * processes and summing the final cumulative value of each segment. Segment
  * boundaries are detected by the cumulative cost decreasing: it is monotonically
- * non-decreasing within a process, so a drop means the counter reset.
+ * non-decreasing within a process, so a drop means the counter reset. The fold
+ * itself runs in SQL as each message is inserted (src/server/services/session-usage.ts).
  *
  * The "context usage %" reflects how full the context window currently is, NOT
  * the total tokens consumed: it uses the most recent top-level (main-agent)
@@ -101,15 +102,6 @@ const ResultContentSchema = z.object({
   modelUsage: z.record(z.string(), z.object({ contextWindow: z.number().optional() })).optional(),
 });
 
-/**
- * Message structure expected by the estimation function.
- * Messages must be provided in chronological order (oldest first).
- */
-interface Message {
-  type: string;
-  content: unknown;
-}
-
 interface ExtractedUsage {
   inputTokens: number;
   outputTokens: number;
@@ -146,15 +138,18 @@ function extractAssistantUsage(content: unknown): {
   };
 }
 
+export interface ResultUsage {
+  usage: ExtractedUsage | null;
+  contextWindowByModel: Record<string, number>;
+  /** Cumulative for the query process, not per-turn (see the module docstring). */
+  totalCostUsd: number | null;
+}
+
 /**
  * Extract per-turn usage, the cumulative cost, and the context window from a
  * result message.
  */
-function extractResultUsage(content: unknown): {
-  usage: ExtractedUsage | null;
-  contextWindowByModel: Record<string, number>;
-  totalCostUsd?: number;
-} | null {
+export function extractResultUsage(content: unknown): ResultUsage | null {
   const parsed = ResultContentSchema.safeParse(content);
   if (!parsed.success) {
     return null;
@@ -170,140 +165,113 @@ function extractResultUsage(content: unknown): {
   return {
     usage: parsed.data.usage ? extractUsageTokens(parsed.data.usage) : null,
     contextWindowByModel,
-    totalCostUsd: parsed.data.total_cost_usd,
+    totalCostUsd: parsed.data.total_cost_usd ?? null,
   };
 }
 
-/**
- * Extract model name from system init message
- */
-function extractModelFromInit(content: unknown): string | undefined {
+export function extractModelFromInit(content: unknown): string | undefined {
   const parsed = SystemInitSchema.safeParse(content);
-  if (parsed.success) {
-    return parsed.data.model;
-  }
-  return undefined;
+  return parsed.success ? parsed.data.model : undefined;
 }
 
 /**
- * Estimate token usage, session cost, and context window occupancy from a list
- * of messages. Messages must be in chronological order (oldest first).
+ * Whether a persisted message can change the stats: results and system/init
+ * move the running totals, a top-level assistant message moves the context %.
+ */
+export function affectsTokenUsage(type: string, content: unknown): boolean {
+  if (type === 'result') return true;
+  if (type === 'system') return extractModelFromInit(content) !== undefined;
+  if (type === 'assistant') return extractAssistantUsage(content)?.isTopLevel ?? false;
+  return false;
+}
+
+/** Running totals folded from a session's result and system/init messages. */
+export interface SessionUsageTotals {
+  resultCount: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  /** Final cumulative cost of each query process that has since reset. */
+  closedSegmentsCostUsd: number;
+  /** Latest cumulative cost reported by the current query process. */
+  currentSegmentCostUsd: number;
+  /** Latest reported context window per model. */
+  contextWindowByModel: Record<string, number>;
+  /** From the first system/init. */
+  model?: string;
+}
+
+export const EMPTY_SESSION_USAGE_TOTALS: SessionUsageTotals = {
+  resultCount: 0,
+  inputTokens: 0,
+  outputTokens: 0,
+  cacheReadTokens: 0,
+  cacheCreationTokens: 0,
+  closedSegmentsCostUsd: 0,
+  currentSegmentCostUsd: 0,
+  contextWindowByModel: {},
+};
+
+/**
+ * Build the stats from a session's running totals and the content of its most
+ * recent top-level (main-agent) assistant message, if any.
  *
  * See the module docstring for the SDK semantics this relies on.
  */
-export function estimateTokenUsage(messages: Message[]): TokenUsageStats {
-  let totalInputTokens = 0;
-  let totalOutputTokens = 0;
-  let totalCacheReadTokens = 0;
-  let totalCacheCreationTokens = 0;
-  let detectedModel: string | undefined;
-  // Latest known context window per model, from result modelUsage. A result can
-  // report several models (the main agent plus utility/subagent models), so the
-  // window is resolved against the main model after model detection.
-  const contextWindowByModel: Record<string, number> = {};
+export function buildTokenUsageStats(
+  totals: SessionUsageTotals,
+  lastTopLevelAssistant: unknown
+): TokenUsageStats {
+  let { inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens } = totals;
+  let detectedModel = totals.model;
 
-  // First pass: look for model info in system init
-  for (const msg of messages) {
-    if (msg.type === 'system') {
-      const model = extractModelFromInit(msg.content);
-      if (model) {
-        detectedModel = model;
-        break;
-      }
-    }
-  }
-
-  // Sum per-turn usage across result messages, and aggregate the cumulative
-  // total_cost_usd by process segment: within one query process the value is
-  // monotonically non-decreasing, so a drop marks a re-established query whose
-  // counter reset. The session total is the sum of each segment's final value.
-  const resultMessages = messages.filter((m) => m.type === 'result');
-  let closedSegmentsCost = 0;
-  let currentSegmentCost = 0;
-  for (const resultMsg of resultMessages) {
-    const extracted = extractResultUsage(resultMsg.content);
-    if (!extracted) {
-      continue;
-    }
-    if (extracted.usage) {
-      totalInputTokens += extracted.usage.inputTokens;
-      totalOutputTokens += extracted.usage.outputTokens;
-      totalCacheReadTokens += extracted.usage.cacheReadTokens;
-      totalCacheCreationTokens += extracted.usage.cacheCreationTokens;
-    }
-    Object.assign(contextWindowByModel, extracted.contextWindowByModel);
-    if (extracted.totalCostUsd !== undefined) {
-      if (extracted.totalCostUsd < currentSegmentCost) {
-        closedSegmentsCost += currentSegmentCost;
-      }
-      currentSegmentCost = extracted.totalCostUsd;
-    }
-  }
-  const totalCostUsd = closedSegmentsCost + currentSegmentCost;
-
-  // Find the most recent top-level (main-agent) assistant message to determine
-  // current context occupancy. Subagent messages (parent_tool_use_id set) run
-  // in their own context and would misreport the main conversation's size.
-  let lastAssistantContextTokens = 0;
-  let lastAssistantUsage: ExtractedUsage | undefined;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const msg = messages[i];
-    if (msg.type !== 'assistant') {
-      continue;
-    }
-    const extracted = extractAssistantUsage(msg.content);
-    if (!extracted || !extracted.isTopLevel) {
-      continue;
-    }
-    // The prompt of the latest API call is input + cache read + cache creation
-    // (newly cached tokens are part of the prompt too); output tokens become
-    // input in the next call. Together they are the current occupancy.
-    const { usage } = extracted;
-    lastAssistantUsage = usage;
-    lastAssistantContextTokens =
-      usage.inputTokens + usage.cacheReadTokens + usage.cacheCreationTokens + usage.outputTokens;
-    if (extracted.model && !detectedModel) {
-      detectedModel = extracted.model;
-    }
-    break;
+  // The prompt of the latest API call is input + cache read + cache creation
+  // (newly cached tokens are part of the prompt too); output tokens become
+  // input in the next call. Together they are the current occupancy.
+  const assistant = extractAssistantUsage(lastTopLevelAssistant);
+  const lastAssistantUsage = assistant?.isTopLevel ? assistant.usage : undefined;
+  const lastAssistantContextTokens = lastAssistantUsage
+    ? lastAssistantUsage.inputTokens +
+      lastAssistantUsage.cacheReadTokens +
+      lastAssistantUsage.cacheCreationTokens +
+      lastAssistantUsage.outputTokens
+    : 0;
+  if (lastAssistantUsage && !detectedModel) {
+    detectedModel = assistant?.model;
   }
 
   // With no result messages yet (mid-first-turn), the latest assistant call's
   // usage is the best available total.
-  if (resultMessages.length === 0 && lastAssistantUsage) {
-    totalInputTokens = lastAssistantUsage.inputTokens;
-    totalOutputTokens = lastAssistantUsage.outputTokens;
-    totalCacheReadTokens = lastAssistantUsage.cacheReadTokens;
-    totalCacheCreationTokens = lastAssistantUsage.cacheCreationTokens;
+  if (totals.resultCount === 0 && lastAssistantUsage) {
+    ({ inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens } = lastAssistantUsage);
   }
 
-  // Calculate total tokens consumed (for cost/display)
-  const totalTokens = totalInputTokens + totalOutputTokens;
+  const totalTokens = inputTokens + outputTokens;
 
   // Resolve the context window: the main model's reported window, falling back
   // to the largest reported one (the main model dwarfs the utility models), then
   // the default.
-  const knownWindows = Object.values(contextWindowByModel);
+  const knownWindows = Object.values(totals.contextWindowByModel);
   const contextWindow =
-    (detectedModel ? contextWindowByModel[detectedModel] : undefined) ??
+    (detectedModel ? totals.contextWindowByModel[detectedModel] : undefined) ??
     (knownWindows.length > 0 ? Math.max(...knownWindows) : DEFAULT_CONTEXT_WINDOW);
 
-  // Calculate percentage of context window currently used.
   // Fall back to total tokens if no assistant messages found (shouldn't happen in practice).
   const currentContextTokens =
     lastAssistantContextTokens > 0 ? lastAssistantContextTokens : totalTokens;
   const percentUsed = contextWindow > 0 ? (currentContextTokens / contextWindow) * 100 : 0;
 
   return {
-    inputTokens: totalInputTokens,
-    outputTokens: totalOutputTokens,
-    cacheReadTokens: totalCacheReadTokens,
-    cacheCreationTokens: totalCacheCreationTokens,
+    inputTokens,
+    outputTokens,
+    cacheReadTokens,
+    cacheCreationTokens,
     totalTokens,
     contextWindow,
-    percentUsed: Math.min(percentUsed, 100), // Cap at 100%
+    percentUsed: Math.min(percentUsed, 100),
     model: detectedModel,
-    totalCostUsd,
+    totalCostUsd: totals.closedSegmentsCostUsd + totals.currentSegmentCostUsd,
   };
 }
 

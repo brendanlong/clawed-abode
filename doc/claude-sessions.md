@@ -73,7 +73,7 @@ Accepted gaps: an untrappable SIGKILL leaves scopes until the next startup reap;
 
 ## Cost & Context Estimation
 
-`estimateTokenUsage` ([`src/lib/token-estimation.ts`](../src/lib/token-estimation.ts)), served by `claude.getTokenUsage`. It relies on result-message semantics **verified empirically against real sessions** — the two field families have different scopes:
+Served by `claude.getTokenUsage` from running totals in `SessionUsage`, folded in by `insertMessage` as each result and system/init arrives ([`session-usage.ts`](../src/server/services/session-usage.ts)), so a read never rescans the transcript — the client refetches on every message that can move the numbers. The pure logic is in [`src/lib/token-estimation.ts`](../src/lib/token-estimation.ts). It relies on result-message semantics **verified empirically against real sessions** — the two field families have different scopes:
 
 - Top-level `usage` is **per-turn** → summable across results.
 - `total_cost_usd` / `modelUsage` are **cumulative since the query process started** — with a persistent query one process spans many turns, so summing double-counts roughly quadratically. Cost is aggregated by segmenting results into query processes (cumulative cost is monotone within a process, so a drop marks a reset) and summing each segment's final value. A reset is masked only if a new process's first turn costs more than the entire previous process — a slight undercount, acceptable for an indicator.

@@ -19,7 +19,8 @@ import {
   persistSyntheticToolResult,
 } from '../services/message-store';
 import { getSessionCommands } from '../services/session-commands';
-import { estimateTokenUsage } from '@/lib/token-estimation';
+import { buildTokenUsageStats } from '@/lib/token-estimation';
+import { getSessionUsageTotals } from '../services/session-usage';
 import {
   type ToolResponse,
   summarizeToolResponse,
@@ -167,17 +168,10 @@ export const claudeRouter = router({
     // The context-% calculation needs the latest top-level (main-agent)
     // assistant message; subagent messages (parent_tool_use_id set) run in
     // their own context and would misreport the main conversation's size.
-    const [resultAndSystemMessages, lastTopLevelAssistant] = await Promise.all([
-      prisma.message.findMany({
-        where: {
-          sessionId: input.sessionId,
-          type: { in: ['result', 'system'] },
-        },
-        select: { type: true, content: true },
-        orderBy: { sequence: 'asc' },
-      }),
-      prisma.$queryRaw<{ type: string; content: string }[]>`
-          SELECT type, content FROM Message
+    const [totals, lastTopLevelAssistant] = await Promise.all([
+      getSessionUsageTotals(input.sessionId),
+      prisma.$queryRaw<{ content: string }[]>`
+          SELECT content FROM Message
           WHERE sessionId = ${input.sessionId}
             AND type = 'assistant'
             AND json_extract(content, '$.parent_tool_use_id') IS NULL
@@ -186,14 +180,10 @@ export const claudeRouter = router({
         `,
     ]);
 
-    const allMessages = [...resultAndSystemMessages, ...lastTopLevelAssistant];
-
-    const parsedMessages = allMessages.map((m) => ({
-      type: m.type,
-      content: JSON.parse(m.content),
-    }));
-
-    return estimateTokenUsage(parsedMessages);
+    const assistantContent: unknown = lastTopLevelAssistant[0]
+      ? JSON.parse(lastTopLevelAssistant[0].content)
+      : undefined;
+    return buildTokenUsageStats(totals, assistantContent);
   }),
 
   // Initial value of every live per-session field; each then streams over its

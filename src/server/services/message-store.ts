@@ -8,6 +8,7 @@ import type { SanitizationInfo } from '@/lib/sanitization';
 import { sseEvents } from './events';
 import { sanitizeUntrustedInput } from './input-sanitizer';
 import { resolveUploadPaths } from './uploads';
+import { recordMessageUsage } from './session-usage';
 
 const log = createLogger('message-store');
 
@@ -24,7 +25,8 @@ const MESSAGE_ID_NAMESPACE = '6ba7b810-9dad-11d1-80b4-00c04fd430c8';
  *
  * A duplicate `id` (e.g. an idempotent synthetic tool_result) is a no-op returning
  * `inserted: false`; the reserved sequence is skipped, a harmless gap since
- * pagination never assumes contiguity. Emits a `message` event on a real insert.
+ * pagination never assumes contiguity. On a real insert, folds the message into the
+ * session's usage totals and emits a `message` event.
  * Throws if the session does not exist.
  */
 export async function insertMessage(params: {
@@ -60,6 +62,13 @@ export async function insertMessage(params: {
       return { inserted: false };
     }
     throw err;
+  }
+
+  // Before the event, so a client refetching usage on it sees this message folded in.
+  try {
+    await recordMessageUsage(sessionId, type, content);
+  } catch (err) {
+    log.error('Failed to record message usage', toError(err), { sessionId, id });
   }
 
   sseEvents.emitNewMessage(sessionId, { id, sessionId, sequence, type, content, createdAt });
