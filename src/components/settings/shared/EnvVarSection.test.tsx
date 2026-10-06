@@ -1,8 +1,12 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import type { ReactElement } from 'react';
+import { render as rtlRender, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { EnvVarSection, type EnvVarMutations } from './EnvVarSection';
 import type { EnvVar } from '@/lib/settings-types';
+import { QueryClientWrapper } from '@/test/query-client-wrapper';
+
+const render = (ui: ReactElement) => rtlRender(ui, { wrapper: QueryClientWrapper });
 
 /** What the routers actually send for a secret: the value is masked. */
 const MASKED_SECRET: EnvVar = {

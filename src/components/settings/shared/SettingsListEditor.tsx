@@ -21,14 +21,40 @@ interface SettingsListEditorProps<T extends SettingsListItem> {
   items: T[];
   onDelete: (name: string) => Promise<unknown>;
   onUpdate: () => void;
-  renderItem: (item: T) => ReactNode;
+  /**
+   * Render one row, normally a component wrapping `SettingsListRow` so the row can
+   * own its per-item state. `editorActions` (Edit, Delete) must be passed through.
+   */
+  renderRow: (item: T, editorActions: ReactNode) => ReactNode;
   renderForm: (props: {
     existingItem: T | undefined;
     onClose: () => void;
     onSuccess: () => void;
   }) => ReactNode;
-  extraItemActions?: (item: T) => ReactNode;
-  renderItemExtra?: (item: T) => ReactNode;
+}
+
+/** The standard row layout: summary, then row actions, then anything shown below the row. */
+export function SettingsListRow({
+  children,
+  actions,
+  editorActions,
+  extra,
+}: {
+  children: ReactNode;
+  actions?: ReactNode;
+  editorActions: ReactNode;
+  extra?: ReactNode;
+}) {
+  return (
+    <>
+      <div className="flex items-center gap-2 p-2 rounded-md bg-muted/50">
+        <div className="flex-1 min-w-0">{children}</div>
+        {actions}
+        {editorActions}
+      </div>
+      {extra}
+    </>
+  );
 }
 
 /** Which form is open: the add form, the edit form for an item id, or none. */
@@ -41,10 +67,8 @@ export function SettingsListEditor<T extends SettingsListItem>({
   items,
   onDelete,
   onUpdate,
-  renderItem,
+  renderRow,
   renderForm,
-  extraItemActions,
-  renderItemExtra,
 }: SettingsListEditorProps<T>) {
   const [editing, setEditing] = useState<Editing>(null);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
@@ -80,23 +104,23 @@ export function SettingsListEditor<T extends SettingsListItem>({
         <ul className="space-y-2">
           {items.map((item) => (
             <li key={item.id} className="space-y-1">
-              <div className="flex items-center gap-2 p-2 rounded-md bg-muted/50">
-                <div className="flex-1 min-w-0">{renderItem(item)}</div>
-                {extraItemActions?.(item)}
-                <Button variant="ghost" size="sm" onClick={() => setEditing(item.id)}>
-                  Edit
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setDeleteTarget(item.name)}
-                  className="text-destructive hover:text-destructive"
-                  aria-label={`Delete ${item.name}`}
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </div>
-              {renderItemExtra?.(item)}
+              {renderRow(
+                item,
+                <>
+                  <Button variant="ghost" size="sm" onClick={() => setEditing(item.id)}>
+                    Edit
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setDeleteTarget(item.name)}
+                    className="text-destructive hover:text-destructive"
+                    aria-label={`Delete ${item.name}`}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </>
+              )}
             </li>
           ))}
         </ul>
