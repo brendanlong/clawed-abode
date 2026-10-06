@@ -96,6 +96,7 @@ export const sessionsRouter = router({
     .query(async ({ input }) => ({
       session: await prisma.session.findFirst({
         where: { agentName: input.agentName },
+        orderBy: { createdAt: 'desc' },
         select: { id: true, name: true },
       }),
     })),

@@ -61,7 +61,7 @@ function PeerSessionLink({ agentName }: { agentName: string }) {
     <Link
       href={`/session/${session.id}`}
       title={`@${agentName}`}
-      className="font-medium text-foreground underline-offset-2 hover:underline"
+      className="font-medium text-foreground underline decoration-dotted underline-offset-2"
     >
       {session.name}
     </Link>
