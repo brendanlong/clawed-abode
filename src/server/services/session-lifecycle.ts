@@ -13,6 +13,7 @@ import {
   sendUserMessage,
   stopSession,
 } from './claude-runner';
+import { resolveAgentName } from './agent-name';
 import { clearQueuedPrompts } from './prompt-queue';
 import { recomputeRateLimitHolds } from './rate-limit-pause';
 
@@ -85,6 +86,11 @@ export async function createSession(input: CreateSessionInput): Promise<Session>
       statusMessage: repo ? 'Cloning repository...' : 'Creating workspace...',
       claudeModel: input.claudeModel?.trim() || null,
     },
+  });
+
+  // Started now so it overlaps the clone; the first query establishment waits for it.
+  resolveAgentName(session.id, input.initialPrompt).catch((error) => {
+    log.error('Agent name resolution failed', toError(error), { sessionId: session.id });
   });
 
   setupSession(session.id, repo, input.initialPrompt).catch((error) => {

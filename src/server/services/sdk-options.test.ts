@@ -46,6 +46,7 @@ const recordSanitization = vi.fn();
 const build = (s: MergedSessionSettings, resumeId: string | null = null) =>
   buildSdkOptions({
     sessionId: 'sid',
+    agentName: 'math-fable-d37e',
     workingDir: '/w',
     settings: s,
     resumeId,
@@ -128,6 +129,11 @@ describe('buildSdkOptions', () => {
       'mcp-config': '/ws/sid/mcp-config.json',
       settings: JSON.stringify({ advisorModel: 'claude-x' }),
     });
+  });
+
+  it('registers the agent name for cross-session messaging', async () => {
+    const { options } = await build(settings());
+    expect(options.env).toMatchObject({ CLAUDE_CODE_SESSION_NAME: 'math-fable-d37e' });
   });
 
   it('wires the systemd scope launcher and returns the unit for the runner to record', async () => {

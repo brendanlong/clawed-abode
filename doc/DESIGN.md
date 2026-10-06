@@ -6,7 +6,7 @@ A self-hosted web application providing mobile-friendly access to Claude Code ru
 
 This file is the high-level map. Details live in reference docs, loaded on demand:
 
-- [`claude-sessions.md`](claude-sessions.md) — the persistent SDK query, turn/background status, message delivery, interactive tools, process reaping, cost estimation
+- [`claude-sessions.md`](claude-sessions.md) — the persistent SDK query, turn/background status, message delivery, interactive tools, cross-session messaging, process reaping, cost estimation
 - [`messages-and-sse.md`](messages-and-sse.md) — message classification, storage/pagination, SSE streaming/resume
 - [`settings.md`](settings.md) — settings layers, model resolution, secrets, MCP servers
 - [`rate-limit-pause.md`](rate-limit-pause.md) — pausing sessions on subscription usage limits and draining when the window resets

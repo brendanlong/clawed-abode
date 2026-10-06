@@ -67,6 +67,7 @@ import {
   forgetSessionCommands,
   replaceSessionCommands,
 } from './session-commands';
+import { resolveAgentName } from './agent-name';
 import { buildMcpServersRecord, buildSdkOptions } from './sdk-options';
 import { cancelBranchPrRefresh, detectBranchAndPr } from './session-branch-pr';
 
@@ -317,6 +318,7 @@ async function establishSessionQuery(
   const toolSanitizations: LiveQuery['toolSanitizations'] = new Map();
   const { options, sessionScope } = await buildSdkOptions({
     sessionId,
+    agentName: await resolveAgentName(sessionId),
     workingDir,
     settings,
     resumeId,

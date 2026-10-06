@@ -63,6 +63,12 @@ Known limitation: only one `pendingInput` parks at a time; a second interactive 
 
 Client side, `WorkCompleteNotifier` (mounted once in `Providers`, fed by the global SSE stream) notifies for **any** session except the one actively watched — its page open _and_ the tab visible (pure helpers in [`src/lib/work-complete-notification.ts`](../src/lib/work-complete-notification.ts)).
 
+## Cross-Session Messaging
+
+Sessions message each other with the CLI's built-in `ListAgents` / `SendMessage` tools, which go over a per-process local socket; nothing in the app relays them. A message to an idle session starts a turn there on its own, like a background-task notification.
+
+- **Addressing**: the CLI registers under `CLAUDE_CODE_SESSION_NAME`, set from `Session.agentName`. Unset, the CLI derives a name with a random suffix that changes on every process start, so agents lost each other's address across Stop/Start and server restarts. The name is generated once ([`agent-name.ts`](../src/server/services/agent-name.ts)): Haiku picks 2–3 words from the title, repo, and first prompt (started at creation so it overlaps the clone), plus a session-id suffix because sibling sessions given the same prompt would otherwise collide. It falls back to the repo name, or a bare id prefix, on any failure. First write wins, so a name never changes once a query has used it.
+
 ## Process Reaping (cgroup)
 
 Daemons an agent starts (Postgres, Redis, dev servers) double-fork and escape the process tree, so killing the launching command's tree leaks them on the shared host. We don't touch them mid-session — an agent may legitimately keep a service running — we only guarantee **everything a session spawned dies when the session ends**. Implementation: [`src/server/services/session-cgroup.ts`](../src/server/services/session-cgroup.ts), covered by `session-cgroup.integration.test.ts`.

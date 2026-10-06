@@ -1,4 +1,5 @@
 import type { McpServerConfig, Options, PermissionResult } from '@anthropic-ai/claude-agent-sdk';
+import { AGENT_NAME_ENV } from '@/lib/agent-name';
 import { createLogger } from '@/lib/logger';
 import { mayChangeBranchOrPr } from '@/lib/pull-request';
 import type { SanitizationInfo } from '@/lib/sanitization';
@@ -59,6 +60,8 @@ export function buildMcpServersRecord(
  */
 export async function buildSdkOptions(params: {
   sessionId: string;
+  /** Name other Claude sessions address this one by (see doc/claude-sessions.md). */
+  agentName: string;
   workingDir: string;
   settings: MergedSessionSettings;
   /** Claude Code conversation to resume, or null to start one under `sessionId`. */
@@ -68,9 +71,17 @@ export async function buildSdkOptions(params: {
   /** Records sanitizer findings for a tool result, to badge it when persisted. */
   recordSanitization: (toolUseId: string, info: SanitizationInfo) => void;
 }): Promise<SdkOptionsResult> {
-  const { sessionId, workingDir, settings, resumeId, waitForUserInput, recordSanitization } =
-    params;
+  const {
+    sessionId,
+    agentName,
+    workingDir,
+    settings,
+    resumeId,
+    waitForUserInput,
+    recordSanitization,
+  } = params;
   const agentEnv = await buildAgentEnv(settings.envVars, settings.claudeApiKey);
+  agentEnv[AGENT_NAME_ENV] = agentName;
   const mcpServersRecord = buildMcpServersRecord(settings.mcpServers);
 
   const options: Options = {
