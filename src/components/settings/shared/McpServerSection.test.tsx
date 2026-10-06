@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import type { ReactElement } from 'react';
 import { render as rtlRender, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -55,6 +55,10 @@ async function openEditForm(m: McpServerMutations) {
 }
 
 describe('McpServerSection', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it('submits an empty value for an untouched secret header so the server keeps the stored one', async () => {
     const m = mutations();
     const user = await openEditForm(m);
@@ -165,6 +169,23 @@ describe('McpServerSection', () => {
     expect(screen.queryByText('discovery failed')).not.toBeInTheDocument();
     rejectRetry(new Error('still broken'));
     expect(await screen.findByText('still broken')).toBeInTheDocument();
+  });
+
+  it('navigates to the authorization URL and stays busy while leaving', async () => {
+    const user = userEvent.setup();
+    const assign = vi.fn();
+    vi.stubGlobal('location', { ...window.location, assign });
+    const oauthServer: McpServer = { ...HTTP_SERVER, headers: {}, authType: 'oauth' };
+    const m = mutations();
+    render(
+      <McpServerSection mcpServers={[oauthServer]} mutations={m} onUpdate={vi.fn()} scope="repo" />
+    );
+
+    await user.click(screen.getByTitle('Connect with OAuth'));
+
+    expect(m.startMcpOAuth).toHaveBeenCalledWith('remote');
+    expect(assign).toHaveBeenCalledWith('https://auth.example.com');
+    expect(screen.getByTitle('Connect with OAuth')).toBeDisabled();
   });
 
   it('clears a connect error when disconnecting, and refetches once disconnected', async () => {

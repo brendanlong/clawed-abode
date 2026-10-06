@@ -48,8 +48,7 @@ export function initialMcpServerForm(existing?: McpServer): McpServerFormFields 
   };
 }
 
-export type McpServerInputResult =
-  { ok: true; input: McpServerInput } | { ok: false; error: string };
+type McpServerInputResult = { ok: true; input: McpServerInput } | { ok: false; error: string };
 
 /** Validate the form and build what `setMcpServer` takes, keeping only the fields its type uses. */
 export function buildMcpServerInput(
