@@ -31,6 +31,9 @@ export interface QueuedPrompt {
   attachments: string[];
 }
 
+/** What it takes to push a prompt whose bubble is already written. */
+export type PromptPayload = Omit<QueuedPrompt, 'id' | 'position'>;
+
 function toQueuedPrompt(row: {
   id: string;
   position: number;
@@ -57,10 +60,7 @@ const QUEUE_SELECT = {
  * remainder with no path back to the SDK (their in-flight entries are already
  * cancelled by the time this runs).
  */
-export async function enqueuePrompts(
-  sessionId: string,
-  prompts: Omit<QueuedPrompt, 'id' | 'position'>[]
-): Promise<void> {
+export async function enqueuePrompts(sessionId: string, prompts: PromptPayload[]): Promise<void> {
   if (prompts.length === 0) return;
   const rows = await prisma.$queryRaw<{ queuedPromptSequence: number | bigint }[]>`
     UPDATE "Session"

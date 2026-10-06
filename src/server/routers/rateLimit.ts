@@ -3,7 +3,7 @@ import { router, protectedProcedure } from '../trpc';
 import { createLogger } from '@/lib/logger';
 import { thresholdSchema } from '@/lib/rate-limit';
 import { getRateLimitReadings, loadGlobalPausePolicy } from '../services/rate-limit-state';
-import { recomputeRateLimitHolds } from '../services/claude-runner';
+import { recomputeRateLimitHolds } from '../services/rate-limit-pause';
 import { countQueuedPrompts } from '../services/prompt-queue';
 import { patchGlobalSettings } from '../services/global-settings';
 

@@ -3,12 +3,8 @@ import { router, protectedProcedure, sessionProcedure } from '../trpc';
 import { prisma } from '@/lib/prisma';
 import { getSessionWorkspacePath } from '../services/worktree-manager';
 import { buildEditorUrl } from '@/lib/editor-url';
-import {
-  isClaudeRunning,
-  isSessionBackgroundActive,
-  isSessionRateLimitPaused,
-  recomputeRateLimitHolds,
-} from '../services/claude-runner';
+import { isClaudeRunning, isSessionBackgroundActive } from '../services/claude-runner';
+import { isSessionRateLimitPaused, recomputeRateLimitHolds } from '../services/rate-limit-pause';
 import {
   archiveSession,
   createSession,
