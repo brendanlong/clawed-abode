@@ -279,14 +279,18 @@ describe('public files login', () => {
     expect(cookieToken(await get(`/_login?code=${code}&next=/`, null))).not.toBeNull();
   });
 
-  it('does not open another auth session for a browser that is already signed in', async () => {
+  it('does not open another auth session for a browser that is already signed in, but spends the code', async () => {
     const before = await testPrisma.authSession.count();
 
-    const res = await get(`/_login?code=${mintPublicLoginCode()}&next=/x`);
+    const code = mintPublicLoginCode();
+    const res = await get(`/_login?code=${code}&next=/x`);
     expect(res.status).toBe(303);
     expect(res.headers.get('location')).toBe('/x');
     expect(res.headers.get('set-cookie')).toBeNull();
     expect(await testPrisma.authSession.count()).toBe(before);
+
+    // Still spent, so it can't be replayed from this browser's history.
+    expect(cookieToken(await get(`/_login?code=${code}&next=/x`, null))).toBeNull();
   });
 
   it('never redirects off-origin', async () => {

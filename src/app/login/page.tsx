@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useState, useEffect } from 'react';
+import { Suspense, useState, useEffect, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { trpc } from '@/lib/trpc';
 import { useAuth } from '@/lib/auth-context';
@@ -24,16 +24,9 @@ function LoginForm() {
   const router = useRouter();
   // The public files server sends browsers here to sign in, then back to this path.
   const publicNext = useSearchParams().get(PUBLIC_NEXT_PARAM);
-  const { login, isAuthenticated } = useAuth();
+  const { login, isAuthenticated, isLoading } = useAuth();
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
-
-  const loginMutation = trpc.auth.login.useMutation({
-    onSuccess: (data) => login(data.token),
-    onError: (err) => {
-      setError(err.message);
-    },
-  });
 
   const { mutate: openPublicFiles } = trpc.auth.createPublicLoginUrl.useMutation({
     onSuccess: ({ url }) => window.location.replace(url),
@@ -42,11 +35,30 @@ function LoginForm() {
     },
   });
 
-  useEffect(() => {
-    if (!isAuthenticated) return;
+  const leave = () => {
     if (publicNext === null) router.push('/');
     else openPublicFiles({ next: publicNext });
-  }, [isAuthenticated, publicNext, router, openPublicFiles]);
+  };
+
+  const loginMutation = trpc.auth.login.useMutation({
+    onSuccess: (data) => {
+      login(data.token);
+      leave();
+    },
+    onError: (err) => {
+      setError(err.message);
+    },
+  });
+
+  // Leave right away if this browser arrived signed in. Only on arrival: a stored
+  // token may be stale (rejected without clearing auth state), so a later sign-in
+  // leaves from onSuccess rather than waiting for isAuthenticated to change.
+  const arrivalHandled = useRef(false);
+  useEffect(() => {
+    if (isLoading || arrivalHandled.current) return;
+    arrivalHandled.current = true;
+    if (isAuthenticated) leave();
+  });
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();

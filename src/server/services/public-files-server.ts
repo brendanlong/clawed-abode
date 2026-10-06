@@ -136,11 +136,13 @@ async function handleLogin(
     return;
   }
   const next = safeNextPath(url.searchParams.get('next'));
+  const code = url.searchParams.get('code');
+  // Spent even when unneeded, so no live code is left in this browser's history.
+  const codeValid = req.method === 'GET' && code !== null && consumePublicLoginCode(code);
   // A browser that already shares the app's cookie needs no new auth session.
   if (await hasValidAuthCookie(req)) return redirect(res, next);
 
-  const code = url.searchParams.get('code');
-  if (req.method === 'GET' && code !== null && consumePublicLoginCode(code)) {
+  if (codeValid) {
     const ipAddress = getClientIp((name) => firstHeader(req.headers[name]));
     return redirect(res, next, await createAuthSession(ipAddress, req.headers['user-agent']));
   }
