@@ -813,6 +813,33 @@ export async function cleanupSession(sessionId: string): Promise<void> {
   await stopped;
 }
 
+/**
+ * Establish a running session's query without a prompt, so its CLI is up and
+ * reachable by other sessions. Best-effort.
+ */
+export async function reviveSession(sessionId: string): Promise<void> {
+  try {
+    const session = await prisma.session.findUnique({
+      where: { id: sessionId },
+      select: { status: true },
+    });
+    if (session?.status !== 'running') return;
+    await ensureSessionQuery(sessionId);
+  } catch (err) {
+    log.warn('Failed to revive session', { sessionId, error: toError(err).message });
+  }
+}
+
+/** Revive every running session, one at a time so boot doesn't spawn every CLI at once. */
+export async function reviveRunningSessions(): Promise<void> {
+  const sessions = await prisma.session.findMany({
+    where: { status: 'running' },
+    select: { id: true },
+  });
+  log.info('Reviving running sessions', { count: sessions.length });
+  for (const { id } of sessions) await reviveSession(id);
+}
+
 /** Stop all active Claude queries (graceful shutdown). */
 export async function stopAllSessions(): Promise<void> {
   const sessionIds = [...sessions.keys()];

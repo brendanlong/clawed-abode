@@ -13,6 +13,7 @@ import { startPublicFilesServer } from '@/server/services/public-files-server';
 import {
   rateLimitPauseRunner,
   reapOrphanedSessionScopes,
+  reviveRunningSessions,
   stopAllSessions,
 } from '@/server/services/claude-runner';
 import { initRateLimitPause } from '@/server/services/rate-limit-pause';
@@ -47,6 +48,8 @@ export async function registerNode() {
   // Both are best-effort and log their own failures.
   await reapOrphanedSessionScopes();
   await initRateLimitPause(rateLimitPauseRunner);
+  // In the background: other sessions can only message a session whose CLI is up.
+  void reviveRunningSessions().catch((err) => log.error('Error reviving sessions', toError(err)));
 
   // Fatal like a bad env: the system prompt would otherwise hand out dead links.
   if (env.PUBLIC_FILES_PORT !== undefined && env.PUBLIC_FILES_URL !== undefined) {

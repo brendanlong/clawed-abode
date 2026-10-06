@@ -102,6 +102,7 @@ let getSessionBackgroundTasks: typeof import('./claude-runner').getSessionBackgr
 let stopBackgroundTask: typeof import('./claude-runner').stopBackgroundTask;
 let insertMessage: typeof import('./message-store').insertMessage;
 let reapOrphanedSessionScopes: typeof import('./claude-runner').reapOrphanedSessionScopes;
+let reviveRunningSessions: typeof import('./claude-runner').reviveRunningSessions;
 let _setQueryFactory: typeof import('./claude-runner')._setQueryFactory;
 let mockLoadSettings: ReturnType<
   typeof vi.mocked<typeof import('./settings-merger').loadMergedSessionSettings>
@@ -338,6 +339,7 @@ describe('claude-runner persistent streaming loop', () => {
     stopBackgroundTask = mod.stopBackgroundTask;
     insertMessage = (await import('./message-store')).insertMessage;
     reapOrphanedSessionScopes = mod.reapOrphanedSessionScopes;
+    reviveRunningSessions = mod.reviveRunningSessions;
     _setQueryFactory = mod._setQueryFactory;
     const sm = await import('./settings-merger');
     mockLoadSettings = vi.mocked(sm.loadMergedSessionSettings);
@@ -965,6 +967,24 @@ describe('claude-runner persistent streaming loop', () => {
     expect(userMsgs).toHaveLength(2);
 
     stopSession(sessionId);
+  });
+
+  it('revives running sessions without sending a prompt, leaving stopped ones alone', async () => {
+    const fake = makeFakeQuery();
+    const factory = vi.fn(fake.factory);
+    _setQueryFactory(factory);
+    const running = await createRunningSession();
+    const { id: stopped } = await testPrisma.session.create({
+      data: { name: 'Stopped', repoPath: '', status: 'stopped' },
+    });
+
+    await reviveRunningSessions();
+
+    expect(factory).toHaveBeenCalledTimes(1);
+    expect(fake.inputs).toHaveLength(0);
+    expect(isClaudeRunning(running)).toBe(false);
+    stopSession(running);
+    stopSession(stopped);
   });
 
   it('drops the echo of a pushed prompt but persists a message from another session', async () => {

@@ -64,7 +64,7 @@ The schema ([`prisma/schema.prisma`](../prisma/schema.prisma)) is the source of 
 - **Interact**: prompts go through the session's persistent streaming query ([`claude-sessions.md`](claude-sessions.md)); a mid-turn send goes straight to the agent.
 - **Interrupt** stops only the current turn; the query stays alive. **Stop** closes the query; the worktree stays on disk and **Start** revives it. **Delete** stops the query, removes the workspace, and archives.
 - **Status writes are conditional** ([`session-lifecycle.ts`](../src/server/services/session-lifecycle.ts), table in [`session-transitions.ts`](../src/lib/session-transitions.ts)): each transition updates only from its allowed statuses in one statement, so a stop, start, or late-finishing setup can never overwrite a concurrent archive. A failed setup (`error`, no workspace) can only be archived.
-- **Restart recovery**: a server restart loses in-memory state but not intent — a session in DB status `running` is revived lazily with `resume` on the next interaction. In-flight background work is not resurrected (its subprocess is gone); recovery restores the conversation.
+- **Running means reachable**: every `running` session gets its query (with `resume`) without waiting for a prompt — at setup, on Start, and for all of them at boot, one at a time — so other sessions can message it ([`claude-sessions.md`](claude-sessions.md)). That costs an idle CLI process per running session; Stop is how to free one. In-flight background work is not resurrected (its subprocess is gone); recovery restores the conversation.
 
 ### File Uploads
 
