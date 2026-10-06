@@ -2,17 +2,14 @@ import type { Query, SDKUserMessage, PermissionResult } from '@anthropic-ai/clau
 import type { Pushable } from '@/lib/pushable';
 import { INITIAL_LIVE_STATUS, type LiveStatus } from '@/lib/session-status';
 import type { SanitizationInfo } from '@/lib/sanitization';
+import type { UserInputRequest } from './sdk-options';
 import type { MergedSessionSettings } from './settings-merger';
 
 /**
- * A pending interactive tool request (AskUserQuestion / ExitPlanMode): the
- * `canUseTool` callback parks a promise here and the answer mutation resolves it.
+ * A pending interactive tool request: the `canUseTool` callback parks a promise
+ * here and the answer mutation resolves it.
  */
-export interface PendingUserInput {
-  toolName: string;
-  /** The tool_use block id, used to match an incoming answer to this request. */
-  toolUseId: string;
-  input: Record<string, unknown>;
+export interface PendingUserInput extends UserInputRequest {
   resolve: (result: PermissionResult) => void;
   reject: (error: Error) => void;
 }
@@ -48,28 +45,50 @@ export interface InFlightCommand {
   resultsSeen: number;
 }
 
+/**
+ * Everything bound to one established query: created together when it is
+ * established, dropped together by `releaseQuery`. Anything holding a `LiveQuery`
+ * (the output loop, an async callback) checks it is still current with
+ * `state.live === live`.
+ */
+export interface LiveQuery {
+  query: Query;
+  /** Input channel feeding the query; push user messages, close to end the query. */
+  input: Pushable<SDKUserMessage>;
+  /**
+   * Transient systemd user scope the CLI runs in (null when cgroup reaping is
+   * unavailable). Mirrored onto the DB row by the runner so a crash can reap it by
+   * exact name; stopped on teardown to kill the whole process tree.
+   */
+  sessionScope: string | null;
+  workingDir: string;
+  /** Settings the query was built with (model/MCP can be applied live later). */
+  boundSettings: MergedSessionSettings;
+  /** Settings key (repoFullName or '__no_repo__') for reloading merged settings. */
+  settingsKey: string;
+  /**
+   * Claude Code conversation last persisted to `Session.claudeSessionId` by this
+   * query (null until its first init), so only changes are written.
+   */
+  claudeSessionId: string | null;
+  pendingInput: PendingUserInput | null;
+  /**
+   * Sanitizer findings from the PostToolUse hook, keyed by tool_use_id, awaiting
+   * the matching tool_result message so they can be attached on persist (the
+   * message comes from the SDK stream, not from us). Consumed once; a finding
+   * whose result never streams back (query killed mid-tool) dies with the query.
+   */
+  toolSanitizations: Map<string, SanitizationInfo>;
+}
+
 /** In-memory state for one active session. */
 export interface SessionState {
-  /** The live streaming query, or null when not established (e.g. after restart). */
-  query: Query | null;
-  /** Input channel feeding the query; push user messages, close to end the query. */
-  input: Pushable<SDKUserMessage> | null;
+  /** The established query, or null when there is none (e.g. after restart). */
+  live: LiveQuery | null;
   /** In-flight establishment promise, for coalescing concurrent ensureSessionQuery. */
   establishing: Promise<SessionState> | null;
   /** Two-axis live status + ephemeral retry (derived from the message stream). */
   status: LiveStatus;
-  pendingInput: PendingUserInput | null;
-  workingDir: string;
-  /** Settings the live query was built with (model/MCP can be applied live later). */
-  boundSettings: MergedSessionSettings | null;
-  /** Settings key (repoFullName or '__no_repo__') for reloading merged settings. */
-  settingsKey: string;
-  /**
-   * Sanitizer findings from the PostToolUse hook, keyed by tool_use_id, awaiting
-   * the matching tool_result message so they can be attached on persist (the
-   * message comes from the SDK stream, not from us). Consumed once.
-   */
-  toolSanitizations: Map<string, SanitizationInfo>;
   /**
    * Messages pushed into the SDK whose work hasn't visibly begun yet, keyed by the
    * `uuid` stamped on the pushed message. See {@link InFlightCommand}.
@@ -91,8 +110,8 @@ export interface SessionState {
    */
   commandLifecycleSeen: boolean;
   /**
-   * Set by interruptClaude so the turn-end it triggers is not reported as Claude
-   * *finishing*. Consumed by the turn-end in applyStatus.
+   * Set when a turn is being interrupted so the turn-end it triggers is not
+   * reported as Claude *finishing*. Consumed by the turn-end in applyStatus.
    */
   interruptRequested: boolean;
   /**
@@ -103,36 +122,17 @@ export interface SessionState {
    * "working" for the whole pause. See `clearOptimisticTurn`.
    */
   optimisticTurnActive: boolean;
-  /**
-   * Transient systemd user scope this session's query runs in (null when cgroup
-   * reaping is unavailable). Mirrored onto the DB row by the runner so a crash can
-   * reap it by exact name; stopped on teardown to kill the whole process tree.
-   */
-  sessionScope: string | null;
-  /**
-   * Claude Code conversation last persisted to `Session.claudeSessionId` by the
-   * live query (null until its first init), so only changes are written.
-   */
-  claudeSessionId: string | null;
 }
 
 export function createSessionState(): SessionState {
   return {
-    query: null,
-    input: null,
+    live: null,
     establishing: null,
     status: INITIAL_LIVE_STATUS,
-    pendingInput: null,
-    workingDir: '',
-    boundSettings: null,
-    settingsKey: '',
-    toolSanitizations: new Map(),
     inFlightCommands: new Map(),
     emittedRunning: false,
     commandLifecycleSeen: false,
     interruptRequested: false,
     optimisticTurnActive: false,
-    sessionScope: null,
-    claudeSessionId: null,
   };
 }

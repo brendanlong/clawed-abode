@@ -178,33 +178,25 @@ function clearOptimisticTurn(state: SessionState): void {
 }
 
 /**
- * Recall for Stop: the prompts never happened, so their bubbles are deleted and
- * the text/attachments handed back for the composer to restore.
+ * Take back prompts the agent never read (recalled from the CLI, or parked behind
+ * a rate-limit pause) for Stop: they never happened, so their bubbles are deleted
+ * and the text/attachments handed back for the composer to restore.
  */
-export async function cancelInFlightCommands(
+export async function discardUnreadPrompts(
   sessionId: string,
-  state: SessionState,
-  query: Query
+  prompts: { messageId: string; text: string; attachments: string[] }[]
 ): Promise<CancelledPrompt[]> {
-  const recalled = await recallUnstartedCommands(sessionId, state, query);
-  if (recalled.length === 0) return [];
-
+  if (prompts.length === 0) return [];
   await removeMessages(
     sessionId,
-    recalled.map((command) => command.messageId)
+    prompts.map((prompt) => prompt.messageId)
   );
-  return Promise.all(recalled.map((command) => describeCancelledPrompt(sessionId, command)));
-}
-
-/** Rebuild the composer-restorable form of a recalled prompt. */
-export async function describeCancelledPrompt(
-  sessionId: string,
-  command: { text: string; attachments: string[] }
-): Promise<CancelledPrompt> {
-  return {
-    text: command.text,
-    attachments: await describeAttachments(sessionId, command.attachments),
-  };
+  return Promise.all(
+    prompts.map(async (prompt) => ({
+      text: prompt.text,
+      attachments: await describeAttachments(sessionId, prompt.attachments),
+    }))
+  );
 }
 
 /**

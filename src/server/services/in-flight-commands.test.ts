@@ -2,10 +2,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import {
-  cancelInFlightCommands,
+  discardUnreadPrompts,
   effectiveRunning,
   handleCommandLifecycle,
   pendingMessageIds,
+  recallUnstartedCommands,
   retireInFlightCommands,
   syncRunning,
 } from './in-flight-commands';
@@ -115,21 +116,24 @@ describe('retireInFlightCommands', () => {
   });
 });
 
-describe('cancelInFlightCommands', () => {
+describe('recallUnstartedCommands + discardUnreadPrompts', () => {
   const queryThat = (cancel: (uuid: string) => Promise<boolean>) =>
     ({ cancelAsyncMessage: cancel }) as unknown as Query;
 
-  it('recalls unread commands the CLI still has queued, deleting their bubbles and returning text + attachments', async () => {
+  it('recalls unread commands the CLI still has queued; discarding deletes their bubbles and returns text + attachments', async () => {
     const state = stateWith({ unread: {}, read: { started: true } });
     state.inFlightCommands.get('unread')!.attachments = ['0123abcd-notes.txt'];
 
-    const cancelled = await cancelInFlightCommands(
+    const recalled = await recallUnstartedCommands(
       's',
       state,
       queryThat(async () => true)
     );
+    expect(recalled.map((c) => c.messageId)).toEqual(['m-unread']);
+    expect([...state.inFlightCommands.keys()]).toEqual(['read']);
+    expect(mockRemoveMessages).not.toHaveBeenCalled();
 
-    expect(cancelled).toEqual([
+    expect(await discardUnreadPrompts('s', recalled)).toEqual([
       {
         text: 'unread',
         attachments: [
@@ -142,19 +146,22 @@ describe('cancelInFlightCommands', () => {
       },
     ]);
     expect(mockRemoveMessages).toHaveBeenCalledWith('s', ['m-unread']);
-    expect([...state.inFlightCommands.keys()]).toEqual(['read']);
   });
 
   it('leaves a command alone when the CLI reports it already dequeued', async () => {
     const state = stateWith({ a: {} });
     expect(
-      await cancelInFlightCommands(
+      await recallUnstartedCommands(
         's',
         state,
         queryThat(async () => false)
       )
     ).toEqual([]);
     expect(state.inFlightCommands.size).toBe(1);
+  });
+
+  it('discarding nothing touches nothing', async () => {
+    expect(await discardUnreadPrompts('s', [])).toEqual([]);
     expect(mockRemoveMessages).not.toHaveBeenCalled();
   });
 });

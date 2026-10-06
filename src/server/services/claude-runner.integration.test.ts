@@ -1228,6 +1228,42 @@ describe('claude-runner persistent streaming loop', () => {
     stopSession(sessionId);
   });
 
+  it("treats Stop on an idle session's unread send as a recall, not an interrupt", async () => {
+    // The push set turnActive optimistically; recalling it means no turn ever ran,
+    // so there is nothing to stamp "Interrupted" and no turn-end to claim.
+    const fake = makeFakeQuery();
+    _setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+
+    await sendUserMessage(sessionId, 'first');
+    await fake.deliver();
+    fake.emit(messageStart());
+    fake.emit(messageDelta('end_turn'));
+    fake.emit(result());
+    await waitFor(() => !isClaudeRunning(sessionId));
+
+    await sendUserMessage(sessionId, 'take it back');
+    await waitFor(() => fake.inputs.length >= 2);
+    expect(isClaudeRunning(sessionId)).toBe(true);
+
+    const { interrupted, cancelled } = await interruptClaude(sessionId);
+    expect(interrupted).toBe(false);
+    expect(cancelled).toEqual([{ text: 'take it back', attachments: [] }]);
+    expect(isClaudeRunning(sessionId)).toBe(false);
+
+    // The next genuine turn still reports finishing.
+    mockSseEvents.emitClaudeFinished.mockClear();
+    await sendUserMessage(sessionId, 'next');
+    await fake.deliver();
+    fake.emit(messageStart());
+    fake.emit(messageDelta('end_turn'));
+    fake.emit(result());
+    await waitFor(() => !isClaudeRunning(sessionId));
+    expect(mockSseEvents.emitClaudeFinished).toHaveBeenCalledTimes(1);
+
+    stopSession(sessionId);
+  });
+
   it('applies a model change live on the next send', async () => {
     const fake = makeFakeQuery();
     _setQueryFactory(fake.factory);

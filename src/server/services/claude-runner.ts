@@ -34,7 +34,12 @@ import {
 } from './settings-merger';
 import { StreamAccumulator } from './stream-accumulator';
 import { stopSessionScope } from './session-cgroup';
-import { createSessionState, type SessionState } from './session-state';
+import {
+  createSessionState,
+  type InFlightCommand,
+  type LiveQuery,
+  type SessionState,
+} from './session-state';
 import {
   createErrorMessage,
   bumpSessionActivity,
@@ -44,8 +49,7 @@ import {
   removeMessages,
 } from './message-store';
 import {
-  cancelInFlightCommands,
-  describeCancelledPrompt,
+  discardUnreadPrompts,
   effectiveRunning,
   handleCommandLifecycle,
   isTopLevelMessageStart,
@@ -75,7 +79,7 @@ import {
   replaceSessionCommands,
 } from './session-commands';
 import { buildMcpServersRecord, buildSdkOptions } from './sdk-options';
-import { detectBranchAndPr } from './session-branch-pr';
+import { cancelBranchPrRefresh, detectBranchAndPr } from './session-branch-pr';
 
 const log = createLogger('claude-runner');
 
@@ -145,15 +149,15 @@ async function persistSessionScope(sessionId: string, unit: string | null): Prom
 async function trackClaudeSessionId(
   sessionId: string,
   state: SessionState,
-  q: Query,
+  live: LiveQuery,
   message: SDKMessage
 ): Promise<void> {
   const claudeSessionId = initSessionId(message);
-  if (!claudeSessionId || claudeSessionId === state.claudeSessionId) return;
-  if (state.query !== q) return;
+  if (!claudeSessionId || claudeSessionId === live.claudeSessionId) return;
+  if (state.live !== live) return;
   try {
     await prisma.session.updateMany({ where: { id: sessionId }, data: { claudeSessionId } });
-    state.claudeSessionId = claudeSessionId;
+    live.claudeSessionId = claudeSessionId;
   } catch (err) {
     log.error('Failed to persist Claude session id', toError(err), { sessionId, claudeSessionId });
   }
@@ -194,16 +198,14 @@ function clearLiveStatus(sessionId: string, state: SessionState): void {
  * after {@link clearLiveStatus}. Resolves once the scope's processes are dead.
  */
 function releaseQuery(sessionId: string, state: SessionState, reason: string): Promise<void> {
-  state.query = null;
-  state.input = null;
-  if (state.pendingInput) {
-    state.pendingInput.reject(new Error(reason));
-    state.pendingInput = null;
-  }
-  if (!state.sessionScope) return Promise.resolve();
-  const stopped = stopSessionScope(state.sessionScope);
+  const live = state.live;
+  if (!live) return Promise.resolve();
+  state.live = null;
+  live.pendingInput?.reject(new Error(reason));
+  live.pendingInput = null;
+  if (!live.sessionScope) return Promise.resolve();
+  const stopped = stopSessionScope(live.sessionScope);
   void persistSessionScope(sessionId, null);
-  state.sessionScope = null;
   return stopped;
 }
 
@@ -212,7 +214,12 @@ function releaseQuery(sessionId: string, state: SessionState, reason: string): P
  * Runs for EVERY message (including ones skipped for persistence, since
  * `api_retry`/`task_*` drive status). Fires the branch/PR refresh at a main-turn end.
  */
-function applyStatus(sessionId: string, state: SessionState, message: SDKMessage): void {
+function applyStatus(
+  sessionId: string,
+  state: SessionState,
+  live: LiveQuery,
+  message: SDKMessage
+): void {
   const { status, changed } = reduceSessionMessage(state.status, message);
   const turnEnded = changed.turnActive && !status.turnActive;
 
@@ -243,7 +250,7 @@ function applyStatus(sessionId: string, state: SessionState, message: SDKMessage
   if (changed.retry) sseEvents.emitClaudeRetry(sessionId, status.retry);
 
   if (turnEnded) {
-    void detectBranchAndPr(sessionId, state.workingDir);
+    void detectBranchAndPr(sessionId, live.workingDir);
   }
 }
 
@@ -252,17 +259,21 @@ function applyStatus(sessionId: string, state: SessionState, message: SDKMessage
  * emits partials, and folds every message into live status. Exits only when the
  * input channel closes, the query is closed, or the SDK throws.
  */
-async function runSessionLoop(sessionId: string, state: SessionState, q: Query): Promise<void> {
+async function runSessionLoop(
+  sessionId: string,
+  state: SessionState,
+  live: LiveQuery
+): Promise<void> {
   const accumulator = new StreamAccumulator();
   let nextPartialSequence = 0;
 
   try {
-    for await (const message of q) {
+    for await (const message of live.query) {
       // Delivery bookkeeping first: `command_lifecycle` can retire a pending
       // message, which feeds the running state applyStatus is about to emit.
       if (handleCommandLifecycle(sessionId, state, message)) continue;
 
-      applyStatus(sessionId, state, message);
+      applyStatus(sessionId, state, live, message);
 
       // Account-wide rate-limit state arrives on whichever session's stream happens
       // to be talking to the API; recording it re-evaluates the pause for ALL
@@ -271,15 +282,7 @@ async function runSessionLoop(sessionId: string, state: SessionState, q: Query):
       if (readings.length > 0) void recordRateLimitReadings(readings);
 
       if (message.type === 'stream_event') {
-        const partial = accumulator.accumulate(
-          message as {
-            type: 'stream_event';
-            event: { type: string; [key: string]: unknown };
-            parent_tool_use_id: string | null;
-            uuid: string;
-            session_id: string;
-          }
-        );
+        const partial = accumulator.accumulate(message);
         if (partial) {
           sseEvents.emitNewMessage(sessionId, {
             id: partialMessageId(partial.parent_tool_use_id),
@@ -300,7 +303,7 @@ async function runSessionLoop(sessionId: string, state: SessionState, q: Query):
       }
 
       applyCommandMessage(sessionId, message);
-      await trackClaudeSessionId(sessionId, state, q, message);
+      await trackClaudeSessionId(sessionId, state, live, message);
 
       const handling = classifyMessage(message);
       if (handling.kind !== 'persist') continue;
@@ -310,8 +313,8 @@ async function runSessionLoop(sessionId: string, state: SessionState, q: Query):
       // removed only once the message is durably persisted, so a duplicate/no-op
       // insert can't consume a badge it never wrote.
       const attachedSanitizations =
-        handling.dbType === 'user' && state.toolSanitizations.size > 0
-          ? attachToolResultSanitizations(message, state.toolSanitizations)
+        handling.dbType === 'user' && live.toolSanitizations.size > 0
+          ? attachToolResultSanitizations(message, live.toolSanitizations)
           : [];
 
       const id = (message as { uuid?: string }).uuid || uuid();
@@ -322,7 +325,7 @@ async function runSessionLoop(sessionId: string, state: SessionState, q: Query):
         content: message,
       });
       if (inserted) {
-        for (const toolUseId of attachedSanitizations) state.toolSanitizations.delete(toolUseId);
+        for (const toolUseId of attachedSanitizations) live.toolSanitizations.delete(toolUseId);
       }
       if (sequence !== undefined) nextPartialSequence = sequence + 1;
     }
@@ -332,17 +335,10 @@ async function runSessionLoop(sessionId: string, state: SessionState, q: Query):
     await createErrorMessage(sessionId, `Claude query failed: ${toError(err).message}`);
   } finally {
     clearLiveStatus(sessionId, state);
-    // A finding is retired when its tool_result is persisted, so one whose result
-    // never streamed back (query killed mid-tool, CLI crash) is stranded — and
-    // unreachable, since a revive re-emits neither the message nor its uuid. This
-    // is the only safe place to drop them: the loop above has drained, whereas
-    // stopSession runs synchronously while messages may still be queued (it drops
-    // the whole state record anyway, so it needs no clear of its own).
-    state.toolSanitizations.clear();
-    // Drop the live query handle so the next interaction re-establishes (resume).
-    // The state record stays in the map (commands etc. persist); only stop/delete
-    // remove it. The `=== q` guard skips this when stopSession already released it.
-    if (state.query === q) void releaseQuery(sessionId, state, 'Query ended');
+    // Drop the live query so the next interaction re-establishes (resume). The
+    // state record stays in the map (commands etc. persist); only stop/delete
+    // remove it. The guard skips this when stopSession already released it.
+    if (state.live === live) void releaseQuery(sessionId, state, 'Query ended');
   }
 }
 
@@ -372,12 +368,27 @@ async function establishSessionQuery(
   // messages alone (a rate-limit-queued first prompt, an error from a query that
   // died before init) don't mean one was ever written.
   const resumeId = session.claudeSessionId;
-  const options = await buildSdkOptions({ sessionId, workingDir, settings, resumeId, state });
+  // The SDK only calls these once the query below exists, so `live` is set by then.
+  let live: LiveQuery | null = null;
+  const toolSanitizations: LiveQuery['toolSanitizations'] = new Map();
+  const { options, sessionScope } = await buildSdkOptions({
+    sessionId,
+    workingDir,
+    settings,
+    resumeId,
+    waitForUserInput: (request) =>
+      new Promise<PermissionResult>((resolve, reject) => {
+        if (!live) return reject(new Error('Session query is not available'));
+        live.pendingInput?.reject(new Error('Superseded by another tool request'));
+        live.pendingInput = { ...request, resolve, reject };
+      }),
+    recordSanitization: (toolUseId, info) => toolSanitizations.set(toolUseId, info),
+  });
   // Record the scope name durably BEFORE the subprocess (and thus the scope) is
   // spawned, so a crash between here and teardown can always reap it by exact
   // name. Over-recording — a name written for a scope that ends up not created
   // because establish aborts below — is harmless: the reap's stop is a no-op.
-  if (state.sessionScope) await persistSessionScope(sessionId, state.sessionScope);
+  if (sessionScope) await persistSessionScope(sessionId, sessionScope);
 
   // If `stopSession` ran while we were loading (it deletes the map entry), abort
   // before creating the query — otherwise we'd resurrect a torn-down session with
@@ -387,29 +398,35 @@ async function establishSessionQuery(
     throw new Error('Session establishment cancelled: session was stopped during establish');
   }
 
-  state.workingDir = workingDir;
-  state.boundSettings = settings;
-  state.settingsKey = settingsKey;
-  state.claudeSessionId = null;
-
   const input = createPushable<SDKUserMessage>();
-  const q = queryFactory({ prompt: input.iterable, options });
-  state.input = input;
-  state.query = q;
+  const established: LiveQuery = {
+    query: queryFactory({ prompt: input.iterable, options }),
+    input,
+    sessionScope,
+    workingDir,
+    boundSettings: settings,
+    settingsKey,
+    claudeSessionId: null,
+    pendingInput: null,
+    toolSanitizations,
+  };
+  live = established;
+  state.live = established;
 
   log.info('Established session query', { sessionId, workingDir, resumeId });
 
-  void q
+  void established.query
     .supportedCommands()
     .then((commands) => {
       // A result landing after Stop/Delete would clobber a newer query's list or resurrect a forgotten one.
-      if (sessions.get(sessionId)?.query === q) replaceSessionCommands(sessionId, commands);
+      if (sessions.get(sessionId)?.live === established)
+        replaceSessionCommands(sessionId, commands);
     })
     .catch((err) => {
       log.debug('Failed to fetch supportedCommands', { sessionId, error: toError(err).message });
     });
 
-  void runSessionLoop(sessionId, state, q);
+  void runSessionLoop(sessionId, state, established);
 
   return state;
 }
@@ -422,7 +439,7 @@ async function establishSessionQuery(
  */
 function ensureSessionQuery(sessionId: string): Promise<SessionState> {
   const existing = sessions.get(sessionId);
-  if (existing?.query) return Promise.resolve(existing);
+  if (existing?.live) return Promise.resolve(existing);
   if (existing?.establishing) return existing.establishing;
 
   const state = existing ?? createSessionState();
@@ -444,8 +461,7 @@ function ensureSessionQuery(sessionId: string): Promise<SessionState> {
  * running query, so edits take effect on the next turn without a Stop→Start.
  * Everything else is bound at construction (doc/settings.md). Best-effort.
  */
-async function applyLiveSettings(sessionId: string, state: SessionState): Promise<void> {
-  if (!state.query || !state.boundSettings) return;
+async function applyLiveSettings(sessionId: string, live: LiveQuery): Promise<void> {
   let settings: MergedSessionSettings;
   try {
     // Re-read the per-session model override too, so sessions.setModel applies live.
@@ -453,7 +469,7 @@ async function applyLiveSettings(sessionId: string, state: SessionState): Promis
       where: { id: sessionId },
       select: { claudeModel: true },
     });
-    settings = await loadMergedSessionSettings(sessionId, state.settingsKey, session?.claudeModel);
+    settings = await loadMergedSessionSettings(sessionId, live.settingsKey, session?.claudeModel);
   } catch (err) {
     log.debug('applyLiveSettings: failed to load settings', {
       sessionId,
@@ -462,17 +478,17 @@ async function applyLiveSettings(sessionId: string, state: SessionState): Promis
     return;
   }
 
-  const bound = state.boundSettings;
+  const bound = live.boundSettings;
   try {
     if (settings.claudeModel !== bound.claudeModel) {
-      await state.query.setModel(settings.claudeModel);
+      await live.query.setModel(settings.claudeModel);
       log.info('Applied live model change', { sessionId, model: settings.claudeModel });
     }
     if (!mcpServersEqual(bound.mcpServers, settings.mcpServers)) {
-      await state.query.setMcpServers(buildMcpServersRecord(settings.mcpServers) ?? {});
+      await live.query.setMcpServers(buildMcpServersRecord(settings.mcpServers) ?? {});
       log.info('Applied live MCP server change', { sessionId });
     }
-    state.boundSettings = settings;
+    live.boundSettings = settings;
   } catch (err) {
     log.warn('applyLiveSettings: failed to apply', { sessionId, error: toError(err).message });
   }
@@ -489,8 +505,8 @@ function pushPreparedPrompt(
   state: SessionState,
   prompt: Omit<QueuedPrompt, 'id' | 'position'>
 ): void {
-  const input = state.input;
-  if (!input) throw new Error('Session query is not available');
+  const live = state.live;
+  if (!live) throw new Error('Session query is not available');
 
   const commandUuid = uuid();
   state.inFlightCommands.set(commandUuid, {
@@ -511,7 +527,7 @@ function pushPreparedPrompt(
   }
   syncRunning(sessionId, state);
 
-  input.push({
+  live.input.push({
     type: 'user',
     message: { role: 'user', content: prompt.content },
     parent_tool_use_id: null,
@@ -540,8 +556,8 @@ export async function sendUserMessage(
   const hold = await resolveSessionHold(sessionId);
   const state = hold ? null : await ensureSessionQuery(sessionId);
   if (state) {
-    if (!state.input) throw new Error('Session query is not available');
-    await applyLiveSettings(sessionId, state);
+    if (!state.live) throw new Error('Session query is not available');
+    await applyLiveSettings(sessionId, state.live);
   }
   if (userInitiated) await bumpSessionActivity(sessionId);
 
@@ -567,10 +583,10 @@ export async function sendUserMessage(
     return;
   }
 
-  // Re-check the input *after* the insert: the query loop can exit mid-await (CLI
-  // crash, stop) and null it. Tracking a command we never pushed would strand it
+  // Re-check the query *after* the insert: the query loop can exit mid-await (CLI
+  // crash, stop) and release it. Tracking a command we never pushed would strand it
   // in-flight forever, so undo the bubble and surface the failure instead.
-  if (!state.input) {
+  if (!state.live) {
     await removeMessages(sessionId, [messageId]);
     throw new Error('Session query is not available');
   }
@@ -693,12 +709,12 @@ async function pauseSessionForRateLimit(
   hadActiveTurn: boolean
 ): Promise<void> {
   const state = sessions.get(sessionId);
-  const q = state?.query;
+  const live = state?.live;
   let interrupted = false;
-  if (state && q) {
-    // Recall first: the interrupt wakes the CLI's drain loop, and anything still
-    // queued at that moment would run as its own turn.
-    const recalled = await recallUnstartedCommands(sessionId, state, q);
+  if (state && live) {
+    const aborted = await abortTurn(sessionId, state, live, { requireRealTurn: true });
+    const { recalled } = aborted;
+    interrupted = aborted.interrupted;
     if (recalled.length > 0) {
       await enqueuePrompts(
         sessionId,
@@ -711,7 +727,6 @@ async function pauseSessionForRateLimit(
       );
       await emitQueuedPrompts(sessionId);
     }
-    interrupted = await interruptTurnForRateLimit(sessionId, state, q);
     if (recalled.length > 0 || interrupted) {
       log.info('Paused session for rate limit', {
         sessionId,
@@ -740,34 +755,6 @@ async function pauseSessionForRateLimit(
         error: toError(err).message,
       });
     }
-  }
-}
-
-/**
- * Abort a genuinely running main turn. The coming turn-end is flagged as an
- * interrupt so it doesn't fire a "Claude finished" notification for work that
- * isn't finished.
- */
-async function interruptTurnForRateLimit(
-  sessionId: string,
-  state: SessionState,
-  q: Query
-): Promise<boolean> {
-  if (!state.status.turnActive || state.optimisticTurnActive || state.query !== q) return false;
-  // Already on its way down. Whoever asked owns the resume flag: an earlier
-  // pause already set it, and a user's Stop must not have it set back.
-  if (state.interruptRequested) return false;
-  state.interruptRequested = true;
-  try {
-    await q.interrupt();
-    return true;
-  } catch (err) {
-    state.interruptRequested = false;
-    log.warn('Failed to interrupt turn for rate limit', {
-      sessionId,
-      error: toError(err).message,
-    });
-    return false;
   }
 }
 
@@ -801,7 +788,7 @@ async function drainSessionAfterRateLimit(sessionId: string): Promise<void> {
     const state = await ensureSessionQuery(sessionId);
     for (const prompt of queued) {
       // The input can vanish mid-drain (CLI crash, stop); leave the rest queued.
-      if (!state.input) break;
+      if (!state.live) break;
       // Claim before pushing: Stop can empty the queue underneath this loop, and
       // pushing a prompt it already took back would run cancelled work with no
       // bubble to show for it.
@@ -863,11 +850,11 @@ export async function submitLiveToolResponse(
 ): Promise<boolean> {
   const deadline = Date.now() + waitMs;
   for (;;) {
-    const state = sessions.get(sessionId);
-    const pending = state?.pendingInput;
+    const live = sessions.get(sessionId)?.live;
+    const pending = live?.pendingInput;
 
-    if (pending && pending.toolUseId === toolUseId) {
-      state!.pendingInput = null;
+    if (live && pending && pending.toolUseId === toolUseId) {
+      live.pendingInput = null;
       log.info('submitLiveToolResponse: resolving live tool call', {
         sessionId,
         toolName: pending.toolName,
@@ -879,7 +866,7 @@ export async function submitLiveToolResponse(
 
     // A live promise can only appear while the query is alive; the short poll
     // covers an answer racing the SDK's canUseTool call.
-    if (!state?.query || Date.now() >= deadline) {
+    if (!live || Date.now() >= deadline) {
       return false;
     }
     await sleep(150);
@@ -921,37 +908,70 @@ export async function interruptClaude(sessionId: string): Promise<InterruptResul
   const recalledFromQueue = await discardQueuedPrompts(sessionId);
 
   const state = sessions.get(sessionId);
-  if (!state?.query || !effectiveRunning(state)) {
+  if (!state?.live || !effectiveRunning(state)) {
     log.info('interruptClaude: nothing to interrupt', { sessionId });
     return { interrupted: false, cancelled: recalledFromQueue };
   }
 
-  // Whether there is a turn to abort at all — Stop is also reachable when the only
-  // thing "running" is a message the CLI hasn't picked up yet. Read before any
-  // await, and reported back so the caller doesn't stamp "Interrupted" on a turn
-  // that had already finished.
-  const hadActiveTurn = state.status.turnActive;
+  const { recalled, interrupted } = await abortTurn(sessionId, state, state.live, {
+    requireRealTurn: false,
+  });
+  const cancelled = await discardUnreadPrompts(sessionId, recalled);
+  return { interrupted, cancelled: [...cancelled, ...recalledFromQueue] };
+}
 
-  // Mark the coming turn-end as an interrupt before the awaits below, so a turn
-  // ending naturally while we cancel can't fire a work-complete notification for
-  // work the user just cancelled.
-  state.interruptRequested = hadActiveTurn;
+/**
+ * Recall everything the agent hasn't read, then interrupt the turn. The recall
+ * must come first: `interrupt()` wakes the CLI's drain loop, which runs anything
+ * still queued as its own turn the instant the abort lands — cancelling afterwards
+ * loses that race every time (doc/claude-sessions.md, "Stop cancels what the agent
+ * hasn't read"). What happens to the recalled prompts is the caller's policy.
+ *
+ * `requireRealTurn` selects the rate-limit pause's policy: interrupt only a turn
+ * the stream actually opened (an optimistic one has nothing started to cut short)
+ * and leave one already being interrupted alone — whoever asked owns its resume
+ * flag, and a user's Stop must not have it set back. Stop instead interrupts
+ * whatever is still running, and claims the coming turn-end as an interrupt before
+ * the recall, so a turn that ends naturally meanwhile can't fire "Claude finished"
+ * for work the user just cancelled.
+ *
+ * `interrupted` is true only when a turn the stream had opened was aborted, so the
+ * caller never stamps "Interrupted" on a turn that had already finished.
+ */
+async function abortTurn(
+  sessionId: string,
+  state: SessionState,
+  live: LiveQuery,
+  { requireRealTurn }: { requireRealTurn: boolean }
+): Promise<{ recalled: InFlightCommand[]; interrupted: boolean }> {
+  const alreadyInterrupting = requireRealTurn && state.interruptRequested;
+  if (!requireRealTurn) state.interruptRequested = state.status.turnActive;
 
-  // Empty the CLI's command queue first: the abort below wakes its drain loop, and
-  // anything still queued at that moment would run as its own turn.
-  const cancelled = await cancelInFlightCommands(sessionId, state, state.query);
+  const recalled = await recallUnstartedCommands(sessionId, state, live.query);
 
+  // Read after the recall: recalling the push behind an optimistic turnActive ends it.
+  const realTurn = state.status.turnActive && !state.optimisticTurnActive;
+  const abort =
+    state.live === live &&
+    !alreadyInterrupting &&
+    (requireRealTurn ? realTurn : effectiveRunning(state));
+  if (!abort) {
+    // Withdraw Stop's claim: no interrupt-driven turn-end is coming to consume it.
+    if (!requireRealTurn) state.interruptRequested = false;
+    return { recalled, interrupted: false };
+  }
+
+  state.interruptRequested = state.status.turnActive;
   try {
-    await state.query.interrupt();
+    await live.query.interrupt();
   } catch (err) {
     // No interrupt-driven turn-end is coming; clear the flag so it can't suppress
     // a later, natural turn-end's notification.
     state.interruptRequested = false;
-    log.warn('interruptClaude: failed', { sessionId, error: toError(err).message });
-    return { interrupted: false, cancelled: [...cancelled, ...recalledFromQueue] };
+    log.warn('Failed to interrupt turn', { sessionId, error: toError(err).message });
+    return { recalled, interrupted: false };
   }
-
-  return { interrupted: hadActiveTurn, cancelled: [...cancelled, ...recalledFromQueue] };
+  return { recalled, interrupted: realTurn };
 }
 
 /**
@@ -968,12 +988,9 @@ async function discardQueuedPrompts(sessionId: string): Promise<CancelledPrompt[
   });
   if (queued.length === 0) return [];
 
-  await removeMessages(
-    sessionId,
-    queued.map((prompt) => prompt.messageId)
-  );
+  const cancelled = await discardUnreadPrompts(sessionId, queued);
   await emitQueuedPrompts(sessionId);
-  return Promise.all(queued.map((prompt) => describeCancelledPrompt(sessionId, prompt)));
+  return cancelled;
 }
 
 /**
@@ -982,7 +999,7 @@ async function discardQueuedPrompts(sessionId: string): Promise<CancelledPrompt[
  * or the SDK rejected the stop.
  */
 export async function stopBackgroundTask(sessionId: string, taskId: string): Promise<boolean> {
-  const query = sessions.get(sessionId)?.query;
+  const query = sessions.get(sessionId)?.live?.query;
   if (!query) return false;
   try {
     await query.stopTask(taskId);
@@ -1008,9 +1025,8 @@ export function isClaudeRunning(sessionId: string): boolean {
  * one exists. A no-op without a live query — the next establish picks them up.
  */
 export async function refreshSessionSettings(sessionId: string): Promise<void> {
-  const state = sessions.get(sessionId);
-  if (!state?.query) return;
-  await applyLiveSettings(sessionId, state);
+  const live = sessions.get(sessionId)?.live;
+  if (live) await applyLiveSettings(sessionId, live);
 }
 
 /**
@@ -1032,9 +1048,9 @@ export function stopSession(sessionId: string): Promise<void> {
   const state = sessions.get(sessionId);
   if (!state) return Promise.resolve();
 
-  state.input?.close();
+  state.live?.input.close();
   try {
-    state.query?.close();
+    state.live?.query.close();
   } catch {
     // ignore close errors
   }
@@ -1054,6 +1070,7 @@ export function stopSession(sessionId: string): Promise<void> {
 export async function cleanupSession(sessionId: string): Promise<void> {
   const stopped = stopSession(sessionId);
   forgetSessionCommands(sessionId);
+  cancelBranchPrRefresh(sessionId);
   await stopped;
 }
 
@@ -1067,7 +1084,7 @@ export async function stopAllSessions(): Promise<void> {
   // awaited too (stopSession's is fire-and-forget, which shutdown would exit
   // before): a graceful restart leaves no scopes running or recorded.
   const scopes = sessionIds
-    .map((id) => sessions.get(id)?.sessionScope)
+    .map((id) => sessions.get(id)?.live?.sessionScope)
     .filter((s): s is string => Boolean(s));
   await Promise.allSettled(sessionIds.map((id) => stopSession(id)));
   if (scopes.length > 0) await clearRecordedScopes(scopes);

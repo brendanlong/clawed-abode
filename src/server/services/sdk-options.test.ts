@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import type { MergedSessionSettings } from './settings-merger';
 import { buildMcpServersRecord, buildSdkOptions } from './sdk-options';
-import { createSessionState } from './session-state';
 
 vi.mock('./agent-env', () => ({
   buildAgentEnv: vi.fn(async (vars: { name: string; value: string }[]) => ({
@@ -37,16 +37,21 @@ const settings = (overrides: Partial<MergedSessionSettings> = {}): MergedSession
   ...overrides,
 });
 
-const build = (s: MergedSessionSettings, resumeId: string | null = null) => {
-  const state = createSessionState();
-  return buildSdkOptions({
+const waitForUserInput = vi.fn(async (): Promise<PermissionResult> => ({
+  behavior: 'deny',
+  message: 'no',
+}));
+const recordSanitization = vi.fn();
+
+const build = (s: MergedSessionSettings, resumeId: string | null = null) =>
+  buildSdkOptions({
     sessionId: 'sid',
     workingDir: '/w',
     settings: s,
     resumeId,
-    state,
-  }).then((options) => ({ options, state }));
-};
+    waitForUserInput,
+    recordSanitization,
+  });
 
 beforeEach(() => vi.clearAllMocks());
 
@@ -125,35 +130,39 @@ describe('buildSdkOptions', () => {
     });
   });
 
-  it('wires the systemd scope launcher and puts the unit on state for the runner to record', async () => {
+  it('wires the systemd scope launcher and returns the unit for the runner to record', async () => {
     mockScopeConfig.mockResolvedValueOnce({ launcherPath: '/l.sh', claudeBin: '/claude' });
-    const { options, state } = await build(settings());
+    const { options, sessionScope } = await build(settings());
     expect(options.pathToClaudeCodeExecutable).toBe('/l.sh');
-    expect(state.sessionScope).toMatch(/nonce/);
+    expect(sessionScope).toMatch(/nonce/);
     expect(options.env).toMatchObject({
-      CLAWED_SESSION_SCOPE: state.sessionScope,
+      CLAWED_SESSION_SCOPE: sessionScope,
       CLAWED_CLAUDE_BIN: '/claude',
     });
   });
 
   it('leaves the scope unset when cgroup scoping is unavailable', async () => {
-    const { options, state } = await build(settings());
-    expect(state.sessionScope).toBeNull();
+    const { options, sessionScope } = await build(settings());
+    expect(sessionScope).toBeNull();
     expect(options.pathToClaudeCodeExecutable).toBeUndefined();
   });
 
-  it('canUseTool parks interactive tools on state and allows everything else', async () => {
-    const { options, state } = await build(settings());
+  it('canUseTool hands interactive tools to waitForUserInput and allows everything else', async () => {
+    const { options } = await build(settings());
     type ToolContext = Parameters<NonNullable<typeof options.canUseTool>>[2];
     const ctx = (toolUseID: string) =>
       ({ toolUseID, signal: new AbortController().signal }) as unknown as ToolContext;
     const allowed = await options.canUseTool!('Bash', { command: 'ls' }, ctx('t1'));
     expect(allowed).toEqual({ behavior: 'allow', updatedInput: { command: 'ls' } });
+    expect(waitForUserInput).not.toHaveBeenCalled();
 
-    const parked = options.canUseTool!('AskUserQuestion', { questions: [] }, ctx('t2'));
-    expect(state.pendingInput).toMatchObject({ toolName: 'AskUserQuestion', toolUseId: 't2' });
-    state.pendingInput!.resolve({ behavior: 'deny', message: 'no' });
-    expect(await parked).toEqual({ behavior: 'deny', message: 'no' });
+    const answered = await options.canUseTool!('AskUserQuestion', { questions: [] }, ctx('t2'));
+    expect(waitForUserInput).toHaveBeenCalledWith({
+      toolName: 'AskUserQuestion',
+      toolUseId: 't2',
+      input: { questions: [] },
+    });
+    expect(answered).toEqual({ behavior: 'deny', message: 'no' });
   });
 
   it('schedules a branch/PR refresh after a tool call that may change them', async () => {

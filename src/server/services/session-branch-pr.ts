@@ -121,6 +121,12 @@ export function scheduleBranchPrRefresh(sessionId: string, workingDir: string): 
   );
 }
 
+/** Drop a pending tool-call refresh, e.g. when the session's workspace is going away. */
+export function cancelBranchPrRefresh(sessionId: string): void {
+  clearTimeout(toolRefreshTimers.get(sessionId));
+  toolRefreshTimers.delete(sessionId);
+}
+
 /**
  * Sessions queued or being refreshed, so concurrent readers make one call, not N.
  * The cap keeps a single list read — which can carry every loaded page — from
