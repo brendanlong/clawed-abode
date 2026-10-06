@@ -1,5 +1,5 @@
 import { resetEnvCache } from '@/lib/env';
-import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach, beforeEach, vi } from 'vitest';
 import { setupTestDb, teardownTestDb, testPrisma, clearTestDb } from '@/test/setup-test-db';
 
 vi.mock('@/lib/logger', async () => (await import('@/test/mock-logger')).mockLoggerModule());
@@ -123,6 +123,100 @@ describe('settings-scope', () => {
 
       await scopeModule.deleteMcpServer(scope, 'srv');
       expect(await testPrisma.mcpServer.count({ where: scope })).toBe(0);
+    });
+
+    describe('when another write lands between reading and writing an MCP server', () => {
+      const httpServer = (headers: Record<string, { value: string; isSecret: boolean }>) => ({
+        name: 'srv',
+        type: 'http' as const,
+        url: 'https://mcp.example.com',
+        authType: 'headers' as const,
+        headers,
+      });
+
+      /** Run `concurrentWrite` right after the upsert's next read of the row. */
+      function interleaveAfterRead(concurrentWrite: () => Promise<unknown>) {
+        const findFirst = testPrisma.mcpServer.findFirst.bind(testPrisma.mcpServer);
+        vi.spyOn(testPrisma.mcpServer, 'findFirst').mockImplementationOnce(((
+          args: Parameters<typeof findFirst>[0]
+        ) =>
+          findFirst(args).then(async (row) => {
+            await concurrentWrite();
+            return row;
+          })) as unknown as typeof findFirst);
+      }
+
+      afterEach(() => vi.restoreAllMocks());
+
+      it('keeps the concurrently stored secret rather than the one read', async () => {
+        const scope = await makeScope();
+        await scopeModule.upsertMcpServer(
+          scope,
+          httpServer({ Authorization: { value: 'old', isSecret: true } })
+        );
+        interleaveAfterRead(() =>
+          scopeModule.upsertMcpServer(
+            scope,
+            httpServer({ Authorization: { value: 'new', isSecret: true } })
+          )
+        );
+
+        await scopeModule.upsertMcpServer(
+          scope,
+          httpServer({
+            Authorization: { value: '', isSecret: true },
+            X: { value: 'x', isSecret: false },
+          })
+        );
+        const row = await testPrisma.mcpServer.findFirstOrThrow({
+          where: { ...scope, name: 'srv' },
+        });
+        const headers = JSON.parse(row.headers!) as Record<
+          string,
+          { value: string; isSecret: boolean }
+        >;
+        expect(crypto.decrypt(headers.Authorization.value)).toBe('new');
+        expect(headers.X).toEqual({ value: 'x', isSecret: false });
+      });
+
+      it('rejects keeping a secret that was concurrently made plaintext', async () => {
+        const scope = await makeScope();
+        await scopeModule.upsertMcpServer(
+          scope,
+          httpServer({ Authorization: { value: 'secret', isSecret: true } })
+        );
+        const plain = httpServer({ Authorization: { value: 'plain', isSecret: false } });
+        interleaveAfterRead(() => scopeModule.upsertMcpServer(scope, plain));
+
+        await expect(
+          scopeModule.upsertMcpServer(
+            scope,
+            httpServer({ Authorization: { value: '', isSecret: true } })
+          )
+        ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+        const row = await testPrisma.mcpServer.findFirstOrThrow({
+          where: { ...scope, name: 'srv' },
+        });
+        expect(JSON.parse(row.headers!)).toEqual(plain.headers);
+      });
+
+      it('updates the row a concurrent create inserted', async () => {
+        const scope = await makeScope();
+        interleaveAfterRead(() =>
+          scopeModule.upsertMcpServer(
+            scope,
+            httpServer({ A: { value: 'theirs', isSecret: false } })
+          )
+        );
+
+        await scopeModule.upsertMcpServer(
+          scope,
+          httpServer({ A: { value: 'ours', isSecret: false } })
+        );
+        const rows = await testPrisma.mcpServer.findMany({ where: { ...scope, name: 'srv' } });
+        expect(rows).toHaveLength(1);
+        expect(JSON.parse(rows[0].headers!)).toEqual({ A: { value: 'ours', isSecret: false } });
+      });
     });
 
     it('upserts the same name concurrently without a unique violation or duplicate rows', async () => {

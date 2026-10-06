@@ -116,40 +116,57 @@ export async function getEnvVarValue(scope: SettingsScope, name: string): Promis
   return envVar.isSecret ? decrypt(envVar.value) : envVar.value;
 }
 
+const MCP_WRITE_ATTEMPTS = 3;
+
 /**
- * Create or update an MCP server. Unchanged secrets (empty value + isSecret) are
- * carried over from the existing row's JSON, which needs a read; the write itself
- * is still a single ON CONFLICT statement.
+ * Write the McpServer row. Unchanged secrets (empty value + isSecret) are carried
+ * over from the stored JSON, so the write is a compare-and-set: it only applies if
+ * the columns the merge read are still what was read, and otherwise re-reads and
+ * merges again. A concurrent edit can't make us store a stale or blank secret.
  */
+async function writeMcpServerRow(
+  scope: SettingsScope,
+  server: McpServerInput
+): Promise<{ id: string; urlChanged: boolean }> {
+  for (let attempt = 0; attempt < MCP_WRITE_ATTEMPTS; attempt++) {
+    const existing = await prisma.mcpServer.findFirst({
+      where: { ...scope, name: server.name },
+      select: { id: true, env: true, headers: true, url: true },
+    });
+    const data = buildMcpServerData(server, existing);
+
+    if (existing) {
+      const { count } = await prisma.mcpServer.updateMany({
+        where: { id: existing.id, env: existing.env, headers: existing.headers, url: existing.url },
+        data,
+      });
+      if (count === 1) return { id: existing.id, urlChanged: existing.url !== data.url };
+      continue;
+    }
+
+    const now = new Date().toISOString();
+    const inserted = await prisma.$queryRaw<{ id: string }[]>`
+      INSERT INTO "McpServer" ("id", "repoSettingsId", "name", "type", "command", "args", "env", "url", "headers", "authType", "createdAt", "updatedAt")
+      VALUES (${randomUUID()}, ${scope.repoSettingsId}, ${server.name}, ${data.type}, ${data.command}, ${data.args}, ${data.env}, ${data.url}, ${data.headers}, ${data.authType}, ${now}, ${now})
+      ${conflictTarget(scope)} DO NOTHING
+      RETURNING "id"`;
+    if (inserted.length === 1) return { id: inserted[0].id, urlChanged: false };
+  }
+
+  throw new TRPCError({
+    code: 'CONFLICT',
+    message: `MCP server "${server.name}" is being edited concurrently; try again`,
+  });
+}
+
 export async function upsertMcpServer(scope: SettingsScope, server: McpServerInput): Promise<void> {
   requireEncryptionForSecrets(mcpServerHasSecrets(server));
-  const existing = await prisma.mcpServer.findFirst({
-    where: { ...scope, name: server.name },
-    select: { id: true, env: true, headers: true, url: true },
-  });
-  const data = buildMcpServerData(server, existing);
-  const now = new Date().toISOString();
-
-  // RETURNING gives the OAuth grant the server's id without a second read, whether
-  // the statement inserted a new row or updated the existing one.
-  const [{ id }] = await prisma.$queryRaw<[{ id: string }]>`
-    INSERT INTO "McpServer" ("id", "repoSettingsId", "name", "type", "command", "args", "env", "url", "headers", "authType", "createdAt", "updatedAt")
-    VALUES (${randomUUID()}, ${scope.repoSettingsId}, ${server.name}, ${data.type}, ${data.command}, ${data.args}, ${data.env}, ${data.url}, ${data.headers}, ${data.authType}, ${now}, ${now})
-    ${conflictTarget(scope)} DO UPDATE SET
-      "type" = excluded."type",
-      "command" = excluded."command",
-      "args" = excluded."args",
-      "env" = excluded."env",
-      "url" = excluded."url",
-      "headers" = excluded."headers",
-      "authType" = excluded."authType",
-      "updatedAt" = excluded."updatedAt"
-    RETURNING "id"`;
+  const { id, urlChanged } = await writeMcpServerRow(scope, server);
 
   await syncMcpOAuthConfig({
     mcpServerId: id,
     isOAuth: server.type !== 'stdio' && server.authType === 'oauth',
-    urlChanged: !!existing && existing.url !== data.url,
+    urlChanged,
     clientId: server.type === 'stdio' ? '' : (server.oauth?.clientId ?? ''),
     clientSecret: server.type === 'stdio' ? '' : (server.oauth?.clientSecret ?? ''),
     scope: server.type === 'stdio' ? '' : (server.oauth?.scope ?? ''),
