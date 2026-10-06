@@ -5,6 +5,7 @@
  * doc/claude-sessions.md; invariants in src/server/services/CLAUDE.md.
  */
 
+import { access } from 'fs/promises';
 import {
   query as sdkQuery,
   type Query,
@@ -18,6 +19,7 @@ import { prisma } from '@/lib/prisma';
 import {
   classifyMessage,
   initSessionId,
+  isEchoOfPushedPrompt,
   parseCommandLifecycle,
   type RetryState,
 } from '@/lib/claude-messages';
@@ -67,6 +69,7 @@ import {
   forgetSessionCommands,
   replaceSessionCommands,
 } from './session-commands';
+import { resolveAgentName } from './agent-name';
 import { buildMcpServersRecord, buildSdkOptions } from './sdk-options';
 import { cancelBranchPrRefresh, detectBranchAndPr } from './session-branch-pr';
 
@@ -98,6 +101,8 @@ const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
 
 /** Active sessions tracked in memory. */
 const sessions = new Map<string, SessionState>();
+/** Set by stopAllSessions so a revive racing shutdown doesn't start a new CLI. */
+let shuttingDown = false;
 
 /**
  * Injectable query factory (the SDK `query` by default). Tests replace this to
@@ -213,6 +218,8 @@ async function runSessionLoop(
         continue;
       }
 
+      if (isEchoOfPushedPrompt(message, live.pushedUuids)) continue;
+
       // Every other message, including ones skipped for persistence, since
       // `api_retry`/`task_*` drive status.
       if (dispatch(sessionId, state, { type: 'sdk_message', message }).turnEnded) {
@@ -297,10 +304,21 @@ async function establishSessionQuery(
 ): Promise<SessionState> {
   const session = await prisma.session.findUnique({
     where: { id: sessionId },
-    select: { repoUrl: true, repoPath: true, claudeModel: true, claudeSessionId: true },
+    select: {
+      status: true,
+      repoUrl: true,
+      repoPath: true,
+      claudeModel: true,
+      claudeSessionId: true,
+    },
   });
   if (!session) {
     throw new Error('Session not found');
+  }
+  // Stop and Delete tear down memory before writing the status, so an
+  // establishment that started just before them can still see it here.
+  if (session.status !== 'running') {
+    throw new Error(`Session is ${session.status}`);
   }
 
   const repoFullName = session.repoUrl ? extractRepoFullName(session.repoUrl) : null;
@@ -317,6 +335,11 @@ async function establishSessionQuery(
   const toolSanitizations: LiveQuery['toolSanitizations'] = new Map();
   const { options, sessionScope } = await buildSdkOptions({
     sessionId,
+    // Best-effort: without it the CLI derives its own (unstable) name.
+    agentName: await resolveAgentName(sessionId).catch((err) => {
+      log.warn('Agent name unavailable', { sessionId, error: toError(err).message });
+      return null;
+    }),
     workingDir,
     settings,
     resumeId,
@@ -357,6 +380,7 @@ async function establishSessionQuery(
     claudeSessionId: null,
     pendingInput: null,
     toolSanitizations,
+    pushedUuids: new Set(),
   };
   live = established;
   state.live = established;
@@ -380,10 +404,9 @@ async function establishSessionQuery(
 }
 
 /**
- * Ensure a live streaming query exists for a session, establishing one lazily
- * (with `resume`) if needed. Idempotent and coalesced: concurrent callers share a
- * single establishment. This is the recovery path after a server restart or a
- * fatal query error.
+ * Ensure a live streaming query exists for a session, establishing one (with
+ * `resume`) if needed. Idempotent and coalesced: concurrent callers share a
+ * single establishment.
  */
 function ensureSessionQuery(sessionId: string): Promise<SessionState> {
   const existing = sessions.get(sessionId);
@@ -453,6 +476,7 @@ function pushPreparedPrompt(sessionId: string, state: SessionState, prompt: Prom
   if (!live) throw new Error('Session query is not available');
 
   const commandUuid = uuid();
+  live.pushedUuids.add(commandUuid);
   dispatch(sessionId, state, {
     type: 'pushed',
     commandUuid,
@@ -533,6 +557,7 @@ export async function sendUserMessage(
 
 /** The runner as the rate-limit pause sees it; handed over at startup. */
 export const rateLimitPauseRunner: PauseRunner = {
+  revive: (sessionId) => reviveSession(sessionId),
   turnActiveSessionIds: () =>
     new Set([...sessions].filter(([, state]) => hasRealTurn(state.turn)).map(([id]) => id)),
 
@@ -802,8 +827,50 @@ export async function cleanupSession(sessionId: string): Promise<void> {
   await stopped;
 }
 
+/**
+ * Establish a running session's query without a prompt, so its CLI is up and
+ * reachable by other sessions. Skips a session the rate-limit pause holds (the
+ * pause revives it on release) or whose workspace is gone (the CLI would only
+ * fail into its transcript). Best-effort.
+ */
+export async function reviveSession(sessionId: string): Promise<void> {
+  try {
+    const session = await prisma.session.findUnique({
+      where: { id: sessionId },
+      select: { status: true, repoPath: true },
+    });
+    if (session?.status !== 'running' || currentHold(sessionId) || shuttingDown) return;
+    const workingDir = getSessionWorkingDir(sessionId, session.repoPath);
+    if (!(await pathExists(workingDir))) {
+      log.warn('Not reviving session with no workspace', { sessionId, workingDir });
+      return;
+    }
+    await ensureSessionQuery(sessionId);
+  } catch (err) {
+    log.warn('Failed to revive session', { sessionId, error: toError(err).message });
+  }
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  return access(path).then(
+    () => true,
+    () => false
+  );
+}
+
+/** Revive every running session, concurrently so one slow establishment can't hold up the rest. */
+export async function reviveRunningSessions(): Promise<void> {
+  const running = await prisma.session.findMany({
+    where: { status: 'running' },
+    select: { id: true },
+  });
+  log.info('Reviving running sessions', { count: running.length });
+  await Promise.all(running.map(({ id }) => reviveSession(id)));
+}
+
 /** Stop all active Claude queries (graceful shutdown). */
 export async function stopAllSessions(): Promise<void> {
+  shuttingDown = true;
   const sessionIds = [...sessions.keys()];
   if (sessionIds.length === 0) return;
 

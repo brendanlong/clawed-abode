@@ -8,6 +8,8 @@ import {
   parseRetryState,
   formatRetryReason,
   initSessionId,
+  parseInjectedOrigin,
+  isEchoOfPushedPrompt,
 } from './claude-messages';
 
 describe('claude-messages', () => {
@@ -256,5 +258,63 @@ describe('getParentToolUseId', () => {
     expect(getParentToolUseId({})).toBeNull();
     expect(getParentToolUseId(undefined)).toBeNull();
     expect(getParentToolUseId('string')).toBeNull();
+  });
+
+  describe('parseInjectedOrigin', () => {
+    it('names a peer by its display name and keeps the stripped body', () => {
+      expect(
+        parseInjectedOrigin({
+          kind: 'peer',
+          from: 'uds:/x.sock',
+          name: 'math-opus-1a2b',
+          body: 'hi',
+        })
+      ).toEqual({ sender: 'math-opus-1a2b', body: 'hi' });
+    });
+
+    it('names a channel by its server', () => {
+      expect(parseInjectedOrigin({ kind: 'channel', server: 'slack' })).toEqual({
+        sender: 'slack',
+        body: null,
+      });
+    });
+
+    it('falls back to the socket address, then a generic sender', () => {
+      expect(parseInjectedOrigin({ kind: 'peer', from: 'uds:/x.sock' })?.sender).toBe(
+        'uds:/x.sock'
+      );
+      expect(parseInjectedOrigin({ kind: 'peer' })?.sender).toBe('another session');
+    });
+
+    it('rejects prompts we sent and anything malformed', () => {
+      expect(parseInjectedOrigin(undefined)).toBeNull();
+      expect(parseInjectedOrigin({ kind: 'human' })).toBeNull();
+      expect(parseInjectedOrigin({ kind: 'peer', name: 5 })).toBeNull();
+    });
+  });
+
+  describe('isEchoOfPushedPrompt', () => {
+    const pushed = new Set(['ours']);
+    const user = (m: Record<string, unknown>) => ({ type: 'user', ...m }) as unknown as SDKMessage;
+
+    it('matches the replay of a prompt we pushed', () => {
+      expect(isEchoOfPushedPrompt(user({ isReplay: true, uuid: 'ours' }), pushed)).toBe(true);
+    });
+
+    it('keeps other replays: slash-command output and messages from other sessions', () => {
+      expect(isEchoOfPushedPrompt(user({ isReplay: true, uuid: 'cli-output' }), pushed)).toBe(
+        false
+      );
+      expect(
+        isEchoOfPushedPrompt(
+          user({ isReplay: true, uuid: 'peer', origin: { kind: 'peer', from: 'x' } }),
+          pushed
+        )
+      ).toBe(false);
+    });
+
+    it('ignores messages that are not replays', () => {
+      expect(isEchoOfPushedPrompt(user({ uuid: 'ours' }), pushed)).toBe(false);
+    });
   });
 });

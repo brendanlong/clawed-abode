@@ -15,7 +15,7 @@ import { useTranscriptScroll } from '@/hooks/useTranscriptScroll';
 import { useAskUserQuestionNotifications } from '@/hooks/useAskUserQuestionNotifications';
 import {
   isToolCallOnlyMessage,
-  isToolResultMessage,
+  isOwnPromptMessage,
   buildTranscriptLayout,
   getLatestTodoWriteId,
   getPendingAskUserQuestions,
@@ -186,9 +186,7 @@ export function MessageList({
             }
 
             const message = row.message;
-            // Only right-align actual user messages, not tool results
-            const isUserMessage =
-              message.type === 'user' && !isToolResultMessage(message.content as MessageContent);
+            const isUserMessage = isOwnPromptMessage(message);
 
             // Spacing: full gap between messages, but tight when two consecutive
             // tool-call-only messages sit back-to-back (issue #312). The first

@@ -10,9 +10,11 @@ import { cloneRepo, createEmptyWorkspace, removeWorkspace } from './worktree-man
 import {
   cleanupSession,
   refreshSessionSettings,
+  reviveSession,
   sendUserMessage,
   stopSession,
 } from './claude-runner';
+import { resolveAgentName } from './agent-name';
 import { clearQueuedPrompts } from './prompt-queue';
 import { recomputeRateLimitHolds } from './rate-limit-pause';
 
@@ -87,6 +89,11 @@ export async function createSession(input: CreateSessionInput): Promise<Session>
     },
   });
 
+  // Started now so it overlaps the clone; the first query establishment waits for it.
+  resolveAgentName(session.id, input.initialPrompt).catch((error) => {
+    log.error('Agent name resolution failed', toError(error), { sessionId: session.id });
+  });
+
   setupSession(session.id, repo, input.initialPrompt).catch((error) => {
     log.error('Unhandled error in session setup', toError(error), { sessionId: session.id });
   });
@@ -153,6 +160,8 @@ async function setupSession(
     sendUserMessage(sessionId, initialPrompt.trim()).catch((err) => {
       log.error('Initial prompt failed', toError(err), { sessionId });
     });
+  } else {
+    void reviveSession(sessionId);
   }
 }
 
@@ -161,13 +170,14 @@ function logSetupAbandoned(sessionId: string, session: Session): void {
 }
 
 /**
- * Mark a stopped session running; its query is established lazily
- * on the next prompt. Already running is a no-op; any other status can't start
- * (archived has no workspace, creating is still being set up).
+ * Mark a stopped session running and start its query in the background, so other
+ * sessions can reach it before it gets a prompt. Already running is a no-op; any
+ * other status can't start (archived has no workspace, creating is still being set up).
  */
 export async function startSession(sessionId: string): Promise<Session> {
   const { applied, session } = await transitionSession(sessionId, 'start', { status: 'running' });
   if (applied) {
+    void reviveSession(sessionId);
     // Only running sessions drain, so a session stopped while it held queued
     // prompts would otherwise strand them until the next reading change.
     await recomputeRateLimitHolds();

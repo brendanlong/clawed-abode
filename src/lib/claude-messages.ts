@@ -240,6 +240,48 @@ export function assertNeverFallback<T>(_unhandled: never, fallback: T): T {
 }
 
 /**
+ * Whether a message is the CLI's replay of a prompt we pushed. Other replays
+ * (slash-command output, messages from other sessions) are real transcript
+ * content.
+ */
+export function isEchoOfPushedPrompt(
+  message: SDKMessage,
+  pushedUuids: ReadonlySet<string>
+): boolean {
+  return (
+    message.type === 'user' &&
+    'isReplay' in message &&
+    message.isReplay === true &&
+    pushedUuids.has(message.uuid)
+  );
+}
+
+/** Origin of a user message another session (`peer`) or an MCP channel injected. */
+const InjectedOriginSchema = z.object({
+  kind: z.enum(['peer', 'channel']),
+  /** Sender's display name. */
+  name: z.string().optional(),
+  /** Sender's socket address. */
+  from: z.string().optional(),
+  /** Channel MCP server name. */
+  server: z.string().optional(),
+  /** Message text with the CLI's envelope stripped. */
+  body: z.string().optional(),
+});
+
+export interface InjectedMessageOrigin {
+  sender: string;
+  body: string | null;
+}
+
+export function parseInjectedOrigin(origin: unknown): InjectedMessageOrigin | null {
+  const parsed = InjectedOriginSchema.safeParse(origin);
+  if (!parsed.success) return null;
+  const { name, from, server, body } = parsed.data;
+  return { sender: name ?? server ?? from ?? 'another session', body: body ?? null };
+}
+
+/**
  * Decide how to handle a message yielded by the Claude Agent SDK.
  *
  * Driven by the SDK's `SDKMessage` discriminated union: the `switch` is

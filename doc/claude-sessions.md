@@ -6,7 +6,9 @@ Everything below about turn status, delivery and interrupts is implemented by th
 
 ## Persistent Streaming Query
 
-Each session has **one long-lived `query()` in streaming-input mode** (the prompt is a pushable `AsyncIterable`, [`src/lib/pushable.ts`](../src/lib/pushable.ts)). It is established lazily (`ensureSessionQuery` — idempotent and coalesced; the in-flight promise clears in `finally` so a failed establish can retry), stays alive across turns and idle periods, and is torn down only on stop / delete / shutdown / fatal error.
+Each session has **one long-lived `query()` in streaming-input mode** (the prompt is a pushable `AsyncIterable`, [`src/lib/pushable.ts`](../src/lib/pushable.ts)). It is established by `ensureSessionQuery` (idempotent and coalesced; the in-flight promise clears in `finally` so a failed establish can retry), stays alive across turns and idle periods, and is torn down only on stop / delete / shutdown / fatal error.
+
+**Running means reachable.** A `running` session gets its query without waiting for a prompt — at the end of setup, on Start, when the rate-limit pause releases it, and for all running sessions (concurrently) at boot — because another session can only message a CLI that is up ([Cross-Session Messaging](#cross-session-messaging)). The cost is an idle CLI process (~260 MB) per running session; Stop is how to free one. `reviveSession` skips a held session and one whose workspace is gone (the CLI would only fail into its transcript). Establishment itself refuses a session that is no longer `running`, since Stop and Delete tear down memory before writing the status.
 
 **Why:** background tasks (`run_in_background` subagents, `Monitor` watches, backgrounded `Bash`) deliver their `task_started` / `task_notification` messages later in the same stream — and when a task settles, the main agent autonomously continues in a new turn — but only while the stream stays open. A per-prompt query closed the stream at each `result`, killing every waiter.
 
@@ -62,6 +64,14 @@ Known limitation: only one `pendingInput` parks at a time; a second interactive 
 "Claude finished" (`LiveOutcome.finished`) fires only on a **natural turn end that leaves the session fully idle**: `turnActive` flipped off, not interrupted, no end-state background task running, and nothing still pending delivery. Why not the `running: false` edge: that also fires on interrupt/stop/delete and would notify for work the user cancelled. Why turn-end rather than background-drain: a settling task autonomously continues the main agent, and _that_ turn's end is the real "done" (firing on the drain would notify twice). Residual edge, accepted: a task settling with no continuation leaves no finished signal — no spurious notification beats no missed one.
 
 Client side, `WorkCompleteNotifier` (mounted once in `Providers`, fed by the global SSE stream) notifies for **any** session except the one actively watched — its page open _and_ the tab visible (pure helpers in [`src/lib/work-complete-notification.ts`](../src/lib/work-complete-notification.ts)).
+
+## Cross-Session Messaging
+
+Sessions message each other with the CLI's built-in `ListAgents` / `SendMessage` tools over a per-process local socket; nothing in the app relays them. A message to an idle session starts a turn there on its own.
+
+The CLI registers under `CLAUDE_CODE_SESSION_NAME`, set from `Session.agentName`; left unset, it picks a random suffix on every process start, so an address would not survive a restart. The name is generated once ([`agent-name.ts`](../src/server/services/agent-name.ts)): 2–3 words from Haiku plus a session-id suffix, since sibling sessions given the same prompt would otherwise get the same name. Generation starts at creation so it overlaps the clone, and it is best-effort: any failure falls back to the repo name or an id prefix, and establishment never waits on more than one short request.
+
+How the incoming messages reach the transcript is under Classification in [`messages-and-sse.md`](messages-and-sse.md).
 
 ## Process Reaping (cgroup)
 

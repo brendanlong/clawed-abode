@@ -19,6 +19,7 @@ vi.mock('../services/worktree-manager', () => ({
 const mockRefreshSessionSettings = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const mockSendUserMessage = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const mockStopSession = vi.hoisted(() => vi.fn());
+const mockReviveSession = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const mockCleanupSession = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 
 vi.mock('../services/claude-runner', () => ({
@@ -28,6 +29,7 @@ vi.mock('../services/claude-runner', () => ({
   isClaudeRunning: vi.fn().mockReturnValue(false),
   isSessionBackgroundActive: vi.fn().mockReturnValue(false),
   refreshSessionSettings: mockRefreshSessionSettings,
+  reviveSession: mockReviveSession,
 }));
 vi.mock('../services/rate-limit-pause', () => ({
   isSessionRateLimitPaused: vi.fn().mockReturnValue(false),
@@ -451,6 +453,8 @@ describe('sessionsRouter integration', () => {
       // Verify database was updated
       const dbSession = await testPrisma.session.findUnique({ where: { id: session.id } });
       expect(dbSession!.status).toBe('running');
+      // Its CLI starts now, so other sessions can reach it before it gets a prompt.
+      expect(mockReviveSession).toHaveBeenCalledWith(session.id);
     });
 
     it('should not start an already running session', async () => {

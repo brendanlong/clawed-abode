@@ -28,6 +28,7 @@ interface SessionHeaderProps {
     rateLimitPauseEnabled?: boolean | null;
     rateLimitPauseThreshold?: number | null;
     pullRequest?: PullRequestInfo | null;
+    agentName?: string | null;
   };
   onStart?: () => void;
   onStop?: () => void;
@@ -77,9 +78,17 @@ export function SessionHeader({
                 {session.name}
               </h1>
             )}
-            {repoName && (
+            {(repoName || session.agentName) && (
               <p className="text-sm text-muted-foreground truncate flex items-center gap-2">
                 {repoName}
+                {session.agentName && (
+                  <span
+                    className="font-mono text-xs truncate"
+                    title="Name other Claude sessions use to message this one"
+                  >
+                    @{session.agentName}
+                  </span>
+                )}
                 {session.pullRequest && <PrStatusIndicator pullRequest={session.pullRequest} />}
               </p>
             )}

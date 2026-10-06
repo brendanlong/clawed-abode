@@ -433,6 +433,7 @@ describe('rate-limit pause', () => {
         abortTurn,
         sendUserMessage: vi.fn(async () => {}),
         openQuery: vi.fn(async () => ({ isLive: () => false, push: () => {} })),
+        revive: vi.fn(async () => {}),
       };
     }
     type runnerPort = Parameters<typeof pause.initRateLimitPause>[0];
@@ -479,6 +480,24 @@ describe('rate-limit pause', () => {
       await stop;
 
       expect(await resumeFlag(sessionId)).toBe(false);
+    });
+
+    it('revives a session once its hold releases, so other sessions can reach it again', async () => {
+      const sessionId = await createRunningSession();
+      const stub = stubRunner(sessionId, async (_id, steps) => ({
+        disposed: await steps.dispose([]),
+        interrupted: false,
+        interruptPending: false,
+      }));
+      await pause.initRateLimitPause(stub);
+
+      await rejection();
+      await pause.recomputeRateLimitHolds();
+      expect(stub.revive).not.toHaveBeenCalledWith(sessionId);
+
+      vi.setSystemTime(NOW + HOUR_MS + 1000);
+      await pause.recomputeRateLimitHolds();
+      expect(stub.revive).toHaveBeenCalledWith(sessionId);
     });
   });
 
