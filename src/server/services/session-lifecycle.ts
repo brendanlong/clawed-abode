@@ -1,10 +1,4 @@
-/**
- * Session lifecycle: create/setup, start, stop, archive, and the other writes to
- * a session row that the API makes. Status changes are conditional writes keyed
- * on `ALLOWED_FROM` (see `src/lib/session-transitions.ts`), never a status read
- * followed by an unconditional write — the row a router loaded may already be
- * stale (e.g. archived by a concurrent delete).
- */
+/** Session lifecycle and the API's writes to a session row; status writes go through `transitionSession`. */
 
 import { TRPCError } from '@trpc/server';
 import { prisma } from '@/lib/prisma';
@@ -24,10 +18,10 @@ import { clearQueuedPrompts } from './prompt-queue';
 
 const log = createLogger('session-lifecycle');
 
-/** Write `data` to the session and push the new row to subscribers. */
+/** Write non-status fields and push the new row to subscribers. */
 export async function updateSession(
   sessionId: string,
-  data: Prisma.SessionUpdateInput
+  data: Omit<Prisma.SessionUpdateInput, 'status'>
 ): Promise<Session> {
   const session = await prisma.session.update({ where: { id: sessionId }, data });
   sseEvents.emitSessionUpdate(sessionId, session);
@@ -44,7 +38,7 @@ interface TransitionResult {
  * Apply `data` only if the session's status is one `transition` may leave, in a
  * single statement, and emit the update when it applied.
  */
-export async function transitionSession(
+async function transitionSession(
   sessionId: string,
   transition: SessionTransition,
   data: Prisma.SessionUpdateManyMutationInput
@@ -114,7 +108,8 @@ async function setupSession(
   try {
     let repoPath = '';
     if (repo) {
-      await setStatusMessage('Cloning repository...');
+      result = await setStatusMessage('Cloning repository...');
+      if (!result.applied) return logSetupAbandoned(sessionId, result.session);
       ({ repoPath } = await cloneRepo({
         sessionId,
         repoFullName: repo.fullName,
@@ -122,7 +117,8 @@ async function setupSession(
       }));
       log.info('Worktree created', { sessionId, repoPath });
     } else {
-      await setStatusMessage('Creating workspace...');
+      result = await setStatusMessage('Creating workspace...');
+      if (!result.applied) return logSetupAbandoned(sessionId, result.session);
       await createEmptyWorkspace(sessionId);
     }
 
@@ -140,9 +136,9 @@ async function setupSession(
   }
 
   if (!result.applied) {
+    logSetupAbandoned(sessionId, result.session);
     // Deleted mid-setup: delete removed the workspace while the clone was still
     // writing into it, so clear whatever the clone left behind.
-    log.info('Session left creating during setup', { sessionId, status: result.session.status });
     if (result.session.status === 'archived') await removeWorkspace(sessionId);
     return;
   }
@@ -158,6 +154,10 @@ async function setupSession(
       log.error('Initial prompt failed', toError(err), { sessionId });
     });
   }
+}
+
+function logSetupAbandoned(sessionId: string, session: Session): void {
+  log.info('Session left creating during setup', { sessionId, status: session.status });
 }
 
 /**
@@ -200,7 +200,11 @@ export async function shutDownSession(sessionId: string): Promise<Session> {
   return session;
 }
 
-/** Delete: stop the session, archive it (keeping its messages), and remove its workspace. */
+/**
+ * Delete: stop the session, archive it (keeping its messages), and remove its
+ * workspace. Repeating it on an archived session still tears down, which kills a
+ * query a concurrent send re-established (see `shutDownSession`).
+ */
 export async function archiveSession(sessionId: string): Promise<void> {
   // The in-memory teardown is synchronous; the scope stop is awaited below.
   const stopped = cleanupSession(sessionId);

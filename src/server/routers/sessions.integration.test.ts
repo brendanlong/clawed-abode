@@ -462,6 +462,15 @@ describe('sessionsRouter integration', () => {
       expect(result.session.status).toBe('running');
     });
 
+    it('should reject starting a session that is still being set up', async () => {
+      const session = await createNoRepoSession({ name: 'Creating', status: 'creating' });
+
+      const caller = createCaller('auth-session-id');
+      await expect(caller.sessions.start({ sessionId: session.id })).rejects.toMatchObject({
+        code: 'PRECONDITION_FAILED',
+      });
+    });
+
     it('should reject starting an archived session', async () => {
       const session = await createNoRepoSession({
         name: 'Archived Session',
@@ -476,6 +485,18 @@ describe('sessionsRouter integration', () => {
   });
 
   describe('stop', () => {
+    it('should leave a session that is still being set up to its setup', async () => {
+      const session = await createNoRepoSession({ name: 'Creating', status: 'creating' });
+
+      const result = await createCaller('auth-session-id').sessions.stop({
+        sessionId: session.id,
+      });
+
+      expect(result.session.status).toBe('creating');
+      const dbSession = await testPrisma.session.findUniqueOrThrow({ where: { id: session.id } });
+      expect(dbSession.status).toBe('creating');
+    });
+
     it('should stop a running session and update the database', async () => {
       const session = await createTestSession({
         name: 'Running Session',
@@ -793,19 +814,34 @@ describe('sessionsRouter integration', () => {
 
       await createCaller('auth-session-id').sessions.delete({ sessionId: session.id });
 
+      // Still tears down, in case a concurrent send re-established a query.
+      expect(mockCleanupSession).toHaveBeenCalledWith(session.id);
       expect(mockRemoveWorkspace).not.toHaveBeenCalled();
       expect(mockSseEvents.emitSessionUpdate).not.toHaveBeenCalled();
     });
 
-    it('stop leaves a session that is still being set up to its setup', async () => {
-      const session = await createNoRepoSession({ name: 'Creating', status: 'creating' });
+    it('setup deleted before it starts cloning never clones', async () => {
+      // Archive the row just ahead of setup's first write.
+      const updateManyAndReturn = testPrisma.session.updateManyAndReturn.bind(testPrisma.session);
+      vi.spyOn(testPrisma.session, 'updateManyAndReturn').mockImplementationOnce(((
+        args: Parameters<typeof updateManyAndReturn>[0]
+      ) =>
+        testPrisma.session
+          .updateMany({ data: { status: 'archived' } })
+          .then(() => updateManyAndReturn(args))) as unknown as typeof updateManyAndReturn);
 
-      const result = await createCaller('auth-session-id').sessions.stop({
-        sessionId: session.id,
+      const { session } = await createCaller('auth-session-id').sessions.create({
+        name: 'Deleted before clone',
+        repoFullName: 'owner/repo',
+        branch: 'main',
+        initialPrompt: 'Do something',
       });
 
-      expect(result.session.status).toBe('creating');
-      expect(await statusOf(session.id)).toBe('creating');
+      await vi.waitFor(() => expect(testPrisma.session.updateManyAndReturn).toHaveBeenCalled());
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(mockCloneRepo).not.toHaveBeenCalled();
+      expect(mockSendUserMessage).not.toHaveBeenCalled();
+      expect(await statusOf(session.id)).toBe('archived');
     });
 
     it('a clone that finishes after delete leaves the session archived and cleans up', async () => {
