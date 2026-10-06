@@ -280,8 +280,8 @@ export interface McpServerValueWrite {
 
 /**
  * What saving an MCP server writes. Values with an empty secret are "unchanged":
- * they go in `keep` rather than `values`, so their stored row is left alone.
- * Every other stored value of the server is deleted.
+ * they go in `keep` rather than `values`, so their stored row is neither written
+ * nor deleted. Every other stored value of the server is deleted.
  */
 export interface McpServerWritePlan {
   row: { type: string; command: string; args: string | null; url: string | null; authType: string };

@@ -60,19 +60,17 @@ describe('settings-scope', () => {
       expect(await testPrisma.envVar.count({ where: scope })).toBe(1);
     });
 
-    it('rejects an empty secret env var with no stored secret to keep', async () => {
+    it('leaves the stored row alone for an empty secret, whatever it now holds', async () => {
       const scope = await makeScope();
-      await expect(
-        scopeModule.upsertEnvVar(scope, { name: 'NEW', value: '', isSecret: true })
-      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      await scopeModule.upsertEnvVar(scope, { name: 'NEW', value: '', isSecret: true });
       expect(await testPrisma.envVar.count({ where: scope })).toBe(0);
 
-      // Another tab flipped it to plaintext: the stale "unchanged" submit must not blank it.
+      // Another tab made it plaintext; a stale "unchanged" submit doesn't undo that.
       await scopeModule.upsertEnvVar(scope, { name: 'FLIP', value: 'plain', isSecret: false });
-      await expect(
-        scopeModule.upsertEnvVar(scope, { name: 'FLIP', value: '', isSecret: true })
-      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
-      expect(await scopeModule.getEnvVarValue(scope, 'FLIP')).toBe('plain');
+      await scopeModule.upsertEnvVar(scope, { name: 'FLIP', value: '', isSecret: true });
+      expect(
+        await testPrisma.envVar.findFirst({ where: { ...scope, name: 'FLIP' } })
+      ).toMatchObject({ value: 'plain', isSecret: false });
     });
 
     describe('MCP servers', () => {
@@ -136,15 +134,14 @@ describe('settings-scope', () => {
           scope,
           httpServer({ KEY: { value: 'header-secret', isSecret: true } })
         );
-        // A same-named header secret can't be "kept" as an env var.
-        await expect(
-          scopeModule.upsertMcpServer(scope, {
-            name: 'srv',
-            type: 'stdio',
-            command: 'node',
-            env: { KEY: { value: '', isSecret: true } },
-          })
-        ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+        // A same-named header secret isn't "kept" as an env var.
+        await scopeModule.upsertMcpServer(scope, {
+          name: 'srv',
+          type: 'stdio',
+          command: 'node',
+          env: { KEY: { value: '', isSecret: true } },
+        });
+        expect(await storedValues(scope)).toEqual([]);
 
         await scopeModule.upsertMcpServer(scope, {
           name: 'srv',
@@ -173,24 +170,23 @@ describe('settings-scope', () => {
         expect(await storedValues(scope)).toEqual([]);
       });
 
-      it('rejects an empty secret with no stored secret to keep, writing nothing', async () => {
+      it("leaves an empty secret's row alone, whatever another writer made of it", async () => {
         const scope = await makeScope();
-        await expect(
-          scopeModule.upsertMcpServer(scope, httpServer({ A: { value: '', isSecret: true } }))
-        ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
-        expect(await testPrisma.mcpServer.count({ where: scope })).toBe(0);
+        await scopeModule.upsertMcpServer(scope, httpServer({ A: { value: '', isSecret: true } }));
+        expect(await storedValues(scope)).toEqual([]);
 
-        // Another tab flipped it to plaintext: the stale "unchanged" submit must not blank it.
+        // Another tab made it plaintext; a stale "unchanged" submit doesn't undo that.
         const plain = httpServer({ A: { value: 'plain', isSecret: false } });
         await scopeModule.upsertMcpServer(scope, plain);
-        await expect(
-          scopeModule.upsertMcpServer(scope, {
-            ...httpServer({ A: { value: '', isSecret: true } }),
-            url: 'https://elsewhere.example.com',
-          })
-        ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+        await scopeModule.upsertMcpServer(scope, {
+          ...httpServer({ A: { value: '', isSecret: true } }),
+          url: 'https://elsewhere.example.com',
+        });
         const { mcpServers } = await scopeModule.listScopeSettings(scope);
-        expect(mcpServers[0]).toMatchObject({ url: plain.url, headers: plain.headers });
+        expect(mcpServers[0]).toMatchObject({
+          url: 'https://elsewhere.example.com',
+          headers: plain.headers,
+        });
       });
     });
 

@@ -67,28 +67,12 @@ export async function listScopeSettings(scope: SettingsScope) {
 }
 
 /**
- * Create or update an env var. An empty secret value means "unchanged", which is
- * a conditional UPDATE of an existing secret rather than an upsert, so there is
- * no read-then-write; if no stored secret matched, the input is rejected rather
- * than storing an empty secret.
+ * Create or update an env var. An empty secret value means "unchanged", so the
+ * stored row is left as it is — including whatever another writer made of it.
  */
 export async function upsertEnvVar(scope: SettingsScope, envVar: EnvVarInput): Promise<void> {
   requireEncryptionForSecrets(envVar.isSecret);
-
-  if (envVar.isSecret && envVar.value === '') {
-    const { count } = await prisma.envVar.updateMany({
-      where: { ...scope, name: envVar.name, isSecret: true },
-      data: { updatedAt: new Date() },
-    });
-    if (count === 0) {
-      throw new TRPCError({
-        code: 'BAD_REQUEST',
-        message: `Environment variable "${envVar.name}" has no stored secret to keep; provide a value`,
-      });
-    }
-    log.info('Kept env var secret', { ...scope, name: envVar.name });
-    return;
-  }
+  if (envVar.isSecret && envVar.value === '') return;
 
   const value = envVar.isSecret ? encrypt(envVar.value) : envVar.value;
   const now = new Date().toISOString();
@@ -120,9 +104,8 @@ export async function getEnvVarValue(scope: SettingsScope, name: string): Promis
 
 /**
  * Create or update an MCP server. Each env var/header is its own row, so an
- * unchanged secret (empty value + isSecret) is simply not rewritten; like env
- * vars, it's rejected up front if there is no stored secret to keep. No step reads
- * stored state to decide what to write.
+ * unchanged secret (empty value + isSecret) is simply not written, and not deleted
+ * either — whatever another writer made of it stands.
  *
  * Deliberately not a transaction: the better-sqlite3 adapter shares one connection,
  * so other requests' queries would run inside it. Each row is last-writer-wins.
@@ -131,19 +114,6 @@ export async function upsertMcpServer(scope: SettingsScope, server: McpServerInp
   requireEncryptionForSecrets(mcpServerHasSecrets(server));
   const plan = planMcpServerWrite(server);
   const serverKey = { ...scope, name: server.name };
-
-  if (plan.keep.length > 0) {
-    const { count } = await prisma.mcpServerValue.updateMany({
-      where: { mcpServer: serverKey, kind: plan.kind, name: { in: plan.keep }, isSecret: true },
-      data: { updatedAt: new Date() },
-    });
-    if (count !== plan.keep.length) {
-      throw new TRPCError({
-        code: 'BAD_REQUEST',
-        message: `MCP server "${server.name}" has no stored secret to keep for ${plan.keep.map((n) => `"${n}"`).join(', ')}; provide a value`,
-      });
-    }
-  }
 
   // A stdio save deletes the grant outright in syncMcpOAuthConfig.
   if (plan.row.url !== null) await invalidateMcpOAuthOnUrlChange(serverKey, plan.row.url);
