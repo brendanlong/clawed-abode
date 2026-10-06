@@ -595,8 +595,7 @@ describe('MCP OAuth', () => {
     // A save that wrote its row before the one above, but syncs after it.
     await oauth.syncMcpOAuthConfig({
       mcpServerId: id,
-      url: remote.mcpUrl,
-      authType: 'oauth',
+      server: { type: 'http', url: remote.mcpUrl, authType: 'oauth' },
       clientId: 'client-a',
       clientSecret: 'secret-a',
       scope: 'a',
@@ -608,6 +607,27 @@ describe('MCP OAuth', () => {
     expect(row.scope).toBe('b');
   });
 
+  it('drops the OAuth config of a superseded save to the same URL over another transport', async () => {
+    await scope.upsertMcpServer(scope.GLOBAL_SCOPE, {
+      name: 'remote',
+      type: 'sse',
+      url: remote.mcpUrl,
+      authType: 'oauth',
+      oauth: { clientId: 'client-b', clientSecret: '', scope: '' },
+    });
+    const { id } = await testPrisma.mcpServer.findFirstOrThrow({ where: { name: 'remote' } });
+
+    await oauth.syncMcpOAuthConfig({
+      mcpServerId: id,
+      server: { type: 'http', url: remote.mcpUrl, authType: 'oauth' },
+      clientId: 'client-a',
+      clientSecret: '',
+      scope: '',
+    });
+
+    expect((await credential()).clientId).toBe('client-b');
+  });
+
   it('keeps the grant when a stale non-OAuth save syncs after a later OAuth save', async () => {
     await addOAuthServer();
     await connect();
@@ -615,8 +635,7 @@ describe('MCP OAuth', () => {
 
     await oauth.syncMcpOAuthConfig({
       mcpServerId: id,
-      url: remote.mcpUrl,
-      authType: 'headers',
+      server: { type: 'http', url: remote.mcpUrl, authType: 'headers' },
       clientId: '',
       clientSecret: '',
       scope: '',

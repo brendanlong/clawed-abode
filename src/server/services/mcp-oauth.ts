@@ -273,22 +273,23 @@ export async function invalidateMcpOAuthOnUrlChange(
  * keep the grant consistent with it: switching a server away from OAuth (or to a
  * different client) invalidates any token we hold.
  *
- * `url` and `authType` are what this save just wrote to the server row. The sync
- * only applies while the row still holds them, so when two saves interleave the
- * client config can't end up from one and the server row from the other. It is
- * one statement (no read-then-write) so "blank secret means unchanged" and the
+ * `server` is what this save just wrote to the server row (for an http/sse row,
+ * every column that varies). The sync only applies while the row still holds it,
+ * so two interleaved saves end up as if they ran one after the other, never with
+ * the server row from one and the client config from the other. It is one
+ * statement (no read-then-write) so "blank secret means unchanged" and the
  * client-changed check are resolved against the row as it is when written.
  */
 export async function syncMcpOAuthConfig(params: {
   mcpServerId: string;
-  url: string | null;
-  authType: string;
+  server: { type: string; url: string | null; authType: string };
   clientId: string;
   /** Blank means "unchanged" (the field is masked in the UI). */
   clientSecret: string;
   scope: string;
 }): Promise<void> {
-  if (params.authType !== 'oauth' || params.url === null) {
+  const { server } = params;
+  if (server.authType !== 'oauth' || server.url === null) {
     await prisma.mcpOAuth.deleteMany({
       where: { mcpServerId: params.mcpServerId, mcpServer: { authType: { not: 'oauth' } } },
     });
@@ -308,11 +309,11 @@ export async function syncMcpOAuthConfig(params: {
   const clearIfInvalidated = (column: string) =>
     Prisma.sql`${Prisma.raw(`"${column}"`)} = CASE WHEN ${invalidate} THEN NULL ELSE ${Prisma.raw(`"McpOAuth"."${column}"`)} END`;
 
-  await prisma.$executeRaw`
+  const written = await prisma.$executeRaw`
     INSERT INTO "McpOAuth" ("id", "mcpServerId", "clientId", "clientIdIsManual", "clientSecret", "scope", "createdAt", "updatedAt")
     SELECT ${randomUUID()}, "id", ${clientId}, ${clientId !== null ? 1 : 0}, ${clientSecret}, ${params.scope.trim() || null}, ${now}, ${now}
     FROM "McpServer"
-    WHERE "id" = ${params.mcpServerId} AND "url" = ${params.url} AND "authType" = 'oauth'
+    WHERE "id" = ${params.mcpServerId} AND "type" = ${server.type} AND "url" = ${server.url} AND "authType" = 'oauth'
     ON CONFLICT("mcpServerId") DO UPDATE SET
       "clientId" = CASE
         WHEN excluded."clientId" IS NOT NULL THEN excluded."clientId"
@@ -332,6 +333,11 @@ export async function syncMcpOAuthConfig(params: {
         ',\n      '
       )},
       "updatedAt" = excluded."updatedAt"`;
+  if (written === 0) {
+    log.info('Skipped MCP OAuth config sync superseded by a later save', {
+      mcpServerId: params.mcpServerId,
+    });
+  }
 }
 
 export async function disconnectMcpOAuth(mcpServerId: string): Promise<void> {
