@@ -243,12 +243,14 @@ export function decryptMcpServers(mcpServers: DbMcpServer[]): ResolvedMcpServer[
 
 /**
  * Merge secret values from input with existing encrypted values from the DB.
- * When a secret value is empty, it means the user didn't change it, so we
- * preserve the existing encrypted value from the database.
+ * An empty secret value means "unchanged" and keeps the stored ciphertext; if
+ * there is no stored secret to keep, the input is rejected rather than storing
+ * an empty secret.
  */
 function mergeSecretEnv(
   input: Record<string, McpServerEnvValue>,
-  existingJson: string | null
+  existingJson: string | null,
+  itemLabel: string
 ): Record<string, McpServerEnvValue> {
   const existing = existingJson
     ? (JSON.parse(existingJson) as Record<string, McpServerEnvValue>)
@@ -256,8 +258,13 @@ function mergeSecretEnv(
 
   return Object.fromEntries(
     Object.entries(input).map(([key, entry]) => {
-      if (entry.isSecret && !entry.value && existing[key]?.isSecret) {
-        // Unchanged secret: preserve existing encrypted value
+      if (entry.isSecret && !entry.value) {
+        if (!existing[key]?.isSecret) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: `The ${itemLabel} "${key}" has no stored secret to keep; provide a value`,
+          });
+        }
         return [key, existing[key]];
       }
       // New or changed value: encrypt if secret
@@ -277,8 +284,8 @@ interface ExistingMcpServer {
 
 /**
  * Build MCP server data object for database upsert from validated input.
- * When `existing` is provided, unchanged secret values (empty string + isSecret)
- * are preserved from the existing DB record rather than being overwritten.
+ * Unchanged secret values (empty string + isSecret) are preserved from `existing`,
+ * and rejected when it has no secret under that key.
  */
 export function buildMcpServerData(
   server: z.infer<typeof mcpServerSchema>,
@@ -287,10 +294,14 @@ export function buildMcpServerData(
   const isStdio = server.type === 'stdio';
   const env = isStdio ? (server.env ?? {}) : {};
   const processedEnv =
-    Object.keys(env).length > 0 ? mergeSecretEnv(env, existing?.env ?? null) : null;
+    Object.keys(env).length > 0
+      ? mergeSecretEnv(env, existing?.env ?? null, 'environment variable')
+      : null;
   const headers = !isStdio ? (server.headers ?? {}) : {};
   const processedHeaders =
-    Object.keys(headers).length > 0 ? mergeSecretEnv(headers, existing?.headers ?? null) : null;
+    Object.keys(headers).length > 0
+      ? mergeSecretEnv(headers, existing?.headers ?? null, 'header')
+      : null;
 
   return {
     type: server.type,

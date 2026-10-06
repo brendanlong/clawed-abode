@@ -164,23 +164,15 @@ describe('settings-helpers', () => {
       expect(data).toMatchObject({ type: 'stdio', url: null, headers: null, args: null });
     });
 
-    it('re-encrypts when the existing value was not a secret, and clears stdio fields for http', () => {
-      const data = buildMcpServerData(
-        {
-          name: 'h',
-          type: 'http',
-          url: 'https://x',
-          authType: 'headers',
-          headers: { A: { value: '', isSecret: true } },
-        },
-        { env: null, headers: JSON.stringify({ A: { value: 'was-plain', isSecret: false } }) }
-      );
-      const headers = JSON.parse(data.headers!) as Record<
-        string,
-        { value: string; isSecret: boolean }
-      >;
-      expect(headers.A.isSecret).toBe(true);
-      expect(headers.A.value).not.toBe('was-plain');
+    it('clears stdio fields for http', () => {
+      const data = buildMcpServerData({
+        name: 'h',
+        type: 'http',
+        url: 'https://x',
+        authType: 'headers',
+        headers: { A: { value: 'v', isSecret: false } },
+      });
+      expect(JSON.parse(data.headers!)).toEqual({ A: { value: 'v', isSecret: false } });
       expect(data).toMatchObject({
         type: 'http',
         command: '',
@@ -188,6 +180,28 @@ describe('settings-helpers', () => {
         env: null,
         url: 'https://x',
       });
+    });
+
+    it.each([
+      [
+        'the stored value is plaintext',
+        JSON.stringify({ A: { value: 'was-plain', isSecret: false } }),
+      ],
+      ['there is no stored value', JSON.stringify({ B: { value: encrypt('b'), isSecret: true } })],
+      ['there is no existing row', null],
+    ])('rejects an empty secret when %s', (_label, headers) => {
+      expect(() =>
+        buildMcpServerData(
+          {
+            name: 'h',
+            type: 'http',
+            url: 'https://x',
+            authType: 'headers',
+            headers: { A: { value: '', isSecret: true } },
+          },
+          headers === null ? null : { env: null, headers }
+        )
+      ).toThrow(expect.objectContaining({ code: 'BAD_REQUEST' }));
     });
   });
 
