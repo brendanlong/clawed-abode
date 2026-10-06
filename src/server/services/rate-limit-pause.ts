@@ -208,12 +208,14 @@ async function pauseSession(
 /**
  * Mark a session to be nudged to continue once the window resets. Best-effort.
  * Set even when the interrupt then fails: the nudge is phrased so an agent that
- * had finished just says so.
+ * had finished just says so. Only while the session is running, in the same
+ * statement: the header Stop clears the flag as it stops, and a pause write
+ * landing after it must not re-arm the nudge for the next Start.
  */
 async function flagForResume(sessionId: string): Promise<void> {
   try {
     await prisma.session.updateMany({
-      where: { id: sessionId },
+      where: { id: sessionId, status: 'running' },
       data: { resumeAfterRateLimit: true },
     });
   } catch (err) {
