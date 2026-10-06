@@ -1,19 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
-import {
-  discardUnreadPrompts,
-  effectiveRunning,
-  handleCommandLifecycle,
-  pendingMessageIds,
-  recallUnstartedCommands,
-  retireInFlightCommands,
-  syncRunning,
-} from './in-flight-commands';
-import { createSessionState } from './session-state';
+import type { InFlightCommand } from '@/lib/live-turn';
+import { cancelUnstartedCommands, discardUnreadPrompts } from './in-flight-commands';
 
-const mockSse = vi.hoisted(() => ({ emitClaudeRunning: vi.fn(), emitPendingMessages: vi.fn() }));
-vi.mock('./events', () => ({ sseEvents: mockSse }));
 const mockResolveUploadPaths = vi.hoisted(() =>
   vi.fn(async (sessionId: string, names: string[]) =>
     names.map((n) => `/ws/${sessionId}/uploads/${n}`)
@@ -23,117 +12,57 @@ vi.mock('./uploads', () => ({ resolveUploadPaths: mockResolveUploadPaths }));
 const mockRemoveMessages = vi.hoisted(() => vi.fn(async () => {}));
 vi.mock('./message-store', () => ({ removeMessages: mockRemoveMessages }));
 
-const lifecycle = (command_uuid: string, state: string) =>
-  ({ type: 'command_lifecycle', command_uuid, state }) as unknown as SDKMessage;
-const messageStart = (parent: string | null = null) =>
-  ({
-    type: 'stream_event',
-    parent_tool_use_id: parent,
-    event: { type: 'message_start' },
-  }) as unknown as SDKMessage;
-const result = () => ({ type: 'result' }) as unknown as SDKMessage;
-
-function stateWith(commands: Record<string, { started?: boolean }>) {
-  const state = createSessionState();
-  for (const [uuid, c] of Object.entries(commands)) {
-    state.inFlightCommands.set(uuid, {
-      messageId: `m-${uuid}`,
-      text: uuid,
-      attachments: [],
-      content: uuid,
-      started: c.started ?? false,
-      resultsSeen: 0,
-    });
-  }
-  return state;
+function inFlight(commands: Record<string, { started?: boolean; attachments?: string[] }>) {
+  return new Map<string, InFlightCommand>(
+    Object.entries(commands).map(([uuid, c]) => [
+      uuid,
+      {
+        messageId: `m-${uuid}`,
+        text: uuid,
+        attachments: c.attachments ?? [],
+        content: uuid,
+        started: c.started ?? false,
+        resultsSeen: 0,
+      },
+    ])
+  );
 }
+
+const queryThat = (cancel: (uuid: string) => Promise<boolean>) =>
+  ({ cancelAsyncMessage: vi.fn(cancel) }) as unknown as Query & {
+    cancelAsyncMessage: ReturnType<typeof vi.fn>;
+  };
 
 beforeEach(() => vi.clearAllMocks());
 
-describe('running derivation', () => {
-  it('is on for a live turn or an undelivered push, and emits only on change', () => {
-    const state = stateWith({ a: {} });
-    expect(effectiveRunning(state)).toBe(true);
-    expect(syncRunning('s', state)).toBe(true);
-    expect(syncRunning('s', state)).toBe(false);
-    state.inFlightCommands.clear();
-    expect(effectiveRunning(state)).toBe(false);
-    expect(syncRunning('s', state)).toBe(true);
-    expect(mockSse.emitClaudeRunning.mock.calls).toEqual([
-      ['s', true],
-      ['s', false],
+describe('cancelUnstartedCommands', () => {
+  it('asks the CLI to drop only unread commands, returning those it dropped in push order', async () => {
+    const query = queryThat(async (uuid) => uuid !== 'dequeued');
+    const dropped = await cancelUnstartedCommands(
+      's',
+      inFlight({ a: {}, read: { started: true }, dequeued: {}, b: {} }),
+      query
+    );
+    expect(dropped.map(([uuid]) => uuid)).toEqual(['a', 'b']);
+    expect(query.cancelAsyncMessage.mock.calls.map(([uuid]) => uuid)).toEqual([
+      'a',
+      'dequeued',
+      'b',
     ]);
   });
-});
 
-describe('handleCommandLifecycle', () => {
-  it('ignores non-lifecycle messages and records that the CLI reports lifecycles', () => {
-    const state = stateWith({ a: {} });
-    expect(handleCommandLifecycle('s', state, { type: 'assistant' })).toBe(false);
-    expect(state.commandLifecycleSeen).toBe(false);
-    expect(handleCommandLifecycle('s', state, lifecycle('a', 'queued'))).toBe(true);
-    expect(state.commandLifecycleSeen).toBe(true);
-    expect(pendingMessageIds(state)).toEqual(['m-a']);
-  });
-
-  it('"started" clears the pending marker but keeps the entry; a terminal state retires it', () => {
-    const state = stateWith({ a: {}, b: {} });
-    handleCommandLifecycle('s', state, lifecycle('a', 'started'));
-    expect(pendingMessageIds(state)).toEqual(['m-b']);
-    expect(state.inFlightCommands.has('a')).toBe(true);
-    handleCommandLifecycle('s', state, lifecycle('b', 'completed'));
-    expect(state.inFlightCommands.has('b')).toBe(false);
-    expect(mockSse.emitPendingMessages).toHaveBeenLastCalledWith('s', []);
+  it('treats a failed cancel as not dropped', async () => {
+    const query = queryThat(async () => {
+      throw new Error('control channel closed');
+    });
+    expect(await cancelUnstartedCommands('s', inFlight({ a: {} }), query)).toEqual([]);
   });
 });
 
-describe('retireInFlightCommands', () => {
-  it('a top-level message_start retires entries the agent has read, not unread ones', () => {
-    const state = stateWith({ read: { started: true }, unread: {} });
-    state.commandLifecycleSeen = true;
-    retireInFlightCommands('s', state, messageStart('subagent-tool-use'));
-    expect(state.inFlightCommands.size).toBe(2);
-    retireInFlightCommands('s', state, messageStart());
-    expect([...state.inFlightCommands.keys()]).toEqual(['unread']);
-  });
-
-  it('with lifecycle reports, an entry may survive one result boundary and no more', () => {
-    const state = stateWith({ a: {} });
-    state.commandLifecycleSeen = true;
-    retireInFlightCommands('s', state, result());
-    expect(state.inFlightCommands.size).toBe(1);
-    retireInFlightCommands('s', state, result());
-    expect(state.inFlightCommands.size).toBe(0);
-  });
-
-  it('without any lifecycle reports, the first boundary retires everything', () => {
-    const state = stateWith({ a: {}, b: {} });
-    retireInFlightCommands('s', state, result());
-    expect(state.inFlightCommands.size).toBe(0);
-    const state2 = stateWith({ a: {} });
-    retireInFlightCommands('s', state2, messageStart());
-    expect(state2.inFlightCommands.size).toBe(0);
-  });
-});
-
-describe('recallUnstartedCommands + discardUnreadPrompts', () => {
-  const queryThat = (cancel: (uuid: string) => Promise<boolean>) =>
-    ({ cancelAsyncMessage: cancel }) as unknown as Query;
-
-  it('recalls unread commands the CLI still has queued; discarding deletes their bubbles and returns text + attachments', async () => {
-    const state = stateWith({ unread: {}, read: { started: true } });
-    state.inFlightCommands.get('unread')!.attachments = ['0123abcd-notes.txt'];
-
-    const recalled = await recallUnstartedCommands(
-      's',
-      state,
-      queryThat(async () => true)
-    );
-    expect(recalled.map((c) => c.messageId)).toEqual(['m-unread']);
-    expect([...state.inFlightCommands.keys()]).toEqual(['read']);
-    expect(mockRemoveMessages).not.toHaveBeenCalled();
-
-    expect(await discardUnreadPrompts('s', recalled)).toEqual([
+describe('discardUnreadPrompts', () => {
+  it('deletes the bubbles and returns text + attachments for the composer', async () => {
+    const [[, command]] = inFlight({ unread: { attachments: ['0123abcd-notes.txt'] } });
+    expect(await discardUnreadPrompts('s', [command])).toEqual([
       {
         text: 'unread',
         attachments: [
@@ -146,18 +75,6 @@ describe('recallUnstartedCommands + discardUnreadPrompts', () => {
       },
     ]);
     expect(mockRemoveMessages).toHaveBeenCalledWith('s', ['m-unread']);
-  });
-
-  it('leaves a command alone when the CLI reports it already dequeued', async () => {
-    const state = stateWith({ a: {} });
-    expect(
-      await recallUnstartedCommands(
-        's',
-        state,
-        queryThat(async () => false)
-      )
-    ).toEqual([]);
-    expect(state.inFlightCommands.size).toBe(1);
   });
 
   it('discarding nothing touches nothing', async () => {

@@ -18,7 +18,7 @@ import type { ParsedMessage } from './message-store';
  *   the agent read it — messages are otherwise immutable once written.
  * - `pending`: ids of persisted user messages the SDK has accepted but not yet
  *   handed to the model. The full set every time (not a delta), so a reconnecting
- *   client can't drift. See `inFlightCommands` in session-state / in-flight-commands.
+ *   client can't drift. See `inFlight` in src/lib/live-turn.ts.
  * - `queued`: ids of persisted user messages held back by a rate-limit pause,
  *   likewise the full set. Distinct from `pending`: those are with the SDK, these
  *   have never left the server (see doc/rate-limit-pause.md).

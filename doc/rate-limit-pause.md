@@ -84,7 +84,7 @@ its own turn. Background tasks are not stopped; one finishing can start a new
 turn, which the next reading's recompute interrupts in turn.
 
 Recalling a push that the CLI never read has to undo the optimistic `turnActive`
-that push set (`clearOptimisticTurn`), or the composer reads "working" for the
+that push set (the `recalled` event in `src/lib/live-turn.ts`), or the composer reads "working" for the
 whole pause with no message coming that could ever clear it. The same flag keeps
 that session out of the resume-nudge snapshot: nothing started, so there is
 nothing to continue.

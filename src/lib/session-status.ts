@@ -111,7 +111,13 @@ function isTopLevel(message: SDKMessage): boolean {
   return parent === null || parent === undefined;
 }
 
-function retryEquals(a: RetryState | null, b: RetryState | null): boolean {
+/** Whether a message is the main agent's `message_start` — the moment a turn visibly begins. */
+export function isTopLevelMessageStart(message: SDKMessage): boolean {
+  if (message.type !== 'stream_event' || !isTopLevel(message)) return false;
+  return message.event?.type === 'message_start';
+}
+
+export function retryEquals(a: RetryState | null, b: RetryState | null): boolean {
   if (a === b) return true;
   if (!a || !b) return false;
   return (
