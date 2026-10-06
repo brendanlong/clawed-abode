@@ -240,6 +240,34 @@ export function assertNeverFallback<T>(_unhandled: never, fallback: T): T {
 }
 
 /**
+ * Origin of a user message the CLI injected on its own: another session's
+ * SendMessage (`peer`) or an MCP channel. The CLI only reports these as replays
+ * (`--replay-user-messages`), which also echo every prompt we sent; those are
+ * already persisted when sent.
+ */
+const InjectedOriginSchema = z.object({
+  kind: z.enum(['peer', 'channel']),
+  /** Peer display name, e.g. the sender's agent name. */
+  name: z.string().optional(),
+  /** Channel MCP server name. */
+  server: z.string().optional(),
+  /** Message text with the CLI's envelope stripped. */
+  body: z.string().optional(),
+});
+
+export interface InjectedMessageOrigin {
+  sender: string;
+  body: string | null;
+}
+
+export function parseInjectedOrigin(origin: unknown): InjectedMessageOrigin | null {
+  const parsed = InjectedOriginSchema.safeParse(origin);
+  if (!parsed.success) return null;
+  const { name, server, body } = parsed.data;
+  return { sender: name ?? server ?? 'another session', body: body ?? null };
+}
+
+/**
  * Decide how to handle a message yielded by the Claude Agent SDK.
  *
  * Driven by the SDK's `SDKMessage` discriminated union: the `switch` is
@@ -258,7 +286,9 @@ export function classifyMessage(message: SDKMessage): MessageHandling {
     case 'assistant':
       return { kind: 'persist', dbType: 'assistant' };
     case 'user':
-      return { kind: 'persist', dbType: 'user' };
+      return 'isReplay' in message && message.isReplay && !parseInjectedOrigin(message.origin)
+        ? { kind: 'skip' }
+        : { kind: 'persist', dbType: 'user' };
     case 'result':
       return { kind: 'persist', dbType: 'result' };
     case 'stream_event':

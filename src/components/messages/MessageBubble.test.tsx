@@ -31,6 +31,44 @@ describe('MessageBubble', () => {
     });
   });
 
+  describe('messages from other sessions', () => {
+    const envelope =
+      'Another Claude session sent a message:\n<cross-session-message from="uds:/x.sock">\nraw\n</cross-session-message>';
+
+    it('shows the sender and the stripped body, not the envelope', () => {
+      const message = {
+        type: 'user',
+        content: {
+          type: 'user',
+          message: { role: 'user', content: envelope },
+          origin: { kind: 'peer', from: 'uds:/x.sock', name: 'math-opus-1a2b', body: 'Try n=7' },
+        } as MessageContent,
+      };
+
+      render(<MessageBubble message={message} />);
+
+      expect(screen.getByText('math-opus-1a2b')).toBeInTheDocument();
+      expect(screen.getByText('Try n=7')).toBeInTheDocument();
+      expect(screen.queryByText(/cross-session-message/)).not.toBeInTheDocument();
+    });
+
+    it('falls back to the message text when the origin has no body', () => {
+      const message = {
+        type: 'user',
+        content: {
+          type: 'user',
+          message: { role: 'user', content: 'channel text' },
+          origin: { kind: 'channel', server: 'slack' },
+        } as MessageContent,
+      };
+
+      render(<MessageBubble message={message} />);
+
+      expect(screen.getByText('slack')).toBeInTheDocument();
+      expect(screen.getByText('channel text')).toBeInTheDocument();
+    });
+  });
+
   describe('assistant messages', () => {
     it('renders text content from assistant message', () => {
       const message = {

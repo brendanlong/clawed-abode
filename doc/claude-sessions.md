@@ -68,6 +68,7 @@ Client side, `WorkCompleteNotifier` (mounted once in `Providers`, fed by the glo
 Sessions message each other with the CLI's built-in `ListAgents` / `SendMessage` tools, which go over a per-process local socket; nothing in the app relays them. A message to an idle session starts a turn there on its own, like a background-task notification.
 
 - **Addressing**: the CLI registers under `CLAUDE_CODE_SESSION_NAME`, set from `Session.agentName`. Unset, the CLI derives a name with a random suffix that changes on every process start, so agents lost each other's address across Stop/Start and server restarts. The name is generated once ([`agent-name.ts`](../src/server/services/agent-name.ts)): Haiku picks 2–3 words from the title, repo, and first prompt (started at creation so it overlaps the clone), plus a session-id suffix because sibling sessions given the same prompt would otherwise collide. It falls back to the repo name, or a bare id prefix, on any failure. First write wins, so a name never changes once a query has used it.
+- **Transcript**: the CLI reports injected messages only as replays (`--replay-user-messages`), which also echo every prompt we sent. `classifyMessage` persists only replays with a `peer`/`channel` origin; ours are already persisted at send time. They render as "From _sender_", never as the user's own prompt.
 
 ## Process Reaping (cgroup)
 

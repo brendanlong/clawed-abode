@@ -104,6 +104,8 @@ export async function buildSdkOptions(params: {
       snapshot: false,
     },
     tools: { type: 'preset', preset: 'claude_code' },
+    // Echo injected user messages (from other sessions) so they can be persisted.
+    extraArgs: { 'replay-user-messages': null },
     canUseTool: async (
       toolName: string,
       input: Record<string, unknown>,

@@ -8,6 +8,7 @@ import { ToolResultDisplay } from './ToolResultDisplay';
 import { ResultDisplay } from './ResultDisplay';
 import { CompactBoundaryDisplay } from './CompactBoundaryDisplay';
 import { RefusalFallbackDisplay } from './RefusalFallbackDisplay';
+import { InjectedMessageDisplay } from './InjectedMessageDisplay';
 import { MainMessageBubble } from './MainMessageBubble';
 import { MessageTimestamp } from './MessageTimestamp';
 import {
@@ -92,6 +93,14 @@ export function MessageBubble({
     return (
       <div className="w-full max-w-[85%]">
         <ToolResultDisplay results={toolResultBlocks} />
+      </div>
+    );
+  }
+
+  if (category === 'injectedMessage') {
+    return (
+      <div className="w-full max-w-[85%]">
+        <InjectedMessageDisplay content={content} createdAt={message.createdAt} />
       </div>
     );
   }

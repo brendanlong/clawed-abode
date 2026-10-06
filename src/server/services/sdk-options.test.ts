@@ -107,12 +107,15 @@ describe('buildSdkOptions', () => {
     const withMcp = (
       await build(settings({ mcpServers: [{ name: 's', type: 'stdio', command: 'node' }] }))
     ).options;
-    expect(withMcp.extraArgs).toEqual({ 'mcp-config': '/ws/sid/mcp-config.json' });
+    expect(withMcp.extraArgs).toEqual({
+      'replay-user-messages': null,
+      'mcp-config': '/ws/sid/mcp-config.json',
+    });
     expect(withMcp.mcpServers).toBeUndefined();
     expect(mockRemoveMcp).not.toHaveBeenCalled();
 
     const without = (await build(settings())).options;
-    expect(without.extraArgs).toBeUndefined();
+    expect(without.extraArgs).toEqual({ 'replay-user-messages': null });
     expect(mockRemoveMcp).toHaveBeenCalledWith('sid');
   });
 
@@ -126,9 +129,15 @@ describe('buildSdkOptions', () => {
     );
     expect(options.model).toBe('opus');
     expect(options.extraArgs).toEqual({
+      'replay-user-messages': null,
       'mcp-config': '/ws/sid/mcp-config.json',
       settings: JSON.stringify({ advisorModel: 'claude-x' }),
     });
+  });
+
+  it('echoes injected user messages so messages from other sessions can be persisted', async () => {
+    const { options } = await build(settings());
+    expect(options.extraArgs).toMatchObject({ 'replay-user-messages': null });
   });
 
   it('registers the agent name for cross-session messaging', async () => {

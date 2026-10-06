@@ -85,6 +85,8 @@ export interface MessageContent {
   parent_tool_use_id?: string | null;
   // Set on transient streaming snapshots of the in-progress assistant turn.
   partial?: boolean;
+  // Set on user messages the CLI injected (another session's SendMessage, a channel); see parseInjectedOrigin.
+  origin?: unknown;
   // model_refusal_fallback fields
   original_model?: string;
   fallback_model?: string;

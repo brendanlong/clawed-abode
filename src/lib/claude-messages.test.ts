@@ -8,6 +8,7 @@ import {
   parseRetryState,
   formatRetryReason,
   initSessionId,
+  parseInjectedOrigin,
 } from './claude-messages';
 
 describe('claude-messages', () => {
@@ -19,6 +20,18 @@ describe('claude-messages', () => {
       expect(msg({ type: 'assistant' })).toEqual({ kind: 'persist', dbType: 'assistant' });
       expect(msg({ type: 'user' })).toEqual({ kind: 'persist', dbType: 'user' });
       expect(msg({ type: 'result' })).toEqual({ kind: 'persist', dbType: 'result' });
+    });
+
+    it('persists replayed messages from other sessions and channels, but not echoes of our prompts', () => {
+      const replay = (origin?: Record<string, unknown>) =>
+        msg({ type: 'user', isReplay: true, ...(origin && { origin }) });
+      expect(replay({ kind: 'peer', from: 'uds:/x.sock' })).toEqual({
+        kind: 'persist',
+        dbType: 'user',
+      });
+      expect(replay({ kind: 'channel', server: 's' })).toEqual({ kind: 'persist', dbType: 'user' });
+      expect(replay()).toEqual({ kind: 'skip' });
+      expect(replay({ kind: 'human' })).toEqual({ kind: 'skip' });
     });
 
     it('persists non-system progress-ish types as system', () => {
@@ -256,5 +269,37 @@ describe('getParentToolUseId', () => {
     expect(getParentToolUseId({})).toBeNull();
     expect(getParentToolUseId(undefined)).toBeNull();
     expect(getParentToolUseId('string')).toBeNull();
+  });
+
+  describe('parseInjectedOrigin', () => {
+    it('names a peer by its display name and keeps the stripped body', () => {
+      expect(
+        parseInjectedOrigin({
+          kind: 'peer',
+          from: 'uds:/x.sock',
+          name: 'math-opus-1a2b',
+          body: 'hi',
+        })
+      ).toEqual({ sender: 'math-opus-1a2b', body: 'hi' });
+    });
+
+    it('names a channel by its server', () => {
+      expect(parseInjectedOrigin({ kind: 'channel', server: 'slack' })).toEqual({
+        sender: 'slack',
+        body: null,
+      });
+    });
+
+    it('falls back to a generic sender', () => {
+      expect(parseInjectedOrigin({ kind: 'peer', from: 'uds:/x.sock' })?.sender).toBe(
+        'another session'
+      );
+    });
+
+    it('rejects prompts we sent and anything malformed', () => {
+      expect(parseInjectedOrigin(undefined)).toBeNull();
+      expect(parseInjectedOrigin({ kind: 'human' })).toBeNull();
+      expect(parseInjectedOrigin({ kind: 'peer', name: 5 })).toBeNull();
+    });
   });
 });

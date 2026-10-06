@@ -6,7 +6,7 @@ import type {
   ToolResultMap,
 } from './types';
 import { formatAsJson, buildToolMessages } from './types';
-import { getParentToolUseId } from '@/lib/claude-messages';
+import { getParentToolUseId, parseInjectedOrigin } from '@/lib/claude-messages';
 import { isPlanFile, reconstructPlansByToolUseId, type PlanEvent } from './plan-utils';
 
 /**
@@ -22,6 +22,7 @@ export type MessageCategory =
   | 'assistant'
   | 'user'
   | 'userInterrupt'
+  | 'injectedMessage'
   | 'toolResult'
   | 'systemError'
   | 'systemCompactBoundary'
@@ -328,6 +329,8 @@ export function isRecognizedMessage(type: string, content: MessageContent): Reco
   if (type === 'user') {
     if (isToolResultMessage(content)) return { recognized: true, category: 'toolResult' };
     if (content.subtype === 'interrupt') return { recognized: true, category: 'userInterrupt' };
+    if (parseInjectedOrigin(content.origin))
+      return { recognized: true, category: 'injectedMessage' };
     // Prompts carry text blocks, a string message.content (e.g. /context command
     // output), or a simple content string.
     const inner = content.message?.content;
