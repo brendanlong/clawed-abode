@@ -1137,6 +1137,26 @@ describe('buildTranscriptLayout', () => {
     expect(rowKeys(layout)).toEqual(['m1', 'm2', 'm3', 'box:task-1@3']);
   });
 
+  it('orders several relocated and pinned boxes', () => {
+    const spawn = (seq: number, id: string) => [
+      assistant(seq, [toolUse(id, 'Agent', { description: id })]),
+      system(seq + 1, 'task_started', id),
+    ];
+    const messages = [
+      ...spawn(1, 'a'),
+      ...spawn(3, 'b'),
+      ...spawn(5, 'c'),
+      ...spawn(7, 'd'),
+      assistant(9, [text('main work')]),
+      // b finishes before a; c and d are still running.
+      system(10, 'task_notification', 'b'),
+      system(11, 'task_notification', 'a'),
+    ];
+    const layout = buildTranscriptLayout(messages, true);
+    expect(rowKeys(layout)).toEqual(['m1', 'm3', 'm5', 'm7', 'm9', 'box:b@10', 'box:a@11']);
+    expect(layout.pinnedSubagents.map((p) => p.toolUseId)).toEqual(['c', 'd']);
+  });
+
   it('keeps a subagent inline when nothing interleaves', () => {
     const layout = buildTranscriptLayout(
       [

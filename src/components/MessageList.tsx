@@ -46,7 +46,7 @@ interface MessageListProps {
   /**
    * Whether the session's query is live. Gates pinning a still-running subagent's
    * box to the bottom (a subagent whose result was lost to a dead query would
-   * otherwise pin forever). See {@link computeSubagentPlacements}.
+   * otherwise pin forever). See `computeSubagentPlacements` in messageHelpers.
    */
   isSessionRunning?: boolean;
 }
