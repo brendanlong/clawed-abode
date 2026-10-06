@@ -7,12 +7,12 @@
  *   - `turnActive`     — the MAIN agent is mid-turn generating. Gates the composer.
  *   - background tasks — `run_in_background` subagents / Monitor / backgrounded
  *                        Bash that outlive a turn. An indicator only; NEVER gates
- *                        input (the whole point of the refactor).
+ *                        input.
  *
  * Plus the existing ephemeral API-retry status.
  *
- * This module is a pure reducer so it is exhaustively unit-testable; the runner's
- * loop applies the returned state and emits the changed channels over SSE.
+ * A pure reducer, composed into the live-turn reducer (src/lib/live-turn.ts),
+ * which also tracks delivery and interrupts.
  */
 
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
@@ -52,11 +52,14 @@ export const INITIAL_LIVE_STATUS: LiveStatus = {
   subagentTypes: new Map(),
 };
 
-/** Which status axes changed in a {@link reduceSessionMessage} step. */
+/**
+ * What a {@link reduceSessionMessage} step changed beyond the status itself. Only
+ * the turn axis: the other channels are diffed from the client-visible view (see
+ * `diffLiveView` in live-turn.ts), which relies on the background set being
+ * replaced only when it changes.
+ */
 interface LiveStatusChange {
   turnActive: boolean;
-  background: boolean;
-  retry: boolean;
 }
 
 export interface ReduceResult {
@@ -111,7 +114,13 @@ function isTopLevel(message: SDKMessage): boolean {
   return parent === null || parent === undefined;
 }
 
-function retryEquals(a: RetryState | null, b: RetryState | null): boolean {
+/** Whether a message is the main agent's `message_start` — the moment a turn visibly begins. */
+export function isTopLevelMessageStart(message: SDKMessage): boolean {
+  if (message.type !== 'stream_event' || !isTopLevel(message)) return false;
+  return message.event?.type === 'message_start';
+}
+
+export function retryEquals(a: RetryState | null, b: RetryState | null): boolean {
   if (a === b) return true;
   if (!a || !b) return false;
   return (
@@ -171,7 +180,7 @@ function parseBackgroundTaskSet(
 
 /**
  * Fold one SDK message into the live status. Pure: returns the next status and
- * which axes changed (so the caller emits only the channels that moved).
+ * whether the turn axis moved.
  *
  * - `turnActive`: whether the MAIN agent is actively generating. Driven by the
  *   message STREAM, not the SDK turn `result`: a top-level `message_start` sets it
@@ -255,8 +264,6 @@ export function reduceSessionMessage(prev: LiveStatus, message: SDKMessage): Red
     status: { turnActive, backgroundTasks, retry, subagentTypes },
     changed: {
       turnActive: turnActive !== prev.turnActive,
-      background: backgroundTasks !== prev.backgroundTasks,
-      retry: !retryEquals(retry, prev.retry),
     },
   };
 }

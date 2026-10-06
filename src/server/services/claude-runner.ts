@@ -15,9 +15,24 @@ import {
 } from '@anthropic-ai/claude-agent-sdk';
 import { randomUUID as uuid } from 'node:crypto';
 import { prisma } from '@/lib/prisma';
-import { classifyMessage, initSessionId, type RetryState } from '@/lib/claude-messages';
+import {
+  classifyMessage,
+  initSessionId,
+  parseCommandLifecycle,
+  type RetryState,
+} from '@/lib/claude-messages';
+import {
+  diffLiveView,
+  hasRealTurn,
+  isRunning,
+  liveView,
+  reduceLiveTurn,
+  type InFlightCommand,
+  type LiveEvent,
+  type LiveOutcome,
+} from '@/lib/live-turn';
 import { parseRateLimitEvent } from '@/lib/rate-limit';
-import { reduceSessionMessage, backgroundActive, type BackgroundTask } from '@/lib/session-status';
+import { backgroundActive, type BackgroundTask } from '@/lib/session-status';
 import { createPushable } from '@/lib/pushable';
 import type { ToolResponse } from '@/lib/tool-response';
 import type { CancelledPrompt } from '@/lib/cancelled-prompt';
@@ -34,12 +49,7 @@ import {
 } from './settings-merger';
 import { StreamAccumulator } from './stream-accumulator';
 import { stopSessionScope } from './session-cgroup';
-import {
-  createSessionState,
-  type InFlightCommand,
-  type LiveQuery,
-  type SessionState,
-} from './session-state';
+import { createSessionState, type LiveQuery, type SessionState } from './session-state';
 import {
   createErrorMessage,
   bumpSessionActivity,
@@ -48,16 +58,7 @@ import {
   prepareUserMessage,
   removeMessages,
 } from './message-store';
-import {
-  discardUnreadPrompts,
-  effectiveRunning,
-  handleCommandLifecycle,
-  isTopLevelMessageStart,
-  pendingMessageIds,
-  recallUnstartedCommands,
-  retireInFlightCommands,
-  syncRunning,
-} from './in-flight-commands';
+import { cancelUnstartedCommands, discardUnreadPrompts } from './in-flight-commands';
 import { emitQueuedPrompts, enqueuePrompts, type PromptPayload } from './prompt-queue';
 import { recordRateLimitReadings, resolveSessionHold } from './rate-limit-state';
 import { currentHold, withdrawQueuedWork, type PauseRunner } from './rate-limit-pause';
@@ -152,38 +153,30 @@ async function trackClaudeSessionId(
 }
 
 /**
- * Force all live status off and emit only the channels that changed. Used by the
- * loop `finally`, `stopSession`, and shutdown so a torn-down session never leaves
- * a stale "running"/"background"/"retrying" indicator.
+ * The only way live turn state changes: fold the event, then emit exactly the SSE
+ * channels whose client-visible projection moved (plus "Claude finished"). Since
+ * nothing else touches `state.turn`, the previous view is what clients last saw.
  */
-function clearLiveStatus(sessionId: string, state: SessionState): void {
-  state.interruptRequested = false;
-  state.optimisticTurnActive = false;
-  // Deliveries in flight die with the query. Their bubbles stay (they may well
-  // have been read), but the "not delivered yet" marker must clear.
-  if (state.inFlightCommands.size > 0) {
-    state.inFlightCommands.clear();
-    sseEvents.emitPendingMessages(sessionId, []);
+function dispatch(sessionId: string, state: SessionState, event: LiveEvent): LiveOutcome {
+  const before = liveView(state.turn);
+  const outcome = reduceLiveTurn(state.turn, event);
+  state.turn = outcome.state;
+
+  const changes = diffLiveView(before, liveView(state.turn));
+  if (changes.pendingMessageIds) {
+    sseEvents.emitPendingMessages(sessionId, changes.pendingMessageIds);
   }
-  if (state.status.turnActive) {
-    state.status = { ...state.status, turnActive: false };
-  }
-  syncRunning(sessionId, state);
-  // The SDK's background-task level is per CLI process and sends nothing at
-  // startup, so the set must start empty for the next process.
-  const hadBackgroundTasks = state.status.backgroundTasks.size > 0;
-  state.status = { ...state.status, backgroundTasks: new Map(), subagentTypes: new Map() };
-  if (hadBackgroundTasks) sseEvents.emitBackgroundTasks(sessionId, []);
-  if (state.status.retry) {
-    state.status = { ...state.status, retry: null };
-    sseEvents.emitClaudeRetry(sessionId, null);
-  }
+  if (changes.running !== undefined) sseEvents.emitClaudeRunning(sessionId, changes.running);
+  if (outcome.finished) sseEvents.emitClaudeFinished(sessionId);
+  if (changes.backgroundTasks) sseEvents.emitBackgroundTasks(sessionId, changes.backgroundTasks);
+  if (changes.retry !== undefined) sseEvents.emitClaudeRetry(sessionId, changes.retry);
+  return outcome;
 }
 
 /**
  * Detach a session's dead (or closing) query: reject its parked interactive tool
  * call and stop its systemd scope, reaping anything the CLI left running. Call
- * after {@link clearLiveStatus}. Resolves once the scope's processes are dead.
+ * after dispatching `torn_down`. Resolves once the scope's processes are dead.
  */
 function releaseQuery(sessionId: string, state: SessionState, reason: string): Promise<void> {
   const live = state.live;
@@ -195,51 +188,6 @@ function releaseQuery(sessionId: string, state: SessionState, reason: string): P
   const stopped = stopSessionScope(live.sessionScope);
   void persistSessionScope(sessionId, null);
   return stopped;
-}
-
-/**
- * Fold one message into the session's live status and emit changed channels.
- * Runs for EVERY message (including ones skipped for persistence, since
- * `api_retry`/`task_*` drive status). Fires the branch/PR refresh at a main-turn end.
- */
-function applyStatus(
-  sessionId: string,
-  state: SessionState,
-  live: LiveQuery,
-  message: SDKMessage
-): void {
-  const { status, changed } = reduceSessionMessage(state.status, message);
-  const turnEnded = changed.turnActive && !status.turnActive;
-
-  // An interrupt's turn-end is not Claude finishing — the user stopped it.
-  const interrupted = turnEnded && state.interruptRequested;
-  if (turnEnded) state.interruptRequested = false;
-
-  state.status = status;
-  // Any real turn boundary supersedes the optimistic flag: from here on the
-  // stream owns turnActive. `message_start` needs its own clause — it lands while
-  // the flag already reads true, so it moves no axis for `changed` to report.
-  if (changed.turnActive || isTopLevelMessageStart(message) || message.type === 'result') {
-    state.optimisticTurnActive = false;
-  }
-
-  retireInFlightCommands(sessionId, state, message);
-  syncRunning(sessionId, state);
-
-  // "Claude finished" = a natural main-turn end that leaves the session fully
-  // idle. Why turn-end rather than background-drain, and why not the bare
-  // running:false edge: doc/claude-sessions.md, "Claude Finished" Notification.
-  if (turnEnded && !interrupted && !backgroundActive(status) && state.inFlightCommands.size === 0) {
-    sseEvents.emitClaudeFinished(sessionId);
-  }
-  if (changed.background) {
-    sseEvents.emitBackgroundTasks(sessionId, [...status.backgroundTasks.values()]);
-  }
-  if (changed.retry) sseEvents.emitClaudeRetry(sessionId, status.retry);
-
-  if (turnEnded) {
-    void detectBranchAndPr(sessionId, live.workingDir);
-  }
 }
 
 /**
@@ -257,11 +205,19 @@ async function runSessionLoop(
 
   try {
     for await (const message of live.query) {
-      // Delivery bookkeeping first: `command_lifecycle` can retire a pending
-      // message, which feeds the running state applyStatus is about to emit.
-      if (handleCommandLifecycle(sessionId, state, message)) continue;
+      // Delivery bookkeeping only: never persisted, and kept out of the stream
+      // status (a top-level message would otherwise clear a retry indicator).
+      const lifecycle = parseCommandLifecycle(message);
+      if (lifecycle) {
+        dispatch(sessionId, state, { type: 'command_lifecycle', lifecycle });
+        continue;
+      }
 
-      applyStatus(sessionId, state, live, message);
+      // Every other message, including ones skipped for persistence, since
+      // `api_retry`/`task_*` drive status.
+      if (dispatch(sessionId, state, { type: 'sdk_message', message }).turnEnded) {
+        void detectBranchAndPr(sessionId, live.workingDir);
+      }
 
       // Account-wide rate-limit state arrives on whichever session's stream happens
       // to be talking to the API; recording it re-evaluates the pause for ALL
@@ -322,7 +278,7 @@ async function runSessionLoop(
     log.error('runSessionLoop: error', toError(err), { sessionId });
     await createErrorMessage(sessionId, `Claude query failed: ${toError(err).message}`);
   } finally {
-    clearLiveStatus(sessionId, state);
+    dispatch(sessionId, state, { type: 'torn_down' });
     // Drop the live query so the next interaction re-establishes (resume). The
     // state record stays in the map (commands etc. persist); only stop/delete
     // remove it. The guard skips this when stopSession already released it.
@@ -489,31 +445,24 @@ async function applyLiveSettings(sessionId: string, live: LiveQuery): Promise<vo
 /**
  * Push a prepared prompt into a live query and start tracking its delivery. The
  * push is stamped with a `uuid` so the CLI reports progress over
- * `command_lifecycle`; until then it sits in `inFlightCommands`, marked
- * undelivered in the transcript and cancellable by Stop.
+ * `command_lifecycle`; until then it is in flight, marked undelivered in the
+ * transcript and cancellable by Stop.
  */
 function pushPreparedPrompt(sessionId: string, state: SessionState, prompt: PromptPayload): void {
   const live = state.live;
   if (!live) throw new Error('Session query is not available');
 
   const commandUuid = uuid();
-  state.inFlightCommands.set(commandUuid, {
-    messageId: prompt.messageId,
-    text: prompt.text,
-    attachments: prompt.attachments,
-    content: prompt.content,
-    started: false,
-    resultsSeen: 0,
+  dispatch(sessionId, state, {
+    type: 'pushed',
+    commandUuid,
+    prompt: {
+      messageId: prompt.messageId,
+      text: prompt.text,
+      attachments: prompt.attachments,
+      content: prompt.content,
+    },
   });
-  sseEvents.emitPendingMessages(sessionId, pendingMessageIds(state));
-  // Optimistically mark the turn active so the reducer's true→false edge — and
-  // the work-complete signal — stays intact for a turn that reaches its terminal
-  // `result` without a `message_start`.
-  if (!state.status.turnActive) {
-    state.status = { ...state.status, turnActive: true };
-    state.optimisticTurnActive = true;
-  }
-  syncRunning(sessionId, state);
 
   live.input.push({
     type: 'user',
@@ -585,11 +534,7 @@ export async function sendUserMessage(
 /** The runner as the rate-limit pause sees it; handed over at startup. */
 export const rateLimitPauseRunner: PauseRunner = {
   turnActiveSessionIds: () =>
-    new Set(
-      [...sessions]
-        .filter(([, state]) => state.status.turnActive && !state.optimisticTurnActive)
-        .map(([id]) => id)
-    ),
+    new Set([...sessions].filter(([, state]) => hasRealTurn(state.turn)).map(([id]) => id)),
 
   async abortTurn(sessionId, steps) {
     const state = sessions.get(sessionId);
@@ -598,7 +543,7 @@ export const rateLimitPauseRunner: PauseRunner = {
       requireRealTurn: true,
       ...steps,
     });
-    return { ...result, interruptPending: state.interruptRequested };
+    return { ...result, interruptPending: state.turn.interruptRequested };
   },
 
   sendUserMessage: (sessionId, prompt, opts) => sendUserMessage(sessionId, prompt, [], opts),
@@ -616,7 +561,7 @@ export const rateLimitPauseRunner: PauseRunner = {
 /** Transcript ids of a session's not-yet-delivered messages (seeds the client). */
 export function getPendingMessageIds(sessionId: string): string[] {
   const state = sessions.get(sessionId);
-  return state ? pendingMessageIds(state) : [];
+  return state ? liveView(state.turn).pendingMessageIds : [];
 }
 
 /**
@@ -660,13 +605,13 @@ export async function submitLiveToolResponse(
 
 /** Current API-retry status for a session, or null. In-memory only. */
 export function getSessionRetry(sessionId: string): RetryState | null {
-  return sessions.get(sessionId)?.status.retry ?? null;
+  return sessions.get(sessionId)?.turn.status.retry ?? null;
 }
 
 /** Current running background tasks for a session. In-memory only. */
 export function getSessionBackgroundTasks(sessionId: string): BackgroundTask[] {
   const state = sessions.get(sessionId);
-  return state ? [...state.status.backgroundTasks.values()] : [];
+  return state ? [...state.turn.status.backgroundTasks.values()] : [];
 }
 
 export interface InterruptResult {
@@ -693,7 +638,7 @@ export async function interruptClaude(sessionId: string): Promise<InterruptResul
   const recalledFromQueue = await withdrawQueuedWork(sessionId);
 
   const state = sessions.get(sessionId);
-  if (!state?.live || !effectiveRunning(state)) {
+  if (!state?.live || !isRunning(state.turn)) {
     log.info('interruptClaude: nothing to interrupt', { sessionId });
     return { interrupted: false, cancelled: recalledFromQueue };
   }
@@ -740,30 +685,36 @@ async function abortTurn<T>(
     beforeInterrupt?: () => Promise<void>;
   }
 ): Promise<{ disposed: T; interrupted: boolean }> {
-  if (!requireRealTurn) state.interruptRequested = state.status.turnActive;
+  if (!requireRealTurn) dispatch(sessionId, state, { type: 'interrupt_requested' });
 
-  const disposed = await dispose(await recallUnstartedCommands(sessionId, state, live.query));
+  const dropped = await cancelUnstartedCommands(
+    sessionId,
+    state.turn.inFlight,
+    live.query,
+    (commandUuid) => dispatch(sessionId, state, { type: 'recalled', commandUuids: [commandUuid] })
+  );
+  const disposed = await dispose(dropped);
 
   // Read after the awaits: recalling the push behind an optimistic turnActive ends
   // it, and an earlier interrupt may have landed meanwhile.
-  const realTurn = state.status.turnActive && !state.optimisticTurnActive;
+  const realTurn = hasRealTurn(state.turn);
   const abort =
     state.live === live &&
-    (requireRealTurn ? realTurn && !state.interruptRequested : effectiveRunning(state));
+    (requireRealTurn ? realTurn && !state.turn.interruptRequested : isRunning(state.turn));
   if (!abort) {
     // Withdraw Stop's claim: no interrupt-driven turn-end is coming to consume it.
-    if (!requireRealTurn) state.interruptRequested = false;
+    if (!requireRealTurn) dispatch(sessionId, state, { type: 'interrupt_failed' });
     return { disposed, interrupted: false };
   }
 
-  state.interruptRequested = state.status.turnActive;
+  dispatch(sessionId, state, { type: 'interrupt_requested' });
   try {
     await beforeInterrupt?.();
     await live.query.interrupt();
   } catch (err) {
     // No interrupt-driven turn-end is coming; clear the flag so it can't suppress
     // a later, natural turn-end's notification.
-    state.interruptRequested = false;
+    dispatch(sessionId, state, { type: 'interrupt_failed' });
     log.warn('Failed to interrupt turn', { sessionId, error: toError(err).message });
     return { disposed, interrupted: false };
   }
@@ -794,7 +745,7 @@ export async function stopBackgroundTask(sessionId: string, taskId: string): Pro
 /** Whether the session is working from the composer's point of view. */
 export function isClaudeRunning(sessionId: string): boolean {
   const state = sessions.get(sessionId);
-  return state ? effectiveRunning(state) : false;
+  return state ? isRunning(state.turn) : false;
 }
 
 /**
@@ -812,7 +763,7 @@ export async function refreshSessionSettings(sessionId: string): Promise<void> {
  */
 export function isSessionBackgroundActive(sessionId: string): boolean {
   const state = sessions.get(sessionId);
-  return state ? backgroundActive(state.status) : false;
+  return state ? backgroundActive(state.turn.status) : false;
 }
 
 /**
@@ -831,7 +782,7 @@ export function stopSession(sessionId: string): Promise<void> {
   } catch {
     // ignore close errors
   }
-  clearLiveStatus(sessionId, state);
+  dispatch(sessionId, state, { type: 'torn_down' });
   // Closing the query kills the launcher, but stopping the scope is what
   // cgroup-kills the whole tree (incl. daemons the agent backgrounded).
   const stopped = releaseQuery(sessionId, state, 'Session stopped');
