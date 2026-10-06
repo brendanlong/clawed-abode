@@ -4,6 +4,7 @@ import {
   clampThreshold,
   decideHold,
   describeLimitType,
+  diffHolds,
   formatTimeUntil,
   holdsEqual,
   mergeReading,
@@ -13,6 +14,7 @@ import {
   parseRateLimitEvent,
   resolvePausePolicy,
   UNKNOWN_RESET_HOLD_MS,
+  type RateLimitHold,
   type RateLimitReading,
 } from './rate-limit';
 
@@ -392,6 +394,43 @@ describe('holdsEqual', () => {
     expect(
       holdsEqual({ ...hold, utilization: null }, { ...hold, untilMs: IN_A_WEEK, utilization: null })
     ).toBe(false);
+  });
+});
+
+describe('diffHolds', () => {
+  const hold = (overrides: Partial<RateLimitHold> = {}): RateLimitHold => ({
+    untilMs: IN_AN_HOUR,
+    limitType: 'five_hour',
+    reason: 'threshold',
+    utilization: 96,
+    ...overrides,
+  });
+
+  it('reports new holds, releases and changed holds, and nothing for unchanged ones', () => {
+    const prev = new Map([
+      ['kept', hold()],
+      ['released', hold()],
+      ['extended', hold()],
+      ['reading-moved', hold()],
+    ]);
+    const next = new Map([
+      ['kept', hold()],
+      ['extended', hold({ untilMs: IN_A_WEEK, limitType: 'seven_day', reason: 'rejected' })],
+      // Utilization alone isn't a transition: the banner doesn't change.
+      ['reading-moved', hold({ utilization: 99 })],
+      ['new', hold()],
+    ]);
+
+    expect(diffHolds(prev, next)).toEqual([
+      { sessionId: 'released', hold: null },
+      { sessionId: 'extended', hold: next.get('extended') },
+      { sessionId: 'new', hold: next.get('new') },
+    ]);
+  });
+
+  it('is empty between equal snapshots', () => {
+    expect(diffHolds(new Map(), new Map())).toEqual([]);
+    expect(diffHolds(new Map([['s', hold()]]), new Map([['s', hold()]]))).toEqual([]);
   });
 });
 

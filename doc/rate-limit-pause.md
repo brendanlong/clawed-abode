@@ -7,7 +7,9 @@ week instead of failing turns once the 5-hour window runs out.
 Pure logic: [`src/lib/rate-limit.ts`](../src/lib/rate-limit.ts). State and
 scheduling: [`rate-limit-state.ts`](../src/server/services/rate-limit-state.ts).
 The durable queue: [`prompt-queue.ts`](../src/server/services/prompt-queue.ts).
-Orchestration lives in `claude-runner`, which subscribes to state changes.
+Pausing and draining: [`rate-limit-pause.ts`](../src/server/services/rate-limit-pause.ts),
+which subscribes to state changes and reaches the session queries only through
+the `PauseRunner` port `claude-runner` hands it at startup.
 
 ## Readings Are Shared, Policy Is Per-Session
 
@@ -60,7 +62,16 @@ Holds are never stored; `recomputeRateLimitHolds` recomputes the desired state f
 every session and converges on it, so a missed or duplicated trigger is harmless.
 It runs on a new reading, on a window resetting (a single timer armed for the
 earliest active reset), on a policy change, and at startup. It is serialized —
-two concurrent runs would race to push the same queued prompt twice.
+two concurrent runs would race to push the same queued prompt twice — and
+awaiting it waits for a run that started after the call, so a policy change's
+caller sees its own effect.
+
+The last run's per-session result (`currentHold`) is the one source for showing
+a hold: the session list, `getLiveState` and the `rate_limit` SSE channel, which
+therefore can't disagree. Only the send path also reads the policy fresh
+(`resolveSessionHold`), because sending into a refusing window is the one thing
+the pause exists to prevent, and before the first startup recompute the snapshot
+is empty.
 
 **Pausing** stops feeding the session: everything the CLI has queued but not
 read is recalled into the durable queue, and new sends go there instead. It then

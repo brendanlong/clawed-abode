@@ -2,7 +2,7 @@
  * Account-wide subscription rate-limit readings, and the per-session policy that
  * turns them into a pause. Owns the persisted window state and the timer that
  * fires when a window resets; the *reaction* to a hold (pausing a query, draining
- * a queue) belongs to claude-runner, which subscribes here.
+ * a queue) belongs to rate-limit-pause, which subscribes here.
  *
  * Readings are shared because there is one subscription; policy is per-session so
  * a low-priority session can pause at 50% of the 5-hour window while an urgent one
@@ -34,7 +34,7 @@ let onChange: (() => void) | null = null;
 
 /**
  * Register the reaction to a change in holds (a new reading, or a window
- * resetting). Called once by claude-runner at startup; a second call replaces the
+ * resetting). Called once by rate-limit-pause at startup; a second call replaces the
  * first so a hot reload can't stack listeners.
  */
 export function setRateLimitChangeHandler(handler: (() => void) | null): void {
