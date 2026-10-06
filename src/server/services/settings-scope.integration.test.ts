@@ -166,6 +166,13 @@ describe('settings-scope', () => {
         expect(await testPrisma.mcpServerValue.count()).toBe(0);
       });
 
+      it('deletes every value when a save submits none', async () => {
+        const scope = await makeScope();
+        await scopeModule.upsertMcpServer(scope, httpServer({ A: { value: 'a', isSecret: true } }));
+        await scopeModule.upsertMcpServer(scope, httpServer({}));
+        expect(await storedValues(scope)).toEqual([]);
+      });
+
       it('rejects an empty secret with no stored secret to keep, writing nothing', async () => {
         const scope = await makeScope();
         await expect(

@@ -259,7 +259,7 @@ async function clearFlow(id: string, lastError: string | null): Promise<void> {
  */
 export async function invalidateMcpOAuthOnUrlChange(
   server: { repoSettingsId: string | null; name: string },
-  newUrl: string | null
+  newUrl: string
 ): Promise<void> {
   await prisma.mcpOAuth.updateMany({
     where: { mcpServer: { ...server, OR: [{ url: null }, { url: { not: newUrl } }] } },

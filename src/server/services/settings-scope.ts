@@ -123,6 +123,9 @@ export async function getEnvVarValue(scope: SettingsScope, name: string): Promis
  * unchanged secret (empty value + isSecret) is simply not rewritten; like env
  * vars, it's rejected up front if there is no stored secret to keep. No step reads
  * stored state to decide what to write.
+ *
+ * Deliberately not a transaction: the better-sqlite3 adapter shares one connection,
+ * so other requests' queries would run inside it. Each row is last-writer-wins.
  */
 export async function upsertMcpServer(scope: SettingsScope, server: McpServerInput): Promise<void> {
   requireEncryptionForSecrets(mcpServerHasSecrets(server));
@@ -142,7 +145,8 @@ export async function upsertMcpServer(scope: SettingsScope, server: McpServerInp
     }
   }
 
-  await invalidateMcpOAuthOnUrlChange(serverKey, plan.row.url);
+  // A stdio save deletes the grant outright in syncMcpOAuthConfig.
+  if (plan.row.url !== null) await invalidateMcpOAuthOnUrlChange(serverKey, plan.row.url);
 
   const now = new Date().toISOString();
   // RETURNING gives the values and OAuth grant the server's id without a second
