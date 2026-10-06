@@ -38,12 +38,15 @@ beforeEach(() => vi.clearAllMocks());
 describe('cancelUnstartedCommands', () => {
   it('asks the CLI to drop only unread commands, returning those it dropped in push order', async () => {
     const query = queryThat(async (uuid) => uuid !== 'dequeued');
+    const reported: string[] = [];
     const dropped = await cancelUnstartedCommands(
       's',
       inFlight({ a: {}, read: { started: true }, dequeued: {}, b: {} }),
-      query
+      query,
+      (uuid) => reported.push(uuid)
     );
-    expect(dropped.map(([uuid]) => uuid)).toEqual(['a', 'b']);
+    expect(dropped.map((c) => c.messageId)).toEqual(['m-a', 'm-b']);
+    expect(reported).toEqual(['a', 'b']);
     expect(query.cancelAsyncMessage.mock.calls.map(([uuid]) => uuid)).toEqual([
       'a',
       'dequeued',
@@ -51,11 +54,25 @@ describe('cancelUnstartedCommands', () => {
     ]);
   });
 
+  it('reports each drop as soon as it is confirmed, before the next cancel', async () => {
+    const reported: string[] = [];
+    const query = queryThat(async (uuid) => {
+      if (uuid === 'b') expect(reported).toEqual(['a']);
+      return true;
+    });
+    await cancelUnstartedCommands('s', inFlight({ a: {}, b: {} }), query, (uuid) =>
+      reported.push(uuid)
+    );
+    expect(reported).toEqual(['a', 'b']);
+  });
+
   it('treats a failed cancel as not dropped', async () => {
     const query = queryThat(async () => {
       throw new Error('control channel closed');
     });
-    expect(await cancelUnstartedCommands('s', inFlight({ a: {} }), query)).toEqual([]);
+    const onDropped = vi.fn();
+    expect(await cancelUnstartedCommands('s', inFlight({ a: {} }), query, onDropped)).toEqual([]);
+    expect(onDropped).not.toHaveBeenCalled();
   });
 });
 

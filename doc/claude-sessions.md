@@ -2,7 +2,7 @@
 
 Implementation: [`src/server/services/claude-runner.ts`](../src/server/services/claude-runner.ts) orchestrates; module ownership is in [`src/server/services/CLAUDE.md`](../src/server/services/CLAUDE.md). Pure logic (unit-tested): [`src/lib/live-turn.ts`](../src/lib/live-turn.ts), [`src/lib/session-status.ts`](../src/lib/session-status.ts), [`src/lib/session-scope.ts`](../src/lib/session-scope.ts), [`src/lib/token-estimation.ts`](../src/lib/token-estimation.ts).
 
-**Live turn state has one writer.** Everything below about turn status, delivery and interrupts is the pure reducer `reduceLiveTurn` over a `LiveEvent` union (SDK message, `command_lifecycle`, pushed, recalled, interrupt requested/failed, torn down). The runner's `dispatch` is the only thing that applies events, and it emits exactly the SSE channels whose projection (`liveView`: running, pending ids, background tasks, retry) changed. There are no hand-placed emits. A new piece of live state goes in the reducer and its view, so it can't drift from what clients were sent.
+Everything below about turn status, delivery and interrupts is implemented by the `reduceLiveTurn` reducer in `live-turn.ts` (the single-writer rule is in the services `CLAUDE.md`).
 
 ## Persistent Streaming Query
 

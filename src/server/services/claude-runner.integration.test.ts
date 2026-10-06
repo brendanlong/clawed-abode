@@ -1266,6 +1266,36 @@ describe('claude-runner persistent streaming loop', () => {
     stopSession(sessionId);
   });
 
+  it('ends the optimistic turn even when the CLI reports the cancel before confirming it', async () => {
+    // The CLI's `cancelled` lifecycle can be processed while cancelAsyncMessage is
+    // still awaited, retiring the entry before the recall is recorded.
+    const fake = makeFakeQuery();
+    _setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+
+    await sendUserMessage(sessionId, 'first');
+    await fake.deliver();
+    fake.emit(messageStart());
+    fake.emit(messageDelta('end_turn'));
+    fake.emit(result());
+    await waitFor(() => !isClaudeRunning(sessionId));
+
+    await sendUserMessage(sessionId, 'take it back');
+    await waitFor(() => fake.inputs.length >= 2);
+    fake.cancelAsyncMessage.mockImplementationOnce(async (uuid: string) => {
+      fake.emit(commandLifecycle(uuid, 'cancelled'));
+      await waitFor(() => getPendingMessageIds(sessionId).length === 0);
+      return true;
+    });
+
+    const { interrupted, cancelled } = await interruptClaude(sessionId);
+    expect(interrupted).toBe(false);
+    expect(cancelled).toEqual([{ text: 'take it back', attachments: [] }]);
+    expect(isClaudeRunning(sessionId)).toBe(false);
+
+    stopSession(sessionId);
+  });
+
   it('interrupts a read-but-unanswered send without stamping the previous turn', async () => {
     // The agent has read it (nothing to recall) but no turn has opened yet: Stop
     // must still abort what is coming, yet there is no turn of its own to mark

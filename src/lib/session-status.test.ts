@@ -196,10 +196,10 @@ describe('reduceSessionMessage — background tasks', () => {
       ambient: false,
     });
 
-    const { status, changed } = reduceSessionMessage(s, backgroundTasksChanged('t2'));
+    const { status } = reduceSessionMessage(s, backgroundTasksChanged('t2'));
+    expect(status.backgroundTasks).not.toBe(s.backgroundTasks);
     s = status;
     expect([...s.backgroundTasks.keys()]).toEqual(['t2']);
-    expect(changed.background).toBe(true);
   });
 
   it('an empty payload clears the set even without task_notification edges', () => {
@@ -210,22 +210,21 @@ describe('reduceSessionMessage — background tasks', () => {
   });
 
   it('task_started / task_notification edges do not change membership', () => {
+    // Identity matters: the runner emits the `background` channel when the set
+    // object changes.
     let r = reduceSessionMessage(INITIAL_LIVE_STATUS, taskStarted('t1'));
-    expect(r.status.backgroundTasks.size).toBe(0);
-    expect(r.changed.background).toBe(false);
+    expect(r.status.backgroundTasks).toBe(INITIAL_LIVE_STATUS.backgroundTasks);
 
     const withTask = reduceSessionMessage(INITIAL_LIVE_STATUS, backgroundTasksChanged('t1')).status;
     r = reduceSessionMessage(withTask, taskNotification('t1'));
-    expect(r.status.backgroundTasks.has('t1')).toBe(true);
-    expect(r.changed.background).toBe(false);
+    expect(r.status.backgroundTasks).toBe(withTask.backgroundTasks);
   });
 
   it('an unparseable payload leaves the set untouched', () => {
     const s = reduceSessionMessage(INITIAL_LIVE_STATUS, backgroundTasksChanged('t1')).status;
     const bad = { type: 'system', subtype: 'background_tasks_changed' } as unknown as SDKMessage;
-    const { status, changed } = reduceSessionMessage(s, bad);
+    const { status } = reduceSessionMessage(s, bad);
     expect(status.backgroundTasks).toBe(s.backgroundTasks);
-    expect(changed.background).toBe(false);
   });
 
   it('carries the ambient flag', () => {
@@ -253,14 +252,10 @@ describe('reduceSessionMessage — subagentType from task_started', () => {
   });
 
   it('patches a task the level listed first', () => {
-    let s = reduceSessionMessage(INITIAL_LIVE_STATUS, backgroundTasksChanged('t1')).status;
-    const { status, changed } = reduceSessionMessage(
-      s,
-      taskStarted('t1', { subagent_type: 'Explore' })
-    );
-    s = status;
-    expect(s.backgroundTasks.get('t1')?.subagentType).toBe('Explore');
-    expect(changed.background).toBe(true);
+    const s = reduceSessionMessage(INITIAL_LIVE_STATUS, backgroundTasksChanged('t1')).status;
+    const { status } = reduceSessionMessage(s, taskStarted('t1', { subagent_type: 'Explore' }));
+    expect(status.backgroundTasks.get('t1')?.subagentType).toBe('Explore');
+    expect(status.backgroundTasks).not.toBe(s.backgroundTasks);
   });
 
   it('survives later level payloads', () => {
@@ -342,39 +337,35 @@ describe('backgroundActive — daemon-only sets read as idle', () => {
 
 describe('reduceSessionMessage — retry (turn-scoped clear)', () => {
   it('api_retry sets retry state', () => {
-    const { status, changed } = reduceSessionMessage(INITIAL_LIVE_STATUS, apiRetry(2));
+    const { status } = reduceSessionMessage(INITIAL_LIVE_STATUS, apiRetry(2));
     expect(status.retry).toEqual({
       attempt: 2,
       maxRetries: 10,
       errorStatus: undefined,
       error: 'overloaded',
     });
-    expect(changed.retry).toBe(true);
   });
 
   it('a subsequent top-level message clears retry', () => {
     const retrying = reduceSessionMessage(INITIAL_LIVE_STATUS, apiRetry(2)).status;
-    const { status, changed } = reduceSessionMessage(retrying, assistant());
+    const { status } = reduceSessionMessage(retrying, assistant());
     expect(status.retry).toBeNull();
-    expect(changed.retry).toBe(true);
   });
 
   it('a subagent (background) message does NOT clear a main-turn retry', () => {
     const retrying = reduceSessionMessage(INITIAL_LIVE_STATUS, apiRetry(2)).status;
-    const { status, changed } = reduceSessionMessage(retrying, assistant('tool_abc'));
+    const { status } = reduceSessionMessage(retrying, assistant('tool_abc'));
     expect(status.retry).not.toBeNull();
-    expect(changed.retry).toBe(false);
   });
 
   it('a top-level message_start clears retry (the request recovered and is streaming)', () => {
     const retrying = reduceSessionMessage(INITIAL_LIVE_STATUS, apiRetry(2)).status;
-    const { status, changed } = reduceSessionMessage(retrying, messageStart());
+    const { status } = reduceSessionMessage(retrying, messageStart());
     expect(status.retry).toBeNull();
-    expect(changed.retry).toBe(true);
   });
 
   it('no retry change when none set and a normal message arrives', () => {
-    const { changed } = reduceSessionMessage(INITIAL_LIVE_STATUS, assistant());
-    expect(changed.retry).toBe(false);
+    const { status } = reduceSessionMessage(INITIAL_LIVE_STATUS, assistant());
+    expect(status.retry).toBeNull();
   });
 });

@@ -160,12 +160,15 @@ export function reduceLiveTurn(state: LiveTurnState, event: LiveEvent): LiveOutc
     }
 
     case 'recalled': {
-      const dropped = event.commandUuids.filter((id) => state.inFlight.has(id));
-      if (dropped.length === 0) return settled(state);
-      const inFlight = new Map(state.inFlight);
-      for (const id of dropped) inFlight.delete(id);
+      const dropped = new Set(event.commandUuids.filter((id) => state.inFlight.has(id)));
+      const inFlight =
+        dropped.size > 0
+          ? new Map([...state.inFlight].filter(([id]) => !dropped.has(id)))
+          : state.inFlight;
       // A purely optimistic turnActive must go once nothing in flight justifies
-      // it; a turn that genuinely started is left to the stream to end.
+      // it; a turn that genuinely started is left to the stream to end. Checked
+      // even when the entry is already gone: the CLI's `cancelled` lifecycle can
+      // retire it while the cancel is still being confirmed.
       if (!state.optimisticTurnActive || inFlight.size > 0) return settled({ ...state, inFlight });
       return settled({
         ...state,

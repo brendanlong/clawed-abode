@@ -123,6 +123,13 @@ const cases: Case[] = [
     pending: ['m-b'],
   },
   {
+    name: 'a recall confirmed after the CLI already reported the push cancelled still ends the optimistic turn',
+    events: [pushed('a'), lifecycle('a', 'cancelled'), recalled('a')],
+    running: false,
+    turnActive: false,
+    finishedAt: [],
+  },
+  {
     name: 'recalling an unknown command changes nothing',
     events: [pushed('a'), recalled('x')],
     running: true,

@@ -687,11 +687,13 @@ async function abortTurn<T>(
 ): Promise<{ disposed: T; interrupted: boolean }> {
   if (!requireRealTurn) dispatch(sessionId, state, { type: 'interrupt_requested' });
 
-  const dropped = await cancelUnstartedCommands(sessionId, state.turn.inFlight, live.query);
-  if (dropped.length > 0) {
-    dispatch(sessionId, state, { type: 'recalled', commandUuids: dropped.map(([id]) => id) });
-  }
-  const disposed = await dispose(dropped.map(([, command]) => command));
+  const dropped = await cancelUnstartedCommands(
+    sessionId,
+    state.turn.inFlight,
+    live.query,
+    (commandUuid) => dispatch(sessionId, state, { type: 'recalled', commandUuids: [commandUuid] })
+  );
+  const disposed = await dispose(dropped);
 
   // Read after the awaits: recalling the push behind an optimistic turnActive ends
   // it, and an earlier interrupt may have landed meanwhile.

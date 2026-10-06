@@ -23,7 +23,7 @@ type CancelCapableQuery = Query & {
 
 /**
  * Ask the CLI to drop every pushed message the agent hasn't read yet, returning
- * those it dropped, in push order, by command uuid. The caller records the recall
+ * those it dropped, in push order. The caller records each recall
  * and disposes of the prompts — the two callers disagree about the bubbles (Stop
  * deletes them, a rate-limit pause keeps them and re-queues).
  *
@@ -33,16 +33,21 @@ type CancelCapableQuery = Query & {
 export async function cancelUnstartedCommands(
   sessionId: string,
   inFlight: ReadonlyMap<string, InFlightCommand>,
-  query: Query
-): Promise<[string, InFlightCommand][]> {
+  query: Query,
+  /** Called as each drop is confirmed, so the caller can record it at once. */
+  onDropped: (commandUuid: string) => void
+): Promise<InFlightCommand[]> {
   const recallable = [...inFlight].filter(([, c]) => !c.started);
   const canceller = query as CancelCapableQuery;
 
-  const dropped: [string, InFlightCommand][] = [];
-  for (const entry of recallable) {
+  const dropped: InFlightCommand[] = [];
+  for (const [commandUuid, command] of recallable) {
     try {
       // false = the CLI already dequeued it; the agent did read it, so it stays put.
-      if (await canceller.cancelAsyncMessage(entry[0])) dropped.push(entry);
+      if (await canceller.cancelAsyncMessage(commandUuid)) {
+        dropped.push(command);
+        onDropped(commandUuid);
+      }
     } catch (err) {
       log.warn('cancelUnstartedCommands: cancelAsyncMessage failed', {
         sessionId,
