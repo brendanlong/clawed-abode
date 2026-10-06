@@ -30,9 +30,9 @@ const log = createLogger('settings-scope');
  * below is scope-agnostic so the two routers share one implementation.
  *
  * Uniqueness of (scope, name) is a compound unique for repo rows and a hand-written
- * partial unique index for global rows (see prisma/schema.prisma), so writes use
+ * partial unique index for global rows (see prisma/schema.prisma), so inserts use
  * `INSERT ... ON CONFLICT` via raw SQL — Prisma's `upsert` can't target a partial
- * index — instead of a read-then-branch.
+ * index.
  */
 export interface SettingsScope {
   repoSettingsId: string | null;
@@ -123,6 +123,8 @@ const MCP_WRITE_ATTEMPTS = 3;
  * over from the stored JSON, so the write is a compare-and-set: it only applies if
  * the columns the merge read are still what was read, and otherwise re-reads and
  * merges again. A concurrent edit can't make us store a stale or blank secret.
+ * (Not a transaction: the better-sqlite3 adapter only serializes transactions
+ * against each other, not against plain queries.)
  */
 async function writeMcpServerRow(
   scope: SettingsScope,
