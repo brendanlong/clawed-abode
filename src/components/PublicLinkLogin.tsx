@@ -11,7 +11,7 @@ export function PublicLinkLogin() {
     enabled: isAuthenticated,
     staleTime: Infinity,
   });
-  const { mutateAsync } = trpc.auth.createPublicLoginCode.useMutation();
+  const { mutateAsync } = trpc.auth.createPublicLoginUrl.useMutation();
   usePublicLinkLogin(data?.url ?? null, mutateAsync);
   return null;
 }

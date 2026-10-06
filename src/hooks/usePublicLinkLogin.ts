@@ -1,15 +1,15 @@
 import { useEffect } from 'react';
-import { publicLinkPath, publicLoginUrl } from '@/lib/public-files';
+import { publicLinkPath } from '@/lib/public-files';
 
 /**
  * Opens links into the public files server through its one-time-code login, so
  * the browser they open in is signed in even if it doesn't share this one's
  * cookies (an Android PWA opens links in a separate browser). A failed mint
- * falls back to the plain link, which shows the login page.
+ * falls back to the plain link, whose page offers a sign-in link.
  */
 export function usePublicLinkLogin(
   baseUrl: string | null,
-  createCode: () => Promise<{ code: string }>
+  createLoginUrl: (input: { next: string }) => Promise<{ url: string }>
 ): void {
   useEffect(() => {
     if (!baseUrl) return;
@@ -23,13 +23,24 @@ export function usePublicLinkLogin(
       if (next === null) return;
 
       event.preventDefault();
-      // Opened after a round trip; browsers still allow it this soon after the tap.
-      createCode()
-        .then(({ code }) => publicLoginUrl(baseUrl, code, next))
+      createLoginUrl({ next })
+        .then(({ url }) => url)
         .catch(() => anchor.href)
-        .then((url) => window.open(url, '_blank', 'noopener,noreferrer'));
+        .then(openInNewWindow);
     };
     document.addEventListener('click', onClick);
     return () => document.removeEventListener('click', onClick);
-  }, [baseUrl, createCode]);
+  }, [baseUrl, createLoginUrl]);
+}
+
+/**
+ * The window opens after a round trip, which a browser may block as a popup once
+ * the tap is too far behind it; navigate this window instead so the tap is never
+ * lost (an out-of-scope URL leaves an installed PWA for a browser tab anyway).
+ * Not `noopener`, which would make a block undetectable; the opener is cut instead.
+ */
+function openInNewWindow(url: string): void {
+  const opened = window.open(url, '_blank');
+  if (opened) opened.opener = null;
+  else window.location.assign(url);
 }

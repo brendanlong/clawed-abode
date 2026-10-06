@@ -49,9 +49,12 @@ export async function registerNode() {
   await initRateLimitPause(rateLimitPauseRunner);
 
   // Fatal like a bad env: the system prompt would otherwise hand out dead links.
-  if (env.PUBLIC_FILES_PORT !== undefined) {
+  if (env.PUBLIC_FILES_PORT !== undefined && env.PUBLIC_FILES_URL !== undefined) {
     try {
-      await startPublicFilesServer(env.PUBLIC_FILES_PORT);
+      await startPublicFilesServer(env.PUBLIC_FILES_PORT, {
+        baseUrl: env.PUBLIC_FILES_URL,
+        appUrl: env.APP_URL,
+      });
     } catch (err) {
       log.error('Refusing to start: the public files server could not listen', toError(err));
       process.exit(1);

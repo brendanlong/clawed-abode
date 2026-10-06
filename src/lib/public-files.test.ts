@@ -9,7 +9,8 @@ import {
   publicLinkPath,
   publicLoginUrl,
   renderDirectoryListing,
-  renderLoginPage,
+  renderSignInPage,
+  appSignInUrl,
   safeNextPath,
 } from './public-files';
 
@@ -157,6 +158,8 @@ describe('safeNextPath', () => {
       'https://evil.example/',
       '//evil.example/',
       '/\\evil.example/',
+      '/\t/evil.example/',
+      '/\n/evil.example/',
       'a',
     ]) {
       expect(safeNextPath(raw)).toBe('/');
@@ -192,12 +195,36 @@ describe('publicLinkPath', () => {
   });
 });
 
-describe('renderLoginPage', () => {
-  it('posts the escaped next path and error to the login endpoint', () => {
-    const html = renderLoginPage({ next: '/"><script>', error: '<b>bad</b>' });
-    expect(html).toContain('action="/_login"');
-    expect(html).toContain('value="/&quot;&gt;&lt;script&gt;"');
-    expect(html).toContain('&lt;b&gt;bad&lt;/b&gt;');
+describe('safeNextPath control characters', () => {
+  it('never returns a character that is invalid in a Location header', () => {
+    expect(safeNextPath('/a\r\nSet-Cookie: x=1')).not.toMatch(/[\r\n]/);
+  });
+});
+
+describe('appSignInUrl', () => {
+  it("defaults to the public server's host on the default port", () => {
+    const url = new URL(appSignInUrl(undefined, 'https://h.ts.net:8444', `/${ID}/a.html`));
+    expect(url.origin).toBe('https://h.ts.net');
+    expect(url.pathname).toBe('/login');
+    expect(url.searchParams.get('public')).toBe(`/${ID}/a.html`);
+  });
+
+  it('uses APP_URL when set', () => {
+    const url = new URL(appSignInUrl('https://app.ts.net:3000/x', 'https://h.ts.net:8444', '/'));
+    expect(url.origin).toBe('https://app.ts.net:3000');
+    expect(url.pathname).toBe('/login');
+  });
+});
+
+describe('renderSignInPage', () => {
+  it('links to the escaped sign-in URL and has no password field', () => {
+    const html = renderSignInPage({ signInUrl: 'https://h/login?public="><script>' });
+    expect(html).toContain('href="https://h/login?public=&quot;&gt;&lt;script&gt;"');
     expect(html).not.toContain('<script>');
+    expect(html).not.toContain('password');
+  });
+
+  it('says when a link has expired', () => {
+    expect(renderSignInPage({ signInUrl: '/', expired: true })).toContain('expired');
   });
 });

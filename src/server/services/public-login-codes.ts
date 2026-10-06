@@ -4,8 +4,14 @@ import { randomBytes } from 'crypto';
 // browser history is dead by the time anyone could read it.
 export const PUBLIC_LOGIN_CODE_TTL_MS = 60 * 1000;
 
-/** Code → expiry. In memory: the public files server runs in this process, and a restart only costs a re-tap. */
-const codes = new Map<string, number>();
+/**
+ * Code → expiry. In memory: the public files server runs in this process, and a
+ * restart only costs a re-tap. On globalThis because Next bundles the tRPC route
+ * (which mints) apart from instrumentation (which starts the server that
+ * consumes), so each would otherwise get its own copy of this module.
+ */
+const globalForCodes = globalThis as unknown as { publicLoginCodes?: Map<string, number> };
+const codes = (globalForCodes.publicLoginCodes ??= new Map<string, number>());
 
 export function mintPublicLoginCode(): string {
   const now = Date.now();

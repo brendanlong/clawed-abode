@@ -17,15 +17,47 @@ export function publicAuthCookie(token: string | null, maxAgeSeconds: number): s
 }
 
 /**
- * The public files server's login endpoint: GET with a one-time `code` from the
- * app, or POST the password form. Session ids are UUIDs, so it can't collide.
+ * The public files server's login endpoint, which trades a one-time `code` from
+ * the app for the cookie. Session ids are UUIDs, so it can't collide.
  */
 export const PUBLIC_LOGIN_PATH = '/_login';
 
-/** Where to send the browser after login: a same-origin path, never `//host` or an absolute URL. */
+const NEXT_BASE = 'http://next.invalid';
+
+/**
+ * Where to send the browser after login: a same-origin path. Parsed rather than
+ * prefix-checked, since browsers strip tabs and newlines and treat `\` as `/`
+ * when resolving, and serialized so it is safe in a Location header.
+ */
 export function safeNextPath(raw: string | null | undefined): string {
-  if (!raw || !raw.startsWith('/') || raw.startsWith('//') || raw.includes('\\')) return '/';
-  return raw;
+  if (!raw?.startsWith('/')) return '/';
+  try {
+    const url = new URL(raw, NEXT_BASE);
+    return url.origin === NEXT_BASE ? url.pathname + url.search + url.hash : '/';
+  } catch {
+    return '/';
+  }
+}
+
+/** Query parameter on the app's login page carrying the public path to return to. */
+export const PUBLIC_NEXT_PARAM = 'public';
+
+/**
+ * The app's login page, set to bounce back to `next` on the public files server.
+ * Passwords are only typed on the app's origin, never on the one serving
+ * agent-written pages. The app is assumed to be on the public files server's
+ * host at the default port (`tailscale serve`) unless APP_URL says otherwise.
+ */
+export function appSignInUrl(
+  appUrl: string | undefined,
+  publicBaseUrl: string,
+  next: string
+): string {
+  const origin = new URL(appUrl ?? publicBaseUrl);
+  if (!appUrl) origin.port = '';
+  const url = new URL('/login', origin.origin);
+  url.searchParams.set(PUBLIC_NEXT_PARAM, next);
+  return url.toString();
 }
 
 export function publicLoginUrl(baseUrl: string, code: string, next: string): string {
@@ -197,26 +229,20 @@ function escapeHtml(text: string): string {
 const PAGE_HEAD =
   '<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">';
 
-/** Password form shown in place of any page the browser isn't signed in for. */
-export function renderLoginPage(options: { next: string; error?: string }): string {
-  const error = options.error ? `<p role="alert">${escapeHtml(options.error)}</p>` : '';
+/** Shown in place of any page the browser isn't signed in for. */
+export function renderSignInPage(options: { signInUrl: string; expired?: boolean }): string {
+  const message = options.expired
+    ? 'That link has expired. Sign in to continue.'
+    : 'Sign in to view this page.';
   return `<!doctype html>
 <html>
 <head>${PAGE_HEAD}<title>Sign in - Clawed Abode</title>
-<style>
-body{font-family:system-ui,sans-serif;max-width:22rem;margin:4rem auto;padding:0 1rem;color-scheme:light dark}
-input,button{display:block;width:100%;box-sizing:border-box;font:inherit;padding:.6rem;margin-top:.75rem}
-[role=alert]{color:#dc2626}
-</style>
+<style>body{font-family:system-ui,sans-serif;max-width:22rem;margin:4rem auto;padding:0 1rem;color-scheme:light dark}</style>
 </head>
 <body>
 <h1>Clawed Abode</h1>
-<p>Sign in to view this page.</p>
-${error}<form method="post" action="${PUBLIC_LOGIN_PATH}">
-<input type="hidden" name="next" value="${escapeHtml(options.next)}">
-<input type="password" name="password" placeholder="Password" aria-label="Password" autocomplete="current-password" required autofocus>
-<button type="submit">Sign in</button>
-</form>
+<p>${message}</p>
+<p><a href="${escapeHtml(options.signInUrl)}">Sign in</a></p>
 </body>
 </html>
 `;

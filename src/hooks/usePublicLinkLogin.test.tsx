@@ -26,45 +26,42 @@ afterEach(() => {
 });
 
 describe('usePublicLinkLogin', () => {
-  it('opens public links through a one-time login code', async () => {
-    const open = vi.spyOn(window, 'open').mockReturnValue(null);
-    const createCode = vi.fn().mockResolvedValue({ code: 'c0de' });
-    renderHook(() => usePublicLinkLogin(BASE, createCode));
+  it('opens public links through a login URL for that path, without an opener', async () => {
+    const opened = { opener: window } as unknown as Window;
+    const open = vi.spyOn(window, 'open').mockReturnValue(opened);
+    const createLoginUrl = vi.fn().mockResolvedValue({ url: `${BASE}/_login?code=c0de` });
+    renderHook(() => usePublicLinkLogin(BASE, createLoginUrl));
 
-    const event = click(addLink(`${BASE}/${ID}/a.html`).querySelector('span')!);
+    const event = click(addLink(`${BASE}/${ID}/a.html?x=1`).querySelector('span')!);
 
     expect(event.defaultPrevented).toBe(true);
-    await waitFor(() => expect(open).toHaveBeenCalledTimes(1));
-    const url = new URL(open.mock.calls[0][0] as string);
-    expect(url.pathname).toBe('/_login');
-    expect(url.searchParams.get('code')).toBe('c0de');
-    expect(url.searchParams.get('next')).toBe(`/${ID}/a.html`);
+    expect(createLoginUrl).toHaveBeenCalledWith({ next: `/${ID}/a.html?x=1` });
+    await waitFor(() => expect(open).toHaveBeenCalledWith(`${BASE}/_login?code=c0de`, '_blank'));
+    expect(opened.opener).toBeNull();
   });
 
   it('falls back to the plain link when minting fails', async () => {
-    const open = vi.spyOn(window, 'open').mockReturnValue(null);
-    const createCode = vi.fn().mockRejectedValue(new Error('offline'));
-    renderHook(() => usePublicLinkLogin(BASE, createCode));
+    const open = vi.spyOn(window, 'open').mockReturnValue({ opener: null } as unknown as Window);
+    const createLoginUrl = vi.fn().mockRejectedValue(new Error('offline'));
+    renderHook(() => usePublicLinkLogin(BASE, createLoginUrl));
 
     click(addLink(`${BASE}/${ID}/a.html`));
 
-    await waitFor(() =>
-      expect(open).toHaveBeenCalledWith(`${BASE}/${ID}/a.html`, '_blank', 'noopener,noreferrer')
-    );
+    await waitFor(() => expect(open).toHaveBeenCalledWith(`${BASE}/${ID}/a.html`, '_blank'));
   });
 
   it('leaves other links and modified clicks alone', () => {
-    const createCode = vi.fn();
-    renderHook(() => usePublicLinkLogin(BASE, createCode));
+    const createLoginUrl = vi.fn();
+    renderHook(() => usePublicLinkLogin(BASE, createLoginUrl));
 
     expect(click(addLink('https://example.com/')).defaultPrevented).toBe(false);
     expect(click(addLink(`${BASE}/${ID}/`), { ctrlKey: true }).defaultPrevented).toBe(false);
-    expect(createCode).not.toHaveBeenCalled();
+    expect(createLoginUrl).not.toHaveBeenCalled();
   });
 
   it('does nothing when public files are not configured', () => {
-    const createCode = vi.fn();
-    renderHook(() => usePublicLinkLogin(null, createCode));
+    const createLoginUrl = vi.fn();
+    renderHook(() => usePublicLinkLogin(null, createLoginUrl));
 
     expect(click(addLink(`${BASE}/${ID}/`)).defaultPrevented).toBe(false);
   });

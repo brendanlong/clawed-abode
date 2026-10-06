@@ -1,10 +1,9 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'http';
 import { open } from 'fs/promises';
 import { pipeline } from 'stream/promises';
-import { z } from 'zod';
 import { prisma } from '@/lib/prisma';
 import { createLogger, toError } from '@/lib/logger';
-import { SESSION_DURATION_MS, loginSchema } from '@/lib/auth';
+import { SESSION_DURATION_MS } from '@/lib/auth';
 import { getClientIp } from '@/lib/client-ip';
 import {
   PUBLIC_AUTH_COOKIE,
@@ -14,16 +13,23 @@ import {
   parseCookie,
   parsePublicRequestPath,
   publicAuthCookie,
+  appSignInUrl,
   renderDirectoryListing,
-  renderLoginPage,
+  renderSignInPage,
   safeNextPath,
 } from '@/lib/public-files';
 import { createAuthSession, resolveAuthSessionId } from './auth-sessions';
-import { loginWithPassword, retryAfterMessage, type ClientInfo } from './password-login';
 import { consumePublicLoginCode } from './public-login-codes';
 import { resolvePublicTarget } from './public-dir';
 
 const log = createLogger('public-files');
+
+export interface PublicFilesUrls {
+  /** Where browsers reach this server (PUBLIC_FILES_URL). */
+  baseUrl: string;
+  /** Where browsers reach the app, when it isn't this host's default port (APP_URL). */
+  appUrl?: string;
+}
 
 /**
  * Serves each session's `public/` directory at `/{sessionId}/…` on its own port.
@@ -31,9 +37,9 @@ const log = createLogger('public-files');
  * they pull in) can't read the app's localStorage token, without sandboxing
  * that would break `fetch()` and module scripts.
  */
-export function createPublicFilesServer(): Server {
+export function createPublicFilesServer(urls: PublicFilesUrls): Server {
   return createServer((req, res) => {
-    handleRequest(req, res).catch((err) => {
+    handleRequest(req, res, urls).catch((err) => {
       // Clients abort mid-stream all the time (video seeking, navigating away).
       if (res.destroyed) {
         log.debug('Public file response aborted', { url: req.url });
@@ -47,8 +53,8 @@ export function createPublicFilesServer(): Server {
 }
 
 /** Loopback only: Tailscale Serve is the ingress, as for the app itself. */
-export async function startPublicFilesServer(port: number): Promise<Server> {
-  const server = createPublicFilesServer();
+export async function startPublicFilesServer(port: number, urls: PublicFilesUrls): Promise<Server> {
+  const server = createPublicFilesServer(urls);
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
     server.listen(port, '127.0.0.1', () => {
@@ -68,10 +74,14 @@ const BASE_HEADERS = {
   'Cache-Control': 'no-cache',
 };
 
-async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
+async function handleRequest(
+  req: IncomingMessage,
+  res: ServerResponse,
+  urls: PublicFilesUrls
+): Promise<void> {
   const url = new URL(req.url ?? '/', 'http://localhost');
   const { pathname } = url;
-  if (pathname === PUBLIC_LOGIN_PATH) return handleLogin(req, res, url);
+  if (pathname === PUBLIC_LOGIN_PATH) return handleLogin(req, res, url, urls);
 
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     res.writeHead(405, { ...BASE_HEADERS, Allow: 'GET, HEAD' }).end();
@@ -79,7 +89,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
   }
 
   if (!(await hasValidAuthCookie(req))) {
-    return sendHtml(res, 401, renderLoginPage({ next: safeNextPath(pathname + url.search) }));
+    return sendSignInPage(res, 401, urls, safeNextPath(pathname + url.search));
   }
 
   const parsed = parsePublicRequestPath(pathname);
@@ -109,63 +119,45 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
   }
 }
 
-const LOGIN_BODY_LIMIT_BYTES = 8 * 1024;
-
-const loginFormSchema = loginSchema.extend({ next: z.string().optional() });
-
 /**
- * Signs this browser in, by one-time code (a link tapped in the app) or password
- * (any other link), and redirects to `next`. Either way the browser gets its own
- * auth session: it may not share the app's cookies, as when an Android PWA opens
- * links in a different browser.
+ * Trades a one-time code from the app for this browser's own auth session and
+ * redirects to `next`. The browser may not share the app's cookies, as when an
+ * Android PWA opens links in a different browser.
  */
-async function handleLogin(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
-  const client: ClientInfo = {
-    ipAddress: getClientIp((name) => firstHeader(req.headers[name])),
-    userAgent: req.headers['user-agent'],
-  };
-
-  if (req.method === 'GET' || req.method === 'HEAD') {
-    const next = safeNextPath(url.searchParams.get('next'));
-    const code = url.searchParams.get('code');
-    const codeValid = code !== null && consumePublicLoginCode(code);
-    // A browser that already shares the app's cookie needs no new auth session.
-    if (await hasValidAuthCookie(req)) return redirect(res, next);
-    if (codeValid) {
-      return redirect(res, next, await createAuthSession(client.ipAddress, client.userAgent));
-    }
-    const error = code === null ? undefined : 'That link has expired. Sign in to continue.';
-    return sendHtml(res, 200, renderLoginPage({ next, error }));
-  }
-
-  if (req.method !== 'POST') {
-    res.writeHead(405, { ...BASE_HEADERS, Allow: 'GET, HEAD, POST' }).end();
+async function handleLogin(
+  req: IncomingMessage,
+  res: ServerResponse,
+  url: URL,
+  urls: PublicFilesUrls
+): Promise<void> {
+  // Only GET spends the code: HEAD comes from link previewers, not the browser that will keep the cookie.
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    res.writeHead(405, { ...BASE_HEADERS, Allow: 'GET, HEAD' }).end();
     return;
   }
+  const next = safeNextPath(url.searchParams.get('next'));
+  // A browser that already shares the app's cookie needs no new auth session.
+  if (await hasValidAuthCookie(req)) return redirect(res, next);
 
-  const body = await readBody(req, LOGIN_BODY_LIMIT_BYTES);
-  if (body === null) return sendText(res, 413, 'Request too large\n');
-  const form = loginFormSchema.safeParse(Object.fromEntries(new URLSearchParams(body)));
-  const next = safeNextPath(form.success ? form.data.next : null);
-  if (!form.success) {
-    return sendHtml(res, 400, renderLoginPage({ next, error: 'Password is required.' }));
+  const code = url.searchParams.get('code');
+  if (req.method === 'GET' && code !== null && consumePublicLoginCode(code)) {
+    const ipAddress = getClientIp((name) => firstHeader(req.headers[name]));
+    return redirect(res, next, await createAuthSession(ipAddress, req.headers['user-agent']));
   }
+  return sendSignInPage(res, 200, urls, next, code !== null);
+}
 
-  const result = await loginWithPassword(form.data.password, client);
-  if (result.ok) return redirect(res, next, result.token);
-  switch (result.reason) {
-    case 'rate_limited':
-      return sendHtml(
-        res,
-        429,
-        renderLoginPage({ next, error: retryAfterMessage(result.retryAfterMs) })
-      );
-    case 'invalid_password':
-      return sendHtml(res, 401, renderLoginPage({ next, error: 'Invalid password.' }));
-    case 'not_configured':
-    case 'bad_hash':
-      return sendHtml(res, 500, renderLoginPage({ next, error: 'Login is misconfigured.' }));
-  }
+/** Passwords are typed only on the app's origin, never on this one, which runs agent-written pages. */
+function sendSignInPage(
+  res: ServerResponse,
+  status: number,
+  urls: PublicFilesUrls,
+  next: string,
+  expired = false
+): void {
+  const signInUrl = appSignInUrl(urls.appUrl, urls.baseUrl, next);
+  res.writeHead(status, { ...BASE_HEADERS, 'Content-Type': 'text/html; charset=utf-8' });
+  res.end(renderSignInPage({ signInUrl, expired }));
 }
 
 async function hasValidAuthCookie(req: IncomingMessage): Promise<boolean> {
@@ -177,20 +169,7 @@ function firstHeader(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
-/** The request body as text, or null if it exceeds `limit` bytes. */
-async function readBody(req: IncomingMessage, limit: number): Promise<string | null> {
-  const chunks: Buffer[] = [];
-  let size = 0;
-  for await (const chunk of req) {
-    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string);
-    size += buffer.length;
-    if (size > limit) return null;
-    chunks.push(buffer);
-  }
-  return Buffer.concat(chunks).toString('utf8');
-}
-
-/** 303 so a POSTed login form becomes a GET of `next`; sets the auth cookie when given a token. */
+/** Sets the auth cookie when given a token. */
 function redirect(res: ServerResponse, location: string, token?: string): void {
   res
     .writeHead(303, {
@@ -242,11 +221,6 @@ async function serveFile(
   } finally {
     await handle.close();
   }
-}
-
-function sendHtml(res: ServerResponse, status: number, html: string): void {
-  res.writeHead(status, { ...BASE_HEADERS, 'Content-Type': 'text/html; charset=utf-8' });
-  res.end(html);
 }
 
 function sendText(res: ServerResponse, status: number, text: string): void {

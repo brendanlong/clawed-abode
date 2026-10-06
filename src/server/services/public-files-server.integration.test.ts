@@ -6,8 +6,6 @@ import { randomUUID } from 'crypto';
 import type { Server } from 'http';
 import type { AddressInfo } from 'net';
 import { setupTestDb, teardownTestDb, testPrisma, clearTestDb } from '@/test/setup-test-db';
-import { hashPassword } from '@/lib/auth';
-import { resetEnvCache } from '@/lib/env';
 
 // The server imports @/lib/prisma at module load, so import it only after the test DB is configured.
 let getSessionPublicDir: typeof import('./public-dir').getSessionPublicDir;
@@ -17,8 +15,6 @@ let server: Server;
 let baseUrl: string;
 
 const TOKEN = 'public-route-test-token';
-const PASSWORD = 'public-login-test-password';
-const originalPasswordHash = process.env.PASSWORD_HASH;
 const createdSessionIds: string[] = [];
 
 async function createSession(status = 'running'): Promise<string> {
@@ -50,10 +46,8 @@ beforeAll(async () => {
   ({ getSessionPublicDir } = await import('./public-dir'));
   ({ getSessionWorkspacePath } = await import('./worktree-manager'));
   ({ mintPublicLoginCode } = await import('./public-login-codes'));
-  process.env.PASSWORD_HASH = Buffer.from(await hashPassword(PASSWORD)).toString('base64');
-  resetEnvCache();
   const { createPublicFilesServer } = await import('./public-files-server');
-  server = createPublicFilesServer();
+  server = createPublicFilesServer({ baseUrl: 'https://h.ts.net:8444' });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 
@@ -72,9 +66,6 @@ afterEach(async () => {
 
 afterAll(async () => {
   await new Promise((resolve) => server.close(resolve));
-  if (originalPasswordHash === undefined) delete process.env.PASSWORD_HASH;
-  else process.env.PASSWORD_HASH = originalPasswordHash;
-  resetEnvCache();
   await clearTestDb();
   await teardownTestDb();
 });
@@ -87,8 +78,9 @@ describe('public files server', () => {
     const res = await get(`/${id}/a.txt?v=1`, null);
     expect(res.status).toBe(401);
     const html = await res.text();
-    expect(html).toContain('action="/_login"');
-    expect(html).toContain(`name="next" value="/${id}/a.txt?v=1"`);
+    expect(html).toContain(
+      `href="https://h.ts.net/login?public=${encodeURIComponent(`/${id}/a.txt?v=1`)}"`
+    );
     expect((await get(`/${id}/a.txt`, 'bogus')).status).toBe(401);
   });
 
@@ -241,49 +233,26 @@ describe('public files server', () => {
 });
 
 describe('public files login', () => {
-  let ipCounter = 0;
-  /** A fresh client IP per test, so the shared login rate limiter doesn't couple tests. */
-  function freshIp(): string {
-    ipCounter += 1;
-    return `10.0.0.${ipCounter}`;
-  }
-
   function cookieToken(res: Response): string | null {
     return res.headers.get('set-cookie')?.match(/^public_auth=([^;]+)/)?.[1] ?? null;
   }
 
-  function postLogin(fields: Record<string, string>, ip = freshIp()): Promise<Response> {
-    return fetch(`${baseUrl}/_login`, {
-      method: 'POST',
-      redirect: 'manual',
-      headers: {
-        'content-type': 'application/x-www-form-urlencoded',
-        'x-forwarded-for': ip,
-      },
-      body: new URLSearchParams(fields).toString(),
-    });
-  }
-
-  async function isActiveToken(token: string): Promise<boolean> {
-    const row = await testPrisma.authSession.findUnique({ where: { token } });
-    return row !== null && row.revokedAt === null;
-  }
-
   it('exchanges a one-time code for a new auth session and redirects to next', async () => {
     const id = await createSession();
-    const code = mintPublicLoginCode();
     const next = `/${id}/a.html?x=1`;
 
-    const res = await get(`/_login?code=${code}&next=${encodeURIComponent(next)}`, null, {
-      'user-agent': 'custom-tab',
-    });
+    const res = await get(
+      `/_login?code=${mintPublicLoginCode()}&next=${encodeURIComponent(next)}`,
+      null,
+      { 'user-agent': 'custom-tab', 'x-forwarded-for': '100.64.0.9' }
+    );
     expect(res.status).toBe(303);
     expect(res.headers.get('location')).toBe(next);
     const token = cookieToken(res);
     expect(token).not.toBeNull();
     expect(token).not.toBe(TOKEN);
     const row = await testPrisma.authSession.findUnique({ where: { token: token! } });
-    expect(row?.userAgent).toBe('custom-tab');
+    expect(row).toMatchObject({ userAgent: 'custom-tab', ipAddress: '100.64.0.9' });
 
     await writePublic(id, 'a.html', 'hi');
     expect((await get(next, token)).status).toBe(200);
@@ -299,6 +268,17 @@ describe('public files login', () => {
     expect(await res.text()).toContain('That link has expired');
   });
 
+  it('does not spend the code on HEAD', async () => {
+    const code = mintPublicLoginCode();
+    const head = await fetch(`${baseUrl}/_login?code=${code}&next=/`, {
+      method: 'HEAD',
+      redirect: 'manual',
+    });
+    expect(cookieToken(head)).toBeNull();
+
+    expect(cookieToken(await get(`/_login?code=${code}&next=/`, null))).not.toBeNull();
+  });
+
   it('does not open another auth session for a browser that is already signed in', async () => {
     const before = await testPrisma.authSession.count();
 
@@ -310,40 +290,17 @@ describe('public files login', () => {
   });
 
   it('never redirects off-origin', async () => {
-    const res = await get(`/_login?code=${mintPublicLoginCode()}&next=//evil.example/`, null);
-    expect(res.headers.get('location')).toBe('/');
-  });
-
-  it('signs in with the password and redirects to next', async () => {
-    const res = await postLogin({ password: PASSWORD, next: '/somewhere' });
-    expect(res.status).toBe(303);
-    expect(res.headers.get('location')).toBe('/somewhere');
-    const token = cookieToken(res);
-    expect(token).not.toBeNull();
-    expect(await isActiveToken(token!)).toBe(true);
-  });
-
-  it('rejects a wrong password with the form and keeps next', async () => {
-    const res = await postLogin({ password: 'wrong', next: '/somewhere' });
-    expect(res.status).toBe(401);
-    expect(cookieToken(res)).toBeNull();
-    const html = await res.text();
-    expect(html).toContain('Invalid password.');
-    expect(html).toContain('name="next" value="/somewhere"');
-  });
-
-  it('shares the app login rate limit', async () => {
-    const ip = freshIp();
-    for (let i = 0; i < 5; i++) {
-      expect((await postLogin({ password: 'wrong' }, ip)).status).toBe(401);
+    for (const next of ['//evil.example/', '/%09/evil.example/', '/%5Cevil.example/']) {
+      const res = await get(`/_login?next=${next}`);
+      expect(res.headers.get('location')).toBe('/');
     }
-    const res = await postLogin({ password: PASSWORD }, ip);
-    expect(res.status).toBe(429);
-    expect(cookieToken(res)).toBeNull();
+    const crlf = await get('/_login?next=/a%0D%0ASet-Cookie:%20x=1');
+    expect(crlf.status).toBe(303);
+    expect(crlf.headers.get('set-cookie')).toBeNull();
   });
 
-  it('rejects an oversized body', async () => {
-    const res = await postLogin({ password: 'x'.repeat(16 * 1024) });
-    expect(res.status).toBe(413);
+  it('only accepts GET and HEAD', async () => {
+    const res = await fetch(`${baseUrl}/_login`, { method: 'POST', body: 'password=x' });
+    expect(res.status).toBe(405);
   });
 });
