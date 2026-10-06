@@ -1,9 +1,4 @@
-import type {
-  Query,
-  SDKUserMessage,
-  SlashCommand,
-  PermissionResult,
-} from '@anthropic-ai/claude-agent-sdk';
+import type { Query, SDKUserMessage, PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import type { Pushable } from '@/lib/pushable';
 import { INITIAL_LIVE_STATUS, type LiveStatus } from '@/lib/session-status';
 import type { SanitizationInfo } from '@/lib/sanitization';
@@ -65,8 +60,6 @@ export interface SessionState {
   status: LiveStatus;
   pendingInput: PendingUserInput | null;
   workingDir: string;
-  /** Discovered slash commands (mirrored into session-commands for reads between queries). */
-  commands: SlashCommand[];
   /** Settings the live query was built with (model/MCP can be applied live later). */
   boundSettings: MergedSessionSettings | null;
   /** Settings key (repoFullName or '__no_repo__') for reloading merged settings. */
@@ -123,7 +116,7 @@ export interface SessionState {
   claudeSessionId: string | null;
 }
 
-export function createSessionState(commands: SlashCommand[]): SessionState {
+export function createSessionState(): SessionState {
   return {
     query: null,
     input: null,
@@ -131,7 +124,6 @@ export function createSessionState(commands: SlashCommand[]): SessionState {
     status: INITIAL_LIVE_STATUS,
     pendingInput: null,
     workingDir: '',
-    commands,
     boundSettings: null,
     settingsKey: '',
     toolSanitizations: new Map(),

@@ -10,6 +10,8 @@ Every SDK message routes through `classifyMessage` ([`src/lib/claude-messages.ts
 2. **Visible**: `error`, `compact_boundary`, `model_refusal_fallback` — these carry signal. `model_refusal_fallback` marks a silent primary→fallback model downgrade after an API refusal; without a visible banner the downgrade would be invisible.
 3. **Hidden**: everything else is **persisted but not rendered**. Persisting keeps the option of widening the visible set later without a backfill.
 
+The composer's slash commands are not messages: [`session-commands.ts`](../src/server/services/session-commands.ts) keeps the SDK's list per session, replaced wholesale by `supportedCommands()` and each `commands_changed`, and hides init's `terminal_slash_commands` (terminal-UI commands like `/exit` are meaningless on a phone).
+
 Other rendering-relevant classification: `server_tool_use` (e.g. the advisor, which runs inside the API and never passes `canUseTool`) renders as a one-line indicator; a message whose only block is an encrypted `advisor_tool_result` is hidden (nothing human-readable to show). Thinking blocks are accumulated from `thinking_delta`s, rendered as one collapsed section, and excluded from copy/voice output.
 
 ## Storage & Pagination

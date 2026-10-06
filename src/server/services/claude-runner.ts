@@ -70,11 +70,9 @@ import {
   setRateLimitChangeHandler,
 } from './rate-limit-state';
 import {
+  applyCommandMessage,
   forgetSessionCommands,
-  getSessionCommands,
-  mergeInitCommands,
-  mergeSlashCommands,
-  rememberSessionCommands,
+  replaceSessionCommands,
 } from './session-commands';
 import { buildMcpServersRecord, buildSdkOptions } from './sdk-options';
 import { detectBranchAndPr } from './session-branch-pr';
@@ -301,7 +299,7 @@ async function runSessionLoop(sessionId: string, state: SessionState, q: Query):
         accumulator.resetAll();
       }
 
-      mergeInitCommands(sessionId, state, message);
+      applyCommandMessage(sessionId, message);
       await trackClaudeSessionId(sessionId, state, q, message);
 
       const handling = classifyMessage(message);
@@ -401,17 +399,9 @@ async function establishSessionQuery(
 
   log.info('Established session query', { sessionId, workingDir, resumeId });
 
-  // Fetch rich command metadata once (init message may arrive first; merge both).
   void q
     .supportedCommands()
-    .then((commands) => {
-      state.commands = mergeSlashCommands(
-        commands,
-        state.commands.map((c) => c.name)
-      );
-      rememberSessionCommands(sessionId, state.commands);
-      sseEvents.emitCommands(sessionId, state.commands);
-    })
+    .then((commands) => replaceSessionCommands(sessionId, commands))
     .catch((err) => {
       log.debug('Failed to fetch supportedCommands', { sessionId, error: toError(err).message });
     });
@@ -432,7 +422,7 @@ function ensureSessionQuery(sessionId: string): Promise<SessionState> {
   if (existing?.query) return Promise.resolve(existing);
   if (existing?.establishing) return existing.establishing;
 
-  const state = existing ?? createSessionState(getSessionCommands(sessionId));
+  const state = existing ?? createSessionState();
   sessions.set(sessionId, state);
   // Establish against THIS state object; the promise is identity-checked on clear
   // so a stop+revive race never nulls a newer establishment's promise.
