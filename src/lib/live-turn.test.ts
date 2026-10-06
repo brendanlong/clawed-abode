@@ -272,6 +272,22 @@ describe('reduceLiveTurn', () => {
     expect(finishedAt).toEqual([2]);
   });
 
+  it('a push read after the previous turn ended finishes its own turn with no message_start', () => {
+    const events = [
+      lifecycle('x', 'queued'),
+      messageStart(),
+      pushed('a'),
+      endTurn,
+      result,
+      lifecycle('a', 'started'),
+      result,
+      lifecycle('a', 'completed'),
+    ];
+    const { view, finishedAt } = fold(events);
+    expect(view.running).toBe(false);
+    expect(finishedAt).toEqual([6]);
+  });
+
   it('reports turnEnded only for a stream-driven end, not a recall or teardown', () => {
     expect(fold([messageStart(), endTurn]).turnEndedAt).toEqual([1]);
     expect(fold([pushed('a'), recalled('a')]).turnEndedAt).toEqual([]);
