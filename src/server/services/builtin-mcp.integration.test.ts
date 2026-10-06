@@ -11,7 +11,6 @@ let mcp: typeof import('./builtin-mcp');
 const port = {
   renameSession: vi.fn(async () => {}),
   createSession: vi.fn(async () => ({ id: 'new-id' })),
-  sendMessage: vi.fn(async () => {}),
   stopSession: vi.fn(async () => ({ status: 'stopped' })),
   isTurnActive: vi.fn(() => false),
 } satisfies SessionToolsPort;
@@ -47,25 +46,24 @@ describe('built-in MCP server', () => {
     vi.clearAllMocks();
   });
 
-  it('offers only rename_session at the self level, and all tools at the sessions level', async () => {
+  it('offers rename and list at the basic level, and the management tools only at the manage level', async () => {
     const self = await createTestSession();
     const names = async (level: BuiltinToolsLevel) =>
       (await (await connect(self.id, level)).listTools()).tools.map((t) => t.name).sort();
 
-    expect(await names('self')).toEqual(['rename_session']);
-    expect(await names('sessions')).toEqual([
+    expect(await names('basic')).toEqual(['list_sessions', 'rename_session']);
+    expect(await names('manage')).toEqual([
       'create_session',
       'list_sessions',
       'read_session',
       'rename_session',
-      'send_message',
       'stop_session',
     ]);
   });
 
   it('renames the calling session', async () => {
     const self = await createTestSession();
-    const client = await connect(self.id, 'self');
+    const client = await connect(self.id, 'basic');
 
     expect(await call(client, 'rename_session', { name: '  Fix login  ' })).toMatchObject({
       isError: false,
@@ -73,16 +71,9 @@ describe('built-in MCP server', () => {
     expect(port.renameSession).toHaveBeenCalledWith(self.id, 'Fix login');
   });
 
-  it('labels messages and initial prompts with the sending session', async () => {
-    const self = await createTestSession({ name: 'Boss' });
-    const other = await createTestSession();
-    const client = await connect(self.id, 'sessions');
-
-    await call(client, 'send_message', { sessionId: other.id, message: 'status?' });
-    expect(port.sendMessage).toHaveBeenCalledWith(
-      other.id,
-      attributeMessage({ id: self.id, name: 'Boss' }, 'status?')
-    );
+  it('creates a session marked as agent-created, with a labeled initial prompt', async () => {
+    const self = await createTestSession({ name: 'Boss', agentName: 'boss-a1b2' });
+    const client = await connect(self.id, 'manage');
 
     await call(client, 'create_session', {
       name: 'Worker',
@@ -94,31 +85,30 @@ describe('built-in MCP server', () => {
       name: 'Worker',
       repoFullName: 'owner/repo',
       branch: 'main',
-      initialPrompt: attributeMessage({ id: self.id, name: 'Boss' }, 'do it'),
+      initialPrompt: attributeMessage(
+        { id: self.id, name: 'Boss', agentName: 'boss-a1b2' },
+        'do it'
+      ),
+      createdBySessionId: self.id,
     });
   });
 
-  it('refuses to message or stop itself, or message a session that is not running', async () => {
+  it('refuses to read or stop itself', async () => {
     const self = await createTestSession();
-    const stopped = await createTestSession({ status: 'stopped' });
-    const client = await connect(self.id, 'sessions');
+    const client = await connect(self.id, 'manage');
 
-    expect(await call(client, 'send_message', { sessionId: self.id, message: 'x' })).toMatchObject({
-      isError: true,
-    });
     expect(await call(client, 'stop_session', { sessionId: self.id })).toMatchObject({
       isError: true,
     });
-    expect(
-      await call(client, 'send_message', { sessionId: stopped.id, message: 'x' })
-    ).toMatchObject({ isError: true, text: expect.stringContaining('stopped') });
-    expect(port.sendMessage).not.toHaveBeenCalled();
+    expect(await call(client, 'read_session', { sessionId: self.id })).toMatchObject({
+      isError: true,
+    });
     expect(port.stopSession).not.toHaveBeenCalled();
   });
 
   it('requires a branch when creating a session for a repository', async () => {
     const self = await createTestSession();
-    const client = await connect(self.id, 'sessions');
+    const client = await connect(self.id, 'manage');
 
     expect(
       await call(client, 'create_session', { name: 'W', prompt: 'p', repoFullName: 'o/r' })
@@ -126,19 +116,19 @@ describe('built-in MCP server', () => {
     expect(port.createSession).not.toHaveBeenCalled();
   });
 
-  it('lists non-archived sessions and marks the caller', async () => {
-    const self = await createTestSession();
-    const other = await createTestSession();
+  it('lists non-archived sessions with their SendMessage addresses, marking the caller', async () => {
+    const self = await createTestSession({ agentName: 'me-0001' });
+    const other = await createTestSession({ agentName: 'other-0002' });
     await createTestSession({ status: 'archived' });
-    const client = await connect(self.id, 'sessions');
+    const client = await connect(self.id, 'basic');
 
     const { sessions } = JSON.parse((await call(client, 'list_sessions', {})).text) as {
-      sessions: { id: string; isYou: boolean }[];
+      sessions: { id: string; agentName: string | null; isYou: boolean }[];
     };
-    expect(sessions.map((s) => [s.id, s.isYou]).sort()).toEqual(
+    expect(sessions.map((s) => [s.id, s.agentName, s.isYou]).sort()).toEqual(
       [
-        [self.id, true],
-        [other.id, false],
+        [self.id, 'me-0001', true],
+        [other.id, 'other-0002', false],
       ].sort()
     );
   });
@@ -164,7 +154,7 @@ describe('built-in MCP server', () => {
         content: JSON.stringify(m.content),
       })),
     });
-    const client = await connect(self.id, 'sessions');
+    const client = await connect(self.id, 'manage');
 
     const { text, isError } = await call(client, 'read_session', { sessionId: other.id });
     expect(isError).toBe(false);
@@ -176,7 +166,7 @@ describe('built-in MCP server', () => {
   it('stops another session, and reports when it was not running', async () => {
     const self = await createTestSession();
     const other = await createTestSession({ name: 'Other' });
-    const client = await connect(self.id, 'sessions');
+    const client = await connect(self.id, 'manage');
 
     expect(await call(client, 'stop_session', { sessionId: other.id })).toEqual({
       text: 'Stopped "Other".',
@@ -207,7 +197,7 @@ describe('built-in MCP server', () => {
         content: JSON.stringify(reply(sequence)),
       })),
     });
-    const client = await connect(self.id, 'sessions');
+    const client = await connect(self.id, 'manage');
     const read = async (cursor?: number) => {
       const { text } = await call(client, 'read_session', { sessionId: other.id, cursor });
       const newline = text.indexOf('\n');

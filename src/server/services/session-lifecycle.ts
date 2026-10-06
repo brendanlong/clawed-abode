@@ -68,6 +68,8 @@ interface CreateSessionInput {
   branch?: string;
   initialPrompt?: string;
   claudeModel?: string;
+  /** Set when another session's agent creates this one (see `sessionBuiltinTools`). */
+  createdBySessionId?: string;
 }
 
 /**
@@ -88,6 +90,7 @@ export async function createSession(input: CreateSessionInput): Promise<Session>
       status: 'creating',
       statusMessage: repo ? 'Cloning repository...' : 'Creating workspace...',
       claudeModel: input.claudeModel?.trim() || null,
+      createdBySessionId: input.createdBySessionId ?? null,
     },
   });
 
@@ -261,8 +264,6 @@ export const sessionToolsPort: SessionToolsPort = {
     await updateSession(sessionId, { name });
   },
   createSession,
-  // Not user-initiated: another agent's message shouldn't reorder the session list.
-  sendMessage: (sessionId, text) => sendUserMessage(sessionId, text, [], { userInitiated: false }),
   stopSession: shutDownSession,
   isTurnActive: isClaudeRunning,
 };

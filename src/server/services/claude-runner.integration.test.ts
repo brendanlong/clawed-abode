@@ -936,7 +936,7 @@ describe('claude-runner persistent streaming loop', () => {
       ];
       return fake.factory(p);
     });
-    mockLoadSettings.mockResolvedValue({ ...baseSettings, builtinTools: 'self' });
+    mockLoadSettings.mockResolvedValue({ ...baseSettings, builtinTools: 'basic' });
     const sessionId = await createRunningSession();
 
     await sendUserMessage(sessionId, 'hello');
@@ -948,7 +948,7 @@ describe('claude-runner persistent streaming loop', () => {
     const added = { name: 'added', type: 'stdio' as const, command: 'node' };
     mockLoadSettings.mockResolvedValue({
       ...baseSettings,
-      builtinTools: 'self',
+      builtinTools: 'basic',
       mcpServers: [added],
     });
     await sendUserMessage(sessionId, 'again');

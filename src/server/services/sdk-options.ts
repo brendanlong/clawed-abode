@@ -10,7 +10,11 @@ import { mayChangeBranchOrPr } from '@/lib/pull-request';
 import type { SanitizationInfo } from '@/lib/sanitization';
 import { CLAUDE_BIN_ENV, SESSION_SCOPE_ENV, sessionScopeUnitName } from '@/lib/session-scope';
 import { buildAgentEnv } from './agent-env';
-import { BUILTIN_MCP_SERVER_NAME, builtinToolsPrompt } from '@/lib/builtin-tools';
+import {
+  BUILTIN_MCP_SERVER_NAME,
+  builtinToolsPrompt,
+  sessionBuiltinTools,
+} from '@/lib/builtin-tools';
 import { buildBuiltinMcpServer } from './builtin-mcp';
 import { sanitizeToolOutputHook } from './input-sanitizer';
 import { writeSessionMcpConfig, removeSessionMcpConfig } from './mcp-config-file';
@@ -87,6 +91,8 @@ export async function buildSdkOptions(params: {
   agentName: string | null;
   /** Whether the session still has its auto-generated name, so the agent is asked to rename it. */
   sessionNameIsDefault: boolean;
+  /** The session whose agent created this one, if any; caps its built-in tools. */
+  createdBySessionId: string | null;
   workingDir: string;
   settings: MergedSessionSettings;
   /** Claude Code conversation to resume, or null to start one under `sessionId`. */
@@ -100,6 +106,7 @@ export async function buildSdkOptions(params: {
     sessionId,
     agentName,
     sessionNameIsDefault,
+    createdBySessionId,
     workingDir,
     settings,
     resumeId,
@@ -107,6 +114,7 @@ export async function buildSdkOptions(params: {
     recordSanitization,
   } = params;
   const agentEnv = await buildAgentEnv(settings.envVars, settings.claudeApiKey);
+  const builtinTools = sessionBuiltinTools(settings.builtinTools, createdBySessionId);
   if (agentName) agentEnv[AGENT_NAME_ENV] = agentName;
   const mcpServersRecord = buildMcpServersRecord(settings.mcpServers);
 
@@ -126,8 +134,8 @@ export async function buildSdkOptions(params: {
     systemPrompt: {
       type: 'preset',
       preset: 'claude_code',
-      append: settings.builtinTools
-        ? `${settings.systemPrompt}\n\n${builtinToolsPrompt(settings.builtinTools, sessionNameIsDefault)}`
+      append: builtinTools
+        ? `${settings.systemPrompt}\n\n${builtinToolsPrompt(builtinTools, sessionNameIsDefault)}`
         : settings.systemPrompt,
       snapshot: false,
     },
@@ -192,9 +200,7 @@ export async function buildSdkOptions(params: {
 
   // The built-in server is the one `options.mcpServers` entry: an in-process SDK
   // instance is registered over the control channel, never serialized onto argv.
-  const builtinMcpServer = settings.builtinTools
-    ? buildBuiltinMcpServer(sessionId, settings.builtinTools)
-    : null;
+  const builtinMcpServer = builtinTools ? buildBuiltinMcpServer(sessionId, builtinTools) : null;
   if (builtinMcpServer) {
     options.mcpServers = { [BUILTIN_MCP_SERVER_NAME]: builtinMcpServer };
   }

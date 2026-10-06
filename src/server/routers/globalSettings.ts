@@ -33,7 +33,7 @@ const globalSettingsUpdateSchema = z
     systemPromptOverrideEnabled: z.boolean(),
     /** Give agents the built-in MCP server; takes effect on the next Stop→Start. */
     builtinToolsEnabled: z.boolean(),
-    /** Include the tools that act on other sessions (needs builtinToolsEnabled). */
+    /** Include the tools that create, read, and stop other sessions (needs builtinToolsEnabled). */
     sessionToolsEnabled: z.boolean(),
   })
   .partial();

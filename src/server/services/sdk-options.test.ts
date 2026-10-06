@@ -48,12 +48,14 @@ const recordSanitization = vi.fn();
 const build = (
   s: MergedSessionSettings,
   resumeId: string | null = null,
-  agentName: string | null = 'math-fable-d37e'
+  agentName: string | null = 'math-fable-d37e',
+  createdBySessionId: string | null = null
 ) =>
   buildSdkOptions({
     sessionId: 'sid',
     agentName,
     sessionNameIsDefault: true,
+    createdBySessionId,
     workingDir: '/w',
     settings: s,
     resumeId,
@@ -133,23 +135,31 @@ describe('buildSdkOptions', () => {
         ? systemPrompt.append
         : undefined;
     };
-    expect(await append(settings({ builtinTools: 'self' }))).toBe(
-      `prompt\n\n${builtinToolsPrompt('self', true)}`
+    expect(await append(settings({ builtinTools: 'basic' }))).toBe(
+      `prompt\n\n${builtinToolsPrompt('basic', true)}`
     );
     expect(await append(settings({ builtinTools: null }))).toBe('prompt');
+  });
+
+  it('gives a session another agent created the basic tools even when management is on', async () => {
+    const { options } = await build(settings({ builtinTools: 'manage' }), null, null, 'creator');
+    const { systemPrompt } = options;
+    expect(
+      typeof systemPrompt === 'object' && 'append' in systemPrompt && systemPrompt.append
+    ).toBe(`prompt\n\n${builtinToolsPrompt('basic', true)}`);
   });
 
   it('registers the built-in server in-process only when enabled, keeping configured servers in the file', async () => {
     const enabled = await build(
       settings({
-        builtinTools: 'self',
+        builtinTools: 'basic',
         mcpServers: [{ name: 's', type: 'stdio', command: 'node' }],
       })
     );
     expect(Object.keys(enabled.options.mcpServers ?? {})).toEqual(['clawed-abode']);
     expect(enabled.options.mcpServers?.['clawed-abode']).toMatchObject({ type: 'sdk' });
     expect(enabled.builtinMcpServer).toBe(enabled.options.mcpServers?.['clawed-abode']);
-    expect(enabled.options.extraArgs).toEqual({ 'mcp-config': '/ws/sid/mcp-config.json' });
+    expect(enabled.options.extraArgs?.['mcp-config']).toBe('/ws/sid/mcp-config.json');
 
     const disabled = await build(settings({ builtinTools: null }));
     expect(disabled.options.mcpServers).toBeUndefined();
@@ -256,7 +266,7 @@ describe('buildSdkOptions', () => {
 
 describe('buildLiveMcpServersRecord', () => {
   it('keeps the bound built-in server alongside the configured ones so a live update never drops it', async () => {
-    const { builtinMcpServer } = await build(settings({ builtinTools: 'sessions' }));
+    const { builtinMcpServer } = await build(settings({ builtinTools: 'manage' }));
     const servers = [{ name: 's', type: 'stdio' as const, command: 'node' }];
 
     expect(buildLiveMcpServersRecord(servers, builtinMcpServer)).toEqual({

@@ -38,8 +38,8 @@ export interface SessionToolsPort {
     repoFullName?: string;
     branch?: string;
     initialPrompt: string;
+    createdBySessionId: string;
   }): Promise<{ id: string }>;
-  sendMessage(sessionId: string, text: string): Promise<void>;
   /** Resolves to the session's status afterwards, which is unchanged if it wasn't running. */
   stopSession(sessionId: string): Promise<{ status: string }>;
   isTurnActive(sessionId: string): boolean;
@@ -101,13 +101,13 @@ async function loadOtherSession(callerId: string, targetId: string) {
 async function loadCaller(sessionId: string) {
   const caller = await prisma.session.findUnique({
     where: { id: sessionId },
-    select: { id: true, name: true },
+    select: { id: true, name: true, agentName: true },
   });
   if (!caller) throw new Error('Calling session not found');
   return caller;
 }
 
-function selfTools(sessionId: string) {
+function basicTools(sessionId: string) {
   return [
     tool(
       'rename_session',
@@ -120,14 +120,9 @@ function selfTools(sessionId: string) {
         }),
       { alwaysLoad: true }
     ),
-  ];
-}
-
-function sessionTools(sessionId: string) {
-  return [
     tool(
       'list_sessions',
-      'List the user’s non-archived sessions, most recently used first.',
+      'List the user’s non-archived sessions, most recently used first. agentName is the address to use with SendMessage (null until assigned).',
       { cursor: keysetPageInputSchema.shape.cursor },
       ({ cursor }) =>
         run('list_sessions', async () => {
@@ -139,6 +134,7 @@ function sessionTools(sessionId: string) {
             select: {
               id: true,
               name: true,
+              agentName: true,
               repoUrl: true,
               currentBranch: true,
               status: true,
@@ -154,6 +150,11 @@ function sessionTools(sessionId: string) {
           return textResult(JSON.stringify({ sessions, nextCursor }, null, 2));
         })
     ),
+  ];
+}
+
+function manageTools(sessionId: string) {
+  return [
     tool(
       'create_session',
       'Start a new session with its own fresh clone and send it an initial prompt. Only use this when the user asks for a separate session; use subagents for ordinary delegation. Returns the new session id; setup (cloning) continues in the background.',
@@ -172,29 +173,11 @@ function sessionTools(sessionId: string) {
             repoFullName,
             branch: repoFullName ? branch : undefined,
             initialPrompt: attributeMessage(caller, prompt),
+            createdBySessionId: sessionId,
           });
           return textResult(
-            `Created session ${created.id}. It will receive the prompt once setup finishes; check on it with read_session.`
+            `Created session ${created.id}. It will receive the prompt once setup finishes; find its agentName with list_sessions to message it, or check on it with read_session.`
           );
-        })
-    ),
-    tool(
-      'send_message',
-      'Send a message to another running session, as if typed into it. It reaches the agent even mid-turn (or is queued if that session is paused for a rate limit).',
-      { sessionId: sessionIdSchema, message: promptSchema },
-      ({ sessionId: targetId, message }) =>
-        run('send_message', async () => {
-          const [target, caller] = await Promise.all([
-            loadOtherSession(sessionId, targetId),
-            loadCaller(sessionId),
-          ]);
-          if (target.status !== 'running') {
-            throw new Error(
-              `Session "${target.name}" is ${target.status}; only running sessions accept messages`
-            );
-          }
-          await requirePort().sendMessage(target.id, attributeMessage(caller, message));
-          return textResult(`Sent to "${target.name}".`);
         })
     ),
     tool(
@@ -257,6 +240,6 @@ export function buildBuiltinMcpServer(
 ): McpSdkServerConfigWithInstance {
   return createSdkMcpServer({
     name: BUILTIN_MCP_SERVER_NAME,
-    tools: [...selfTools(sessionId), ...(level === 'sessions' ? sessionTools(sessionId) : [])],
+    tools: [...basicTools(sessionId), ...(level === 'manage' ? manageTools(sessionId) : [])],
   });
 }

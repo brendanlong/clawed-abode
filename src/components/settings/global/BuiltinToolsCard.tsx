@@ -24,7 +24,7 @@ export function BuiltinToolsCard({
         <SwitchSetting
           id="builtin-tools"
           title="Enable built-in tools"
-          description="Lets agents rename their own session, and they're encouraged to when the name is the auto-generated default."
+          description="Lets agents rename their own session (they're asked to when it has the default name) and look up other sessions' addresses for messaging."
           checked={builtinToolsEnabled}
           onCheckedChange={(checked) => mutation.mutate({ builtinToolsEnabled: checked })}
           disabled={mutation.isPending}
@@ -32,7 +32,7 @@ export function BuiltinToolsCard({
         <SwitchSetting
           id="session-tools"
           title="Session management"
-          description="Also lets agents list, create, message, read, and stop your other sessions. They're told to do this only when you ask."
+          description="Also lets agents create, read, and stop your other sessions. They're told to do this only when you ask. Sessions an agent creates never get these tools."
           checked={builtinToolsEnabled && sessionToolsEnabled}
           onCheckedChange={(checked) => mutation.mutate({ sessionToolsEnabled: checked })}
           disabled={mutation.isPending || !builtinToolsEnabled}

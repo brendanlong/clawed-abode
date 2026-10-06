@@ -310,6 +310,7 @@ async function establishSessionQuery(
       name: true,
       repoUrl: true,
       branch: true,
+      createdBySessionId: true,
       repoPath: true,
       claudeModel: true,
       claudeSessionId: true,
@@ -344,6 +345,7 @@ async function establishSessionQuery(
       return null;
     }),
     sessionNameIsDefault: isDefaultSessionName(session),
+    createdBySessionId: session.createdBySessionId,
     workingDir,
     settings,
     resumeId,
