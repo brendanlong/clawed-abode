@@ -18,6 +18,12 @@ vi.mock('../services/claude-runner', async (importOriginal) => {
   };
 });
 
+const mockCurrentHold = vi.hoisted(() => vi.fn().mockReturnValue(null));
+vi.mock('../services/rate-limit-pause', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../services/rate-limit-pause')>();
+  return { ...actual, currentHold: mockCurrentHold };
+});
+
 // Use real token estimation (pure function)
 vi.mock('../services/message-store', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../services/message-store')>();
@@ -486,6 +492,24 @@ describe('claudeRouter integration', () => {
       const result = await caller.claude.getLiveState({ sessionId: session.id });
 
       expect(result.queuedMessageIds).toEqual(['first', 'second']);
+    });
+
+    it("reports the last recompute's hold, the same one the list and SSE use", async () => {
+      const session = await createTestSession({ name: 'Paused Session' });
+      mockIsClaudeRunning.mockReturnValue(false);
+      const hold = {
+        untilMs: Date.now() + 60_000,
+        limitType: 'five_hour' as const,
+        reason: 'threshold' as const,
+        utilization: 97,
+      };
+      mockCurrentHold.mockReturnValueOnce(hold);
+
+      const caller = createCaller('auth-session-id');
+      const result = await caller.claude.getLiveState({ sessionId: session.id });
+
+      expect(result.rateLimitHold).toEqual(hold);
+      expect(mockCurrentHold).toHaveBeenCalledWith(session.id);
     });
 
     it('should require authentication', async () => {
