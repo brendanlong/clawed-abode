@@ -1,17 +1,22 @@
 import { describe, it, expect } from 'vitest';
+import type { SDKPartialAssistantMessage } from '@anthropic-ai/claude-agent-sdk';
 import { StreamAccumulator } from './stream-accumulator';
 
 /**
  * Helper to wrap a raw stream event in the message envelope the accumulator expects.
+ * Events are written partially (as the real stream's often are), hence the cast.
  */
-function event(e: Record<string, unknown>, parentToolUseId: string | null = null) {
+function event(
+  e: Record<string, unknown>,
+  parentToolUseId: string | null = null
+): SDKPartialAssistantMessage {
   return {
-    type: 'stream_event' as const,
-    event: e as { type: string; [key: string]: unknown },
+    type: 'stream_event',
+    event: e,
     parent_tool_use_id: parentToolUseId,
     uuid: 'uuid-1',
     session_id: 'session-1',
-  };
+  } as unknown as SDKPartialAssistantMessage;
 }
 
 describe('StreamAccumulator', () => {

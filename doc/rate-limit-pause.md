@@ -108,6 +108,9 @@ and returns the text to the composer (the same recall path Stop already used for
 in-flight prompts), and withdraws a pending resume nudge (as does the header Stop) — a user stopping is a
 clear signal they don't want the session picking work back up on its own. This
 matters because a paused session has no live turn for Stop to act on otherwise.
+For Stop to win a race with a pause in progress, the pause makes the recalled
+prompts durable and sets the nudge flag _before_ sending its interrupt: a Stop
+landing during that round trip finds the prompts and clears the flag for good.
 Archiving clears the queue for the same reason: archiving keeps the session row,
 so the `onDelete: Cascade` never fires and nothing drains an archived session.
 

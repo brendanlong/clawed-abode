@@ -410,6 +410,49 @@ describe('rate-limit pause', () => {
     runner.stopSession(sessionId);
   });
 
+  it('lets Stop take back what a pause recalled while the pause is still interrupting', async () => {
+    const fake = makeFakeQuery();
+    runner._setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession({ rateLimitPauseThreshold: 50 });
+
+    await sendAndDeliver(fake, sessionId, 'long job', { settle: false });
+    await runner.sendUserMessage(sessionId, 'unread');
+
+    let releaseInterrupt!: () => void;
+    fake.interrupt.mockImplementationOnce(
+      () => new Promise<void>((resolve) => (releaseInterrupt = resolve))
+    );
+    fake.emit(
+      rateLimitEvent({
+        status: 'allowed',
+        rateLimitType: 'five_hour',
+        resetsAt: (NOW + HOUR_MS) / 1000,
+        unifiedWindows: { five_hour: { utilization: 0.6, resetsAt: (NOW + HOUR_MS) / 1000 } },
+      })
+    );
+    await waitFor(() => fake.interrupt.mock.calls.length > 0);
+
+    // The recalled prompt is already durable, so Stop finds it.
+    const { cancelled } = await runner.interruptClaude(sessionId);
+    expect(cancelled).toEqual([{ text: 'unread', attachments: [] }]);
+
+    // Nor does the pause, finishing after the Stop, re-arm the resume nudge.
+    releaseInterrupt();
+    await runner.recomputeRateLimitHolds();
+    expect(
+      (await testPrisma.session.findUniqueOrThrow({ where: { id: sessionId } }))
+        .resumeAfterRateLimit
+    ).toBe(false);
+
+    // Once the window resets, nothing the user took back runs.
+    vi.setSystemTime(NOW + HOUR_MS + 1000);
+    await runner.recomputeRateLimitHolds();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(fake.inputs.map((i) => i.message.content)).toEqual(['long job', 'unread']);
+
+    runner.stopSession(sessionId);
+  });
+
   it('does not interrupt or nudge an idle session at the threshold', async () => {
     const fake = makeFakeQuery();
     runner._setQueryFactory(fake.factory);

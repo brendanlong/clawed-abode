@@ -1,16 +1,34 @@
 import type { McpServerConfig, Options, PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import { createLogger } from '@/lib/logger';
 import { mayChangeBranchOrPr } from '@/lib/pull-request';
+import type { SanitizationInfo } from '@/lib/sanitization';
 import { CLAUDE_BIN_ENV, SESSION_SCOPE_ENV, sessionScopeUnitName } from '@/lib/session-scope';
 import { buildAgentEnv } from './agent-env';
 import { sanitizeToolOutputHook } from './input-sanitizer';
 import { writeSessionMcpConfig, removeSessionMcpConfig } from './mcp-config-file';
 import { scheduleBranchPrRefresh } from './session-branch-pr';
 import { getSessionScopeConfig, sessionScopeNonce } from './session-cgroup';
-import type { SessionState } from './session-state';
 import type { MergedSessionSettings } from './settings-merger';
 
 const log = createLogger('sdk-options');
+
+/** An interactive tool request (AskUserQuestion / ExitPlanMode) awaiting the user. */
+export interface UserInputRequest {
+  toolName: string;
+  /** The tool_use block id, used to match an incoming answer to this request. */
+  toolUseId: string;
+  input: Record<string, unknown>;
+}
+
+export interface SdkOptionsResult {
+  options: Options;
+  /**
+   * The systemd scope unit the CLI will run in, or null when cgroup scoping is
+   * unavailable. The runner records it on the DB row before the subprocess exists
+   * so a crash can always reap it by exact name.
+   */
+  sessionScope: string | null;
+}
 
 /** Convert merged MCP server settings into the SDK's record shape. */
 export function buildMcpServersRecord(
@@ -37,8 +55,7 @@ export function buildMcpServersRecord(
 
 /**
  * Build the SDK query options for a session. Settings bind here (see
- * doc/settings.md "Live vs Restart-Bound"); the `canUseTool` callback parks
- * interactive tool requests on `state.pendingInput`.
+ * doc/settings.md "Live vs Restart-Bound").
  */
 export async function buildSdkOptions(params: {
   sessionId: string;
@@ -46,9 +63,13 @@ export async function buildSdkOptions(params: {
   settings: MergedSessionSettings;
   /** Claude Code conversation to resume, or null to start one under `sessionId`. */
   resumeId: string | null;
-  state: SessionState;
-}): Promise<Options> {
-  const { sessionId, workingDir, settings, resumeId, state } = params;
+  /** Answers an interactive tool call; the turn stays parked until it settles. */
+  waitForUserInput: (request: UserInputRequest) => Promise<PermissionResult>;
+  /** Records sanitizer findings for a tool result, to badge it when persisted. */
+  recordSanitization: (toolUseId: string, info: SanitizationInfo) => void;
+}): Promise<SdkOptionsResult> {
+  const { sessionId, workingDir, settings, resumeId, waitForUserInput, recordSanitization } =
+    params;
   const agentEnv = await buildAgentEnv(settings.envVars, settings.claudeApiKey);
   const mcpServersRecord = buildMcpServersRecord(settings.mcpServers);
 
@@ -81,12 +102,7 @@ export async function buildSdkOptions(params: {
         log.info('canUseTool: Waiting for user input', { sessionId, toolName, toolUseID });
         // No running-state toggle here: the answer UI is DB-derived (a tool_use
         // with no tool_result), and the turn genuinely remains active while parked.
-        return await new Promise<PermissionResult>((resolve, reject) => {
-          if (state.pendingInput) {
-            state.pendingInput.reject(new Error('Superseded by another tool request'));
-          }
-          state.pendingInput = { toolName, toolUseId: toolUseID, input, resolve, reject };
-        });
+        return await waitForUserInput({ toolName, toolUseId: toolUseID, input });
       }
       return { behavior: 'allow', updatedInput: input };
     },
@@ -97,10 +113,7 @@ export async function buildSdkOptions(params: {
       PostToolUse: [
         {
           hooks: [
-            (input) =>
-              sanitizeToolOutputHook(input, sessionId, (toolUseId, info) => {
-                state.toolSanitizations.set(toolUseId, info);
-              }),
+            (input) => sanitizeToolOutputHook(input, sessionId, recordSanitization),
             async (input) => {
               if (
                 input.hook_event_name === 'PostToolUse' &&
@@ -149,16 +162,12 @@ export async function buildSdkOptions(params: {
 
   // Run the CLI (and everything it spawns) in a transient systemd user scope so the
   // whole tree is reaped on teardown (doc/claude-sessions.md "Process Reaping").
-  // The unit name goes on `state.sessionScope`; the runner records it on the DB row
-  // before the subprocess exists so a crash can always reap it by exact name.
   const scopeConfig = await getSessionScopeConfig();
-  if (scopeConfig) {
-    const unit = sessionScopeUnitName(sessionId, sessionScopeNonce());
-    state.sessionScope = unit;
-    options.pathToClaudeCodeExecutable = scopeConfig.launcherPath;
-    agentEnv[SESSION_SCOPE_ENV] = unit;
-    agentEnv[CLAUDE_BIN_ENV] = scopeConfig.claudeBin;
-  }
+  if (!scopeConfig) return { options, sessionScope: null };
 
-  return options;
+  const sessionScope = sessionScopeUnitName(sessionId, sessionScopeNonce());
+  options.pathToClaudeCodeExecutable = scopeConfig.launcherPath;
+  agentEnv[SESSION_SCOPE_ENV] = sessionScope;
+  agentEnv[CLAUDE_BIN_ENV] = scopeConfig.claudeBin;
+  return { options, sessionScope };
 }

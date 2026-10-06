@@ -13,6 +13,8 @@
  * events interleaved in one SDK stream, so state is kept per `parent_tool_use_id`.
  */
 
+import type { SDKPartialAssistantMessage } from '@anthropic-ai/claude-agent-sdk';
+
 /**
  * A partial assistant message built from accumulated stream events.
  * Shaped to match the assistant message content structure so the frontend
@@ -52,44 +54,10 @@ interface AccumulatingContentBlock {
   input?: string; // accumulated JSON string, parsed at emission time
 }
 
-/**
- * Streaming event structure from the Anthropic API.
- * We use loose typing here since these come from the SDK as opaque objects.
- */
-interface StreamEvent {
-  type: string;
-  message?: {
-    model?: string;
-    role?: string;
-    [key: string]: unknown;
-  };
-  index?: number;
-  content_block?: {
-    type: string;
-    id?: string;
-    name?: string;
-    text?: string;
-    thinking?: string;
-    [key: string]: unknown;
-  };
-  delta?: {
-    type: string;
-    text?: string;
-    thinking?: string;
-    partial_json?: string;
-    stop_reason?: string;
-    [key: string]: unknown;
-  };
-  [key: string]: unknown;
-}
-
-interface StreamEventMessage {
-  type: 'stream_event';
-  event: StreamEvent;
-  parent_tool_use_id: string | null;
-  uuid: string;
-  session_id: string;
-}
+type StreamEventMessage = Pick<
+  SDKPartialAssistantMessage,
+  'event' | 'parent_tool_use_id' | 'uuid' | 'session_id'
+>;
 
 export class StreamAccumulator {
   private streams = new Map<string | null, MessageAccumulator>();

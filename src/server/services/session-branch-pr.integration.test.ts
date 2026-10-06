@@ -27,6 +27,7 @@ let fetchPullRequestForBranch: typeof import('./github').fetchPullRequestForBran
 let refreshStalePullRequests: typeof import('./session-branch-pr').refreshStalePullRequests;
 let scheduleBranchPrRefresh: typeof import('./session-branch-pr').scheduleBranchPrRefresh;
 let detectBranchAndPr: typeof import('./session-branch-pr').detectBranchAndPr;
+let cancelBranchPrRefresh: typeof import('./session-branch-pr').cancelBranchPrRefresh;
 
 const staleCheck = new Date(Date.now() - PR_SNAPSHOT_TTL_MS - 1000);
 
@@ -57,7 +58,7 @@ async function storedPr(id: string): Promise<PullRequestInfo | null> {
 beforeAll(async () => {
   await setupTestDb();
   ({ fetchPullRequestForBranch } = await import('./github'));
-  ({ refreshStalePullRequests, scheduleBranchPrRefresh, detectBranchAndPr } =
+  ({ refreshStalePullRequests, scheduleBranchPrRefresh, detectBranchAndPr, cancelBranchPrRefresh } =
     await import('./session-branch-pr'));
 });
 
@@ -233,6 +234,18 @@ describe('scheduleBranchPrRefresh', () => {
     expect(await storedPr(id)).toEqual(pr);
     expect(fetchPullRequestForBranch).toHaveBeenCalledTimes(1);
     expect(fetchPullRequestForBranch).toHaveBeenCalledWith('o/r', 'feat-b');
+  });
+
+  it('cancelBranchPrRefresh drops the pending refresh', () => {
+    vi.useFakeTimers();
+    try {
+      scheduleBranchPrRefresh('gone', repoDir);
+      expect(vi.getTimerCount()).toBe(1);
+      cancelBranchPrRefresh('gone');
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
