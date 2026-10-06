@@ -1,34 +1,20 @@
 import { z } from 'zod';
 import { router, protectedProcedure } from '../trpc';
-import { prisma } from '@/lib/prisma';
 import { encrypt } from '@/lib/crypto';
 import { createLogger } from '@/lib/logger';
 import { env } from '@/lib/env';
 import { DEFAULT_SYSTEM_PROMPT } from '@/lib/system-prompt';
 import { nullableTextSchema, requireEncryptionForSecrets } from '../services/settings-helpers';
-import { GLOBAL_SCOPE, GLOBAL_SETTINGS_ID, listScopeSettings } from '../services/settings-scope';
+import { GLOBAL_SCOPE, listScopeSettings } from '../services/settings-scope';
+import { loadGlobalSettings, patchGlobalSettings } from '../services/global-settings';
 import { scopedSettingsProcedures } from './scoped-settings';
 import { getModelSuggestions } from '../services/anthropic-models';
 import { SUGGESTED_ADVISOR_MODEL } from '@/lib/advisor';
 import { settingSourceFlagsFromRow, settingSourceFlagsSchema } from '@/lib/setting-sources';
 import { mcpOAuthRedirectUri } from '@/lib/mcp-oauth-urls';
 import { kokoroVoiceSchema } from '@/lib/kokoro-voices';
-import type { Prisma } from '@/generated/prisma/client';
 
 const log = createLogger('globalSettings');
-
-type GlobalSettingsPatch = Partial<
-  Omit<Prisma.GlobalSettingsCreateInput, 'id' | 'createdAt' | 'updatedAt'>
->;
-
-/** Write some fields of the singleton row, creating it on first use. */
-async function patchGlobalSettings(patch: GlobalSettingsPatch): Promise<void> {
-  await prisma.globalSettings.upsert({
-    where: { id: GLOBAL_SETTINGS_ID },
-    create: { id: GLOBAL_SETTINGS_ID, ...patch },
-    update: patch,
-  });
-}
 
 /** Plain global settings, each validated on its own; see `update`. */
 const globalSettingsUpdateSchema = z
@@ -60,21 +46,19 @@ export const globalSettingsRouter = router({
 
   /** Current global settings, with defaults when the row doesn't exist yet. */
   get: protectedProcedure.query(async () => {
-    const settings = await prisma.globalSettings.findUnique({
-      where: { id: GLOBAL_SETTINGS_ID },
-    });
+    const settings = await loadGlobalSettings();
 
     return {
-      systemPromptOverride: settings?.systemPromptOverride ?? null,
-      systemPromptOverrideEnabled: settings?.systemPromptOverrideEnabled ?? false,
-      systemPromptAppend: settings?.systemPromptAppend ?? null,
-      claudeModel: settings?.claudeModel ?? null,
-      advisorModel: settings?.advisorModel ?? null,
-      hasClaudeApiKey: settings?.claudeApiKey !== null && settings?.claudeApiKey !== undefined,
-      ttsSpeed: settings?.ttsSpeed ?? null,
-      ttsVoice: settings?.ttsVoice ?? null,
+      systemPromptOverride: settings.systemPromptOverride,
+      systemPromptOverrideEnabled: settings.systemPromptOverrideEnabled,
+      systemPromptAppend: settings.systemPromptAppend,
+      claudeModel: settings.claudeModel,
+      advisorModel: settings.advisorModel,
+      hasClaudeApiKey: settings.claudeApiKey !== null,
+      ttsSpeed: settings.ttsSpeed,
+      ttsVoice: settings.ttsVoice,
       ttsEnabled: !!env.TTS_BASE_URL,
-      voiceAutoSend: settings?.voiceAutoSend ?? true,
+      voiceAutoSend: settings.voiceAutoSend,
       settingSources: settingSourceFlagsFromRow(settings),
       defaultClaudeModel: env.CLAUDE_MODEL,
       suggestedAdvisorModel: SUGGESTED_ADVISOR_MODEL,

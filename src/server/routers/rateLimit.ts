@@ -1,12 +1,11 @@
 import { z } from 'zod';
 import { router, protectedProcedure } from '../trpc';
-import { prisma } from '@/lib/prisma';
 import { createLogger } from '@/lib/logger';
 import { thresholdSchema } from '@/lib/rate-limit';
-import { GLOBAL_SETTINGS_ID } from '../services/settings-scope';
 import { getRateLimitReadings, loadGlobalPausePolicy } from '../services/rate-limit-state';
 import { recomputeRateLimitHolds } from '../services/claude-runner';
 import { countQueuedPrompts } from '../services/prompt-queue';
+import { patchGlobalSettings } from '../services/global-settings';
 
 const log = createLogger('rateLimit');
 
@@ -31,14 +30,9 @@ export const rateLimitRouter = router({
   setDefaults: protectedProcedure
     .input(z.object({ enabled: z.boolean(), threshold: thresholdSchema }))
     .mutation(async ({ input }) => {
-      const patch = {
+      await patchGlobalSettings({
         rateLimitPauseEnabled: input.enabled,
         rateLimitPauseThreshold: input.threshold,
-      };
-      await prisma.globalSettings.upsert({
-        where: { id: GLOBAL_SETTINGS_ID },
-        create: { id: GLOBAL_SETTINGS_ID, ...patch },
-        update: patch,
       });
       log.info('Set rate-limit pause defaults', input);
       await recomputeRateLimitHolds();

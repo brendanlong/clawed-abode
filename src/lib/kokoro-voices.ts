@@ -65,6 +65,9 @@ export type KokoroVoice = (typeof KOKORO_VOICES)[number];
 
 export const DEFAULT_KOKORO_VOICE: KokoroVoice = 'af_heart';
 
+/** Playback speed when none is saved. */
+export const DEFAULT_TTS_SPEED = 1.0;
+
 export const kokoroVoiceSchema = z.enum(KOKORO_VOICES);
 
 /** The stored voice, or the default when unset or no longer a known voice. */

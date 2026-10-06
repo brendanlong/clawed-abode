@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { router, publicProcedure, protectedProcedure } from '../trpc';
 import { prisma } from '@/lib/prisma';
-import { verifyPassword, loginSchema, IDLE_TIMEOUT_MS } from '@/lib/auth';
+import { verifyPassword, loginSchema, effectiveExpiry } from '@/lib/auth';
 import { loginRateLimiter } from '@/lib/rate-limiter';
 import { env } from '@/lib/env';
 import { TRPCError } from '@trpc/server';
@@ -100,15 +100,11 @@ export const authRouter = router({
     const { items, nextCursor } = page.slice(rows);
 
     return {
-      sessions: items.map((s) => {
-        const idleExpiresAt = new Date(s.lastActivityAt.getTime() + IDLE_TIMEOUT_MS);
-        const effectiveExpiresAt = idleExpiresAt < s.expiresAt ? idleExpiresAt : s.expiresAt;
-        return {
-          ...s,
-          effectiveExpiresAt,
-          isCurrent: s.id === ctx.sessionId,
-        };
-      }),
+      sessions: items.map((s) => ({
+        ...s,
+        effectiveExpiresAt: effectiveExpiry(s),
+        isCurrent: s.id === ctx.sessionId,
+      })),
       nextCursor,
     };
   }),

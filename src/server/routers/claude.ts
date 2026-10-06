@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import { router, protectedProcedure, sessionProcedure, runningSessionProcedure } from '../trpc';
-import { prisma } from '@/lib/prisma';
 import { TRPCError } from '@trpc/server';
 import {
   sendUserMessage,
@@ -15,6 +14,8 @@ import {
 import { queuedMessageIds } from '../services/prompt-queue';
 import { resolveSessionHold } from '../services/rate-limit-state';
 import {
+  loadHistoryPage,
+  loadLastTopLevelAssistantContent,
   markLastMessageAsInterrupted,
   persistSyntheticToolResult,
 } from '../services/message-store';
@@ -141,48 +142,13 @@ export const claudeRouter = router({
         limit: z.number().int().min(1).max(100).default(50),
       })
     )
-    .query(async ({ input }) => {
-      const messages = await prisma.message.findMany({
-        where: {
-          sessionId: input.sessionId,
-          ...(input.cursor != null && { sequence: { lt: input.cursor } }),
-        },
-        orderBy: { sequence: 'desc' },
-        take: input.limit + 1,
-      });
-
-      const hasMore = messages.length > input.limit;
-      if (hasMore) {
-        messages.pop();
-      }
-
-      const parsedMessages = messages.map((m) => ({
-        ...m,
-        content: JSON.parse(m.content),
-      }));
-
-      return { messages: parsedMessages.reverse(), hasMore };
-    }),
+    .query(({ input }) => loadHistoryPage(input.sessionId, input.cursor, input.limit)),
 
   getTokenUsage: sessionProcedure.query(async ({ input }) => {
-    // The context-% calculation needs the latest top-level (main-agent)
-    // assistant message; subagent messages (parent_tool_use_id set) run in
-    // their own context and would misreport the main conversation's size.
-    const [totals, lastTopLevelAssistant] = await Promise.all([
+    const [totals, assistantContent] = await Promise.all([
       getSessionUsageTotals(input.sessionId),
-      prisma.$queryRaw<{ content: string }[]>`
-          SELECT content FROM Message
-          WHERE sessionId = ${input.sessionId}
-            AND type = 'assistant'
-            AND json_extract(content, '$.parent_tool_use_id') IS NULL
-          ORDER BY sequence DESC
-          LIMIT 1
-        `,
+      loadLastTopLevelAssistantContent(input.sessionId),
     ]);
-
-    const assistantContent: unknown = lastTopLevelAssistant[0]
-      ? JSON.parse(lastTopLevelAssistant[0].content)
-      : undefined;
     return buildTokenUsageStats(totals, assistantContent);
   }),
 

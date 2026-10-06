@@ -19,6 +19,7 @@ import { trpc } from '@/lib/trpc';
 import { useVoicePlayback } from '@/hooks/useVoicePlayback';
 import {
   DEFAULT_KOKORO_VOICE,
+  DEFAULT_TTS_SPEED,
   groupKokoroVoices,
   kokoroVoiceSchema,
   resolveKokoroVoice,
@@ -142,7 +143,7 @@ function TtsSpeedSection({
   currentSpeed: number | null;
   onUpdate: () => void;
 }) {
-  const [editValue, setEditValue] = useState(currentSpeed ?? 1.0);
+  const [editValue, setEditValue] = useState(currentSpeed ?? DEFAULT_TTS_SPEED);
 
   const mutation = trpc.globalSettings.update.useMutation({ onSuccess: onUpdate });
 
@@ -155,7 +156,7 @@ function TtsSpeedSection({
   };
 
   const handleReset = () => {
-    setEditValue(1.0);
+    setEditValue(DEFAULT_TTS_SPEED);
     mutation.mutate({ ttsSpeed: null });
   };
 

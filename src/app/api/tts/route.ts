@@ -1,10 +1,9 @@
 import { z } from 'zod';
 import { createContext } from '@/server/trpc';
-import { prisma } from '@/lib/prisma';
 import { env } from '@/lib/env';
-import { resolveKokoroVoice } from '@/lib/kokoro-voices';
+import { DEFAULT_TTS_SPEED, resolveKokoroVoice } from '@/lib/kokoro-voices';
 import { getSpeechStore } from '@/server/services/kokoro';
-import { GLOBAL_SETTINGS_ID } from '@/server/services/settings-scope';
+import { loadGlobalSettings } from '@/server/services/global-settings';
 
 const bodySchema = z.object({ text: z.string().trim().min(1).max(100_000) });
 
@@ -29,14 +28,11 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ error: 'A non-empty text field is required' }, { status: 400 });
   }
 
-  const settings = await prisma.globalSettings.findUnique({
-    where: { id: GLOBAL_SETTINGS_ID },
-    select: { ttsVoice: true, ttsSpeed: true },
-  });
+  const settings = await loadGlobalSettings();
   const { id, speech } = getSpeechStore().open({
     text: parsed.data.text,
-    voice: resolveKokoroVoice(settings?.ttsVoice),
-    speed: settings?.ttsSpeed ?? 1.0,
+    voice: resolveKokoroVoice(settings.ttsVoice),
+    speed: settings.ttsSpeed ?? DEFAULT_TTS_SPEED,
   });
 
   try {

@@ -117,6 +117,30 @@ describe('createContext - activity tracking', () => {
       expect(ctx.sessionId).toBe(session.id);
     });
 
+    it('accepts a session exactly at its idle deadline and rejects it just after', async () => {
+      const now = new Date('2026-06-01T00:00:00Z');
+      vi.useFakeTimers({ toFake: ['Date'] });
+      try {
+        vi.setSystemTime(now);
+        const expiresAt = new Date(now.getTime() + 60_000);
+        const atDeadline = await createTestSession({
+          lastActivityAt: new Date(now.getTime() - IDLE_TIMEOUT_MS),
+          expiresAt,
+        });
+        const pastDeadline = await createTestSession({
+          lastActivityAt: new Date(now.getTime() - IDLE_TIMEOUT_MS - 1),
+          expiresAt,
+        });
+
+        const accepted = await createContext({ headers: createHeaders(atDeadline.token) });
+        expect(accepted.sessionId).toBe(atDeadline.session.id);
+        const rejected = await createContext({ headers: createHeaders(pastDeadline.token) });
+        expect(rejected.sessionId).toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it('should reject sessions exceeding idle timeout but preserve them in database', async () => {
       const lastActivity = new Date(Date.now() - IDLE_TIMEOUT_MS - 1000); // Past idle timeout
       const { session, token } = await createTestSession({ lastActivityAt: lastActivity });

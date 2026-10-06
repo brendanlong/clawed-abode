@@ -9,6 +9,15 @@ export const ACTIVITY_UPDATE_THROTTLE_MS = 60 * 1000; // 1 minute - minimum time
 // How long expired/revoked auth sessions stay listed for audit before being deleted
 export const AUTH_SESSION_RETENTION_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
+/**
+ * When an auth session stops being accepted: its absolute `expiresAt`, or
+ * IDLE_TIMEOUT_MS after its last activity, whichever comes first.
+ */
+export function effectiveExpiry(session: { lastActivityAt: Date; expiresAt: Date }): Date {
+  const idleExpiresAt = new Date(session.lastActivityAt.getTime() + IDLE_TIMEOUT_MS);
+  return idleExpiresAt < session.expiresAt ? idleExpiresAt : session.expiresAt;
+}
+
 export const loginSchema = z.object({
   password: z.string().min(1, 'Password is required'),
 });

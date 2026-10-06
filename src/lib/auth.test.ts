@@ -6,6 +6,8 @@ import {
   parseAuthHeader,
   loginSchema,
   SESSION_DURATION_MS,
+  IDLE_TIMEOUT_MS,
+  effectiveExpiry,
 } from './auth';
 
 describe('auth', () => {
@@ -118,6 +120,25 @@ describe('auth', () => {
     it('should reject missing password', () => {
       const result = loginSchema.safeParse({});
       expect(result.success).toBe(false);
+    });
+  });
+
+  describe('effectiveExpiry', () => {
+    const lastActivityAt = new Date('2026-01-01T00:00:00Z');
+    const idleDeadline = new Date(lastActivityAt.getTime() + IDLE_TIMEOUT_MS);
+
+    it('is the idle deadline when that comes first', () => {
+      const expiresAt = new Date(idleDeadline.getTime() + 1);
+      expect(effectiveExpiry({ lastActivityAt, expiresAt })).toEqual(idleDeadline);
+    });
+
+    it('is the shared deadline when both coincide', () => {
+      expect(effectiveExpiry({ lastActivityAt, expiresAt: idleDeadline })).toEqual(idleDeadline);
+    });
+
+    it('is the absolute expiry when that comes first', () => {
+      const expiresAt = new Date(idleDeadline.getTime() - 1);
+      expect(effectiveExpiry({ lastActivityAt, expiresAt })).toEqual(expiresAt);
     });
   });
 

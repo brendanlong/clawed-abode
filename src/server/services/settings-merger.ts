@@ -11,7 +11,8 @@ import { env } from '@/lib/env';
 import { publicFilesUrl } from '@/lib/public-files';
 import type { ResolvedEnvVar, ResolvedMcpServer } from '@/lib/settings-types';
 import { MCP_SERVER_INCLUDE, decryptEnvVars, decryptMcpServers } from './settings-helpers';
-import { GLOBAL_SCOPE, GLOBAL_SETTINGS_ID } from './settings-scope';
+import { GLOBAL_SCOPE } from './settings-scope';
+import { loadGlobalSettings } from './global-settings';
 import { applyMcpOAuthHeaders } from './mcp-oauth';
 import { getSessionPublicDir } from './public-dir';
 
@@ -54,17 +55,17 @@ export async function loadResolvedRepoSettings(
 
 export async function loadResolvedGlobalSettings(): Promise<ResolvedGlobalSettings> {
   const [settings, envVarRows, mcpServerRows] = await Promise.all([
-    prisma.globalSettings.findUnique({ where: { id: GLOBAL_SETTINGS_ID } }),
+    loadGlobalSettings(),
     prisma.envVar.findMany({ where: GLOBAL_SCOPE }),
     prisma.mcpServer.findMany({ where: GLOBAL_SCOPE, include: MCP_SERVER_INCLUDE }),
   ]);
   return {
-    systemPromptOverride: settings?.systemPromptOverride ?? null,
-    systemPromptOverrideEnabled: settings?.systemPromptOverrideEnabled ?? false,
-    systemPromptAppend: settings?.systemPromptAppend ?? null,
-    claudeModel: settings?.claudeModel ?? null,
-    advisorModel: settings?.advisorModel ?? null,
-    claudeApiKey: settings?.claudeApiKey ? decrypt(settings.claudeApiKey) : null,
+    systemPromptOverride: settings.systemPromptOverride,
+    systemPromptOverrideEnabled: settings.systemPromptOverrideEnabled,
+    systemPromptAppend: settings.systemPromptAppend,
+    claudeModel: settings.claudeModel,
+    advisorModel: settings.advisorModel,
+    claudeApiKey: settings.claudeApiKey ? decrypt(settings.claudeApiKey) : null,
     settingSources: settingSourceFlagsFromRow(settings),
     envVars: decryptEnvVars(envVarRows),
     mcpServers: decryptMcpServers(mcpServerRows),
@@ -76,11 +77,8 @@ export async function loadResolvedGlobalSettings(): Promise<ResolvedGlobalSettin
  * encrypted global override when set, else `CLAUDE_CODE_OAUTH_TOKEN`.
  */
 export async function loadClaudeCredential(): Promise<string | null> {
-  const settings = await prisma.globalSettings.findUnique({
-    where: { id: GLOBAL_SETTINGS_ID },
-    select: { claudeApiKey: true },
-  });
-  const stored = settings?.claudeApiKey ? decrypt(settings.claudeApiKey) : null;
+  const { claudeApiKey } = await loadGlobalSettings();
+  const stored = claudeApiKey ? decrypt(claudeApiKey) : null;
   return stored || env.CLAUDE_CODE_OAUTH_TOKEN || null;
 }
 
