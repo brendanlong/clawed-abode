@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useEffect, useCallback, useMemo, useState } from 'react';
+import { useRef, useEffect, useCallback, useMemo } from 'react';
 import { cn } from '@/lib/utils';
 import { getParentToolUseId } from '@/lib/claude-messages';
 import { MessageBubble } from './messages/MessageBubble';
@@ -80,7 +80,6 @@ export function MessageList({
     useVoicePlaybackContext();
 
   // Track which TodoWrite components have been manually toggled by the user
-  const [manuallyToggledTodoIds, setManuallyToggledTodoIds] = useState<Set<string>>(new Set());
 
   // Track which AskUserQuestion IDs we've already notified about (using ref to avoid re-renders)
   const notifiedQuestionIdsRef = useRef<Set<string>>(new Set());
@@ -160,11 +159,6 @@ export function MessageList({
       }
     }
   }, [pendingQuestions, showNotification]);
-
-  // Callback for when a TodoWrite is manually toggled
-  const handleTodoManualToggle = useCallback((toolId: string) => {
-    setManuallyToggledTodoIds((prev) => new Set([...prev, toolId]));
-  }, []);
 
   // Filter the top-level transcript down to what should render as its own row:
   // the shared transcript-visibility predicate, plus the top-level-only rule that
@@ -371,8 +365,6 @@ export function MessageList({
   const contextValue = useMemo(
     () => ({
       latestTodoWriteId,
-      manuallyToggledTodoIds,
-      onTodoManualToggle: handleTodoManualToggle,
       onAnswerQuestion,
       onRespondToPlan,
       planContentByToolUseId,
@@ -381,8 +373,6 @@ export function MessageList({
     }),
     [
       latestTodoWriteId,
-      manuallyToggledTodoIds,
-      handleTodoManualToggle,
       onAnswerQuestion,
       onRespondToPlan,
       planContentByToolUseId,
