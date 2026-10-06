@@ -386,6 +386,31 @@ describe('sessionsRouter integration', () => {
     });
   });
 
+  describe('byAgentName', () => {
+    it('finds the session with that agent name, including archived ones', async () => {
+      const session = await createNoRepoSession({
+        name: 'Sender',
+        agentName: 'math-opus-1a2b',
+        status: 'archived',
+      });
+      await createNoRepoSession({ name: 'Other', agentName: 'other-cafe' });
+
+      const result = await createCaller('auth-session-id').sessions.byAgentName({
+        agentName: 'math-opus-1a2b',
+      });
+
+      expect(result.session).toEqual({ id: session.id, name: 'Sender' });
+    });
+
+    it('returns null for an unknown agent name', async () => {
+      const result = await createCaller('auth-session-id').sessions.byAgentName({
+        agentName: 'nobody-0000',
+      });
+
+      expect(result.session).toBeNull();
+    });
+  });
+
   describe('getEditorUrl', () => {
     afterEach(() => {
       delete process.env.CODE_SERVER_URL;

@@ -271,14 +271,20 @@ const InjectedOriginSchema = z.object({
 
 export interface InjectedMessageOrigin {
   sender: string;
+  /** The sending session's `Session.agentName`, when another session sent it. */
+  peerAgentName: string | null;
   body: string | null;
 }
 
 export function parseInjectedOrigin(origin: unknown): InjectedMessageOrigin | null {
   const parsed = InjectedOriginSchema.safeParse(origin);
   if (!parsed.success) return null;
-  const { name, from, server, body } = parsed.data;
-  return { sender: name ?? server ?? from ?? 'another session', body: body ?? null };
+  const { kind, name, from, server, body } = parsed.data;
+  return {
+    sender: name ?? server ?? from ?? 'another session',
+    peerAgentName: kind === 'peer' ? (name ?? null) : null,
+    body: body ?? null,
+  };
 }
 
 /**

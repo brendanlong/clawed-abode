@@ -1,10 +1,24 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { MessageBubble } from './MessageBubble';
 import { MessageListProvider } from './MessageListContext';
 import { SubagentTranscript } from './SubagentTranscript';
 import { formatFullTimestamp, formatMessageTimestamp } from '@/lib/message-timestamp';
 import type { ToolResultMap, MessageContent } from './types';
+
+const peerSessions = vi.hoisted(() => new Map<string, { id: string; name: string }>());
+
+vi.mock('@/lib/trpc', () => ({
+  trpc: {
+    sessions: {
+      byAgentName: {
+        useQuery: ({ agentName }: { agentName: string }) => ({
+          data: { session: peerSessions.get(agentName) ?? null },
+        }),
+      },
+    },
+  },
+}));
 
 describe('MessageBubble', () => {
   describe('unrecognized messages', () => {
@@ -32,6 +46,8 @@ describe('MessageBubble', () => {
   });
 
   describe('messages from other sessions', () => {
+    beforeEach(() => peerSessions.clear());
+
     const envelope =
       'Another Claude session sent a message:\n<cross-session-message from="uds:/x.sock">\nraw\n</cross-session-message>';
 
@@ -50,6 +66,23 @@ describe('MessageBubble', () => {
       expect(screen.getByText('math-opus-1a2b')).toBeInTheDocument();
       expect(screen.getByText('Try n=7')).toBeInTheDocument();
       expect(screen.queryByText(/cross-session-message/)).not.toBeInTheDocument();
+    });
+
+    it('links the sender to its session by title', () => {
+      peerSessions.set('math-opus-1a2b', { id: 'sess-1', name: 'Prove the lemma' });
+      const message = {
+        type: 'user',
+        content: {
+          type: 'user',
+          message: { role: 'user', content: envelope },
+          origin: { kind: 'peer', from: 'uds:/x.sock', name: 'math-opus-1a2b', body: 'Try n=7' },
+        } as MessageContent,
+      };
+
+      render(<MessageBubble message={message} />);
+
+      const link = screen.getByRole('link', { name: 'Prove the lemma' });
+      expect(link).toHaveAttribute('href', '/session/sess-1');
     });
 
     it('falls back to the message text when the origin has no body', () => {

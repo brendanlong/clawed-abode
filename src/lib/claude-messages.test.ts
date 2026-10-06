@@ -269,12 +269,13 @@ describe('getParentToolUseId', () => {
           name: 'math-opus-1a2b',
           body: 'hi',
         })
-      ).toEqual({ sender: 'math-opus-1a2b', body: 'hi' });
+      ).toEqual({ sender: 'math-opus-1a2b', peerAgentName: 'math-opus-1a2b', body: 'hi' });
     });
 
     it('names a channel by its server', () => {
       expect(parseInjectedOrigin({ kind: 'channel', server: 'slack' })).toEqual({
         sender: 'slack',
+        peerAgentName: null,
         body: null,
       });
     });
@@ -284,6 +285,7 @@ describe('getParentToolUseId', () => {
         'uds:/x.sock'
       );
       expect(parseInjectedOrigin({ kind: 'peer' })?.sender).toBe('another session');
+      expect(parseInjectedOrigin({ kind: 'peer', from: 'uds:/x.sock' })?.peerAgentName).toBeNull();
     });
 
     it('rejects prompts we sent and anything malformed', () => {
