@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState, use } from 'react';
+import { useCallback, useState, use } from 'react';
 import Link from 'next/link';
 import { AuthGuard } from '@/components/AuthGuard';
 import { Header } from '@/components/Header';
@@ -22,7 +22,7 @@ import {
   useVoicePlayback,
   VoicePlaybackContext,
 } from '@/hooks/useVoicePlayback';
-import { getNewAutoReadMessages } from '@/components/voice/playable-messages';
+import { useAutoRead } from '@/hooks/useAutoRead';
 import { VoiceControlPanel } from '@/components/voice/VoiceControlPanel';
 import type { UploadedAttachment } from '@/lib/attachments';
 
@@ -92,17 +92,11 @@ function SessionView({ sessionId }: { sessionId: string }) {
   const [voiceOverlayOpen, setVoiceOverlayOpen] = useState(false);
 
   // Auto-read: stream TTS as assistant messages arrive during a turn
-  const prevRunningRef = useRef(false);
-  const autoReadQueuedIdsRef = useRef<Set<string>>(new Set());
-  const autoReadStoppedRef = useRef(false);
-
-  // Wrap voicePlayback.stop to also set the stopped flag for this turn.
-  // When the user manually stops playback during a turn, we don't want to
-  // keep auto-queuing new messages for the rest of that turn.
-  const stopWithAutoReadFlag = useCallback(() => {
-    autoReadStoppedRef.current = true;
-    voicePlayback.stop();
-  }, [voicePlayback]);
+  const { stopPlayback, onPromptSent } = useAutoRead(voicePlayback, {
+    isRunning: isClaudeRunning,
+    messages,
+    enabled: voiceConfig.autoRead && voiceConfig.ttsEnabled,
+  });
 
   // Send a prompt (also stops any playback). It goes straight to the agent
   // whatever the turn state, so the client just sends. A running session is
@@ -113,13 +107,13 @@ function SessionView({ sessionId }: { sessionId: string }) {
       if (!session || session.status !== 'running') {
         return Promise.reject(new Error('Session is not running'));
       }
-      stopWithAutoReadFlag();
+      onPromptSent();
       return sendPrompt(
         prompt,
         attachments.length ? attachments.map((a) => a.storedName) : undefined
       );
     },
-    [session, sendPrompt, stopWithAutoReadFlag]
+    [session, sendPrompt, onPromptSent]
   );
 
   // Interrupt the current turn. Resolves with the text of any prompts the agent
@@ -128,40 +122,6 @@ function SessionView({ sessionId }: { sessionId: string }) {
     () => interrupt().then((result) => result.cancelled),
     [interrupt]
   );
-
-  // During a turn: enqueue new assistant text messages as they arrive
-  useEffect(() => {
-    const wasRunning = prevRunningRef.current;
-    prevRunningRef.current = isClaudeRunning;
-
-    // Detect transition from not running -> running (new turn starts)
-    if (!wasRunning && isClaudeRunning) {
-      autoReadQueuedIdsRef.current = new Set();
-      autoReadStoppedRef.current = false;
-    }
-
-    // Enqueue new messages while running, and also do a final check on turn
-    // completion to catch any messages that arrived in the same render cycle.
-    const shouldEnqueue =
-      (isClaudeRunning || (wasRunning && !isClaudeRunning)) &&
-      voiceConfig.autoRead &&
-      voiceConfig.ttsEnabled &&
-      !autoReadStoppedRef.current;
-
-    if (shouldEnqueue) {
-      const newMessages = getNewAutoReadMessages(messages, autoReadQueuedIdsRef.current);
-      for (const msg of newMessages) {
-        autoReadQueuedIdsRef.current.add(msg.id);
-        voicePlayback.enqueue({ messageId: msg.id, text: msg.text });
-      }
-    }
-  }, [
-    isClaudeRunning,
-    messages,
-    voiceConfig.autoRead,
-    voiceConfig.ttsEnabled,
-    voicePlayback.enqueue,
-  ]);
 
   if (sessionLoading) {
     return (
@@ -231,11 +191,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
 
   return (
     <VoicePlaybackContext.Provider
-      value={
-        voiceConfig.enabled
-          ? { ...voicePlayback, stop: stopWithAutoReadFlag }
-          : defaultPlaybackState
-      }
+      value={voiceConfig.enabled ? { ...voicePlayback, stop: stopPlayback } : defaultPlaybackState}
     >
       <div className="flex-1 flex flex-col min-h-0">
         <SessionHeader
