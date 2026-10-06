@@ -52,9 +52,8 @@ export async function resolveAuthSessionId(token: string): Promise<string | null
 
   // Expired or idle: reject, but keep the row for the audit list.
   if (effectiveExpiry(session) < now) {
-    if (session.expiresAt >= now) {
-      log.info('Session rejected due to idle timeout', { sessionId: session.id });
-    }
+    const idle = session.expiresAt >= now; // still within its absolute lifetime
+    if (idle) log.info('Session rejected due to idle timeout', { sessionId: session.id });
     return null;
   }
 

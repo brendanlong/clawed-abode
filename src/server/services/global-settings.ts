@@ -17,7 +17,7 @@ type GlobalSettingsPatch = Partial<
  * column's null means "use the built-in default" (e.g. `ttsSpeed`), which the
  * consumer resolves, so the UI can still tell "unset" from an explicit value.
  */
-export const GLOBAL_SETTINGS_DEFAULTS: GlobalSettingsValues = {
+export const GLOBAL_SETTINGS_DEFAULTS: Readonly<GlobalSettingsValues> = Object.freeze({
   systemPromptOverride: null,
   systemPromptOverrideEnabled: false,
   systemPromptAppend: null,
@@ -32,9 +32,9 @@ export const GLOBAL_SETTINGS_DEFAULTS: GlobalSettingsValues = {
   settingSourceLocal: DEFAULT_SETTING_SOURCE_FLAGS.local,
   rateLimitPauseEnabled: false,
   rateLimitPauseThreshold: DEFAULT_PAUSE_THRESHOLD,
-};
+});
 
-export async function loadGlobalSettings(): Promise<GlobalSettingsValues> {
+export async function loadGlobalSettings(): Promise<Readonly<GlobalSettingsValues>> {
   const row = await prisma.globalSettings.findUnique({
     where: { id: GLOBAL_SETTINGS_ID },
     omit: { id: true, createdAt: true, updatedAt: true },

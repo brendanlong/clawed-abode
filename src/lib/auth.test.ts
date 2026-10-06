@@ -132,6 +132,10 @@ describe('auth', () => {
       expect(effectiveExpiry({ lastActivityAt, expiresAt })).toEqual(idleDeadline);
     });
 
+    it('is the shared deadline when both coincide', () => {
+      expect(effectiveExpiry({ lastActivityAt, expiresAt: idleDeadline })).toEqual(idleDeadline);
+    });
+
     it('is the absolute expiry when that comes first', () => {
       const expiresAt = new Date(idleDeadline.getTime() - 1);
       expect(effectiveExpiry({ lastActivityAt, expiresAt })).toEqual(expiresAt);

@@ -84,4 +84,15 @@ describe('message-store reads', () => {
       n: 0,
     });
   });
+
+  it('picks the newest top-level assistant message, ignoring other types', async () => {
+    const session = await createTestSession();
+    // The newest has no parent_tool_use_id key at all, which is top-level too.
+    await seed(session.id, [{ parent_tool_use_id: null, n: 0 }, { n: 1 }]);
+    await testPrisma.message.create({
+      data: { sessionId: session.id, sequence: 2, type: 'result', content: '{"n":2}' },
+    });
+
+    expect(await store.loadLastTopLevelAssistantContent(session.id)).toEqual({ n: 1 });
+  });
 });
