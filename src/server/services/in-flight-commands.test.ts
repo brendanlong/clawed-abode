@@ -33,7 +33,7 @@ const messageStart = (parent: string | null = null) =>
 const result = () => ({ type: 'result' }) as unknown as SDKMessage;
 
 function stateWith(commands: Record<string, { started?: boolean }>) {
-  const state = createSessionState([]);
+  const state = createSessionState();
   for (const [uuid, c] of Object.entries(commands)) {
     state.inFlightCommands.set(uuid, {
       messageId: `m-${uuid}`,

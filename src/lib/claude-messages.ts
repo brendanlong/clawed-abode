@@ -6,7 +6,7 @@
  */
 
 import { z } from 'zod';
-import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { SDKMessage, SlashCommand } from '@anthropic-ai/claude-agent-sdk';
 
 /**
  * System init message content
@@ -15,7 +15,22 @@ export const SystemInitContentSchema = z.object({
   type: z.literal('system'),
   subtype: z.literal('init'),
   session_id: z.string(),
-  slash_commands: z.array(z.string()).optional(),
+  terminal_slash_commands: z.array(z.string()).optional(),
+});
+
+/** A `commands_changed` message: the full slash-command list, replacing the cached one. */
+export const CommandsChangedContentSchema = z.object({
+  type: z.literal('system'),
+  subtype: z.literal('commands_changed'),
+  commands: z.array(
+    z.object({
+      name: z.string(),
+      description: z.string(),
+      argumentHint: z.string(),
+      aliases: z.array(z.string()).optional(),
+      builtin: z.boolean().optional(),
+    }) satisfies z.ZodType<SlashCommand>
+  ),
 });
 
 /**
@@ -61,7 +76,7 @@ export type MessageHandling =
  * - `hook_progress`: streaming hook output between `hook_started`/`hook_response`.
  * - `status`, `session_state_changed`: transient session/run state.
  * - `files_persisted`, `elicitation_complete`: internal bookkeeping events.
- * - `commands_changed`: slash-command list updates (not chat content).
+ * - `commands_changed`: slash-command list updates, applied by `session-commands`.
  * - `api_retry`: transient "retrying due to rate limit / overload" ticks. The
  *   live attempt count is surfaced ephemerally via the `retry` SSE channel (see
  *   {@link parseRetryState}); persisting each one would pollute the transcript

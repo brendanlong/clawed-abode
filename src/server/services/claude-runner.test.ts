@@ -2,12 +2,12 @@ import { describe, it, expect, vi } from 'vitest';
 
 vi.mock('@/lib/prisma', () => ({ prisma: {} }));
 vi.mock('./events', () => ({
-  sseEvents: { emitClaudeRunning: vi.fn(), emitPendingMessages: vi.fn() },
+  sseEvents: { emitClaudeRunning: vi.fn(), emitPendingMessages: vi.fn(), emitCommands: vi.fn() },
 }));
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({ query: vi.fn() }));
 
 import { submitLiveToolResponse, isClaudeRunning, cleanupSession } from './claude-runner';
-import { getSessionCommands, rememberSessionCommands } from './session-commands';
+import { getSessionCommands, replaceSessionCommands } from './session-commands';
 
 describe('claude-runner without a live session', () => {
   it('submitLiveToolResponse returns false immediately when no query is running', async () => {
@@ -23,7 +23,7 @@ describe('claude-runner without a live session', () => {
   });
 
   it("cleanupSession forgets the session's slash commands", () => {
-    rememberSessionCommands('cleanup-me', [{ name: 'compact', description: '', argumentHint: '' }]);
+    replaceSessionCommands('cleanup-me', [{ name: 'compact', description: '', argumentHint: '' }]);
     cleanupSession('cleanup-me');
     expect(getSessionCommands('cleanup-me')).toEqual([]);
   });

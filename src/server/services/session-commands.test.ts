@@ -1,66 +1,87 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
+  applyCommandMessage,
   forgetSessionCommands,
   getSessionCommands,
-  mergeInitCommands,
-  mergeSlashCommands,
-  rememberSessionCommands,
+  replaceSessionCommands,
+  visibleCommands,
 } from './session-commands';
-import { createSessionState } from './session-state';
 
 const mockEmitCommands = vi.hoisted(() => vi.fn());
 vi.mock('./events', () => ({ sseEvents: { emitCommands: mockEmitCommands } }));
 
-const rich = { name: 'commit', description: 'Commit changes', argumentHint: '' };
-const bare = (name: string) => ({ name, description: '', argumentHint: '' });
+const cmd = (name: string) => ({ name, description: `${name} desc`, argumentHint: '' });
 
-describe('mergeSlashCommands', () => {
-  it('keeps rich metadata and appends unknown names once, in order', () => {
-    expect(mergeSlashCommands([rich], ['commit', 'compact', 'compact', 'cost'])).toEqual([
-      rich,
-      bare('compact'),
-      bare('cost'),
+const init = (terminal_slash_commands?: string[]) => ({
+  type: 'system',
+  subtype: 'init',
+  session_id: 'sid',
+  ...(terminal_slash_commands && { terminal_slash_commands }),
+});
+
+const commandsChanged = (names: string[]) => ({
+  type: 'system',
+  subtype: 'commands_changed',
+  commands: names.map(cmd),
+  uuid: 'u',
+  session_id: 'sid',
+});
+
+beforeEach(() => {
+  mockEmitCommands.mockClear();
+  forgetSessionCommands('s');
+});
+
+describe('visibleCommands', () => {
+  it('drops terminal-only commands', () => {
+    expect(visibleCommands([cmd('commit'), cmd('exit')], new Set(['exit']))).toEqual([
+      cmd('commit'),
     ]);
-    expect(mergeSlashCommands([], [])).toEqual([]);
   });
 });
 
-describe('persisted session commands', () => {
-  it('remembers, returns and forgets per session', () => {
-    expect(getSessionCommands('none')).toEqual([]);
-    rememberSessionCommands('s1', [rich]);
-    expect(getSessionCommands('s1')).toEqual([rich]);
-    forgetSessionCommands('s1');
-    expect(getSessionCommands('s1')).toEqual([]);
-  });
-});
-
-describe('mergeInitCommands', () => {
-  const init = (slash_commands: string[]) =>
-    ({
-      type: 'system',
-      subtype: 'init',
-      cwd: '/w',
-      session_id: 'sid',
-      model: 'opus',
-      slash_commands,
-    }) as never;
-
-  it('folds new names from a system init message into state, persistence and SSE', () => {
-    const state = createSessionState([rich]);
-    mergeInitCommands('s2', state, init(['commit', 'compact']));
-    expect(state.commands).toEqual([rich, bare('compact')]);
-    expect(getSessionCommands('s2')).toEqual([rich, bare('compact')]);
-    expect(mockEmitCommands).toHaveBeenCalledWith('s2', [rich, bare('compact')]);
-    forgetSessionCommands('s2');
+describe('session commands', () => {
+  it('replaces, emits, and forgets per session', () => {
+    expect(getSessionCommands('s')).toEqual([]);
+    replaceSessionCommands('s', [cmd('commit')]);
+    expect(getSessionCommands('s')).toEqual([cmd('commit')]);
+    expect(mockEmitCommands).toHaveBeenCalledWith('s', [cmd('commit')]);
+    forgetSessionCommands('s');
+    expect(getSessionCommands('s')).toEqual([]);
   });
 
-  it('is silent when nothing is new or the message is not an init', () => {
+  it('replaces the whole list on commands_changed', () => {
+    replaceSessionCommands('s', [cmd('commit'), cmd('old')]);
+    applyCommandMessage('s', commandsChanged(['commit', 'new-skill']));
+    expect(getSessionCommands('s')).toEqual([cmd('commit'), cmd('new-skill')]);
+    expect(mockEmitCommands).toHaveBeenLastCalledWith('s', [cmd('commit'), cmd('new-skill')]);
+  });
+
+  it('hides terminal-only commands when init follows the list', () => {
+    replaceSessionCommands('s', [cmd('commit'), cmd('exit')]);
+    applyCommandMessage('s', init(['exit']));
+    expect(getSessionCommands('s')).toEqual([cmd('commit')]);
+    expect(mockEmitCommands).toHaveBeenLastCalledWith('s', [cmd('commit')]);
+  });
+
+  it('hides terminal-only commands when init precedes the list', () => {
+    applyCommandMessage('s', init(['exit']));
+    replaceSessionCommands('s', [cmd('commit'), cmd('exit')]);
+    expect(getSessionCommands('s')).toEqual([cmd('commit')]);
+
+    applyCommandMessage('s', commandsChanged(['commit', 'exit', 'statusline']));
+    expect(getSessionCommands('s')).toEqual([cmd('commit'), cmd('statusline')]);
+
+    applyCommandMessage('s', init(['exit', 'statusline']));
+    expect(mockEmitCommands).toHaveBeenLastCalledWith('s', [cmd('commit')]);
+  });
+
+  it('only emits on init when the terminal-only set changes', () => {
+    replaceSessionCommands('s', [cmd('commit')]);
     mockEmitCommands.mockClear();
-    const state = createSessionState([rich]);
-    mergeInitCommands('s3', state, init(['commit']));
-    mergeInitCommands('s3', state, { type: 'assistant' } as never);
+    applyCommandMessage('s', init());
+    applyCommandMessage('s', init([]));
+    applyCommandMessage('s', { type: 'assistant' });
     expect(mockEmitCommands).not.toHaveBeenCalled();
-    expect(getSessionCommands('s3')).toEqual([]);
   });
 });
