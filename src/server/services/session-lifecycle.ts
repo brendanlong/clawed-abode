@@ -6,7 +6,12 @@ import { createLogger, toError } from '@/lib/logger';
 import { ALLOWED_FROM, type SessionTransition } from '@/lib/session-transitions';
 import type { Prisma, Session } from '@/generated/prisma/client';
 import { sseEvents } from './events';
-import { cloneRepo, createEmptyWorkspace, removeWorkspace } from './worktree-manager';
+import {
+  cloneRepo,
+  createEmptyWorkspace,
+  listWorkspaceDirNames,
+  removeWorkspace,
+} from './worktree-manager';
 import {
   cleanupSession,
   refreshSessionSettings,
@@ -224,6 +229,24 @@ export async function archiveSession(sessionId: string): Promise<void> {
   await stopped;
   // Already archived: whoever archived it owns the workspace removal.
   if (applied) await removeWorkspace(sessionId);
+}
+
+/**
+ * Remove workspaces an archive left behind (e.g. a crash between the archive
+ * write and the rm). Only directories named for a session this DB has archived:
+ * the workspaces root is shared with co-tenant instances, so a directory with no
+ * row here may be another instance's live session and is never touched.
+ */
+export async function removeArchivedWorkspaces(): Promise<void> {
+  const names = await listWorkspaceDirNames();
+  if (names.length === 0) return;
+  const archived = await prisma.session.findMany({
+    where: { id: { in: names }, status: 'archived' },
+    select: { id: true },
+  });
+  if (archived.length === 0) return;
+  log.info('Removing workspaces left behind by archived sessions', { count: archived.length });
+  for (const { id } of archived) await removeWorkspace(id);
 }
 
 /** Set the per-session model override and apply it to the live query. Archived sessions are read-only. */

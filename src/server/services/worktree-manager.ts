@@ -5,7 +5,7 @@
  */
 
 import { execFile } from 'child_process';
-import { mkdir, rm } from 'fs/promises';
+import { mkdir, readdir, rm } from 'fs/promises';
 import { join } from 'path';
 import { homedir } from 'os';
 import { createLogger, toError } from '@/lib/logger';
@@ -175,6 +175,17 @@ export async function removeWorkspace(sessionId: string): Promise<void> {
     log.info('Workspace removed', { sessionId });
   } catch (error) {
     log.error('Failed to remove workspace', toError(error), { sessionId });
+  }
+}
+
+/** Names of the directories under the workspaces root (each a session id, if it's ours). */
+export async function listWorkspaceDirNames(): Promise<string[]> {
+  try {
+    const entries = await readdir(WORKTREES_DIR, { withFileTypes: true });
+    return entries.filter((e) => e.isDirectory()).map((e) => e.name);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw error;
   }
 }
 

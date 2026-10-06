@@ -16,6 +16,7 @@ import {
   stopAllSessions,
 } from '@/server/services/claude-runner';
 import { initRateLimitPause } from '@/server/services/rate-limit-pause';
+import { removeArchivedWorkspaces } from '@/server/services/session-lifecycle';
 
 const log = createLogger('startup');
 
@@ -47,6 +48,12 @@ export async function registerNode() {
   // Both are best-effort and log their own failures.
   await reapOrphanedSessionScopes();
   await initRateLimitPause(rateLimitPauseRunner);
+
+  // After the reap, so no archived session's daemon is left to rewrite files.
+  // Not awaited: archived sessions never revive, and a large rm shouldn't delay boot.
+  removeArchivedWorkspaces().catch((err) => {
+    log.error('Error removing archived workspaces', toError(err));
+  });
 
   // Fatal like a bad env: the system prompt would otherwise hand out dead links.
   if (env.PUBLIC_FILES_PORT !== undefined) {
