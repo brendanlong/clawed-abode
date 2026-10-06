@@ -51,27 +51,18 @@ export function resolveSettingSources(flags: SettingSourceFlags): SettingSource[
 }
 
 /**
- * Map a `GlobalSettings` row's per-scope columns to {@link SettingSourceFlags},
- * falling back to {@link DEFAULT_SETTING_SOURCE_FLAGS} when no row exists yet.
+ * Map the global settings' per-scope columns to {@link SettingSourceFlags}.
  * Typed structurally (not against the Prisma model) to keep this module
- * dependency-free. Shared by the settings router and the container-settings
- * service so both derive the flags identically.
+ * dependency-free.
  */
-export function settingSourceFlagsFromRow(
-  row:
-    | {
-        settingSourceUser: boolean;
-        settingSourceProject: boolean;
-        settingSourceLocal: boolean;
-      }
-    | null
-    | undefined
-): SettingSourceFlags {
-  return row
-    ? {
-        user: row.settingSourceUser,
-        project: row.settingSourceProject,
-        local: row.settingSourceLocal,
-      }
-    : DEFAULT_SETTING_SOURCE_FLAGS;
+export function settingSourceFlagsFromRow(row: {
+  settingSourceUser: boolean;
+  settingSourceProject: boolean;
+  settingSourceLocal: boolean;
+}): SettingSourceFlags {
+  return {
+    user: row.settingSourceUser,
+    project: row.settingSourceProject,
+    local: row.settingSourceLocal,
+  };
 }

@@ -15,7 +15,6 @@ import {
   activeReadings,
   clampThreshold,
   decideHold,
-  DEFAULT_PAUSE_THRESHOLD,
   isHoldableLimitType,
   mergeReading,
   nextReadingExpiry,
@@ -24,7 +23,7 @@ import {
   type RateLimitHold,
   type RateLimitReading,
 } from '@/lib/rate-limit';
-import { GLOBAL_SETTINGS_ID } from './settings-scope';
+import { loadGlobalSettings } from './global-settings';
 
 const log = createLogger('rate-limit-state');
 
@@ -194,13 +193,10 @@ export async function loadRateLimitReadings(): Promise<void> {
 
 /** The global default policy sessions inherit when they set no override. */
 export async function loadGlobalPausePolicy(): Promise<PausePolicy> {
-  const settings = await prisma.globalSettings.findUnique({
-    where: { id: GLOBAL_SETTINGS_ID },
-    select: { rateLimitPauseEnabled: true, rateLimitPauseThreshold: true },
-  });
+  const settings = await loadGlobalSettings();
   return {
-    enabled: settings?.rateLimitPauseEnabled ?? false,
-    threshold: clampThreshold(settings?.rateLimitPauseThreshold ?? DEFAULT_PAUSE_THRESHOLD),
+    enabled: settings.rateLimitPauseEnabled,
+    threshold: clampThreshold(settings.rateLimitPauseThreshold),
   };
 }
 

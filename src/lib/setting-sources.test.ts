@@ -39,11 +39,6 @@ describe('resolveSettingSources', () => {
 });
 
 describe('settingSourceFlagsFromRow', () => {
-  it('falls back to the defaults when no row exists', () => {
-    expect(settingSourceFlagsFromRow(null)).toEqual(DEFAULT_SETTING_SOURCE_FLAGS);
-    expect(settingSourceFlagsFromRow(undefined)).toEqual(DEFAULT_SETTING_SOURCE_FLAGS);
-  });
-
   it('maps the per-scope columns to flags', () => {
     expect(
       settingSourceFlagsFromRow({
