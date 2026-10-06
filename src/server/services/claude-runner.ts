@@ -378,7 +378,9 @@ async function establishSessionQuery(
     resumeId,
     waitForUserInput: (request) =>
       new Promise<PermissionResult>((resolve, reject) => {
-        if (!live) return reject(new Error('Session query is not available'));
+        if (!live || state.live !== live) {
+          return reject(new Error('Session query is not available'));
+        }
         live.pendingInput?.reject(new Error('Superseded by another tool request'));
         live.pendingInput = { ...request, resolve, reject };
       }),
@@ -395,6 +397,8 @@ async function establishSessionQuery(
   // an orphan live query. This check and the attach below are await-free, so they
   // run atomically with respect to a synchronous stopSession.
   if (sessions.get(sessionId) !== state) {
+    // Exactly our name: a revive may already have recorded its own.
+    if (sessionScope) void clearRecordedScopes([sessionScope]);
     throw new Error('Session establishment cancelled: session was stopped during establish');
   }
 
@@ -712,27 +716,34 @@ async function pauseSessionForRateLimit(
   const live = state?.live;
   let interrupted = false;
   if (state && live) {
-    const aborted = await abortTurn(sessionId, state, live, { requireRealTurn: true });
-    const { recalled } = aborted;
+    const aborted = await abortTurn(sessionId, state, live, {
+      requireRealTurn: true,
+      dispose: async (recalled) => {
+        if (recalled.length === 0) return 0;
+        await enqueuePrompts(
+          sessionId,
+          recalled.map((command) => ({
+            messageId: command.messageId,
+            content: command.content,
+            text: command.text,
+            attachments: command.attachments,
+          }))
+        );
+        await emitQueuedPrompts(sessionId);
+        return recalled.length;
+      },
+      // Flag before interrupting, not after: a Stop landing while the interrupt is
+      // in flight withdraws the nudge, and must not have it set back.
+      beforeInterrupt: () => flagForResumeAfterRateLimit(sessionId),
+    });
+    const requeued = aborted.disposed;
     interrupted = aborted.interrupted;
-    if (recalled.length > 0) {
-      await enqueuePrompts(
-        sessionId,
-        recalled.map((command) => ({
-          messageId: command.messageId,
-          content: command.content,
-          text: command.text,
-          attachments: command.attachments,
-        }))
-      );
-      await emitQueuedPrompts(sessionId);
-    }
-    if (recalled.length > 0 || interrupted) {
+    if (requeued > 0 || interrupted) {
       log.info('Paused session for rate limit', {
         sessionId,
         limitType: hold.limitType,
         reason: hold.reason,
-        requeued: recalled.length,
+        requeued,
         interrupted,
         resumesAt: new Date(hold.untilMs).toISOString(),
       });
@@ -743,18 +754,25 @@ async function pauseSessionForRateLimit(
   // by the pre-await snapshot (unless an interrupt is already underway); otherwise
   // only a turn we actually cut short needs a nudge once the window resets.
   const rejectedMidTurn = hold.reason === 'rejected' && hadActiveTurn && !state?.interruptRequested;
-  if (interrupted || rejectedMidTurn) {
-    try {
-      await prisma.session.updateMany({
-        where: { id: sessionId },
-        data: { resumeAfterRateLimit: true },
-      });
-    } catch (err) {
-      log.warn('Failed to flag session for post-rate-limit resume', {
-        sessionId,
-        error: toError(err).message,
-      });
-    }
+  if (!interrupted && rejectedMidTurn) await flagForResumeAfterRateLimit(sessionId);
+}
+
+/**
+ * Mark a session to be nudged to continue once the window resets. Best-effort.
+ * Set even when the interrupt then fails: the nudge is phrased so an agent that
+ * had finished just says so.
+ */
+async function flagForResumeAfterRateLimit(sessionId: string): Promise<void> {
+  try {
+    await prisma.session.updateMany({
+      where: { id: sessionId },
+      data: { resumeAfterRateLimit: true },
+    });
+  } catch (err) {
+    log.warn('Failed to flag session for post-rate-limit resume', {
+      sessionId,
+      error: toError(err).message,
+    });
   }
 }
 
@@ -913,19 +931,21 @@ export async function interruptClaude(sessionId: string): Promise<InterruptResul
     return { interrupted: false, cancelled: recalledFromQueue };
   }
 
-  const { recalled, interrupted } = await abortTurn(sessionId, state, state.live, {
+  const { disposed, interrupted } = await abortTurn(sessionId, state, state.live, {
     requireRealTurn: false,
+    dispose: (recalled) => discardUnreadPrompts(sessionId, recalled),
   });
-  const cancelled = await discardUnreadPrompts(sessionId, recalled);
-  return { interrupted, cancelled: [...cancelled, ...recalledFromQueue] };
+  return { interrupted, cancelled: [...disposed, ...recalledFromQueue] };
 }
 
 /**
- * Recall everything the agent hasn't read, then interrupt the turn. The recall
- * must come first: `interrupt()` wakes the CLI's drain loop, which runs anything
- * still queued as its own turn the instant the abort lands — cancelling afterwards
- * loses that race every time (doc/claude-sessions.md, "Stop cancels what the agent
- * hasn't read"). What happens to the recalled prompts is the caller's policy.
+ * Recall everything the agent hasn't read, hand it to `dispose` (the caller's
+ * policy: Stop deletes the bubbles, a pause re-queues them), then interrupt the
+ * turn. The recall must come first: `interrupt()` wakes the CLI's drain loop,
+ * which runs anything still queued as its own turn the instant the abort lands —
+ * cancelling afterwards loses that race every time (doc/claude-sessions.md, "Stop
+ * cancels what the agent hasn't read"). Disposal comes before the interrupt too, so
+ * recalled prompts are never only in memory while it is awaited.
  *
  * `requireRealTurn` selects the rate-limit pause's policy: interrupt only a turn
  * the stream actually opened (an optimistic one has nothing started to cut short)
@@ -938,40 +958,49 @@ export async function interruptClaude(sessionId: string): Promise<InterruptResul
  * `interrupted` is true only when a turn the stream had opened was aborted, so the
  * caller never stamps "Interrupted" on a turn that had already finished.
  */
-async function abortTurn(
+async function abortTurn<T>(
   sessionId: string,
   state: SessionState,
   live: LiveQuery,
-  { requireRealTurn }: { requireRealTurn: boolean }
-): Promise<{ recalled: InFlightCommand[]; interrupted: boolean }> {
-  const alreadyInterrupting = requireRealTurn && state.interruptRequested;
+  {
+    requireRealTurn,
+    dispose,
+    beforeInterrupt,
+  }: {
+    requireRealTurn: boolean;
+    dispose: (recalled: InFlightCommand[]) => Promise<T>;
+    /** Runs once it is decided to interrupt, before the interrupt is sent. */
+    beforeInterrupt?: () => Promise<void>;
+  }
+): Promise<{ disposed: T; interrupted: boolean }> {
   if (!requireRealTurn) state.interruptRequested = state.status.turnActive;
 
-  const recalled = await recallUnstartedCommands(sessionId, state, live.query);
+  const disposed = await dispose(await recallUnstartedCommands(sessionId, state, live.query));
 
-  // Read after the recall: recalling the push behind an optimistic turnActive ends it.
+  // Read after the awaits: recalling the push behind an optimistic turnActive ends
+  // it, and an earlier interrupt may have landed meanwhile.
   const realTurn = state.status.turnActive && !state.optimisticTurnActive;
   const abort =
     state.live === live &&
-    !alreadyInterrupting &&
-    (requireRealTurn ? realTurn : effectiveRunning(state));
+    (requireRealTurn ? realTurn && !state.interruptRequested : effectiveRunning(state));
   if (!abort) {
     // Withdraw Stop's claim: no interrupt-driven turn-end is coming to consume it.
     if (!requireRealTurn) state.interruptRequested = false;
-    return { recalled, interrupted: false };
+    return { disposed, interrupted: false };
   }
 
   state.interruptRequested = state.status.turnActive;
   try {
+    await beforeInterrupt?.();
     await live.query.interrupt();
   } catch (err) {
     // No interrupt-driven turn-end is coming; clear the flag so it can't suppress
     // a later, natural turn-end's notification.
     state.interruptRequested = false;
     log.warn('Failed to interrupt turn', { sessionId, error: toError(err).message });
-    return { recalled, interrupted: false };
+    return { disposed, interrupted: false };
   }
-  return { recalled, interrupted: realTurn };
+  return { disposed, interrupted: realTurn };
 }
 
 /**

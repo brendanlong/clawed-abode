@@ -117,6 +117,7 @@ function makeFakeQuery() {
   // Default: every still-queued command can be pulled back. A test overrides it
   // to model a command the CLI had already dequeued.
   const cancelAsyncMessage = vi.fn(async (_uuid: string) => true);
+  const interrupt = vi.fn(async () => {});
 
   const factory = (params: { prompt: AsyncIterable<SDKUserMessage>; options: unknown }): Query => {
     // Record pushed user messages so we can assert sendUserMessage reached the SDK.
@@ -125,7 +126,7 @@ function makeFakeQuery() {
     })();
     return {
       [Symbol.asyncIterator]: () => out.iterable[Symbol.asyncIterator](),
-      interrupt: vi.fn(async () => {}),
+      interrupt,
       close: vi.fn(() => out.close()),
       supportedCommands: vi.fn(async () => []),
       stopTask,
@@ -165,6 +166,7 @@ function makeFakeQuery() {
     setMcpServers,
     stopTask,
     cancelAsyncMessage,
+    interrupt,
   };
 }
 
@@ -1260,6 +1262,40 @@ describe('claude-runner persistent streaming loop', () => {
     fake.emit(result());
     await waitFor(() => !isClaudeRunning(sessionId));
     expect(mockSseEvents.emitClaudeFinished).toHaveBeenCalledTimes(1);
+
+    stopSession(sessionId);
+  });
+
+  it('interrupts a read-but-unanswered send without stamping the previous turn', async () => {
+    // The agent has read it (nothing to recall) but no turn has opened yet: Stop
+    // must still abort what is coming, yet there is no turn of its own to mark
+    // "Interrupted", and the aborted turn's end is not Claude finishing.
+    const fake = makeFakeQuery();
+    _setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+
+    await sendUserMessage(sessionId, 'first');
+    await fake.deliver();
+    fake.emit(messageStart());
+    fake.emit(messageDelta('end_turn'));
+    fake.emit(result());
+    await waitFor(() => !isClaudeRunning(sessionId));
+
+    await sendUserMessage(sessionId, 'read, not answered');
+    await fake.deliver();
+    await waitFor(() => getPendingMessageIds(sessionId).length === 0);
+    expect(isClaudeRunning(sessionId)).toBe(true);
+
+    mockSseEvents.emitClaudeFinished.mockClear();
+    const { interrupted, cancelled } = await interruptClaude(sessionId);
+    expect(interrupted).toBe(false);
+    expect(cancelled).toEqual([]);
+    expect(fake.cancelAsyncMessage).not.toHaveBeenCalled();
+    expect(fake.interrupt).toHaveBeenCalledTimes(1);
+
+    fake.emit(result('error_during_execution'));
+    await waitFor(() => !isClaudeRunning(sessionId));
+    expect(mockSseEvents.emitClaudeFinished).not.toHaveBeenCalled();
 
     stopSession(sessionId);
   });
