@@ -21,6 +21,9 @@ function handleUnauthorized() {
   clearAuthToken();
   // Only redirect if we're not already on the login page
   if (window.location.pathname !== '/login') {
+    // A full load (not router.push) drops the cached data and open streams of
+    // the logged-out session; this also runs outside any component.
+    // eslint-disable-next-line @next/next/no-location-assign-relative-destination
     window.location.href = '/login';
   }
 }
