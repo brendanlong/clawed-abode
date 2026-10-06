@@ -9,11 +9,77 @@ import { sseEvents } from './events';
 import { sanitizeUntrustedInput } from './input-sanitizer';
 import { resolveUploadPaths } from './uploads';
 import { messageUsageStatement } from './session-usage';
+import type { Message } from '@/generated/prisma/client';
 
 const log = createLogger('message-store');
 
 /** Namespace for deterministic (idempotent) message ids derived from content. */
 const MESSAGE_ID_NAMESPACE = '6ba7b810-9dad-11d1-80b4-00c04fd430c8';
+
+/** A message row with its JSON `content` decoded, as the API and SSE deliver it. */
+export type ParsedMessage = Omit<Message, 'content'> & { content: unknown };
+
+function toParsedMessage(row: Message): ParsedMessage {
+  return { ...row, content: JSON.parse(row.content) as unknown };
+}
+
+/**
+ * One page of history, paging backward: the newest `limit` messages older than
+ * `cursor` (or the newest overall), returned oldest-first.
+ */
+export async function loadHistoryPage(
+  sessionId: string,
+  cursor: number | null | undefined,
+  limit: number
+): Promise<{ messages: ParsedMessage[]; hasMore: boolean }> {
+  const rows = await prisma.message.findMany({
+    where: { sessionId, ...(cursor != null && { sequence: { lt: cursor } }) },
+    orderBy: { sequence: 'desc' },
+    take: limit + 1,
+  });
+  const hasMore = rows.length > limit;
+  if (hasMore) rows.pop();
+  return { messages: rows.reverse().map(toParsedMessage), hasMore };
+}
+
+/** Every message after `floor`, oldest-first (SSE catch-up replay). */
+export async function loadMessagesAfter(
+  sessionId: string,
+  floor: number
+): Promise<ParsedMessage[]> {
+  const rows = await prisma.message.findMany({
+    where: { sessionId, sequence: { gt: floor } },
+    orderBy: { sequence: 'asc' },
+  });
+  return rows.map(toParsedMessage);
+}
+
+/** The highest persisted sequence, or null when the session has no messages. */
+export async function latestSequence(sessionId: string): Promise<number | null> {
+  const last = await prisma.message.findFirst({
+    where: { sessionId },
+    orderBy: { sequence: 'desc' },
+    select: { sequence: true },
+  });
+  return last?.sequence ?? null;
+}
+
+/**
+ * Decoded content of the latest top-level (main-agent) assistant message.
+ * Subagent messages (`parent_tool_use_id` set) run in their own context, so they
+ * would misreport the main conversation's size.
+ */
+export async function loadLastTopLevelAssistantContent(sessionId: string): Promise<unknown> {
+  const [row] = await prisma.$queryRaw<{ content: string }[]>`
+    SELECT content FROM Message
+    WHERE sessionId = ${sessionId}
+      AND type = 'assistant'
+      AND json_extract(content, '$.parent_tool_use_id') IS NULL
+    ORDER BY sequence DESC
+    LIMIT 1
+  `;
+  return row ? (JSON.parse(row.content) as unknown) : undefined;
+}
 
 /**
  * Insert a message, assigning its per-session `sequence` atomically: one autocommit

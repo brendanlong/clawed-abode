@@ -3,7 +3,7 @@ import { router, protectedProcedure } from '../trpc';
 import { sseEvents } from '../services/events';
 import type { SessionStreamEvent, SessionListEvent } from '../services/events';
 import { tracked } from '@trpc/server';
-import { prisma } from '@/lib/prisma';
+import { latestSequence, loadMessagesAfter } from '../services/message-store';
 import { isPartialMessageId } from '@/lib/message-cache';
 import { formatResumeToken, parseResumeToken, EMPTY_WATERMARK } from '@/lib/sse-resume';
 
@@ -118,14 +118,6 @@ async function* drainEventQueue<T>(
 const partialMessageKey = (event: SessionStreamEvent) =>
   event.kind === 'message' && isPartialMessageId(event.message.id) ? event.message.id : undefined;
 
-async function loadMessagesAfter(sessionId: string, floor: number) {
-  const missed = await prisma.message.findMany({
-    where: { sessionId, sequence: { gt: floor } },
-    orderBy: { sequence: 'asc' },
-  });
-  return missed.map((msg) => ({ ...msg, content: JSON.parse(msg.content) as unknown }));
-}
-
 export const sseRouter = router({
   // Single multiplexed stream of all event kinds for one session.
   //
@@ -182,12 +174,7 @@ export const sseRouter = router({
         } else {
           // No catch-up requested: anchor the watermark at the current max so a
           // later reconnect replays only messages created from here on.
-          const last = await prisma.message.findFirst({
-            where: { sessionId: input.sessionId },
-            orderBy: { sequence: 'desc' },
-            select: { sequence: true },
-          });
-          watermark = last?.sequence ?? EMPTY_WATERMARK;
+          watermark = (await latestSequence(input.sessionId)) ?? EMPTY_WATERMARK;
         }
 
         for await (const event of drainEventQueue(events, signal)) yield track(event);

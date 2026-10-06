@@ -1,13 +1,11 @@
 import { EventEmitter } from 'events';
-import type { Message, Session } from '@/generated/prisma/client';
+import type { Session } from '@/generated/prisma/client';
 import type { SlashCommand } from '@anthropic-ai/claude-agent-sdk';
 import type { RetryState } from '@/lib/claude-messages';
 import type { RateLimitHold } from '@/lib/rate-limit';
 import { toSessionView, type SessionView } from '@/lib/session-view';
 import { taskHasEndState, type BackgroundTask } from '@/lib/session-status';
-
-// Message with parsed content (for SSE events)
-type ParsedMessage = Omit<Message, 'content'> & { content: unknown };
+import type { ParsedMessage } from './message-store';
 
 /**
  * Everything delivered over the single multiplexed per-session SSE stream
