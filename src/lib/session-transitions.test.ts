@@ -22,7 +22,7 @@ describe('ALLOWED_FROM', () => {
     expect(ALLOWED_FROM.stop).toEqual(['running']);
   });
 
-  it('lets a failed setup only be archived', () => {
+  it('never starts or stops a failed setup', () => {
     for (const transition of transitions) {
       if (transition === 'archive' || transition === 'configure') continue;
       expect(ALLOWED_FROM[transition]).not.toContain('error');

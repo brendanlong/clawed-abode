@@ -28,6 +28,7 @@ function session(overrides: Partial<Session> & Pick<Session, 'id' | 'name'>): Se
     status: 'running',
     canStart: false,
     canStop: true,
+    canArchive: true,
     statusMessage: null,
     currentBranch: null,
     pullRequest: null,
@@ -112,6 +113,30 @@ describe('SessionList', () => {
       expect(items[1]).toHaveTextContent('stopped');
       expect(items[2]).toHaveTextContent('waiting');
       expect(items[3]).toHaveTextContent('background');
+    });
+
+    it('offers only the actions the server says apply', () => {
+      render(
+        <SessionList
+          active={paged([
+            session({
+              id: 'failed',
+              name: 'Failed',
+              // A status that would read as startable if the UI judged it itself.
+              status: 'stopped',
+              canStart: false,
+              canStop: false,
+              canArchive: true,
+            }),
+          ])}
+          archived={none}
+          showArchived={false}
+          onToggleArchived={vi.fn()}
+        />
+      );
+      expect(screen.queryByRole('button', { name: /^start$/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /^stop$/i })).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^archive$/i })).toBeInTheDocument();
     });
 
     it('shows the persisted pull request status', () => {

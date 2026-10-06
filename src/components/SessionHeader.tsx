@@ -22,6 +22,7 @@ interface SessionHeaderProps {
     status: string;
     canStart: boolean;
     canStop: boolean;
+    canArchive: boolean;
     statusMessage?: string | null;
     claudeModel?: string | null;
     rateLimitPauseEnabled?: boolean | null;
@@ -118,7 +119,7 @@ export function SessionHeader({
               isStopping={isStopping}
             />
           </div>
-          {(session.status === 'stopped' || session.status === 'running') && onArchive && (
+          {session.canArchive && onArchive && (
             <SessionActionButton
               action="archive"
               onClick={onArchive}

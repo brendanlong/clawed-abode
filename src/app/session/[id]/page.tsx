@@ -150,7 +150,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
   ) {
     return (
       <div className="flex-1 flex flex-col min-h-0">
-        <SessionHeader session={session} />
+        <SessionHeader session={session} onArchive={archive} isArchiving={isArchiving} />
         {session.status === 'creating' && (
           <div className="flex-1 flex flex-col items-center justify-center gap-4">
             <Spinner size="lg" />
