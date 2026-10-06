@@ -166,6 +166,14 @@ model EnvVar {
 // MCP server configurations for a repository or global
 // When repoSettingsId is null, the MCP server is global (applies to all sessions).
 // Same hand-written partial unique index as EnvVar (McpServer_global_name_key).
+//
+// CHECK constraints on McpServer (type, authType, args, url), McpServerValue.kind,
+// QueuedPrompt.attachments and SessionUsage.contextWindows live in migration
+// 20261007000000, mirroring the Zod schemas the rows are parsed with (asserted by
+// src/server/services/db-check-constraints.integration.test.ts). Prisma can't
+// express CHECK and its differ ignores them, so a generated rebuild of any of these
+// tables silently drops them: recreate them by hand, and change them with a new
+// migration whenever the Zod enums change.
 model McpServer {
   id             String        @id @default(uuid())
   repoSettingsId String?
