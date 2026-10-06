@@ -11,6 +11,14 @@ updates:
     # https://daniakash.com/posts/simplest-supply-chain-defense/
     cooldown:
       default-days: 7
+    # Majors that break lint: typescript-eslint doesn't support TS 7, and the
+    # eslint-plugin-react bundled by eslint-config-next crashes on ESLint 10.
+    # Drop each once its dependents support it.
+    ignore:
+      - dependency-name: 'typescript'
+        update-types: ['version-update:semver-major']
+      - dependency-name: 'eslint'
+        update-types: ['version-update:semver-major']
     # One PR per run instead of many that conflict on the lockfile
     groups:
       npm-dependencies:
