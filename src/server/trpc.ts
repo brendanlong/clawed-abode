@@ -7,6 +7,7 @@ import { prisma } from '@/lib/prisma';
 import { createLogger } from '@/lib/logger';
 import { originHeadersFrom, resolveAppOrigin } from '@/lib/app-origin';
 import { env } from '@/lib/env';
+import { getClientIp } from '@/lib/client-ip';
 
 const log = createLogger('trpc');
 
@@ -19,16 +20,9 @@ export interface Context {
   appOrigin?: string | null;
 }
 
-/** Tailscale Serve/Funnel and other reverse proxies put the real client IP first in X-Forwarded-For. */
-function getClientIp(headers: Headers): string | undefined {
-  const forwarded = headers.get('x-forwarded-for');
-  const first = forwarded?.split(',')[0]?.trim();
-  return first || headers.get('x-real-ip')?.trim() || undefined;
-}
-
 export async function createContext(opts: { headers: Headers }): Promise<Context> {
   const clientInfo = {
-    ipAddress: getClientIp(opts.headers),
+    ipAddress: getClientIp((name) => opts.headers.get(name)),
     userAgent: opts.headers.get('user-agent') ?? undefined,
     appOrigin: resolveAppOrigin(env.APP_URL, originHeadersFrom(opts.headers)),
   };

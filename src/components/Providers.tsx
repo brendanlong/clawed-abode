@@ -8,6 +8,7 @@ import { WorkingProvider } from '@/lib/working-context';
 import { ThemeProvider } from '@/lib/theme-context';
 import { SessionListStreamProvider } from '@/lib/session-list-stream-context';
 import { WorkCompleteNotifier } from '@/components/WorkCompleteNotifier';
+import { PublicLinkLogin } from '@/components/PublicLinkLogin';
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(() => new QueryClient());
@@ -22,6 +23,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
             <SessionListStreamProvider>
               <WorkingProvider>
                 <WorkCompleteNotifier />
+                <PublicLinkLogin />
                 {children}
               </WorkingProvider>
             </SessionListStreamProvider>

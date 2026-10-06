@@ -1,73 +1,50 @@
 import { z } from 'zod';
 import { router, publicProcedure, protectedProcedure } from '../trpc';
 import { prisma } from '@/lib/prisma';
-import { verifyPassword, loginSchema, effectiveExpiry } from '@/lib/auth';
-import { loginRateLimiter } from '@/lib/rate-limiter';
+import { loginSchema, effectiveExpiry } from '@/lib/auth';
 import { env } from '@/lib/env';
 import { TRPCError } from '@trpc/server';
-import { createLogger, toError } from '@/lib/logger';
 import { keysetPage, keysetPageInputSchema } from '@/lib/keyset-page';
-import { createAuthSession, purgeInactiveAuthSessions } from '../services/auth-sessions';
-
-const log = createLogger('auth');
+import { loginWithPassword, retryAfterMessage } from '../services/password-login';
+import { mintPublicLoginCode } from '../services/public-login-codes';
 
 export const authRouter = router({
   login: publicProcedure.input(loginSchema).mutation(async ({ input, ctx }) => {
-    // IP and user agent come from request headers (never from client input, which
-    // an attacker could vary to dodge the rate limiter).
-    const rateLimitKey = ctx.ipAddress ?? 'unknown';
-    const rateLimitCheck = loginRateLimiter.check(rateLimitKey);
-
-    if (!rateLimitCheck.allowed) {
-      const retryAfterMinutes = Math.ceil((rateLimitCheck.retryAfterMs ?? 0) / 60000);
-      log.warn('Login rate limited', { ip: ctx.ipAddress, retryAfterMinutes });
-      throw new TRPCError({
-        code: 'TOO_MANY_REQUESTS',
-        message: `Too many login attempts. Please try again in ${retryAfterMinutes} minute${retryAfterMinutes === 1 ? '' : 's'}.`,
-      });
+    const result = await loginWithPassword(input.password, ctx);
+    if (result.ok) return { token: result.token };
+    switch (result.reason) {
+      case 'rate_limited':
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: retryAfterMessage(result.retryAfterMs),
+        });
+      case 'invalid_password':
+        throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Invalid password' });
+      case 'not_configured':
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: 'Authentication not configured. Set PASSWORD_HASH environment variable.',
+        });
+      case 'bad_hash':
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: 'Invalid PASSWORD_HASH format. Generate with: pnpm hash-password <yourpassword>',
+        });
     }
+  }),
 
-    if (!env.PASSWORD_HASH) {
-      throw new TRPCError({
-        code: 'INTERNAL_SERVER_ERROR',
-        message: 'Authentication not configured. Set PASSWORD_HASH environment variable.',
-      });
+  publicFilesUrl: protectedProcedure.query(() => ({ url: env.PUBLIC_FILES_URL ?? null })),
+
+  /**
+   * A one-time code that signs whichever browser opens a public-files link into
+   * that server. The PWA can't hand its cookie to the browser Android opens links
+   * in, but it can put this in the URL.
+   */
+  createPublicLoginCode: protectedProcedure.mutation(() => {
+    if (!env.PUBLIC_FILES_URL) {
+      throw new TRPCError({ code: 'NOT_FOUND', message: 'Public files are not configured' });
     }
-
-    let valid: boolean;
-    try {
-      valid = await verifyPassword(input.password, env.PASSWORD_HASH);
-    } catch (error) {
-      log.error('Password verification error', toError(error));
-      throw new TRPCError({
-        code: 'INTERNAL_SERVER_ERROR',
-        message: 'Invalid PASSWORD_HASH format. Generate with: pnpm hash-password <yourpassword>',
-      });
-    }
-
-    if (!valid) {
-      const failureResult = loginRateLimiter.recordFailure(rateLimitKey);
-      log.warn('Failed login attempt', {
-        ip: ctx.ipAddress,
-        remainingAttempts: failureResult.remainingAttempts,
-      });
-      throw new TRPCError({
-        code: 'UNAUTHORIZED',
-        message: 'Invalid password',
-      });
-    }
-
-    loginRateLimiter.recordSuccess(rateLimitKey);
-
-    try {
-      await purgeInactiveAuthSessions();
-    } catch (error) {
-      log.error('Failed to purge inactive auth sessions', toError(error));
-    }
-
-    const token = await createAuthSession(ctx.ipAddress, ctx.userAgent);
-
-    return { token };
+    return { code: mintPublicLoginCode() };
   }),
 
   logout: protectedProcedure.mutation(async ({ ctx }) => {

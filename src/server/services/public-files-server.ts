@@ -1,17 +1,26 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'http';
 import { open } from 'fs/promises';
 import { pipeline } from 'stream/promises';
+import { z } from 'zod';
 import { prisma } from '@/lib/prisma';
 import { createLogger, toError } from '@/lib/logger';
+import { SESSION_DURATION_MS, loginSchema } from '@/lib/auth';
+import { getClientIp } from '@/lib/client-ip';
 import {
   PUBLIC_AUTH_COOKIE,
+  PUBLIC_LOGIN_PATH,
   contentTypeFor,
   parseByteRange,
   parseCookie,
   parsePublicRequestPath,
+  publicAuthCookie,
   renderDirectoryListing,
+  renderLoginPage,
+  safeNextPath,
 } from '@/lib/public-files';
-import { resolveAuthSessionId } from './auth-sessions';
+import { createAuthSession, resolveAuthSessionId } from './auth-sessions';
+import { loginWithPassword, retryAfterMessage, type ClientInfo } from './password-login';
+import { consumePublicLoginCode } from './public-login-codes';
 import { resolvePublicTarget } from './public-dir';
 
 const log = createLogger('public-files');
@@ -60,18 +69,19 @@ const BASE_HEADERS = {
 };
 
 async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const url = new URL(req.url ?? '/', 'http://localhost');
+  const { pathname } = url;
+  if (pathname === PUBLIC_LOGIN_PATH) return handleLogin(req, res, url);
+
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     res.writeHead(405, { ...BASE_HEADERS, Allow: 'GET, HEAD' }).end();
     return;
   }
 
-  const token = parseCookie(req.headers.cookie, PUBLIC_AUTH_COOKIE);
-  if (!token || !(await resolveAuthSessionId(token))) {
-    sendText(res, 401, 'Open Clawed Abode and sign in on this browser, then reload this page.\n');
-    return;
+  if (!(await hasValidAuthCookie(req))) {
+    return sendHtml(res, 401, renderLoginPage({ next: safeNextPath(pathname + url.search) }));
   }
 
-  const pathname = new URL(req.url ?? '/', 'http://localhost').pathname;
   const parsed = parsePublicRequestPath(pathname);
   if (!parsed) return sendText(res, 404, 'Not found\n');
 
@@ -97,6 +107,98 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       res.writeHead(200, { ...BASE_HEADERS, 'Content-Type': 'text/html; charset=utf-8' });
       res.end(req.method === 'HEAD' ? undefined : renderDirectoryListing(pathname, target.entries));
   }
+}
+
+const LOGIN_BODY_LIMIT_BYTES = 8 * 1024;
+
+const loginFormSchema = loginSchema.extend({ next: z.string().optional() });
+
+/**
+ * Signs this browser in, by one-time code (a link tapped in the app) or password
+ * (any other link), and redirects to `next`. Either way the browser gets its own
+ * auth session: it may not share the app's cookies, as when an Android PWA opens
+ * links in a different browser.
+ */
+async function handleLogin(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
+  const client: ClientInfo = {
+    ipAddress: getClientIp((name) => firstHeader(req.headers[name])),
+    userAgent: req.headers['user-agent'],
+  };
+
+  if (req.method === 'GET' || req.method === 'HEAD') {
+    const next = safeNextPath(url.searchParams.get('next'));
+    const code = url.searchParams.get('code');
+    const codeValid = code !== null && consumePublicLoginCode(code);
+    // A browser that already shares the app's cookie needs no new auth session.
+    if (await hasValidAuthCookie(req)) return redirect(res, next);
+    if (codeValid) {
+      return redirect(res, next, await createAuthSession(client.ipAddress, client.userAgent));
+    }
+    const error = code === null ? undefined : 'That link has expired. Sign in to continue.';
+    return sendHtml(res, 200, renderLoginPage({ next, error }));
+  }
+
+  if (req.method !== 'POST') {
+    res.writeHead(405, { ...BASE_HEADERS, Allow: 'GET, HEAD, POST' }).end();
+    return;
+  }
+
+  const body = await readBody(req, LOGIN_BODY_LIMIT_BYTES);
+  if (body === null) return sendText(res, 413, 'Request too large\n');
+  const form = loginFormSchema.safeParse(Object.fromEntries(new URLSearchParams(body)));
+  const next = safeNextPath(form.success ? form.data.next : null);
+  if (!form.success) {
+    return sendHtml(res, 400, renderLoginPage({ next, error: 'Password is required.' }));
+  }
+
+  const result = await loginWithPassword(form.data.password, client);
+  if (result.ok) return redirect(res, next, result.token);
+  switch (result.reason) {
+    case 'rate_limited':
+      return sendHtml(
+        res,
+        429,
+        renderLoginPage({ next, error: retryAfterMessage(result.retryAfterMs) })
+      );
+    case 'invalid_password':
+      return sendHtml(res, 401, renderLoginPage({ next, error: 'Invalid password.' }));
+    case 'not_configured':
+    case 'bad_hash':
+      return sendHtml(res, 500, renderLoginPage({ next, error: 'Login is misconfigured.' }));
+  }
+}
+
+async function hasValidAuthCookie(req: IncomingMessage): Promise<boolean> {
+  const token = parseCookie(req.headers.cookie, PUBLIC_AUTH_COOKIE);
+  return token !== null && (await resolveAuthSessionId(token)) !== null;
+}
+
+function firstHeader(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+/** The request body as text, or null if it exceeds `limit` bytes. */
+async function readBody(req: IncomingMessage, limit: number): Promise<string | null> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of req) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string);
+    size += buffer.length;
+    if (size > limit) return null;
+    chunks.push(buffer);
+  }
+  return Buffer.concat(chunks).toString('utf8');
+}
+
+/** 303 so a POSTed login form becomes a GET of `next`; sets the auth cookie when given a token. */
+function redirect(res: ServerResponse, location: string, token?: string): void {
+  res
+    .writeHead(303, {
+      ...BASE_HEADERS,
+      Location: location,
+      ...(token ? { 'Set-Cookie': publicAuthCookie(token, SESSION_DURATION_MS / 1000) } : {}),
+    })
+    .end();
 }
 
 async function serveFile(
@@ -140,6 +242,11 @@ async function serveFile(
   } finally {
     await handle.close();
   }
+}
+
+function sendHtml(res: ServerResponse, status: number, html: string): void {
+  res.writeHead(status, { ...BASE_HEADERS, 'Content-Type': 'text/html; charset=utf-8' });
+  res.end(html);
 }
 
 function sendText(res: ServerResponse, status: number, text: string): void {

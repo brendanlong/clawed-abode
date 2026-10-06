@@ -7,6 +7,49 @@ import { z } from 'zod';
  */
 export const PUBLIC_AUTH_COOKIE = 'public_auth';
 
+/**
+ * `Set-Cookie` value for the public auth cookie; a null token clears it. HttpOnly
+ * keeps it from the agent-written pages it unlocks.
+ */
+export function publicAuthCookie(token: string | null, maxAgeSeconds: number): string {
+  const maxAge = token === null ? 0 : Math.floor(maxAgeSeconds);
+  return `${PUBLIC_AUTH_COOKIE}=${token ?? ''}; Path=/; Max-Age=${maxAge}; HttpOnly; Secure; SameSite=Lax`;
+}
+
+/**
+ * The public files server's login endpoint: GET with a one-time `code` from the
+ * app, or POST the password form. Session ids are UUIDs, so it can't collide.
+ */
+export const PUBLIC_LOGIN_PATH = '/_login';
+
+/** Where to send the browser after login: a same-origin path, never `//host` or an absolute URL. */
+export function safeNextPath(raw: string | null | undefined): string {
+  if (!raw || !raw.startsWith('/') || raw.startsWith('//') || raw.includes('\\')) return '/';
+  return raw;
+}
+
+export function publicLoginUrl(baseUrl: string, code: string, next: string): string {
+  const url = new URL(PUBLIC_LOGIN_PATH, baseUrl);
+  url.searchParams.set('code', code);
+  url.searchParams.set('next', next);
+  return url.toString();
+}
+
+/**
+ * The path (with query and fragment) of a link into the public files server, or
+ * null for links anywhere else — including its login endpoint, which needs no login.
+ */
+export function publicLinkPath(href: string, baseUrl: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(href);
+  } catch {
+    return null;
+  }
+  if (url.origin !== new URL(baseUrl).origin || url.pathname === PUBLIC_LOGIN_PATH) return null;
+  return url.pathname + url.search + url.hash;
+}
+
 const sessionIdSchema = z.string().uuid();
 
 export function publicFilesUrl(baseUrl: string, sessionId: string): string {
@@ -151,6 +194,34 @@ function escapeHtml(text: string): string {
     .replace(/'/g, '&#39;');
 }
 
+const PAGE_HEAD =
+  '<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">';
+
+/** Password form shown in place of any page the browser isn't signed in for. */
+export function renderLoginPage(options: { next: string; error?: string }): string {
+  const error = options.error ? `<p role="alert">${escapeHtml(options.error)}</p>` : '';
+  return `<!doctype html>
+<html>
+<head>${PAGE_HEAD}<title>Sign in - Clawed Abode</title>
+<style>
+body{font-family:system-ui,sans-serif;max-width:22rem;margin:4rem auto;padding:0 1rem;color-scheme:light dark}
+input,button{display:block;width:100%;box-sizing:border-box;font:inherit;padding:.6rem;margin-top:.75rem}
+[role=alert]{color:#dc2626}
+</style>
+</head>
+<body>
+<h1>Clawed Abode</h1>
+<p>Sign in to view this page.</p>
+${error}<form method="post" action="${PUBLIC_LOGIN_PATH}">
+<input type="hidden" name="next" value="${escapeHtml(options.next)}">
+<input type="password" name="password" placeholder="Password" aria-label="Password" autocomplete="current-password" required autofocus>
+<button type="submit">Sign in</button>
+</form>
+</body>
+</html>
+`;
+}
+
 /** Minimal HTML index for a directory without an `index.html`. Links are relative, so the URL must end in `/`. */
 export function renderDirectoryListing(title: string, entries: DirectoryEntry[]): string {
   const sorted = [...entries].sort(
@@ -166,7 +237,7 @@ export function renderDirectoryListing(title: string, entries: DirectoryEntry[])
   const body = items ? `<ul>\n${items}\n</ul>` : '<p>This directory is empty.</p>';
   return `<!doctype html>
 <html>
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(title)}</title></head>
+<head>${PAGE_HEAD}<title>${escapeHtml(title)}</title></head>
 <body>
 <h1>${escapeHtml(title)}</h1>
 ${body}

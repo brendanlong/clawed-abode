@@ -1,15 +1,7 @@
-import { NextResponse } from 'next/server';
 import { parseAuthHeader, SESSION_DURATION_MS } from '@/lib/auth';
 import { resolveAuthSessionId } from '@/server/services/auth-sessions';
-import { PUBLIC_AUTH_COOKIE } from '@/lib/public-files';
+import { publicAuthCookie } from '@/lib/public-files';
 import { env } from '@/lib/env';
-
-const COOKIE_OPTIONS = {
-  path: '/',
-  httpOnly: true,
-  secure: true,
-  sameSite: 'lax',
-} as const;
 
 /**
  * Mirrors the caller's bearer token into the cookie the public files server
@@ -27,16 +19,15 @@ export async function POST(request: Request): Promise<Response> {
   if (!token || !(await resolveAuthSessionId(token))) {
     return Response.json({ error: 'Unauthorized' }, { status: 401 });
   }
-  const response = new NextResponse(null, { status: 204 });
-  response.cookies.set(PUBLIC_AUTH_COOKIE, token, {
-    ...COOKIE_OPTIONS,
-    maxAge: SESSION_DURATION_MS / 1000,
+  return new Response(null, {
+    status: 204,
+    headers: { 'Set-Cookie': publicAuthCookie(token, SESSION_DURATION_MS / 1000) },
   });
-  return response;
 }
 
 export async function DELETE(): Promise<Response> {
-  const response = new NextResponse(null, { status: 204 });
-  response.cookies.set(PUBLIC_AUTH_COOKIE, '', { ...COOKIE_OPTIONS, maxAge: 0 });
-  return response;
+  return new Response(null, {
+    status: 204,
+    headers: { 'Set-Cookie': publicAuthCookie(null, 0) },
+  });
 }

@@ -4,8 +4,13 @@ import {
   parseByteRange,
   parsePublicRequestPath,
   parseCookie,
+  publicAuthCookie,
   publicFilesUrl,
+  publicLinkPath,
+  publicLoginUrl,
   renderDirectoryListing,
+  renderLoginPage,
+  safeNextPath,
 } from './public-files';
 
 const ID = '123e4567-e89b-42d3-a456-426614174000';
@@ -125,5 +130,74 @@ describe('parseByteRange', () => {
     expect(parseByteRange('bytes=100-', 100)).toBe('unsatisfiable');
     expect(parseByteRange('bytes=-0', 100)).toBe('unsatisfiable');
     expect(parseByteRange('bytes=0-', 0)).toBe('unsatisfiable');
+  });
+});
+
+describe('publicAuthCookie', () => {
+  it('sets an HttpOnly, Secure, Lax cookie for the whole host', () => {
+    expect(publicAuthCookie('tok', 60)).toBe(
+      'public_auth=tok; Path=/; Max-Age=60; HttpOnly; Secure; SameSite=Lax'
+    );
+  });
+
+  it('expires the cookie for a null token', () => {
+    expect(publicAuthCookie(null, 60)).toContain('public_auth=; Path=/; Max-Age=0;');
+  });
+});
+
+describe('safeNextPath', () => {
+  it('keeps same-origin paths with their query', () => {
+    expect(safeNextPath(`/${ID}/a.html?x=1#y`)).toBe(`/${ID}/a.html?x=1#y`);
+  });
+
+  it('rejects anything that could leave the origin', () => {
+    for (const raw of [
+      null,
+      '',
+      'https://evil.example/',
+      '//evil.example/',
+      '/\\evil.example/',
+      'a',
+    ]) {
+      expect(safeNextPath(raw)).toBe('/');
+    }
+  });
+});
+
+describe('publicLoginUrl', () => {
+  it('points at the login endpoint with the code and next path', () => {
+    const url = new URL(publicLoginUrl('https://h.ts.net:8444', 'c0de', `/${ID}/a b.html`));
+    expect(url.origin).toBe('https://h.ts.net:8444');
+    expect(url.pathname).toBe('/_login');
+    expect(url.searchParams.get('code')).toBe('c0de');
+    expect(url.searchParams.get('next')).toBe(`/${ID}/a b.html`);
+  });
+});
+
+describe('publicLinkPath', () => {
+  const base = 'https://h.ts.net:8444';
+
+  it('returns the path, query, and fragment of links into the public server', () => {
+    expect(publicLinkPath(`${base}/${ID}/a.html?x=1#top`, base)).toBe(`/${ID}/a.html?x=1#top`);
+  });
+
+  it('ignores other origins, including the app on the same host', () => {
+    expect(publicLinkPath(`https://h.ts.net/${ID}/`, base)).toBeNull();
+    expect(publicLinkPath(`https://other.ts.net:8444/${ID}/`, base)).toBeNull();
+    expect(publicLinkPath('not a url', base)).toBeNull();
+  });
+
+  it('ignores links to the login endpoint itself', () => {
+    expect(publicLinkPath(`${base}/_login?next=/`, base)).toBeNull();
+  });
+});
+
+describe('renderLoginPage', () => {
+  it('posts the escaped next path and error to the login endpoint', () => {
+    const html = renderLoginPage({ next: '/"><script>', error: '<b>bad</b>' });
+    expect(html).toContain('action="/_login"');
+    expect(html).toContain('value="/&quot;&gt;&lt;script&gt;"');
+    expect(html).toContain('&lt;b&gt;bad&lt;/b&gt;');
+    expect(html).not.toContain('<script>');
   });
 });
