@@ -235,7 +235,7 @@ The schema in [`src/lib/env.ts`](src/lib/env.ts) is authoritative; it is validat
 | `TTS_MAX_CONCURRENCY`                    | Speech requests per message run at once; use `1` for a local CPU server                                                                            | `4`                  |
 | `SESSIONS_MEMORY_MAX`                    | Memory cap across all agent sessions (systemd syntax: `96G`, `85%`, `infinity`)                                                                    | `85%`                |
 | `SESSIONS_MEMORY_SWAP_MAX`               | Swap the sessions may use, in the same syntax                                                                                                      | `0`                  |
-| `SESSIONS_CPU_QUOTA`                     | CPU cap across all sessions, where `100%` is one core (e.g. `2200%` keeps ~2 of 24 cores free)                                                     | None                 |
+| `SESSIONS_CPU_QUOTA`                     | CPU cap across all sessions, where `100%` is one core (e.g. `2200%` leaves 2 of 24 free)                                                           | None                 |
 | `LOG_LEVEL`                              | Minimum server log level: `debug`, `info`, `warn`, or `error`                                                                                      | `info`               |
 
 ## Development

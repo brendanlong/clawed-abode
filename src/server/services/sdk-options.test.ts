@@ -22,7 +22,7 @@ const mockScopeConfig = vi.hoisted(() =>
 const mockApplySliceLimits = vi.hoisted(() => vi.fn(async () => {}));
 vi.mock('./session-cgroup', () => ({
   getSessionScopeConfig: mockScopeConfig,
-  applySessionsSliceLimits: mockApplySliceLimits,
+  ensureSessionsSliceLimits: mockApplySliceLimits,
   sessionScopeNonce: () => 'nonce',
 }));
 vi.mock('./input-sanitizer', () => ({ sanitizeToolOutputHook: vi.fn() }));
@@ -206,11 +206,7 @@ describe('buildSdkOptions', () => {
       CLAWED_CLAUDE_BIN: '/claude',
       CLAWED_SESSIONS_SLICE: 'clawed-sessions.slice',
     });
-    expect(mockApplySliceLimits).toHaveBeenCalledWith('clawed-sessions.slice', {
-      memoryMax: '85%',
-      memorySwapMax: '0',
-      cpuQuota: undefined,
-    });
+    expect(mockApplySliceLimits).toHaveBeenCalled();
   });
 
   it('leaves the scope unset when cgroup scoping is unavailable', async () => {

@@ -40,24 +40,23 @@ describe('sessionScopeUnitName', () => {
 describe('SESSION_SCOPE_LAUNCHER', () => {
   it('runs the real CLI under a systemd user scope when the scope env is set', () => {
     expect(SESSION_SCOPE_LAUNCHER).toContain('#!/bin/bash');
-    expect(SESSION_SCOPE_LAUNCHER).toContain('systemd-run --user --scope --collect --quiet');
-    expect(SESSION_SCOPE_LAUNCHER).toContain(`--unit="$${SESSION_SCOPE_ENV}"`);
+    expect(SESSION_SCOPE_LAUNCHER).toContain('args=(--user --scope --collect --quiet');
+    expect(SESSION_SCOPE_LAUNCHER).toContain(
+      `exec systemd-run "\${args[@]}" --unit="$${SESSION_SCOPE_ENV}"`
+    );
     expect(SESSION_SCOPE_LAUNCHER).toContain(`exec "$${CLAUDE_BIN_ENV}" "$@"`);
   });
 
   it('places the scope in the shared slice and survives an OOM kill inside it', () => {
-    expect(SESSION_SCOPE_LAUNCHER).toContain(
-      `$${'{'}${SESSIONS_SLICE_ENV}:+"--slice=$${SESSIONS_SLICE_ENV}"}`
-    );
+    expect(SESSION_SCOPE_LAUNCHER).toContain(`args+=("--slice=$${SESSIONS_SLICE_ENV}")`);
     expect(SESSION_SCOPE_LAUNCHER).toContain('-p OOMPolicy=continue');
   });
 
-  it('gates scoping on the scope env and a runtime scope-creation probe', () => {
+  it('gates scoping on the scope env and a probe scope with the same properties', () => {
     expect(SESSION_SCOPE_LAUNCHER).toContain(`[ -n "$${SESSION_SCOPE_ENV}" ]`);
     // Actually create-and-collect a throwaway scope so a runtime failure (no bus,
-    // no delegation) degrades to unwrapped rather than a non-recoverable exec.
-    expect(SESSION_SCOPE_LAUNCHER).toContain(
-      'systemd-run --user --scope --collect --quiet -- true'
-    );
+    // no delegation, an unsupported property) degrades to unwrapped rather than a
+    // non-recoverable exec.
+    expect(SESSION_SCOPE_LAUNCHER).toContain('systemd-run "${args[@]}" -- true');
   });
 });

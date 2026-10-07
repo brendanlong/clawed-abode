@@ -80,10 +80,27 @@ describe('env', () => {
     expect(env.SESSIONS_MEMORY_SWAP_MAX).toBe('infinity');
     expect(env.SESSIONS_CPU_QUOTA).toBe('2200%');
 
-    process.env.SESSIONS_MEMORY_MAX = '96 GB';
-    process.env.SESSIONS_CPU_QUOTA = '22';
+    process.env.SESSIONS_MEMORY_MAX = '1P';
+    process.env.SESSIONS_MEMORY_SWAP_MAX = '0';
     resetEnvCache();
-    expect(() => getEnv()).toThrow(/SESSIONS_MEMORY_MAX[\s\S]*SESSIONS_CPU_QUOTA/);
+    expect(env.SESSIONS_MEMORY_MAX).toBe('1P');
+    expect(env.SESSIONS_MEMORY_SWAP_MAX).toBe('0');
+  });
+
+  // Each of these is rejected by systemd, which would drop every limit at once.
+  it.each([
+    ['SESSIONS_MEMORY_MAX', '96 GB'],
+    ['SESSIONS_MEMORY_MAX', '0'],
+    ['SESSIONS_MEMORY_MAX', '150%'],
+    ['SESSIONS_MEMORY_MAX', '85.555%'],
+    ['SESSIONS_MEMORY_SWAP_MAX', '1X'],
+    ['SESSIONS_CPU_QUOTA', '22'],
+    ['SESSIONS_CPU_QUOTA', '0%'],
+    ['SESSIONS_CPU_QUOTA', '1.2345%'],
+  ])('rejects %s=%s', (name, value) => {
+    process.env[name] = value;
+    resetEnvCache();
+    expect(() => getEnv()).toThrow(new RegExp(name));
   });
 
   it('rejects a PUBLIC_FILES_URL with a path', () => {

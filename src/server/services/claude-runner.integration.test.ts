@@ -77,7 +77,7 @@ vi.mock('./settings-merger', async (importOriginal) => {
 });
 
 // Mock session-cgroup so the runner's scope wiring is observable and the other
-// tests don't touch real systemd (incl. the shared slice's limits). getSessionScopeConfig returns a fake config
+// tests don't touch real systemd. getSessionScopeConfig returns a fake config
 // (so buildSdkOptions sets state.sessionScope), the nonce is fixed for a
 // deterministic unit name, and stopSessionScope is a spy.
 const mockStopSessionScope = vi.hoisted(() => vi.fn(async (_unit: string) => {}));
@@ -86,7 +86,7 @@ vi.mock('./session-cgroup', () => ({
     launcherPath: '/fake/launcher.sh',
     claudeBin: '/fake/claude',
   })),
-  applySessionsSliceLimits: vi.fn(async () => {}),
+  ensureSessionsSliceLimits: vi.fn(async () => {}),
   sessionScopeNonce: vi.fn(() => 'testnonce'),
   stopSessionScope: mockStopSessionScope,
 }));

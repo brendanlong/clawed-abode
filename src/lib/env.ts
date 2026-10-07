@@ -3,10 +3,24 @@ import { DEFAULT_CLAUDE_MODEL } from './claude-model';
 
 export const LOG_LEVELS = ['debug', 'info', 'warn', 'error'] as const;
 
-/** A systemd memory value: bytes with optional K/M/G/T suffix, a % of RAM, or `infinity`. */
-const systemdMemory = z
-  .string()
-  .regex(/^(\d+(\.\d+)?[KMGT]?|\d+(\.\d+)?%|infinity)$/, 'e.g. 64G, 85%, or infinity');
+/** A percentage systemd accepts: at most two decimals, within [min, max]. */
+function isSystemdPercent(value: string, min: number, max: number): boolean {
+  const match = /^(\d+(?:\.\d{1,2})?)%$/.exec(value);
+  return match !== null && Number(match[1]) >= min && Number(match[1]) <= max;
+}
+
+/** A systemd memory limit: a size like 64G, a % of RAM, or `infinity`. */
+function systemdMemory(min: 0 | 1) {
+  return z
+    .string()
+    .refine(
+      (v) =>
+        v === 'infinity' ||
+        isSystemdPercent(v, min, 100) ||
+        (/^\d+(\.\d+)?[KMGTPE]?$/.test(v) && parseFloat(v) >= min),
+      `e.g. 64G, 85%, or infinity${min > 0 ? ' (not 0)' : ''}`
+    );
+}
 
 /** Treat `VAR=` (common in .env templates) as unset. */
 function emptyToUndefined(value: unknown): unknown {
@@ -74,18 +88,15 @@ const envSchema = z
       emptyToUndefined,
       z.coerce.number().int().min(1).max(16).default(4)
     ),
-    // Collective limits on all agent sessions' processes (the shared systemd slice
-    // in src/lib/session-scope.ts). The memory cap applies with swap disabled, so a
-    // runaway agent is OOM-killed instead of pushing the host into swap.
-    SESSIONS_MEMORY_MAX: z.preprocess(emptyToUndefined, systemdMemory.default('85%')),
-    SESSIONS_MEMORY_SWAP_MAX: z.preprocess(emptyToUndefined, systemdMemory.default('0')),
-    // CPU time across all sessions, where 100% is one core (e.g. 2200% leaves ~2
-    // of 24 cores free). Unset means uncapped.
+    // Collective limits on all agent sessions (see "Process Reaping" in
+    // doc/claude-sessions.md), in systemd syntax.
+    SESSIONS_MEMORY_MAX: z.preprocess(emptyToUndefined, systemdMemory(1).default('85%')),
+    SESSIONS_MEMORY_SWAP_MAX: z.preprocess(emptyToUndefined, systemdMemory(0).default('0')),
     SESSIONS_CPU_QUOTA: z.preprocess(
       emptyToUndefined,
       z
         .string()
-        .regex(/^\d+(\.\d+)?%$/, 'a percentage where 100% is one core, e.g. 2200%')
+        .refine((v) => isSystemdPercent(v, 0.01, Infinity), 'e.g. 2200% (100% is one core)')
         .optional()
     ),
     // Minimum level the server logger writes (see src/lib/logger.ts).

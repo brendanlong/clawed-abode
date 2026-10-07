@@ -8,7 +8,6 @@ import { AGENT_NAME_ENV } from '@/lib/agent-name';
 import { createLogger } from '@/lib/logger';
 import { mayChangeBranchOrPr } from '@/lib/pull-request';
 import type { SanitizationInfo } from '@/lib/sanitization';
-import { env } from '@/lib/env';
 import {
   CLAUDE_BIN_ENV,
   SESSION_SCOPE_ENV,
@@ -27,7 +26,7 @@ import { sanitizeToolOutputHook } from './input-sanitizer';
 import { writeSessionMcpConfig, removeSessionMcpConfig } from './mcp-config-file';
 import { scheduleBranchPrRefresh } from './session-branch-pr';
 import {
-  applySessionsSliceLimits,
+  ensureSessionsSliceLimits,
   getSessionScopeConfig,
   sessionScopeNonce,
 } from './session-cgroup';
@@ -232,11 +231,7 @@ export async function buildSdkOptions(params: {
   const scopeConfig = await getSessionScopeConfig();
   if (!scopeConfig) return { options, sessionScope: null, builtinMcpServer };
 
-  await applySessionsSliceLimits(SESSIONS_SLICE, {
-    memoryMax: env.SESSIONS_MEMORY_MAX,
-    memorySwapMax: env.SESSIONS_MEMORY_SWAP_MAX,
-    cpuQuota: env.SESSIONS_CPU_QUOTA,
-  });
+  await ensureSessionsSliceLimits();
   const sessionScope = sessionScopeUnitName(sessionId, sessionScopeNonce());
   options.pathToClaudeCodeExecutable = scopeConfig.launcherPath;
   agentEnv[SESSION_SCOPE_ENV] = sessionScope;

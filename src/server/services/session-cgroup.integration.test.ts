@@ -198,6 +198,31 @@ describe('session cgroup launcher + teardown (real processes)', () => {
       await rm(dir, { recursive: true, force: true });
     }
   }, 20000);
+
+  it('falls back to running the CLI unwrapped when systemd rejects the scope arguments', async (ctx) => {
+    if (!(await userScopeAvailable())) ctx.skip('systemd user scope unavailable');
+    const dir = await mkdtemp(join(tmpdir(), 'ca-sess-rejected-'));
+    const ranMarker = join(dir, 'ran');
+    const launcher = join(dir, 'launcher.sh');
+    await writeFile(launcher, SESSION_SCOPE_LAUNCHER, { mode: 0o755 });
+    const fakeCli = join(dir, 'fake-cli');
+    await writeFile(fakeCli, `#!/bin/bash\n: > '${ranMarker}'\n`, { mode: 0o755 });
+
+    try {
+      await execFileAsync('bash', [launcher], {
+        env: {
+          ...process.env,
+          [CLAUDE_BIN_ENV]: fakeCli,
+          [SESSION_SCOPE_ENV]: sessionScopeUnitName('rejected', 'cccc0000'),
+          [SESSIONS_SLICE_ENV]: 'not-a-slice.service',
+        },
+        timeout: 10000,
+      });
+      await expect(access(ranMarker)).resolves.toBeUndefined();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 20000);
 });
 
 async function sliceProperty(slice: string, property: string): Promise<string> {
@@ -216,8 +241,8 @@ describe('sessions slice limits (real systemd)', () => {
   it('OOM-kills a runaway process at the slice cap without ending its session', async (ctx) => {
     if (!(await userScopeAvailable())) ctx.skip('systemd user scope unavailable');
     // A throwaway slice, never the real one: its limits are shared by every
-    // instance on the host.
-    const slice = `clawed-itest-${randomBytes(4).toString('hex')}.slice`;
+    // instance on the host. No dashes, which would leave nested parent slices.
+    const slice = `clawed_itest_${randomBytes(4).toString('hex')}.slice`;
     const unit = sessionScopeUnitName('oom', randomBytes(4).toString('hex'));
     const dir = await mkdtemp(join(tmpdir(), 'ca-sess-oom-'));
     const statusFile = join(dir, 'status');
@@ -234,6 +259,8 @@ describe('sessions slice limits (real systemd)', () => {
     await chmod(fakeCli, 0o755);
 
     try {
+      // A stale percentage drop-in must not outrank the absolute size below.
+      await applySessionsSliceLimits(slice, { memoryMax: '50%', memorySwapMax: '0' });
       await applySessionsSliceLimits(slice, {
         memoryMax: '100M',
         memorySwapMax: '0',
