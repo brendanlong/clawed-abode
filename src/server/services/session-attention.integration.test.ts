@@ -6,6 +6,7 @@ import type { SessionListEvent } from './events';
 let attention: typeof import('./session-attention');
 let messageStore: typeof import('./message-store');
 let events: typeof import('./events');
+let lifecycle: typeof import('./session-lifecycle');
 
 const attentionOf = (id: string) =>
   testPrisma.session.findUniqueOrThrow({
@@ -23,6 +24,7 @@ describe('session attention', () => {
     attention = await import('./session-attention');
     messageStore = await import('./message-store');
     events = await import('./events');
+    lifecycle = await import('./session-lifecycle');
     unsubscribe = events.sseEvents.onSessionListChanged((e) => listEvents.push(e));
   });
 
@@ -65,6 +67,15 @@ describe('session attention', () => {
     await attention.requestAttention(session.id, 'PR ready');
 
     await messageStore.bumpSessionActivity(session.id);
+
+    expect(await attentionOf(session.id)).toEqual({ attentionAt: null, attentionSummary: null });
+  });
+
+  it('clears when the session is archived', async () => {
+    const session = await createTestSession();
+    await attention.requestAttention(session.id, 'PR ready');
+
+    await lifecycle.archiveSession(session.id);
 
     expect(await attentionOf(session.id)).toEqual({ attentionAt: null, attentionSummary: null });
   });

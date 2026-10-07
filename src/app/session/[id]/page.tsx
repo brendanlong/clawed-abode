@@ -83,7 +83,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
   // Working indicator: page title, favicon, and the header logo
   useWorkingIndicator(session?.name, isWorking);
 
-  useClearAttentionWhileViewing(sessionId, Boolean(session?.attentionAt));
+  useClearAttentionWhileViewing(sessionId, session?.attentionAt?.getTime() ?? null);
 
   // Voice features
   const voiceConfig = useVoiceConfig(sessionId);

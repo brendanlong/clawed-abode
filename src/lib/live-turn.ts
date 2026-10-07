@@ -66,7 +66,7 @@ export interface LiveTurnState {
    * composer "working" (see {@link retire}).
    */
   commandLifecycleSeen: boolean;
-  /** The coming turn-end is an interrupt, not Claude *finishing*; the turn-end consumes it. */
+  /** The coming turn-end is already claimed by an interrupt (so a pause won't send another); the turn-end consumes it. */
   interruptRequested: boolean;
   /**
    * `turnActive` was set optimistically by a push and no real turn has been seen

@@ -101,7 +101,7 @@ const cases: Case[] = [
     running: false,
   },
   {
-    name: 'a recalled push on an idle session undoes the optimistic turn, ',
+    name: 'a recalled push on an idle session undoes the optimistic turn',
     events: [pushed('a'), recalled('a')],
     running: false,
     turnActive: false,

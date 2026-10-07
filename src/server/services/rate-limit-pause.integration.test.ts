@@ -16,7 +16,6 @@ import { waitFor } from '@/test/wait-for';
 const mockSseEvents = vi.hoisted(() => ({
   emitNewMessage: vi.fn(),
   emitClaudeRunning: vi.fn(),
-  emitClaudeFinished: vi.fn(),
   emitClaudeRetry: vi.fn(),
   emitBackgroundTasks: vi.fn(),
   emitPendingMessages: vi.fn(),
@@ -358,14 +357,13 @@ describe('rate-limit pause', () => {
         .resumeAfterRateLimit
     ).toBe(true);
 
-    // The interrupted turn ending is not Claude finishing.
+    // The interrupted turn ends.
     fake.emit({
       type: 'result',
       subtype: 'error_during_execution',
       session_id: 's',
     } as unknown as SDKMessage);
     await waitFor(() => !runner.isClaudeRunning(sessionId));
-    expect(mockSseEvents.emitClaudeFinished).not.toHaveBeenCalled();
 
     // Later recomputes during the same pause find no turn left to interrupt.
     await pause.recomputeRateLimitHolds();

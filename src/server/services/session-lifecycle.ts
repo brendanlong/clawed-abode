@@ -230,7 +230,11 @@ export async function archiveSession(sessionId: string): Promise<void> {
   // QueuedPrompt cascade never fires for a kept row, so the queue must be
   // cleared here or it waits forever, badged in a read-only transcript.
   const [{ applied }] = await Promise.all([
-    transitionSession(sessionId, 'archive', { status: 'archived' }),
+    transitionSession(sessionId, 'archive', {
+      status: 'archived',
+      attentionAt: null,
+      attentionSummary: null,
+    }),
     clearQueuedPrompts(sessionId),
   ]);
 

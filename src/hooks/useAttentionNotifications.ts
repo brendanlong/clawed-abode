@@ -31,10 +31,8 @@ export function useAttentionNotifications() {
     });
     if (watching) return;
 
-    void showNotification(event.name, {
-      body: event.summary,
-      // Per session, so a newer request replaces that session's older one.
-      tag: `attention-${event.sessionId}`,
-    });
+    // No tag: a same-tag notification replaces the old one silently, and each
+    // request should alert.
+    void showNotification(event.name, { body: event.summary });
   });
 }

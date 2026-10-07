@@ -12,7 +12,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi, afterEach } from 'vitest';
-import type { Query, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { CanUseTool, Query, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { setupTestDb, teardownTestDb, testPrisma, clearTestDb } from '@/test/setup-test-db';
 import { waitFor } from '@/test/wait-for';
 
@@ -25,6 +25,7 @@ const mockSseEvents = vi.hoisted(() => ({
   emitMessageRemoved: vi.fn(),
   emitCommands: vi.fn(),
   emitSessionUpdate: vi.fn(),
+  emitAttention: vi.fn(),
 }));
 vi.mock('./events', () => ({ sseEvents: mockSseEvents }));
 
@@ -108,6 +109,7 @@ let reapOrphanedSessionScopes: typeof import('./claude-runner').reapOrphanedSess
 let reviveRunningSessions: typeof import('./claude-runner').reviveRunningSessions;
 let reviveSession: typeof import('./claude-runner').reviveSession;
 let _setQueryFactory: typeof import('./claude-runner')._setQueryFactory;
+let submitLiveToolResponse: typeof import('./claude-runner').submitLiveToolResponse;
 let mockLoadSettings: ReturnType<
   typeof vi.mocked<typeof import('./settings-merger').loadMergedSessionSettings>
 >;
@@ -346,6 +348,7 @@ describe('claude-runner persistent streaming loop', () => {
     reviveRunningSessions = mod.reviveRunningSessions;
     reviveSession = mod.reviveSession;
     _setQueryFactory = mod._setQueryFactory;
+    submitLiveToolResponse = mod.submitLiveToolResponse;
     const sm = await import('./settings-merger');
     mockLoadSettings = vi.mocked(sm.loadMergedSessionSettings);
   });
@@ -385,6 +388,43 @@ describe('claude-runner persistent streaming loop', () => {
     await waitFor(() => !isClaudeRunning(sessionId));
     expect(mockSseEvents.emitClaudeRunning).toHaveBeenCalledWith(sessionId, true);
     expect(mockSseEvents.emitClaudeRunning).toHaveBeenCalledWith(sessionId, false);
+
+    stopSession(sessionId);
+  });
+
+  it('flags the session for the user while a question waits, and clears it once answered', async () => {
+    const fake = makeFakeQuery();
+    let canUseTool: CanUseTool | undefined;
+    _setQueryFactory((p) => {
+      canUseTool = (p.options as { canUseTool: CanUseTool }).canUseTool;
+      return fake.factory(p);
+    });
+    const sessionId = await createRunningSession();
+    await sendUserMessage(sessionId, 'ask me something');
+    await fake.deliver();
+
+    const parked = canUseTool!(
+      'AskUserQuestion',
+      { questions: [{ question: 'Which database?' }] },
+      { toolUseID: 'ask-1', signal: new AbortController().signal, requestId: 'req-1' }
+    );
+    const attentionOf = async () =>
+      (await testPrisma.session.findUniqueOrThrow({ where: { id: sessionId } })).attentionSummary;
+    await waitFor(async () => (await attentionOf()) === 'Which database?');
+    expect(mockSseEvents.emitAttention).toHaveBeenCalledWith(
+      sessionId,
+      expect.any(String),
+      'Which database?'
+    );
+
+    expect(
+      await submitLiveToolResponse(sessionId, 'ask-1', {
+        kind: 'questions',
+        answers: { 'Which database?': 'SQLite' },
+      })
+    ).toBe(true);
+    await parked;
+    expect(await attentionOf()).toBeNull();
 
     stopSession(sessionId);
   });
