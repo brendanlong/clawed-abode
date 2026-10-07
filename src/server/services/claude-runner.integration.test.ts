@@ -12,20 +12,20 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi, afterEach } from 'vitest';
-import type { Query, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { CanUseTool, Query, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { setupTestDb, teardownTestDb, testPrisma, clearTestDb } from '@/test/setup-test-db';
 import { waitFor } from '@/test/wait-for';
 
 const mockSseEvents = vi.hoisted(() => ({
   emitNewMessage: vi.fn(),
   emitClaudeRunning: vi.fn(),
-  emitClaudeFinished: vi.fn(),
   emitClaudeRetry: vi.fn(),
   emitBackgroundTasks: vi.fn(),
   emitPendingMessages: vi.fn(),
   emitMessageRemoved: vi.fn(),
   emitCommands: vi.fn(),
   emitSessionUpdate: vi.fn(),
+  emitAttention: vi.fn(),
 }));
 vi.mock('./events', () => ({ sseEvents: mockSseEvents }));
 
@@ -110,6 +110,7 @@ let reapOrphanedSessionScopes: typeof import('./claude-runner').reapOrphanedSess
 let reviveRunningSessions: typeof import('./claude-runner').reviveRunningSessions;
 let reviveSession: typeof import('./claude-runner').reviveSession;
 let _setQueryFactory: typeof import('./claude-runner')._setQueryFactory;
+let submitLiveToolResponse: typeof import('./claude-runner').submitLiveToolResponse;
 let mockLoadSettings: ReturnType<
   typeof vi.mocked<typeof import('./settings-merger').loadMergedSessionSettings>
 >;
@@ -348,6 +349,7 @@ describe('claude-runner persistent streaming loop', () => {
     reviveRunningSessions = mod.reviveRunningSessions;
     reviveSession = mod.reviveSession;
     _setQueryFactory = mod._setQueryFactory;
+    submitLiveToolResponse = mod.submitLiveToolResponse;
     const sm = await import('./settings-merger');
     mockLoadSettings = vi.mocked(sm.loadMergedSessionSettings);
   });
@@ -387,8 +389,43 @@ describe('claude-runner persistent streaming loop', () => {
     await waitFor(() => !isClaudeRunning(sessionId));
     expect(mockSseEvents.emitClaudeRunning).toHaveBeenCalledWith(sessionId, true);
     expect(mockSseEvents.emitClaudeRunning).toHaveBeenCalledWith(sessionId, false);
-    // A natural turn end signals work-complete (drives the app-level notifier).
-    expect(mockSseEvents.emitClaudeFinished).toHaveBeenCalledWith(sessionId);
+
+    stopSession(sessionId);
+  });
+
+  it('flags the session for the user while a question waits, and clears it once answered', async () => {
+    const fake = makeFakeQuery();
+    let canUseTool: CanUseTool | undefined;
+    _setQueryFactory((p) => {
+      canUseTool = (p.options as { canUseTool: CanUseTool }).canUseTool;
+      return fake.factory(p);
+    });
+    const sessionId = await createRunningSession();
+    await sendUserMessage(sessionId, 'ask me something');
+    await fake.deliver();
+
+    const parked = canUseTool!(
+      'AskUserQuestion',
+      { questions: [{ question: 'Which database?' }] },
+      { toolUseID: 'ask-1', signal: new AbortController().signal, requestId: 'req-1' }
+    );
+    const attentionOf = async () =>
+      (await testPrisma.session.findUniqueOrThrow({ where: { id: sessionId } })).attentionSummary;
+    await waitFor(async () => (await attentionOf()) === 'Which database?');
+    expect(mockSseEvents.emitAttention).toHaveBeenCalledWith(
+      sessionId,
+      expect.any(String),
+      'Which database?'
+    );
+
+    expect(
+      await submitLiveToolResponse(sessionId, 'ask-1', {
+        kind: 'questions',
+        answers: { 'Which database?': 'SQLite' },
+      })
+    ).toBe(true);
+    await parked;
+    expect(await attentionOf()).toBeNull();
 
     stopSession(sessionId);
   });
@@ -709,46 +746,6 @@ describe('claude-runner persistent streaming loop', () => {
     const msgs = await messagesFor(sessionId);
     // sequences are contiguous and ordered across both turns + background messages.
     expect(msgs.map((m) => m.sequence)).toEqual([...Array(msgs.length).keys()]);
-
-    stopSession(sessionId);
-  });
-
-  it('suppresses the work-complete signal until every background task is done', async () => {
-    const fake = makeFakeQuery();
-    _setQueryFactory(fake.factory);
-    const sessionId = await createRunningSession();
-
-    await sendUserMessage(sessionId, 'start a background job');
-    await fake.deliver();
-    fake.emit(messageStart());
-    await waitFor(() => isClaudeRunning(sessionId));
-    fake.emit(backgroundTasksChanged('bg-1'));
-    fake.emit(taskStarted('bg-1'));
-
-    mockSseEvents.emitClaudeFinished.mockClear();
-
-    // The main turn ends while the background task is still running: the session is
-    // NOT fully idle, so no work-complete signal fires (the app-level notifier must
-    // stay silent while a subagent keeps working).
-    fake.emit(messageDelta('end_turn'));
-    await waitFor(() => !isClaudeRunning(sessionId));
-    expect(getSessionBackgroundTasks(sessionId).map((t) => t.taskId)).toEqual(['bg-1']);
-    expect(mockSseEvents.emitClaudeFinished).not.toHaveBeenCalled();
-
-    // The task settles; draining it alone does NOT fire a completion — the main agent
-    // autonomously continues in a new turn, and that turn's end is the real finish.
-    fake.emit(backgroundTasksChanged());
-    fake.emit(taskNotification('bg-1'));
-    await waitFor(() => getSessionBackgroundTasks(sessionId).length === 0);
-    expect(mockSseEvents.emitClaudeFinished).not.toHaveBeenCalled();
-
-    // The continuation turn runs and ends with no background tasks left: fully idle,
-    // so the work-complete signal fires exactly once.
-    fake.emit(messageStart());
-    await waitFor(() => isClaudeRunning(sessionId));
-    fake.emit(messageDelta('end_turn'));
-    await waitFor(() => !isClaudeRunning(sessionId));
-    expect(mockSseEvents.emitClaudeFinished).toHaveBeenCalledTimes(1);
 
     stopSession(sessionId);
   });
@@ -1125,7 +1122,7 @@ describe('claude-runner persistent streaming loop', () => {
   it('holds the running indicator across a turn end while a pushed message is still undelivered', async () => {
     // The CLI usually folds a mid-turn message into the running turn, but if the
     // turn ends first it starts a fresh one for it. The result/message_start gap
-    // in between must not blip the composer idle or fire "Claude finished".
+    // in between must not blip the composer idle.
     const fake = makeFakeQuery();
     _setQueryFactory(fake.factory);
     const sessionId = await createRunningSession();
@@ -1141,21 +1138,18 @@ describe('claude-runner persistent streaming loop', () => {
     const followUpUuid = fake.inputs[1].uuid!;
 
     mockSseEvents.emitClaudeRunning.mockClear();
-    mockSseEvents.emitClaudeFinished.mockClear();
 
     // Turn 1 ends while the follow-up is still queued in the CLI.
     fake.emit(messageDelta('end_turn'));
     fake.emit(result());
     expect(isClaudeRunning(sessionId)).toBe(true);
     expect(mockSseEvents.emitClaudeRunning).not.toHaveBeenCalledWith(sessionId, false);
-    expect(mockSseEvents.emitClaudeFinished).not.toHaveBeenCalled();
 
     // The follow-up's own turn runs and ends: now the session is genuinely idle.
     fake.emit(commandLifecycle(followUpUuid, 'started'));
     fake.emit(messageStart());
     fake.emit(messageDelta('end_turn'));
     await waitFor(() => !isClaudeRunning(sessionId));
-    expect(mockSseEvents.emitClaudeFinished).toHaveBeenCalledTimes(1);
 
     stopSession(sessionId);
   });
@@ -1175,7 +1169,6 @@ describe('claude-runner persistent streaming loop', () => {
     await waitFor(() => fake.inputs.length >= 2);
     const [pendingId] = getPendingMessageIds(sessionId);
 
-    mockSseEvents.emitClaudeFinished.mockClear();
     // Stop means stop: the SDK would otherwise run the still-queued message as
     // its own turn the instant the interrupt lands.
     const { interrupted, cancelled } = await interruptClaude(sessionId);
@@ -1189,10 +1182,8 @@ describe('claude-runner persistent streaming loop', () => {
     const userMsgs = (await messagesFor(sessionId)).filter((m) => m.type === 'user');
     expect(userMsgs.map((m) => m.id)).not.toContain(pendingId);
 
-    // An interrupt is NOT a natural completion — no work-complete signal fires.
     fake.emit(result('error_during_execution'));
     await waitFor(() => !isClaudeRunning(sessionId));
-    expect(mockSseEvents.emitClaudeFinished).not.toHaveBeenCalled();
 
     stopSession(sessionId);
   });
@@ -1277,49 +1268,6 @@ describe('claude-runner persistent streaming loop', () => {
     stopSession(sessionId);
   });
 
-  it('does not report Claude finished for a turn that ends while Stop is cancelling', async () => {
-    // cancelAsyncMessage is a control round-trip, so a turn can end naturally in the
-    // middle of it. That end belongs to the interrupt, not to Claude finishing.
-    const fake = makeFakeQuery();
-    _setQueryFactory(fake.factory);
-    const sessionId = await createRunningSession();
-
-    await sendUserMessage(sessionId, 'first');
-    await waitFor(() => fake.inputs.length >= 1);
-    fake.emit(commandLifecycle(fake.inputs[0].uuid!, 'started'));
-    fake.emit(messageStart());
-    await waitFor(() => isClaudeRunning(sessionId));
-    await sendUserMessage(sessionId, 'never read');
-    await waitFor(() => fake.inputs.length >= 2);
-
-    // The turn wraps up naturally while the cancel is still in flight.
-    fake.cancelAsyncMessage.mockImplementationOnce(async () => {
-      fake.emit(messageDelta('end_turn'));
-      fake.emit(result());
-      await new Promise((r) => setTimeout(r, 20));
-      return true;
-    });
-
-    mockSseEvents.emitClaudeFinished.mockClear();
-    await interruptClaude(sessionId);
-    await waitFor(() => !isClaudeRunning(sessionId));
-
-    expect(mockSseEvents.emitClaudeFinished).not.toHaveBeenCalled();
-
-    // And the flag was consumed by that end, so the NEXT genuine turn still reports.
-    await sendUserMessage(sessionId, 'next');
-    await waitFor(() => fake.inputs.length >= 3);
-    fake.emit(commandLifecycle(fake.inputs[2].uuid!, 'started'));
-    fake.emit(messageStart());
-    await waitFor(() => isClaudeRunning(sessionId));
-    fake.emit(messageDelta('end_turn'));
-    fake.emit(result());
-    await waitFor(() => !isClaudeRunning(sessionId));
-    expect(mockSseEvents.emitClaudeFinished).toHaveBeenCalledTimes(1);
-
-    stopSession(sessionId);
-  });
-
   it('reports interrupted:false when Stop only recalled a message (no turn to abort)', async () => {
     // The caller stamps "Interrupted" on the last message when this is true — doing
     // that for a turn that had already completed would corrupt the transcript.
@@ -1372,16 +1320,6 @@ describe('claude-runner persistent streaming loop', () => {
     expect(cancelled).toEqual([{ text: 'take it back', attachments: [] }]);
     expect(isClaudeRunning(sessionId)).toBe(false);
 
-    // The next genuine turn still reports finishing.
-    mockSseEvents.emitClaudeFinished.mockClear();
-    await sendUserMessage(sessionId, 'next');
-    await fake.deliver();
-    fake.emit(messageStart());
-    fake.emit(messageDelta('end_turn'));
-    fake.emit(result());
-    await waitFor(() => !isClaudeRunning(sessionId));
-    expect(mockSseEvents.emitClaudeFinished).toHaveBeenCalledTimes(1);
-
     stopSession(sessionId);
   });
 
@@ -1418,7 +1356,7 @@ describe('claude-runner persistent streaming loop', () => {
   it('interrupts a read-but-unanswered send without stamping the previous turn', async () => {
     // The agent has read it (nothing to recall) but no turn has opened yet: Stop
     // must still abort what is coming, yet there is no turn of its own to mark
-    // "Interrupted", and the aborted turn's end is not Claude finishing.
+    // "Interrupted".
     const fake = makeFakeQuery();
     _setQueryFactory(fake.factory);
     const sessionId = await createRunningSession();
@@ -1435,7 +1373,6 @@ describe('claude-runner persistent streaming loop', () => {
     await waitFor(() => getPendingMessageIds(sessionId).length === 0);
     expect(isClaudeRunning(sessionId)).toBe(true);
 
-    mockSseEvents.emitClaudeFinished.mockClear();
     const { interrupted, cancelled } = await interruptClaude(sessionId);
     expect(interrupted).toBe(false);
     expect(cancelled).toEqual([]);
@@ -1444,7 +1381,6 @@ describe('claude-runner persistent streaming loop', () => {
 
     fake.emit(result('error_during_execution'));
     await waitFor(() => !isClaudeRunning(sessionId));
-    expect(mockSseEvents.emitClaudeFinished).not.toHaveBeenCalled();
 
     stopSession(sessionId);
   });

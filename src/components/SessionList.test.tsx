@@ -36,6 +36,8 @@ function session(overrides: Partial<Session> & Pick<Session, 'id' | 'name'>): Se
     backgroundActive: false,
     rateLimitPaused: false,
     lastActivityAt: new Date('2024-01-15T10:00:00Z'),
+    attentionAt: null,
+    attentionSummary: null,
     createdAt: new Date('2024-01-15T09:00:00Z'),
     ...overrides,
   };
@@ -188,6 +190,27 @@ describe('SessionList', () => {
       );
       expect(screen.queryByRole('button', { name: /load more/i })).not.toBeInTheDocument();
     });
+  });
+
+  it("shows what an agent has for the user, and nothing for a session that hasn't asked", () => {
+    render(
+      <SessionList
+        active={paged([
+          session({
+            id: 'a',
+            name: 'Asking',
+            attentionAt: new Date('2024-01-15T11:00:00Z'),
+            attentionSummary: 'PR #12 ready for review',
+          }),
+          session({ id: 'b', name: 'Quiet' }),
+        ])}
+        archived={none}
+        showArchived={false}
+        onToggleArchived={vi.fn()}
+      />
+    );
+    expect(screen.getByText('PR #12 ready for review')).toBeInTheDocument();
+    expect(screen.getAllByLabelText('Needs you')).toHaveLength(1);
   });
 
   describe('archived section', () => {

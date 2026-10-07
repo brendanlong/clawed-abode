@@ -10,7 +10,6 @@ import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { CommandLifecycle, RetryState } from './claude-messages';
 import {
   INITIAL_LIVE_STATUS,
-  backgroundActive,
   isTopLevelMessageStart,
   reduceSessionMessage,
   retryEquals,
@@ -67,7 +66,7 @@ export interface LiveTurnState {
    * composer "working" (see {@link retire}).
    */
   commandLifecycleSeen: boolean;
-  /** The coming turn-end is an interrupt, not Claude *finishing*; the turn-end consumes it. */
+  /** The coming turn-end is already claimed by an interrupt (so a pause won't send another); the turn-end consumes it. */
   interruptRequested: boolean;
   /**
    * `turnActive` was set optimistically by a push and no real turn has been seen
@@ -104,19 +103,12 @@ export interface LiveOutcome {
   state: LiveTurnState;
   /** A main turn ended (stream-driven) — the moment to refresh branch/PR. */
   turnEnded: boolean;
-  /**
-   * A natural turn end that leaves the session fully idle: not interrupted, no
-   * end-state background task, nothing pending delivery. Why turn-end rather than
-   * background-drain, and why not the bare running:false edge: doc/claude-sessions.md.
-   */
-  finished: boolean;
 }
 
 export function reduceLiveTurn(state: LiveTurnState, event: LiveEvent): LiveOutcome {
   const settled = (next: LiveTurnState): LiveOutcome => ({
     state: next,
     turnEnded: false,
-    finished: false,
   });
 
   switch (event.type) {
@@ -158,9 +150,8 @@ export function reduceLiveTurn(state: LiveTurnState, event: LiveEvent): LiveOutc
         started: false,
         resultsSeen: 0,
       });
-      // Optimistically mark the turn active so the true→false edge — and the
-      // finished signal — stays intact for a turn that reaches its terminal
-      // `result` without a `message_start`.
+      // Optimistically mark the turn active so the true→false edge stays intact
+      // for a turn that reaches its terminal `result` without a `message_start`.
       if (state.status.turnActive) return settled({ ...state, inFlight });
       return settled({
         ...state,
@@ -220,8 +211,6 @@ export function reduceLiveTurn(state: LiveTurnState, event: LiveEvent): LiveOutc
 function reduceMessage(state: LiveTurnState, message: SDKMessage): LiveOutcome {
   const { status, changed } = reduceSessionMessage(state.status, message);
   const turnEnded = changed.turnActive && !status.turnActive;
-  // An interrupt's turn-end is not Claude finishing — the user stopped it.
-  const interrupted = turnEnded && state.interruptRequested;
 
   // Any real turn boundary supersedes the optimistic flag: from here on the
   // stream owns turnActive. `message_start` needs its own clause — it lands while
@@ -236,11 +225,7 @@ function reduceMessage(state: LiveTurnState, message: SDKMessage): LiveOutcome {
     interruptRequested: turnEnded ? false : state.interruptRequested,
     optimisticTurnActive: boundary ? false : state.optimisticTurnActive,
   };
-  return {
-    state: next,
-    turnEnded,
-    finished: turnEnded && !interrupted && !backgroundActive(status) && next.inFlight.size === 0,
-  };
+  return { state: next, turnEnded };
 }
 
 /**

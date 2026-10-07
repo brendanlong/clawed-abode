@@ -12,13 +12,11 @@ import { Spinner } from '@/components/ui/spinner';
 import { ContextUsageIndicator } from '@/components/ContextUsageIndicator';
 import type { TokenUsageStats } from '@/lib/token-estimation';
 import { useTranscriptScroll } from '@/hooks/useTranscriptScroll';
-import { useAskUserQuestionNotifications } from '@/hooks/useAskUserQuestionNotifications';
 import {
   isToolCallOnlyMessage,
   isOwnPromptMessage,
   buildTranscriptLayout,
   getLatestTodoWriteId,
-  getPendingAskUserQuestions,
   getPlanContentByToolUseId,
 } from './messages/messageHelpers';
 
@@ -86,12 +84,6 @@ export function MessageList({
 
   // Reconstruct plan content per ExitPlanMode call (keyed by tool_use id)
   const planContentByToolUseId = useMemo(() => getPlanContentByToolUseId(messages), [messages]);
-
-  const pendingQuestions = useMemo(
-    () => getPendingAskUserQuestions(messages, resultMap),
-    [messages, resultMap]
-  );
-  useAskUserQuestionNotifications(pendingQuestions);
 
   // Render a subagent Task's nested transcript. Lives here (not in TaskDisplay)
   // so the recursive MessageBubble import stays out of the tool-display modules.

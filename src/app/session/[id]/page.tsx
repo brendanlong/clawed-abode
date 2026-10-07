@@ -12,6 +12,7 @@ import { ConnectionStatusIndicator } from '@/components/ConnectionStatusIndicato
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
 import { useWorkingIndicator } from '@/hooks/useWorkingIndicator';
+import { useClearAttentionWhileViewing } from '@/hooks/useClearAttentionWhileViewing';
 import { useSessionState } from '@/hooks/useSessionState';
 import { useSessionMessages } from '@/hooks/useSessionMessages';
 import { useClaudeState } from '@/hooks/useClaudeState';
@@ -82,9 +83,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
   // Working indicator: page title, favicon, and the header logo
   useWorkingIndicator(session?.name, isWorking);
 
-  // Work-complete notifications are handled app-wide by <WorkCompleteNotifier>
-  // (mounted in Providers), so they fire for every session — not just this one —
-  // and are suppressed only while this session is the one on screen and focused.
+  useClearAttentionWhileViewing(sessionId, session?.attentionAt?.getTime() ?? null);
 
   // Voice features
   const voiceConfig = useVoiceConfig(sessionId);

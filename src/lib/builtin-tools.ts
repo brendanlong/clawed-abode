@@ -4,7 +4,7 @@ export const BUILTIN_MCP_SERVER_NAME = 'clawed-abode';
 
 /**
  * Which built-in tools a session gets; null in merged settings means none.
- * `basic`: rename itself and list sessions; `manage`: also create, read, and stop them.
+ * `basic`: rename itself, notify the user, and list sessions; `manage`: also create, read, and stop them.
  */
 export type BuiltinToolsLevel = 'basic' | 'manage';
 
@@ -25,6 +25,9 @@ export function sessionBuiltinTools(
   return level === 'manage' && createdBySessionId ? 'basic' : level;
 }
 
+const NOTIFY =
+  "Call notify_user with a one-line summary right before ending a turn in which you have something for the user: a result, a finished PR, a question, or a blocker. It is the only way the user is notified, so don't skip it. Don't call it for progress updates, or when you are ending a turn only to wait on a background task or another session. AskUserQuestion and ExitPlanMode notify on their own.";
+
 const MESSAGING =
   "To find other sessions' agents, call list_sessions: each session's agentName is its address for the SendMessage tool.";
 
@@ -33,8 +36,8 @@ export function builtinToolsPrompt(level: BuiltinToolsLevel, nameIsDefault: bool
   const rename = nameIsDefault
     ? "This session's name in the user's session list is an auto-generated default. Call the rename_session tool with a short (2–6 word) description of the task as soon as you understand it, before doing the work. Rename again if the task changes substantially."
     : "The user chose this session's name; only use rename_session if they ask.";
-  if (level === 'basic') return `${rename}\n\n${MESSAGING}`;
-  return `${rename}\n\n${MESSAGING}
+  if (level === 'basic') return `${rename}\n\n${NOTIFY}\n\n${MESSAGING}`;
+  return `${rename}\n\n${NOTIFY}\n\n${MESSAGING}
 
 The create_session, read_session, and stop_session tools act on the user's other sessions. Only use them when the user asks you to; for ordinary parallel or delegated work, use subagents instead. After creating a session, talk to it with SendMessage and check on it with read_session rather than doing its work yourself.`;
 }

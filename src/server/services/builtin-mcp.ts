@@ -18,6 +18,7 @@ import { keysetPage, keysetPageInputSchema } from '@/lib/keyset-page';
 import { repoFullNameSchema } from '@/lib/repo-full-name';
 import { PROMPT_MAX_LENGTH } from '@/lib/types';
 import { sessionNameSchema } from '@/lib/session-name';
+import { attentionSummarySchema } from '@/lib/session-attention';
 import {
   attributeMessage,
   BUILTIN_MCP_SERVER_NAME,
@@ -29,6 +30,7 @@ import {
   type TranscriptEntry,
 } from '@/lib/session-transcript';
 import { loadHistoryPage } from './message-store';
+import { requestAttention } from './session-attention';
 
 const log = createLogger('builtin-mcp');
 
@@ -120,6 +122,17 @@ function basicTools(sessionId: string) {
         run('rename_session', async () => {
           await requirePort().renameSession(sessionId, name);
           return textResult(`Renamed this session to "${name}".`);
+        }),
+      { alwaysLoad: true }
+    ),
+    tool(
+      'notify_user',
+      'Flag this session in the user’s session list and send them a notification. Call it when you have something for the user (a result, a finished PR, a question, a blocker), right before ending your turn.',
+      { summary: attentionSummarySchema.describe('One line saying what you have for the user') },
+      ({ summary }) =>
+        run('notify_user', async () => {
+          await requestAttention(sessionId, summary);
+          return textResult('Notified the user.');
         }),
       { alwaysLoad: true }
     ),

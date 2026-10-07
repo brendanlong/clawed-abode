@@ -69,7 +69,6 @@ function fold(events: LiveEvent[], start: LiveTurnState = INITIAL_LIVE_TURN) {
   return {
     state,
     view: liveView(state),
-    finishedAt: outcomes.flatMap((o, i) => (o.finished ? [i] : [])),
     turnEndedAt: outcomes.flatMap((o, i) => (o.turnEnded ? [i] : [])),
   };
 }
@@ -79,8 +78,7 @@ interface Case {
   events: LiveEvent[];
   running: boolean;
   pending?: string[];
-  /** Indexes of the events that report "Claude finished". */
-  finishedAt?: number[];
+  interruptRequested?: boolean;
   turnActive?: boolean;
 }
 
@@ -96,16 +94,14 @@ const cases: Case[] = [
     name: 'optimistic turn: the push feeds a turn that starts and ends naturally',
     events: [pushed('a'), lifecycle('a', 'started'), messageStart(), endTurn, result],
     running: false,
-    finishedAt: [3],
   },
   {
-    name: 'optimistic turn reaching its result with no message_start still finishes',
+    name: 'optimistic turn reaching its result with no message_start ends',
     events: [pushed('a'), result],
     running: false,
-    finishedAt: [1],
   },
   {
-    name: 'a recalled push on an idle session undoes the optimistic turn, without finishing',
+    name: 'a recalled push on an idle session undoes the optimistic turn',
     events: [pushed('a'), recalled('a')],
     running: false,
     turnActive: false,
@@ -127,7 +123,6 @@ const cases: Case[] = [
     events: [pushed('a'), lifecycle('a', 'cancelled'), recalled('a')],
     running: false,
     turnActive: false,
-    finishedAt: [],
   },
   {
     name: 'recalling an unknown command changes nothing',
@@ -159,7 +154,6 @@ const cases: Case[] = [
     events: [lifecycle('x', 'queued'), messageStart(), pushed('a'), endTurn, result],
     running: true,
     pending: ['m-a'],
-    finishedAt: [],
   },
   {
     name: 'with lifecycle reports, a second result boundary retires it',
@@ -179,13 +173,11 @@ const cases: Case[] = [
       endTurn,
     ],
     running: false,
-    finishedAt: [7],
   },
   {
     name: 'a CLI without lifecycle messages: the first boundary retires everything',
     events: [messageStart(), pushed('a'), endTurn, result],
     running: false,
-    finishedAt: [],
   },
   {
     name: 'a CLI without lifecycle messages: message_start retires the push as read',
@@ -205,74 +197,62 @@ const cases: Case[] = [
     pending: [],
   },
   {
-    name: 'interrupt racing a natural end: the end is claimed, so no finished',
-    events: [messageStart(), interruptRequested, endTurn, result],
-    running: false,
-    finishedAt: [],
+    name: 'an interrupt request mid-turn claims the coming end',
+    events: [messageStart(), interruptRequested],
+    running: true,
+    interruptRequested: true,
   },
   {
-    name: 'the claim is consumed by that end: the next turn finishes normally',
-    events: [messageStart(), interruptRequested, endTurn, result, messageStart(), endTurn],
+    name: 'the claim is consumed by the turn end',
+    events: [messageStart(), interruptRequested, endTurn, result],
     running: false,
-    finishedAt: [5],
+    interruptRequested: false,
   },
   {
     name: 'a failed interrupt withdraws the claim',
-    events: [messageStart(), interruptRequested, interruptFailed, endTurn],
-    running: false,
-    finishedAt: [3],
+    events: [messageStart(), interruptRequested, interruptFailed],
+    running: true,
+    interruptRequested: false,
   },
   {
     name: 'an interrupt request with no turn open claims nothing',
-    events: [interruptRequested, pushed('a'), lifecycle('a', 'started'), messageStart(), endTurn],
+    events: [interruptRequested],
     running: false,
-    finishedAt: [4],
+    interruptRequested: false,
   },
   {
-    name: 'an end-state background task suppresses finished',
-    events: [background({ task_id: 't' }), messageStart(), endTurn],
-    running: false,
-    finishedAt: [],
-  },
-  {
-    name: 'a backgrounded Bash does not suppress finished',
-    events: [background({ task_id: 't', task_type: 'local_bash' }), messageStart(), endTurn],
-    running: false,
-    finishedAt: [2],
-  },
-  {
-    name: 'a turn ending with a push still undelivered is not finished',
+    name: 'a turn ending with a push still undelivered keeps running',
     events: [lifecycle('x', 'queued'), messageStart(), pushed('a'), endTurn],
     running: true,
-    finishedAt: [],
   },
   {
-    name: 'teardown mid-turn clears every live axis without finishing',
+    name: 'teardown mid-turn clears every live axis',
     events: [messageStart(), pushed('a'), background({ task_id: 't' }), apiRetry, tornDown],
     running: false,
     pending: [],
     turnActive: false,
-    finishedAt: [],
   },
 ];
 
 describe('reduceLiveTurn', () => {
   it.each(cases)('$name', (c) => {
-    const { state, view, finishedAt } = fold(c.events);
+    const { state, view } = fold(c.events);
     expect(view.running).toBe(c.running);
     if (c.pending) expect(view.pendingMessageIds).toEqual(c.pending);
-    if (c.finishedAt) expect(finishedAt).toEqual(c.finishedAt);
+    if (c.interruptRequested !== undefined) {
+      expect(state.interruptRequested).toBe(c.interruptRequested);
+    }
     if (c.turnActive !== undefined) expect(state.status.turnActive).toBe(c.turnActive);
   });
 
-  it('a lifecycle-reporting turn that ends with no message_start still finishes', () => {
+  it('a lifecycle-reporting turn that ends with no message_start ends', () => {
     const events = [pushed('a'), lifecycle('a', 'started'), result, lifecycle('a', 'completed')];
-    const { view, finishedAt } = fold(events);
+    const { view, turnEndedAt } = fold(events);
     expect(view.running).toBe(false);
-    expect(finishedAt).toEqual([2]);
+    expect(turnEndedAt).toEqual([2]);
   });
 
-  it('a push read after the previous turn ended finishes its own turn with no message_start', () => {
+  it('a push read after the previous turn ended ends its own turn with no message_start', () => {
     const events = [
       lifecycle('x', 'queued'),
       messageStart(),
@@ -283,9 +263,9 @@ describe('reduceLiveTurn', () => {
       result,
       lifecycle('a', 'completed'),
     ];
-    const { view, finishedAt } = fold(events);
+    const { view, turnEndedAt } = fold(events);
     expect(view.running).toBe(false);
-    expect(finishedAt).toEqual([6]);
+    expect(turnEndedAt).toEqual([3, 6]);
   });
 
   it('reports turnEnded only for a stream-driven end, not a recall or teardown', () => {

@@ -45,13 +45,18 @@ describe('sseEvents', () => {
     l.unsubscribe();
   });
 
-  it('delivers finished to the list channel only', () => {
+  it('delivers attention to the list channel only', () => {
     const l = listen('session-1');
 
-    sseEvents.emitClaudeFinished('session-1');
+    sseEvents.emitAttention('session-1', 'My session', 'PR ready');
 
     expect(l.session).not.toHaveBeenCalled();
-    expect(l.list).toHaveBeenCalledWith({ kind: 'finished', sessionId: 'session-1' });
+    expect(l.list).toHaveBeenCalledWith({
+      kind: 'attention',
+      sessionId: 'session-1',
+      name: 'My session',
+      summary: 'PR ready',
+    });
     l.unsubscribe();
   });
 
@@ -108,7 +113,7 @@ describe('sseEvents', () => {
     });
 
     // An empty set signals idle (drives the badge back to "waiting" even when no
-    // running/finished edge fired — e.g. a ✕-stop or a settle with no continuation).
+    // running edge fired — e.g. a ✕-stop or a settle with no continuation).
     l.list.mockClear();
     sseEvents.emitBackgroundTasks('session-1', []);
     expect(l.list).toHaveBeenCalledWith({

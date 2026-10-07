@@ -43,25 +43,23 @@ export type SessionStreamEvent =
  * subscription per row. Payloads are deliberately lightweight: the list refetches
  * `sessions.list` on any event, which carries the authoritative state.
  *
- * - `session`: a session row changed. Only `name` rides along (the work-complete
- *   notifier needs it); the full row goes to the per-session stream.
- * - `finished`: a main-agent turn ended **naturally** (not interrupted, not
- *   stopped/torn down) and left nothing pending. Distinct from `running: false`,
- *   which also fires on interrupt/stop/error — this is the genuine "Claude
- *   finished" signal the work-complete notifier keys off of. It is the one list
- *   event a refetch can't reconstruct, so a stream `resync` (buffer overflow)
- *   can lose a notification.
+ * - `session`: a session row changed. Only `name` rides along; the full row goes
+ *   to the per-session stream.
+ * - `attention`: the agent asked for the user (doc/claude-sessions.md, "Needs
+ *   You"). The row change also arrives as `session`; this edge is what fires the
+ *   notification, so a stream `resync` (buffer overflow) can lose one — the list
+ *   badge still shows it.
  * - `background`: the session's background-task set flipped between empty and
  *   non-empty, so the badge can flip live even when the change produces no
- *   `running`/`finished` edge (the last background task settling with no
- *   main-agent continuation, or a user ✕-stopping it).
+ *   `running` edge (the last background task settling with no main-agent
+ *   continuation, or a user ✕-stopping it).
  * - `rate_limit`: the session started or stopped being paused for a subscription
  *   rate limit, so the list badge and the global paused banner can update.
  */
 export type SessionListEvent =
   | { kind: 'session'; sessionId: string; name: string }
   | { kind: 'running'; sessionId: string; running: boolean }
-  | { kind: 'finished'; sessionId: string }
+  | { kind: 'attention'; sessionId: string; name: string; summary: string }
   | { kind: 'background'; sessionId: string; active: boolean }
   | { kind: 'rate_limit'; sessionId: string; paused: boolean };
 
@@ -97,9 +95,9 @@ class SSEEventEmitter {
     this.emitList({ kind: 'running', sessionId, running });
   }
 
-  /** Global-channel only — see `finished` on {@link SessionListEvent}. */
-  emitClaudeFinished(sessionId: string): void {
-    this.emitList({ kind: 'finished', sessionId });
+  /** Global-channel only — see `attention` on {@link SessionListEvent}. */
+  emitAttention(sessionId: string, name: string, summary: string): void {
+    this.emitList({ kind: 'attention', sessionId, name, summary });
   }
 
   emitCommands(sessionId: string, commands: SlashCommand[]): void {
