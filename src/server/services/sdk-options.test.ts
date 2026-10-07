@@ -25,6 +25,14 @@ vi.mock('./session-cgroup', () => ({
   ensureSessionsSliceLimits: mockApplySliceLimits,
   sessionScopeNonce: () => 'nonce',
 }));
+const mockEnv = vi.hoisted(() => ({
+  LLM_PROXY_URL: undefined as string | undefined,
+  LLM_PROXY_KEY: undefined as string | undefined,
+}));
+vi.mock('@/lib/env', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/env')>()),
+  env: mockEnv,
+}));
 vi.mock('./input-sanitizer', () => ({ sanitizeToolOutputHook: vi.fn() }));
 const mockScheduleRefresh = vi.hoisted(() => vi.fn());
 vi.mock('./session-branch-pr', () => ({ scheduleBranchPrRefresh: mockScheduleRefresh }));
@@ -65,7 +73,11 @@ const build = (
     recordSanitization,
   });
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  mockEnv.LLM_PROXY_URL = undefined;
+  mockEnv.LLM_PROXY_KEY = undefined;
+});
 
 describe('buildMcpServersRecord', () => {
   it('maps stdio and http/sse servers to the SDK shape, omitting empty maps', () => {
@@ -182,6 +194,41 @@ describe('buildSdkOptions', () => {
       'mcp-config': '/ws/sid/mcp-config.json',
       settings: JSON.stringify({ advisorModel: 'claude-x' }),
     });
+  });
+
+  it('sends a proxied model through the proxy without any Claude credential or advisor', async () => {
+    mockEnv.LLM_PROXY_URL = 'http://proxy';
+    mockEnv.LLM_PROXY_KEY = 'sk-proxy';
+    const { options } = await build(
+      settings({
+        claudeModel: 'openai/gpt-6-astra',
+        advisorModel: 'claude-x',
+        envVars: [
+          { name: 'CLAUDE_CODE_OAUTH_TOKEN', value: 'sk-ant-oat-secret' },
+          { name: 'ANTHROPIC_BASE_URL', value: 'http://elsewhere' },
+        ],
+      })
+    );
+    expect(options.env).toMatchObject({
+      ANTHROPIC_BASE_URL: 'http://proxy',
+      ANTHROPIC_AUTH_TOKEN: 'sk-proxy',
+      ANTHROPIC_DEFAULT_FABLE_MODEL: 'openai/gpt-6-astra',
+    });
+    expect(options.env).not.toHaveProperty('CLAUDE_CODE_OAUTH_TOKEN');
+    expect(options.model).toBe('openai/gpt-6-astra');
+    expect(options.extraArgs).not.toHaveProperty('settings');
+  });
+
+  it('refuses a proxied model when no proxy is configured', async () => {
+    await expect(build(settings({ claudeModel: 'openai/gpt-6-astra' }))).rejects.toThrow(
+      /LLM_PROXY_URL/
+    );
+  });
+
+  it('leaves a Claude model off the proxy even when one is configured', async () => {
+    mockEnv.LLM_PROXY_URL = 'http://proxy';
+    const { options } = await build(settings({ claudeModel: 'opus' }));
+    expect(options.env).not.toHaveProperty('ANTHROPIC_BASE_URL');
   });
 
   it('echoes injected user messages so messages from other sessions can be persisted', async () => {

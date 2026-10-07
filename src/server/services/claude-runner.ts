@@ -35,6 +35,7 @@ import {
   type LiveOutcome,
 } from '@/lib/live-turn';
 import { parseRateLimitEvent } from '@/lib/rate-limit';
+import { modelChangeNeedsRestart, usesLlmProxy } from '@/lib/llm-proxy';
 import { backgroundActive, type BackgroundTask } from '@/lib/session-status';
 import { createPushable } from '@/lib/pushable';
 import type { ToolResponse } from '@/lib/tool-response';
@@ -232,7 +233,10 @@ async function runSessionLoop(
       // Account-wide rate-limit state arrives on whichever session's stream happens
       // to be talking to the API; recording it re-evaluates the pause for ALL
       // sessions (see recomputeRateLimitHolds).
-      const readings = parseRateLimitEvent(message, Date.now());
+      // A proxied model's limits aren't the subscription's.
+      const readings = usesLlmProxy(live.boundSettings.claudeModel)
+        ? []
+        : parseRateLimitEvent(message, Date.now());
       if (readings.length > 0) void recordRateLimitReadings(readings);
 
       if (message.type === 'stream_event') {
@@ -288,7 +292,8 @@ async function runSessionLoop(
     log.error('runSessionLoop: error', toError(err), { sessionId });
     await createErrorMessage(sessionId, `Claude query failed: ${toError(err).message}`);
   } finally {
-    dispatch(sessionId, state, { type: 'torn_down' });
+    // A restart tears its query down itself and may already have a new one live.
+    if (!state.live || state.live === live) dispatch(sessionId, state, { type: 'torn_down' });
     // Drop the live query so the next interaction re-establishes (resume). The
     // state record stays in the map (commands etc. persist); only stop/delete
     // remove it. The guard skips this when stopSession already released it.
@@ -430,24 +435,65 @@ function ensureSessionQuery(sessionId: string): Promise<SessionState> {
 
   const state = existing ?? createSessionState();
   sessions.set(sessionId, state);
-  // Establish against THIS state object; the promise is identity-checked on clear
-  // so a stop+revive race never nulls a newer establishment's promise.
-  const establishing: Promise<SessionState> = establishSessionQuery(sessionId, state).finally(
-    () => {
-      const current = sessions.get(sessionId);
-      if (current && current.establishing === establishing) current.establishing = null;
-    }
-  );
+  return beginEstablishing(sessionId, state, establishSessionQuery(sessionId, state));
+}
+
+/**
+ * Record an establishment against THIS state object so concurrent callers share
+ * it. The promise is identity-checked on clear so a stop+revive race never nulls
+ * a newer establishment's promise.
+ */
+function beginEstablishing(
+  sessionId: string,
+  state: SessionState,
+  establishment: Promise<SessionState>
+): Promise<SessionState> {
+  const establishing: Promise<SessionState> = establishment.finally(() => {
+    const current = sessions.get(sessionId);
+    if (current && current.establishing === establishing) current.establishing = null;
+  });
   state.establishing = establishing;
   return establishing;
 }
 
 /**
+ * Replace a session's query with a fresh CLI process that resumes the same
+ * conversation, keeping the session's in-memory state (commands etc.). Only for
+ * an idle session: the old process and everything it spawned is killed.
+ */
+function restartSessionQuery(
+  sessionId: string,
+  state: SessionState,
+  live: LiveQuery
+): Promise<SessionState> {
+  // Torn down synchronously, like stopSession, so nothing can push into the
+  // closed input while the old process dies.
+  live.input.close();
+  try {
+    live.query.close();
+  } catch {
+    // ignore close errors
+  }
+  dispatch(sessionId, state, { type: 'torn_down' });
+  const stopped = releaseQuery(sessionId, state, 'Query restarting');
+  // The old CLI must be gone before a new one resumes its conversation.
+  return beginEstablishing(
+    sessionId,
+    state,
+    stopped.then(() => establishSessionQuery(sessionId, state))
+  );
+}
+
+/**
  * Apply the settings the SDK supports changing live (model, MCP servers) to a
  * running query, so edits take effect on the next turn without a Stop→Start.
- * Everything else is bound at construction (doc/settings.md). Best-effort.
+ * Everything else is bound at construction (doc/settings.md), except a model
+ * change to or from a proxied model, which restarts an idle query and waits for
+ * the next idle apply otherwise. Best-effort.
  */
-async function applyLiveSettings(sessionId: string, live: LiveQuery): Promise<void> {
+async function applyLiveSettings(sessionId: string, state: SessionState): Promise<void> {
+  const live = state.live;
+  if (!live) return;
   let settings: MergedSessionSettings;
   try {
     // Re-read the per-session model override too, so sessions.setModel applies live.
@@ -464,7 +510,26 @@ async function applyLiveSettings(sessionId: string, live: LiveQuery): Promise<vo
     return;
   }
 
+  // A concurrent apply already replaced this query.
+  if (state.live !== live) return;
   const bound = live.boundSettings;
+  if (modelChangeNeedsRestart(bound.claudeModel, settings.claudeModel)) {
+    // Any background task counts, even a daemon: the restart would kill it.
+    if (!isRunning(state.turn) && state.turn.status.backgroundTasks.size === 0) {
+      log.info('Restarting query for a proxied model change', {
+        sessionId,
+        from: bound.claudeModel,
+        to: settings.claudeModel,
+      });
+      try {
+        await restartSessionQuery(sessionId, state, live);
+      } catch (err) {
+        log.error('Failed to restart query for a model change', toError(err), { sessionId });
+      }
+      return;
+    }
+    settings = { ...settings, claudeModel: bound.claudeModel };
+  }
   try {
     if (settings.claudeModel !== bound.claudeModel) {
       await live.query.setModel(settings.claudeModel);
@@ -490,7 +555,7 @@ async function applyLiveSettings(sessionId: string, live: LiveQuery): Promise<vo
  */
 function pushPreparedPrompt(sessionId: string, state: SessionState, prompt: PromptPayload): void {
   const live = state.live;
-  if (!live) throw new Error('Session query is not available');
+  if (!live || live.input.closed) throw new Error('Session query is not available');
 
   const commandUuid = uuid();
   live.pushedUuids.add(commandUuid);
@@ -535,7 +600,7 @@ export async function sendUserMessage(
   const state = hold ? null : await ensureSessionQuery(sessionId);
   if (state) {
     if (!state.live) throw new Error('Session query is not available');
-    await applyLiveSettings(sessionId, state.live);
+    await applyLiveSettings(sessionId, state);
   }
   if (userInitiated) await bumpSessionActivity(sessionId);
 
@@ -563,7 +628,9 @@ export async function sendUserMessage(
 
   // Re-check the query *after* the insert: the query loop can exit mid-await (CLI
   // crash, stop) and release it. Tracking a command we never pushed would strand it
-  // in-flight forever, so undo the bubble and surface the failure instead.
+  // in-flight forever, so undo the bubble and surface the failure instead. A
+  // restart's replacement query is worth waiting for.
+  if (!state.live && state.establishing) await state.establishing.catch(() => null);
   if (!state.live) {
     await removeMessages(sessionId, [messageId]);
     throw new Error('Session query is not available');
@@ -794,8 +861,8 @@ export function isClaudeRunning(sessionId: string): boolean {
  * one exists. A no-op without a live query — the next establish picks them up.
  */
 export async function refreshSessionSettings(sessionId: string): Promise<void> {
-  const live = sessions.get(sessionId)?.live;
-  if (live) await applyLiveSettings(sessionId, live);
+  const state = sessions.get(sessionId);
+  if (state) await applyLiveSettings(sessionId, state);
 }
 
 /**

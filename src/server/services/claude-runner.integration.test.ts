@@ -92,6 +92,7 @@ vi.mock('./session-cgroup', () => ({
 }));
 
 import { createPushable } from '@/lib/pushable';
+import { resetEnvCache } from '@/lib/env';
 import { sessionScopeUnitName } from '@/lib/session-scope';
 import { partialMessageId } from '@/lib/message-cache';
 import type { PartialAssistantMessage } from './stream-accumulator';
@@ -111,6 +112,7 @@ let reviveRunningSessions: typeof import('./claude-runner').reviveRunningSession
 let reviveSession: typeof import('./claude-runner').reviveSession;
 let _setQueryFactory: typeof import('./claude-runner')._setQueryFactory;
 let submitLiveToolResponse: typeof import('./claude-runner').submitLiveToolResponse;
+let refreshSessionSettings: typeof import('./claude-runner').refreshSessionSettings;
 let mockLoadSettings: ReturnType<
   typeof vi.mocked<typeof import('./settings-merger').loadMergedSessionSettings>
 >;
@@ -350,6 +352,7 @@ describe('claude-runner persistent streaming loop', () => {
     reviveSession = mod.reviveSession;
     _setQueryFactory = mod._setQueryFactory;
     submitLiveToolResponse = mod.submitLiveToolResponse;
+    refreshSessionSettings = mod.refreshSessionSettings;
     const sm = await import('./settings-merger');
     mockLoadSettings = vi.mocked(sm.loadMergedSessionSettings);
   });
@@ -1406,6 +1409,129 @@ describe('claude-runner persistent streaming loop', () => {
     fake.emit(result());
     await waitFor(() => !isClaudeRunning(sessionId));
     stopSession(sessionId);
+  });
+
+  describe('switching to a proxied model', () => {
+    const PROXY_URL = 'http://127.0.0.1:4000';
+    const ASTRA = 'openai/gpt-6-astra';
+
+    beforeEach(() => {
+      vi.stubEnv('LLM_PROXY_URL', PROXY_URL);
+      resetEnvCache();
+    });
+    afterEach(() => {
+      vi.unstubAllEnvs();
+      resetEnvCache();
+    });
+
+    /** A factory handing out a fresh fake query per establishment, recording each one's env. */
+    function queriesInSequence() {
+      const fakes: ReturnType<typeof makeFakeQuery>[] = [];
+      const envs: Record<string, string | undefined>[] = [];
+      _setQueryFactory((params) => {
+        envs.push((params.options as { env: Record<string, string | undefined> }).env);
+        const fake = makeFakeQuery();
+        fakes.push(fake);
+        return fake.factory(params);
+      });
+      return { fakes, envs };
+    }
+
+    async function finishTurn(fake: ReturnType<typeof makeFakeQuery>, sessionId: string) {
+      await fake.deliver();
+      fake.emit(result());
+      await waitFor(() => !isClaudeRunning(sessionId));
+    }
+
+    it('restarts an idle query against the proxy instead of switching it live', async () => {
+      const { fakes, envs } = queriesInSequence();
+      const sessionId = await createRunningSession();
+
+      await sendUserMessage(sessionId, 'first');
+      await finishTurn(fakes[0], sessionId);
+
+      mockLoadSettings.mockResolvedValue({ ...baseSettings, claudeModel: ASTRA });
+      await sendUserMessage(sessionId, 'second');
+
+      expect(fakes).toHaveLength(2);
+      expect(fakes[0].setModel).not.toHaveBeenCalled();
+      expect(envs[0].ANTHROPIC_BASE_URL).toBeUndefined();
+      expect(envs[1]).toMatchObject({
+        ANTHROPIC_BASE_URL: PROXY_URL,
+        ANTHROPIC_DEFAULT_FABLE_MODEL: ASTRA,
+      });
+      await fakes[1].deliver();
+      expect(fakes[1].inputs.map((m) => m.message.content)).toEqual(['second']);
+
+      stopSession(sessionId);
+    });
+
+    it('waits for the turn to end before restarting', async () => {
+      const { fakes } = queriesInSequence();
+      const sessionId = await createRunningSession();
+
+      await sendUserMessage(sessionId, 'first');
+      await fakes[0].deliver();
+
+      mockLoadSettings.mockResolvedValue({ ...baseSettings, claudeModel: ASTRA });
+      await sendUserMessage(sessionId, 'mid-turn');
+      expect(fakes).toHaveLength(1);
+      expect(fakes[0].setModel).not.toHaveBeenCalled();
+
+      await finishTurn(fakes[0], sessionId);
+      await sendUserMessage(sessionId, 'after');
+      expect(fakes).toHaveLength(2);
+
+      stopSession(sessionId);
+    });
+
+    it('waits for a backgrounded shell to end before restarting', async () => {
+      const { fakes } = queriesInSequence();
+      const sessionId = await createRunningSession();
+
+      await sendUserMessage(sessionId, 'first');
+      await fakes[0].deliver();
+      fakes[0].emit({
+        type: 'system',
+        subtype: 'background_tasks_changed',
+        tasks: [{ task_id: 't1', task_type: 'local_bash', description: 'pnpm build' }],
+        session_id: 's',
+        uuid: nextUuid(),
+      } as unknown as SDKMessage);
+      fakes[0].emit(result());
+      await waitFor(() => getSessionBackgroundTasks(sessionId).length === 1);
+      await waitFor(() => !isClaudeRunning(sessionId));
+
+      mockLoadSettings.mockResolvedValue({ ...baseSettings, claudeModel: ASTRA });
+      await refreshSessionSettings(sessionId);
+      expect(fakes).toHaveLength(1);
+
+      fakes[0].emit(backgroundTasksChanged());
+      await waitFor(() => getSessionBackgroundTasks(sessionId).length === 0);
+      await refreshSessionSettings(sessionId);
+      expect(fakes).toHaveLength(2);
+
+      stopSession(sessionId);
+    });
+
+    it('delivers a prompt sent while the restart is under way to the new query', async () => {
+      const { fakes } = queriesInSequence();
+      const sessionId = await createRunningSession();
+
+      await sendUserMessage(sessionId, 'first');
+      await finishTurn(fakes[0], sessionId);
+
+      mockLoadSettings.mockResolvedValue({ ...baseSettings, claudeModel: ASTRA });
+      const restart = refreshSessionSettings(sessionId);
+      await sendUserMessage(sessionId, 'during restart');
+      await restart;
+
+      expect(fakes).toHaveLength(2);
+      await fakes[1].deliver();
+      expect(fakes[1].inputs.map((m) => m.message.content)).toEqual(['during restart']);
+
+      stopSession(sessionId);
+    });
   });
 
   it('stitches a PostToolUse sanitizer finding onto the persisted tool_result message', async () => {

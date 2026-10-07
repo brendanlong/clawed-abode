@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import { encrypt, decrypt, isEncryptionConfigured } from '@/lib/crypto';
+import { env } from '@/lib/env';
+import { usesLlmProxy } from '@/lib/llm-proxy';
 import { TRPCError } from '@trpc/server';
 import type { Prisma } from '@/generated/prisma/client';
 import {
@@ -91,6 +93,20 @@ export const nullableTextSchema = (max: number) =>
     .max(max)
     .nullable()
     .transform((value) => value?.trim() || null);
+
+/** A model name. A proxied one needs a proxy, or a session on it couldn't start. */
+export const modelSchema = z
+  .string()
+  .max(200)
+  .refine(
+    (model) => !usesLlmProxy(model) || env.LLM_PROXY_URL !== undefined,
+    'Models with a provider prefix (like openai/…) need LLM_PROXY_URL'
+  );
+
+/** A model setting: trimmed, with blank/null meaning "clear". */
+export const nullableModelSchema = modelSchema
+  .nullable()
+  .transform((value) => value?.trim() || null);
 
 export type EnvVarInput = z.infer<typeof envVarSchema>;
 export type McpServerInput = z.infer<typeof mcpServerSchema>;

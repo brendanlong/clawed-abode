@@ -1,0 +1,17 @@
+# LiteLLM config for proxied models (see "Other model providers" in README.md).
+# Each provider is a wildcard entry named "<provider>/*": the app routes models
+# with a provider prefix through the proxy and lists them from /v1/models.
+model_list:
+  - model_name: 'openai/*'
+    litellm_params:
+      model: 'openai/*'
+      api_key: os.environ/OPENAI_API_KEY
+
+litellm_settings:
+  # Claude Code sends Anthropic-only parameters; drop what the provider rejects.
+  drop_params: true
+  # List the provider's real models for a wildcard entry instead of "openai/*".
+  check_provider_endpoint: true
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
