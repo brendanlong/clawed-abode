@@ -34,7 +34,10 @@ vi.mock('@/lib/env', async (importOriginal) => ({
   env: mockEnv,
 }));
 vi.mock('./gpt-subagent-command', () => ({
-  ensureGptSubagentCommand: vi.fn(async () => '/home/u/.clawed/gpt-subagent'),
+  ensureGptSubagentCommand: vi.fn(async () => ({
+    path: '/home/u/.clawed/gpt-subagent',
+    claudeBin: '/sdk/claude',
+  })),
 }));
 vi.mock('./input-sanitizer', () => ({ sanitizeToolOutputHook: vi.fn() }));
 const mockScheduleRefresh = vi.hoisted(() => vi.fn());
@@ -246,6 +249,7 @@ describe('buildSdkOptions', () => {
       CLAWED_LLM_PROXY_URL: 'http://proxy',
       CLAWED_LLM_PROXY_KEY: 'sk-proxy',
       CLAWED_SETTING_SOURCES: 'project',
+      CLAWED_CLAUDE_BIN: '/sdk/claude',
     });
     expect(appendedPrompt(options)).toContain('/home/u/.clawed/gpt-subagent');
   });

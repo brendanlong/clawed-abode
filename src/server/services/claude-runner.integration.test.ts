@@ -92,7 +92,10 @@ vi.mock('./session-cgroup', () => ({
 }));
 
 vi.mock('./gpt-subagent-command', () => ({
-  ensureGptSubagentCommand: vi.fn(async () => '/fake/gpt-subagent'),
+  ensureGptSubagentCommand: vi.fn(async () => ({
+    path: '/fake/gpt-subagent',
+    claudeBin: '/fake/claude',
+  })),
 }));
 
 import { createPushable } from '@/lib/pushable';

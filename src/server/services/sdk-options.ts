@@ -152,12 +152,14 @@ export async function buildSdkOptions(params: {
   if (gptSubagentCommand && env.LLM_PROXY_URL) {
     agentEnv[LLM_PROXY_URL_ENV] = env.LLM_PROXY_URL;
     if (env.LLM_PROXY_KEY) agentEnv[LLM_PROXY_KEY_ENV] = env.LLM_PROXY_KEY;
-    agentEnv[SETTING_SOURCES_ENV] = settings.settingSources.join(',') || 'project';
+    // Empty when every source is off, which the subagent must honor too.
+    agentEnv[SETTING_SOURCES_ENV] = settings.settingSources.join(',');
+    agentEnv[CLAUDE_BIN_ENV] = gptSubagentCommand.claudeBin;
   }
   const appendedPrompt = [
     settings.systemPrompt,
     builtinTools && builtinToolsPrompt(builtinTools, sessionNameIsDefault),
-    gptSubagentCommand && gptSubagentPrompt(gptSubagentCommand),
+    gptSubagentCommand && gptSubagentPrompt(gptSubagentCommand.path),
   ]
     .filter(Boolean)
     .join('\n\n');

@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createRequire } from 'node:module';
 import { randomBytes } from 'node:crypto';
-import { writeFile, chmod, mkdir, access } from 'node:fs/promises';
+import { writeFile, chmod, mkdir, access, rename } from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -19,8 +19,7 @@ const execFileAsync = promisify(execFile);
 const log = createLogger('session-cgroup');
 
 /** App-owned home for generated scripts (not world-writable /tmp, not tmp-reaped). */
-export const LAUNCHER_DIR = join(homedir(), '.clawed');
-const LAUNCHER_PATH = join(LAUNCHER_DIR, 'session-launcher.sh');
+const LAUNCHER_DIR = join(homedir(), '.clawed');
 
 /** Resolved config needed to launch a session inside a systemd user scope. */
 export interface SessionScopeConfig {
@@ -69,7 +68,7 @@ async function resolveClaudeBinary(): Promise<string | null> {
 let claudeBinPromise: Promise<string | null> | null = null;
 
 /** The resolved Claude CLI binary, probed once and memoized (path is stable). */
-function getClaudeBinary(): Promise<string | null> {
+export function getClaudeBinary(): Promise<string | null> {
   if (!claudeBinPromise) claudeBinPromise = resolveClaudeBinary();
   return claudeBinPromise;
 }
@@ -84,16 +83,33 @@ function getClaudeBinary(): Promise<string | null> {
  */
 async function ensureSessionLauncher(): Promise<string | null> {
   try {
-    await mkdir(LAUNCHER_DIR, { recursive: true, mode: 0o700 });
-    await writeFile(LAUNCHER_PATH, SESSION_SCOPE_LAUNCHER, { mode: 0o755 });
-    await chmod(LAUNCHER_PATH, 0o755);
-    return LAUNCHER_PATH;
+    return await writeGeneratedScript('session-launcher.sh', SESSION_SCOPE_LAUNCHER);
   } catch (err) {
     log.warn('Could not write the session-scope launcher; session runs unwrapped', {
       error: toError(err).message,
     });
     return null;
   }
+}
+
+/**
+ * Write an executable script into the app's script dir and return its path.
+ * Atomic (temp file + rename), since sessions establishing together rewrite the
+ * same script while others may be running it: a reader sees the old or the new
+ * file, never a truncated one.
+ */
+export async function writeGeneratedScript(
+  name: string,
+  content: string,
+  dir: string = LAUNCHER_DIR
+): Promise<string> {
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  const path = join(dir, name);
+  const temp = join(dir, `.${name}.${randomBytes(6).toString('hex')}`);
+  await writeFile(temp, content, { mode: 0o755 });
+  await chmod(temp, 0o755);
+  await rename(temp, path);
+  return path;
 }
 
 /**
