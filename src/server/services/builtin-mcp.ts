@@ -29,6 +29,12 @@ import {
   toTranscriptEntries,
   type TranscriptEntry,
 } from '@/lib/session-transcript';
+import {
+  backgroundResultMessage,
+  GPT_AGENT_TIERS,
+  GPT_AGENT_TOOL_DESCRIPTION,
+} from '@/lib/gpt-agent';
+import { runGptAgent, type GptAgentContext } from './gpt-agent';
 import { loadHistoryPage } from './message-store';
 import { requestAttention } from './session-attention';
 
@@ -46,6 +52,11 @@ export interface SessionToolsPort {
   /** Resolves to the session's status afterwards, which is unchanged if it wasn't running. */
   stopSession(sessionId: string): Promise<{ status: string }>;
   isTurnActive(sessionId: string): boolean;
+  /**
+   * Send a message to a session's agent on the app's behalf (not the user's),
+   * only if its query is live: never one that would revive a session.
+   */
+  deliverMessage(sessionId: string, text: string): Promise<void>;
 }
 
 const portRef = processSingleton<{ port: SessionToolsPort | null }>('builtin-mcp.port', () => ({
@@ -249,13 +260,73 @@ function manageTools(sessionId: string) {
   ];
 }
 
-/** A fresh server instance; one instance can serve only one query. */
+/** The tool call's abort signal (set by the MCP SDK; the type says unknown). */
+function callSignal(extra: unknown): AbortSignal | undefined {
+  const signal = (extra as { signal?: unknown } | null)?.signal;
+  return signal instanceof AbortSignal ? signal : undefined;
+}
+
+function gptTools(ctx: GptAgentContext) {
+  return [
+    tool(
+      'gpt_agent',
+      GPT_AGENT_TOOL_DESCRIPTION,
+      {
+        model: z.enum(GPT_AGENT_TIERS),
+        description: z
+          .string()
+          .trim()
+          .min(1)
+          .max(100)
+          .describe('A short (3-5 word) description of the task'),
+        prompt: promptSchema,
+        run_in_background: z.boolean().default(false),
+      },
+      ({ model, description, prompt, run_in_background }, extra) =>
+        run('gpt_agent', async () => {
+          if (!run_in_background) {
+            const outcome = await runGptAgent(ctx, model, prompt, callSignal(extra));
+            return outcome.isError ? errorResult(outcome.text) : textResult(outcome.text);
+          }
+          void runGptAgent(ctx, model, prompt)
+            .then(async (outcome) => {
+              if (outcome.cancelled) return;
+              await requirePort().deliverMessage(
+                ctx.sessionId,
+                backgroundResultMessage(model, description, outcome)
+              );
+            })
+            .catch((err) =>
+              log.warn('Could not deliver a background GPT agent result', {
+                sessionId: ctx.sessionId,
+                error: toError(err).message,
+              })
+            );
+          return textResult(
+            `Started the GPT agent "${description}" (${model}) in the background. Its result will arrive as a message; don't wait for it or poll.`
+          );
+        }),
+      { alwaysLoad: true }
+    ),
+  ];
+}
+
+/**
+ * A fresh server instance; one instance can serve only one query. Null when the
+ * session gets no built-in tools at all.
+ */
 export function buildBuiltinMcpServer(
   sessionId: string,
-  level: BuiltinToolsLevel
-): McpSdkServerConfigWithInstance {
+  level: BuiltinToolsLevel | null,
+  gpt: GptAgentContext | null
+): McpSdkServerConfigWithInstance | null {
+  if (!level && !gpt) return null;
   return createSdkMcpServer({
     name: BUILTIN_MCP_SERVER_NAME,
-    tools: [...basicTools(sessionId), ...(level === 'manage' ? manageTools(sessionId) : [])],
+    tools: [
+      ...(level ? basicTools(sessionId) : []),
+      ...(level === 'manage' ? manageTools(sessionId) : []),
+      ...(gpt ? gptTools(gpt) : []),
+    ],
   });
 }

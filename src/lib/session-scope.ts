@@ -59,6 +59,20 @@ export function sessionScopeUnitName(sessionId: string, nonce: string): string {
 }
 
 /**
+ * A unit for a process the app starts on a session's behalf outside its CLI (a
+ * GPT agent run), named under the session's scope so stopping the session stops
+ * it too. The session scope's random nonce keeps {@link childScopePattern} from
+ * ever matching another instance's units.
+ */
+export function childScopeUnitName(sessionScope: string, nonce: string): string {
+  return `${sessionScope.replace(/\.scope$/, '')}-child-${nonce}.scope`;
+}
+
+export function childScopePattern(sessionScope: string): string {
+  return `${sessionScope.replace(/\.scope$/, '')}-child-*.scope`;
+}
+
+/**
  * Launcher the SDK spawns as `pathToClaudeCodeExecutable`. It runs the real
  * Claude CLI (`$CLAWED_CLAUDE_BIN`, resolved by the app) inside the session's
  * transient user scope (`$CLAWED_SESSION_SCOPE`), forwarding all CLI args and

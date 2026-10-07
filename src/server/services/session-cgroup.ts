@@ -2,13 +2,14 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createRequire } from 'node:module';
 import { randomBytes } from 'node:crypto';
-import { writeFile, chmod, mkdir, access } from 'node:fs/promises';
+import { writeFile, chmod, mkdir, access, rename } from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { env } from '@/lib/env';
 import { createLogger, toError } from '@/lib/logger';
 import {
+  childScopePattern,
   SESSION_SCOPE_LAUNCHER,
   SESSIONS_SLICE,
   sessionsSliceProperties,
@@ -18,9 +19,8 @@ import {
 const execFileAsync = promisify(execFile);
 const log = createLogger('session-cgroup');
 
-/** App-owned launcher location (not world-writable /tmp, not tmp-reaped). */
+/** App-owned home for generated scripts (not world-writable /tmp, not tmp-reaped). */
 const LAUNCHER_DIR = join(homedir(), '.clawed');
-const LAUNCHER_PATH = join(LAUNCHER_DIR, 'session-launcher.sh');
 
 /** Resolved config needed to launch a session inside a systemd user scope. */
 export interface SessionScopeConfig {
@@ -84,16 +84,29 @@ function getClaudeBinary(): Promise<string | null> {
  */
 async function ensureSessionLauncher(): Promise<string | null> {
   try {
-    await mkdir(LAUNCHER_DIR, { recursive: true, mode: 0o700 });
-    await writeFile(LAUNCHER_PATH, SESSION_SCOPE_LAUNCHER, { mode: 0o755 });
-    await chmod(LAUNCHER_PATH, 0o755);
-    return LAUNCHER_PATH;
+    return await writeGeneratedScript('session-launcher.sh', SESSION_SCOPE_LAUNCHER);
   } catch (err) {
     log.warn('Could not write the session-scope launcher; session runs unwrapped', {
       error: toError(err).message,
     });
     return null;
   }
+}
+
+/**
+ * Write an executable script into the app's script dir and return its path.
+ * Atomic (temp file + rename), since sessions establishing together rewrite the
+ * same script while others may be running it: a reader sees the old or the new
+ * file, never a truncated one.
+ */
+async function writeGeneratedScript(name: string, content: string): Promise<string> {
+  await mkdir(LAUNCHER_DIR, { recursive: true, mode: 0o700 });
+  const path = join(LAUNCHER_DIR, name);
+  const temp = join(LAUNCHER_DIR, `.${name}.${randomBytes(6).toString('hex')}`);
+  await writeFile(temp, content, { mode: 0o755 });
+  await chmod(temp, 0o755);
+  await rename(temp, path);
+  return path;
 }
 
 /**
@@ -161,22 +174,29 @@ export function ensureSessionsSliceLimits(): Promise<void> {
 
 /**
  * Stop a session's systemd scope, cgroup-killing its whole process tree (incl.
- * daemonized double-forks). Best-effort and idempotent: a missing/already-stopped
- * unit is fine. Called on session teardown (stop / delete / shutdown).
+ * daemonized double-forks), and its child scopes. Best-effort and idempotent: a
+ * missing/already-stopped unit is fine. Called on session teardown (stop /
+ * delete / shutdown) and by the crash reaper.
  */
 export async function stopSessionScope(unitName: string): Promise<void> {
+  await stopScope(childScopePattern(unitName));
+  await stopScope(unitName);
+}
+
+/** Stop a scope unit, or every loaded unit matching a glob. */
+export async function stopScope(unit: string): Promise<void> {
   try {
-    await execFileAsync('systemctl', ['--user', 'stop', unitName], { timeout: 15000 });
+    await execFileAsync('systemctl', ['--user', 'stop', unit], { timeout: 15000 });
   } catch (err) {
     // Non-zero when the unit is already gone (the common case — the session may
     // have run unwrapped), so this is debug, not an error.
-    log.debug('stopSessionScope: stop returned non-zero (unit likely already gone)', {
-      unitName,
+    log.debug('stopScope: stop returned non-zero (unit likely already gone)', {
+      unit,
       error: toError(err).message,
     });
   }
   try {
-    await execFileAsync('systemctl', ['--user', 'reset-failed', unitName], { timeout: 5000 });
+    await execFileAsync('systemctl', ['--user', 'reset-failed', unit], { timeout: 5000 });
   } catch {
     // reset-failed is cleanup only.
   }

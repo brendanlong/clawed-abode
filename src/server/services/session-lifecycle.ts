@@ -9,6 +9,7 @@ import { sseEvents } from './events';
 import { cloneRepo, createEmptyWorkspace, removeWorkspace } from './worktree-manager';
 import {
   cleanupSession,
+  deliverAppMessage,
   isClaudeRunning,
   refreshSessionSettings,
   reviveSession,
@@ -270,4 +271,5 @@ export const sessionToolsPort: SessionToolsPort = {
   createSession,
   stopSession: shutDownSession,
   isTurnActive: isClaudeRunning,
+  deliverMessage: deliverAppMessage,
 };

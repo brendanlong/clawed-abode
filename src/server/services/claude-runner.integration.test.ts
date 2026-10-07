@@ -113,6 +113,7 @@ let reviveSession: typeof import('./claude-runner').reviveSession;
 let _setQueryFactory: typeof import('./claude-runner')._setQueryFactory;
 let submitLiveToolResponse: typeof import('./claude-runner').submitLiveToolResponse;
 let refreshSessionSettings: typeof import('./claude-runner').refreshSessionSettings;
+let deliverAppMessage: typeof import('./claude-runner').deliverAppMessage;
 let mockLoadSettings: ReturnType<
   typeof vi.mocked<typeof import('./settings-merger').loadMergedSessionSettings>
 >;
@@ -353,6 +354,7 @@ describe('claude-runner persistent streaming loop', () => {
     _setQueryFactory = mod._setQueryFactory;
     submitLiveToolResponse = mod.submitLiveToolResponse;
     refreshSessionSettings = mod.refreshSessionSettings;
+    deliverAppMessage = mod.deliverAppMessage;
     const sm = await import('./settings-merger');
     mockLoadSettings = vi.mocked(sm.loadMergedSessionSettings);
   });
@@ -1532,6 +1534,34 @@ describe('claude-runner persistent streaming loop', () => {
 
       stopSession(sessionId);
     });
+  });
+
+  it('delivers an app message only to a session with a live query, never reviving one', async () => {
+    const fake = makeFakeQuery();
+    let established = 0;
+    _setQueryFactory((params) => {
+      established++;
+      return fake.factory(params);
+    });
+    const sessionId = await createRunningSession();
+
+    await deliverAppMessage(sessionId, 'too early');
+    expect(established).toBe(0);
+    expect(await messagesFor(sessionId)).toHaveLength(0);
+
+    await sendUserMessage(sessionId, 'hello');
+    await fake.deliver();
+    fake.emit(result());
+    await waitFor(() => !isClaudeRunning(sessionId));
+    await deliverAppMessage(sessionId, 'result');
+    await fake.deliver();
+    expect(fake.inputs.map((m) => m.message.content)).toEqual(['hello', 'result']);
+
+    stopSession(sessionId);
+    const before = (await messagesFor(sessionId)).length;
+    await deliverAppMessage(sessionId, 'after stop');
+    expect(established).toBe(1);
+    expect(await messagesFor(sessionId)).toHaveLength(before);
   });
 
   it('stitches a PostToolUse sanitizer finding onto the persisted tool_result message', async () => {

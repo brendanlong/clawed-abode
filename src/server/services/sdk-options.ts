@@ -24,6 +24,7 @@ import {
   sessionBuiltinTools,
 } from '@/lib/builtin-tools';
 import { buildBuiltinMcpServer } from './builtin-mcp';
+import type { GptAgentContext } from './gpt-agent';
 import { sanitizeToolOutputHook } from './input-sanitizer';
 import { writeSessionMcpConfig, removeSessionMcpConfig } from './mcp-config-file';
 import { scheduleBranchPrRefresh } from './session-branch-pr';
@@ -139,6 +140,21 @@ export async function buildSdkOptions(params: {
       llmProxyEnv(proxiedModel, { url: env.LLM_PROXY_URL, key: env.LLM_PROXY_KEY })
     );
   }
+  // Run the CLI (and everything it spawns) in a transient systemd user scope so the
+  // whole tree is reaped on teardown (doc/claude-sessions.md "Process Reaping").
+  const scopeConfig = await getSessionScopeConfig();
+  const sessionScope = scopeConfig ? sessionScopeUnitName(sessionId, sessionScopeNonce()) : null;
+  // A proxied session's own subagents are already GPT models.
+  const gptAgents: GptAgentContext | null =
+    env.LLM_PROXY_URL && !proxiedModel
+      ? {
+          sessionId,
+          workingDir,
+          settingSources: settings.settingSources,
+          env: { ...agentEnv },
+          scope: scopeConfig && sessionScope ? { ...scopeConfig, sessionScope } : null,
+        }
+      : null;
   const mcpServersRecord = buildMcpServersRecord(settings.mcpServers);
 
   const options: Options = {
@@ -223,7 +239,7 @@ export async function buildSdkOptions(params: {
 
   // The built-in server is the one `options.mcpServers` entry: an in-process SDK
   // instance is registered over the control channel, never serialized onto argv.
-  const builtinMcpServer = builtinTools ? buildBuiltinMcpServer(sessionId, builtinTools) : null;
+  const builtinMcpServer = buildBuiltinMcpServer(sessionId, builtinTools, gptAgents);
   if (builtinMcpServer) {
     options.mcpServers = { [BUILTIN_MCP_SERVER_NAME]: builtinMcpServer };
   }
@@ -239,13 +255,9 @@ export async function buildSdkOptions(params: {
     };
   }
 
-  // Run the CLI (and everything it spawns) in a transient systemd user scope so the
-  // whole tree is reaped on teardown (doc/claude-sessions.md "Process Reaping").
-  const scopeConfig = await getSessionScopeConfig();
-  if (!scopeConfig) return { options, sessionScope: null, builtinMcpServer };
+  if (!scopeConfig || !sessionScope) return { options, sessionScope: null, builtinMcpServer };
 
   await ensureSessionsSliceLimits();
-  const sessionScope = sessionScopeUnitName(sessionId, sessionScopeNonce());
   options.pathToClaudeCodeExecutable = scopeConfig.launcherPath;
   agentEnv[SESSION_SCOPE_ENV] = sessionScope;
   agentEnv[CLAUDE_BIN_ENV] = scopeConfig.claudeBin;

@@ -7,6 +7,7 @@ import { randomBytes } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  childScopeUnitName,
   CLAUDE_BIN_ENV,
   SESSION_SCOPE_ENV,
   SESSION_SCOPE_LAUNCHER,
@@ -16,6 +17,7 @@ import {
 import {
   applySessionsSliceLimits,
   getSessionScopeConfig,
+  stopScope,
   stopSessionScope,
 } from './session-cgroup';
 
@@ -174,6 +176,45 @@ describe('session cgroup launcher + teardown (real processes)', () => {
       await stopSessionScope(unitB);
       await rm(dirA, { recursive: true, force: true });
       await rm(dirB, { recursive: true, force: true });
+    }
+  }, 30000);
+
+  it('stopSessionScope also reaps its child scopes, and no other session’s', async (ctx) => {
+    if (!(await userScopeAvailable())) ctx.skip('systemd user scope unavailable');
+    const session = sessionScopeUnitName('child', 'aaaa0000');
+    const units = {
+      own: childScopeUnitName(session, 'c1'),
+      other: childScopeUnitName(sessionScopeUnitName('child', 'bbbb0000'), 'c1'),
+    };
+    const runs = await Promise.all(
+      Object.entries(units).map(async ([name, unit]) => {
+        const dir = await mkdtemp(join(tmpdir(), `ca-child-${name}-`));
+        const pidFile = join(dir, 'daemon.pid');
+        const fix = await fixtures(dir, pidFile, join(dir, 'ran'));
+        const proc = spawn('bash', [fix.launcher], {
+          stdio: 'ignore',
+          env: { ...process.env, [SESSION_SCOPE_ENV]: unit, [CLAUDE_BIN_ENV]: fix.fakeCli },
+        });
+        return { dir, pidFile, proc, unit, daemon: null as number | null };
+      })
+    );
+    try {
+      for (const run of runs) run.daemon = await waitForPid(run.pidFile, 8000);
+      const [own, other] = runs;
+      expect(own.daemon).not.toBeNull();
+      expect(other.daemon).not.toBeNull();
+
+      await stopSessionScope(session);
+
+      expect(await waitFor(() => !isAlive(own.daemon!), 10000)).toBe(true);
+      expect(isAlive(other.daemon!)).toBe(true);
+    } finally {
+      for (const run of runs) {
+        if (run.daemon && isAlive(run.daemon)) process.kill(run.daemon, 'SIGKILL');
+        run.proc.kill('SIGKILL');
+        await stopScope(run.unit);
+        await rm(run.dir, { recursive: true, force: true });
+      }
     }
   }, 30000);
 

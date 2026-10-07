@@ -8,7 +8,7 @@ This file is the high-level map. Details live in reference docs, loaded on deman
 
 - [`claude-sessions.md`](claude-sessions.md) — the persistent SDK query, turn/background status, message delivery, interactive tools, cross-session messaging, process reaping, cost estimation
 - [`messages-and-sse.md`](messages-and-sse.md) — message classification, storage/pagination, SSE streaming/resume
-- [`settings.md`](settings.md) — settings layers, model resolution, proxied (non-Claude) models, secrets, MCP servers
+- [`settings.md`](settings.md) — settings layers, model resolution, proxied (non-Claude) models and GPT agents, secrets, MCP servers
 - [`rate-limit-pause.md`](rate-limit-pause.md) — pausing sessions on subscription usage limits and draining when the window resets
 - [`security.md`](security.md) — auth and input sanitization
 

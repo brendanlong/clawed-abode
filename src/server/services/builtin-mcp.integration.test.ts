@@ -5,6 +5,22 @@ import { setupTestDb, teardownTestDb, testPrisma, clearTestDb } from '@/test/set
 import { createTestSession } from '@/test/fixtures';
 import { attributeMessage, type BuiltinToolsLevel } from '@/lib/builtin-tools';
 import type { SessionToolsPort } from './builtin-mcp';
+import type { GptAgentContext } from './gpt-agent';
+
+const mockRunGptAgent = vi.hoisted(() =>
+  vi.fn(
+    async (
+      _ctx: unknown,
+      _tier: string,
+      _prompt: string,
+      _signal?: AbortSignal
+    ): Promise<{ text: string; isError: boolean; cancelled?: boolean }> => ({
+      text: 'looks right',
+      isError: false,
+    })
+  )
+);
+vi.mock('./gpt-agent', () => ({ runGptAgent: mockRunGptAgent }));
 
 let mcp: typeof import('./builtin-mcp');
 
@@ -13,10 +29,16 @@ const port = {
   createSession: vi.fn(async () => ({ id: 'new-id' })),
   stopSession: vi.fn(async () => ({ status: 'stopped' })),
   isTurnActive: vi.fn(() => false),
+  deliverMessage: vi.fn(async () => {}),
 } satisfies SessionToolsPort;
 
-async function connect(sessionId: string, level: BuiltinToolsLevel) {
-  const server = mcp.buildBuiltinMcpServer(sessionId, level);
+async function connect(
+  sessionId: string,
+  level: BuiltinToolsLevel | null,
+  gpt: GptAgentContext | null = null
+) {
+  const server = mcp.buildBuiltinMcpServer(sessionId, level, gpt);
+  if (!server) throw new Error('no built-in server');
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.instance.connect(serverTransport);
   const client = new Client({ name: 'test', version: '1' });
@@ -232,5 +254,112 @@ describe('built-in MCP server', () => {
       cursor = page.header.nextCursor;
     }
     expect(seen).toEqual(Array.from({ length: 60 }, (_, i) => i));
+  });
+
+  describe('gpt_agent', () => {
+    const gpt = (sessionId: string): GptAgentContext => ({
+      sessionId,
+      workingDir: '/w',
+      settingSources: ['project'],
+      env: {},
+      scope: null,
+    });
+
+    it('is offered only with a GPT agent context, independent of the other tools', async () => {
+      expect(mcp.buildBuiltinMcpServer('s', null, null)).toBeNull();
+      const client = await connect('s', null, gpt('s'));
+      const { tools } = await client.listTools();
+      expect(tools.map((t) => t.name)).toEqual(['gpt_agent']);
+    });
+
+    it('returns the run result in the foreground', async () => {
+      const client = await connect('s', 'basic', gpt('s'));
+      const result = await call(client, 'gpt_agent', {
+        model: 'sol',
+        description: 'review diff',
+        prompt: 'Review the diff',
+      });
+      expect(result).toEqual({ text: 'looks right', isError: false });
+      expect(mockRunGptAgent).toHaveBeenCalledWith(
+        gpt('s'),
+        'sol',
+        'Review the diff',
+        expect.any(AbortSignal)
+      );
+    });
+
+    it('reports a failed run as a tool error', async () => {
+      mockRunGptAgent.mockResolvedValueOnce({ text: 'proxy down', isError: true });
+      const client = await connect('s', null, gpt('s'));
+      const result = await call(client, 'gpt_agent', {
+        model: 'luna',
+        description: 'x',
+        prompt: 'x',
+      });
+      expect(result).toEqual({ text: 'proxy down', isError: true });
+    });
+
+    it('aborts the run when the tool call is cancelled', async () => {
+      let signal: AbortSignal | undefined;
+      mockRunGptAgent.mockImplementationOnce(
+        (_ctx, _tier, _prompt, s) =>
+          new Promise((resolve) => {
+            signal = s;
+            s?.addEventListener('abort', () => resolve({ text: 'stopped', isError: true }));
+          })
+      );
+      const client = await connect('s', null, gpt('s'));
+      const controller = new AbortController();
+      const pending = client.callTool(
+        { name: 'gpt_agent', arguments: { model: 'astra', description: 'x', prompt: 'x' } },
+        undefined,
+        { signal: controller.signal }
+      );
+      await vi.waitFor(() => expect(signal).toBeDefined());
+      controller.abort();
+      await expect(pending).rejects.toThrow();
+      await vi.waitFor(() => expect(signal?.aborted).toBe(true));
+    });
+
+    it('returns at once in the background and delivers the result as a message', async () => {
+      let finish: (value: { text: string; isError: boolean }) => void = () => {};
+      mockRunGptAgent.mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)));
+      const client = await connect('s', null, gpt('s'));
+      const result = await call(client, 'gpt_agent', {
+        model: 'sol',
+        description: 'second review',
+        prompt: 'Review it',
+        run_in_background: true,
+      });
+      expect(result.text).toMatch(/in the background/);
+      expect(port.deliverMessage).not.toHaveBeenCalled();
+
+      finish({ text: 'two bugs', isError: false });
+      await vi.waitFor(() =>
+        expect(port.deliverMessage).toHaveBeenCalledWith(
+          's',
+          expect.stringMatching(
+            /^\[Background GPT agent "second review" \(sol\) finished[\s\S]*two bugs$/
+          )
+        )
+      );
+    });
+
+    it('drops the result of a background run cancelled by teardown', async () => {
+      mockRunGptAgent.mockResolvedValueOnce({
+        text: 'interrupted',
+        isError: true,
+        cancelled: true,
+      });
+      const client = await connect('s', null, gpt('s'));
+      await call(client, 'gpt_agent', {
+        model: 'sol',
+        description: 'x',
+        prompt: 'x',
+        run_in_background: true,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(port.deliverMessage).not.toHaveBeenCalled();
+    });
   });
 });
