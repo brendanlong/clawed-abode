@@ -8,7 +8,7 @@ import { nullableTextSchema, requireEncryptionForSecrets } from '../services/set
 import { GLOBAL_SCOPE, listScopeSettings } from '../services/settings-scope';
 import { loadGlobalSettings, patchGlobalSettings } from '../services/global-settings';
 import { scopedSettingsProcedures } from './scoped-settings';
-import { getModelSuggestions } from '../services/anthropic-models';
+import { getModelSuggestions } from '../services/model-suggestions';
 import { SUGGESTED_ADVISOR_MODEL } from '@/lib/advisor';
 import { settingSourceFlagsFromRow, settingSourceFlagsSchema } from '@/lib/setting-sources';
 import { mcpOAuthRedirectUri } from '@/lib/mcp-oauth-urls';

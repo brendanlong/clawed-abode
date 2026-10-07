@@ -193,6 +193,28 @@ TTS_MAX_CONCURRENCY=1   # one request at a time, so they don't compete for CPU c
 
 Logs: `journalctl --user -u kokoro.service`.
 
+### Other model providers (optional)
+
+Sessions can run non-Claude models, such as OpenAI's GPT-6, through a [LiteLLM](https://docs.litellm.ai/) proxy. Pick a model with a provider prefix (`openai/gpt-6-astra`) in the model picker. Claude models never go through the proxy (see [`doc/settings.md`](doc/settings.md#proxied-models)). [`scripts/litellm.container`](scripts/litellm.container) runs it as a podman Quadlet user service on `127.0.0.1:4000`, with [`scripts/litellm-config.yaml`](scripts/litellm-config.yaml) serving every OpenAI model. To add another provider, add a `<provider>/*` entry to the config.
+
+```bash
+mkdir -p ~/.config/litellm ~/.config/containers/systemd
+cp scripts/litellm-config.yaml ~/.config/litellm/config.yaml
+(umask 077; printf 'OPENAI_API_KEY=%s\nLITELLM_MASTER_KEY=sk-%s\n' "sk-your-openai-key" "$(openssl rand -hex 24)" > ~/.config/litellm/env)
+cp scripts/litellm.container ~/.config/containers/systemd/
+systemctl --user daemon-reload
+systemctl --user start litellm.service
+```
+
+Then add the following to `.env`, using the master key from `~/.config/litellm/env`, and restart `clawed-abode.service`:
+
+```bash
+LLM_PROXY_URL="http://127.0.0.1:4000"
+LLM_PROXY_KEY="sk-..."
+```
+
+Logs: `journalctl --user -u litellm.service`.
+
 ## Remote Access with Tailscale
 
 ### Tailscale Serve (within your Tailnet)
@@ -233,6 +255,7 @@ The schema in [`src/lib/env.ts`](src/lib/env.ts) is authoritative; it is validat
 | `TTS_API_KEY`                            | Bearer key for `TTS_BASE_URL`, if it needs one                                                                                                     | None                 |
 | `TTS_MODEL`                              | Model name sent to `TTS_BASE_URL` (`kokoro` for Kokoro-FastAPI)                                                                                    | `hexgrad/kokoro-82m` |
 | `TTS_MAX_CONCURRENCY`                    | Speech requests per message run at once; use `1` for a local CPU server                                                                            | `4`                  |
+| `LLM_PROXY_URL` / `LLM_PROXY_KEY`        | Anthropic-compatible proxy (LiteLLM) and its key, for provider-prefixed models like `openai/gpt-6-astra`                                           | None                 |
 | `SESSIONS_MEMORY_MAX`                    | Memory cap across all agent sessions (systemd syntax: `96G`, `85%`, `infinity`)                                                                    | `85%`                |
 | `SESSIONS_MEMORY_SWAP_MAX`               | Swap the sessions may use, in the same syntax                                                                                                      | `0`                  |
 | `SESSIONS_CPU_QUOTA`                     | CPU cap across all sessions, where `100%` is one core (e.g. `2200%` leaves 2 of 24 free)                                                           | None                 |

@@ -5,6 +5,8 @@ import type {
   PermissionResult,
 } from '@anthropic-ai/claude-agent-sdk';
 import { AGENT_NAME_ENV } from '@/lib/agent-name';
+import { env } from '@/lib/env';
+import { CLAUDE_CREDENTIAL_ENV_VARS, llmProxyEnv, usesLlmProxy } from '@/lib/llm-proxy';
 import { createLogger } from '@/lib/logger';
 import { mayChangeBranchOrPr } from '@/lib/pull-request';
 import type { SanitizationInfo } from '@/lib/sanitization';
@@ -126,6 +128,17 @@ export async function buildSdkOptions(params: {
   const agentEnv = await buildAgentEnv(settings.envVars, settings.claudeApiKey);
   const builtinTools = sessionBuiltinTools(settings.builtinTools, createdBySessionId);
   if (agentName) agentEnv[AGENT_NAME_ENV] = agentName;
+  const proxiedModel = usesLlmProxy(settings.claudeModel) ? settings.claudeModel : null;
+  if (proxiedModel) {
+    if (!env.LLM_PROXY_URL) {
+      throw new Error(`Model "${proxiedModel}" needs an LLM proxy, but LLM_PROXY_URL is unset`);
+    }
+    for (const name of CLAUDE_CREDENTIAL_ENV_VARS) delete agentEnv[name];
+    Object.assign(
+      agentEnv,
+      llmProxyEnv(proxiedModel, { url: env.LLM_PROXY_URL, key: env.LLM_PROXY_KEY })
+    );
+  }
   const mcpServersRecord = buildMcpServersRecord(settings.mcpServers);
 
   const options: Options = {
@@ -216,10 +229,10 @@ export async function buildSdkOptions(params: {
   }
 
   // The advisor model has no SDK option; it is an ad-hoc `--settings` source,
-  // omitted entirely when disabled. Wires up `advisor_20260301` on SDK 0.3.196+
-  // (verified by capturing the CLI's outgoing /v1/messages request; re-verify the
-  // same way after SDK bumps).
-  if (settings.advisorModel) {
+  // omitted entirely when disabled or proxied (the proxy can't serve it). Wires up
+  // `advisor_20260301` on SDK 0.3.196+ (verified by capturing the CLI's outgoing
+  // /v1/messages request; re-verify the same way after SDK bumps).
+  if (settings.advisorModel && !proxiedModel) {
     options.extraArgs = {
       ...options.extraArgs,
       settings: JSON.stringify({ advisorModel: settings.advisorModel }),

@@ -1,0 +1,20 @@
+# Podman Quadlet unit for the LiteLLM proxy; see "Other model providers" in README.md.
+[Unit]
+Description=LiteLLM proxy for non-Claude models
+
+[Container]
+ContainerName=litellm
+Image=ghcr.io/berriai/litellm:main-stable
+PublishPort=127.0.0.1:4000:4000
+Volume=%h/.config/litellm/config.yaml:/app/config.yaml:ro,Z
+# OPENAI_API_KEY and LITELLM_MASTER_KEY.
+EnvironmentFile=%h/.config/litellm/env
+Exec=--config /app/config.yaml --port 4000
+
+[Service]
+Restart=always
+# The first start may pull the image.
+TimeoutStartSec=900
+
+[Install]
+WantedBy=default.target

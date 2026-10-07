@@ -16,6 +16,14 @@ Env vars and MCP servers are **scope-generic**: one table each, `repoSettingsId`
 
 Global-only and **opt-in**: null means the advisor tool isn't wired into requests at all; setting a model enables it. `SUGGESTED_ADVISOR_MODEL` ([`src/lib/advisor.ts`](../src/lib/advisor.ts), dependency-free so server and client share it) is what an empty Enable→Save adopts — it is _not_ a resolution fallback; only the Disable button reaches the disabled state. There's no dedicated SDK option, so it's passed as an ad-hoc `--settings` source via `Options.extraArgs` (omitted entirely when disabled).
 
+## Proxied Models
+
+Non-Claude models (e.g. OpenAI's GPT-6) run through an Anthropic-compatible proxy, LiteLLM by default (`LLM_PROXY_URL`; setup in the README). A model is proxied exactly when its name has a provider prefix (`openai/gpt-6-astra`), which no Claude model name has; [`src/lib/llm-proxy.ts`](../src/lib/llm-proxy.ts). That rule, rather than "whatever the proxy lists", keeps Claude traffic off the proxy even when it's down or misconfigured: we never proxy Claude, so the subscription is never billed through a third party.
+
+A proxied session's CLI gets the proxy as its base URL and the proxy's key, with every Claude credential removed from its env. Claude Code resolves the `fable`/`opus`/`sonnet`/`haiku` aliases itself (subagents, session titles), and the proxy can't serve Claude, so each alias maps to a comparable model in the same family (`MODEL_FAMILIES`; GPT-6: fable→Astra, opus/sonnet→Sol, haiku→Luna), or to the session's model outside a known family. The model picker lists the proxy's `/v1/models` alongside Anthropic's.
+
+Claude-only features don't apply: the advisor model is omitted, and a proxied session's rate-limit events are ignored (they aren't about the subscription). The pause itself still holds a proxied session when the subscription window fills, since holds are resolved without the session's model; turn the pause off for sessions that only use proxied models. The CLI still prices usage with Claude rates and assumes a 200k context window, so cost and context indicators are off.
+
 ## Built-in Tools
 
 The app's own MCP server, `clawed-abode` ([`builtin-mcp.ts`](../src/server/services/builtin-mcp.ts); prompt text and pure rules in [`src/lib/builtin-tools.ts`](../src/lib/builtin-tools.ts)), runs in-process: it is the one entry in the SDK's `options.mcpServers`, which registers SDK instances over the control channel rather than on argv. A live `setMcpServers` replaces the whole set, so it must re-pass the bound instance (`buildLiveMcpServersRecord`) or the SDK disconnects it. Two global switches, both restart-bound:
@@ -54,4 +62,4 @@ Values marked secret are encrypted at rest (AES-256-GCM with `ENCRYPTION_KEY`, [
 
 ## Live vs Restart-Bound
 
-Settings bind when the query is established. **Model and MCP servers** re-apply live on the next send when changed (`query.setModel` / `query.setMcpServers`; `sessions.setModel` also refreshes an idle query immediately). **Env vars, system prompt, advisor model, setting sources, and built-in tools** have no live SDK setter and take effect only after Stop→Start. The **rate-limit pause** settings aren't SDK options at all — they're evaluated server-side per send, so they apply at once.
+Settings bind when the query is established. **Model and MCP servers** re-apply live on the next send when changed (`query.setModel` / `query.setMcpServers`; `sessions.setModel` also refreshes an idle query immediately). A model change to or from a [proxied model](#proxied-models) is the exception: the proxy env binds at spawn, so it restarts the query (resuming the conversation) once the session is idle — no turn or background task running, since the restart kills the process. **Env vars, system prompt, advisor model, setting sources, and built-in tools** have no live SDK setter and take effect only after Stop→Start. The **rate-limit pause** settings aren't SDK options at all — they're evaluated server-side per send, so they apply at once.

@@ -35,6 +35,7 @@ import {
   type LiveOutcome,
 } from '@/lib/live-turn';
 import { parseRateLimitEvent } from '@/lib/rate-limit';
+import { modelChangeNeedsRestart, usesLlmProxy } from '@/lib/llm-proxy';
 import { backgroundActive, type BackgroundTask } from '@/lib/session-status';
 import { createPushable } from '@/lib/pushable';
 import type { ToolResponse } from '@/lib/tool-response';
@@ -232,7 +233,10 @@ async function runSessionLoop(
       // Account-wide rate-limit state arrives on whichever session's stream happens
       // to be talking to the API; recording it re-evaluates the pause for ALL
       // sessions (see recomputeRateLimitHolds).
-      const readings = parseRateLimitEvent(message, Date.now());
+      // A proxied model's limits aren't the subscription's.
+      const readings = usesLlmProxy(live.boundSettings.claudeModel)
+        ? []
+        : parseRateLimitEvent(message, Date.now());
       if (readings.length > 0) void recordRateLimitReadings(readings);
 
       if (message.type === 'stream_event') {
@@ -396,6 +400,7 @@ async function establishSessionQuery(
     pendingInput: null,
     toolSanitizations,
     pushedUuids: new Set(),
+    loop: Promise.resolve(),
   };
   live = established;
   state.live = established;
@@ -413,7 +418,7 @@ async function establishSessionQuery(
       log.debug('Failed to fetch supportedCommands', { sessionId, error: toError(err).message });
     });
 
-  void runSessionLoop(sessionId, state, established);
+  established.loop = runSessionLoop(sessionId, state, established);
 
   return state;
 }
@@ -443,11 +448,37 @@ function ensureSessionQuery(sessionId: string): Promise<SessionState> {
 }
 
 /**
+ * Replace a session's query with a fresh CLI process that resumes the same
+ * conversation, keeping the session's in-memory state (commands etc.). Only for
+ * an idle session: the old process and everything it spawned is killed.
+ */
+async function restartSessionQuery(
+  sessionId: string,
+  state: SessionState,
+  live: LiveQuery
+): Promise<void> {
+  live.input.close();
+  try {
+    live.query.close();
+  } catch {
+    // ignore close errors
+  }
+  await live.loop;
+  // A Stop during the wait owns the session now.
+  if (sessions.get(sessionId) !== state) return;
+  await ensureSessionQuery(sessionId);
+}
+
+/**
  * Apply the settings the SDK supports changing live (model, MCP servers) to a
  * running query, so edits take effect on the next turn without a Stop→Start.
- * Everything else is bound at construction (doc/settings.md). Best-effort.
+ * Everything else is bound at construction (doc/settings.md), except a model
+ * change to or from a proxied model, which restarts an idle query and waits for
+ * the next idle apply otherwise. Best-effort.
  */
-async function applyLiveSettings(sessionId: string, live: LiveQuery): Promise<void> {
+async function applyLiveSettings(sessionId: string, state: SessionState): Promise<void> {
+  const live = state.live;
+  if (!live) return;
   let settings: MergedSessionSettings;
   try {
     // Re-read the per-session model override too, so sessions.setModel applies live.
@@ -465,6 +496,18 @@ async function applyLiveSettings(sessionId: string, live: LiveQuery): Promise<vo
   }
 
   const bound = live.boundSettings;
+  if (modelChangeNeedsRestart(bound.claudeModel, settings.claudeModel)) {
+    if (!isRunning(state.turn) && !backgroundActive(state.turn.status)) {
+      log.info('Restarting query for a proxied model change', {
+        sessionId,
+        from: bound.claudeModel,
+        to: settings.claudeModel,
+      });
+      await restartSessionQuery(sessionId, state, live);
+      return;
+    }
+    settings = { ...settings, claudeModel: bound.claudeModel };
+  }
   try {
     if (settings.claudeModel !== bound.claudeModel) {
       await live.query.setModel(settings.claudeModel);
@@ -535,7 +578,7 @@ export async function sendUserMessage(
   const state = hold ? null : await ensureSessionQuery(sessionId);
   if (state) {
     if (!state.live) throw new Error('Session query is not available');
-    await applyLiveSettings(sessionId, state.live);
+    await applyLiveSettings(sessionId, state);
   }
   if (userInitiated) await bumpSessionActivity(sessionId);
 
@@ -794,8 +837,8 @@ export function isClaudeRunning(sessionId: string): boolean {
  * one exists. A no-op without a live query — the next establish picks them up.
  */
 export async function refreshSessionSettings(sessionId: string): Promise<void> {
-  const live = sessions.get(sessionId)?.live;
-  if (live) await applyLiveSettings(sessionId, live);
+  const state = sessions.get(sessionId);
+  if (state) await applyLiveSettings(sessionId, state);
 }
 
 /**

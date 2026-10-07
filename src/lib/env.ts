@@ -88,6 +88,10 @@ const envSchema = z
       emptyToUndefined,
       z.coerce.number().int().min(1).max(16).default(4)
     ),
+    // Anthropic-compatible proxy (e.g. LiteLLM at http://localhost:4000) serving
+    // provider-prefixed models like openai/gpt-6-astra; see doc/settings.md.
+    LLM_PROXY_URL: z.preprocess(emptyToUndefined, z.string().url().optional()),
+    LLM_PROXY_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
     // Collective limits on all agent sessions (see "Process Reaping" in
     // doc/claude-sessions.md), in systemd syntax.
     SESSIONS_MEMORY_MAX: z.preprocess(emptyToUndefined, systemdMemory(1).default('85%')),
