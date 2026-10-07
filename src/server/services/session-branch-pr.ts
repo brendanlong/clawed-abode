@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/prisma';
 import { createLogger, toError } from '@/lib/logger';
+import { processSingleton } from '@/lib/process-singleton';
 import { extractRepoFullName } from '@/lib/utils';
 import {
   isPrSnapshotStale,
@@ -104,7 +105,10 @@ export async function detectBranchAndPr(sessionId: string, workingDir: string): 
  * several pushes in a row) into one refresh after the last of them.
  */
 const TOOL_REFRESH_DEBOUNCE_MS = 2000;
-const toolRefreshTimers = new Map<string, NodeJS.Timeout>();
+const toolRefreshTimers = processSingleton(
+  'session-branch-pr.toolRefreshTimers',
+  () => new Map<string, NodeJS.Timeout>()
+);
 
 /**
  * Refresh branch and PR soon after a tool call that may have changed them

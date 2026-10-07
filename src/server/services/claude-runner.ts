@@ -16,6 +16,7 @@ import {
 } from '@anthropic-ai/claude-agent-sdk';
 import { randomUUID as uuid } from 'node:crypto';
 import { prisma } from '@/lib/prisma';
+import { processSingleton } from '@/lib/process-singleton';
 import {
   classifyMessage,
   initSessionId,
@@ -101,9 +102,9 @@ function buildPermissionResult(
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** Active sessions tracked in memory. */
-const sessions = new Map<string, SessionState>();
+const sessions = processSingleton('claude-runner.sessions', () => new Map<string, SessionState>());
 /** Set by stopAllSessions so a revive racing shutdown doesn't start a new CLI. */
-let shuttingDown = false;
+const shutdown = processSingleton('claude-runner.shutdown', () => ({ started: false }));
 
 /**
  * Injectable query factory (the SDK `query` by default). Tests replace this to
@@ -848,7 +849,7 @@ export async function reviveSession(sessionId: string): Promise<void> {
       where: { id: sessionId },
       select: { status: true, repoPath: true },
     });
-    if (session?.status !== 'running' || currentHold(sessionId) || shuttingDown) return;
+    if (session?.status !== 'running' || currentHold(sessionId) || shutdown.started) return;
     const workingDir = getSessionWorkingDir(sessionId, session.repoPath);
     if (!(await pathExists(workingDir))) {
       log.warn('Not reviving session with no workspace', { sessionId, workingDir });
@@ -879,7 +880,7 @@ export async function reviveRunningSessions(): Promise<void> {
 
 /** Stop all active Claude queries (graceful shutdown). */
 export async function stopAllSessions(): Promise<void> {
-  shuttingDown = true;
+  shutdown.started = true;
   const sessionIds = [...sessions.keys()];
   if (sessionIds.length === 0) return;
 

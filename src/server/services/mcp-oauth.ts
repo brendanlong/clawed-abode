@@ -8,6 +8,7 @@ import {
 } from '@modelcontextprotocol/sdk/client/auth.js';
 import { InvalidGrantError, OAuthError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
 import { prisma } from '@/lib/prisma';
+import { processSingleton } from '@/lib/process-singleton';
 import { Prisma } from '@/generated/prisma/client';
 import { decrypt, encrypt } from '@/lib/crypto';
 import { createLogger, toError } from '@/lib/logger';
@@ -363,7 +364,10 @@ export interface McpOAuthTokenSnapshot {
  * once and a rotating refresh token is single-use, so a concurrent second
  * refresh would invalidate the first one's result.
  */
-const pendingRefreshes = new Map<string, Promise<string | null>>();
+const pendingRefreshes = processSingleton(
+  'mcp-oauth.pendingRefreshes',
+  () => new Map<string, Promise<string | null>>()
+);
 
 /**
  * The current access token for a stored grant, refreshing it when it is close to

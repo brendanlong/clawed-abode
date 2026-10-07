@@ -12,6 +12,7 @@ import {
 } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { prisma } from '@/lib/prisma';
+import { processSingleton } from '@/lib/process-singleton';
 import { createLogger, toError } from '@/lib/logger';
 import { keysetPage, keysetPageInputSchema } from '@/lib/keyset-page';
 import { repoFullNameSchema } from '@/lib/repo-full-name';
@@ -45,15 +46,17 @@ export interface SessionToolsPort {
   isTurnActive(sessionId: string): boolean;
 }
 
-let port: SessionToolsPort | null = null;
+const portRef = processSingleton<{ port: SessionToolsPort | null }>('builtin-mcp.port', () => ({
+  port: null,
+}));
 
 export function initBuiltinMcp(sessionTools: SessionToolsPort): void {
-  port = sessionTools;
+  portRef.port = sessionTools;
 }
 
 function requirePort(): SessionToolsPort {
-  if (!port) throw new Error('Built-in session tools are not initialized');
-  return port;
+  if (!portRef.port) throw new Error('Built-in session tools are not initialized');
+  return portRef.port;
 }
 
 const TRANSCRIPT_PAGE_ROWS = 100;

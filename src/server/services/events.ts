@@ -4,6 +4,7 @@ import type { SlashCommand } from '@anthropic-ai/claude-agent-sdk';
 import type { RetryState } from '@/lib/claude-messages';
 import type { RateLimitHold } from '@/lib/rate-limit';
 import { toSessionView, type SessionView } from '@/lib/session-view';
+import { processSingleton } from '@/lib/process-singleton';
 import { taskHasEndState, type BackgroundTask } from '@/lib/session-status';
 import type { ParsedMessage } from './message-store';
 
@@ -67,13 +68,15 @@ export type SessionListEvent =
 // Global channel name for cross-session list updates (not session-scoped).
 const SESSION_LIST_EVENT = 'session-list';
 
-class SSEEventEmitter extends EventEmitter {
+class SSEEventEmitter {
+  constructor(private readonly bus: EventEmitter) {}
+
   private emitSession(sessionId: string, event: SessionStreamEvent): void {
-    this.emit(`session:${sessionId}`, event);
+    this.bus.emit(`session:${sessionId}`, event);
   }
 
   private emitList(event: SessionListEvent): void {
-    this.emit(SESSION_LIST_EVENT, event);
+    this.bus.emit(SESSION_LIST_EVENT, event);
   }
 
   emitSessionUpdate(sessionId: string, row: Session): void {
@@ -129,18 +132,21 @@ class SSEEventEmitter extends EventEmitter {
 
   onSessionEvents(sessionId: string, callback: (event: SessionStreamEvent) => void): () => void {
     const channel = `session:${sessionId}`;
-    this.on(channel, callback);
-    return () => this.off(channel, callback);
+    this.bus.on(channel, callback);
+    return () => this.bus.off(channel, callback);
   }
 
   onSessionListChanged(callback: (event: SessionListEvent) => void): () => void {
-    this.on(SESSION_LIST_EVENT, callback);
-    return () => this.off(SESSION_LIST_EVENT, callback);
+    this.bus.on(SESSION_LIST_EVENT, callback);
+    return () => this.bus.off(SESSION_LIST_EVENT, callback);
   }
 }
 
-// Singleton instance for the application
-export const sseEvents = new SSEEventEmitter();
-
-// Increase max listeners to handle many concurrent sessions
-sseEvents.setMaxListeners(1000);
+export const sseEvents = new SSEEventEmitter(
+  processSingleton('sse-events', () => {
+    const bus = new EventEmitter();
+    // Every open session view and session list subscribes.
+    bus.setMaxListeners(1000);
+    return bus;
+  })
+);

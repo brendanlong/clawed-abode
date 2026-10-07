@@ -58,13 +58,6 @@ export async function setupTestDb(): Promise<void> {
   process.env.ENCRYPTION_KEY = 'test-encryption-key-for-integration-tests';
   resetEnvCache();
 
-  // Clear any cached Prisma client from globalThis so it recreates with new URL
-  const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
-  if (globalForPrisma.prisma) {
-    await globalForPrisma.prisma.$disconnect();
-    globalForPrisma.prisma = undefined;
-  }
-
   copyFileSync(inject('testDbTemplate'), dbPath);
 
   // Now import the real prisma module - it will create a client with our test DATABASE_URL
@@ -82,10 +75,6 @@ export async function teardownTestDb(): Promise<void> {
   if (testPrisma) {
     await testPrisma.$disconnect();
   }
-
-  // Clear the global cache
-  const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
-  globalForPrisma.prisma = undefined;
 
   if (tempDir) {
     rmSync(tempDir, { recursive: true, force: true });

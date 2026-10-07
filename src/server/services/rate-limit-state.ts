@@ -10,6 +10,7 @@
  */
 
 import { prisma } from '@/lib/prisma';
+import { processSingleton } from '@/lib/process-singleton';
 import { createLogger, toError } from '@/lib/logger';
 import {
   activeReadings,
@@ -28,9 +29,11 @@ import { loadGlobalSettings } from './global-settings';
 const log = createLogger('rate-limit-state');
 
 /** Latest reading per window, account-wide. Rehydrated from the DB at startup. */
-let readings: RateLimitReading[] = [];
-let expiryTimer: NodeJS.Timeout | null = null;
-let onChange: (() => void) | null = null;
+const state = processSingleton<{
+  readings: RateLimitReading[];
+  expiryTimer: NodeJS.Timeout | null;
+  onChange: (() => void) | null;
+}>('rate-limit-state', () => ({ readings: [], expiryTimer: null, onChange: null }));
 
 /**
  * Register the reaction to a change in holds (a new reading, or a window
@@ -38,12 +41,12 @@ let onChange: (() => void) | null = null;
  * first so a hot reload can't stack listeners.
  */
 export function setRateLimitChangeHandler(handler: (() => void) | null): void {
-  onChange = handler;
+  state.onChange = handler;
 }
 
 /** Currently-meaningful readings (windows that haven't rolled over yet). */
 export function getRateLimitReadings(): RateLimitReading[] {
-  return activeReadings(readings, Date.now());
+  return activeReadings(state.readings, Date.now());
 }
 
 /**
@@ -52,28 +55,28 @@ export function getRateLimitReadings(): RateLimitReading[] {
  * there is at most one pending wake.
  */
 function scheduleExpiryWake(): void {
-  if (expiryTimer) {
-    clearTimeout(expiryTimer);
-    expiryTimer = null;
+  if (state.expiryTimer) {
+    clearTimeout(state.expiryTimer);
+    state.expiryTimer = null;
   }
   const now = Date.now();
-  const next = nextReadingExpiry(readings, now);
+  const next = nextReadingExpiry(state.readings, now);
   if (next === null) return;
 
   // A reset can be a week out; setTimeout tops out around 24.8 days, so a weekly
   // window still fits comfortably. +1s so the reading is unambiguously expired
   // when the handler reads the clock.
-  expiryTimer = setTimeout(
+  state.expiryTimer = setTimeout(
     () => {
-      expiryTimer = null;
-      readings = activeReadings(readings, Date.now());
+      state.expiryTimer = null;
+      state.readings = activeReadings(state.readings, Date.now());
       void sweepExpiredWindows();
       scheduleExpiryWake();
-      onChange?.();
+      state.onChange?.();
     },
     next - now + 1000
   );
-  expiryTimer.unref?.();
+  state.expiryTimer.unref?.();
 }
 
 async function sweepExpiredWindows(): Promise<void> {
@@ -94,13 +97,13 @@ export async function recordRateLimitReadings(incoming: RateLimitReading[]): Pro
   if (incoming.length === 0) return;
   const now = Date.now();
 
-  const before = readings;
+  const before = state.readings;
   for (const reading of incoming) {
-    readings = mergeReading(readings, reading, now);
+    state.readings = mergeReading(state.readings, reading, now);
   }
-  if (!readingsChanged(before, readings)) return;
+  if (!readingsChanged(before, state.readings)) return;
 
-  for (const reading of readings) {
+  for (const reading of state.readings) {
     log.info('Observed subscription rate limit', {
       limitType: reading.limitType,
       rejected: reading.rejected,
@@ -111,9 +114,9 @@ export async function recordRateLimitReadings(incoming: RateLimitReading[]): Pro
 
   // Persist the merged state of the windows the incoming readings touched.
   const touched = new Set(incoming.map((r) => r.limitType));
-  await persistReadings(readings.filter((r) => touched.has(r.limitType)));
+  await persistReadings(state.readings.filter((r) => touched.has(r.limitType)));
   scheduleExpiryWake();
-  onChange?.();
+  state.onChange?.();
 }
 
 function readingsChanged(before: RateLimitReading[], after: RateLimitReading[]): boolean {
@@ -156,7 +159,7 @@ export async function loadRateLimitReadings(): Promise<void> {
   const now = new Date();
   try {
     const rows = await prisma.rateLimitWindow.findMany({ where: { resetsAt: { gt: now } } });
-    readings = rows
+    state.readings = rows
       .flatMap((row): RateLimitReading[] => {
         // Only holdable readings are persisted; anything else predates a change to
         // that list, and dropping it only costs the pause across this restart.
@@ -180,11 +183,11 @@ export async function loadRateLimitReadings(): Promise<void> {
       .sort((a, b) => a.limitType.localeCompare(b.limitType));
   } catch (err) {
     log.error('Failed to load rate-limit windows', toError(err));
-    readings = [];
+    state.readings = [];
   }
-  if (readings.length > 0) {
+  if (state.readings.length > 0) {
     log.info('Restored subscription rate-limit state', {
-      windows: readings.map((r) => r.limitType),
+      windows: state.readings.map((r) => r.limitType),
     });
   }
   await sweepExpiredWindows();
@@ -217,7 +220,7 @@ function holdForRow(row: SessionPolicyRow, global: PausePolicy, nowMs: number) {
     { enabled: row.rateLimitPauseEnabled, threshold: row.rateLimitPauseThreshold },
     global
   );
-  return decideHold(readings, policy, nowMs);
+  return decideHold(state.readings, policy, nowMs);
 }
 
 /**
@@ -227,7 +230,7 @@ function holdForRow(row: SessionPolicyRow, global: PausePolicy, nowMs: number) {
  */
 export async function resolveSessionHold(sessionId: string): Promise<RateLimitHold | null> {
   const now = Date.now();
-  if (activeReadings(readings, now).length === 0) return null;
+  if (activeReadings(state.readings, now).length === 0) return null;
 
   const [row, global] = await Promise.all([
     prisma.session.findUnique({ where: { id: sessionId }, select: SESSION_POLICY_SELECT }),
@@ -262,8 +265,8 @@ export async function resolveAllSessionHolds(): Promise<Map<string, RateLimitHol
 
 /** Test seam: drop all in-memory state and cancel the pending reset wake. */
 export function _resetRateLimitState(): void {
-  readings = [];
-  if (expiryTimer) clearTimeout(expiryTimer);
-  expiryTimer = null;
-  onChange = null;
+  state.readings = [];
+  if (state.expiryTimer) clearTimeout(state.expiryTimer);
+  state.expiryTimer = null;
+  state.onChange = null;
 }
