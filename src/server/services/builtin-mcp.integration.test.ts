@@ -46,15 +46,16 @@ describe('built-in MCP server', () => {
     vi.clearAllMocks();
   });
 
-  it('offers rename and list at the basic level, and the management tools only at the manage level', async () => {
+  it('offers rename, notify, and list at the basic level, and the management tools only at the manage level', async () => {
     const self = await createTestSession();
     const names = async (level: BuiltinToolsLevel) =>
       (await (await connect(self.id, level)).listTools()).tools.map((t) => t.name).sort();
 
-    expect(await names('basic')).toEqual(['list_sessions', 'rename_session']);
+    expect(await names('basic')).toEqual(['list_sessions', 'notify_user', 'rename_session']);
     expect(await names('manage')).toEqual([
       'create_session',
       'list_sessions',
+      'notify_user',
       'read_session',
       'rename_session',
       'stop_session',
@@ -69,6 +70,18 @@ describe('built-in MCP server', () => {
       isError: false,
     });
     expect(port.renameSession).toHaveBeenCalledWith(self.id, 'Fix login');
+  });
+
+  it('flags the calling session for the user', async () => {
+    const self = await createTestSession();
+    const client = await connect(self.id, 'basic');
+
+    expect(await call(client, 'notify_user', { summary: ' PR #3 ready ' })).toMatchObject({
+      isError: false,
+    });
+    const row = await testPrisma.session.findUniqueOrThrow({ where: { id: self.id } });
+    expect(row.attentionSummary).toBe('PR #3 ready');
+    expect(row.attentionAt).toBeInstanceOf(Date);
   });
 
   it('creates a session marked as agent-created, with a labeled initial prompt', async () => {

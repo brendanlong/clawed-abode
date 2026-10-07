@@ -80,17 +80,15 @@ const BACKGROUND_BASH_TASK_TYPE = 'local_bash';
  * status axis — i.e. whether it has a knowable end state.
  *
  * EXCLUDED, because counting them would pin the session in the "background" state
- * and suppress the "Claude finished" notification until teardown:
+ * until teardown:
  * - `ambient` tasks — the SDK's own "not activity" flag;
  * - `local_bash` tasks — backgrounded Bash and Monitor watches, which may be
  *   permanent daemons / session-length watches. The SDK does NOT mark a
  *   `persistent: true` Monitor ambient, so this check is what excludes it.
  *
- * This gates ONLY the background-vs-waiting badge and the finished notification;
- * excluded tasks still appear in the stoppable task list (`getLiveState`). Accepted imperfection: a
- * FINITE backgrounded Bash is also excluded, so a turn ending while one runs
- * notifies early — self-correcting, since its settle makes the main agent continue
- * and that turn's end notifies again.
+ * This gates ONLY the background-vs-waiting badge; excluded tasks still appear in
+ * the stoppable task list (`getLiveState`). Accepted imperfection: a FINITE
+ * backgrounded Bash is also excluded, so the session reads "waiting" while one runs.
  */
 export function taskHasEndState(task: BackgroundTask): boolean {
   return !task.ambient && task.taskType !== BACKGROUND_BASH_TASK_TYPE;

@@ -7,7 +7,7 @@ import { AuthProvider } from '@/lib/auth-context';
 import { WorkingProvider } from '@/lib/working-context';
 import { ThemeProvider } from '@/lib/theme-context';
 import { SessionListStreamProvider } from '@/lib/session-list-stream-context';
-import { WorkCompleteNotifier } from '@/components/WorkCompleteNotifier';
+import { AttentionNotifier } from '@/components/AttentionNotifier';
 import { PublicLinkLogin } from '@/components/PublicLinkLogin';
 
 export function Providers({ children }: { children: React.ReactNode }) {
@@ -22,7 +22,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
           <AuthProvider>
             <SessionListStreamProvider>
               <WorkingProvider>
-                <WorkCompleteNotifier />
+                <AttentionNotifier />
                 <PublicLinkLogin />
                 {children}
               </WorkingProvider>

@@ -23,6 +23,7 @@ import { sessionStatusSchema } from '@/lib/session-display-status';
 import { thresholdSchema } from '@/lib/rate-limit';
 import { repoFullNameSchema } from '@/lib/repo-full-name';
 import { refreshStalePullRequests } from '../services/session-branch-pr';
+import { clearAttention } from '../services/session-attention';
 
 const sessionListSelect = {
   id: true,
@@ -35,6 +36,8 @@ const sessionListSelect = {
   pullRequest: true,
   prCheckedAt: true, // server-only; toSessionView drops it before the client sees it
   lastActivityAt: true,
+  attentionAt: true,
+  attentionSummary: true,
   createdAt: true,
 } satisfies Prisma.SessionSelect;
 
@@ -154,6 +157,13 @@ export const sessionsRouter = router({
       await recomputeRateLimitHolds();
       return { session: toSessionView(session) };
     }),
+
+  // The session page calls this while it is on screen, so an agent's request for
+  // the user is cleared once seen rather than only once answered.
+  markSeen: sessionProcedure.mutation(async ({ input }) => {
+    await clearAttention(input.sessionId);
+    return { success: true };
+  }),
 
   setModel: sessionProcedure
     .input(z.object({ claudeModel: z.string().max(200).nullable() }))

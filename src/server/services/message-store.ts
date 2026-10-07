@@ -6,6 +6,7 @@ import { buildSyntheticToolResultContent } from '@/lib/tool-response';
 import { buildPromptWithAttachments } from '@/lib/attachments';
 import type { SanitizationInfo } from '@/lib/sanitization';
 import { sseEvents } from './events';
+import { clearAttention } from './session-attention';
 import { sanitizeUntrustedInput } from './input-sanitizer';
 import { resolveUploadPaths } from './uploads';
 import { messageUsageStatement } from './session-usage';
@@ -138,10 +139,11 @@ export async function insertMessage(params: {
 }
 
 /**
- * Bump the session's activity timestamp (drives session-list ordering). Called
- * only for genuine user interactions — a prompt or an interactive-tool answer —
- * never for assistant/background traffic, so the list doesn't shuffle while the
- * user reads it. Best-effort.
+ * Bump the session's activity timestamp (drives session-list ordering) and clear
+ * its "needs you" flag, since the user is plainly looking at it. Called only for
+ * genuine user interactions — a prompt or an interactive-tool answer — never for
+ * assistant/background traffic, so the list doesn't shuffle while the user reads
+ * it. Best-effort.
  */
 export async function bumpSessionActivity(sessionId: string): Promise<void> {
   try {
@@ -155,6 +157,7 @@ export async function bumpSessionActivity(sessionId: string): Promise<void> {
       error: toError(err).message,
     });
   }
+  await clearAttention(sessionId);
 }
 
 /** Persist a system error message for display to the user. */

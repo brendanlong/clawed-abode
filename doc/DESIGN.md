@@ -80,7 +80,7 @@ Opt-in (`PUBLIC_FILES_PORT` + `PUBLIC_FILES_URL`): a second HTTP server in the s
 
 ### Built-in Tools
 
-Agents get an in-process MCP server for renaming their own session and finding other sessions' messaging addresses, and optionally (off by default) for managing other sessions — see [`settings.md`](settings.md#built-in-tools).
+Agents get an in-process MCP server for renaming their own session, notifying the user (the app's only notification — see [`claude-sessions.md`](claude-sessions.md#needs-you)), and finding other sessions' messaging addresses, and optionally (off by default) for managing other sessions — see [`settings.md`](settings.md#built-in-tools).
 
 ## Voice
 

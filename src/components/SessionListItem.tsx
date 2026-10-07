@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { BellRing } from 'lucide-react';
 import { trpc } from '@/lib/trpc';
 import { extractRepoFullName } from '@/lib/utils';
 import { deriveSessionDisplayStatus } from '@/lib/session-display-status';
@@ -45,6 +46,12 @@ export function SessionListItem({ session }: SessionListItemProps) {
                 'No repository'
               )}
             </p>
+            {session.attentionSummary && (
+              <p className="mt-1 flex items-center gap-1.5 text-sm font-medium text-primary">
+                <BellRing className="h-3.5 w-3.5 shrink-0" aria-label="Needs you" />
+                <span className="truncate">{session.attentionSummary}</span>
+              </p>
+            )}
           </Link>
         </div>
 

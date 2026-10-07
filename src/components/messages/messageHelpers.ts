@@ -646,35 +646,6 @@ export function getLatestTodoWriteId(messages: DisplayMessage[]): string | null 
   return null;
 }
 
-export interface AskUserQuestionInfo {
-  id: string;
-  header: string;
-  question: string;
-}
-
-/**
- * `AskUserQuestion` calls that have no result yet, i.e. are still waiting on the
- * user, in transcript order. Drives the browser notification.
- */
-export function getPendingAskUserQuestions(
-  messages: DisplayMessage[],
-  resultMap: ToolResultMap
-): AskUserQuestionInfo[] {
-  const pending: AskUserQuestionInfo[] = [];
-  for (const { block } of toolUseBlocks(messages)) {
-    if (block.name !== 'AskUserQuestion' || resultMap.has(block.id)) continue;
-    const input = block.input as
-      { questions?: Array<{ header?: string; question?: string }> } | undefined;
-    const firstQuestion = input?.questions?.[0];
-    pending.push({
-      id: block.id,
-      header: firstQuestion?.header || 'Question',
-      question: firstQuestion?.question || 'Claude needs your input',
-    });
-  }
-  return pending;
-}
-
 /**
  * Reconstruct the plan content shown by each `ExitPlanMode` call (keyed by its
  * tool_use id) from the plan-file `Write`/`Edit` calls that preceded it. See

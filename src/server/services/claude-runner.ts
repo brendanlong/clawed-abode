@@ -41,6 +41,7 @@ import type { ToolResponse } from '@/lib/tool-response';
 import type { CancelledPrompt } from '@/lib/cancelled-prompt';
 import { extractRepoFullName } from '@/lib/utils';
 import { isDefaultSessionName } from '@/lib/session-name';
+import { interactiveToolAttentionSummary } from '@/lib/session-attention';
 import { createLogger, toError } from '@/lib/logger';
 import { attachToolResultSanitizations } from '@/lib/message-sanitization';
 import { partialMessageId } from '@/lib/message-cache';
@@ -72,6 +73,7 @@ import {
   replaceSessionCommands,
 } from './session-commands';
 import { resolveAgentName } from './agent-name';
+import { requestAttention } from './session-attention';
 import { buildLiveMcpServersRecord, buildSdkOptions } from './sdk-options';
 import { cancelBranchPrRefresh, detectBranchAndPr } from './session-branch-pr';
 
@@ -161,7 +163,7 @@ async function trackClaudeSessionId(
 
 /**
  * The only way live turn state changes: fold the event, then emit exactly the SSE
- * channels whose client-visible projection moved (plus "Claude finished"). Since
+ * channels whose client-visible projection moved. Since
  * nothing else touches `state.turn`, the previous view is what clients last saw.
  */
 function dispatch(sessionId: string, state: SessionState, event: LiveEvent): LiveOutcome {
@@ -174,7 +176,6 @@ function dispatch(sessionId: string, state: SessionState, event: LiveEvent): Liv
     sseEvents.emitPendingMessages(sessionId, changes.pendingMessageIds);
   }
   if (changes.running !== undefined) sseEvents.emitClaudeRunning(sessionId, changes.running);
-  if (outcome.finished) sseEvents.emitClaudeFinished(sessionId);
   if (changes.backgroundTasks) sseEvents.emitBackgroundTasks(sessionId, changes.backgroundTasks);
   if (changes.retry !== undefined) sseEvents.emitClaudeRetry(sessionId, changes.retry);
   return outcome;
@@ -357,6 +358,12 @@ async function establishSessionQuery(
         }
         live.pendingInput?.reject(new Error('Superseded by another tool request'));
         live.pendingInput = { ...request, resolve, reject };
+        const summary = interactiveToolAttentionSummary(request.toolName, request.input);
+        if (summary) {
+          requestAttention(sessionId, summary).catch((err) =>
+            log.error('Failed to flag session for attention', toError(err), { sessionId })
+          );
+        }
       }),
     recordSanitization: (toolUseId, info) => toolSanitizations.set(toolUseId, info),
   });
@@ -699,8 +706,7 @@ export async function interruptClaude(sessionId: string): Promise<InterruptResul
  * and leave one already being interrupted alone — whoever asked owns its resume
  * flag, and a user's Stop must not have it set back. Stop instead interrupts
  * whatever is still running, and claims the coming turn-end as an interrupt before
- * the recall, so a turn that ends naturally meanwhile can't fire "Claude finished"
- * for work the user just cancelled.
+ * the recall, so a pause racing it sees the turn as already being interrupted.
  *
  * `interrupted` is true only when a turn the stream had opened was aborted, so the
  * caller never stamps "Interrupted" on a turn that had already finished.
@@ -747,8 +753,8 @@ async function abortTurn<T>(
     await beforeInterrupt?.();
     await live.query.interrupt();
   } catch (err) {
-    // No interrupt-driven turn-end is coming; clear the flag so it can't suppress
-    // a later, natural turn-end's notification.
+    // No interrupt-driven turn-end is coming; clear the flag so a later pause
+    // doesn't take the next turn for one already being interrupted.
     dispatch(sessionId, state, { type: 'interrupt_failed' });
     log.warn('Failed to interrupt turn', { sessionId, error: toError(err).message });
     return { disposed, interrupted: false };

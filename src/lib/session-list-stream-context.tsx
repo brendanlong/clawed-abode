@@ -16,7 +16,7 @@ const SessionListStreamContext = createContext<Subscribe | undefined>(undefined)
 /**
  * Owns the app's single subscription to the global session-list SSE stream.
  * `httpSubscriptionLink` opens one EventSource per subscription, so every
- * consumer (the home page list, the work-complete notifier) registers a handler
+ * consumer (the home page list, the attention notifier) registers a handler
  * here instead of subscribing itself. Inert until authenticated.
  */
 export function SessionListStreamProvider({ children }: { children: ReactNode }) {

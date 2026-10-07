@@ -3,16 +3,16 @@
 import { useEffect } from 'react';
 import { useAuth } from '@/lib/auth-context';
 import { useNotification } from '@/hooks/useNotification';
-import { useWorkCompleteNotifications } from '@/hooks/useWorkCompleteNotifications';
+import { useAttentionNotifications } from '@/hooks/useAttentionNotifications';
 
 /**
- * Mounts the app-level work-complete notifier (issue #420) and requests
+ * Mounts the app-level attention notifier and requests
  * notification permission once the user is authenticated (not on the login page).
  * Renders nothing. Mounted once, app-wide, so notifications fire for every
  * session — not just the one currently open.
  */
-export function WorkCompleteNotifier() {
-  useWorkCompleteNotifications();
+export function AttentionNotifier() {
+  useAttentionNotifications();
 
   const { isAuthenticated } = useAuth();
   const { requestPermission, permission } = useNotification();

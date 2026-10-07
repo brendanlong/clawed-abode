@@ -45,6 +45,11 @@ describe('builtinToolsPrompt', () => {
     expect(builtinToolsPrompt('basic', true)).toMatch(/list_sessions.*agentName.*SendMessage/);
   });
 
+  it('tells the agent to notify the user at every level', () => {
+    expect(builtinToolsPrompt('basic', true)).toContain('notify_user');
+    expect(builtinToolsPrompt('manage', false)).toContain('notify_user');
+  });
+
   it('describes the management tools only at the manage level', () => {
     expect(builtinToolsPrompt('basic', true)).not.toContain('create_session');
     expect(builtinToolsPrompt('manage', true)).toContain('create_session');

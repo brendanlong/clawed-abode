@@ -20,12 +20,11 @@ import {
   toolResultText,
   collectSubagentLifecycles,
   getLatestTodoWriteId,
-  getPendingAskUserQuestions,
   getPlanContentByToolUseId,
   buildTranscriptLayout,
   type SubagentLifecycle,
 } from './messageHelpers';
-import type { ContentBlock, DisplayMessage, ToolResultMap } from './types';
+import type { ContentBlock, DisplayMessage } from './types';
 
 describe('extractTextContent', () => {
   it('extracts text from assistant message content array', () => {
@@ -1083,32 +1082,6 @@ describe('getLatestTodoWriteId', () => {
       getLatestTodoWriteId([assistant(1, [{ type: 'tool_use', name: 'TodoWrite' }])])
     ).toBeNull();
     expect(getLatestTodoWriteId([])).toBeNull();
-  });
-});
-
-describe('getPendingAskUserQuestions', () => {
-  const ask = (id: string, questions?: unknown) => toolUse(id, 'AskUserQuestion', { questions });
-
-  it('returns questions without a result, in order, with the first question summarized', () => {
-    const resultMap: ToolResultMap = new Map([['q-answered', { content: 'yes' }]]);
-    expect(
-      getPendingAskUserQuestions(
-        [
-          assistant(1, [ask('q-answered', [{ header: 'Old', question: 'Done?' }])]),
-          assistant(2, [
-            ask('q-1', [
-              { header: 'Approach', question: 'Which one?' },
-              { header: 'Ignored', question: 'Second' },
-            ]),
-          ]),
-          assistant(3, [ask('q-2'), toolUse('read', 'Read')]),
-        ],
-        resultMap
-      )
-    ).toEqual([
-      { id: 'q-1', header: 'Approach', question: 'Which one?' },
-      { id: 'q-2', header: 'Question', question: 'Claude needs your input' },
-    ]);
   });
 });
 
