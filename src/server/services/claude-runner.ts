@@ -74,7 +74,7 @@ import {
   replaceSessionCommands,
 } from './session-commands';
 import { resolveAgentName } from './agent-name';
-import { hasActiveGptRuns } from './gpt-agent';
+import { abortGptRuns, hasActiveGptRuns } from './gpt-agent';
 import { requestAttention } from './session-attention';
 import { buildLiveMcpServersRecord, buildSdkOptions } from './sdk-options';
 import { cancelBranchPrRefresh, detectBranchAndPr } from './session-branch-pr';
@@ -192,6 +192,7 @@ function releaseQuery(sessionId: string, state: SessionState, reason: string): P
   const live = state.live;
   if (!live) return Promise.resolve();
   state.live = null;
+  abortGptRuns(sessionId);
   live.pendingInput?.reject(new Error(reason));
   live.pendingInput = null;
   if (!live.sessionScope) return Promise.resolve();
@@ -642,6 +643,19 @@ export async function sendUserMessage(
   }
 
   pushPreparedPrompt(sessionId, state, pushable);
+}
+
+/**
+ * Send an app-originated message (e.g. a background GPT agent's result) to a
+ * session whose query is live. Dropped otherwise, so it can never revive a
+ * stopped, archived or crashed session, or one mid-shutdown.
+ */
+export async function deliverAppMessage(sessionId: string, text: string): Promise<void> {
+  if (shutdown.started || !sessions.get(sessionId)?.live) {
+    log.info('Dropped an app message for a session without a live query', { sessionId });
+    return;
+  }
+  await sendUserMessage(sessionId, text, [], { userInitiated: false });
 }
 
 /** The runner as the rate-limit pause sees it; handed over at startup. */

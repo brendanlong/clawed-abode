@@ -44,11 +44,22 @@ export function _setGptQueryFactory(factory: QueryFactory | null): void {
   queryFactory = factory ?? sdkQuery;
 }
 
-/** Runs in flight per session, so a restart doesn't kill a background one. */
-const activeRuns = processSingleton('gpt-agent.activeRuns', () => new Map<string, number>());
+/**
+ * Runs in flight per session: a restart waits for them, and teardown aborts them
+ * (the child scope would kill them, but a session can run unscoped).
+ */
+const activeRuns = processSingleton(
+  'gpt-agent.activeRuns',
+  () => new Map<string, Set<AbortController>>()
+);
 
 export function hasActiveGptRuns(sessionId: string): boolean {
-  return (activeRuns.get(sessionId) ?? 0) > 0;
+  return (activeRuns.get(sessionId)?.size ?? 0) > 0;
+}
+
+/** Abort a session's runs, e.g. because its query is going away. */
+export function abortGptRuns(sessionId: string): void {
+  for (const controller of activeRuns.get(sessionId) ?? []) controller.abort();
 }
 
 /**
@@ -79,7 +90,8 @@ export async function runGptAgent(
     runEnv[SESSIONS_SLICE_ENV] = SESSIONS_SLICE;
   }
 
-  activeRuns.set(ctx.sessionId, (activeRuns.get(ctx.sessionId) ?? 0) + 1);
+  const runs = activeRuns.get(ctx.sessionId) ?? new Set();
+  activeRuns.set(ctx.sessionId, runs.add(abortController));
   log.info('Starting GPT agent', { sessionId: ctx.sessionId, model });
   try {
     const run = queryFactory({
@@ -106,14 +118,15 @@ export async function runGptAgent(
     }
     return { text: 'GPT agent ended without a result', isError: true };
   } catch (err) {
-    if (abortController.signal.aborted) return { text: 'GPT agent was interrupted', isError: true };
+    if (abortController.signal.aborted) {
+      return { text: 'GPT agent was interrupted', isError: true, cancelled: true };
+    }
     log.warn('GPT agent failed', { sessionId: ctx.sessionId, error: toError(err).message });
     return { text: `GPT agent failed: ${toError(err).message}`, isError: true };
   } finally {
     signal?.removeEventListener('abort', abort);
-    const left = (activeRuns.get(ctx.sessionId) ?? 1) - 1;
-    if (left > 0) activeRuns.set(ctx.sessionId, left);
-    else activeRuns.delete(ctx.sessionId);
+    runs.delete(abortController);
+    if (runs.size === 0 && activeRuns.get(ctx.sessionId) === runs) activeRuns.delete(ctx.sessionId);
     // Anything the run backgrounded dies with it.
     if (scope) void stopScope(scope.unit);
   }

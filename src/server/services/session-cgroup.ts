@@ -99,14 +99,10 @@ async function ensureSessionLauncher(): Promise<string | null> {
  * same script while others may be running it: a reader sees the old or the new
  * file, never a truncated one.
  */
-export async function writeGeneratedScript(
-  name: string,
-  content: string,
-  dir: string = LAUNCHER_DIR
-): Promise<string> {
-  await mkdir(dir, { recursive: true, mode: 0o700 });
-  const path = join(dir, name);
-  const temp = join(dir, `.${name}.${randomBytes(6).toString('hex')}`);
+async function writeGeneratedScript(name: string, content: string): Promise<string> {
+  await mkdir(LAUNCHER_DIR, { recursive: true, mode: 0o700 });
+  const path = join(LAUNCHER_DIR, name);
+  const temp = join(LAUNCHER_DIR, `.${name}.${randomBytes(6).toString('hex')}`);
   await writeFile(temp, content, { mode: 0o755 });
   await chmod(temp, 0o755);
   await rename(temp, path);

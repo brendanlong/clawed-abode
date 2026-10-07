@@ -39,6 +39,8 @@ export function gptAgentEnv(
 export interface GptAgentOutcome {
   text: string;
   isError: boolean;
+  /** Stopped by an interrupt or its session's teardown, so nobody wants the result. */
+  cancelled?: boolean;
 }
 
 /** The outcome a run's `result` message reports, or null for any other message. */

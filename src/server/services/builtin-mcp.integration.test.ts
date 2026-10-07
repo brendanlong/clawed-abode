@@ -14,7 +14,10 @@ const mockRunGptAgent = vi.hoisted(() =>
       _tier: string,
       _prompt: string,
       _signal?: AbortSignal
-    ): Promise<{ text: string; isError: boolean }> => ({ text: 'looks right', isError: false })
+    ): Promise<{ text: string; isError: boolean; cancelled?: boolean }> => ({
+      text: 'looks right',
+      isError: false,
+    })
   )
 );
 vi.mock('./gpt-agent', () => ({ runGptAgent: mockRunGptAgent }));
@@ -340,6 +343,23 @@ describe('built-in MCP server', () => {
           )
         )
       );
+    });
+
+    it('drops the result of a background run cancelled by teardown', async () => {
+      mockRunGptAgent.mockResolvedValueOnce({
+        text: 'interrupted',
+        isError: true,
+        cancelled: true,
+      });
+      const client = await connect('s', null, gpt('s'));
+      await call(client, 'gpt_agent', {
+        model: 'sol',
+        description: 'x',
+        prompt: 'x',
+        run_in_background: true,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(port.deliverMessage).not.toHaveBeenCalled();
     });
   });
 });

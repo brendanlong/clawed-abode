@@ -3,6 +3,7 @@ import type { Options, Query, SDKMessage } from '@anthropic-ai/claude-agent-sdk'
 import { createPushable } from '@/lib/pushable';
 import {
   _setGptQueryFactory,
+  abortGptRuns,
   hasActiveGptRuns,
   runGptAgent,
   type GptAgentContext,
@@ -31,25 +32,32 @@ const ctx: GptAgentContext = {
   },
 };
 
-/** A fake run whose messages the test pushes; records the options it was started with. */
+/** Fake runs whose messages the test pushes (`out` feeds the first); records each start. */
 function fakeRun() {
-  const out = createPushable<SDKMessage>();
+  const outs: ReturnType<typeof createPushable<SDKMessage>>[] = [];
   const started: { prompt: string; options: Options }[] = [];
   _setGptQueryFactory((params) => {
+    const out = createPushable<SDKMessage>();
+    outs.push(out);
     started.push(params);
-    params.options.abortController?.signal.addEventListener('abort', () =>
-      out.push({ type: 'never' } as unknown as SDKMessage)
-    );
+    const signal = params.options.abortController?.signal;
+    signal?.addEventListener('abort', () => out.push({ type: 'never' } as unknown as SDKMessage));
     return {
       async *[Symbol.asyncIterator]() {
         for await (const message of out.iterable) {
-          if (params.options.abortController?.signal.aborted) throw new Error('aborted');
+          if (signal?.aborted) throw new Error('aborted');
           yield message;
         }
       },
     } as unknown as Query;
   });
-  return { out, started };
+  return {
+    started,
+    out: {
+      push: (message: SDKMessage) => outs[0].push(message),
+      close: () => outs[0].close(),
+    },
+  };
 }
 
 const result = (text: string) =>
@@ -105,8 +113,24 @@ describe('runGptAgent', () => {
     const run = runGptAgent(ctx, 'astra', 'prove it', controller.signal);
     await vi.waitFor(() => expect(started).toHaveLength(1));
     controller.abort();
-    expect(await run).toEqual({ text: 'GPT agent was interrupted', isError: true });
+    expect(await run).toEqual({
+      text: 'GPT agent was interrupted',
+      isError: true,
+      cancelled: true,
+    });
     expect(hasActiveGptRuns('sid')).toBe(false);
+  });
+
+  it('stops every run of a session torn down, and only that session’s', async () => {
+    const { started } = fakeRun();
+    const own = runGptAgent(ctx, 'sol', 'a');
+    const other = runGptAgent({ ...ctx, sessionId: 'other' }, 'sol', 'b');
+    await vi.waitFor(() => expect(started).toHaveLength(2));
+    abortGptRuns('sid');
+    expect(await own).toMatchObject({ cancelled: true });
+    expect(hasActiveGptRuns('other')).toBe(true);
+    abortGptRuns('other');
+    await other;
   });
 
   it('reports a run that ends without a result as an error', async () => {

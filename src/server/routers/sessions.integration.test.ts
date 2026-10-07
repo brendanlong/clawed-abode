@@ -30,6 +30,7 @@ vi.mock('../services/claude-runner', () => ({
   isSessionBackgroundActive: vi.fn().mockReturnValue(false),
   refreshSessionSettings: mockRefreshSessionSettings,
   reviveSession: mockReviveSession,
+  deliverAppMessage: vi.fn(),
 }));
 vi.mock('../services/rate-limit-pause', () => ({
   isSessionRateLimitPaused: vi.fn().mockReturnValue(false),

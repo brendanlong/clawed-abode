@@ -52,7 +52,10 @@ export interface SessionToolsPort {
   /** Resolves to the session's status afterwards, which is unchanged if it wasn't running. */
   stopSession(sessionId: string): Promise<{ status: string }>;
   isTurnActive(sessionId: string): boolean;
-  /** Send a message to a session's agent on the app's behalf (not the user's). */
+  /**
+   * Send a message to a session's agent on the app's behalf (not the user's),
+   * only if its query is live: never one that would revive a session.
+   */
   deliverMessage(sessionId: string, text: string): Promise<void>;
 }
 
@@ -286,12 +289,13 @@ function gptTools(ctx: GptAgentContext) {
             return outcome.isError ? errorResult(outcome.text) : textResult(outcome.text);
           }
           void runGptAgent(ctx, model, prompt)
-            .then((outcome) =>
-              requirePort().deliverMessage(
+            .then(async (outcome) => {
+              if (outcome.cancelled) return;
+              await requirePort().deliverMessage(
                 ctx.sessionId,
                 backgroundResultMessage(model, description, outcome)
-              )
-            )
+              );
+            })
             .catch((err) =>
               log.warn('Could not deliver a background GPT agent result', {
                 sessionId: ctx.sessionId,
