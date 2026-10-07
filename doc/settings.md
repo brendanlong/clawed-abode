@@ -24,6 +24,10 @@ A proxied session's CLI gets the proxy as its base URL and the proxy's key, with
 
 Claude-only features don't apply: the advisor model is omitted, and a proxied session's rate-limit events are ignored (they aren't about the subscription). The pause itself still holds a proxied session when the subscription window fills, since holds are resolved without the session's model; turn the pause off for sessions that only use proxied models. The CLI still prices usage with Claude rates and assumes a 200k context window, so cost and context indicators are off.
 
+## GPT Subagents
+
+When a proxy is configured, Claude sessions also get a command for handing a task to a GPT-6 model (astra, sol or luna; [`src/lib/gpt-subagent.ts`](../src/lib/gpt-subagent.ts)), described in their system prompt with when each is worth it. It's a generated script (`~/.clawed/gpt-subagent`, like the session launcher) that the agent runs with Bash, rather than an MCP tool, so the run is in the session's process tree (Stop reaps it), can run in the background, and isn't subject to MCP tool timeouts. It runs a one-shot `claude -p` behind the proxy with the same credential stripping as a proxied session. The proxy key reaches the session's env for this; that's fine, since an agent can already do anything the app's user can. Proxied sessions don't get the command, since their own subagents are already GPT models.
+
 ## Built-in Tools
 
 The app's own MCP server, `clawed-abode` ([`builtin-mcp.ts`](../src/server/services/builtin-mcp.ts); prompt text and pure rules in [`src/lib/builtin-tools.ts`](../src/lib/builtin-tools.ts)), runs in-process: it is the one entry in the SDK's `options.mcpServers`, which registers SDK instances over the control channel rather than on argv. A live `setMcpServers` replaces the whole set, so it must re-pass the bound instance (`buildLiveMcpServersRecord`) or the SDK disconnects it. Two global switches, both restart-bound:

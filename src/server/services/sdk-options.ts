@@ -7,6 +7,12 @@ import type {
 import { AGENT_NAME_ENV } from '@/lib/agent-name';
 import { env } from '@/lib/env';
 import { CLAUDE_CREDENTIAL_ENV_VARS, llmProxyEnv, usesLlmProxy } from '@/lib/llm-proxy';
+import {
+  gptSubagentPrompt,
+  LLM_PROXY_KEY_ENV,
+  LLM_PROXY_URL_ENV,
+  SETTING_SOURCES_ENV,
+} from '@/lib/gpt-subagent';
 import { createLogger } from '@/lib/logger';
 import { mayChangeBranchOrPr } from '@/lib/pull-request';
 import type { SanitizationInfo } from '@/lib/sanitization';
@@ -24,6 +30,7 @@ import {
   sessionBuiltinTools,
 } from '@/lib/builtin-tools';
 import { buildBuiltinMcpServer } from './builtin-mcp';
+import { ensureGptSubagentCommand } from './gpt-subagent-command';
 import { sanitizeToolOutputHook } from './input-sanitizer';
 import { writeSessionMcpConfig, removeSessionMcpConfig } from './mcp-config-file';
 import { scheduleBranchPrRefresh } from './session-branch-pr';
@@ -139,6 +146,21 @@ export async function buildSdkOptions(params: {
       llmProxyEnv(proxiedModel, { url: env.LLM_PROXY_URL, key: env.LLM_PROXY_KEY })
     );
   }
+  // A proxied session's own subagents are already GPT models.
+  const gptSubagentCommand =
+    env.LLM_PROXY_URL && !proxiedModel ? await ensureGptSubagentCommand() : null;
+  if (gptSubagentCommand && env.LLM_PROXY_URL) {
+    agentEnv[LLM_PROXY_URL_ENV] = env.LLM_PROXY_URL;
+    if (env.LLM_PROXY_KEY) agentEnv[LLM_PROXY_KEY_ENV] = env.LLM_PROXY_KEY;
+    agentEnv[SETTING_SOURCES_ENV] = settings.settingSources.join(',') || 'project';
+  }
+  const appendedPrompt = [
+    settings.systemPrompt,
+    builtinTools && builtinToolsPrompt(builtinTools, sessionNameIsDefault),
+    gptSubagentCommand && gptSubagentPrompt(gptSubagentCommand),
+  ]
+    .filter(Boolean)
+    .join('\n\n');
   const mcpServersRecord = buildMcpServersRecord(settings.mcpServers);
 
   const options: Options = {
@@ -157,9 +179,7 @@ export async function buildSdkOptions(params: {
     systemPrompt: {
       type: 'preset',
       preset: 'claude_code',
-      append: builtinTools
-        ? `${settings.systemPrompt}\n\n${builtinToolsPrompt(builtinTools, sessionNameIsDefault)}`
-        : settings.systemPrompt,
+      append: appendedPrompt,
       snapshot: false,
     },
     tools: { type: 'preset', preset: 'claude_code' },

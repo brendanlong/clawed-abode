@@ -33,6 +33,9 @@ vi.mock('@/lib/env', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/env')>()),
   env: mockEnv,
 }));
+vi.mock('./gpt-subagent-command', () => ({
+  ensureGptSubagentCommand: vi.fn(async () => '/home/u/.clawed/gpt-subagent'),
+}));
 vi.mock('./input-sanitizer', () => ({ sanitizeToolOutputHook: vi.fn() }));
 const mockScheduleRefresh = vi.hoisted(() => vi.fn());
 vi.mock('./session-branch-pr', () => ({ scheduleBranchPrRefresh: mockScheduleRefresh }));
@@ -72,6 +75,10 @@ const build = (
     waitForUserInput,
     recordSanitization,
   });
+
+function appendedPrompt(options: { systemPrompt?: unknown }): string {
+  return (options.systemPrompt as { append: string }).append;
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -229,6 +236,29 @@ describe('buildSdkOptions', () => {
     mockEnv.LLM_PROXY_URL = 'http://proxy';
     const { options } = await build(settings({ claudeModel: 'opus' }));
     expect(options.env).not.toHaveProperty('ANTHROPIC_BASE_URL');
+  });
+
+  it('offers GPT subagents to a Claude session when a proxy is configured', async () => {
+    mockEnv.LLM_PROXY_URL = 'http://proxy';
+    mockEnv.LLM_PROXY_KEY = 'sk-proxy';
+    const { options } = await build(settings({ claudeModel: 'opus' }));
+    expect(options.env).toMatchObject({
+      CLAWED_LLM_PROXY_URL: 'http://proxy',
+      CLAWED_LLM_PROXY_KEY: 'sk-proxy',
+      CLAWED_SETTING_SOURCES: 'project',
+    });
+    expect(appendedPrompt(options)).toContain('/home/u/.clawed/gpt-subagent');
+  });
+
+  it('offers no GPT subagents without a proxy or to a proxied session', async () => {
+    const { options: noProxy } = await build(settings({ claudeModel: 'opus' }));
+    expect(noProxy.env).not.toHaveProperty('CLAWED_LLM_PROXY_URL');
+    expect(appendedPrompt(noProxy)).not.toContain('gpt-subagent');
+
+    mockEnv.LLM_PROXY_URL = 'http://proxy';
+    const { options: proxied } = await build(settings({ claudeModel: 'openai/gpt-6-astra' }));
+    expect(proxied.env).not.toHaveProperty('CLAWED_LLM_PROXY_URL');
+    expect(appendedPrompt(proxied)).not.toContain('gpt-subagent');
   });
 
   it('echoes injected user messages so messages from other sessions can be persisted', async () => {

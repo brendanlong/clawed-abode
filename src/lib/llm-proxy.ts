@@ -49,6 +49,18 @@ const MODEL_FAMILIES: { prefix: string; tiers: Record<ModelTier, string> }[] = [
   },
 ];
 
+const GPT_6_TIERS = MODEL_FAMILIES[0].tiers;
+
+/**
+ * The GPT models Claude sessions can run as subagents
+ * (doc/settings.md "GPT Subagents"), named by their model's own tier name.
+ */
+export const GPT_SUBAGENT_MODELS = {
+  astra: GPT_6_TIERS.fable,
+  sol: GPT_6_TIERS.opus,
+  luna: GPT_6_TIERS.haiku,
+} as const;
+
 export function proxiedModelTiers(model: string): Record<ModelTier, string> {
   return (
     MODEL_FAMILIES.find((family) => model.startsWith(family.prefix))?.tiers ?? {

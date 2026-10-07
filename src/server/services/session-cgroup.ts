@@ -18,8 +18,8 @@ import {
 const execFileAsync = promisify(execFile);
 const log = createLogger('session-cgroup');
 
-/** App-owned launcher location (not world-writable /tmp, not tmp-reaped). */
-const LAUNCHER_DIR = join(homedir(), '.clawed');
+/** App-owned home for generated scripts (not world-writable /tmp, not tmp-reaped). */
+export const LAUNCHER_DIR = join(homedir(), '.clawed');
 const LAUNCHER_PATH = join(LAUNCHER_DIR, 'session-launcher.sh');
 
 /** Resolved config needed to launch a session inside a systemd user scope. */
