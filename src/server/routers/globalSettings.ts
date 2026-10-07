@@ -4,7 +4,11 @@ import { encrypt } from '@/lib/crypto';
 import { createLogger } from '@/lib/logger';
 import { env } from '@/lib/env';
 import { DEFAULT_SYSTEM_PROMPT } from '@/lib/system-prompt';
-import { nullableTextSchema, requireEncryptionForSecrets } from '../services/settings-helpers';
+import {
+  nullableModelSchema,
+  nullableTextSchema,
+  requireEncryptionForSecrets,
+} from '../services/settings-helpers';
 import { GLOBAL_SCOPE, listScopeSettings } from '../services/settings-scope';
 import { loadGlobalSettings, patchGlobalSettings } from '../services/global-settings';
 import { scopedSettingsProcedures } from './scoped-settings';
@@ -21,7 +25,7 @@ const globalSettingsUpdateSchema = z
   .object({
     systemPromptAppend: nullableTextSchema(50000),
     /** Claude model override; null reverts to CLAUDE_MODEL. */
-    claudeModel: nullableTextSchema(200),
+    claudeModel: nullableModelSchema,
     /** Model for the server-side advisor tool; null disables it (the default). */
     advisorModel: nullableTextSchema(200),
     /** TTS playback speed; null resets to the default (1.0). */

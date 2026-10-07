@@ -24,6 +24,7 @@ import { thresholdSchema } from '@/lib/rate-limit';
 import { repoFullNameSchema } from '@/lib/repo-full-name';
 import { refreshStalePullRequests } from '../services/session-branch-pr';
 import { clearAttention } from '../services/session-attention';
+import { modelSchema, nullableModelSchema } from '../services/settings-helpers';
 
 const sessionListSelect = {
   id: true,
@@ -49,7 +50,7 @@ export const sessionsRouter = router({
         repoFullName: repoFullNameSchema.optional(),
         branch: z.string().min(1).optional(),
         initialPrompt: z.string().max(PROMPT_MAX_LENGTH).optional(),
-        claudeModel: z.string().max(200).optional(),
+        claudeModel: modelSchema.optional(),
       })
     )
     .mutation(async ({ input }) => ({ session: toSessionView(await createSession(input)) })),
@@ -166,11 +167,10 @@ export const sessionsRouter = router({
   }),
 
   setModel: sessionProcedure
-    .input(z.object({ claudeModel: z.string().max(200).nullable() }))
-    .mutation(async ({ input }) => {
-      const model = input.claudeModel?.trim() || null;
-      return { session: toSessionView(await setSessionModel(input.sessionId, model)) };
-    }),
+    .input(z.object({ claudeModel: nullableModelSchema }))
+    .mutation(async ({ input }) => ({
+      session: toSessionView(await setSessionModel(input.sessionId, input.claudeModel)),
+    })),
 
   stop: sessionProcedure.mutation(async ({ input }) => ({
     session: toSessionView(await shutDownSession(input.sessionId)),

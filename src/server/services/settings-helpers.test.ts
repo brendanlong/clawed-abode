@@ -8,6 +8,7 @@ import {
   formatMcpServersForDisplay,
   mcpServerHasSecrets,
   mcpServerSchema,
+  nullableModelSchema,
   planMcpServerWrite,
 } from './settings-helpers';
 
@@ -236,5 +237,33 @@ describe('mcpServerSchema', () => {
   it('reserves the built-in server name', () => {
     expect(mcpServerSchema.safeParse({ name: 'clawed-abode', command: 'x' }).success).toBe(false);
     expect(mcpServerSchema.safeParse({ name: 'mine', command: 'x' }).success).toBe(true);
+  });
+
+  describe('nullableModelSchema', () => {
+    const withProxy = (url: string | undefined, run: () => void) => {
+      if (url) process.env.LLM_PROXY_URL = url;
+      else delete process.env.LLM_PROXY_URL;
+      resetEnvCache();
+      try {
+        run();
+      } finally {
+        delete process.env.LLM_PROXY_URL;
+        resetEnvCache();
+      }
+    };
+
+    it('rejects a proxied model when no proxy is configured', () => {
+      withProxy(undefined, () => {
+        expect(nullableModelSchema.safeParse('openai/gpt-6-astra').success).toBe(false);
+        expect(nullableModelSchema.parse(' opus ')).toBe('opus');
+        expect(nullableModelSchema.parse('')).toBeNull();
+      });
+    });
+
+    it('accepts a proxied model once a proxy is configured', () => {
+      withProxy('http://127.0.0.1:4000', () => {
+        expect(nullableModelSchema.parse('openai/gpt-6-astra')).toBe('openai/gpt-6-astra');
+      });
+    });
   });
 });

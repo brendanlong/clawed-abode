@@ -24,7 +24,11 @@ export interface LlmProxyConfig {
 }
 
 /** Credentials that would send Claude subscription or API billing through the proxy. */
-export const CLAUDE_CREDENTIAL_ENV_VARS = ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY'] as const;
+export const CLAUDE_CREDENTIAL_ENV_VARS = [
+  'CLAUDE_CODE_OAUTH_TOKEN',
+  'CLAUDE_CODE_OAUTH_REFRESH_TOKEN',
+  'ANTHROPIC_API_KEY',
+] as const;
 
 type ModelTier = 'fable' | 'opus' | 'sonnet' | 'haiku';
 

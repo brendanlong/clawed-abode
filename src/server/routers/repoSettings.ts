@@ -7,6 +7,7 @@ import {
   formatEnvVarsForDisplay,
   formatMcpServersForDisplay,
   MCP_SERVER_INCLUDE,
+  nullableModelSchema,
   nullableTextSchema,
 } from '../services/settings-helpers';
 import { scopedSettingsProcedures, type ResolveScope } from './scoped-settings';
@@ -87,7 +88,7 @@ export const repoSettingsRouter = router({
 
   /** Per-repo Claude model override; null/blank reverts to global/env. */
   setClaudeModel: protectedProcedure
-    .input(repoScopeInput.extend({ claudeModel: nullableTextSchema(200) }))
+    .input(repoScopeInput.extend({ claudeModel: nullableModelSchema }))
     .mutation(async ({ input }) => {
       await prisma.repoSettings.upsert({
         where: { repoFullName: input.repoFullName },

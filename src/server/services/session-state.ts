@@ -57,8 +57,6 @@ export interface LiveQuery {
   toolSanitizations: Map<string, SanitizationInfo>;
   /** uuids of the prompts pushed into this query, to drop the CLI's replays of them. */
   pushedUuids: Set<string>;
-  /** The output loop, settled once it has torn this query down. */
-  loop: Promise<void>;
 }
 
 /** In-memory state for one active session. */
