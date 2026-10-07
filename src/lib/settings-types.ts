@@ -5,6 +5,7 @@ export interface EnvVar {
   name: string;
   value: string;
   isSecret: boolean;
+  updatedAt: Date;
 }
 
 export const mcpHttpServerTypeSchema = z.enum(['http', 'sse']);
@@ -42,6 +43,7 @@ export interface McpServer {
   authType: McpAuthType;
   /** Present only when authType is "oauth". */
   oauth?: McpOAuthStatus;
+  updatedAt: Date;
 }
 
 export interface ValidationResult {

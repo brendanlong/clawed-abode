@@ -161,6 +161,7 @@ interface DbEnvVar {
   name: string;
   value: string;
   isSecret: boolean;
+  updatedAt: Date;
 }
 
 /** DB row shape for MCP servers, with the OAuth row joined when there is one. */
@@ -221,13 +222,17 @@ function parseDbMcpServer(mcp: DbMcpServer): z.infer<typeof dbMcpServerFieldsSch
  * Format env var DB rows for display (mask secrets)
  */
 export function formatEnvVarsForDisplay(envVars: DbEnvVar[]) {
-  return envVars.map(({ id, name, value, isSecret }) => maskSecret({ id, name, value, isSecret }));
+  return envVars.map(({ id, name, value, isSecret, updatedAt }) =>
+    maskSecret({ id, name, value, isSecret, updatedAt })
+  );
 }
 
 /**
  * Format MCP server DB rows for display (mask secrets, parse JSON)
  */
-export function formatMcpServersForDisplay(mcpServers: DbMcpServer[]): McpServer[] {
+export function formatMcpServersForDisplay(
+  mcpServers: Array<DbMcpServer & { updatedAt: Date }>
+): McpServer[] {
   return mcpServers.map((mcp) => {
     const fields = parseDbMcpServer(mcp);
     return {
@@ -241,6 +246,7 @@ export function formatMcpServersForDisplay(mcpServers: DbMcpServer[]): McpServer
       headers: maskedValuesOfKind(mcp.values, 'header'),
       authType: fields.authType,
       ...(fields.authType === 'oauth' ? { oauth: formatOAuthStatus(mcp.oauth) } : {}),
+      updatedAt: mcp.updatedAt,
     };
   });
 }

@@ -8,6 +8,7 @@ import { DeleteConfirmDialog } from './DeleteConfirmDialog';
 interface SettingsListItem {
   id: string;
   name: string;
+  updatedAt: Date;
 }
 
 /** Global lists say so in their copy; repo lists are the unqualified default. */
@@ -103,7 +104,9 @@ export function SettingsListEditor<T extends SettingsListItem>({
       ) : (
         <ul className="space-y-2">
           {items.map((item) => (
-            <li key={item.id} className="space-y-1">
+            // Keyed by version too, so a changed item remounts its row and drops
+            // per-item state (a revealed secret, a test result) about the old config.
+            <li key={`${item.id}:${item.updatedAt.getTime()}`} className="space-y-1">
               {renderRow(
                 item,
                 <>
