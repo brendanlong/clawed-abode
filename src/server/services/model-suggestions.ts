@@ -117,8 +117,12 @@ export async function getModelSuggestions(): Promise<string[]> {
     ...new Set([...WELL_KNOWN_ALIASES, ...inferredAliases, ...apiModels, ...proxiedModels]),
   ];
 
-  cachedModels = result;
-  cacheTimestamp = now;
+  // A configured proxy that listed nothing is misconfigured or still starting;
+  // retry on the next request rather than hiding its models for an hour.
+  if (!env.LLM_PROXY_URL || proxiedModels.length > 0) {
+    cachedModels = result;
+    cacheTimestamp = now;
+  }
 
   return result;
 }

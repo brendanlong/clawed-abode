@@ -206,6 +206,8 @@ systemctl --user daemon-reload
 systemctl --user start litellm.service
 ```
 
+Don't quote values in `~/.config/litellm/env`: podman passes quotes through literally, and OpenAI rejects the key.
+
 Then add the following to `.env`, using the master key from `~/.config/litellm/env`, and restart `clawed-abode.service`:
 
 ```bash
