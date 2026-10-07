@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import type { MergedSessionSettings } from './settings-merger';
-import { builtinToolsPrompt } from '@/lib/builtin-tools';
+import { BUILTIN_MCP_SERVER_NAME, builtinToolsPrompt } from '@/lib/builtin-tools';
 import { buildLiveMcpServersRecord, buildMcpServersRecord, buildSdkOptions } from './sdk-options';
 
 vi.mock('./agent-env', () => ({
@@ -33,12 +33,12 @@ vi.mock('@/lib/env', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/env')>()),
   env: mockEnv,
 }));
-vi.mock('./gpt-subagent-command', () => ({
-  ensureGptSubagentCommand: vi.fn(async () => ({
-    path: '/home/u/.clawed/gpt-subagent',
-    claudeBin: '/sdk/claude',
-  })),
-}));
+const mockBuildBuiltin = vi.hoisted(() => vi.fn());
+vi.mock('./builtin-mcp', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./builtin-mcp')>();
+  mockBuildBuiltin.mockImplementation(actual.buildBuiltinMcpServer);
+  return { ...actual, buildBuiltinMcpServer: mockBuildBuiltin };
+});
 vi.mock('./input-sanitizer', () => ({ sanitizeToolOutputHook: vi.fn() }));
 const mockScheduleRefresh = vi.hoisted(() => vi.fn());
 vi.mock('./session-branch-pr', () => ({ scheduleBranchPrRefresh: mockScheduleRefresh }));
@@ -78,10 +78,6 @@ const build = (
     waitForUserInput,
     recordSanitization,
   });
-
-function appendedPrompt(options: { systemPrompt?: unknown }): string {
-  return (options.systemPrompt as { append: string }).append;
-}
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -241,28 +237,27 @@ describe('buildSdkOptions', () => {
     expect(options.env).not.toHaveProperty('ANTHROPIC_BASE_URL');
   });
 
-  it('offers GPT subagents to a Claude session when a proxy is configured', async () => {
+  it('gives a Claude session the gpt_agent tool when a proxy is configured', async () => {
     mockEnv.LLM_PROXY_URL = 'http://proxy';
-    mockEnv.LLM_PROXY_KEY = 'sk-proxy';
-    const { options } = await build(settings({ claudeModel: 'opus' }));
-    expect(options.env).toMatchObject({
-      CLAWED_LLM_PROXY_URL: 'http://proxy',
-      CLAWED_LLM_PROXY_KEY: 'sk-proxy',
-      CLAWED_SETTING_SOURCES: 'project',
-      CLAWED_CLAUDE_BIN: '/sdk/claude',
+    mockScopeConfig.mockResolvedValueOnce({ launcherPath: '/l.sh', claudeBin: '/claude' });
+    const { options, sessionScope } = await build(settings({ claudeModel: 'opus' }));
+    expect(options.mcpServers).toHaveProperty(BUILTIN_MCP_SERVER_NAME);
+    expect(mockBuildBuiltin).toHaveBeenCalledWith('sid', null, {
+      sessionId: 'sid',
+      workingDir: '/w',
+      settingSources: ['project'],
+      env: expect.objectContaining({ PATH: '/bin' }),
+      scope: { launcherPath: '/l.sh', claudeBin: '/claude', sessionScope },
     });
-    expect(appendedPrompt(options)).toContain('/home/u/.clawed/gpt-subagent');
   });
 
-  it('offers no GPT subagents without a proxy or to a proxied session', async () => {
-    const { options: noProxy } = await build(settings({ claudeModel: 'opus' }));
-    expect(noProxy.env).not.toHaveProperty('CLAWED_LLM_PROXY_URL');
-    expect(appendedPrompt(noProxy)).not.toContain('gpt-subagent');
+  it('gives no gpt_agent tool without a proxy or to a proxied session', async () => {
+    await build(settings({ claudeModel: 'opus' }));
+    expect(mockBuildBuiltin).toHaveBeenLastCalledWith('sid', null, null);
 
     mockEnv.LLM_PROXY_URL = 'http://proxy';
-    const { options: proxied } = await build(settings({ claudeModel: 'openai/gpt-6-astra' }));
-    expect(proxied.env).not.toHaveProperty('CLAWED_LLM_PROXY_URL');
-    expect(appendedPrompt(proxied)).not.toContain('gpt-subagent');
+    await build(settings({ claudeModel: 'openai/gpt-6-astra' }));
+    expect(mockBuildBuiltin).toHaveBeenLastCalledWith('sid', null, null);
   });
 
   it('echoes injected user messages so messages from other sessions can be persisted', async () => {

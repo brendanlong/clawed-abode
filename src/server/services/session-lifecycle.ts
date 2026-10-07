@@ -270,4 +270,6 @@ export const sessionToolsPort: SessionToolsPort = {
   createSession,
   stopSession: shutDownSession,
   isTurnActive: isClaudeRunning,
+  deliverMessage: (sessionId, text) =>
+    sendUserMessage(sessionId, text, [], { userInitiated: false }),
 };

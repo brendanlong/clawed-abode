@@ -7,12 +7,6 @@ import type {
 import { AGENT_NAME_ENV } from '@/lib/agent-name';
 import { env } from '@/lib/env';
 import { CLAUDE_CREDENTIAL_ENV_VARS, llmProxyEnv, usesLlmProxy } from '@/lib/llm-proxy';
-import {
-  gptSubagentPrompt,
-  LLM_PROXY_KEY_ENV,
-  LLM_PROXY_URL_ENV,
-  SETTING_SOURCES_ENV,
-} from '@/lib/gpt-subagent';
 import { createLogger } from '@/lib/logger';
 import { mayChangeBranchOrPr } from '@/lib/pull-request';
 import type { SanitizationInfo } from '@/lib/sanitization';
@@ -30,7 +24,7 @@ import {
   sessionBuiltinTools,
 } from '@/lib/builtin-tools';
 import { buildBuiltinMcpServer } from './builtin-mcp';
-import { ensureGptSubagentCommand } from './gpt-subagent-command';
+import type { GptAgentContext } from './gpt-agent';
 import { sanitizeToolOutputHook } from './input-sanitizer';
 import { writeSessionMcpConfig, removeSessionMcpConfig } from './mcp-config-file';
 import { scheduleBranchPrRefresh } from './session-branch-pr';
@@ -146,23 +140,21 @@ export async function buildSdkOptions(params: {
       llmProxyEnv(proxiedModel, { url: env.LLM_PROXY_URL, key: env.LLM_PROXY_KEY })
     );
   }
+  // Run the CLI (and everything it spawns) in a transient systemd user scope so the
+  // whole tree is reaped on teardown (doc/claude-sessions.md "Process Reaping").
+  const scopeConfig = await getSessionScopeConfig();
+  const sessionScope = scopeConfig ? sessionScopeUnitName(sessionId, sessionScopeNonce()) : null;
   // A proxied session's own subagents are already GPT models.
-  const gptSubagentCommand =
-    env.LLM_PROXY_URL && !proxiedModel ? await ensureGptSubagentCommand() : null;
-  if (gptSubagentCommand && env.LLM_PROXY_URL) {
-    agentEnv[LLM_PROXY_URL_ENV] = env.LLM_PROXY_URL;
-    if (env.LLM_PROXY_KEY) agentEnv[LLM_PROXY_KEY_ENV] = env.LLM_PROXY_KEY;
-    // Empty when every source is off, which the subagent must honor too.
-    agentEnv[SETTING_SOURCES_ENV] = settings.settingSources.join(',');
-    agentEnv[CLAUDE_BIN_ENV] = gptSubagentCommand.claudeBin;
-  }
-  const appendedPrompt = [
-    settings.systemPrompt,
-    builtinTools && builtinToolsPrompt(builtinTools, sessionNameIsDefault),
-    gptSubagentCommand && gptSubagentPrompt(gptSubagentCommand.path),
-  ]
-    .filter(Boolean)
-    .join('\n\n');
+  const gptAgents: GptAgentContext | null =
+    env.LLM_PROXY_URL && !proxiedModel
+      ? {
+          sessionId,
+          workingDir,
+          settingSources: settings.settingSources,
+          env: { ...agentEnv },
+          scope: scopeConfig && sessionScope ? { ...scopeConfig, sessionScope } : null,
+        }
+      : null;
   const mcpServersRecord = buildMcpServersRecord(settings.mcpServers);
 
   const options: Options = {
@@ -181,7 +173,9 @@ export async function buildSdkOptions(params: {
     systemPrompt: {
       type: 'preset',
       preset: 'claude_code',
-      append: appendedPrompt,
+      append: builtinTools
+        ? `${settings.systemPrompt}\n\n${builtinToolsPrompt(builtinTools, sessionNameIsDefault)}`
+        : settings.systemPrompt,
       snapshot: false,
     },
     tools: { type: 'preset', preset: 'claude_code' },
@@ -245,7 +239,7 @@ export async function buildSdkOptions(params: {
 
   // The built-in server is the one `options.mcpServers` entry: an in-process SDK
   // instance is registered over the control channel, never serialized onto argv.
-  const builtinMcpServer = builtinTools ? buildBuiltinMcpServer(sessionId, builtinTools) : null;
+  const builtinMcpServer = buildBuiltinMcpServer(sessionId, builtinTools, gptAgents);
   if (builtinMcpServer) {
     options.mcpServers = { [BUILTIN_MCP_SERVER_NAME]: builtinMcpServer };
   }
@@ -261,13 +255,9 @@ export async function buildSdkOptions(params: {
     };
   }
 
-  // Run the CLI (and everything it spawns) in a transient systemd user scope so the
-  // whole tree is reaped on teardown (doc/claude-sessions.md "Process Reaping").
-  const scopeConfig = await getSessionScopeConfig();
-  if (!scopeConfig) return { options, sessionScope: null, builtinMcpServer };
+  if (!scopeConfig || !sessionScope) return { options, sessionScope: null, builtinMcpServer };
 
   await ensureSessionsSliceLimits();
-  const sessionScope = sessionScopeUnitName(sessionId, sessionScopeNonce());
   options.pathToClaudeCodeExecutable = scopeConfig.launcherPath;
   agentEnv[SESSION_SCOPE_ENV] = sessionScope;
   agentEnv[CLAUDE_BIN_ENV] = scopeConfig.claudeBin;

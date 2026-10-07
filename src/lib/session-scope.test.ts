@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
+  childScopePattern,
+  childScopeUnitName,
   CLAUDE_BIN_ENV,
   SESSION_SCOPE_ENV,
   SESSION_SCOPE_LAUNCHER,
@@ -34,6 +36,19 @@ describe('sessionScopeUnitName', () => {
     const b = sessionScopeUnitName('sess', 'bbbb0000');
     expect(a).not.toBe(b);
     expect(a.endsWith('.scope')).toBe(true);
+  });
+});
+
+describe('child scopes', () => {
+  it('name units under the session scope, matched by its pattern and no other session’s', () => {
+    const session = sessionScopeUnitName('sess', 'aaaa0000');
+    const child = childScopeUnitName(session, 'n1');
+    expect(child).toBe('clawed-session-sess-aaaa0000-child-n1.scope');
+    const matches = (unit: string) =>
+      new RegExp(`^${childScopePattern(session).replace('*', '.*')}$`).test(unit);
+    expect(matches(child)).toBe(true);
+    expect(matches(session)).toBe(false);
+    expect(matches(childScopeUnitName(sessionScopeUnitName('sess', 'bbbb0000'), 'n1'))).toBe(false);
   });
 });
 

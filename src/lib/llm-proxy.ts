@@ -52,10 +52,10 @@ const MODEL_FAMILIES: { prefix: string; tiers: Record<ModelTier, string> }[] = [
 const GPT_6_TIERS = MODEL_FAMILIES[0].tiers;
 
 /**
- * The GPT models Claude sessions can run as subagents
- * (doc/settings.md "GPT Subagents"), named by their model's own tier name.
+ * The GPT models Claude sessions can run as agents
+ * (doc/settings.md "GPT Agents"), named by their model's own tier name.
  */
-export const GPT_SUBAGENT_MODELS = {
+export const GPT_AGENT_MODELS = {
   astra: GPT_6_TIERS.fable,
   sol: GPT_6_TIERS.opus,
   luna: GPT_6_TIERS.haiku,

@@ -74,6 +74,7 @@ import {
   replaceSessionCommands,
 } from './session-commands';
 import { resolveAgentName } from './agent-name';
+import { hasActiveGptRuns } from './gpt-agent';
 import { requestAttention } from './session-attention';
 import { buildLiveMcpServersRecord, buildSdkOptions } from './sdk-options';
 import { cancelBranchPrRefresh, detectBranchAndPr } from './session-branch-pr';
@@ -514,8 +515,12 @@ async function applyLiveSettings(sessionId: string, state: SessionState): Promis
   if (state.live !== live) return;
   const bound = live.boundSettings;
   if (modelChangeNeedsRestart(bound.claudeModel, settings.claudeModel)) {
-    // Any background task counts, even a daemon: the restart would kill it.
-    if (!isRunning(state.turn) && state.turn.status.backgroundTasks.size === 0) {
+    // Any background work counts, even a daemon: the restart would kill it.
+    if (
+      !isRunning(state.turn) &&
+      state.turn.status.backgroundTasks.size === 0 &&
+      !hasActiveGptRuns(sessionId)
+    ) {
       log.info('Restarting query for a proxied model change', {
         sessionId,
         from: bound.claudeModel,

@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { env } from '@/lib/env';
 import { createLogger, toError } from '@/lib/logger';
 import {
+  childScopePattern,
   SESSION_SCOPE_LAUNCHER,
   SESSIONS_SLICE,
   sessionsSliceProperties,
@@ -68,7 +69,7 @@ async function resolveClaudeBinary(): Promise<string | null> {
 let claudeBinPromise: Promise<string | null> | null = null;
 
 /** The resolved Claude CLI binary, probed once and memoized (path is stable). */
-export function getClaudeBinary(): Promise<string | null> {
+function getClaudeBinary(): Promise<string | null> {
   if (!claudeBinPromise) claudeBinPromise = resolveClaudeBinary();
   return claudeBinPromise;
 }
@@ -177,22 +178,29 @@ export function ensureSessionsSliceLimits(): Promise<void> {
 
 /**
  * Stop a session's systemd scope, cgroup-killing its whole process tree (incl.
- * daemonized double-forks). Best-effort and idempotent: a missing/already-stopped
- * unit is fine. Called on session teardown (stop / delete / shutdown).
+ * daemonized double-forks), and its child scopes. Best-effort and idempotent: a
+ * missing/already-stopped unit is fine. Called on session teardown (stop /
+ * delete / shutdown) and by the crash reaper.
  */
 export async function stopSessionScope(unitName: string): Promise<void> {
+  await stopScope(childScopePattern(unitName));
+  await stopScope(unitName);
+}
+
+/** Stop a scope unit, or every loaded unit matching a glob. */
+export async function stopScope(unit: string): Promise<void> {
   try {
-    await execFileAsync('systemctl', ['--user', 'stop', unitName], { timeout: 15000 });
+    await execFileAsync('systemctl', ['--user', 'stop', unit], { timeout: 15000 });
   } catch (err) {
     // Non-zero when the unit is already gone (the common case — the session may
     // have run unwrapped), so this is debug, not an error.
-    log.debug('stopSessionScope: stop returned non-zero (unit likely already gone)', {
-      unitName,
+    log.debug('stopScope: stop returned non-zero (unit likely already gone)', {
+      unit,
       error: toError(err).message,
     });
   }
   try {
-    await execFileAsync('systemctl', ['--user', 'reset-failed', unitName], { timeout: 5000 });
+    await execFileAsync('systemctl', ['--user', 'reset-failed', unit], { timeout: 5000 });
   } catch {
     // reset-failed is cleanup only.
   }

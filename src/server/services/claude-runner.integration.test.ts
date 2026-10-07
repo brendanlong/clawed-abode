@@ -91,13 +91,6 @@ vi.mock('./session-cgroup', () => ({
   stopSessionScope: mockStopSessionScope,
 }));
 
-vi.mock('./gpt-subagent-command', () => ({
-  ensureGptSubagentCommand: vi.fn(async () => ({
-    path: '/fake/gpt-subagent',
-    claudeBin: '/fake/claude',
-  })),
-}));
-
 import { createPushable } from '@/lib/pushable';
 import { resetEnvCache } from '@/lib/env';
 import { sessionScopeUnitName } from '@/lib/session-scope';
