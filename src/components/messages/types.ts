@@ -10,15 +10,9 @@ export interface ToolCall {
   name: string;
   id?: string;
   input: unknown;
-  output?: unknown;
+  /** Undefined until the call's tool_result arrives. */
+  output?: string;
   is_error?: boolean;
-}
-
-export interface ToolResultPart {
-  type?: string;
-  text?: string;
-  /** For tool_reference parts (a ToolSearch result) */
-  tool_name?: string;
 }
 
 export interface ContentBlock {
@@ -40,10 +34,11 @@ export interface ContentBlock {
   input?: unknown;
   tool_use_id?: string;
   /**
-   * tool_result content is a string or (MCP tools, ToolSearch, image Reads) an
-   * array of parts; advisor_tool_result carries an encrypted object.
+   * tool_result content is a string or (MCP tools, ToolSearch, image Reads,
+   * Agent) an array of parts — read it with `toolResultText`;
+   * advisor_tool_result carries an encrypted object.
    */
-  content?: string | ToolResultPart[] | { type?: string; encrypted_content?: string };
+  content?: string | unknown[] | { type?: string; encrypted_content?: string };
   is_error?: boolean;
   /** Sanitizer findings attached to a tool_result block whose output was filtered. */
   sanitization?: SanitizationInfo;

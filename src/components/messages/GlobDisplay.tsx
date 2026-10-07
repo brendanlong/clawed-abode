@@ -23,7 +23,7 @@ interface FileEntry {
  * Groups files by directory for better organization.
  */
 function parseGlobOutput(output: string): FileEntry[] {
-  if (!output || typeof output !== 'string') {
+  if (!output) {
     return [];
   }
 
@@ -81,12 +81,7 @@ export function GlobDisplay({ tool }: { tool: ToolCall }) {
   const pattern = inputObj?.pattern ?? '';
   const searchPath = inputObj?.path;
 
-  const files = useMemo(() => {
-    if (typeof tool.output !== 'string') {
-      return [];
-    }
-    return parseGlobOutput(tool.output);
-  }, [tool.output]);
+  const files = useMemo(() => parseGlobOutput(tool.output ?? ''), [tool.output]);
 
   const groupedFiles = useMemo(() => groupByDirectory(files), [files]);
 

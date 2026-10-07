@@ -1,10 +1,10 @@
+import { z } from 'zod';
 import type {
   ContentBlock,
   DisplayMessage,
   MessageContent,
   ToolCall,
   ToolResultMap,
-  ToolResultPart,
 } from './types';
 import { formatAsJson, buildToolMessages } from './types';
 import {
@@ -84,11 +84,21 @@ export function isOwnPromptMessage(message: { type: string; content: unknown }):
   );
 }
 
-function toolResultPartText(part: ToolResultPart): string {
-  if (typeof part.text === 'string') return part.text;
-  if (part.type === 'image') return '[Image]';
-  if (part.type === 'tool_reference' && part.tool_name) return `Loaded ${part.tool_name}`;
-  return JSON.stringify(part);
+const toolResultPartSchema = z.object({
+  type: z.string().optional(),
+  text: z.string().optional(),
+  tool_name: z.string().optional(),
+});
+
+/** Non-text parts get a short label; their payloads (e.g. base64 images) are never shown. */
+function toolResultPartText(part: unknown): string | null {
+  if (typeof part === 'string') return part;
+  const parsed = toolResultPartSchema.safeParse(part);
+  if (!parsed.success) return null;
+  const { type, text, tool_name } = parsed.data;
+  if (text !== undefined) return text;
+  if (type === 'tool_reference' && tool_name) return `Loaded ${tool_name}`;
+  return `[${type ?? 'unknown'}]`;
 }
 
 /**
@@ -96,11 +106,14 @@ function toolResultPartText(part: ToolResultPart): string {
  * finished, so this always returns a string — never undefined, which the tool
  * displays read as still running.
  */
-export function toolResultText(content: ContentBlock['content']): string {
-  if (content === undefined || content === null) return '';
-  if (typeof content === 'string') return content;
-  if (Array.isArray(content)) return content.map(toolResultPartText).join('\n');
-  return JSON.stringify(content);
+export function toolResultText(content: unknown): string {
+  if (Array.isArray(content)) {
+    return content
+      .map(toolResultPartText)
+      .filter((text) => text !== null)
+      .join('\n\n');
+  }
+  return toolResultPartText(content) ?? '';
 }
 
 /**

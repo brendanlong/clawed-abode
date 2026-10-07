@@ -105,8 +105,7 @@ export function AskUserQuestionDisplay({ tool }: { tool: ToolCall }) {
   // With canUseTool, the tool won't have an error output while waiting.
   // The query is parked in the canUseTool callback - no output yet.
   const isWaitingForInput =
-    !hasOutput ||
-    (tool.is_error && typeof tool.output === 'string' && tool.output.includes('Answer questions'));
+    !hasOutput || (tool.is_error && tool.output?.includes('Answer questions'));
   const isRealError = tool.is_error && !isWaitingForInput;
   const isPending = isWaitingForInput;
 
@@ -194,7 +193,7 @@ export function AskUserQuestionDisplay({ tool }: { tool: ToolCall }) {
 
   // Check if an option was the answered option (match output with option label)
   const isAnsweredOption = (option: QuestionOption) => {
-    if (isPending || !hasOutput || typeof tool.output !== 'string') return false;
+    if (isPending || tool.output === undefined) return false;
     const output = tool.output.trim();
     return output === option.label || output.split(', ').includes(option.label);
   };
@@ -291,7 +290,7 @@ export function AskUserQuestionDisplay({ tool }: { tool: ToolCall }) {
               isRealError ? 'bg-red-50 dark:bg-red-950 text-red-800 dark:text-red-200' : 'bg-muted'
             )}
           >
-            {typeof tool.output === 'string' ? tool.output : JSON.stringify(tool.output, null, 2)}
+            {tool.output}
           </pre>
         </div>
       )}

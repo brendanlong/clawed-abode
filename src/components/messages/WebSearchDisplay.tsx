@@ -29,7 +29,7 @@ interface ParsedWebSearchOutput {
  * - Rest: Summary text
  */
 function parseWebSearchOutput(output: string): ParsedWebSearchOutput | null {
-  if (!output || typeof output !== 'string') {
+  if (!output) {
     return null;
   }
 
@@ -125,12 +125,7 @@ export function WebSearchDisplay({ tool }: { tool: ToolCall }) {
   const inputObj = parseToolInput(tool.input, webSearchInputSchema);
   const query = inputObj?.query ?? '';
 
-  const parsed = useMemo(() => {
-    if (typeof tool.output !== 'string') {
-      return null;
-    }
-    return parseWebSearchOutput(tool.output);
-  }, [tool.output]);
+  const parsed = useMemo(() => parseWebSearchOutput(tool.output ?? ''), [tool.output]);
 
   return (
     <ToolDisplayWrapper

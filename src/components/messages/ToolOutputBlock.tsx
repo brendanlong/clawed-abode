@@ -4,23 +4,13 @@ import { useMemo } from 'react';
 import { cn } from '@/lib/utils';
 import { processTerminalOutput, isTerminalOutput } from '@/lib/terminal-output';
 
-/**
- * Stringify a tool's output for display: raw string passes through, anything
- * else is pretty-printed JSON. Shared by every tool-output `<pre>` so the
- * behavior can't drift between displays.
- */
-function stringifyToolOutput(output: unknown): string {
-  return typeof output === 'string' ? output : JSON.stringify(output, null, 2);
-}
-
 interface ToolOutputBlockProps {
   /**
    * Label shown above the output (e.g. "Output:", "Result:", "Response:").
    * Omit to render just the `<pre>` with no heading.
    */
   label?: string;
-  /** The tool output — a string or arbitrary JSON-serializable value. */
-  output: unknown;
+  output: string | undefined;
   /** Renders the error styling (red background/text) when true. */
   isError?: boolean;
   /** Tailwind max-height class for the scroll area. Defaults to `max-h-96`. */
@@ -55,7 +45,7 @@ export function ToolOutputBlock({
   preClassName,
 }: ToolOutputBlockProps) {
   const processedTerminal = useMemo(() => {
-    if (!terminal || typeof output !== 'string') return null;
+    if (!terminal || output === undefined) return null;
     return isTerminalOutput(output) ? processTerminalOutput(output) : null;
   }, [terminal, output]);
 
@@ -87,7 +77,7 @@ export function ToolOutputBlock({
             isError ? 'bg-red-50 dark:bg-red-950 text-red-800 dark:text-red-200' : 'bg-muted'
           )}
         >
-          {stringifyToolOutput(output)}
+          {output}
         </pre>
       )}
     </div>
