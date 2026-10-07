@@ -61,6 +61,31 @@ describe('env', () => {
     expect(env.PUBLIC_FILES_URL).toBeUndefined();
   });
 
+  it('defaults the sessions slice to 85% memory, no swap, and no CPU cap', () => {
+    delete process.env.SESSIONS_MEMORY_MAX;
+    delete process.env.SESSIONS_MEMORY_SWAP_MAX;
+    delete process.env.SESSIONS_CPU_QUOTA;
+    resetEnvCache();
+    expect(env.SESSIONS_MEMORY_MAX).toBe('85%');
+    expect(env.SESSIONS_MEMORY_SWAP_MAX).toBe('0');
+    expect(env.SESSIONS_CPU_QUOTA).toBeUndefined();
+  });
+
+  it('accepts systemd-style session limits and rejects malformed ones', () => {
+    process.env.SESSIONS_MEMORY_MAX = '96G';
+    process.env.SESSIONS_MEMORY_SWAP_MAX = 'infinity';
+    process.env.SESSIONS_CPU_QUOTA = '2200%';
+    resetEnvCache();
+    expect(env.SESSIONS_MEMORY_MAX).toBe('96G');
+    expect(env.SESSIONS_MEMORY_SWAP_MAX).toBe('infinity');
+    expect(env.SESSIONS_CPU_QUOTA).toBe('2200%');
+
+    process.env.SESSIONS_MEMORY_MAX = '96 GB';
+    process.env.SESSIONS_CPU_QUOTA = '22';
+    resetEnvCache();
+    expect(() => getEnv()).toThrow(/SESSIONS_MEMORY_MAX[\s\S]*SESSIONS_CPU_QUOTA/);
+  });
+
   it('rejects a PUBLIC_FILES_URL with a path', () => {
     process.env.PUBLIC_FILES_PORT = '8444';
     process.env.PUBLIC_FILES_URL = 'https://host.ts.net:8444/files';

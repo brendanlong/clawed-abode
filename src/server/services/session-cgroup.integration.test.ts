@@ -3,15 +3,21 @@ import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdtemp, writeFile, chmod, readFile, rm, access } from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   CLAUDE_BIN_ENV,
   SESSION_SCOPE_ENV,
   SESSION_SCOPE_LAUNCHER,
+  SESSIONS_SLICE_ENV,
   sessionScopeUnitName,
 } from '@/lib/session-scope';
-import { getSessionScopeConfig, stopSessionScope } from './session-cgroup';
+import {
+  applySessionsSliceLimits,
+  getSessionScopeConfig,
+  stopSessionScope,
+} from './session-cgroup';
 
 const execFileAsync = promisify(execFile);
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -192,6 +198,79 @@ describe('session cgroup launcher + teardown (real processes)', () => {
       await rm(dir, { recursive: true, force: true });
     }
   }, 20000);
+});
+
+async function sliceProperty(slice: string, property: string): Promise<string> {
+  const { stdout } = await execFileAsync('systemctl', [
+    '--user',
+    'show',
+    '--value',
+    '-p',
+    property,
+    slice,
+  ]);
+  return stdout.trim();
+}
+
+describe('sessions slice limits (real systemd)', () => {
+  it('OOM-kills a runaway process at the slice cap without ending its session', async (ctx) => {
+    if (!(await userScopeAvailable())) ctx.skip('systemd user scope unavailable');
+    // A throwaway slice, never the real one: its limits are shared by every
+    // instance on the host.
+    const slice = `clawed-itest-${randomBytes(4).toString('hex')}.slice`;
+    const unit = sessionScopeUnitName('oom', randomBytes(4).toString('hex'));
+    const dir = await mkdtemp(join(tmpdir(), 'ca-sess-oom-'));
+    const statusFile = join(dir, 'status');
+    const launcher = join(dir, 'launcher.sh');
+    await writeFile(launcher, SESSION_SCOPE_LAUNCHER, { mode: 0o755 });
+    const fakeCli = join(dir, 'fake-cli');
+    // `tail` buffers a newline-free stream whole, so this allocates ~400M
+    // inside the 100M slice; the CLI itself must outlive the kill.
+    await writeFile(
+      fakeCli,
+      `#!/bin/bash\nhead -c 400M /dev/zero | tail >/dev/null\necho $? > '${statusFile}'\nsleep 300\n`,
+      { mode: 0o755 }
+    );
+    await chmod(fakeCli, 0o755);
+
+    try {
+      await applySessionsSliceLimits(slice, {
+        memoryMax: '100M',
+        memorySwapMax: '0',
+        cpuQuota: '150%',
+      });
+      expect(await sliceProperty(slice, 'MemoryMax')).toBe(String(100 * 1024 * 1024));
+      expect(await sliceProperty(slice, 'MemorySwapMax')).toBe('0');
+      expect(await sliceProperty(slice, 'CPUQuotaPerSecUSec')).toBe('1.500000s');
+
+      const proc = spawn('bash', [launcher], {
+        stdio: 'ignore',
+        env: {
+          ...process.env,
+          [SESSION_SCOPE_ENV]: unit,
+          [CLAUDE_BIN_ENV]: fakeCli,
+          [SESSIONS_SLICE_ENV]: slice,
+        },
+      });
+      try {
+        expect(await waitForPid(statusFile, 15000)).toBe(137);
+        expect(proc.exitCode).toBeNull();
+        const { stdout } = await execFileAsync('systemctl', ['--user', 'is-active', unit]);
+        expect(stdout.trim()).toBe('active');
+      } finally {
+        proc.kill('SIGKILL');
+      }
+
+      // Unsetting the CPU quota must clear the cap applied above.
+      await applySessionsSliceLimits(slice, { memoryMax: '100M', memorySwapMax: '0' });
+      expect(await sliceProperty(slice, 'CPUQuotaPerSecUSec')).toBe('infinity');
+    } finally {
+      await stopSessionScope(unit);
+      await execFileAsync('systemctl', ['--user', 'stop', slice]).catch(() => {});
+      await execFileAsync('systemctl', ['--user', 'revert', slice]).catch(() => {});
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 30000);
 });
 
 describe('getSessionScopeConfig', () => {

@@ -7,7 +7,11 @@ import { constants as fsConstants } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createLogger, toError } from '@/lib/logger';
-import { SESSION_SCOPE_LAUNCHER } from '@/lib/session-scope';
+import {
+  SESSION_SCOPE_LAUNCHER,
+  sessionsSliceProperties,
+  type SessionsSliceLimits,
+} from '@/lib/session-scope';
 
 const execFileAsync = promisify(execFile);
 const log = createLogger('session-cgroup');
@@ -109,6 +113,30 @@ export async function getSessionScopeConfig(): Promise<SessionScopeConfig | null
 /** A short random suffix distinguishing scope units across establishments. */
 export function sessionScopeNonce(): string {
   return randomBytes(8).toString('hex');
+}
+
+/**
+ * Set the collective resource limits on the slice session scopes run in.
+ * Re-applied per establishment rather than once at boot so the limits come back
+ * if the user manager restarts (runtime properties live under /run). Best-effort:
+ * on failure sessions still run, just uncapped.
+ */
+export async function applySessionsSliceLimits(
+  slice: string,
+  limits: SessionsSliceLimits
+): Promise<void> {
+  try {
+    await execFileAsync(
+      'systemctl',
+      ['--user', 'set-property', '--runtime', slice, ...sessionsSliceProperties(limits)],
+      { timeout: 5000 }
+    );
+  } catch (err) {
+    log.warn('Could not set resource limits on the sessions slice; sessions run uncapped', {
+      slice,
+      error: toError(err).message,
+    });
+  }
 }
 
 /**

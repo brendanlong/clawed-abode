@@ -19,6 +19,38 @@ export const SESSION_SCOPE_ENV = 'CLAWED_SESSION_SCOPE';
 /** Env var carrying the real Claude CLI binary path to the launcher. */
 export const CLAUDE_BIN_ENV = 'CLAWED_CLAUDE_BIN';
 
+/** Env var carrying the shared slice every session scope is placed in. */
+export const SESSIONS_SLICE_ENV = 'CLAWED_SESSIONS_SLICE';
+
+/**
+ * The slice all session scopes share, so the resource limits on it cap agents
+ * collectively (a leak in one session can't push the host into swap) while
+ * sibling scopes split CPU fairly by default weight.
+ */
+export const SESSIONS_SLICE = 'clawed-sessions.slice';
+
+/** Collective limits for {@link SESSIONS_SLICE}, in systemd's own value syntax. */
+export interface SessionsSliceLimits {
+  memoryMax: string;
+  memorySwapMax: string;
+  /** Unset means no CPU cap. */
+  cpuQuota?: string;
+}
+
+/**
+ * `systemctl set-property` assignments for the sessions slice. Every property is
+ * always assigned (an unset CPU quota as an empty reset) because runtime
+ * properties persist across app restarts until reboot, so dropping a limit from
+ * the env must actively clear it.
+ */
+export function sessionsSliceProperties(limits: SessionsSliceLimits): string[] {
+  return [
+    `MemoryMax=${limits.memoryMax}`,
+    `MemorySwapMax=${limits.memorySwapMax}`,
+    `CPUQuota=${limits.cpuQuota ?? ''}`,
+  ];
+}
+
 /**
  * Transient systemd scope unit name for one query establishment. A per-establish
  * `nonce` keeps a stop→start (or resume) from colliding with a not-yet-torn-down
@@ -44,11 +76,15 @@ export function sessionScopeUnitName(sessionId: string, nonce: string): string {
  * the launcher runs the CLI directly (unwrapped) instead of hard-failing the
  * session. This makes reaping best-effort and robust to environment drift after
  * the app's own start-time probe.
+ *
+ * `OOMPolicy=continue` matters once the slice's memory cap is hit: the kernel
+ * kills the largest process, and systemd's default (`stop`) would then tear
+ * down the victim's whole scope, ending the session instead of just the leak.
  */
 export const SESSION_SCOPE_LAUNCHER = `#!/bin/bash
 if [ -n "\$${SESSION_SCOPE_ENV}" ] && systemd-run --user --scope --collect --quiet -- true >/dev/null 2>&1; then
-  exec systemd-run --user --scope --collect --quiet -p TimeoutStopSec=10 \\
-    --unit="\$${SESSION_SCOPE_ENV}" -- "\$${CLAUDE_BIN_ENV}" "\$@"
+  exec systemd-run --user --scope --collect --quiet -p TimeoutStopSec=10 -p OOMPolicy=continue \\
+    \${${SESSIONS_SLICE_ENV}:+"--slice=\$${SESSIONS_SLICE_ENV}"} --unit="\$${SESSION_SCOPE_ENV}" -- "\$${CLAUDE_BIN_ENV}" "\$@"
 fi
 exec "\$${CLAUDE_BIN_ENV}" "\$@"
 `;

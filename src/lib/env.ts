@@ -3,6 +3,11 @@ import { DEFAULT_CLAUDE_MODEL } from './claude-model';
 
 export const LOG_LEVELS = ['debug', 'info', 'warn', 'error'] as const;
 
+/** A systemd memory value: bytes with optional K/M/G/T suffix, a % of RAM, or `infinity`. */
+const systemdMemory = z
+  .string()
+  .regex(/^(\d+(\.\d+)?[KMGT]?|\d+(\.\d+)?%|infinity)$/, 'e.g. 64G, 85%, or infinity');
+
 /** Treat `VAR=` (common in .env templates) as unset. */
 function emptyToUndefined(value: unknown): unknown {
   return value === '' ? undefined : value;
@@ -68,6 +73,20 @@ const envSchema = z
     TTS_MAX_CONCURRENCY: z.preprocess(
       emptyToUndefined,
       z.coerce.number().int().min(1).max(16).default(4)
+    ),
+    // Collective limits on all agent sessions' processes (the shared systemd slice
+    // in src/lib/session-scope.ts). The memory cap applies with swap disabled, so a
+    // runaway agent is OOM-killed instead of pushing the host into swap.
+    SESSIONS_MEMORY_MAX: z.preprocess(emptyToUndefined, systemdMemory.default('85%')),
+    SESSIONS_MEMORY_SWAP_MAX: z.preprocess(emptyToUndefined, systemdMemory.default('0')),
+    // CPU time across all sessions, where 100% is one core (e.g. 2200% leaves ~2
+    // of 24 cores free). Unset means uncapped.
+    SESSIONS_CPU_QUOTA: z.preprocess(
+      emptyToUndefined,
+      z
+        .string()
+        .regex(/^\d+(\.\d+)?%$/, 'a percentage where 100% is one core, e.g. 2200%')
+        .optional()
     ),
     // Minimum level the server logger writes (see src/lib/logger.ts).
     LOG_LEVEL: z.enum(LOG_LEVELS).default('info'),

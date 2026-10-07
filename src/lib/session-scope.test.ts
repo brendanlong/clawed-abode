@@ -3,8 +3,24 @@ import {
   CLAUDE_BIN_ENV,
   SESSION_SCOPE_ENV,
   SESSION_SCOPE_LAUNCHER,
+  SESSIONS_SLICE_ENV,
   sessionScopeUnitName,
+  sessionsSliceProperties,
 } from './session-scope';
+
+describe('sessionsSliceProperties', () => {
+  it('assigns the memory and swap caps and the CPU quota', () => {
+    expect(
+      sessionsSliceProperties({ memoryMax: '85%', memorySwapMax: '0', cpuQuota: '2200%' })
+    ).toEqual(['MemoryMax=85%', 'MemorySwapMax=0', 'CPUQuota=2200%']);
+  });
+
+  it('resets the CPU quota when unset so a previously applied cap is cleared', () => {
+    expect(sessionsSliceProperties({ memoryMax: '64G', memorySwapMax: '0' })).toContain(
+      'CPUQuota='
+    );
+  });
+});
 
 describe('sessionScopeUnitName', () => {
   it('builds a scope unit name from the session id and nonce', () => {
@@ -27,6 +43,13 @@ describe('SESSION_SCOPE_LAUNCHER', () => {
     expect(SESSION_SCOPE_LAUNCHER).toContain('systemd-run --user --scope --collect --quiet');
     expect(SESSION_SCOPE_LAUNCHER).toContain(`--unit="$${SESSION_SCOPE_ENV}"`);
     expect(SESSION_SCOPE_LAUNCHER).toContain(`exec "$${CLAUDE_BIN_ENV}" "$@"`);
+  });
+
+  it('places the scope in the shared slice and survives an OOM kill inside it', () => {
+    expect(SESSION_SCOPE_LAUNCHER).toContain(
+      `$${'{'}${SESSIONS_SLICE_ENV}:+"--slice=$${SESSIONS_SLICE_ENV}"}`
+    );
+    expect(SESSION_SCOPE_LAUNCHER).toContain('-p OOMPolicy=continue');
   });
 
   it('gates scoping on the scope env and a runtime scope-creation probe', () => {
