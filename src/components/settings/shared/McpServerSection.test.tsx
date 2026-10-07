@@ -21,6 +21,7 @@ const MASK = '••••••••';
 /** What the routers actually send for an http server: header secrets are masked. */
 const HTTP_SERVER: McpServer = {
   id: 'm1',
+  updatedAt: new Date(0),
   name: 'remote',
   type: 'http',
   command: '',

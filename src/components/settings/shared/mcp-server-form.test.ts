@@ -22,6 +22,7 @@ describe('initialMcpServerForm', () => {
   it('populates from existing stdio server', () => {
     const form = initialMcpServerForm({
       id: '1',
+      updatedAt: new Date(0),
       authType: 'headers',
       name: 'memory',
       type: 'stdio',
@@ -40,6 +41,7 @@ describe('initialMcpServerForm', () => {
   it('populates from existing HTTP server, blanking masked secret headers', () => {
     const form = initialMcpServerForm({
       id: '2',
+      updatedAt: new Date(0),
       authType: 'headers',
       name: 'web-server',
       type: 'http',
@@ -58,6 +60,7 @@ describe('initialMcpServerForm', () => {
   it('blanks masked secret env var values', () => {
     const form = initialMcpServerForm({
       id: '3',
+      updatedAt: new Date(0),
       authType: 'headers',
       name: 'test',
       type: 'stdio',
@@ -72,6 +75,7 @@ describe('initialMcpServerForm', () => {
   it('joins args with spaces', () => {
     const form = initialMcpServerForm({
       id: '3',
+      updatedAt: new Date(0),
       authType: 'headers',
       name: 'test',
       type: 'stdio',
@@ -86,6 +90,7 @@ describe('initialMcpServerForm', () => {
   it('only pre-fills an OAuth client ID the user entered themselves', () => {
     const base = {
       id: '4',
+      updatedAt: new Date(0),
       authType: 'oauth' as const,
       name: 'remote',
       type: 'http' as const,
@@ -164,6 +169,7 @@ describe('buildMcpServerInput', () => {
   it('keeps an untouched stored secret env var as an empty value', () => {
     const existing: McpServer = {
       id: '1',
+      updatedAt: new Date(0),
       authType: 'headers',
       name: 'memory',
       type: 'stdio',

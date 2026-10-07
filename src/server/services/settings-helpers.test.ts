@@ -22,12 +22,12 @@ describe('settings-helpers', () => {
   describe('display formatting', () => {
     it('masks secret env vars and leaves plain ones readable', () => {
       const rows = [
-        { id: '1', name: 'PLAIN', value: 'v', isSecret: false },
-        { id: '2', name: 'SECRET', value: encrypt('s'), isSecret: true },
+        { id: '1', updatedAt: new Date(0), name: 'PLAIN', value: 'v', isSecret: false },
+        { id: '2', updatedAt: new Date(0), name: 'SECRET', value: encrypt('s'), isSecret: true },
       ];
       expect(formatEnvVarsForDisplay(rows)).toEqual([
-        { id: '1', name: 'PLAIN', value: 'v', isSecret: false },
-        { id: '2', name: 'SECRET', value: MASK, isSecret: true },
+        { id: '1', updatedAt: new Date(0), name: 'PLAIN', value: 'v', isSecret: false },
+        { id: '2', updatedAt: new Date(0), name: 'SECRET', value: MASK, isSecret: true },
       ]);
     });
 
@@ -35,6 +35,7 @@ describe('settings-helpers', () => {
       const [stdio, http] = formatMcpServersForDisplay([
         {
           id: '1',
+          updatedAt: new Date(0),
           name: 's',
           type: 'stdio',
           command: 'node',
@@ -49,6 +50,7 @@ describe('settings-helpers', () => {
         },
         {
           id: '2',
+          updatedAt: new Date(0),
           name: 'h',
           type: 'http',
           command: '',
@@ -137,6 +139,7 @@ describe('settings-helpers', () => {
   describe('corrupt MCP server rows', () => {
     const row = {
       id: '1',
+      updatedAt: new Date(0),
       name: 'bad',
       type: 'http',
       command: '',

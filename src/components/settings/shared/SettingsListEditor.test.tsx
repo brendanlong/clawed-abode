@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -7,12 +7,25 @@ import { SettingsListEditor, SettingsListRow, type SettingsScope } from './Setti
 interface Item {
   id: string;
   name: string;
+  updatedAt: Date;
 }
 
 const ITEMS: Item[] = [
-  { id: 'a', name: 'ALPHA' },
-  { id: 'b', name: 'BETA' },
+  { id: 'a', name: 'ALPHA', updatedAt: new Date(1000) },
+  { id: 'b', name: 'BETA', updatedAt: new Date(1000) },
 ];
+
+/** Stands in for a row's per-item state, like a revealed secret or a test result. */
+function StatefulRow({ item, editorActions }: { item: Item; editorActions: ReactNode }) {
+  const [revealed, setRevealed] = useState(false);
+  return (
+    <SettingsListRow editorActions={editorActions}>
+      <span>{item.name}</span>
+      <button onClick={() => setRevealed(true)}>Reveal {item.name}</button>
+      {revealed && <span>{item.name} revealed</span>}
+    </SettingsListRow>
+  );
+}
 
 /** Seeds its state from `existingItem` on mount only, like the real forms. */
 function SeededForm({
@@ -53,11 +66,7 @@ function renderEditor({
       items={list}
       onDelete={onDelete}
       onUpdate={onUpdate}
-      renderRow={(item, editorActions) => (
-        <SettingsListRow editorActions={editorActions}>
-          <span>{item.name}</span>
-        </SettingsListRow>
-      )}
+      renderRow={(item, editorActions) => <StatefulRow item={item} editorActions={editorActions} />}
       renderForm={(props) => <SeededForm {...props} />}
     />
   );
@@ -126,6 +135,21 @@ describe('SettingsListEditor', () => {
 
     expect(screen.queryByText('Adding')).not.toBeInTheDocument();
     expect(onUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it("resets only a changed row's state when the list refetches", async () => {
+    const { user, setItems } = renderEditor();
+
+    await user.click(screen.getByRole('button', { name: 'Reveal ALPHA' }));
+    await user.click(screen.getByRole('button', { name: 'Reveal BETA' }));
+    // Fresh Date objects for BETA, as a refetch would deserialize them.
+    setItems([
+      { ...ITEMS[0], updatedAt: new Date(2000) },
+      { ...ITEMS[1], updatedAt: new Date(1000) },
+    ]);
+
+    expect(screen.queryByText('ALPHA revealed')).not.toBeInTheDocument();
+    expect(screen.getByText('BETA revealed')).toBeInTheDocument();
   });
 
   it('hides the edit form, rather than turning it into an add form, when its item disappears', async () => {

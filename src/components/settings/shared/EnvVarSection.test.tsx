@@ -11,6 +11,7 @@ const render = (ui: ReactElement) => rtlRender(ui, { wrapper: QueryClientWrapper
 /** What the routers actually send for a secret: the value is masked. */
 const MASKED_SECRET: EnvVar = {
   id: 'e1',
+  updatedAt: new Date(0),
   name: 'TOKEN',
   value: '••••••••',
   isSecret: true,
@@ -100,7 +101,13 @@ describe('EnvVarSection', () => {
   it('promotes a plain var to a secret, keeping its typed value', async () => {
     const user = userEvent.setup();
     const m = mutations();
-    const plain: EnvVar = { id: 'e2', name: 'PLAIN', value: 'v1', isSecret: false };
+    const plain: EnvVar = {
+      id: 'e2',
+      updatedAt: new Date(0),
+      name: 'PLAIN',
+      value: 'v1',
+      isSecret: false,
+    };
     render(<EnvVarSection envVars={[plain]} mutations={m} onUpdate={vi.fn()} scope="repo" />);
 
     await user.click(screen.getByRole('button', { name: 'Edit' }));
@@ -113,7 +120,13 @@ describe('EnvVarSection', () => {
   it('requires a value for a non-secret var', async () => {
     const user = userEvent.setup();
     const m = mutations();
-    const plain: EnvVar = { id: 'e2', name: 'PLAIN', value: 'v1', isSecret: false };
+    const plain: EnvVar = {
+      id: 'e2',
+      updatedAt: new Date(0),
+      name: 'PLAIN',
+      value: 'v1',
+      isSecret: false,
+    };
     render(<EnvVarSection envVars={[plain]} mutations={m} onUpdate={vi.fn()} scope="repo" />);
 
     await user.click(screen.getByRole('button', { name: 'Edit' }));
@@ -141,8 +154,20 @@ describe('EnvVarSection', () => {
   it('saves the second item when switching straight from editing one to another', async () => {
     const user = userEvent.setup();
     const m = mutations();
-    const first: EnvVar = { id: 'e2', name: 'FIRST', value: 'one', isSecret: false };
-    const second: EnvVar = { id: 'e3', name: 'SECOND', value: 'two', isSecret: false };
+    const first: EnvVar = {
+      id: 'e2',
+      updatedAt: new Date(0),
+      name: 'FIRST',
+      value: 'one',
+      isSecret: false,
+    };
+    const second: EnvVar = {
+      id: 'e3',
+      updatedAt: new Date(0),
+      name: 'SECOND',
+      value: 'two',
+      isSecret: false,
+    };
     render(
       <EnvVarSection envVars={[first, second]} mutations={m} onUpdate={vi.fn()} scope="repo" />
     );
@@ -159,7 +184,13 @@ describe('EnvVarSection', () => {
   it('can save an item opened for editing while the add form was showing', async () => {
     const user = userEvent.setup();
     const m = mutations();
-    const plain: EnvVar = { id: 'e2', name: 'PLAIN', value: 'v1', isSecret: false };
+    const plain: EnvVar = {
+      id: 'e2',
+      updatedAt: new Date(0),
+      name: 'PLAIN',
+      value: 'v1',
+      isSecret: false,
+    };
     render(<EnvVarSection envVars={[plain]} mutations={m} onUpdate={vi.fn()} scope="repo" />);
 
     await user.click(screen.getByRole('button', { name: 'Add' }));
