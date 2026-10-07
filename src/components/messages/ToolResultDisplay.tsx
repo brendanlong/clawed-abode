@@ -9,6 +9,7 @@ import { CopyButton } from './CopyButton';
 import { SanitizationBadge } from './SanitizationBadge';
 import { formatAsJson } from './types';
 import type { ContentBlock } from './types';
+import { toolResultText } from './messageHelpers';
 import { parseSanitizationInfo } from '@/lib/sanitization';
 
 /**
@@ -68,9 +69,7 @@ export function ToolResultDisplay({ results }: { results: ContentBlock[] }) {
                         : 'bg-muted'
                     )}
                   >
-                    {typeof result.content === 'string'
-                      ? result.content
-                      : JSON.stringify(result.content, null, 2)}
+                    {toolResultText(result.content)}
                   </pre>
                 </div>
               ))}

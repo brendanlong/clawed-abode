@@ -4,6 +4,7 @@ import type {
   MessageContent,
   ToolCall,
   ToolResultMap,
+  ToolResultPart,
 } from './types';
 import { formatAsJson, buildToolMessages } from './types';
 import {
@@ -81,6 +82,25 @@ export function isOwnPromptMessage(message: { type: string; content: unknown }):
     !parseInjectedOrigin(content.origin) &&
     !isTaskNotificationOrigin(content.origin)
   );
+}
+
+function toolResultPartText(part: ToolResultPart): string {
+  if (typeof part.text === 'string') return part.text;
+  if (part.type === 'image') return '[Image]';
+  if (part.type === 'tool_reference' && part.tool_name) return `Loaded ${part.tool_name}`;
+  return JSON.stringify(part);
+}
+
+/**
+ * The display text of a `tool_result`'s content. Any result means the call has
+ * finished, so this always returns a string — never undefined, which the tool
+ * displays read as still running.
+ */
+export function toolResultText(content: ContentBlock['content']): string {
+  if (content === undefined || content === null) return '';
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) return content.map(toolResultPartText).join('\n');
+  return JSON.stringify(content);
 }
 
 /**
@@ -523,7 +543,7 @@ export function buildToolResultMap(messages: DisplayMessage[]): {
     for (const block of resultBlocks) {
       if (block.tool_use_id && toolUseIds.has(block.tool_use_id)) {
         resultMap.set(block.tool_use_id, {
-          content: typeof block.content === 'string' ? block.content : undefined,
+          content: toolResultText(block.content),
           is_error: block.is_error,
         });
         resultSequenceByToolUseId.set(block.tool_use_id, msg.sequence);

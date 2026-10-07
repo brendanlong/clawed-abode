@@ -4,7 +4,7 @@ import { z } from 'zod';
 import type { SanitizationInfo } from '@/lib/sanitization';
 
 // Map of tool_use_id -> result content
-export type ToolResultMap = Map<string, { content?: string; is_error?: boolean }>;
+export type ToolResultMap = Map<string, { content: string; is_error?: boolean }>;
 
 export interface ToolCall {
   name: string;
@@ -12,6 +12,13 @@ export interface ToolCall {
   input: unknown;
   output?: unknown;
   is_error?: boolean;
+}
+
+export interface ToolResultPart {
+  type?: string;
+  text?: string;
+  /** For tool_reference parts (a ToolSearch result) */
+  tool_name?: string;
 }
 
 export interface ContentBlock {
@@ -32,8 +39,11 @@ export interface ContentBlock {
   name?: string;
   input?: unknown;
   tool_use_id?: string;
-  /** String for tool_result; advisor_tool_result carries an encrypted object */
-  content?: string | { type?: string; encrypted_content?: string };
+  /**
+   * tool_result content is a string or (MCP tools, ToolSearch, image Reads) an
+   * array of parts; advisor_tool_result carries an encrypted object.
+   */
+  content?: string | ToolResultPart[] | { type?: string; encrypted_content?: string };
   is_error?: boolean;
   /** Sanitizer findings attached to a tool_result block whose output was filtered. */
   sanitization?: SanitizationInfo;
