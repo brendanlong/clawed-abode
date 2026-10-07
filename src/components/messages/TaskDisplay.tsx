@@ -9,6 +9,7 @@ import { ToolDisplayWrapper } from './ToolDisplayWrapper';
 import { ToolOutputBlock } from './ToolOutputBlock';
 import { useMessageListContext } from './MessageListContext';
 import { lenient, parseToolInput } from './tool-input';
+import { parseTaskOutput } from './task-output';
 import type { ToolCall } from './types';
 
 /** Shared with SubagentToolDisplay, which renders the same call as a breadcrumb. */
@@ -17,56 +18,6 @@ export const taskInputSchema = z.object({
   description: lenient(z.string()),
   prompt: lenient(z.string()),
 });
-
-interface TaskOutputContent {
-  type: 'text';
-  text: string;
-}
-
-/**
- * Parse the task output which comes as an array of content objects.
- * Returns the main text content and extracted agent ID if present.
- */
-function parseTaskOutput(output: unknown): { text: string; agentId?: string } {
-  if (typeof output === 'string') {
-    const agentIdMatch = output.match(/agentId:\s*(\w+)/);
-    return {
-      text: output,
-      agentId: agentIdMatch?.[1],
-    };
-  }
-
-  if (Array.isArray(output)) {
-    const textParts: string[] = [];
-    let agentId: string | undefined;
-
-    for (const item of output) {
-      if (typeof item === 'string') {
-        textParts.push(item);
-        const match = item.match(/agentId:\s*(\w+)/);
-        if (match) agentId = match[1];
-      } else if (item && typeof item === 'object') {
-        const content = item as TaskOutputContent;
-        if (content.type === 'text' && content.text) {
-          // Check if this is the agentId line
-          const agentIdMatch = content.text.match(/agentId:\s*(\w+)/);
-          if (agentIdMatch) {
-            agentId = agentIdMatch[1];
-          } else {
-            textParts.push(content.text);
-          }
-        }
-      }
-    }
-
-    return {
-      text: textParts.join('\n\n'),
-      agentId,
-    };
-  }
-
-  return { text: '' };
-}
 
 /**
  * Get a nice label for the subagent type.
@@ -142,10 +93,10 @@ export function TaskDisplay({
   const context = useMessageListContext();
   const subagentTranscript = tool.id ? context?.renderSubagentTranscript(tool.id) : null;
 
-  const { text: outputText, agentId } = useMemo(() => {
-    if (!hasOutput) return { text: '' };
-    return parseTaskOutput(tool.output);
-  }, [tool.output, hasOutput]);
+  const { text: outputText, agentId } = useMemo(
+    () => parseTaskOutput(tool.output ?? ''),
+    [tool.output]
+  );
 
   return (
     <ToolDisplayWrapper

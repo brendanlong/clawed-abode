@@ -63,12 +63,10 @@ export function SkillDisplay({ tool }: { tool: ToolCall }) {
           <div className="text-muted-foreground mb-1">Output:</div>
           {tool.is_error ? (
             <ToolOutputBlock output={tool.output} isError wrap />
-          ) : typeof tool.output === 'string' ? (
-            <div className="bg-muted rounded p-3 max-h-96 overflow-y-auto prose prose-sm dark:prose-invert max-w-none">
-              <MarkdownContent content={tool.output} />
-            </div>
           ) : (
-            <ToolOutputBlock output={tool.output} wrap preClassName="text-xs" />
+            <div className="bg-muted rounded p-3 max-h-96 overflow-y-auto prose prose-sm dark:prose-invert max-w-none">
+              <MarkdownContent content={tool.output ?? ''} />
+            </div>
           )}
         </div>
       )}

@@ -86,10 +86,10 @@ export function GrepDisplay({ tool }: { tool: ToolCall }) {
   const outputMode = input?.output_mode ?? 'files_with_matches';
 
   const optionsSummary = useMemo(() => (input ? buildOptionsSummary(input) : ''), [input]);
-  const resultCount = useMemo(() => {
-    if (typeof tool.output !== 'string') return 0;
-    return countResults(tool.output, outputMode);
-  }, [tool.output, outputMode]);
+  const resultCount = useMemo(
+    () => countResults(tool.output ?? '', outputMode),
+    [tool.output, outputMode]
+  );
 
   return (
     <ToolDisplayWrapper
@@ -122,7 +122,7 @@ export function GrepDisplay({ tool }: { tool: ToolCall }) {
           <div className="text-muted-foreground mb-1">Results:</div>
           {tool.is_error ? (
             <ToolOutputBlock output={tool.output} isError wrap />
-          ) : typeof tool.output === 'string' && tool.output.trim() ? (
+          ) : tool.output?.trim() ? (
             <pre className="bg-muted rounded p-2 max-h-96 overflow-y-auto overflow-x-auto text-sm font-mono whitespace-pre-wrap break-words">
               {tool.output}
             </pre>

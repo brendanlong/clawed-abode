@@ -19,8 +19,8 @@ const SYSTEM_REMINDER = /<\/?system-reminder>/;
  * system-reminder lines. Returns the de-numbered code and a line count.
  * Pure function: same input → same output.
  */
-export function parseReadOutput(output: unknown): ParsedReadOutput {
-  if (typeof output !== 'string' || output === '') {
+export function parseReadOutput(output: string | undefined): ParsedReadOutput {
+  if (!output) {
     return { code: '', lineCount: 0 };
   }
 

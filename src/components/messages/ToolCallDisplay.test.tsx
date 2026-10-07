@@ -204,21 +204,6 @@ describe('ToolCallDisplay', () => {
 
       expect(screen.getByText('test output here')).toBeInTheDocument();
     });
-
-    it('shows JSON-formatted output for objects', async () => {
-      const user = userEvent.setup();
-      const tool: ToolCall = {
-        name: 'CustomTool',
-        id: 'test-13',
-        input: { param: 'value' },
-        output: { result: 'success', count: 42 },
-      };
-
-      render(<ToolCallDisplay tool={tool} />);
-      await user.click(screen.getByRole('button'));
-
-      expect(screen.getByText(/"result": "success"/)).toBeInTheDocument();
-    });
   });
 
   describe('styling', () => {

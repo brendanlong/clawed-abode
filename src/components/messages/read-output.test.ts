@@ -48,9 +48,8 @@ describe('parseReadOutput', () => {
     });
   });
 
-  it('handles empty and non-string input', () => {
+  it('handles empty and missing input', () => {
     expect(parseReadOutput('')).toEqual({ code: '', lineCount: 0 });
     expect(parseReadOutput(undefined)).toEqual({ code: '', lineCount: 0 });
-    expect(parseReadOutput(42)).toEqual({ code: '', lineCount: 0 });
   });
 });
