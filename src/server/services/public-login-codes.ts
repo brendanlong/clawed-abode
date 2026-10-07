@@ -1,4 +1,5 @@
 import { randomBytes } from 'crypto';
+import { processSingleton } from '@/lib/process-singleton';
 
 // Long enough to survive a slow link open, short enough that a code left in
 // browser history is dead by the time anyone could read it.
@@ -6,12 +7,9 @@ export const PUBLIC_LOGIN_CODE_TTL_MS = 60 * 1000;
 
 /**
  * Code → expiry. In memory: the public files server runs in this process, and a
- * restart only costs a re-tap. On globalThis because Next bundles the tRPC route
- * (which mints) apart from instrumentation (which starts the server that
- * consumes), so each would otherwise get its own copy of this module.
+ * restart only costs a re-tap.
  */
-const globalForCodes = globalThis as unknown as { publicLoginCodes?: Map<string, number> };
-const codes = (globalForCodes.publicLoginCodes ??= new Map<string, number>());
+const codes = processSingleton('public-login-codes', () => new Map<string, number>());
 
 export function mintPublicLoginCode(): string {
   const now = Date.now();

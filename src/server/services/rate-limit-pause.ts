@@ -9,6 +9,7 @@
 
 import { prisma } from '@/lib/prisma';
 import { coalesce } from '@/lib/coalesce';
+import { processSingleton } from '@/lib/process-singleton';
 import type { CancelledPrompt } from '@/lib/cancelled-prompt';
 import { createLogger, toError } from '@/lib/logger';
 import { diffHolds, type RateLimitHold } from '@/lib/rate-limit';
@@ -65,7 +66,12 @@ export interface PauseRunner {
   revive(sessionId: string): Promise<void>;
 }
 
-let runner: PauseRunner | null = null;
+const runnerRef = processSingleton<{ runner: PauseRunner | null }>(
+  'rate-limit-pause.runner',
+  () => ({
+    runner: null,
+  })
+);
 
 /**
  * Prompt sent to a session whose turn a rate-limit pause cut short, once the
@@ -81,7 +87,10 @@ export const RATE_LIMIT_RESUME_PROMPT =
  * everything that shows or acts on a hold, so the session list, the live state and
  * the SSE channel can never disagree.
  */
-const currentHolds = new Map<string, RateLimitHold>();
+const currentHolds = processSingleton(
+  'rate-limit-pause.currentHolds',
+  () => new Map<string, RateLimitHold>()
+);
 
 /** This session's hold as of the last recompute, or null. */
 export function currentHold(sessionId: string): RateLimitHold | null {
@@ -101,13 +110,16 @@ export function isSessionRateLimitPaused(sessionId: string): boolean {
  * concurrent recomputes would race to push the same queued prompt twice. Awaiting
  * it means a recompute that started after the call has finished.
  */
-export const recomputeRateLimitHolds = coalesce(() =>
-  // The trigger is a fire-and-forget callback from rate-limit-state, so nothing
-  // is left to catch a rejection: swallow it here rather than crash the process.
-  runRecompute().catch((err: unknown) => log.error('Rate-limit recompute failed', toError(err)))
+export const recomputeRateLimitHolds = processSingleton('rate-limit-pause.recompute', () =>
+  coalesce(() =>
+    // The trigger is a fire-and-forget callback from rate-limit-state, so nothing
+    // is left to catch a rejection: swallow it here rather than crash the process.
+    runRecompute().catch((err: unknown) => log.error('Rate-limit recompute failed', toError(err)))
+  )
 );
 
 async function runRecompute(): Promise<void> {
+  const { runner } = runnerRef;
   if (!runner) {
     log.warn('Rate-limit recompute before initRateLimitPause; skipping');
     return;
@@ -217,9 +229,15 @@ async function pauseSession(
  * recompute snapshots it before its first await and flags only sessions whose
  * count is unchanged, so a Stop anywhere during the pause wins.
  */
-const withdrawals = new Map<string, number>();
+const withdrawals = processSingleton(
+  'rate-limit-pause.withdrawals',
+  () => new Map<string, number>()
+);
 /** Flag writes already issued, which a Stop waits out before clearing the flag. */
-const flagWrites = new Map<string, Promise<void>>();
+const flagWrites = processSingleton(
+  'rate-limit-pause.flagWrites',
+  () => new Map<string, Promise<void>>()
+);
 
 /**
  * Mark a session to be nudged to continue once the window resets. Best-effort.
@@ -332,7 +350,7 @@ export async function withdrawQueuedWork(sessionId: string): Promise<CancelledPr
  * revival); the user's queued prompt is exactly the interaction, just an earlier one.
  */
 export async function initRateLimitPause(pauseRunner: PauseRunner): Promise<void> {
-  runner = pauseRunner;
+  runnerRef.runner = pauseRunner;
   setRateLimitChangeHandler(() => void recomputeRateLimitHolds());
   await loadRateLimitReadings();
   void recomputeRateLimitHolds();

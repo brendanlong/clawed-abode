@@ -4,6 +4,7 @@ import type { SlashCommand } from '@anthropic-ai/claude-agent-sdk';
 import type { RetryState } from '@/lib/claude-messages';
 import type { RateLimitHold } from '@/lib/rate-limit';
 import { toSessionView, type SessionView } from '@/lib/session-view';
+import { processSingleton } from '@/lib/process-singleton';
 import { taskHasEndState, type BackgroundTask } from '@/lib/session-status';
 import type { ParsedMessage } from './message-store';
 
@@ -139,8 +140,9 @@ class SSEEventEmitter extends EventEmitter {
   }
 }
 
-// Singleton instance for the application
-export const sseEvents = new SSEEventEmitter();
-
-// Increase max listeners to handle many concurrent sessions
-sseEvents.setMaxListeners(1000);
+export const sseEvents = processSingleton('sse-events', () => {
+  const emitter = new SSEEventEmitter();
+  // Every open session view and session list subscribes.
+  emitter.setMaxListeners(1000);
+  return emitter;
+});

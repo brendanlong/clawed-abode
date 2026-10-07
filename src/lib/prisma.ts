@@ -1,9 +1,6 @@
 import { PrismaBetterSqlite3 } from '@prisma/adapter-better-sqlite3';
 import { PrismaClient } from '@/generated/prisma/client';
-
-const globalForPrisma = globalThis as unknown as {
-  prisma: PrismaClient | undefined;
-};
+import { processSingleton } from './process-singleton';
 
 // Prisma 7 requires a driver adapter for the datasource. The better-sqlite3
 // adapter opens the SQLite file directly (no Rust query engine). We read the
@@ -18,8 +15,4 @@ function createPrismaClient(): PrismaClient {
   return new PrismaClient({ adapter });
 }
 
-export const prisma = globalForPrisma.prisma ?? createPrismaClient();
-
-if (process.env.NODE_ENV !== 'production') {
-  globalForPrisma.prisma = prisma;
-}
+export const prisma = processSingleton('prisma', createPrismaClient);

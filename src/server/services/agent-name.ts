@@ -9,6 +9,7 @@ import {
 import { classifyClaudeCredential } from '@/lib/claude-credential';
 import { createLogger, toError } from '@/lib/logger';
 import { prisma } from '@/lib/prisma';
+import { processSingleton } from '@/lib/process-singleton';
 import { extractRepoFullName } from '@/lib/utils';
 import { sseEvents } from './events';
 import { loadClaudeCredential } from './settings-merger';
@@ -18,7 +19,7 @@ const log = createLogger('agent-name');
 const NAMING_MODEL = 'claude-haiku-4-5';
 const NAMING_TIMEOUT_MS = 5_000;
 
-const inFlight = new Map<string, Promise<string>>();
+const inFlight = processSingleton('agent-name.inFlight', () => new Map<string, Promise<string>>());
 
 /**
  * The session's agent name, generating and storing it on first use. Concurrent

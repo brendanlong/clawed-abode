@@ -1,5 +1,6 @@
 import type { SlashCommand } from '@anthropic-ai/claude-agent-sdk';
 import { CommandsChangedContentSchema, SystemInitContentSchema } from '@/lib/claude-messages';
+import { processSingleton } from '@/lib/process-singleton';
 import { sseEvents } from './events';
 
 interface CommandCache {
@@ -14,7 +15,7 @@ interface CommandCache {
  * fetch them between queries and after page reloads. Cleared only when the
  * session is deleted.
  */
-const cache = new Map<string, CommandCache>();
+const cache = processSingleton('session-commands', () => new Map<string, CommandCache>());
 
 const EMPTY: CommandCache = { all: [], terminalOnly: new Set() };
 
