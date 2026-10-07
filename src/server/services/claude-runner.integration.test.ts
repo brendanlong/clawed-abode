@@ -86,6 +86,7 @@ vi.mock('./session-cgroup', () => ({
     launcherPath: '/fake/launcher.sh',
     claudeBin: '/fake/claude',
   })),
+  ensureSessionsSliceLimits: vi.fn(async () => {}),
   sessionScopeNonce: vi.fn(() => 'testnonce'),
   stopSessionScope: mockStopSessionScope,
 }));

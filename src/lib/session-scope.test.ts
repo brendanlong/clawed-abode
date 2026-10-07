@@ -3,8 +3,24 @@ import {
   CLAUDE_BIN_ENV,
   SESSION_SCOPE_ENV,
   SESSION_SCOPE_LAUNCHER,
+  SESSIONS_SLICE_ENV,
   sessionScopeUnitName,
+  sessionsSliceProperties,
 } from './session-scope';
+
+describe('sessionsSliceProperties', () => {
+  it('assigns the memory and swap caps and the CPU quota', () => {
+    expect(
+      sessionsSliceProperties({ memoryMax: '85%', memorySwapMax: '0', cpuQuota: '2200%' })
+    ).toEqual(['MemoryMax=85%', 'MemorySwapMax=0', 'CPUQuota=2200%']);
+  });
+
+  it('resets the CPU quota when unset so a previously applied cap is cleared', () => {
+    expect(sessionsSliceProperties({ memoryMax: '64G', memorySwapMax: '0' })).toContain(
+      'CPUQuota='
+    );
+  });
+});
 
 describe('sessionScopeUnitName', () => {
   it('builds a scope unit name from the session id and nonce', () => {
@@ -24,17 +40,23 @@ describe('sessionScopeUnitName', () => {
 describe('SESSION_SCOPE_LAUNCHER', () => {
   it('runs the real CLI under a systemd user scope when the scope env is set', () => {
     expect(SESSION_SCOPE_LAUNCHER).toContain('#!/bin/bash');
-    expect(SESSION_SCOPE_LAUNCHER).toContain('systemd-run --user --scope --collect --quiet');
-    expect(SESSION_SCOPE_LAUNCHER).toContain(`--unit="$${SESSION_SCOPE_ENV}"`);
+    expect(SESSION_SCOPE_LAUNCHER).toContain('args=(--user --scope --collect --quiet');
+    expect(SESSION_SCOPE_LAUNCHER).toContain(
+      `exec systemd-run "\${args[@]}" --unit="$${SESSION_SCOPE_ENV}"`
+    );
     expect(SESSION_SCOPE_LAUNCHER).toContain(`exec "$${CLAUDE_BIN_ENV}" "$@"`);
   });
 
-  it('gates scoping on the scope env and a runtime scope-creation probe', () => {
+  it('places the scope in the shared slice and survives an OOM kill inside it', () => {
+    expect(SESSION_SCOPE_LAUNCHER).toContain(`args+=("--slice=$${SESSIONS_SLICE_ENV}")`);
+    expect(SESSION_SCOPE_LAUNCHER).toContain('-p OOMPolicy=continue');
+  });
+
+  it('gates scoping on the scope env and a probe scope with the same properties', () => {
     expect(SESSION_SCOPE_LAUNCHER).toContain(`[ -n "$${SESSION_SCOPE_ENV}" ]`);
     // Actually create-and-collect a throwaway scope so a runtime failure (no bus,
-    // no delegation) degrades to unwrapped rather than a non-recoverable exec.
-    expect(SESSION_SCOPE_LAUNCHER).toContain(
-      'systemd-run --user --scope --collect --quiet -- true'
-    );
+    // no delegation, an unsupported property) degrades to unwrapped rather than a
+    // non-recoverable exec.
+    expect(SESSION_SCOPE_LAUNCHER).toContain('systemd-run "${args[@]}" -- true');
   });
 });

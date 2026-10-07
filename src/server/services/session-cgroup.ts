@@ -6,8 +6,14 @@ import { writeFile, chmod, mkdir, access } from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { env } from '@/lib/env';
 import { createLogger, toError } from '@/lib/logger';
-import { SESSION_SCOPE_LAUNCHER } from '@/lib/session-scope';
+import {
+  SESSION_SCOPE_LAUNCHER,
+  SESSIONS_SLICE,
+  sessionsSliceProperties,
+  type SessionsSliceLimits,
+} from '@/lib/session-scope';
 
 const execFileAsync = promisify(execFile);
 const log = createLogger('session-cgroup');
@@ -109,6 +115,48 @@ export async function getSessionScopeConfig(): Promise<SessionScopeConfig | null
 /** A short random suffix distinguishing scope units across establishments. */
 export function sessionScopeNonce(): string {
   return randomBytes(8).toString('hex');
+}
+
+/**
+ * Replace the resource limits on a slice. Reverting first matters: systemd keeps
+ * a percentage and an absolute size for the same property in separate drop-ins,
+ * and a stale percentage one wins. Best-effort: on failure sessions still run,
+ * just uncapped.
+ */
+export async function applySessionsSliceLimits(
+  slice: string,
+  limits: SessionsSliceLimits
+): Promise<void> {
+  try {
+    await execFileAsync('systemctl', ['--user', 'revert', slice], { timeout: 10000 });
+    await execFileAsync(
+      'systemctl',
+      ['--user', 'set-property', '--runtime', slice, ...sessionsSliceProperties(limits)],
+      { timeout: 10000 }
+    );
+  } catch (err) {
+    log.warn('Could not set resource limits on the sessions slice; sessions run uncapped', {
+      slice,
+      error: toError(err).message,
+    });
+  }
+}
+
+let sessionsSliceLimitsPromise: Promise<void> | null = null;
+
+/**
+ * Apply the env-configured limits to {@link SESSIONS_SLICE}, once per process:
+ * `revert` reloads the user manager (~1s), too slow for every establishment.
+ */
+export function ensureSessionsSliceLimits(): Promise<void> {
+  if (!sessionsSliceLimitsPromise) {
+    sessionsSliceLimitsPromise = applySessionsSliceLimits(SESSIONS_SLICE, {
+      memoryMax: env.SESSIONS_MEMORY_MAX,
+      memorySwapMax: env.SESSIONS_MEMORY_SWAP_MAX,
+      cpuQuota: env.SESSIONS_CPU_QUOTA,
+    });
+  }
+  return sessionsSliceLimitsPromise;
 }
 
 /**

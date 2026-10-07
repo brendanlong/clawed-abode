@@ -61,6 +61,48 @@ describe('env', () => {
     expect(env.PUBLIC_FILES_URL).toBeUndefined();
   });
 
+  it('defaults the sessions slice to 85% memory, no swap, and no CPU cap', () => {
+    delete process.env.SESSIONS_MEMORY_MAX;
+    delete process.env.SESSIONS_MEMORY_SWAP_MAX;
+    delete process.env.SESSIONS_CPU_QUOTA;
+    resetEnvCache();
+    expect(env.SESSIONS_MEMORY_MAX).toBe('85%');
+    expect(env.SESSIONS_MEMORY_SWAP_MAX).toBe('0');
+    expect(env.SESSIONS_CPU_QUOTA).toBeUndefined();
+  });
+
+  it('accepts systemd-style session limits and rejects malformed ones', () => {
+    process.env.SESSIONS_MEMORY_MAX = '96G';
+    process.env.SESSIONS_MEMORY_SWAP_MAX = 'infinity';
+    process.env.SESSIONS_CPU_QUOTA = '2200%';
+    resetEnvCache();
+    expect(env.SESSIONS_MEMORY_MAX).toBe('96G');
+    expect(env.SESSIONS_MEMORY_SWAP_MAX).toBe('infinity');
+    expect(env.SESSIONS_CPU_QUOTA).toBe('2200%');
+
+    process.env.SESSIONS_MEMORY_MAX = '1P';
+    process.env.SESSIONS_MEMORY_SWAP_MAX = '0';
+    resetEnvCache();
+    expect(env.SESSIONS_MEMORY_MAX).toBe('1P');
+    expect(env.SESSIONS_MEMORY_SWAP_MAX).toBe('0');
+  });
+
+  // Each of these is rejected by systemd, which would drop every limit at once.
+  it.each([
+    ['SESSIONS_MEMORY_MAX', '96 GB'],
+    ['SESSIONS_MEMORY_MAX', '0'],
+    ['SESSIONS_MEMORY_MAX', '150%'],
+    ['SESSIONS_MEMORY_MAX', '85.555%'],
+    ['SESSIONS_MEMORY_SWAP_MAX', '1X'],
+    ['SESSIONS_CPU_QUOTA', '22'],
+    ['SESSIONS_CPU_QUOTA', '0%'],
+    ['SESSIONS_CPU_QUOTA', '1.2345%'],
+  ])('rejects %s=%s', (name, value) => {
+    process.env[name] = value;
+    resetEnvCache();
+    expect(() => getEnv()).toThrow(new RegExp(name));
+  });
+
   it('rejects a PUBLIC_FILES_URL with a path', () => {
     process.env.PUBLIC_FILES_PORT = '8444';
     process.env.PUBLIC_FILES_URL = 'https://host.ts.net:8444/files';

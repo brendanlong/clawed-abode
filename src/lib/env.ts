@@ -3,6 +3,25 @@ import { DEFAULT_CLAUDE_MODEL } from './claude-model';
 
 export const LOG_LEVELS = ['debug', 'info', 'warn', 'error'] as const;
 
+/** A percentage systemd accepts: at most two decimals, within [min, max]. */
+function isSystemdPercent(value: string, min: number, max: number): boolean {
+  const match = /^(\d+(?:\.\d{1,2})?)%$/.exec(value);
+  return match !== null && Number(match[1]) >= min && Number(match[1]) <= max;
+}
+
+/** A systemd memory limit: a size like 64G, a % of RAM, or `infinity`. */
+function systemdMemory(min: 0 | 1) {
+  return z
+    .string()
+    .refine(
+      (v) =>
+        v === 'infinity' ||
+        isSystemdPercent(v, min, 100) ||
+        (/^\d+(\.\d+)?[KMGTPE]?$/.test(v) && parseFloat(v) >= min),
+      `e.g. 64G, 85%, or infinity${min > 0 ? ' (not 0)' : ''}`
+    );
+}
+
 /** Treat `VAR=` (common in .env templates) as unset. */
 function emptyToUndefined(value: unknown): unknown {
   return value === '' ? undefined : value;
@@ -68,6 +87,17 @@ const envSchema = z
     TTS_MAX_CONCURRENCY: z.preprocess(
       emptyToUndefined,
       z.coerce.number().int().min(1).max(16).default(4)
+    ),
+    // Collective limits on all agent sessions (see "Process Reaping" in
+    // doc/claude-sessions.md), in systemd syntax.
+    SESSIONS_MEMORY_MAX: z.preprocess(emptyToUndefined, systemdMemory(1).default('85%')),
+    SESSIONS_MEMORY_SWAP_MAX: z.preprocess(emptyToUndefined, systemdMemory(0).default('0')),
+    SESSIONS_CPU_QUOTA: z.preprocess(
+      emptyToUndefined,
+      z
+        .string()
+        .refine((v) => isSystemdPercent(v, 0.01, Infinity), 'e.g. 2200% (100% is one core)')
+        .optional()
     ),
     // Minimum level the server logger writes (see src/lib/logger.ts).
     LOG_LEVEL: z.enum(LOG_LEVELS).default('info'),

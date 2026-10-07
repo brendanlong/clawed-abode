@@ -42,6 +42,7 @@ vi.mock('./mcp-config-file', () => ({
 }));
 vi.mock('./session-cgroup', () => ({
   getSessionScopeConfig: vi.fn(async () => null),
+  ensureSessionsSliceLimits: vi.fn(async () => {}),
   sessionScopeNonce: vi.fn(() => 'testnonce'),
   stopSessionScope: vi.fn(async () => {}),
 }));

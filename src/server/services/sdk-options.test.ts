@@ -19,8 +19,10 @@ vi.mock('./mcp-config-file', () => ({
 const mockScopeConfig = vi.hoisted(() =>
   vi.fn(async () => null as null | { launcherPath: string; claudeBin: string })
 );
+const mockApplySliceLimits = vi.hoisted(() => vi.fn(async () => {}));
 vi.mock('./session-cgroup', () => ({
   getSessionScopeConfig: mockScopeConfig,
+  ensureSessionsSliceLimits: mockApplySliceLimits,
   sessionScopeNonce: () => 'nonce',
 }));
 vi.mock('./input-sanitizer', () => ({ sanitizeToolOutputHook: vi.fn() }));
@@ -202,11 +204,15 @@ describe('buildSdkOptions', () => {
     expect(options.env).toMatchObject({
       CLAWED_SESSION_SCOPE: sessionScope,
       CLAWED_CLAUDE_BIN: '/claude',
+      CLAWED_SESSIONS_SLICE: 'clawed-sessions.slice',
     });
+    expect(mockApplySliceLimits).toHaveBeenCalled();
   });
 
   it('leaves the scope unset when cgroup scoping is unavailable', async () => {
+    mockApplySliceLimits.mockClear();
     const { options, sessionScope } = await build(settings());
+    expect(mockApplySliceLimits).not.toHaveBeenCalled();
     expect(sessionScope).toBeNull();
     expect(options.pathToClaudeCodeExecutable).toBeUndefined();
   });
