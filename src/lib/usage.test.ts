@@ -209,6 +209,20 @@ describe('sessionSubscriptionUsage', () => {
         exhausted: false,
         resetsAtMs: IN_A_WEEK,
       },
+      weekly: {
+        label: 'Weekly (Fable)',
+        percentUsed: 86,
+        exhausted: false,
+        resetsAtMs: IN_A_WEEK,
+      },
+    });
+  });
+
+  it('shows the all-models weekly window instead when it is exhausted', () => {
+    const exhausted = { ...weekly, rejected: true };
+    expect(usageFor('fable', [fable], [fiveHour, exhausted]).weekly).toMatchObject({
+      label: 'Weekly (all models)',
+      exhausted: true,
     });
   });
 
@@ -219,6 +233,7 @@ describe('sessionSubscriptionUsage', () => {
   it('has no model-scoped window for a model without one', () => {
     const usage = usageFor('claude-sonnet-5-5');
     expect(usage.weeklyModel).toBeNull();
+    expect(usage.weekly).toEqual(usage.weeklyAllModels);
     expect(usage.weeklyAllModels).toEqual({
       label: 'Weekly',
       percentUsed: 44,
@@ -250,6 +265,7 @@ describe('sessionSubscriptionUsage', () => {
       fiveHour: null,
       weeklyAllModels: null,
       weeklyModel: null,
+      weekly: null,
     });
   });
 });

@@ -12,6 +12,7 @@ let rateLimitState: typeof import('./rate-limit-state');
 const HOUR_MS = 60 * 60 * 1000;
 
 const working = new Set<string>();
+const liveModels = new Map<string, string>();
 const usageCall = vi.fn<() => Promise<unknown>>();
 const fakeQuery = {
   usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: usageCall,
@@ -19,6 +20,7 @@ const fakeQuery = {
 const port = {
   isSessionWorking: vi.fn((id: string) => working.has(id)),
   deliverMessage: vi.fn(async (_id: string, _text: string) => {}),
+  liveModel: vi.fn((id: string) => liveModels.get(id)),
   subscriptionQuery: vi.fn((_id: string): Query | null => fakeQuery),
 } satisfies UsagePort;
 
@@ -53,6 +55,7 @@ describe('usage tools', () => {
     usage._resetUsageState();
     usage.initUsage(port);
     working.clear();
+    liveModels.clear();
     vi.clearAllMocks();
     usageCall.mockResolvedValue({ rate_limits_available: false, rate_limits: null });
   });
@@ -192,6 +195,23 @@ describe('usage tools', () => {
       expect(usageCall).toHaveBeenCalledTimes(1);
     });
 
+    it('stops asking for snapshots once one shows the credential can’t see plan limits', async () => {
+      const session = await createTestSession();
+      await rateLimitState.recordRateLimitReadings([reading({ utilization: 40 })]);
+      await usage.getUsageReport(session.id);
+      expect(usageCall).toHaveBeenCalledTimes(1);
+
+      vi.useFakeTimers({ toFake: ['Date'] });
+      try {
+        vi.setSystemTime(Date.now() + 10 * 60 * 1000);
+        await rateLimitState.recordRateLimitReadings([reading({ utilization: 41 })]);
+        await usage.getUsageReport(session.id);
+        expect(usageCall).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it('asks for a snapshot while the stream’s readings are fresh, for the per-model windows', async () => {
       const session = await createTestSession();
       await rateLimitState.recordRateLimitReadings([reading({ utilization: 40 })]);
@@ -231,14 +251,24 @@ describe('usage tools', () => {
       });
 
       const fable = await usage.getSessionSubscriptionUsage(session.id, 'claude-fable-5-1');
-      expect(fable.fiveHour?.percentUsed).toBe(58);
-      expect(fable.weeklyModel).toMatchObject({ label: 'Weekly (Fable)', percentUsed: 86 });
-      expect(fable.weeklyAllModels?.percentUsed).toBe(44);
+      expect(fable?.fiveHour?.percentUsed).toBe(58);
+      expect(fable?.weeklyModel).toMatchObject({ label: 'Weekly (Fable)', percentUsed: 86 });
+      expect(fable?.weeklyAllModels?.percentUsed).toBe(44);
 
       const other = await usage.getSessionSubscriptionUsage(session.id, 'claude-sonnet-5-5');
-      expect(other.weeklyModel).toBeNull();
-      expect(other.weeklyAllModels).toMatchObject({ label: 'Weekly', percentUsed: 44 });
+      expect(other?.weeklyModel).toBeNull();
+      expect(other?.weeklyAllModels).toMatchObject({ label: 'Weekly', percentUsed: 44 });
       expect(usageCall).toHaveBeenCalledTimes(1);
+
+      liveModels.set(session.id, 'fable');
+      const live = await usage.getSessionSubscriptionUsage(session.id, 'claude-sonnet-5-5');
+      expect(live?.weekly).toMatchObject({ label: 'Weekly (Fable)' });
+    });
+
+    it('shows nothing for a session on a proxied model', async () => {
+      const session = await createTestSession();
+      await rateLimitState.recordRateLimitReadings([reading({ utilization: 58 })]);
+      expect(await usage.getSessionSubscriptionUsage(session.id, 'openai/gpt-6')).toBeNull();
     });
   });
 });

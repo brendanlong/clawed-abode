@@ -130,7 +130,8 @@ export function MessageList({
 
   return (
     <div className="relative flex-1 min-h-0">
-      <div ref={containerRef} className="h-full overflow-y-auto p-4">
+      {/* Bottom padding keeps the floating usage indicators off the newest message. */}
+      <div ref={containerRef} className="h-full overflow-y-auto p-4 pb-16 sm:pb-12">
         {/* Sentinel for triggering infinite scroll - placed before messages */}
         {/* overflow-anchor:none prevents browser from anchoring to these elements */}
         {/* so when new messages load above, the view stays on current messages */}

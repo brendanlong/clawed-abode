@@ -48,15 +48,14 @@ function MiniBar({ bar }: { bar: UsageBar }) {
 }
 
 /**
- * Subscription usage beside the context indicator: the 5-hour window, and the
- * weekly window scoped to the session's model if the plan has one, else the
- * all-models weekly window. The tooltip details every window, with reset times.
+ * Subscription usage beside the context indicator: the 5-hour window and the
+ * session's weekly window (see `SessionSubscriptionUsage.weekly`). The tooltip
+ * details every window, with reset times.
  */
 export function SubscriptionUsageIndicator({ usage, className }: SubscriptionUsageIndicatorProps) {
   const now = useNowTick();
   if (!usage) return null;
-  const weekly = usage.weeklyModel ?? usage.weeklyAllModels;
-  const bars = [usage.fiveHour, weekly].filter((bar): bar is UsageBar => bar !== null);
+  const bars = [usage.fiveHour, usage.weekly].filter((bar): bar is UsageBar => bar !== null);
   if (bars.length === 0) return null;
 
   const details = [usage.fiveHour, usage.weeklyModel, usage.weeklyAllModels]

@@ -248,6 +248,11 @@ export interface SessionSubscriptionUsage {
   weeklyAllModels: UsageBar | null;
   /** The weekly window scoped to the session's model, when the plan has one. */
   weeklyModel: UsageBar | null;
+  /**
+   * The weekly window to show: the model's, unless the all-models window is
+   * exhausted, since then that is the one blocking the session.
+   */
+  weekly: UsageBar | null;
 }
 
 const MODEL_SCOPED_LIMIT_TYPES: Partial<Record<HoldableLimitType, string>> = {
@@ -307,11 +312,13 @@ export function sessionSubscriptionUsage(input: {
     }
   }
 
+  const weeklyAllModels = sevenDay
+    ? readingBar(sevenDay, weeklyModel ? 'Weekly (all models)' : 'Weekly')
+    : null;
   return {
     fiveHour: fiveHour ? readingBar(fiveHour, 'Session') : null,
-    weeklyAllModels: sevenDay
-      ? readingBar(sevenDay, weeklyModel ? 'Weekly (all models)' : 'Weekly')
-      : null,
+    weeklyAllModels,
     weeklyModel,
+    weekly: weeklyAllModels?.exhausted ? weeklyAllModels : (weeklyModel ?? weeklyAllModels),
   };
 }

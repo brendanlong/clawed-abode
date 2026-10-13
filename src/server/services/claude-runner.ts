@@ -698,6 +698,9 @@ export const usageRunner: UsagePort = {
     return (state ? isWorking(state.turn) : false) || hasActiveGptRuns(sessionId);
   },
   deliverMessage: deliverAppMessage,
+  liveModel(sessionId) {
+    return sessions.get(sessionId)?.live?.boundSettings.claudeModel;
+  },
   subscriptionQuery(preferSessionId) {
     const onSubscription = (state: SessionState | undefined) =>
       state?.live && !usesLlmProxy(state.live.boundSettings.claudeModel) ? state.live.query : null;

@@ -17,7 +17,7 @@ describe('SubscriptionUsageIndicator', () => {
   it('shows the session and all-models weekly bars', () => {
     render(
       <SubscriptionUsageIndicator
-        usage={{ fiveHour: session, weeklyAllModels: weekly, weeklyModel: null }}
+        usage={{ fiveHour: session, weeklyAllModels: weekly, weeklyModel: null, weekly }}
       />
     );
     expect(meterValues()).toEqual([
@@ -26,7 +26,7 @@ describe('SubscriptionUsageIndicator', () => {
     ]);
   });
 
-  it('shows the model-scoped weekly bar instead of the all-models one', () => {
+  it('shows the chosen weekly bar, not the all-models one', () => {
     const fable: UsageBar = { ...weekly, label: 'Weekly (Fable)', percentUsed: 86 };
     render(
       <SubscriptionUsageIndicator
@@ -34,6 +34,7 @@ describe('SubscriptionUsageIndicator', () => {
           fiveHour: session,
           weeklyAllModels: { ...weekly, label: 'Weekly (all models)' },
           weeklyModel: fable,
+          weekly: fable,
         }}
       />
     );
@@ -50,6 +51,7 @@ describe('SubscriptionUsageIndicator', () => {
           fiveHour: { ...session, exhausted: true, percentUsed: null },
           weeklyAllModels: null,
           weeklyModel: null,
+          weekly: null,
         }}
       />
     );
@@ -60,7 +62,7 @@ describe('SubscriptionUsageIndicator', () => {
   it('renders nothing without any window', () => {
     const { container } = render(
       <SubscriptionUsageIndicator
-        usage={{ fiveHour: null, weeklyAllModels: null, weeklyModel: null }}
+        usage={{ fiveHour: null, weeklyAllModels: null, weeklyModel: null, weekly: null }}
       />
     );
     expect(container).toBeEmptyDOMElement();

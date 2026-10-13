@@ -41,11 +41,7 @@ export const rateLimitRouter = router({
       return { success: true };
     }),
 
-  /**
-   * The usage bars beside a session's context indicator. The session's own model
-   * override wins over the model its query reported at startup, since changing
-   * the override applies to the live query.
-   */
+  /** The usage bars beside a session's context indicator. */
   getSessionUsage: sessionProcedure.query(async ({ ctx, input }) => {
     const model = ctx.session.claudeModel ?? (await getSessionUsageTotals(input.sessionId)).model;
     return getSessionSubscriptionUsage(input.sessionId, model ?? null);
