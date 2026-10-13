@@ -56,6 +56,10 @@ model Session {
   resumeAfterRateLimit    Boolean  @default(false)
   // Monotonic counter for atomic queued-prompt position assignment (next position to assign)
   queuedPromptSequence    Int      @default(0)
+  // Usage alerts the agent opted into with set_usage_alerts: percent used at which
+  // it is told about the 5-hour / weekly windows; null = off (see src/lib/usage.ts).
+  usageAlertFiveHour      Int?
+  usageAlertWeekly        Int?
 
   messages      Message[]
   queuedPrompts QueuedPrompt[]

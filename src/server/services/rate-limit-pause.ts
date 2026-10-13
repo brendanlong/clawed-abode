@@ -26,7 +26,7 @@ import {
 import {
   loadRateLimitReadings,
   resolveAllSessionHolds,
-  setRateLimitChangeHandler,
+  onRateLimitChange,
 } from './rate-limit-state';
 
 const log = createLogger('rate-limit-pause');
@@ -351,7 +351,7 @@ export async function withdrawQueuedWork(sessionId: string): Promise<CancelledPr
  */
 export async function initRateLimitPause(pauseRunner: PauseRunner): Promise<void> {
   runnerRef.runner = pauseRunner;
-  setRateLimitChangeHandler(() => void recomputeRateLimitHolds());
+  onRateLimitChange('rate-limit-pause', () => void recomputeRateLimitHolds());
   await loadRateLimitReadings();
   void recomputeRateLimitHolds();
 }

@@ -68,20 +68,48 @@ describe('built-in MCP server', () => {
     vi.clearAllMocks();
   });
 
-  it('offers rename, notify, and list at the basic level, and the management tools only at the manage level', async () => {
+  it('offers rename, notify, list, and usage at the basic level, and the management tools only at the manage level', async () => {
     const self = await createTestSession();
     const names = async (level: BuiltinToolsLevel) =>
       (await (await connect(self.id, level)).listTools()).tools.map((t) => t.name).sort();
 
-    expect(await names('basic')).toEqual(['list_sessions', 'notify_user', 'rename_session']);
+    expect(await names('basic')).toEqual([
+      'check_usage',
+      'list_sessions',
+      'notify_user',
+      'rename_session',
+      'set_usage_alerts',
+    ]);
     expect(await names('manage')).toEqual([
+      'check_usage',
       'create_session',
       'list_sessions',
       'notify_user',
       'read_session',
       'rename_session',
+      'set_usage_alerts',
       'stop_session',
     ]);
+  });
+
+  it('turns usage alerts on with default thresholds, and off', async () => {
+    const self = await createTestSession();
+    const client = await connect(self.id, 'basic');
+    const thresholds = () =>
+      testPrisma.session.findUnique({
+        where: { id: self.id },
+        select: { usageAlertFiveHour: true, usageAlertWeekly: true },
+      });
+
+    const on = await call(client, 'set_usage_alerts', { enabled: true, weeklyPercent: null });
+    expect(on).toMatchObject({ isError: false });
+    expect(JSON.parse(on.text.slice(on.text.indexOf('{')))).toMatchObject({
+      alerts: { fiveHourPercent: 80, weeklyPercent: null },
+    });
+    expect(await thresholds()).toEqual({ usageAlertFiveHour: 80, usageAlertWeekly: null });
+
+    await call(client, 'set_usage_alerts', { enabled: false });
+    expect(await thresholds()).toEqual({ usageAlertFiveHour: null, usageAlertWeekly: null });
   });
 
   it('renames the calling session', async () => {

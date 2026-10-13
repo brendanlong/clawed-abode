@@ -50,6 +50,11 @@ describe('builtinToolsPrompt', () => {
     expect(builtinToolsPrompt('manage', false)).toContain('notify_user');
   });
 
+  it('points the agent at the usage tools at every level', () => {
+    expect(builtinToolsPrompt('basic', true)).toMatch(/check_usage.*subagents.*set_usage_alerts/);
+    expect(builtinToolsPrompt('manage', false)).toContain('check_usage');
+  });
+
   it('describes the management tools only at the manage level', () => {
     expect(builtinToolsPrompt('basic', true)).not.toContain('create_session');
     expect(builtinToolsPrompt('manage', true)).toContain('create_session');

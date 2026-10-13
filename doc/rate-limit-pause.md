@@ -137,3 +137,11 @@ banner above the composer (`RateLimitPauseBanner`, rendered by `PromptInput`)
 explains where they went and offers the only way to take them back. Per-session
 overrides live in the session settings sheet; global defaults and the live window
 readings are in Settings → General.
+
+## Usage Tools
+
+The same readings feed two built-in agent tools ([`usage.ts`](../src/server/services/usage.ts), pure logic in [`src/lib/usage.ts`](../src/lib/usage.ts)), so agents can pace subagent work across the windows: `check_usage` reports every window, and `set_usage_alerts` opts a session into a message when a 5-hour or weekly window crosses a threshold. Thresholds are stored on the session row. Each window alerts once per reset, tracked in memory, so a restart can repeat an alert once.
+
+**Alerts never wake an idle agent.** One goes out only while the session is working (a turn, a pending push, a background task with an end state, or a GPT agent run); otherwise it waits until the session next starts working, which the runner reports from `dispatch`. A reading drops out when its window resets, so an alert held across a reset is never sent stale.
+
+**Refreshing uses an experimental SDK call.** When the readings are more than a few minutes old (normally only after the account has been idle, since any working session keeps them fresh), `check_usage` asks a live CLI for its `/usage` snapshot (`usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET`). The snapshot also carries per-model weekly windows and extra-usage credit, which the events don't. Any failure leaves the readings as they were. Its windows are usage-only readings, and its utilization is a **percentage** (0–100), unlike the events' fractions. **A `claude setup-token` credential (`CLAUDE_CODE_OAUTH_TOKEN`) lacks the `user:profile` scope this needs, so the snapshot returns no limits under that auth.** In that case the tools rely on the event stream alone.

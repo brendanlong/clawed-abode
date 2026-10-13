@@ -31,22 +31,37 @@ const log = createLogger('rate-limit-state');
 /** Latest reading per window, account-wide. Rehydrated from the DB at startup. */
 const state = processSingleton<{
   readings: RateLimitReading[];
+  /** When any reading last arrived, changed or not; null until one does in this process. */
+  observedAtMs: number | null;
   expiryTimer: NodeJS.Timeout | null;
-  onChange: (() => void) | null;
-}>('rate-limit-state', () => ({ readings: [], expiryTimer: null, onChange: null }));
+  onChange: Map<string, () => void>;
+}>('rate-limit-state', () => ({
+  readings: [],
+  observedAtMs: null,
+  expiryTimer: null,
+  onChange: new Map(),
+}));
 
 /**
- * Register the reaction to a change in holds (a new reading, or a window
- * resetting). Called once by rate-limit-pause at startup; a second call replaces the
- * first so a hot reload can't stack listeners.
+ * Register a reaction to a change in readings (a new reading, or a window
+ * resetting), under a key: registering the same key again replaces the handler,
+ * so a hot reload can't stack listeners.
  */
-export function setRateLimitChangeHandler(handler: (() => void) | null): void {
-  state.onChange = handler;
+export function onRateLimitChange(key: string, handler: () => void): void {
+  state.onChange.set(key, handler);
+}
+
+function notifyChange(): void {
+  for (const handler of state.onChange.values()) handler();
 }
 
 /** Currently-meaningful readings (windows that haven't rolled over yet). */
 export function getRateLimitReadings(): RateLimitReading[] {
   return activeReadings(state.readings, Date.now());
+}
+
+export function getRateLimitObservedAt(): number | null {
+  return state.observedAtMs;
 }
 
 /**
@@ -72,7 +87,7 @@ function scheduleExpiryWake(): void {
       state.readings = activeReadings(state.readings, Date.now());
       void sweepExpiredWindows();
       scheduleExpiryWake();
-      state.onChange?.();
+      notifyChange();
     },
     next - now + 1000
   );
@@ -96,6 +111,7 @@ async function sweepExpiredWindows(): Promise<void> {
 export async function recordRateLimitReadings(incoming: RateLimitReading[]): Promise<void> {
   if (incoming.length === 0) return;
   const now = Date.now();
+  state.observedAtMs = now;
 
   const before = state.readings;
   for (const reading of incoming) {
@@ -116,7 +132,7 @@ export async function recordRateLimitReadings(incoming: RateLimitReading[]): Pro
   const touched = new Set(incoming.map((r) => r.limitType));
   await persistReadings(state.readings.filter((r) => touched.has(r.limitType)));
   scheduleExpiryWake();
-  state.onChange?.();
+  notifyChange();
 }
 
 function readingsChanged(before: RateLimitReading[], after: RateLimitReading[]): boolean {
@@ -266,7 +282,8 @@ export async function resolveAllSessionHolds(): Promise<Map<string, RateLimitHol
 /** Test seam: drop all in-memory state and cancel the pending reset wake. */
 export function _resetRateLimitState(): void {
   state.readings = [];
+  state.observedAtMs = null;
   if (state.expiryTimer) clearTimeout(state.expiryTimer);
   state.expiryTimer = null;
-  state.onChange = null;
+  state.onChange.clear();
 }

@@ -5,6 +5,7 @@ import {
   diffLiveView,
   hasRealTurn,
   isRunning,
+  isWorking,
   liveView,
   reduceLiveTurn,
   type LiveEvent,
@@ -292,6 +293,18 @@ describe('reduceLiveTurn', () => {
   it('a lifecycle event does not touch the stream status (a retry indicator stays)', () => {
     const { view } = fold([pushed('a'), apiRetry, lifecycle('a', 'started')]);
     expect(view.retry).not.toBeNull();
+  });
+});
+
+describe('isWorking', () => {
+  it('counts a turn, an undelivered push, or a background task with an end, but not a watch', () => {
+    expect(isWorking(fold([]).state)).toBe(false);
+    expect(isWorking(fold([messageStart()]).state)).toBe(true);
+    expect(isWorking(fold([pushed('a')]).state)).toBe(true);
+    expect(isWorking(fold([background({ task_id: 't' })]).state)).toBe(true);
+    expect(isWorking(fold([background({ task_id: 'w', task_type: 'local_bash' })]).state)).toBe(
+      false
+    );
   });
 });
 
