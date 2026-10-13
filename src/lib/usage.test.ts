@@ -6,6 +6,8 @@ import {
   formatUsageAlert,
   markUsageAlertsSent,
   parseUsageSnapshot,
+  sessionSubscriptionUsage,
+  type ModelUsageWindow,
   type UsageAlertThresholds,
 } from './usage';
 
@@ -175,6 +177,79 @@ describe('buildUsageReport', () => {
         },
       ],
       alerts: { fiveHourPercent: 80, weeklyPercent: null },
+    });
+  });
+});
+
+describe('sessionSubscriptionUsage', () => {
+  const fiveHour = reading({ utilization: 58 });
+  const weekly = reading({ limitType: 'seven_day', utilization: 44, resetsAtMs: IN_A_WEEK });
+  const fable: ModelUsageWindow = { name: 'Fable', percentUsed: 86, resetsAtMs: IN_A_WEEK };
+
+  function usageFor(
+    model: string | null,
+    modelWindows: ModelUsageWindow[] = [fable],
+    readings: RateLimitReading[] = [fiveHour, weekly]
+  ) {
+    return sessionSubscriptionUsage({ readings, modelWindows, model, nowMs: NOW });
+  }
+
+  it('shows the 5-hour window and the model-scoped weekly window for a matching model', () => {
+    expect(usageFor('claude-fable-5-1[1m]')).toEqual({
+      fiveHour: { label: 'Session', percentUsed: 58, exhausted: false, resetsAtMs: IN_TWO_HOURS },
+      weeklyModel: {
+        label: 'Weekly (Fable)',
+        percentUsed: 86,
+        exhausted: false,
+        resetsAtMs: IN_A_WEEK,
+      },
+      weeklyAllModels: {
+        label: 'Weekly (all models)',
+        percentUsed: 44,
+        exhausted: false,
+        resetsAtMs: IN_A_WEEK,
+      },
+    });
+  });
+
+  it('matches model aliases case-insensitively', () => {
+    expect(usageFor('FABLE').weeklyModel?.percentUsed).toBe(86);
+  });
+
+  it('has no model-scoped window for a model without one', () => {
+    const usage = usageFor('claude-sonnet-5-5');
+    expect(usage.weeklyModel).toBeNull();
+    expect(usage.weeklyAllModels).toEqual({
+      label: 'Weekly',
+      percentUsed: 44,
+      exhausted: false,
+      resetsAtMs: IN_A_WEEK,
+    });
+  });
+
+  it('has no model-scoped window when the model is unknown', () => {
+    expect(usageFor(null).weeklyModel).toBeNull();
+  });
+
+  it('uses a per-model rate-limit reading, which knows about exhaustion', () => {
+    const opus = reading({ limitType: 'seven_day_opus', rejected: true, resetsAtMs: IN_A_WEEK });
+    expect(usageFor('claude-opus-5-5', [], [fiveHour, weekly, opus]).weeklyModel).toEqual({
+      label: 'Weekly (Opus)',
+      percentUsed: 50,
+      exhausted: true,
+      resetsAtMs: IN_A_WEEK,
+    });
+  });
+
+  it('ignores a model-scoped window that has already reset', () => {
+    expect(usageFor('fable', [{ ...fable, resetsAtMs: NOW - 1 }]).weeklyModel).toBeNull();
+  });
+
+  it('is empty without readings', () => {
+    expect(usageFor('fable', [], [])).toEqual({
+      fiveHour: null,
+      weeklyAllModels: null,
+      weeklyModel: null,
     });
   });
 });

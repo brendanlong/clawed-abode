@@ -1,7 +1,7 @@
 /**
- * The agents' view of subscription usage: the check_usage report, refreshed from
- * the SDK's experimental `/usage` call when the readings are old, and the opt-in
- * alerts set with set_usage_alerts. Readings are the rate-limit pause's
+ * Subscription usage for agents and the session view: the check_usage report and
+ * the usage bars, refreshed from the SDK's experimental `/usage` call when the
+ * readings are old, and the opt-in alerts set with set_usage_alerts. Readings are the rate-limit pause's
  * (rate-limit-state); the session queries are reached only through the
  * {@link UsagePort} handed to {@link initUsage}. Rationale:
  * doc/rate-limit-pause.md "Usage Tools".
@@ -19,6 +19,8 @@ import {
   formatUsageAlert,
   markUsageAlertsSent,
   parseUsageSnapshot,
+  sessionSubscriptionUsage,
+  type SessionSubscriptionUsage,
   type UsageAlertThresholds,
   type UsageSnapshot,
 } from '@/lib/usage';
@@ -105,13 +107,16 @@ async function loadThresholds(sessionId: string): Promise<UsageAlertThresholds> 
   return { fiveHour: row?.usageAlertFiveHour ?? null, weekly: row?.usageAlertWeekly ?? null };
 }
 
+/**
+ * Refresh when either source is old: the event stream keeps the readings fresh
+ * while any session works, but only the snapshot carries the per-model windows.
+ */
 async function refreshIfStale(sessionId: string): Promise<void> {
   const now = Date.now();
   const observedAt = getRateLimitObservedAt();
-  if (
-    (observedAt === null || now - observedAt > STALE_MS) &&
-    now - state.lastRefreshAttemptMs > STALE_MS
-  ) {
+  const extrasAt = state.extras?.fetchedAtMs ?? null;
+  const isStale = (at: number | null) => at === null || now - at > STALE_MS;
+  if ((isStale(observedAt) || isStale(extrasAt)) && now - state.lastRefreshAttemptMs > STALE_MS) {
     // Set before the await, so concurrent reports don't each fetch.
     state.lastRefreshAttemptMs = now;
     await refreshUsage(sessionId);
@@ -126,6 +131,20 @@ export async function getUsageReport(sessionId: string) {
     observedAtMs: getRateLimitObservedAt(),
     extras: state.extras,
     thresholds: await loadThresholds(sessionId),
+    nowMs: Date.now(),
+  });
+}
+
+/** The usage windows the session view shows for a session running `model`. */
+export async function getSessionSubscriptionUsage(
+  sessionId: string,
+  model: string | null
+): Promise<SessionSubscriptionUsage> {
+  await refreshIfStale(sessionId);
+  return sessionSubscriptionUsage({
+    readings: getRateLimitReadings(),
+    modelWindows: state.extras?.modelWindows ?? [],
+    model,
     nowMs: Date.now(),
   });
 }

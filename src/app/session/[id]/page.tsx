@@ -26,6 +26,10 @@ import {
 import { useAutoRead } from '@/hooks/useAutoRead';
 import { VoiceControlPanel } from '@/components/voice/VoiceControlPanel';
 import type { UploadedAttachment } from '@/lib/attachments';
+import { trpc } from '@/lib/trpc';
+
+/** Readings also refresh on every message that moves token usage (useSessionStream). */
+const SUBSCRIPTION_USAGE_POLL_MS = 60_000;
 
 function SessionView({ sessionId }: { sessionId: string }) {
   // Session state: data, start/stop/archive
@@ -52,6 +56,14 @@ function SessionView({ sessionId }: { sessionId: string }) {
     historyLoaded,
     newestSequence,
   } = useSessionMessages(sessionId);
+
+  const { data: subscriptionUsage } = trpc.rateLimit.getSessionUsage.useQuery(
+    { sessionId },
+    {
+      enabled: !!session && session.status !== 'archived',
+      refetchInterval: SUBSCRIPTION_USAGE_POLL_MS,
+    }
+  );
 
   // Single multiplexed SSE stream: fans live events into the relevant caches.
   // Anchored to the loaded history so no messages are missed between snapshots.
@@ -215,6 +227,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
           hasMore={hasMore}
           onLoadMore={fetchMore}
           tokenUsage={tokenUsage}
+          subscriptionUsage={subscriptionUsage}
           onAnswerQuestion={answerQuestion}
           onRespondToPlan={respondToPlan}
           pendingMessageIds={pendingMessageIds}

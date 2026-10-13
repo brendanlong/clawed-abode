@@ -77,6 +77,7 @@ export function useSessionStream(sessionId: string, options: UseSessionStreamOpt
               affectsTokenUsage(event.message.type, event.message.content)
             ) {
               void utils.claude.getTokenUsage.refetch({ sessionId });
+              void utils.rateLimit.getSessionUsage.invalidate({ sessionId });
             }
             break;
           }

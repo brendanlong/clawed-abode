@@ -10,7 +10,9 @@ import { MessageListProvider } from './messages/MessageListContext';
 import { Clock, PauseCircle } from 'lucide-react';
 import { Spinner } from '@/components/ui/spinner';
 import { ContextUsageIndicator } from '@/components/ContextUsageIndicator';
+import { SubscriptionUsageIndicator } from '@/components/SubscriptionUsageIndicator';
 import type { TokenUsageStats } from '@/lib/token-estimation';
+import type { SessionSubscriptionUsage } from '@/lib/usage';
 import { useTranscriptScroll } from '@/hooks/useTranscriptScroll';
 import {
   isToolCallOnlyMessage,
@@ -28,6 +30,7 @@ interface MessageListProps {
   hasMore: boolean;
   onLoadMore: () => void;
   tokenUsage?: TokenUsageStats | null;
+  subscriptionUsage?: SessionSubscriptionUsage | null;
   onAnswerQuestion?: (toolUseId: string, answers: Record<string, string>) => void;
   onRespondToPlan?: (toolUseId: string, approve: boolean, feedback?: string) => void;
   /**
@@ -55,6 +58,7 @@ export function MessageList({
   hasMore,
   onLoadMore,
   tokenUsage,
+  subscriptionUsage,
   onAnswerQuestion,
   onRespondToPlan,
   pendingMessageIds = [],
@@ -247,8 +251,10 @@ export function MessageList({
         <div ref={bottomRef} style={{ overflowAnchor: 'none' }} />
       </div>
 
-      {/* Context usage indicator - positioned in bottom right */}
-      <ContextUsageIndicator stats={tokenUsage} className="absolute bottom-3 right-3 shadow-xs" />
+      <div className="absolute bottom-3 right-3 flex flex-col items-end gap-1 sm:flex-row sm:items-center">
+        <SubscriptionUsageIndicator usage={subscriptionUsage} className="shadow-xs" />
+        <ContextUsageIndicator stats={tokenUsage} className="shadow-xs" />
+      </div>
     </div>
   );
 }

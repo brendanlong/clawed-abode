@@ -1,11 +1,13 @@
 import { z } from 'zod';
-import { router, protectedProcedure } from '../trpc';
+import { router, protectedProcedure, sessionProcedure } from '../trpc';
 import { createLogger } from '@/lib/logger';
 import { thresholdSchema } from '@/lib/rate-limit';
 import { getRateLimitReadings, loadGlobalPausePolicy } from '../services/rate-limit-state';
 import { recomputeRateLimitHolds } from '../services/rate-limit-pause';
 import { countQueuedPrompts } from '../services/prompt-queue';
 import { patchGlobalSettings } from '../services/global-settings';
+import { getSessionUsageTotals } from '../services/session-usage';
+import { getSessionSubscriptionUsage } from '../services/usage';
 
 const log = createLogger('rateLimit');
 
@@ -38,4 +40,14 @@ export const rateLimitRouter = router({
       await recomputeRateLimitHolds();
       return { success: true };
     }),
+
+  /**
+   * The usage bars beside a session's context indicator. The session's own model
+   * override wins over the model its query reported at startup, since changing
+   * the override applies to the live query.
+   */
+  getSessionUsage: sessionProcedure.query(async ({ ctx, input }) => {
+    const model = ctx.session.claudeModel ?? (await getSessionUsageTotals(input.sessionId)).model;
+    return getSessionSubscriptionUsage(input.sessionId, model ?? null);
+  }),
 });

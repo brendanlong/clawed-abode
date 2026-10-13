@@ -192,11 +192,11 @@ describe('usage tools', () => {
       expect(usageCall).toHaveBeenCalledTimes(1);
     });
 
-    it('does not ask for a snapshot while the stream’s readings are fresh', async () => {
+    it('asks for a snapshot while the stream’s readings are fresh, for the per-model windows', async () => {
       const session = await createTestSession();
       await rateLimitState.recordRateLimitReadings([reading({ utilization: 40 })]);
       const report = await usage.getUsageReport(session.id);
-      expect(usageCall).not.toHaveBeenCalled();
+      expect(usageCall).toHaveBeenCalledTimes(1);
       expect(report.windows).toMatchObject([{ limitType: 'five_hour', percentUsed: 40 }]);
     });
 
@@ -206,6 +206,39 @@ describe('usage tools', () => {
       const report = await usage.getUsageReport(session.id);
       expect(report.windows).toEqual([]);
       expect(report.asOf).toBeNull();
+    });
+  });
+
+  describe('session usage bars', () => {
+    it('shows the weekly window scoped to the session’s model, from the snapshot', async () => {
+      const session = await createTestSession();
+      const weekly = reading({
+        limitType: 'seven_day',
+        utilization: 44,
+        resetsAtMs: Date.now() + 100 * HOUR_MS,
+      });
+      await rateLimitState.recordRateLimitReadings([reading({ utilization: 58 }), weekly]);
+      usageCall.mockResolvedValue({
+        rate_limits: {
+          model_scoped: [
+            {
+              display_name: 'Fable',
+              utilization: 86,
+              resets_at: new Date(Date.now() + 100 * HOUR_MS).toISOString(),
+            },
+          ],
+        },
+      });
+
+      const fable = await usage.getSessionSubscriptionUsage(session.id, 'claude-fable-5-1');
+      expect(fable.fiveHour?.percentUsed).toBe(58);
+      expect(fable.weeklyModel).toMatchObject({ label: 'Weekly (Fable)', percentUsed: 86 });
+      expect(fable.weeklyAllModels?.percentUsed).toBe(44);
+
+      const other = await usage.getSessionSubscriptionUsage(session.id, 'claude-sonnet-5-5');
+      expect(other.weeklyModel).toBeNull();
+      expect(other.weeklyAllModels).toMatchObject({ label: 'Weekly', percentUsed: 44 });
+      expect(usageCall).toHaveBeenCalledTimes(1);
     });
   });
 });
