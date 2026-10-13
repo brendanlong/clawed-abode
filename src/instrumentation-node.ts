@@ -40,6 +40,14 @@ export async function registerNode() {
   }
   log.info('Starting server');
 
+  // WAL so a long read (an agent poking at the DB with the sqlite3 CLI) can't
+  // block our writes past the busy timeout. Persistent in the file; repeating it is a no-op.
+  try {
+    await prisma.$queryRawUnsafe('PRAGMA journal_mode = WAL');
+  } catch (err) {
+    log.error('Error enabling WAL mode', toError(err));
+  }
+
   try {
     await purgeInactiveAuthSessions();
   } catch (err) {
