@@ -118,6 +118,38 @@ describe('usage tools', () => {
       expect(port.deliverMessage.mock.calls[0][1]).not.toContain('5-hour');
     });
 
+    it('holds back an alert from a session the rate-limit pause is holding, even with a background task running', async () => {
+      const session = await createTestSession({
+        rateLimitPauseEnabled: true,
+        rateLimitPauseThreshold: 90,
+      });
+      working.add(session.id);
+      await usage.setUsageAlerts(session.id, { fiveHour: 80, weekly: null });
+
+      await rateLimitState.recordRateLimitReadings([reading({ utilization: 95 })]);
+      await usage.checkUsageAlerts(session.id);
+      expect(port.deliverMessage).not.toHaveBeenCalled();
+    });
+
+    it('does not alert about a crossing that turning alerts on already reported', async () => {
+      const session = await createTestSession();
+      working.add(session.id);
+      usageCall.mockResolvedValue({
+        rate_limits: {
+          five_hour: {
+            utilization: 85,
+            resets_at: new Date(Date.now() + 2 * HOUR_MS).toISOString(),
+          },
+        },
+      });
+
+      await usage.setUsageAlerts(session.id, { fiveHour: 80, weekly: null });
+      expect(usageCall).toHaveBeenCalledTimes(1);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      await usage.checkUsageAlerts(session.id);
+      expect(port.deliverMessage).not.toHaveBeenCalled();
+    });
+
     it('persists the thresholds, and turning alerts off stops them', async () => {
       const session = await createTestSession();
       working.add(session.id);

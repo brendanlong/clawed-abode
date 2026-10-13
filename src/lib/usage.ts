@@ -11,6 +11,7 @@ import {
   formatTimeUntil,
   HOLDABLE_LIMIT_TYPES,
   MAX_PAUSE_THRESHOLD,
+  sameWindow,
   type HoldableLimitType,
   type RateLimitReading,
 } from './rate-limit';
@@ -47,7 +48,10 @@ export function dueUsageAlerts(
 ): RateLimitReading[] {
   return readings.filter((reading) => {
     const threshold = alertThreshold(reading.limitType, thresholds);
-    if (threshold === null || sent.get(reading.limitType) === reading.resetsAtMs) return false;
+    const sentFor = sent.get(reading.limitType);
+    if (threshold === null || (sentFor !== undefined && sameWindow(sentFor, reading.resetsAtMs))) {
+      return false;
+    }
     return reading.rejected || (reading.utilization !== null && reading.utilization >= threshold);
   });
 }
@@ -105,14 +109,9 @@ function snapshotPercent(value: number | null | undefined): number | null {
   return Math.min(MAX_PAUSE_THRESHOLD, value);
 }
 
-/**
- * Rounded to whole seconds, the precision the rate-limit events report: a
- * window's reset time is how `mergeReading` and the alerts tell one window from
- * the next, so a sub-second difference would read as a new window.
- */
 function snapshotResetsAt(value: string | null | undefined): number | null {
   const ms = value ? Date.parse(value) : NaN;
-  return Number.isFinite(ms) ? Math.round(ms / 1000) * 1000 : null;
+  return Number.isFinite(ms) ? ms : null;
 }
 
 const SnapshotWindowSchema = z

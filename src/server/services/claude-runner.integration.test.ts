@@ -1564,6 +1564,51 @@ describe('claude-runner persistent streaming loop', () => {
     expect(await messagesFor(sessionId)).toHaveLength(before);
   });
 
+  it('holds a usage alert while the session is idle and delivers it once the session starts working', async () => {
+    const usage = await import('./usage');
+    const rateLimitState = await import('./rate-limit-state');
+    const { usageRunner } = await import('./claude-runner');
+    usage.initUsage(usageRunner);
+    const fake = makeFakeQuery();
+    _setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+    await testPrisma.session.update({
+      where: { id: sessionId },
+      data: { usageAlertFiveHour: 80 },
+    });
+
+    try {
+      await sendUserMessage(sessionId, 'hello');
+      await fake.deliver();
+      fake.emit(result());
+      await waitFor(() => !isClaudeRunning(sessionId));
+
+      await rateLimitState.recordRateLimitReadings([
+        {
+          limitType: 'five_hour',
+          rejected: false,
+          authoritative: true,
+          utilization: 90,
+          resetsAtMs: Date.now() + 60 * 60 * 1000,
+        },
+      ]);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(fake.inputs).toHaveLength(1);
+
+      await sendUserMessage(sessionId, 'next');
+      await waitFor(() => fake.inputs.length === 3);
+      expect(fake.inputs[1].message.content).toBe('next');
+      expect(fake.inputs[2].message.content).toContain('5-hour limit is 90% used');
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(fake.inputs).toHaveLength(3);
+    } finally {
+      stopSession(sessionId);
+      usage._resetUsageState();
+      rateLimitState._resetRateLimitState();
+    }
+  });
+
   it('stitches a PostToolUse sanitizer finding onto the persisted tool_result message', async () => {
     // End-to-end seam: the real PostToolUse hook records a finding into the
     // per-session map (keyed by tool_use_id), and runSessionLoop attaches it to

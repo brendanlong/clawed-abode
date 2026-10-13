@@ -27,6 +27,7 @@ import {
   getRateLimitReadings,
   onRateLimitChange,
   recordRateLimitReadings,
+  resolveSessionHold,
 } from './rate-limit-state';
 
 const log = createLogger('usage');
@@ -104,8 +105,7 @@ async function loadThresholds(sessionId: string): Promise<UsageAlertThresholds> 
   return { fiveHour: row?.usageAlertFiveHour ?? null, weekly: row?.usageAlertWeekly ?? null };
 }
 
-/** The check_usage report, refreshed first when the readings are old. */
-export async function getUsageReport(sessionId: string) {
+async function refreshIfStale(sessionId: string): Promise<void> {
   const now = Date.now();
   const observedAt = getRateLimitObservedAt();
   if (
@@ -116,6 +116,11 @@ export async function getUsageReport(sessionId: string) {
     state.lastRefreshAttemptMs = now;
     await refreshUsage(sessionId);
   }
+}
+
+/** The check_usage report, refreshed first when the readings are old. */
+export async function getUsageReport(sessionId: string) {
+  await refreshIfStale(sessionId);
   return buildUsageReport({
     readings: getRateLimitReadings(),
     observedAtMs: getRateLimitObservedAt(),
@@ -127,29 +132,38 @@ export async function getUsageReport(sessionId: string) {
 
 /**
  * Set a session's alert thresholds. Windows already past a new threshold count as
- * alerted, since the tool's reply already tells the agent where usage stands.
+ * alerted, since the tool's reply already tells the agent where usage stands. So
+ * the readings are refreshed first (or the refresh behind the reply could show a
+ * crossing nothing was marked for), and marked before the thresholds are stored
+ * (or a check landing in between could alert).
  */
 export async function setUsageAlerts(
   sessionId: string,
   thresholds: UsageAlertThresholds
 ): Promise<void> {
+  await refreshIfStale(sessionId);
+  const due = dueUsageAlerts(getRateLimitReadings(), thresholds, new Map());
+  state.sentAlerts.set(sessionId, markUsageAlertsSent(new Map(), due));
   await prisma.session.update({
     where: { id: sessionId },
     data: { usageAlertFiveHour: thresholds.fiveHour, usageAlertWeekly: thresholds.weekly },
   });
-  const due = dueUsageAlerts(getRateLimitReadings(), thresholds, new Map());
-  state.sentAlerts.set(sessionId, markUsageAlertsSent(new Map(), due));
 }
 
 /**
  * Tell a working session about any alerts that came due. Idle sessions are left
  * alone rather than woken: they hear at their next turn (the runner calls
  * {@link checkUsageAlerts} when a session starts working), and only about windows
- * still current then, since a reading drops out when its window resets.
+ * still current then, since a reading drops out when its window resets. A session
+ * the rate-limit pause holds counts as idle even if a background task runs on: the
+ * alert would only join its queue and arrive after the reset, stale.
  */
 async function deliverDueAlerts(sessionId: string, thresholds: UsageAlertThresholds) {
   const { port } = state;
-  if (!port?.isSessionWorking(sessionId)) return;
+  // Read fresh rather than from the pause's last recompute, which may not have
+  // caught up with the reading that triggered this check.
+  if (!port || (await resolveSessionHold(sessionId))) return;
+  if (!port.isSessionWorking(sessionId)) return;
   const sent = state.sentAlerts.get(sessionId) ?? new Map<HoldableLimitType, number>();
   const due = dueUsageAlerts(getRateLimitReadings(), thresholds, sent);
   if (due.length === 0) return;

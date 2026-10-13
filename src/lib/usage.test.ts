@@ -54,6 +54,9 @@ describe('dueUsageAlerts', () => {
     const sent = markUsageAlertsSent(new Map(), [first]);
     expect(dueUsageAlerts([reading({ utilization: 95 })], BOTH_AT_80, sent)).toEqual([]);
 
+    const sameWindowReportedLater = reading({ utilization: 95, resetsAtMs: IN_TWO_HOURS + 999 });
+    expect(dueUsageAlerts([sameWindowReportedLater], BOTH_AT_80, sent)).toEqual([]);
+
     const nextWindow = reading({ utilization: 85, resetsAtMs: IN_TWO_HOURS + 5 * 3600_000 });
     expect(dueUsageAlerts([nextWindow], BOTH_AT_80, sent)).toEqual([nextWindow]);
   });
@@ -106,14 +109,6 @@ describe('parseUsageSnapshot', () => {
         resetsAtMs: IN_A_WEEK,
       }),
     ]);
-  });
-
-  it('rounds reset times to the whole seconds the rate-limit events use', () => {
-    const parsed = parseUsageSnapshot(
-      snapshot({ five_hour: { utilization: 10, resets_at: '2026-10-12T14:00:00.412345+00:00' } }),
-      NOW
-    );
-    expect(parsed?.readings[0]?.resetsAtMs).toBe(IN_TWO_HOURS);
   });
 
   it('skips windows that are missing, undated, past, or of an unknown type', () => {
