@@ -9,6 +9,7 @@
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { CommandLifecycle, RetryState } from './claude-messages';
 import {
+  backgroundActive,
   INITIAL_LIVE_STATUS,
   isTopLevelMessageStart,
   reduceSessionMessage,
@@ -267,6 +268,11 @@ function retire(
 /** What the composer shows as "Claude is working": a live turn, or an undelivered push. */
 export function isRunning(state: LiveTurnState): boolean {
   return state.status.turnActive || state.inFlight.size > 0;
+}
+
+/** The agent is busy now, or will be when a background task it is waiting on finishes. */
+export function isWorking(state: LiveTurnState): boolean {
+  return isRunning(state) || backgroundActive(state.status);
 }
 
 /** Whether a main turn the stream actually opened is running (not just an optimistic one). */

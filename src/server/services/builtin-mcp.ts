@@ -34,9 +34,11 @@ import {
   GPT_AGENT_TIERS,
   GPT_AGENT_TOOL_DESCRIPTION,
 } from '@/lib/gpt-agent';
+import { DEFAULT_USAGE_ALERT_PERCENT, usageAlertPercentSchema } from '@/lib/usage';
 import { runGptAgent, type GptAgentContext } from './gpt-agent';
 import { loadHistoryPage } from './message-store';
 import { requestAttention } from './session-attention';
+import { getUsageReport, setUsageAlerts } from './usage';
 
 const log = createLogger('builtin-mcp');
 
@@ -175,6 +177,35 @@ function basicTools(sessionId: string) {
             turnActive: requirePort().isTurnActive(s.id),
           }));
           return textResult(JSON.stringify({ sessions, nextCursor }, null, 2));
+        })
+    ),
+    tool(
+      'check_usage',
+      'Show how much of the Claude subscription’s usage limits is used: the 5-hour window and the weekly windows (overall and per model), with when each resets. Usage is shared by every session and subagent on the account. asOf is when the figures were last observed.',
+      {},
+      () =>
+        run('check_usage', async () =>
+          textResult(JSON.stringify(await getUsageReport(sessionId), null, 2))
+        )
+    ),
+    tool(
+      'set_usage_alerts',
+      'Turn usage alerts on or off for this session. While on, you get a message when usage of the 5-hour or a weekly window reaches its threshold, once per window, but only while you or a background task of yours is working; otherwise it waits for your next turn. Null for a threshold turns that kind of alert off.',
+      {
+        enabled: z.boolean(),
+        fiveHourPercent: usageAlertPercentSchema.nullable().default(DEFAULT_USAGE_ALERT_PERCENT),
+        weeklyPercent: usageAlertPercentSchema.nullable().default(DEFAULT_USAGE_ALERT_PERCENT),
+      },
+      ({ enabled, fiveHourPercent, weeklyPercent }) =>
+        run('set_usage_alerts', async () => {
+          const thresholds = enabled
+            ? { fiveHour: fiveHourPercent, weekly: weeklyPercent }
+            : { fiveHour: null, weekly: null };
+          await setUsageAlerts(sessionId, thresholds);
+          const report = await getUsageReport(sessionId);
+          return textResult(
+            `${enabled ? 'Usage alerts set' : 'Usage alerts off'}. Windows already past a threshold won't alert again until they reset.\n\n${JSON.stringify(report, null, 2)}`
+          );
         })
     ),
   ];

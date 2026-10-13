@@ -28,6 +28,7 @@ import {
   diffLiveView,
   hasRealTurn,
   isRunning,
+  isWorking,
   liveView,
   reduceLiveTurn,
   type InFlightCommand,
@@ -78,6 +79,7 @@ import { abortGptRuns, hasActiveGptRuns } from './gpt-agent';
 import { requestAttention } from './session-attention';
 import { buildLiveMcpServersRecord, buildSdkOptions } from './sdk-options';
 import { cancelBranchPrRefresh, detectBranchAndPr } from './session-branch-pr';
+import { checkUsageAlerts, type UsagePort } from './usage';
 
 const log = createLogger('claude-runner');
 
@@ -170,8 +172,11 @@ async function trackClaudeSessionId(
  */
 function dispatch(sessionId: string, state: SessionState, event: LiveEvent): LiveOutcome {
   const before = liveView(state.turn);
+  const wasWorking = isWorking(state.turn);
   const outcome = reduceLiveTurn(state.turn, event);
   state.turn = outcome.state;
+  // Usage alerts held back while the session was idle are due now.
+  if (!wasWorking && isWorking(state.turn)) void checkUsageAlerts(sessionId);
 
   const changes = diffLiveView(before, liveView(state.turn));
   if (changes.pendingMessageIds) {
@@ -683,6 +688,26 @@ export const rateLimitPauseRunner: PauseRunner = {
       isLive: () => live !== null && state.live === live,
       push: (prompt) => pushPreparedPrompt(sessionId, state, prompt),
     };
+  },
+};
+
+/** The runner as the usage tools see it; handed over at startup. */
+export const usageRunner: UsagePort = {
+  isSessionWorking(sessionId) {
+    const state = sessions.get(sessionId);
+    return (state ? isWorking(state.turn) : false) || hasActiveGptRuns(sessionId);
+  },
+  deliverMessage: deliverAppMessage,
+  subscriptionQuery(preferSessionId) {
+    const onSubscription = (state: SessionState | undefined) =>
+      state?.live && !usesLlmProxy(state.live.boundSettings.claudeModel) ? state.live.query : null;
+    const preferred = onSubscription(sessions.get(preferSessionId));
+    if (preferred) return preferred;
+    for (const state of sessions.values()) {
+      const query = onSubscription(state);
+      if (query) return query;
+    }
+    return null;
   },
 };
 

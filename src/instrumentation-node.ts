@@ -15,9 +15,11 @@ import {
   reapOrphanedSessionScopes,
   reviveRunningSessions,
   stopAllSessions,
+  usageRunner,
 } from '@/server/services/claude-runner';
 import { initRateLimitPause } from '@/server/services/rate-limit-pause';
 import { initBuiltinMcp } from '@/server/services/builtin-mcp';
+import { initUsage } from '@/server/services/usage';
 import { sessionToolsPort } from '@/server/services/session-lifecycle';
 
 const log = createLogger('startup');
@@ -50,6 +52,7 @@ export async function registerNode() {
   // Both are best-effort and log their own failures.
   await reapOrphanedSessionScopes();
   initBuiltinMcp(sessionToolsPort);
+  initUsage(usageRunner);
   await initRateLimitPause(rateLimitPauseRunner);
   // In the background: other sessions can only message a session whose CLI is up.
   void reviveRunningSessions().catch((err) => log.error('Error reviving sessions', toError(err)));

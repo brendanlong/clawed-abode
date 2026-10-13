@@ -255,6 +255,12 @@ describe('mergeReading', () => {
     expect(mergeReading([rejected], reading({ utilization: 20 }), NOW)[0].rejected).toBe(false);
   });
 
+  it('keeps a rejection through a usage-only reading whose reset time differs by a second', () => {
+    const rejected = reading({ rejected: true });
+    const usageOnly = reading({ authoritative: false, resetsAtMs: IN_AN_HOUR + 1000 });
+    expect(mergeReading([rejected], usageOnly, NOW)[0].rejected).toBe(true);
+  });
+
   it('drops an inherited rejection once the window has rolled over', () => {
     const rejected = reading({ rejected: true });
     const nextWindow = reading({ authoritative: false, resetsAtMs: IN_A_WEEK });

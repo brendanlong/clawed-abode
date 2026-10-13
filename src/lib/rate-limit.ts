@@ -206,15 +206,27 @@ export function parseRateLimitEvent(message: unknown, nowMs: number): RateLimitR
 }
 
 /**
+ * Reset times this close are the same window. Sources disagree slightly: events
+ * report whole seconds, the `/usage` snapshot fractional ones. Consecutive windows
+ * are hours apart, so the tolerance can't merge two.
+ */
+const SAME_WINDOW_TOLERANCE_MS = 60_000;
+
+/** Whether two readings' reset times describe the same window. */
+export function sameWindow(resetsAtMs: number, otherResetsAtMs: number): boolean {
+  return Math.abs(resetsAtMs - otherResetsAtMs) <= SAME_WINDOW_TOLERANCE_MS;
+}
+
+/**
  * Fold a reading into the known set: one entry per window, newest wins, expired
  * entries dropped. Pure — returns a new array, sorted by window for stable
  * comparison and display.
  *
  * A usage-only reading (see {@link RateLimitReading.authoritative}) updates the
  * numbers but **inherits a live rejection** rather than clearing it — it carries
- * no information about refusal. The inheritance stops at a window boundary: a
- * different `resetsAtMs` means the window has rolled over, so the old rejection
- * no longer describes it. Only an authoritative reading, or the reading expiring,
+ * no information about refusal. The inheritance stops at a window boundary (see
+ * {@link sameWindow}): once the window has rolled over, the old rejection no
+ * longer describes it. Only an authoritative reading, or the reading expiring,
  * ends a rejection.
  */
 export function mergeReading(
@@ -229,7 +241,7 @@ export function mergeReading(
   const inheritsRejection =
     !incoming.authoritative &&
     existing?.rejected === true &&
-    existing.resetsAtMs === incoming.resetsAtMs;
+    sameWindow(existing.resetsAtMs, incoming.resetsAtMs);
 
   byType.set(incoming.limitType, inheritsRejection ? { ...incoming, rejected: true } : incoming);
   return [...byType.values()].sort((a, b) => a.limitType.localeCompare(b.limitType));
