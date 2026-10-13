@@ -52,7 +52,7 @@ export function DeleteConfirmDialog({
   };
 
   return (
-    <AlertDialog open={open} onOpenChange={(isOpen) => !isOpen && close()}>
+    <AlertDialog open={open} onOpenChange={(isOpen) => !isOpen && !isDeleting && close()}>
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>{title}</AlertDialogTitle>

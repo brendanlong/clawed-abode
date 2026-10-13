@@ -125,6 +125,14 @@ function SessionView({ sessionId }: { sessionId: string }) {
     [interrupt]
   );
 
+  const actionErrorAlert = (
+    <ActionErrorAlert
+      error={actionError}
+      onDismiss={dismissActionError}
+      className="rounded-none border-x-0 border-t-0"
+    />
+  );
+
   if (sessionLoading) {
     return (
       <div className="flex-1 flex items-center justify-center">
@@ -153,11 +161,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
     return (
       <div className="flex-1 flex flex-col min-h-0">
         <SessionHeader session={session} onArchive={archive} isArchiving={isArchiving} />
-        <ActionErrorAlert
-          error={actionError}
-          onDismiss={dismissActionError}
-          className="rounded-none border-x-0 border-t-0"
-        />
+        {actionErrorAlert}
         {session.status === 'creating' && (
           <div className="flex-1 flex flex-col items-center justify-center gap-4">
             <Spinner size="lg" />
@@ -216,11 +220,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
           onToggleVoiceMode={() => setVoiceOverlayOpen((prev) => !prev)}
           voiceModeActive={voiceOverlayOpen}
         />
-        <ActionErrorAlert
-          error={actionError}
-          onDismiss={dismissActionError}
-          className="rounded-none border-x-0 border-t-0"
-        />
+        {actionErrorAlert}
 
         <MessageList
           messages={messages}

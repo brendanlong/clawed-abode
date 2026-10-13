@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { SettingsListEditor, SettingsListRow, type SettingsScope } from './SettingsListEditor';
 
@@ -201,6 +201,24 @@ describe('SettingsListEditor', () => {
 
     expect(onUpdate).not.toHaveBeenCalled();
     expect(screen.getByRole('alertdialog')).toHaveTextContent('Delete failed: nope');
+  });
+
+  it('stays open with buttons disabled while the delete is in flight', async () => {
+    let resolveDelete: () => void = () => {};
+    const { user } = renderEditor({
+      onDelete: () => new Promise<void>((resolve) => (resolveDelete = resolve)),
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Delete BETA' }));
+    await user.click(screen.getByRole('button', { name: 'Delete' }));
+
+    expect(screen.getByRole('button', { name: 'Deleting...' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled();
+    await user.keyboard('{Escape}');
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument();
+
+    await act(async () => resolveDelete());
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
   });
 
   it('clears a failed delete error when the dialog is reopened', async () => {
