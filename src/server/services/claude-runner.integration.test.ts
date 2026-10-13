@@ -93,6 +93,7 @@ vi.mock('./session-cgroup', () => ({
 
 import { createPushable } from '@/lib/pushable';
 import { resetEnvCache } from '@/lib/env';
+import { resetBaseEnvCache } from './agent-env';
 import { sessionScopeUnitName } from '@/lib/session-scope';
 import { partialMessageId } from '@/lib/message-cache';
 import type { PartialAssistantMessage } from './stream-accumulator';
@@ -982,6 +983,49 @@ describe('claude-runner persistent streaming loop', () => {
     fake.emit(result());
     await waitFor(() => !isClaudeRunning(sessionId));
     stopSession(sessionId);
+  });
+
+  describe('agent environment', () => {
+    beforeEach(() => {
+      vi.stubEnv('PASSWORD_HASH', 'server-only-password-hash');
+      vi.stubEnv('ENCRYPTION_KEY', 'server-only-encryption-key-0123456789abcdef');
+      resetEnvCache();
+      resetBaseEnvCache();
+    });
+    afterEach(() => {
+      vi.unstubAllEnvs();
+      resetEnvCache();
+      resetBaseEnvCache();
+    });
+
+    it('passes user env vars and the Claude API key to the SDK query, but not server secrets', async () => {
+      const fake = makeFakeQuery();
+      let agentEnv: Record<string, string | undefined> | undefined;
+      _setQueryFactory((p) => {
+        agentEnv = (p.options as { env?: Record<string, string | undefined> }).env;
+        return fake.factory(p);
+      });
+      mockLoadSettings.mockResolvedValue({
+        ...baseSettings,
+        envVars: [{ name: 'MY_TOOL_TOKEN', value: 'user-configured-value' }],
+        claudeApiKey: 'sk-ant-oat-test-key',
+      });
+      const sessionId = await createRunningSession();
+
+      await sendUserMessage(sessionId, 'hello');
+      await fake.deliver();
+      expect(agentEnv).toMatchObject({
+        MY_TOOL_TOKEN: 'user-configured-value',
+        CLAUDE_CODE_OAUTH_TOKEN: 'sk-ant-oat-test-key',
+      });
+      expect(agentEnv?.PATH).toBeDefined();
+      expect(agentEnv).not.toHaveProperty('PASSWORD_HASH');
+      expect(agentEnv).not.toHaveProperty('ENCRYPTION_KEY');
+
+      fake.emit(result());
+      await waitFor(() => !isClaudeRunning(sessionId));
+      stopSession(sessionId);
+    });
   });
 
   it('pushes a message sent mid-turn straight to the SDK, stamped for delivery tracking', async () => {
