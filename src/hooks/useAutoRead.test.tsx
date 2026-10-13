@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useAutoRead } from './useAutoRead';
 import type { DisplayMessage } from '@/components/messages/types';
@@ -50,5 +50,55 @@ describe('useAutoRead', () => {
 
     rerender({ messages: [prompt, first] });
     expect(enqueue).not.toHaveBeenCalled();
+  });
+
+  describe('OS media-control Stop', () => {
+    const handlers = new Map<MediaSessionAction, MediaSessionActionHandler | null>();
+
+    function installMediaSession() {
+      Object.defineProperty(navigator, 'mediaSession', {
+        configurable: true,
+        value: {
+          setActionHandler: (action: MediaSessionAction, h: MediaSessionActionHandler | null) =>
+            handlers.set(action, h),
+        },
+      });
+    }
+
+    afterEach(() => {
+      handlers.clear();
+      Reflect.deleteProperty(navigator, 'mediaSession');
+    });
+
+    it('mutes the rest of the turn like the in-app Stop', () => {
+      installMediaSession();
+      const enqueue = vi.fn();
+      const stop = vi.fn();
+      const { rerender } = renderHook(
+        ({ messages }: { messages: DisplayMessage[] }) =>
+          useAutoRead({ enqueue, stop }, { isRunning: true, messages, enabled: true }),
+        { initialProps: { messages: [prompt] } }
+      );
+
+      act(() => handlers.get('stop')?.({ action: 'stop' }));
+      expect(stop).toHaveBeenCalledTimes(1);
+
+      rerender({ messages: [prompt, first] });
+      expect(enqueue).not.toHaveBeenCalled();
+    });
+
+    it('hands Stop back to plain playback stop when auto-read turns off', () => {
+      installMediaSession();
+      const enqueue = vi.fn();
+      const stop = vi.fn();
+      const { rerender } = renderHook(
+        ({ enabled }: { enabled: boolean }) =>
+          useAutoRead({ enqueue, stop }, { isRunning: true, messages: [prompt], enabled }),
+        { initialProps: { enabled: true } }
+      );
+
+      rerender({ enabled: false });
+      expect(handlers.get('stop')).toBe(stop);
+    });
   });
 });
