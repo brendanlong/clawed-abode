@@ -21,6 +21,7 @@ import {
   emitQueuedPrompts,
   enqueuePrompts,
   listQueuedPrompts,
+  restoreQueuedPrompt,
   type PromptPayload,
 } from './prompt-queue';
 import {
@@ -307,6 +308,12 @@ async function drainSession(runner: PauseRunner, sessionId: string): Promise<voi
       // pushing a prompt it already took back would run cancelled work with no
       // bubble to show for it.
       if (!(await claimQueuedPrompt(prompt.id))) continue;
+      // The query can also die during the claim; put the prompt back rather than
+      // lose it.
+      if (!query.isLive()) {
+        await restoreQueuedPrompt(sessionId, prompt);
+        break;
+      }
       query.push(prompt);
     }
   } catch (err) {

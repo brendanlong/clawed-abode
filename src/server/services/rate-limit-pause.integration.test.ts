@@ -34,6 +34,7 @@ vi.mock('./github', () => ({ fetchPullRequestForBranch: vi.fn().mockResolvedValu
 vi.mock('./worktree-manager', () => ({
   getCurrentBranch: vi.fn().mockResolvedValue(null),
   getSessionWorkingDir: vi.fn(() => '/tmp/rate-limit-pause-test'),
+  removeWorkspace: vi.fn(async () => {}),
 }));
 vi.mock('./mcp-config-file', () => ({
   writeSessionMcpConfig: vi.fn(async (sessionId: string) => `/tmp/${sessionId}/mcp.json`),
@@ -498,6 +499,58 @@ describe('rate-limit pause', () => {
       vi.setSystemTime(NOW + HOUR_MS + 1000);
       await pause.recomputeRateLimitHolds();
       expect(stub.revive).toHaveBeenCalledWith(sessionId);
+    });
+
+    describe('a query dying while the drain claims a prompt', () => {
+      async function drainWhileClaimKillsQuery(
+        sessionId: string,
+        duringClaim: () => Promise<unknown> = async () => {}
+      ) {
+        const promptQueue = await import('./prompt-queue');
+        await promptQueue.enqueuePrompts(
+          sessionId,
+          ['first', 'second'].map((text) => ({
+            messageId: `msg-${text}`,
+            content: text,
+            text,
+            attachments: [],
+          }))
+        );
+        let live = true;
+        const realClaim = promptQueue.claimQueuedPrompt;
+        const claim = vi.spyOn(promptQueue, 'claimQueuedPrompt').mockImplementation(async (id) => {
+          const claimed = await realClaim(id);
+          live = false;
+          await duringClaim();
+          return claimed;
+        });
+        const push = vi.fn();
+        const stub = stubRunner(sessionId, async () => null);
+        stub.openQuery = vi.fn(async () => ({ isLive: () => live, push }));
+        await pause.initRateLimitPause(stub);
+        try {
+          await pause.recomputeRateLimitHolds();
+        } finally {
+          claim.mockRestore();
+        }
+        return push;
+      }
+
+      it('puts the claimed prompt back in its place', async () => {
+        const sessionId = await createRunningSession();
+        const push = await drainWhileClaimKillsQuery(sessionId);
+
+        expect(push).not.toHaveBeenCalled();
+        expect(await queuedTexts(sessionId)).toEqual(['first', 'second']);
+      });
+
+      it('leaves nothing queued when the session is archived meanwhile', async () => {
+        const sessionId = await createRunningSession();
+        const { archiveSession } = await import('./session-lifecycle');
+        await drainWhileClaimKillsQuery(sessionId, () => archiveSession(sessionId));
+
+        expect(await queuedTexts(sessionId)).toEqual([]);
+      });
     });
   });
 

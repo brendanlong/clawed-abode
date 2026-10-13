@@ -106,7 +106,8 @@ Each push re-reads the input channel, so a query that dies mid-drain leaves the
 rest queued for the next attempt rather than dropping it, and **claims each row by
 deleting it before pushing**: Stop can empty the queue underneath the loop, and
 pushing a prompt the user just took back would run cancelled work with no bubble
-to show for it.
+to show for it. A query that dies during the claim gets the row put back at its
+original position.
 
 At startup the readings are restored before anything can drain, but the recompute
 itself is not awaited — if the window reset while the server was down the drain
