@@ -40,14 +40,6 @@ export async function registerNode() {
   }
   log.info('Starting server');
 
-  // WAL so a long read (an agent poking at the DB with the sqlite3 CLI) can't
-  // block our writes past the busy timeout. Persistent in the file; repeating it is a no-op.
-  try {
-    await prisma.$queryRawUnsafe('PRAGMA journal_mode = WAL');
-  } catch (err) {
-    log.error('Error enabling WAL mode', toError(err));
-  }
-
   try {
     await purgeInactiveAuthSessions();
   } catch (err) {
@@ -59,6 +51,8 @@ export async function registerNode() {
   // mid-pause doesn't release queued prompts into a still-exhausted window.
   // Both are best-effort and log their own failures.
   await reapOrphanedSessionScopes();
+  // After the reap, so a leftover sqlite3 reader can't hold the lock the switch needs.
+  await enableWalMode();
   initBuiltinMcp(sessionToolsPort);
   initUsage(usageRunner);
   await initRateLimitPause(rateLimitPauseRunner);
@@ -79,6 +73,21 @@ export async function registerNode() {
   }
 
   registerShutdownHandler();
+}
+
+/** See doc/DESIGN.md. Persistent in the DB file, so repeating it is a no-op. */
+async function enableWalMode() {
+  try {
+    const [row] = await prisma.$queryRawUnsafe<{ journal_mode: string }[]>(
+      'PRAGMA journal_mode = WAL'
+    );
+    // SQLite reports the unchanged mode rather than throwing when it can't switch.
+    if (row?.journal_mode !== 'wal') {
+      log.warn('Could not enable WAL mode', { journalMode: row?.journal_mode });
+    }
+  } catch (err) {
+    log.error('Error enabling WAL mode', toError(err));
+  }
 }
 
 /**
