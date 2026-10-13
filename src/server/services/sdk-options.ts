@@ -1,13 +1,16 @@
 import type {
+  HookCallback,
   McpSdkServerConfigWithInstance,
   McpServerConfig,
   Options,
   PermissionResult,
+  Query,
 } from '@anthropic-ai/claude-agent-sdk';
 import { AGENT_NAME_ENV } from '@/lib/agent-name';
 import { env } from '@/lib/env';
 import { CLAUDE_CREDENTIAL_ENV_VARS, llmProxyEnv, usesLlmProxy } from '@/lib/llm-proxy';
 import { createLogger } from '@/lib/logger';
+import { mcpToolDenyRules, type FilteredMcpServer } from '@/lib/mcp-tool-filter';
 import { mayChangeBranchOrPr } from '@/lib/pull-request';
 import type { SanitizationInfo } from '@/lib/sanitization';
 import {
@@ -95,6 +98,36 @@ export function buildMcpServersRecord(
 }
 
 /**
+ * Refuse calls to MCP tools outside their server's allowlist. This is the
+ * enforcement; the deny rules from `applyMcpToolDenyRules` only keep the tools
+ * the filter knows about out of the agent's context.
+ */
+export function mcpToolFilterHook(isBlocked: (toolId: string) => boolean): HookCallback {
+  return async (input) => {
+    if (input.hook_event_name !== 'PreToolUse' || !isBlocked(input.tool_name)) return {};
+    return {
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'deny',
+        permissionDecisionReason: `${input.tool_name} is not in its MCP server's allowed tools (Clawed Abode settings)`,
+      },
+    };
+  };
+}
+
+/**
+ * Hide filtered servers' non-allowed tools. Flag settings rather than the
+ * `disallowedTools` option because a later call replaces these rules, so a
+ * live filter change can un-hide a tool too.
+ */
+export async function applyMcpToolDenyRules(
+  query: Pick<Query, 'applyFlagSettings'>,
+  servers: FilteredMcpServer[]
+): Promise<void> {
+  await query.applyFlagSettings({ permissions: { deny: mcpToolDenyRules(servers) } });
+}
+
+/**
  * Build the SDK query options for a session. Settings bind here (see
  * doc/settings.md "Live vs Restart-Bound").
  */
@@ -114,6 +147,8 @@ export async function buildSdkOptions(params: {
   waitForUserInput: (request: UserInputRequest) => Promise<PermissionResult>;
   /** Records sanitizer findings for a tool result, to badge it when persisted. */
   recordSanitization: (toolUseId: string, info: SanitizationInfo) => void;
+  /** Whether an MCP tool is outside its server's current allowlist. */
+  isMcpToolBlocked: (toolId: string) => boolean;
 }): Promise<SdkOptionsResult> {
   const {
     sessionId,
@@ -125,6 +160,7 @@ export async function buildSdkOptions(params: {
     resumeId,
     waitForUserInput,
     recordSanitization,
+    isMcpToolBlocked,
   } = params;
   const agentEnv = await buildAgentEnv(settings.envVars, settings.claudeApiKey);
   const builtinTools = sessionBuiltinTools(settings.builtinTools, createdBySessionId);
@@ -195,6 +231,7 @@ export async function buildSdkOptions(params: {
       return { behavior: 'allow', updatedInput: input };
     },
     hooks: {
+      PreToolUse: [{ hooks: [mcpToolFilterHook(isMcpToolBlocked)] }],
       // Sanitize tool output before the model sees it (doc/security.md). Findings
       // are recorded by tool_use_id so the matching tool_result message can carry
       // a "content filtered" badge when it is persisted.

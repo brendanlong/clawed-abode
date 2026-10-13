@@ -4,7 +4,7 @@ import type { ResolvedMcpServer } from '@/lib/settings-types';
 import { validateMcpServer } from './mcp-validator';
 
 describe('validateMcpServer', () => {
-  it('spawns a stdio server with its env and lists its tools', async () => {
+  it('spawns a stdio server with its env and lists its tools and read-only claims', async () => {
     const server: ResolvedMcpServer = {
       name: 'test-stdio',
       type: 'stdio',
@@ -15,7 +15,13 @@ describe('validateMcpServer', () => {
 
     const result = await validateMcpServer(server);
 
-    expect(result).toEqual({ success: true, tools: ['ping'] });
+    expect(result).toEqual({
+      success: true,
+      tools: [
+        { name: 'ping', description: 'replies pong', readOnly: true },
+        { name: 'reset', readOnly: false },
+      ],
+    });
   }, 20_000);
 
   it('reports a stdio command that does not exist', async () => {

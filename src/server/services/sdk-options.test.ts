@@ -2,7 +2,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import type { MergedSessionSettings } from './settings-merger';
 import { BUILTIN_MCP_SERVER_NAME, builtinToolsPrompt } from '@/lib/builtin-tools';
-import { buildLiveMcpServersRecord, buildMcpServersRecord, buildSdkOptions } from './sdk-options';
+import {
+  applyMcpToolDenyRules,
+  buildLiveMcpServersRecord,
+  buildMcpServersRecord,
+  buildSdkOptions,
+} from './sdk-options';
 
 vi.mock('./agent-env', () => ({
   buildAgentEnv: vi.fn(async (vars: { name: string; value: string }[]) => ({
@@ -60,6 +65,7 @@ const waitForUserInput = vi.fn(async (): Promise<PermissionResult> => ({
   message: 'no',
 }));
 const recordSanitization = vi.fn();
+const isMcpToolBlocked = vi.fn((toolId: string) => toolId === 'mcp__todo__delete');
 
 const build = (
   s: MergedSessionSettings,
@@ -77,6 +83,7 @@ const build = (
     resumeId,
     waitForUserInput,
     recordSanitization,
+    isMcpToolBlocked,
   });
 
 beforeEach(() => {
@@ -92,7 +99,13 @@ describe('buildMcpServersRecord', () => {
       buildMcpServersRecord([
         { name: 's', type: 'stdio', command: 'node', args: ['a.js'], env: { K: 'v' } },
         { name: 'b', type: 'stdio', command: 'bare' },
-        { name: 'h', type: 'sse', url: 'https://x', headers: { A: 'b' } },
+        {
+          name: 'h',
+          type: 'sse',
+          url: 'https://x',
+          headers: { A: 'b' },
+          toolFilter: { allowed: ['get'], hidden: ['put'] },
+        },
       ])
     ).toEqual({
       s: { command: 'node', args: ['a.js'], env: { K: 'v' } },
@@ -343,6 +356,47 @@ describe('buildSdkOptions', () => {
     mockScheduleRefresh.mockClear();
     await runHooks('mcp__GitHub__merge_pull_request', '');
     expect(mockScheduleRefresh).toHaveBeenCalledWith('sid', '/w');
+  });
+});
+
+describe('MCP tool filtering', () => {
+  it('denies a blocked MCP tool before it runs and lets everything else through', async () => {
+    const { options } = await build(settings());
+    const [hook] = options.hooks!.PreToolUse![0].hooks;
+    const preToolUse = (tool_name: string) =>
+      hook(
+        {
+          hook_event_name: 'PreToolUse',
+          tool_name,
+          tool_input: {},
+          tool_use_id: 't1',
+          session_id: 'sid',
+          transcript_path: '',
+          cwd: '/w',
+        },
+        't1',
+        { signal: new AbortController().signal }
+      );
+
+    expect(await preToolUse('mcp__todo__delete')).toMatchObject({
+      hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny' },
+    });
+    expect(await preToolUse('mcp__todo__list')).toEqual({});
+    expect(await preToolUse('Bash')).toEqual({});
+  });
+
+  it('replaces the deny rules with the hidden tools of every filtered server', async () => {
+    const query = { applyFlagSettings: vi.fn(async () => {}) };
+    await applyMcpToolDenyRules(query, [
+      { name: 'todo', toolFilter: { allowed: ['list'], hidden: ['delete', 'add'] } },
+      { name: 'open', toolFilter: null },
+    ]);
+    await applyMcpToolDenyRules(query, []);
+
+    expect(query.applyFlagSettings.mock.calls).toEqual([
+      [{ permissions: { deny: ['mcp__todo__add', 'mcp__todo__delete'] } }],
+      [{ permissions: { deny: [] } }],
+    ]);
   });
 });
 

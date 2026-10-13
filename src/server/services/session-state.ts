@@ -38,6 +38,12 @@ export interface LiveQuery {
   workingDir: string;
   /** Settings the query was built with (model/MCP can be applied live later). */
   boundSettings: MergedSessionSettings;
+  /**
+   * MCP servers as last loaded from settings, ahead of `boundSettings` when a live
+   * apply failed. Tool filtering enforces both lists, so a tightened filter holds
+   * even then.
+   */
+  loadedMcpServers: MergedSessionSettings['mcpServers'];
   /** The built-in MCP server bound at establishment (see `SdkOptionsResult`). */
   builtinMcpServer: McpSdkServerConfigWithInstance | null;
   /** Settings key (repoFullName or '__no_repo__') for reloading merged settings. */

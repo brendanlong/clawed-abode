@@ -15,6 +15,7 @@ import {
 } from '@/lib/settings-types';
 import { formatOAuthStatus, type McpOAuthTokenSnapshot, type OAuthStatusRow } from './mcp-oauth';
 import { BUILTIN_MCP_SERVER_NAME } from '@/lib/builtin-tools';
+import { mcpToolFilterSchema, type McpToolFilter } from '@/lib/mcp-tool-filter';
 
 // ─── Validation Schemas ──────────────────────────────────────────────
 
@@ -189,6 +190,7 @@ interface DbMcpServer {
   args: string | null;
   url: string | null;
   authType: string;
+  toolFilter: string | null;
   values: DbMcpServerValue[];
   /**
    * Required (not optional) so a query that forgets `include: { oauth: true }`
@@ -200,38 +202,52 @@ interface DbMcpServer {
 
 /**
  * The stringly-typed columns of an MCP server row. The table's CHECK constraints
- * enforce all of this but args' element type, so a mismatch is a bug: throw
- * rather than hand the runner or the settings form a server we'd have to guess
- * about.
+ * enforce all of this but the JSON columns' element types, so a mismatch is a
+ * bug: throw rather than hand the runner or the settings form a server we'd have
+ * to guess about.
  */
-const dbMcpServerFieldsSchema = z.discriminatedUnion('type', [
-  z.object({
-    type: z.literal('stdio'),
-    authType: mcpAuthTypeSchema,
-    args: z.array(z.string()).nullable(),
-  }),
-  z.object({ type: mcpHttpServerTypeSchema, authType: mcpAuthTypeSchema, url: z.string().min(1) }),
-]);
+const dbMcpServerFieldsSchema = z.intersection(
+  z.discriminatedUnion('type', [
+    z.object({
+      type: z.literal('stdio'),
+      authType: mcpAuthTypeSchema,
+      args: z.array(z.string()).nullable(),
+    }),
+    z.object({
+      type: mcpHttpServerTypeSchema,
+      authType: mcpAuthTypeSchema,
+      url: z.string().min(1),
+    }),
+  ]),
+  z.object({ toolFilter: mcpToolFilterSchema.nullable() })
+);
 
 function parseDbMcpServer(mcp: DbMcpServer): z.infer<typeof dbMcpServerFieldsSchema> {
   const invalid = (reason: string) =>
     new Error(`Invalid stored MCP server "${mcp.name}": ${reason}`);
-  let args: unknown = null;
-  if (mcp.args !== null) {
+  const parseJson = (column: 'args' | 'toolFilter'): unknown => {
+    const raw = mcp[column];
+    if (raw === null) return null;
     try {
-      args = JSON.parse(mcp.args);
+      return JSON.parse(raw);
     } catch {
-      throw invalid('args is not JSON');
+      throw invalid(`${column} is not JSON`);
     }
-  }
+  };
   const parsed = dbMcpServerFieldsSchema.safeParse({
     type: mcp.type,
     authType: mcp.authType,
     url: mcp.url,
-    args,
+    args: parseJson('args'),
+    toolFilter: parseJson('toolFilter'),
   });
   if (!parsed.success) throw invalid(z.prettifyError(parsed.error));
   return parsed.data;
+}
+
+/** Spread into a resolved server so an unfiltered one omits the field entirely. */
+function resolvedToolFilter(toolFilter: McpToolFilter | null): { toolFilter?: McpToolFilter } {
+  return toolFilter ? { toolFilter } : {};
 }
 
 /**
@@ -262,6 +278,7 @@ export function formatMcpServersForDisplay(
       headers: maskedValuesOfKind(mcp.values, 'header'),
       authType: fields.authType,
       ...(fields.authType === 'oauth' ? { oauth: formatOAuthStatus(mcp.oauth) } : {}),
+      toolFilter: fields.toolFilter,
       updatedAt: mcp.updatedAt,
     };
   });
@@ -300,6 +317,7 @@ export function decryptMcpServers(mcpServers: DbMcpServer[]): ResolvedMcpServer[
         type: fields.type,
         url: fields.url,
         headers: decryptValuesOfKind(mcp.values, 'header'),
+        ...resolvedToolFilter(fields.toolFilter),
         ...(fields.authType === 'oauth' && mcp.oauth
           ? {
               oauth: {
@@ -318,6 +336,7 @@ export function decryptMcpServers(mcpServers: DbMcpServer[]): ResolvedMcpServer[
       command: mcp.command,
       args: fields.args ?? undefined,
       env: decryptValuesOfKind(mcp.values, 'env'),
+      ...resolvedToolFilter(fields.toolFilter),
     };
   });
 }

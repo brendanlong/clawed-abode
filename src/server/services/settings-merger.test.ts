@@ -72,4 +72,9 @@ describe('mcpServersEqual', () => {
   it('detects added/removed servers', () => {
     expect(mcpServersEqual([stdio('a', 'x')], [stdio('a', 'x'), stdio('b', 'y')])).toBe(false);
   });
+
+  it('ignores tool filters, which are applied without reconnecting', () => {
+    const filtered = { ...stdio('a', 'x'), toolFilter: { allowed: ['get'], hidden: ['put'] } };
+    expect(mcpServersEqual([stdio('a', 'x')], [filtered])).toBe(true);
+  });
 });

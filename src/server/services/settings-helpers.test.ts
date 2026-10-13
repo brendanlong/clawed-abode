@@ -47,6 +47,7 @@ describe('settings-helpers', () => {
             { kind: 'env', name: 'K', value: encrypt('x'), isSecret: true },
             { kind: 'env', name: 'D', value: '1', isSecret: false },
           ],
+          toolFilter: null,
           oauth: null,
         },
         {
@@ -59,6 +60,7 @@ describe('settings-helpers', () => {
           url: 'https://x',
           authType: 'headers',
           values: [{ kind: 'header', name: 'Authorization', value: encrypt('t'), isSecret: true }],
+          toolFilter: null,
           oauth: null,
         },
       ]);
@@ -100,6 +102,7 @@ describe('settings-helpers', () => {
           url: null,
           authType: 'headers',
           values: [{ kind: 'env', name: 'K', value: encrypt('x'), isSecret: true }],
+          toolFilter: null,
           oauth: null,
         },
         {
@@ -111,6 +114,7 @@ describe('settings-helpers', () => {
           url: 'https://x',
           authType: 'headers',
           values: [{ kind: 'header', name: 'A', value: 'plain', isSecret: false }],
+          toolFilter: null,
           oauth: null,
         },
         {
@@ -122,6 +126,7 @@ describe('settings-helpers', () => {
           url: 'https://y',
           authType: 'headers',
           values: [],
+          toolFilter: JSON.stringify({ allowed: ['get'], hidden: ['put'] }),
           oauth: null,
         },
       ]);
@@ -133,7 +138,13 @@ describe('settings-helpers', () => {
         env: { K: 'x' },
       });
       expect(http).toEqual({ name: 'h', type: 'sse', url: 'https://x', headers: { A: 'plain' } });
-      expect(bare).toEqual({ name: 'b', type: 'http', url: 'https://y', headers: undefined });
+      expect(bare).toEqual({
+        name: 'b',
+        type: 'http',
+        url: 'https://y',
+        headers: undefined,
+        toolFilter: { allowed: ['get'], hidden: ['put'] },
+      });
     });
   });
 
@@ -148,6 +159,7 @@ describe('settings-helpers', () => {
       url: 'https://x',
       authType: 'headers',
       values: [],
+      toolFilter: null,
       oauth: null,
     };
 
@@ -157,6 +169,8 @@ describe('settings-helpers', () => {
       ['an http server without a URL', { url: null }],
       ['stdio args that are not a string array', { type: 'stdio', args: '[1]' }],
       ['stdio args that are not JSON', { type: 'stdio', args: 'not json' }],
+      ['a tool filter that is not JSON', { toolFilter: 'not json' }],
+      ['a tool filter without a hidden list', { toolFilter: '{"allowed":[]}' }],
     ])('throws on %s, naming the server', (_, patch) => {
       expect(() => formatMcpServersForDisplay([{ ...row, ...patch }])).toThrow(/"bad"/);
       expect(() => decryptMcpServers([{ ...row, ...patch }])).toThrow(/"bad"/);

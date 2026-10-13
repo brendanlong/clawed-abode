@@ -7,19 +7,13 @@ import {
 } from '@modelcontextprotocol/sdk/client/stdio.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { createLogger, toError } from '@/lib/logger';
-import type { ResolvedMcpServer } from '@/lib/settings-types';
+import type { ResolvedMcpServer, ValidationResult } from '@/lib/settings-types';
 
 const log = createLogger('mcp-validator');
 
 const VALIDATION_TIMEOUT_MS = 15_000;
 
-export interface McpValidationResult {
-  success: boolean;
-  error?: string;
-  tools?: string[];
-}
-
-async function connectAndListTools(transport: Transport): Promise<McpValidationResult> {
+async function connectAndListTools(transport: Transport): Promise<ValidationResult> {
   const client = new Client({ name: 'clawed-abode-validator', version: '1.0.0' });
 
   try {
@@ -27,7 +21,11 @@ async function connectAndListTools(transport: Transport): Promise<McpValidationR
     const { tools } = await client.listTools();
     return {
       success: true,
-      tools: tools.map((t) => t.name),
+      tools: tools.map((t) => ({
+        name: t.name,
+        ...(t.description && { description: t.description }),
+        readOnly: t.annotations?.readOnlyHint === true,
+      })),
     };
   } finally {
     try {
@@ -83,7 +81,7 @@ function createSseTransport(url: string, headers: Record<string, string>): SSECl
 async function validateHttpServer(
   url: string,
   headers: Record<string, string>
-): Promise<McpValidationResult> {
+): Promise<ValidationResult> {
   // Try Streamable HTTP first, fall back to SSE
   try {
     const transport = createStreamableHttpTransport(url, headers);
@@ -108,7 +106,7 @@ async function validateStdioServer(
   command: string,
   args: string[] | undefined,
   env: Record<string, string> | undefined
-): Promise<McpValidationResult> {
+): Promise<ValidationResult> {
   const transport = new StdioClientTransport({
     command,
     args,
@@ -134,7 +132,7 @@ async function validateStdioServer(
 async function validateSseServer(
   url: string,
   headers: Record<string, string>
-): Promise<McpValidationResult> {
+): Promise<ValidationResult> {
   const transport = createSseTransport(url, headers);
   return await connectAndListTools(transport);
 }
@@ -180,7 +178,7 @@ function formatError(error: unknown): string {
   return String(error);
 }
 
-export async function validateMcpServer(server: ResolvedMcpServer): Promise<McpValidationResult> {
+export async function validateMcpServer(server: ResolvedMcpServer): Promise<ValidationResult> {
   try {
     if (server.type === 'stdio') {
       return await validateStdioServer(server.command, server.args, server.env);

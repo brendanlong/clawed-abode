@@ -37,7 +37,17 @@ The app's own MCP server, `clawed-abode` ([`builtin-mcp.ts`](../src/server/servi
 
 ## MCP Validation
 
-The Validate button connects with the MCP SDK and lists tools. HTTP/SSE servers are contacted directly (with a fresh OAuth token when they use one); stdio servers are spawned on the host with the MCP SDK's minimal default environment plus their own decrypted env (never the app's `process.env`, which holds the encryption key and tokens) and killed after the check (15s timeout).
+The Validate button connects with the MCP SDK and lists tools, with each tool's `readOnlyHint` annotation. HTTP/SSE servers are contacted directly (with a fresh OAuth token when they use one); stdio servers are spawned on the host with the MCP SDK's minimal default environment plus their own decrypted env (never the app's `process.env`, which holds the encryption key and tokens) and killed after the check (15s timeout).
+
+## MCP Tool Filtering
+
+A server can be limited to an allowlist of its tools ([`src/lib/mcp-tool-filter.ts`](../src/lib/mcp-tool-filter.ts)), for services with no read-only credential (Todoist) and to keep unusable tools out of context. It is a **mitigation, not enforcement**: the credential keeps its access. The filter is chosen from a live tool listing (validation), so it's its own mutation on a saved server rather than part of the server form.
+
+- **The allowlist is the stored truth**; "Read-only" is only a UI shortcut that selects the tools annotated `readOnlyHint`. Annotation coverage is too uneven to filter on at runtime (one Fastmail server annotates none of its 47 tools, delete tools included), and a server changing its annotations shouldn't silently widen access.
+- **Enforcement** is an in-process `PreToolUse` hook that refuses any tool of a filtered server not on its allowlist, so tools the server adds later fail closed. It checks both the bound and the last-loaded settings, so a tightened filter holds even if the live apply fails.
+- **Context trimming**: the tools the server listed when the filter was saved (`hidden`) become `permissions.deny` rules via `query.applyFlagSettings`, which removes them from the agent's tool list. Flag settings rather than the `disallowedTools` option, because a later `applyFlagSettings` replaces the rules, so filter changes apply live in both directions.
+
+Both mechanisms work under `bypassPermissions` (verified against the CLI). Tool ids are `mcp__<server>__<tool>` with characters outside `[A-Za-z0-9_-]` replaced by `_`, Claude Code's own normalization.
 
 ## MCP OAuth
 
@@ -66,4 +76,4 @@ Values marked secret are encrypted at rest (AES-256-GCM with `ENCRYPTION_KEY`, [
 
 ## Live vs Restart-Bound
 
-Settings bind when the query is established. **Model and MCP servers** re-apply live on the next send when changed (`query.setModel` / `query.setMcpServers`; `sessions.setModel` also refreshes an idle query immediately). A model change to or from a [proxied model](#proxied-models) is the exception: the proxy env binds at spawn, so it restarts the query (resuming the conversation) once the session is idle — no turn and no background task of any kind (including backgrounded shells), since the restart kills the process tree. **Env vars, system prompt, advisor model, setting sources, and built-in tools** have no live SDK setter and take effect only after Stop→Start. The **rate-limit pause** settings aren't SDK options at all — they're evaluated server-side per send, so they apply at once.
+Settings bind when the query is established. **Model and MCP servers** re-apply live on the next send when changed (`query.setModel` / `query.setMcpServers`; a tool-filter change alone only re-applies the deny rules, without reconnecting; `sessions.setModel` also refreshes an idle query immediately). A model change to or from a [proxied model](#proxied-models) is the exception: the proxy env binds at spawn, so it restarts the query (resuming the conversation) once the session is idle — no turn and no background task of any kind (including backgrounded shells), since the restart kills the process tree. **Env vars, system prompt, advisor model, setting sources, and built-in tools** have no live SDK setter and take effect only after Stop→Start. The **rate-limit pause** settings aren't SDK options at all — they're evaluated server-side per send, so they apply at once.

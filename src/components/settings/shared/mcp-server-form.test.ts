@@ -23,6 +23,7 @@ describe('initialMcpServerForm', () => {
     const form = initialMcpServerForm({
       id: '1',
       updatedAt: new Date(0),
+      toolFilter: null,
       authType: 'headers',
       name: 'memory',
       type: 'stdio',
@@ -44,6 +45,7 @@ describe('initialMcpServerForm', () => {
     const form = initialMcpServerForm({
       id: '2',
       updatedAt: new Date(0),
+      toolFilter: null,
       authType: 'headers',
       name: 'web-server',
       type: 'http',
@@ -65,6 +67,7 @@ describe('initialMcpServerForm', () => {
     const form = initialMcpServerForm({
       id: '3',
       updatedAt: new Date(0),
+      toolFilter: null,
       authType: 'headers',
       name: 'test',
       type: 'stdio',
@@ -82,6 +85,7 @@ describe('initialMcpServerForm', () => {
     const form = initialMcpServerForm({
       id: '3',
       updatedAt: new Date(0),
+      toolFilter: null,
       authType: 'headers',
       name: 'test',
       type: 'stdio',
@@ -97,6 +101,7 @@ describe('initialMcpServerForm', () => {
     const base = {
       id: '4',
       updatedAt: new Date(0),
+      toolFilter: null,
       authType: 'oauth' as const,
       name: 'remote',
       type: 'http' as const,
@@ -176,6 +181,7 @@ describe('buildMcpServerInput', () => {
     const existing: McpServer = {
       id: '1',
       updatedAt: new Date(0),
+      toolFilter: null,
       authType: 'headers',
       name: 'memory',
       type: 'stdio',

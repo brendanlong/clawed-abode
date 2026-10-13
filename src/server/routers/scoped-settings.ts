@@ -2,11 +2,13 @@ import { z } from 'zod';
 import { TRPCError } from '@trpc/server';
 import { protectedProcedure } from '../trpc';
 import { envVarNameSchema, envVarSchema, mcpServerSchema } from '../services/settings-helpers';
+import { mcpToolFilterSchema } from '@/lib/mcp-tool-filter';
 import {
   deleteEnvVar,
   deleteMcpServer,
   disconnectScopeMcpOAuth,
   getEnvVarValue,
+  setMcpToolFilter,
   startScopeMcpOAuth,
   upsertEnvVar,
   upsertMcpServer,
@@ -83,6 +85,14 @@ export function scopedSettingsProcedures<ScopeInput extends object>(
     deleteMcpServer: withScope({ name: mcpServerNameSchema }).mutation(async ({ input }) => {
       const scope = await resolveScope(scopeOf(input), 'read');
       if (scope) await deleteMcpServer(scope, input.name);
+      return { success: true };
+    }),
+
+    setMcpToolFilter: withScope({
+      name: mcpServerNameSchema,
+      toolFilter: mcpToolFilterSchema.nullable(),
+    }).mutation(async ({ input }) => {
+      await setMcpToolFilter(await readScope(input), input.name, input.toolFilter);
       return { success: true };
     }),
 

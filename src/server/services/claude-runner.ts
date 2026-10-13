@@ -47,6 +47,7 @@ import { interactiveToolAttentionSummary } from '@/lib/session-attention';
 import { createLogger, toError } from '@/lib/logger';
 import { attachToolResultSanitizations } from '@/lib/message-sanitization';
 import { partialMessageId } from '@/lib/message-cache';
+import { isMcpToolBlocked, mcpToolDenyRules } from '@/lib/mcp-tool-filter';
 import { sseEvents } from './events';
 import { getSessionWorkingDir } from './worktree-manager';
 import {
@@ -77,7 +78,7 @@ import {
 import { resolveAgentName } from './agent-name';
 import { abortGptRuns, hasActiveGptRuns } from './gpt-agent';
 import { requestAttention } from './session-attention';
-import { buildLiveMcpServersRecord, buildSdkOptions } from './sdk-options';
+import { applyMcpToolDenyRules, buildLiveMcpServersRecord, buildSdkOptions } from './sdk-options';
 import { cancelBranchPrRefresh, detectBranchAndPr } from './session-branch-pr';
 import { checkUsageAlerts, type UsagePort } from './usage';
 
@@ -378,6 +379,11 @@ async function establishSessionQuery(
         }
       }),
     recordSanitization: (toolUseId, info) => toolSanitizations.set(toolUseId, info),
+    isMcpToolBlocked: (toolId) =>
+      isMcpToolBlocked(
+        live ? [...live.boundSettings.mcpServers, ...live.loadedMcpServers] : settings.mcpServers,
+        toolId
+      ),
   });
   // Record the scope name durably BEFORE the subprocess (and thus the scope) is
   // spawned, so a crash between here and teardown can always reap it by exact
@@ -402,6 +408,7 @@ async function establishSessionQuery(
     sessionScope,
     workingDir,
     boundSettings: settings,
+    loadedMcpServers: settings.mcpServers,
     builtinMcpServer,
     settingsKey,
     claudeSessionId: null,
@@ -426,6 +433,14 @@ async function establishSessionQuery(
     });
 
   void runSessionLoop(sessionId, state, established);
+
+  // Before the first prompt can be pushed. Best-effort: the PreToolUse hook still
+  // refuses the hidden tools, they just stay in the agent's context.
+  if (mcpToolDenyRules(settings.mcpServers).length > 0) {
+    await applyMcpToolDenyRules(established.query, settings.mcpServers).catch((err) => {
+      log.warn('Failed to hide filtered MCP tools', { sessionId, error: toError(err).message });
+    });
+  }
 
   return state;
 }
@@ -519,6 +534,7 @@ async function applyLiveSettings(sessionId: string, state: SessionState): Promis
 
   // A concurrent apply already replaced this query.
   if (state.live !== live) return;
+  live.loadedMcpServers = settings.mcpServers;
   const bound = live.boundSettings;
   if (modelChangeNeedsRestart(bound.claudeModel, settings.claudeModel)) {
     // Any background work counts, even a daemon: the restart would kill it.
@@ -551,6 +567,12 @@ async function applyLiveSettings(sessionId: string, state: SessionState): Promis
         buildLiveMcpServersRecord(settings.mcpServers, live.builtinMcpServer)
       );
       log.info('Applied live MCP server change', { sessionId });
+    }
+    if (
+      mcpToolDenyRules(bound.mcpServers).join() !== mcpToolDenyRules(settings.mcpServers).join()
+    ) {
+      await applyMcpToolDenyRules(live.query, settings.mcpServers);
+      log.info('Applied live MCP tool filter change', { sessionId });
     }
     live.boundSettings = settings;
   } catch (err) {

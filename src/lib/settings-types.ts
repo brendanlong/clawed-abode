@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { McpToolFilter, McpToolInfo } from './mcp-tool-filter';
 
 export interface EnvVar {
   id: string;
@@ -43,13 +44,15 @@ export interface McpServer {
   authType: McpAuthType;
   /** Present only when authType is "oauth". */
   oauth?: McpOAuthStatus;
+  /** Null when the agent gets every tool the server offers. */
+  toolFilter: McpToolFilter | null;
   updatedAt: Date;
 }
 
 export interface ValidationResult {
   success: boolean;
   error?: string;
-  tools?: string[];
+  tools?: McpToolInfo[];
 }
 
 // ─── Resolved (decrypted, merged) settings handed to the session runner ────
@@ -65,6 +68,7 @@ export interface ResolvedStdioMcpServer {
   command: string;
   args?: string[];
   env?: Record<string, string>;
+  toolFilter?: McpToolFilter;
 }
 
 export interface ResolvedHttpMcpServer {
@@ -72,6 +76,7 @@ export interface ResolvedHttpMcpServer {
   type: z.infer<typeof mcpHttpServerTypeSchema>;
   url: string;
   headers?: Record<string, string>;
+  toolFilter?: McpToolFilter;
   /**
    * The stored grant to mint an `Authorization` header from, loaded with the
    * server row so the common (unexpired) case needs no further query. Resolved
