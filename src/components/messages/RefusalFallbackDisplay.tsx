@@ -17,9 +17,10 @@ import type { MessageContent } from './types';
  * banner the downgrade is invisible — the reply just comes back on a different
  * model.
  *
- * The primary model's attempt that the fallback rolled back and redid is folded
+ * The primary model's retracted attempt, which the fallback redoes, is folded
  * under the banner, collapsed, so the transcript reads as one turn while the
- * original attempt stays one click away.
+ * original attempt stays one click away. Its tool calls did run, so it isn't
+ * presented as undone.
  */
 export function RefusalFallbackDisplay({
   messageId,
@@ -65,12 +66,15 @@ export function RefusalFallbackDisplay({
               <ChevronRight
                 className={cn('h-3 w-3 transition-transform', showRetracted && 'rotate-90')}
               />
-              {showRetracted ? 'Hide' : 'Show'} retracted {from} attempt
+              {showRetracted ? 'Hide' : 'Show'} {from}&apos;s earlier attempt
             </CollapsibleTrigger>
           )}
         </div>
         {retracted && (
-          <CollapsibleContent className="mt-2 opacity-60" data-retracted-messages>
+          <CollapsibleContent className="mt-2" data-retracted-messages>
+            <p className="mb-2 text-xs text-muted-foreground">
+              Retracted and redone on {to}. Any tool calls below still ran.
+            </p>
             {retracted}
           </CollapsibleContent>
         )}

@@ -1259,6 +1259,15 @@ describe('collectRetractedMessages', () => {
     expect(ids(map)).toEqual({ m3: ['m2'] });
   });
 
+  it('leaves a retracted subagent spawn in place, since its subagent still ran', () => {
+    const map = collectRetractedMessages([
+      withUuid(assistant(1, [toolUse('agent-1', 'Agent')]), 'u1'),
+      withUuid(assistant(2, [{ type: 'text', text: 'a' }]), 'u2'),
+      fallback(3, ['u1', 'u2']),
+    ]);
+    expect(ids(map)).toEqual({ m3: ['m2'] });
+  });
+
   it('ignores fallbacks without a usable uuid list', () => {
     const map = collectRetractedMessages([
       withUuid(assistant(1, []), 'u1'),
@@ -1297,5 +1306,26 @@ describe('buildTranscriptLayout retraction', () => {
     ]);
     expect(layout.retractedMessagesByFallbackId.get('m4')?.map((m) => m.id)).toEqual(['m1']);
     expect(layout.resultMap.get('t1')?.content).toBe('out');
+  });
+
+  it('folds nothing when the retracted messages have nothing to render', () => {
+    // The common prod shape: the retracted turn was only empty thinking blocks.
+    const layout = buildTranscriptLayout(
+      [
+        {
+          ...assistant(1, [{ type: 'thinking', thinking: '' }]),
+          content: { uuid: 'u1', message: { content: [{ type: 'thinking', thinking: '' }] } },
+        },
+        {
+          id: 'm2',
+          type: 'system',
+          sequence: 2,
+          createdAt: new Date(0),
+          content: { subtype: 'model_refusal_fallback', retracted_message_uuids: ['u1'] },
+        },
+      ],
+      true
+    );
+    expect(layout.retractedMessagesByFallbackId.size).toBe(0);
   });
 });

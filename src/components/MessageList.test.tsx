@@ -179,8 +179,7 @@ describe('MessageList subagent relocation', () => {
 });
 
 describe('MessageList refusal fallback', () => {
-  // Mirrors prod: the primary model's call and its result are retracted, the
-  // fallback model's redo starts before the banner arrives.
+  // In prod the redo sometimes starts before the banner arrives, as here.
   const messages: DisplayMessage[] = [
     {
       id: 'm1',
@@ -218,17 +217,18 @@ describe('MessageList refusal fallback', () => {
     expect(container.textContent).not.toContain('fable attempt');
     expect(container.textContent).toContain('opus redo');
 
-    await userEvent.click(screen.getByText('Show retracted claude-fable-5 attempt'));
+    await userEvent.click(screen.getByText("Show claude-fable-5's earlier attempt"));
 
     const retracted = container.querySelector('[data-retracted-messages]');
     expect(retracted?.textContent).toContain('fable attempt');
-    expect(screen.getByText('Hide retracted claude-fable-5 attempt')).toBeInTheDocument();
+    expect(retracted?.textContent).toContain('Any tool calls below still ran');
+    expect(screen.getByText("Hide claude-fable-5's earlier attempt")).toBeInTheDocument();
   });
 
   it('offers no expander when none of the retracted messages are loaded', () => {
     renderList(messages.slice(1), false);
     expect(screen.getByText('Model switched after refusal')).toBeInTheDocument();
-    expect(screen.queryByText(/retracted/)).toBeNull();
+    expect(screen.queryByText(/earlier attempt/)).toBeNull();
   });
 });
 

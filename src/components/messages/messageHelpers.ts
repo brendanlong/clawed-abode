@@ -570,6 +570,10 @@ export function buildToolResultMap(messages: DisplayMessage[]): {
   return { resultMap, pairedMessageIds, resultSequenceByToolUseId };
 }
 
+function isSubagentCall(block: ContentBlock): boolean {
+  return block.name === 'Agent' || block.name === 'Task';
+}
+
 /**
  * Collect the lifecycle of each top-level (main-agent) subagent `Agent`/`Task`
  * call, and index those call blocks by id so a relocated box can be rebuilt from
@@ -588,7 +592,7 @@ export function collectSubagentLifecycles(
   const notificationSequenceByToolUseId = new Map<string, number>();
 
   for (const { block, message } of toolUseBlocks(messages)) {
-    if (block.name !== 'Agent' && block.name !== 'Task') continue;
+    if (!isSubagentCall(block)) continue;
     if (getParentToolUseId(message.content) !== null) continue;
     agentBlockById.set(block.id, block);
     spawnSequenceByToolUseId.set(block.id, message.sequence);
@@ -683,12 +687,18 @@ export function getPlanContentByToolUseId(messages: DisplayMessage[]): Map<strin
   return reconstructPlansByToolUseId(events);
 }
 
+const retractedUuidsSchema = z.array(z.string()).catch([]);
+
 /**
  * Fold the messages a `model_refusal_fallback` retracted (the primary model's
- * rolled-back attempt, which the fallback model redoes) under that fallback
- * banner, keyed by the banner's message id. Matches on the SDK `uuid` of each
- * candidate against the banner's `retracted_message_uuids`; uuids whose message
- * isn't loaded are ignored, so a partially loaded retraction folds what it can.
+ * attempt, which the fallback model redoes) under that fallback banner, keyed by
+ * the banner's message id. Matches on the SDK `uuid` of each candidate against
+ * the banner's `retracted_message_uuids`; uuids whose message isn't loaded are
+ * ignored, so a partially loaded retraction folds what it can.
+ *
+ * The API retracts only the model's turn, not its side effects, so a retracted
+ * subagent spawn stays put: its subagent really ran, and its box is placed
+ * relative to the spawn row.
  */
 export function collectRetractedMessages(
   candidates: DisplayMessage[]
@@ -697,19 +707,22 @@ export function collectRetractedMessages(
   for (const message of candidates) {
     const content = message.content as MessageContent;
     if (message.type !== 'system' || content.subtype !== 'model_refusal_fallback') continue;
-    const uuids = content.retracted_message_uuids;
-    if (!Array.isArray(uuids)) continue;
-    for (const uuid of uuids) {
-      if (typeof uuid === 'string') fallbackIdByUuid.set(uuid, message.id);
+    for (const uuid of retractedUuidsSchema.parse(content.retracted_message_uuids)) {
+      fallbackIdByUuid.set(uuid, message.id);
     }
   }
 
   const retracted = new Map<string, DisplayMessage[]>();
   if (fallbackIdByUuid.size === 0) return retracted;
+  const spawnsSubagent = new Set(
+    [...toolUseBlocks(candidates)]
+      .filter(({ block }) => isSubagentCall(block))
+      .map(({ message }) => message.id)
+  );
   for (const message of candidates) {
     const uuid = (message.content as MessageContent).uuid;
     const fallbackId = uuid === undefined ? undefined : fallbackIdByUuid.get(uuid);
-    if (fallbackId === undefined) continue;
+    if (fallbackId === undefined || spawnsSubagent.has(message.id)) continue;
     const existing = retracted.get(fallbackId);
     if (existing) {
       existing.push(message);

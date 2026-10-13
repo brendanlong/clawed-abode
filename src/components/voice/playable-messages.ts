@@ -5,7 +5,11 @@
  */
 
 import { isPartialMessageId } from '@/lib/message-cache';
-import { extractTextContent, isToolResultMessage } from '@/components/messages/messageHelpers';
+import {
+  collectRetractedMessages,
+  extractTextContent,
+  isToolResultMessage,
+} from '@/components/messages/messageHelpers';
 import type { DisplayMessage, MessageContent } from '@/components/messages/types';
 
 /** An assistant message with meaningful text content, ready for TTS. */
@@ -27,11 +31,19 @@ export function extractAssistantText(msg: DisplayMessage): string | null {
   return text && text.trim() ? text : null;
 }
 
-/** Every complete (non-partial) assistant message with speakable text, in order. */
+/**
+ * Every complete (non-partial) assistant message with speakable text, in order,
+ * skipping ones a refusal fallback retracted (the fallback's redo says the same).
+ */
 export function getAssistantTextMessages(messages: DisplayMessage[]): PlayableMessage[] {
+  const retractedIds = new Set(
+    [...collectRetractedMessages(messages).values()].flat().map((msg) => msg.id)
+  );
   const results: PlayableMessage[] = [];
   for (const msg of messages) {
-    if (msg.type !== 'assistant' || isPartialMessageId(msg.id)) continue;
+    if (msg.type !== 'assistant' || isPartialMessageId(msg.id) || retractedIds.has(msg.id)) {
+      continue;
+    }
     const text = extractAssistantText(msg);
     if (text !== null) results.push({ id: msg.id, text });
   }

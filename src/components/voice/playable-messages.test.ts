@@ -204,6 +204,23 @@ describe('getAssistantTextMessages', () => {
     ];
     expect(getAssistantTextMessages(messages)).toEqual([{ id: 'a3', text: 'Real text.' }]);
   });
+
+  it('skips text a refusal fallback retracted', () => {
+    const retracted = makeAssistantText('a1', 1, 'First try.');
+    retracted.content = { ...(retracted.content as object), uuid: 'uuid-a1' };
+    const messages: DisplayMessage[] = [
+      retracted,
+      makeAssistantText('a2', 2, 'Redo.'),
+      {
+        id: 's1',
+        type: 'system',
+        sequence: 3,
+        createdAt: new Date(0),
+        content: { subtype: 'model_refusal_fallback', retracted_message_uuids: ['uuid-a1'] },
+      },
+    ];
+    expect(getAssistantTextMessages(messages)).toEqual([{ id: 'a2', text: 'Redo.' }]);
+  });
 });
 
 describe('getNewAutoReadMessages', () => {
