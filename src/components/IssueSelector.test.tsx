@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { IssueSelector } from './IssueSelector';
+import type { Issue } from '@/lib/types';
 
-type Page = { issues: Array<{ id: number; number: number; title: string; labels: [] }> };
+type Page = { issues: Issue[] };
 type QueryResult = {
   data?: { pages: Page[] };
   isLoading: boolean;
@@ -56,5 +58,35 @@ describe('IssueSelector', () => {
     render(<IssueSelector repoFullName="owner/repo" selectedIssue={null} onSelect={vi.fn()} />);
 
     expect(screen.getByText('No open issues')).toBeInTheDocument();
+  });
+
+  it('selects and clears an issue from the keyboard', async () => {
+    const user = userEvent.setup();
+    const issue: Issue = {
+      id: 7,
+      number: 42,
+      title: 'Fix the thing',
+      body: null,
+      labels: [],
+      comments: 0,
+    };
+    listIssuesResult.current = baseResult({ data: { pages: [{ issues: [issue] }] } });
+    const onSelect = vi.fn();
+
+    const { rerender } = render(
+      <IssueSelector repoFullName="owner/repo" selectedIssue={null} onSelect={onSelect} />
+    );
+    screen.getByRole('button', { name: /Fix the thing/ }).focus();
+    await user.keyboard('{Enter}');
+    expect(onSelect).toHaveBeenLastCalledWith(issue);
+
+    rerender(<IssueSelector repoFullName="owner/repo" selectedIssue={issue} onSelect={onSelect} />);
+    expect(screen.getByRole('button', { name: /Fix the thing/ })).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    );
+    screen.getByRole('button', { name: 'Clear selection' }).focus();
+    await user.keyboard('{Enter}');
+    expect(onSelect).toHaveBeenLastCalledWith(null);
   });
 });

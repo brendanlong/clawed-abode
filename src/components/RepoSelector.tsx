@@ -6,6 +6,7 @@ import { resolveListQueryState } from '@/lib/list-query-state';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Spinner } from '@/components/ui/spinner';
+import { SelectableRowButton } from '@/components/SelectableRowButton';
 import { cn } from '@/lib/utils';
 import { Star, FolderOpen } from 'lucide-react';
 import { buildRepoChoices } from '@/lib/repo-list';
@@ -55,8 +56,7 @@ export function RepoSelector({
   const toggleFavorite = trpc.repoSettings.toggleFavorite.useMutation();
   const utils = trpc.useUtils();
 
-  const handleToggleFavorite = (e: React.MouseEvent, repoFullName: string) => {
-    e.stopPropagation(); // Don't trigger repo selection
+  const handleToggleFavorite = (repoFullName: string) => {
     const newIsFavorite = !favorites.has(repoFullName);
     toggleFavorite.mutate(
       { repoFullName, isFavorite: newIsFavorite },
@@ -131,52 +131,61 @@ export function RepoSelector({
               const isNoRepo = repo.fullName === NO_REPO_SENTINEL;
               const isFavorite = favorites.has(repo.fullName);
               return (
-                <li
-                  key={repo.fullName}
-                  onClick={() => onSelect(repo)}
-                  className={cn(
-                    'px-4 py-3 cursor-pointer hover:bg-muted/50 transition-colors',
-                    isSelected(repo) && 'bg-primary/10'
-                  )}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <button
-                      type="button"
-                      onClick={(e) => handleToggleFavorite(e, repo.fullName)}
-                      className="p-1 hover:bg-muted rounded transition-colors shrink-0"
-                      title={isFavorite ? 'Remove from favorites' : 'Add to favorites'}
-                    >
-                      <Star
-                        className={cn(
-                          'h-4 w-4',
-                          isFavorite ? 'text-yellow-500 fill-yellow-500' : 'text-muted-foreground'
-                        )}
-                      />
-                    </button>
-                    <div className="flex-1 min-w-0">
+                <li key={repo.fullName} className="relative">
+                  {/* A sibling overlaid on the row's left padding, since a button
+                      can't nest inside the row's button; first so Tab order
+                      matches the visual order. */}
+                  <button
+                    type="button"
+                    onClick={() => handleToggleFavorite(repo.fullName)}
+                    className="absolute left-3 top-1/2 -translate-y-1/2 p-1 hover:bg-muted rounded transition-colors"
+                    title={isFavorite ? 'Remove from favorites' : 'Add to favorites'}
+                    aria-label={
+                      isFavorite
+                        ? `Remove ${repo.fullName} from favorites`
+                        : `Add ${repo.fullName} to favorites`
+                    }
+                  >
+                    <Star
+                      className={cn(
+                        'h-4 w-4',
+                        isFavorite ? 'text-yellow-500 fill-yellow-500' : 'text-muted-foreground'
+                      )}
+                    />
+                  </button>
+                  <SelectableRowButton
+                    selected={isSelected(repo)}
+                    onClick={() => onSelect(repo)}
+                    className="flex items-center justify-between gap-2 py-3 pl-12 pr-4"
+                  >
+                    <span className="block flex-1 min-w-0">
                       {isNoRepo ? (
-                        <div className="flex items-center gap-2">
+                        <span className="flex items-center gap-2">
                           <FolderOpen className="h-4 w-4 text-muted-foreground shrink-0" />
-                          <div>
-                            <p className="text-sm font-medium">No Repository (workspace only)</p>
-                            <p className="text-xs text-muted-foreground">{repo.description}</p>
-                          </div>
-                        </div>
+                          <span>
+                            <span className="block text-sm font-medium">
+                              No Repository (workspace only)
+                            </span>
+                            <span className="block text-xs text-muted-foreground">
+                              {repo.description}
+                            </span>
+                          </span>
+                        </span>
                       ) : (
                         <>
-                          <p className="text-sm font-medium">{repo.fullName}</p>
+                          <span className="block text-sm font-medium">{repo.fullName}</span>
                           {repo.description && (
-                            <p className="text-xs text-muted-foreground truncate max-w-md">
+                            <span className="block text-xs text-muted-foreground truncate max-w-md">
                               {repo.description}
-                            </p>
+                            </span>
                           )}
                         </>
                       )}
-                    </div>
+                    </span>
                     {!isNoRepo && repo.private && (
                       <span className="text-xs text-muted-foreground shrink-0">Private</span>
                     )}
-                  </div>
+                  </SelectableRowButton>
                 </li>
               );
             })}

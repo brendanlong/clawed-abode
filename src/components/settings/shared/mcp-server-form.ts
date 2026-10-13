@@ -1,5 +1,6 @@
 import {
   buildKeyValueRecord,
+  newKeyValueEntry,
   type KeyValueEntry,
   type SecretValueMap,
 } from '@/lib/key-value-entries';
@@ -23,11 +24,9 @@ export interface McpServerFormFields {
 
 /** Stored secrets arrive masked, so their rows start blank ("keep the stored value"). */
 function toEntries(stored: SecretValueMap | undefined): KeyValueEntry[] {
-  return Object.entries(stored ?? {}).map(([key, { value, isSecret }]) => ({
-    key,
-    value: isSecret ? '' : value,
-    isSecret,
-  }));
+  return Object.entries(stored ?? {}).map(([key, { value, isSecret }]) =>
+    newKeyValueEntry({ key, value: isSecret ? '' : value, isSecret })
+  );
 }
 
 export function initialMcpServerForm(existing?: McpServer): McpServerFormFields {

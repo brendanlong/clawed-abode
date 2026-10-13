@@ -10,7 +10,7 @@ const MASK = '••••••••';
 const storedSecret: SecretValueMap = { Authorization: { value: MASK, isSecret: true } };
 
 function entry(overrides: Partial<KeyValueEntry> = {}): KeyValueEntry {
-  return { key: 'Authorization', value: '', isSecret: true, ...overrides };
+  return { id: 'row', key: 'Authorization', value: '', isSecret: true, ...overrides };
 }
 
 describe('keepsStoredSecret', () => {
@@ -77,7 +77,7 @@ describe('buildKeyValueRecord', () => {
   it('drops rows that were added and never filled in', () => {
     const entries = [
       entry({ key: 'X-Token', value: 'a', isSecret: false }),
-      { key: '', value: '', isSecret: false },
+      entry({ key: '', value: '', isSecret: false }),
     ];
 
     expect(buildKeyValueRecord(entries, undefined, 'header')).toEqual({

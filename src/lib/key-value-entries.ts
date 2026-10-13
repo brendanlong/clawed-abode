@@ -1,8 +1,16 @@
+import { v4 as uuidv4 } from 'uuid';
+
 /** One editable row in a settings key/value list (MCP headers, MCP env vars). */
 export interface KeyValueEntry {
+  /** Stable React key: `key` is user-edited and may be blank or duplicated. */
+  id: string;
   key: string;
   value: string;
   isSecret: boolean;
+}
+
+export function newKeyValueEntry(fields: Omit<KeyValueEntry, 'id'>): KeyValueEntry {
+  return { id: uuidv4(), ...fields };
 }
 
 /** How env/header maps are stored and sent: a value plus whether it's encrypted. */

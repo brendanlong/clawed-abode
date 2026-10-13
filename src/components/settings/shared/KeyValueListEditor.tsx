@@ -7,6 +7,7 @@ import { Switch } from '@/components/ui/switch';
 import { Plus, Trash2 } from 'lucide-react';
 import {
   keepsStoredSecret,
+  newKeyValueEntry,
   type KeyValueEntry,
   type SecretValueMap,
 } from '@/lib/key-value-entries';
@@ -29,7 +30,7 @@ export function KeyValueListEditor({
   keyTransform,
 }: KeyValueListEditorProps) {
   const addEntry = () => {
-    onChange([...entries, { key: '', value: '', isSecret: false }]);
+    onChange([...entries, newKeyValueEntry({ key: '', value: '', isSecret: false })]);
   };
 
   const removeEntry = (index: number) => {
@@ -59,7 +60,7 @@ export function KeyValueListEditor({
         </Button>
       </div>
       {entries.map((entry, index) => (
-        <div key={index} className="flex items-center gap-2">
+        <div key={entry.id} className="flex items-center gap-2">
           <Input
             value={entry.key}
             onChange={(e) =>

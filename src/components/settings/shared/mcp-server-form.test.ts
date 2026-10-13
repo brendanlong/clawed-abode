@@ -35,7 +35,9 @@ describe('initialMcpServerForm', () => {
     expect(form.serverType).toBe('stdio');
     expect(form.command).toBe('npx');
     expect(form.args).toBe('@anthropic/mcp-server-memory');
-    expect(form.envVars).toEqual([{ key: 'API_KEY', value: 'key123', isSecret: false }]);
+    expect(form.envVars).toEqual([
+      { id: expect.any(String), key: 'API_KEY', value: 'key123', isSecret: false },
+    ]);
   });
 
   it('populates from existing HTTP server, blanking masked secret headers', () => {
@@ -54,7 +56,9 @@ describe('initialMcpServerForm', () => {
     expect(form.name).toBe('web-server');
     expect(form.serverType).toBe('http');
     expect(form.url).toBe('https://example.com/mcp');
-    expect(form.headers).toEqual([{ key: 'Authorization', value: '', isSecret: true }]);
+    expect(form.headers).toEqual([
+      { id: expect.any(String), key: 'Authorization', value: '', isSecret: true },
+    ]);
   });
 
   it('blanks masked secret env var values', () => {
@@ -69,7 +73,9 @@ describe('initialMcpServerForm', () => {
       env: { SECRET: { value: '••••••••', isSecret: true } },
       headers: {},
     });
-    expect(form.envVars).toEqual([{ key: 'SECRET', value: '', isSecret: true }]);
+    expect(form.envVars).toEqual([
+      { id: expect.any(String), key: 'SECRET', value: '', isSecret: true },
+    ]);
   });
 
   it('joins args with spaces', () => {
@@ -156,7 +162,7 @@ describe('buildMcpServerInput', () => {
       {
         ...stdioForm,
         url: 'https://stale.example.com',
-        headers: [{ key: 'X', value: 'y', isSecret: false }],
+        headers: [{ id: 'row', key: 'X', value: 'y', isSecret: false }],
       },
       undefined
     );
@@ -187,7 +193,7 @@ describe('buildMcpServerInput', () => {
 
   it('passes through env var validation errors', () => {
     const result = buildMcpServerInput(
-      { ...stdioForm, envVars: [{ key: '', value: 'orphan', isSecret: false }] },
+      { ...stdioForm, envVars: [{ id: 'row', key: '', value: 'orphan', isSecret: false }] },
       undefined
     );
     expect(result).toEqual({ ok: false, error: 'Every environment variable needs a name' });
@@ -195,7 +201,7 @@ describe('buildMcpServerInput', () => {
 
   it('passes through header validation errors', () => {
     const result = buildMcpServerInput(
-      { ...httpForm, headers: [{ key: 'X-Key', value: '', isSecret: false }] },
+      { ...httpForm, headers: [{ id: 'row', key: 'X-Key', value: '', isSecret: false }] },
       undefined
     );
     expect(result).toEqual({ ok: false, error: 'The header "X-Key" needs a value' });
@@ -203,7 +209,7 @@ describe('buildMcpServerInput', () => {
 
   it('builds a header-authenticated remote server without OAuth config', () => {
     const result = buildMcpServerInput(
-      { ...httpForm, headers: [{ key: 'X-Key', value: 'v', isSecret: true }] },
+      { ...httpForm, headers: [{ id: 'row', key: 'X-Key', value: 'v', isSecret: true }] },
       undefined
     );
     expect(result).toEqual({
