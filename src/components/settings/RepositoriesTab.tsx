@@ -16,8 +16,7 @@ export function RepositoriesTab() {
   const { data, isLoading, refetch } = trpc.repoSettings.listWithSettings.useQuery();
   const deleteMutation = trpc.repoSettings.delete.useMutation({
     onSuccess: () => {
-      refetch();
-      setDeleteRepo(null);
+      void refetch();
     },
   });
 
@@ -105,7 +104,9 @@ export function RepositoriesTab() {
       <DeleteConfirmDialog
         open={!!deleteRepo}
         onClose={() => setDeleteRepo(null)}
-        onConfirm={() => deleteRepo && deleteMutation.mutate({ repoFullName: deleteRepo })}
+        onConfirm={async () => {
+          if (deleteRepo) await deleteMutation.mutateAsync({ repoFullName: deleteRepo });
+        }}
         title="Delete repository settings?"
         description={
           <>

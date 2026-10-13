@@ -8,6 +8,8 @@ import { deriveSessionDisplayStatus } from '@/lib/session-display-status';
 import { SessionStatusBadge } from '@/components/SessionStatusBadge';
 import { SessionActionButton } from '@/components/SessionActionButton';
 import { PrStatusIndicator } from '@/components/PrStatusIndicator';
+import { ActionErrorAlert } from '@/components/ActionErrorAlert';
+import { useActionError } from '@/hooks/useActionError';
 import type { Session } from '@/hooks/useSessionList';
 
 export interface SessionListItemProps {
@@ -21,9 +23,10 @@ export interface SessionListItemProps {
 export function SessionListItem({ session }: SessionListItemProps) {
   const repoName = session.repoUrl ? extractRepoFullName(session.repoUrl) : null;
 
-  const startMutation = trpc.sessions.start.useMutation();
-  const stopMutation = trpc.sessions.stop.useMutation();
-  const archiveMutation = trpc.sessions.delete.useMutation();
+  const { error, dismiss, handlersFor } = useActionError();
+  const startMutation = trpc.sessions.start.useMutation(handlersFor('start session'));
+  const stopMutation = trpc.sessions.stop.useMutation(handlersFor('stop session'));
+  const archiveMutation = trpc.sessions.delete.useMutation(handlersFor('archive session'));
 
   return (
     <li
@@ -99,6 +102,7 @@ export function SessionListItem({ session }: SessionListItemProps) {
       <div className="mt-2 text-xs text-muted-foreground">
         Last activity: {new Date(session.lastActivityAt).toLocaleString()}
       </div>
+      <ActionErrorAlert error={error} onDismiss={dismiss} className="mt-2" />
     </li>
   );
 }

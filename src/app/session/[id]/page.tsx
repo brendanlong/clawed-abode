@@ -10,6 +10,7 @@ import { PromptInput } from '@/components/PromptInput';
 import { ClaudeStatusIndicator } from '@/components/ClaudeStatusIndicator';
 import { ConnectionStatusIndicator } from '@/components/ConnectionStatusIndicator';
 import { Button } from '@/components/ui/button';
+import { ActionErrorAlert } from '@/components/ActionErrorAlert';
 import { Spinner } from '@/components/ui/spinner';
 import { useWorkingIndicator } from '@/hooks/useWorkingIndicator';
 import { useClearAttentionWhileViewing } from '@/hooks/useClearAttentionWhileViewing';
@@ -39,6 +40,8 @@ function SessionView({ sessionId }: { sessionId: string }) {
     isStarting,
     isStopping,
     isArchiving,
+    actionError,
+    dismissActionError,
   } = useSessionState(sessionId);
 
   // Message state: history, pagination, token usage
@@ -122,6 +125,14 @@ function SessionView({ sessionId }: { sessionId: string }) {
     [interrupt]
   );
 
+  const actionErrorAlert = (
+    <ActionErrorAlert
+      error={actionError}
+      onDismiss={dismissActionError}
+      className="rounded-none border-x-0 border-t-0"
+    />
+  );
+
   if (sessionLoading) {
     return (
       <div className="flex-1 flex items-center justify-center">
@@ -150,6 +161,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
     return (
       <div className="flex-1 flex flex-col min-h-0">
         <SessionHeader session={session} onArchive={archive} isArchiving={isArchiving} />
+        {actionErrorAlert}
         {session.status === 'creating' && (
           <div className="flex-1 flex flex-col items-center justify-center gap-4">
             <Spinner size="lg" />
@@ -208,6 +220,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
           onToggleVoiceMode={() => setVoiceOverlayOpen((prev) => !prev)}
           voiceModeActive={voiceOverlayOpen}
         />
+        {actionErrorAlert}
 
         <MessageList
           messages={messages}

@@ -81,12 +81,8 @@ export function SettingsListEditor<T extends SettingsListItem>({
 
   const handleDelete = async () => {
     if (!deleteTarget) return;
-    try {
-      await onDelete(deleteTarget);
-      onUpdate();
-    } catch {
-      // Nothing was deleted, so there's nothing to refetch.
-    }
+    await onDelete(deleteTarget);
+    onUpdate();
   };
 
   return (
