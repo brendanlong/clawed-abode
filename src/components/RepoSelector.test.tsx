@@ -92,4 +92,43 @@ describe('RepoSelector', () => {
     expect(screen.getByText('EleutherAI/bergson')).toBeInTheDocument();
     expect(screen.queryByText('brendanlong/wiki')).not.toBeInTheDocument();
   });
+
+  it('selects a repo from the keyboard and marks it selected', async () => {
+    const user = userEvent.setup();
+    const repo: Repo = {
+      id: 1,
+      fullName: 'brendanlong/wiki',
+      name: 'wiki',
+      owner: 'brendanlong',
+      description: null,
+      private: false,
+      defaultBranch: 'main',
+    };
+    listReposResult.current = baseResult({ data: { repos: [repo], truncated: false } });
+    const onSelect = vi.fn();
+
+    const { rerender } = render(<RepoSelector selectedRepo={null} onSelect={onSelect} />);
+    const row = screen.getByRole('button', { name: 'brendanlong/wiki' });
+    row.focus();
+    await user.keyboard('{Enter}');
+
+    expect(onSelect).toHaveBeenCalledExactlyOnceWith(repo);
+
+    rerender(<RepoSelector selectedRepo={repo} onSelect={onSelect} />);
+    expect(screen.getByRole('button', { name: 'brendanlong/wiki' })).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    );
+  });
+
+  it('toggles a favorite without selecting the repo', async () => {
+    const user = userEvent.setup();
+    listReposResult.current = baseResult({ data: { repos: [], truncated: false } });
+    const onSelect = vi.fn();
+
+    render(<RepoSelector selectedRepo={null} onSelect={onSelect} />);
+    await user.click(screen.getByRole('button', { name: /Add .* to favorites/ }));
+
+    expect(onSelect).not.toHaveBeenCalled();
+  });
 });

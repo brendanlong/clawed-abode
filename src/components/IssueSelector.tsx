@@ -7,7 +7,7 @@ import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Spinner } from '@/components/ui/spinner';
 import { Badge } from '@/components/ui/badge';
-import { cn } from '@/lib/utils';
+import { SelectableRowButton } from '@/components/SelectableRowButton';
 import type { Issue } from '@/lib/types';
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
 import { useDebounce } from '@/hooks/useDebounce';
@@ -70,29 +70,26 @@ export function IssueSelector({
         ) : (
           <ul className="divide-y divide-border">
             {selectedIssue && (
-              <li
-                onClick={() => onSelect(null)}
-                className="px-4 py-2 cursor-pointer hover:bg-muted/50 transition-colors bg-muted/30"
-              >
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <span>Clear selection</span>
-                </div>
+              <li>
+                <SelectableRowButton
+                  onClick={() => onSelect(null)}
+                  className="px-4 py-2 bg-muted/30 text-sm text-muted-foreground"
+                >
+                  Clear selection
+                </SelectableRowButton>
               </li>
             )}
             {issues.map((issue) => (
-              <li
-                key={issue.id}
-                onClick={() => onSelect(issue)}
-                className={cn(
-                  'px-4 py-2 cursor-pointer hover:bg-muted/50 transition-colors',
-                  selectedIssue?.id === issue.id && 'bg-primary/10'
-                )}
-              >
-                <div className="flex items-start gap-2">
+              <li key={issue.id}>
+                <SelectableRowButton
+                  selected={selectedIssue?.id === issue.id}
+                  onClick={() => onSelect(issue)}
+                  className="flex items-start gap-2 px-4 py-2"
+                >
                   <span className="text-xs text-muted-foreground shrink-0">#{issue.number}</span>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate">{issue.title}</p>
-                    <div className="flex flex-wrap gap-1 mt-1">
+                  <span className="block flex-1 min-w-0">
+                    <span className="block text-sm font-medium truncate">{issue.title}</span>
+                    <span className="flex flex-wrap gap-1 mt-1">
                       {issue.labels.slice(0, 3).map((label) => (
                         <Badge
                           key={label.name}
@@ -106,9 +103,9 @@ export function IssueSelector({
                           {label.name}
                         </Badge>
                       ))}
-                    </div>
-                  </div>
-                </div>
+                    </span>
+                  </span>
+                </SelectableRowButton>
               </li>
             ))}
             {hasNextPage && (

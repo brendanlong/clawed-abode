@@ -17,7 +17,7 @@ describe('EditableSessionName', () => {
     const user = userEvent.setup();
     render(<EditableSessionName name="My Session" onRename={vi.fn()} />);
 
-    await user.click(screen.getByRole('heading', { name: 'My Session' }));
+    await user.click(screen.getByRole('button', { name: 'My Session' }));
 
     const input = screen.getByRole('textbox', { name: 'Session name' });
     expect(input).toHaveValue('My Session');
@@ -28,7 +28,7 @@ describe('EditableSessionName', () => {
     const onRename = vi.fn();
     render(<EditableSessionName name="Old" onRename={onRename} />);
 
-    await user.click(screen.getByRole('heading', { name: 'Old' }));
+    await user.click(screen.getByRole('button', { name: 'Old' }));
     const input = screen.getByRole('textbox', { name: 'Session name' });
     await user.clear(input);
     await user.type(input, '  New Name  {Enter}');
@@ -45,7 +45,7 @@ describe('EditableSessionName', () => {
     const onRename = vi.fn();
     render(<EditableSessionName name="Same" onRename={onRename} />);
 
-    await user.click(screen.getByRole('heading', { name: 'Same' }));
+    await user.click(screen.getByRole('button', { name: 'Same' }));
     await user.type(screen.getByRole('textbox', { name: 'Session name' }), '{Enter}');
 
     expect(onRename).not.toHaveBeenCalled();
@@ -56,7 +56,7 @@ describe('EditableSessionName', () => {
     const onRename = vi.fn();
     render(<EditableSessionName name="Something" onRename={onRename} />);
 
-    await user.click(screen.getByRole('heading', { name: 'Something' }));
+    await user.click(screen.getByRole('button', { name: 'Something' }));
     const input = screen.getByRole('textbox', { name: 'Session name' });
     await user.clear(input);
     await user.type(input, '{Enter}');
@@ -69,7 +69,7 @@ describe('EditableSessionName', () => {
     const onRename = vi.fn();
     render(<EditableSessionName name="Original" onRename={onRename} />);
 
-    await user.click(screen.getByRole('heading', { name: 'Original' }));
+    await user.click(screen.getByRole('button', { name: 'Original' }));
     const input = screen.getByRole('textbox', { name: 'Session name' });
     await user.clear(input);
     await user.type(input, 'Discarded{Escape}');
@@ -78,10 +78,25 @@ describe('EditableSessionName', () => {
     expect(screen.getByRole('heading', { name: 'Original' })).toBeInTheDocument();
   });
 
-  it('does not enter edit mode when disabled', async () => {
+  it('starts editing from the keyboard', async () => {
+    const user = userEvent.setup();
+    render(<EditableSessionName name="My Session" onRename={vi.fn()} />);
+
+    await user.tab();
+    expect(screen.getByRole('button', { name: 'My Session' })).toHaveFocus();
+    await user.keyboard('{Enter}');
+
+    expect(screen.getByRole('textbox', { name: 'Session name' })).toHaveValue('My Session');
+    await user.keyboard('{Escape}');
+
+    expect(screen.getByRole('button', { name: 'My Session' })).toHaveFocus();
+  });
+
+  it('does not offer renaming when disabled', async () => {
     const user = userEvent.setup();
     render(<EditableSessionName name="Locked" onRename={vi.fn()} disabled />);
 
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
     await user.click(screen.getByRole('heading', { name: 'Locked' }));
 
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
