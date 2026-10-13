@@ -97,6 +97,10 @@ export interface MessageContent {
   fallback_model?: string;
   api_refusal_category?: string | null;
   api_refusal_explanation?: string | null;
+  // SDK uuids of the primary model's messages the fallback rolled back and redid.
+  retracted_message_uuids?: unknown;
+  // SDK message uuid, present on persisted SDK messages.
+  uuid?: string;
 }
 
 /**

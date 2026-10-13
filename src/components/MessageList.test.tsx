@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { render } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MessageList } from './MessageList';
 import type { DisplayMessage } from './messages/types';
 
@@ -174,6 +175,60 @@ describe('MessageList subagent relocation', () => {
     expect(container.querySelector('[data-subagent-box]')).not.toBeNull();
     expect(container.querySelector('[data-pinned-subagents]')).toBeNull();
     expect(container.textContent).toContain('Subagent started');
+  });
+});
+
+describe('MessageList refusal fallback', () => {
+  // Mirrors prod: the primary model's call and its result are retracted, the
+  // fallback model's redo starts before the banner arrives.
+  const messages: DisplayMessage[] = [
+    {
+      id: 'm1',
+      type: 'assistant',
+      sequence: 1,
+      createdAt: new Date(0),
+      content: { uuid: 'u1', message: { content: [{ type: 'text', text: 'fable attempt' }] } },
+    },
+    {
+      id: 'm2',
+      type: 'assistant',
+      sequence: 2,
+      createdAt: new Date(0),
+      content: { uuid: 'u2', message: { content: [{ type: 'text', text: 'opus redo' }] } },
+    },
+    {
+      id: 'm3',
+      type: 'system',
+      sequence: 3,
+      createdAt: new Date(0),
+      content: {
+        subtype: 'model_refusal_fallback',
+        original_model: 'claude-fable-5',
+        fallback_model: 'claude-opus-4-8',
+        retracted_message_uuids: ['u1'],
+      },
+    },
+  ];
+
+  it('folds the retracted attempt under the banner, collapsed until expanded', async () => {
+    const { container } = renderList(messages, false);
+
+    // Not a top-level row, and hidden until expanded.
+    expect(container.querySelector('[data-message-id="m1"]')).toBeNull();
+    expect(container.textContent).not.toContain('fable attempt');
+    expect(container.textContent).toContain('opus redo');
+
+    await userEvent.click(screen.getByText('Show retracted claude-fable-5 attempt'));
+
+    const retracted = container.querySelector('[data-retracted-messages]');
+    expect(retracted?.textContent).toContain('fable attempt');
+    expect(screen.getByText('Hide retracted claude-fable-5 attempt')).toBeInTheDocument();
+  });
+
+  it('offers no expander when none of the retracted messages are loaded', () => {
+    renderList(messages.slice(1), false);
+    expect(screen.getByText('Model switched after refusal')).toBeInTheDocument();
+    expect(screen.queryByText(/retracted/)).toBeNull();
   });
 });
 

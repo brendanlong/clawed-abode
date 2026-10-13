@@ -1,10 +1,13 @@
 'use client';
 
-import { useCallback } from 'react';
-import { ShieldAlert } from 'lucide-react';
+import { useCallback, useState } from 'react';
+import { ChevronRight, ShieldAlert } from 'lucide-react';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { cn } from '@/lib/utils';
 
 import { ColorBadge } from './ColorBadge';
 import { CopyButton } from './CopyButton';
+import { useMessageListContext } from './MessageListContext';
 import { formatAsJson } from './types';
 import type { MessageContent } from './types';
 
@@ -13,9 +16,22 @@ import type { MessageContent } from './types';
  * request on the primary model and silently retried it on a fallback. Without a
  * banner the downgrade is invisible — the reply just comes back on a different
  * model.
+ *
+ * The primary model's attempt that the fallback rolled back and redid is folded
+ * under the banner, collapsed, so the transcript reads as one turn while the
+ * original attempt stays one click away.
  */
-export function RefusalFallbackDisplay({ content }: { content: MessageContent }) {
+export function RefusalFallbackDisplay({
+  messageId,
+  content,
+}: {
+  messageId?: string;
+  content: MessageContent;
+}) {
   const getJsonText = useCallback(() => formatAsJson(content), [content]);
+  const [showRetracted, setShowRetracted] = useState(false);
+  const context = useMessageListContext();
+  const retracted = messageId && context ? context.renderRetractedMessages(messageId) : null;
 
   const from = content.original_model ?? 'primary model';
   const to = content.fallback_model ?? 'fallback model';
@@ -41,9 +57,24 @@ export function RefusalFallbackDisplay({ content }: { content: MessageContent })
           <p className="mt-2 text-xs text-amber-800 dark:text-amber-200">{explanation}</p>
         )}
       </div>
-      <div className="mt-1">
-        <CopyButton getText={getJsonText} />
-      </div>
+      <Collapsible open={showRetracted} onOpenChange={setShowRetracted}>
+        <div className="mt-1 flex items-center gap-2">
+          <CopyButton getText={getJsonText} />
+          {retracted && (
+            <CollapsibleTrigger className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors">
+              <ChevronRight
+                className={cn('h-3 w-3 transition-transform', showRetracted && 'rotate-90')}
+              />
+              {showRetracted ? 'Hide' : 'Show'} retracted {from} attempt
+            </CollapsibleTrigger>
+          )}
+        </div>
+        {retracted && (
+          <CollapsibleContent className="mt-2 opacity-60" data-retracted-messages>
+            {retracted}
+          </CollapsibleContent>
+        )}
+      </Collapsible>
     </div>
   );
 }

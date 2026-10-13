@@ -76,7 +76,7 @@ export function MessageBubble({
   if (category === 'systemRefusalFallback') {
     return (
       <div className="w-full max-w-[85%]">
-        <RefusalFallbackDisplay content={content} />
+        <RefusalFallbackDisplay messageId={message.id} content={content} />
       </div>
     );
   }

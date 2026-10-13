@@ -33,6 +33,7 @@ function renderWithContext(
         latestTodoWriteId: null,
         planContentByToolUseId: new Map(),
         renderSubagentTranscript: () => null,
+        renderRetractedMessages: () => null,
         relocatedSubagentIds: new Set(),
         ...ctx,
       }}

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { MessageBubble } from './MessageBubble';
 import { MessageListProvider } from './MessageListContext';
-import { SubagentTranscript } from './SubagentTranscript';
+import { NestedTranscript } from './NestedTranscript';
 import { formatFullTimestamp, formatMessageTimestamp } from '@/lib/message-timestamp';
 import type { ToolResultMap, MessageContent } from './types';
 
@@ -611,6 +611,7 @@ describe('MessageBubble', () => {
             latestTodoWriteId: 'todo-1',
             planContentByToolUseId: new Map(),
             renderSubagentTranscript: () => null,
+            renderRetractedMessages: () => null,
             relocatedSubagentIds: new Set(),
           }}
         >
@@ -646,6 +647,7 @@ describe('MessageBubble', () => {
             latestTodoWriteId,
             planContentByToolUseId: new Map(),
             renderSubagentTranscript: () => null,
+            renderRetractedMessages: () => null,
             relocatedSubagentIds: new Set(),
           }}
         >
@@ -712,6 +714,7 @@ describe('MessageBubble', () => {
               latestTodoWriteId: null,
               planContentByToolUseId: new Map(),
               renderSubagentTranscript: (id: string) => <div>nested transcript for {id}</div>,
+              renderRetractedMessages: () => null,
               relocatedSubagentIds: new Set(),
             }}
           >
@@ -884,9 +887,9 @@ describe('turn-boundary timestamps', () => {
     expect(timeElements(container)).toHaveLength(0);
   });
 
-  it('does not show one inside a subagent transcript', () => {
+  it('does not show one inside a nested transcript', () => {
     const { container } = render(
-      <SubagentTranscript
+      <NestedTranscript
         messages={[
           { id: 'u1', type: 'user', sequence: 1, content: { content: 'go' }, createdAt },
           {
