@@ -128,6 +128,25 @@ export async function claimQueuedPrompt(id: string): Promise<boolean> {
 }
 
 /**
+ * Undo a {@link claimQueuedPrompt} whose push could not happen, putting the row
+ * back at its original position — free, because positions are never reused — so
+ * it keeps its place ahead of anything queued after it.
+ */
+export async function restoreQueuedPrompt(sessionId: string, prompt: QueuedPrompt): Promise<void> {
+  await prisma.queuedPrompt.create({
+    data: {
+      id: prompt.id,
+      sessionId,
+      position: prompt.position,
+      messageId: prompt.messageId,
+      content: prompt.content,
+      text: prompt.text,
+      attachments: JSON.stringify(prompt.attachments),
+    },
+  });
+}
+
+/**
  * How many prompts are waiting across all sessions. Archived sessions are
  * excluded: archiving leaves the session row in place (so the cascade never
  * fires) and nothing drains an archived session, so counting theirs would report

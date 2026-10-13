@@ -499,6 +499,31 @@ describe('rate-limit pause', () => {
       await pause.recomputeRateLimitHolds();
       expect(stub.revive).toHaveBeenCalledWith(sessionId);
     });
+
+    it('puts a claimed prompt back in place when the query dies during the claim', async () => {
+      const sessionId = await createRunningSession();
+      const { enqueuePrompts } = await import('./prompt-queue');
+      await enqueuePrompts(
+        sessionId,
+        ['first', 'second'].map((text) => ({
+          messageId: `msg-${text}`,
+          content: text,
+          text,
+          attachments: [],
+        }))
+      );
+      // Live when checked before the claim, gone by the time the push would happen.
+      let liveChecks = 0;
+      const push = vi.fn();
+      const stub = stubRunner(sessionId, async () => null);
+      stub.openQuery = vi.fn(async () => ({ isLive: () => liveChecks++ === 0, push }));
+      await pause.initRateLimitPause(stub);
+
+      await pause.recomputeRateLimitHolds();
+
+      expect(push).not.toHaveBeenCalled();
+      expect(await queuedTexts(sessionId)).toEqual(['first', 'second']);
+    });
   });
 
   it('does not re-arm the resume nudge when the header Stop lands mid-pause', async () => {
