@@ -358,6 +358,26 @@ describe('reduceSessionMessage — retry (turn-scoped clear)', () => {
     expect(status.retry).not.toBeNull();
   });
 
+  it('background-task system events do NOT clear a main-turn retry', () => {
+    const retrying = reduceSessionMessage(INITIAL_LIVE_STATUS, apiRetry(2)).status;
+    const progress = {
+      type: 'system',
+      subtype: 'task_progress',
+      task_id: 't1',
+      session_id: 's',
+      uuid: 'u',
+    } as unknown as SDKMessage;
+    for (const message of [
+      taskStarted('t1'),
+      progress,
+      backgroundTasksChanged('t1'),
+      taskNotification('t1'),
+    ]) {
+      const { status } = reduceSessionMessage(retrying, message);
+      expect(status.retry, message.type === 'system' ? message.subtype : '').not.toBeNull();
+    }
+  });
+
   it('a top-level message_start clears retry (the request recovered and is streaming)', () => {
     const retrying = reduceSessionMessage(INITIAL_LIVE_STATUS, apiRetry(2)).status;
     const { status } = reduceSessionMessage(retrying, messageStart());

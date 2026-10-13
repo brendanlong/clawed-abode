@@ -112,6 +112,24 @@ function isTopLevel(message: SDKMessage): boolean {
   return parent === null || parent === undefined;
 }
 
+/**
+ * System subtypes reporting on background tasks. They carry no
+ * `parent_tool_use_id` but say nothing about the main agent's request.
+ */
+const BACKGROUND_TASK_SUBTYPES: ReadonlySet<string> = new Set([
+  'task_started',
+  'task_progress',
+  'task_updated',
+  'task_notification',
+  'background_tasks_changed',
+]);
+
+/** Whether a message is evidence the main agent's request is alive (so a retry is over). */
+function isMainAgentTraffic(message: SDKMessage): boolean {
+  if (!isTopLevel(message)) return false;
+  return !(message.type === 'system' && BACKGROUND_TASK_SUBTYPES.has(message.subtype));
+}
+
 /** Whether a message is the main agent's `message_start` — the moment a turn visibly begins. */
 export function isTopLevelMessageStart(message: SDKMessage): boolean {
   if (message.type !== 'stream_event' || !isTopLevel(message)) return false;
@@ -196,9 +214,10 @@ function parseBackgroundTaskSet(
  * - background tasks: each `background_tasks_changed` replaces the set. The
  *   `task_started` / `task_notification` edges only maintain `subagentTypes`,
  *   which each set also prunes to its members.
- * - retry: an `api_retry` message sets it; any other TOP-LEVEL message clears it
- *   (the main request recovered). Background traffic leaves retry untouched, so a
- *   subagent's messages can't prematurely clear a main-turn retry indicator.
+ * - retry: an `api_retry` message sets it; any other main-agent message clears it
+ *   (the main request recovered). Background traffic — subagent messages and the
+ *   top-level background-task system events (`task_progress` etc.) — leaves retry
+ *   untouched, so it can't prematurely clear a main-turn retry indicator.
  */
 export function reduceSessionMessage(prev: LiveStatus, message: SDKMessage): ReduceResult {
   let { turnActive, backgroundTasks, retry, subagentTypes } = prev;
@@ -208,7 +227,7 @@ export function reduceSessionMessage(prev: LiveStatus, message: SDKMessage): Red
   const parsedRetry = parseRetryState(message);
   if (parsedRetry) {
     retry = parsedRetry;
-  } else if (topLevel) {
+  } else if (isMainAgentTraffic(message)) {
     retry = null;
   }
 
