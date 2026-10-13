@@ -6,10 +6,14 @@ import { z } from 'zod';
  * they can be removed from the agent's context by name. A tool in neither (one
  * the server added later) is still blocked — see doc/settings.md.
  */
-export const mcpToolFilterSchema = z.object({
-  allowed: z.array(z.string().min(1).max(500)).max(1000),
-  hidden: z.array(z.string().min(1).max(500)).max(1000),
-});
+export const mcpToolFilterSchema = z
+  .object({
+    allowed: z.array(z.string().min(1).max(500)).max(1000),
+    hidden: z.array(z.string().min(1).max(500)).max(1000),
+  })
+  .refine(({ allowed, hidden }) => !hidden.some((tool) => allowed.includes(tool)), {
+    message: 'A tool cannot be both allowed and hidden',
+  });
 export type McpToolFilter = z.infer<typeof mcpToolFilterSchema>;
 
 /** A tool as the server lists it. `readOnly` is the server's own `readOnlyHint` claim. */
@@ -50,12 +54,23 @@ export function mcpToolDenyRules(servers: FilteredMcpServer[]): string[] {
 /**
  * Whether a tool call must be refused: it belongs to a filtered server and isn't
  * on that server's allowlist. Fails closed for tools the filter has never seen.
+ * The owner is the server with the longest matching prefix, so a filter on `gh`
+ * doesn't claim `gh__ent`'s tools; every entry for the owner must allow the tool.
  */
 export function isMcpToolBlocked(servers: FilteredMcpServer[], toolId: string): boolean {
-  return servers.some((server) => {
-    if (!server.toolFilter || !toolId.startsWith(toolIdPrefix(server.name))) return false;
-    return !server.toolFilter.allowed.some((tool) => mcpToolId(server.name, tool) === toolId);
-  });
+  const ownerPrefix = servers
+    .map((server) => toolIdPrefix(server.name))
+    .filter((prefix) => toolId.startsWith(prefix))
+    .reduce<string | null>(
+      (longest, prefix) => (longest && longest.length >= prefix.length ? longest : prefix),
+      null
+    );
+  return servers.some(
+    (server) =>
+      toolIdPrefix(server.name) === ownerPrefix &&
+      server.toolFilter &&
+      !server.toolFilter.allowed.some((tool) => mcpToolId(server.name, tool) === toolId)
+  );
 }
 
 /** The filter that allows exactly `allowed` out of the tools a server listed. */

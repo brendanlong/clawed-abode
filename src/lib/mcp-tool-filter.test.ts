@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildMcpToolFilter,
+  mcpToolFilterSchema,
   isMcpToolBlocked,
   mcpToolDenyRules,
   mcpToolId,
@@ -41,6 +42,20 @@ describe('isMcpToolBlocked', () => {
     expect(isMcpToolBlocked(loosened, 'mcp__todo__delete-object')).toBe(true);
   });
 
+  it('attributes a tool to the server with the longest matching name', () => {
+    const nested: FilteredMcpServer[] = [
+      { name: 'gh', toolFilter: { allowed: ['search'], hidden: [] } },
+      { name: 'gh__ent' },
+    ];
+    expect(isMcpToolBlocked(nested, 'mcp__gh__ent__delete')).toBe(false);
+    expect(isMcpToolBlocked(nested, 'mcp__gh__delete')).toBe(true);
+  });
+
+  it('blocks every tool of a server with an empty allowlist', () => {
+    const none = [{ name: 'todo', toolFilter: { allowed: [], hidden: ['find'] } }];
+    expect(isMcpToolBlocked(none, 'mcp__todo__find')).toBe(true);
+  });
+
   it('matches allowlisted tools whose names need normalizing', () => {
     const odd = [{ name: 'my srv', toolFilter: { allowed: ['get.item'], hidden: [] } }];
     expect(isMcpToolBlocked(odd, 'mcp__my_srv__get_item')).toBe(false);
@@ -57,6 +72,13 @@ describe('mcpToolDenyRules', () => {
         { name: 'c', toolFilter: null },
       ])
     ).toEqual(['mcp__a__w', 'mcp__b__y', 'mcp__b__z']);
+  });
+});
+
+describe('mcpToolFilterSchema', () => {
+  it('rejects a tool that is both allowed and hidden', () => {
+    expect(mcpToolFilterSchema.safeParse({ allowed: ['a'], hidden: ['b'] }).success).toBe(true);
+    expect(mcpToolFilterSchema.safeParse({ allowed: ['a'], hidden: ['a'] }).success).toBe(false);
   });
 });
 

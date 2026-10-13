@@ -2,12 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import type { MergedSessionSettings } from './settings-merger';
 import { BUILTIN_MCP_SERVER_NAME, builtinToolsPrompt } from '@/lib/builtin-tools';
-import {
-  applyMcpToolDenyRules,
-  buildLiveMcpServersRecord,
-  buildMcpServersRecord,
-  buildSdkOptions,
-} from './sdk-options';
+import { buildLiveMcpServersRecord, buildMcpServersRecord, buildSdkOptions } from './sdk-options';
 
 vi.mock('./agent-env', () => ({
   buildAgentEnv: vi.fn(async (vars: { name: string; value: string }[]) => ({
@@ -383,20 +378,6 @@ describe('MCP tool filtering', () => {
     });
     expect(await preToolUse('mcp__todo__list')).toEqual({});
     expect(await preToolUse('Bash')).toEqual({});
-  });
-
-  it('replaces the deny rules with the hidden tools of every filtered server', async () => {
-    const query = { applyFlagSettings: vi.fn(async () => {}) };
-    await applyMcpToolDenyRules(query, [
-      { name: 'todo', toolFilter: { allowed: ['list'], hidden: ['delete', 'add'] } },
-      { name: 'open', toolFilter: null },
-    ]);
-    await applyMcpToolDenyRules(query, []);
-
-    expect(query.applyFlagSettings.mock.calls).toEqual([
-      [{ permissions: { deny: ['mcp__todo__add', 'mcp__todo__delete'] } }],
-      [{ permissions: { deny: [] } }],
-    ]);
   });
 });
 

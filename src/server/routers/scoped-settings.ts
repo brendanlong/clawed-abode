@@ -3,6 +3,7 @@ import { TRPCError } from '@trpc/server';
 import { protectedProcedure } from '../trpc';
 import { envVarNameSchema, envVarSchema, mcpServerSchema } from '../services/settings-helpers';
 import { mcpToolFilterSchema } from '@/lib/mcp-tool-filter';
+import { refreshAllSessionSettings } from '../services/claude-runner';
 import {
   deleteEnvVar,
   deleteMcpServer,
@@ -93,6 +94,9 @@ export function scopedSettingsProcedures<ScopeInput extends object>(
       toolFilter: mcpToolFilterSchema.nullable(),
     }).mutation(async ({ input }) => {
       await setMcpToolFilter(await readScope(input), input.name, input.toolFilter);
+      // Running sessions enforce a tightened filter now rather than at their next
+      // send, which may never come while an agent works on its own.
+      void refreshAllSessionSettings();
       return { success: true };
     }),
 

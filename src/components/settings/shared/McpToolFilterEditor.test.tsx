@@ -81,6 +81,20 @@ describe('McpToolFilterEditor', () => {
     });
   });
 
+  it('saves an empty allowlist when every tool is deselected', async () => {
+    const { user, save } = renderEditor(SERVER);
+
+    await user.click(screen.getByLabelText('Only allow selected tools'));
+    await screen.findByLabelText(/add-tasks/);
+    await user.click(screen.getByRole('button', { name: 'None' }));
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(save).toHaveBeenCalledWith({
+      allowed: [],
+      hidden: ['find-tasks', 'add-tasks', 'get-overview'],
+    });
+  });
+
   it('can go back to all tools even when the server cannot be reached', async () => {
     const { user, save } = renderEditor(
       { ...SERVER, toolFilter: { allowed: ['find-tasks'], hidden: [] } },

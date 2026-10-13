@@ -78,7 +78,7 @@ import {
 import { resolveAgentName } from './agent-name';
 import { abortGptRuns, hasActiveGptRuns } from './gpt-agent';
 import { requestAttention } from './session-attention';
-import { applyMcpToolDenyRules, buildLiveMcpServersRecord, buildSdkOptions } from './sdk-options';
+import { buildLiveMcpServersRecord, buildSdkOptions } from './sdk-options';
 import { cancelBranchPrRefresh, detectBranchAndPr } from './session-branch-pr';
 import { checkUsageAlerts, type UsagePort } from './usage';
 
@@ -409,6 +409,8 @@ async function establishSessionQuery(
     workingDir,
     boundSettings: settings,
     loadedMcpServers: settings.mcpServers,
+    // A fresh CLI holds none.
+    appliedDenyRules: [],
     builtinMcpServer,
     settingsKey,
     claudeSessionId: null,
@@ -435,14 +437,29 @@ async function establishSessionQuery(
   void runSessionLoop(sessionId, state, established);
 
   // Before the first prompt can be pushed. Best-effort: the PreToolUse hook still
-  // refuses the hidden tools, they just stay in the agent's context.
-  if (mcpToolDenyRules(settings.mcpServers).length > 0) {
-    await applyMcpToolDenyRules(established.query, settings.mcpServers).catch((err) => {
-      log.warn('Failed to hide filtered MCP tools', { sessionId, error: toError(err).message });
-    });
-  }
+  // refuses the hidden tools, they just stay in the agent's context until the
+  // next live apply retries.
+  await syncMcpToolDenyRules(established, settings.mcpServers).catch((err) => {
+    log.warn('Failed to hide filtered MCP tools', { sessionId, error: toError(err).message });
+  });
 
   return state;
+}
+
+/**
+ * Hide filtered servers' known, non-allowed tools from the agent with deny rules.
+ * Flag settings rather than the `disallowedTools` option because a later call
+ * replaces the rules, so a live filter change can un-hide a tool too.
+ */
+async function syncMcpToolDenyRules(
+  live: LiveQuery,
+  servers: MergedSessionSettings['mcpServers']
+): Promise<void> {
+  const rules = mcpToolDenyRules(servers);
+  if (live.appliedDenyRules?.join('\n') === rules.join('\n')) return;
+  live.appliedDenyRules = null;
+  await live.query.applyFlagSettings({ permissions: { deny: rules } });
+  live.appliedDenyRules = rules;
 }
 
 /**
@@ -513,7 +530,13 @@ function restartSessionQuery(
  * change to or from a proxied model, which restarts an idle query and waits for
  * the next idle apply otherwise. Best-effort.
  */
-async function applyLiveSettings(sessionId: string, state: SessionState): Promise<void> {
+function applyLiveSettings(sessionId: string, state: SessionState): Promise<void> {
+  const apply = state.settingsApply.then(() => applyLiveSettingsNow(sessionId, state));
+  state.settingsApply = apply;
+  return apply;
+}
+
+async function applyLiveSettingsNow(sessionId: string, state: SessionState): Promise<void> {
   const live = state.live;
   if (!live) return;
   let settings: MergedSessionSettings;
@@ -568,12 +591,7 @@ async function applyLiveSettings(sessionId: string, state: SessionState): Promis
       );
       log.info('Applied live MCP server change', { sessionId });
     }
-    if (
-      mcpToolDenyRules(bound.mcpServers).join() !== mcpToolDenyRules(settings.mcpServers).join()
-    ) {
-      await applyMcpToolDenyRules(live.query, settings.mcpServers);
-      log.info('Applied live MCP tool filter change', { sessionId });
-    }
+    await syncMcpToolDenyRules(live, settings.mcpServers);
     live.boundSettings = settings;
   } catch (err) {
     log.warn('applyLiveSettings: failed to apply', { sessionId, error: toError(err).message });
@@ -932,6 +950,16 @@ export function isClaudeRunning(sessionId: string): boolean {
 export async function refreshSessionSettings(sessionId: string): Promise<void> {
   const state = sessions.get(sessionId);
   if (state) await applyLiveSettings(sessionId, state);
+}
+
+/**
+ * Apply live settings to every session with a running query, for a change that
+ * shouldn't wait for each session's next send (a tightened MCP tool filter).
+ */
+export async function refreshAllSessionSettings(): Promise<void> {
+  await Promise.all(
+    [...sessions].filter(([, state]) => state.live).map(([id]) => refreshSessionSettings(id))
+  );
 }
 
 /**

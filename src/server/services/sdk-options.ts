@@ -4,13 +4,11 @@ import type {
   McpServerConfig,
   Options,
   PermissionResult,
-  Query,
 } from '@anthropic-ai/claude-agent-sdk';
 import { AGENT_NAME_ENV } from '@/lib/agent-name';
 import { env } from '@/lib/env';
 import { CLAUDE_CREDENTIAL_ENV_VARS, llmProxyEnv, usesLlmProxy } from '@/lib/llm-proxy';
 import { createLogger } from '@/lib/logger';
-import { mcpToolDenyRules, type FilteredMcpServer } from '@/lib/mcp-tool-filter';
 import { mayChangeBranchOrPr } from '@/lib/pull-request';
 import type { SanitizationInfo } from '@/lib/sanitization';
 import {
@@ -99,8 +97,8 @@ export function buildMcpServersRecord(
 
 /**
  * Refuse calls to MCP tools outside their server's allowlist. This is the
- * enforcement; the deny rules from `applyMcpToolDenyRules` only keep the tools
- * the filter knows about out of the agent's context.
+ * enforcement; the runner's deny rules only keep the tools the filter knows
+ * about out of the agent's context.
  */
 export function mcpToolFilterHook(isBlocked: (toolId: string) => boolean): HookCallback {
   return async (input) => {
@@ -113,18 +111,6 @@ export function mcpToolFilterHook(isBlocked: (toolId: string) => boolean): HookC
       },
     };
   };
-}
-
-/**
- * Hide filtered servers' non-allowed tools. Flag settings rather than the
- * `disallowedTools` option because a later call replaces these rules, so a
- * live filter change can un-hide a tool too.
- */
-export async function applyMcpToolDenyRules(
-  query: Pick<Query, 'applyFlagSettings'>,
-  servers: FilteredMcpServer[]
-): Promise<void> {
-  await query.applyFlagSettings({ permissions: { deny: mcpToolDenyRules(servers) } });
 }
 
 /**

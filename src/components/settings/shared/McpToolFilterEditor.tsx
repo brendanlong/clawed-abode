@@ -2,6 +2,7 @@
 
 import { useId, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
@@ -38,6 +39,10 @@ export function McpToolFilterEditor({
       if (!result.success) throw new Error(result.error ?? 'Could not list tools');
       return result.tools ?? [];
     },
+    // Listing can spawn the server, so only on open, never on focus or reconnect.
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
     retry: false,
     gcTime: 0,
   });
@@ -60,7 +65,7 @@ export function McpToolFilterEditor({
     setSelected(new Set(tools.filter(predicate).map((tool) => tool.name)));
 
   // Saving a filter needs the tool list; going back to all tools doesn't.
-  const canSave = !limited || listed.isSuccess;
+  const canSave = !limited || listed.data !== undefined;
 
   return (
     <div className="space-y-3 p-3 border rounded-md text-sm">
@@ -75,12 +80,12 @@ export function McpToolFilterEditor({
       </p>
 
       {limited &&
-        (listed.isPending ? (
+        (listed.isError ? (
+          <p className="text-destructive">{listed.error.message}</p>
+        ) : !listed.data ? (
           <div className="flex items-center gap-2 text-muted-foreground">
             <Spinner size="sm" /> Listing tools…
           </div>
-        ) : listed.isError ? (
-          <p className="text-destructive">{listed.error.message}</p>
         ) : (
           <>
             <div className="flex flex-wrap items-center gap-2">
@@ -124,12 +129,13 @@ export function McpToolFilterEditor({
                   <Label htmlFor={`${id}-${tool.name}`} className="font-normal block min-w-0">
                     <span className="font-mono">{tool.name}</span>
                     {tool.readOnly && (
-                      <span
-                        className="ml-2 text-xs px-1.5 rounded bg-muted text-muted-foreground"
+                      <Badge
+                        variant="secondary"
+                        className="ml-2"
                         title="The server says this tool doesn't modify anything. That's its own claim, not something the app checks."
                       >
                         read-only
-                      </span>
+                      </Badge>
                     )}
                     {tool.description && (
                       <span className="block text-xs text-muted-foreground line-clamp-2">

@@ -44,6 +44,8 @@ export interface LiveQuery {
    * even then.
    */
   loadedMcpServers: MergedSessionSettings['mcpServers'];
+  /** The MCP tool deny rules the CLI holds; null when unknown because applying them failed. */
+  appliedDenyRules: string[] | null;
   /** The built-in MCP server bound at establishment (see `SdkOptionsResult`). */
   builtinMcpServer: McpSdkServerConfigWithInstance | null;
   /** Settings key (repoFullName or '__no_repo__') for reloading merged settings. */
@@ -76,8 +78,15 @@ export interface SessionState {
    * so what clients were last sent is always `liveView(turn)`.
    */
   turn: LiveTurnState;
+  /** Tail of the live-settings applies, which run one at a time so a stale load can't land last. */
+  settingsApply: Promise<void>;
 }
 
 export function createSessionState(): SessionState {
-  return { live: null, establishing: null, turn: INITIAL_LIVE_TURN };
+  return {
+    live: null,
+    establishing: null,
+    turn: INITIAL_LIVE_TURN,
+    settingsApply: Promise.resolve(),
+  };
 }
