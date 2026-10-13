@@ -1,9 +1,9 @@
 /**
- * The agents' view of subscription usage: the check_usage report, refreshed from
- * the SDK's experimental `/usage` call when the readings are old, and the opt-in
- * alerts set with set_usage_alerts. Readings are the rate-limit pause's
- * (rate-limit-state); the session queries are reached only through the
- * {@link UsagePort} handed to {@link initUsage}. Rationale:
+ * Subscription usage for agents and the session view: the check_usage report and
+ * the usage bars, refreshed from the SDK's experimental `/usage` call when the
+ * readings are old, and the opt-in alerts set with set_usage_alerts. Readings are
+ * the rate-limit pause's (rate-limit-state); the session queries are reached only
+ * through the {@link UsagePort} handed to {@link initUsage}. Rationale:
  * doc/rate-limit-pause.md "Usage Tools".
  */
 
@@ -12,6 +12,7 @@ import { prisma } from '@/lib/prisma';
 import { coalesce } from '@/lib/coalesce';
 import { processSingleton } from '@/lib/process-singleton';
 import { createLogger, toError } from '@/lib/logger';
+import { usesLlmProxy } from '@/lib/llm-proxy';
 import type { HoldableLimitType } from '@/lib/rate-limit';
 import {
   buildUsageReport,
@@ -19,6 +20,8 @@ import {
   formatUsageAlert,
   markUsageAlertsSent,
   parseUsageSnapshot,
+  sessionSubscriptionUsage,
+  type SessionSubscriptionUsage,
   type UsageAlertThresholds,
   type UsageSnapshot,
 } from '@/lib/usage';
@@ -37,6 +40,8 @@ export interface UsagePort {
   isSessionWorking(sessionId: string): boolean;
   /** Send a message on the app's behalf, only to a session whose query is live. */
   deliverMessage(sessionId: string, text: string): Promise<void>;
+  /** The model the session's live query was set up with, when one is live and names one. */
+  liveModel(sessionId: string): string | undefined;
   /** A live query on the subscription (not a proxied model), preferring this session's. */
   subscriptionQuery(preferSessionId: string): Query | null;
 }
@@ -51,7 +56,15 @@ const state = processSingleton<{
   sentAlerts: Map<string, ReadonlyMap<HoldableLimitType, number>>;
   extras: (Omit<UsageSnapshot, 'readings'> & { fetchedAtMs: number }) | null;
   lastRefreshAttemptMs: number;
-}>('usage', () => ({ port: null, sentAlerts: new Map(), extras: null, lastRefreshAttemptMs: 0 }));
+  /** The last snapshot carried no plan limits: the credential can't see them, so don't keep asking. */
+  snapshotUnavailable: boolean;
+}>('usage', () => ({
+  port: null,
+  sentAlerts: new Map(),
+  extras: null,
+  lastRefreshAttemptMs: 0,
+  snapshotUnavailable: false,
+}));
 
 export function initUsage(port: UsagePort): void {
   state.port = port;
@@ -68,16 +81,16 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 
 /**
  * Ask a CLI for its `/usage` snapshot. The SDK call is explicitly experimental,
- * so any failure (a throw, a hang, a changed shape, or no plan limits for this
- * credential) just leaves the readings as they were.
+ * so any failure (a throw, a hang) just leaves the readings as they were; a
+ * snapshot without usable plan limits is reported as `'unavailable'`.
  */
-async function fetchUsageSnapshot(query: Query): Promise<UsageSnapshot | null> {
+async function fetchUsageSnapshot(query: Query): Promise<UsageSnapshot | 'unavailable' | null> {
   try {
     const raw = await withTimeout(
       query.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true }),
       SNAPSHOT_TIMEOUT_MS
     );
-    return parseUsageSnapshot(raw, Date.now());
+    return parseUsageSnapshot(raw, Date.now()) ?? 'unavailable';
   } catch (err) {
     log.warn('Usage snapshot failed', { error: toError(err).message });
     return null;
@@ -88,7 +101,12 @@ async function refreshUsage(preferSessionId: string): Promise<void> {
   const query = state.port?.subscriptionQuery(preferSessionId);
   if (!query) return;
   const snapshot = await fetchUsageSnapshot(query);
+  if (snapshot === 'unavailable') {
+    state.snapshotUnavailable = true;
+    return;
+  }
   if (!snapshot) return;
+  state.snapshotUnavailable = false;
   state.extras = {
     modelWindows: snapshot.modelWindows,
     extraUsage: snapshot.extraUsage,
@@ -105,13 +123,17 @@ async function loadThresholds(sessionId: string): Promise<UsageAlertThresholds> 
   return { fiveHour: row?.usageAlertFiveHour ?? null, weekly: row?.usageAlertWeekly ?? null };
 }
 
+/**
+ * Refresh when either source is old: the event stream keeps the readings fresh
+ * while any session works, but only the snapshot carries the per-model windows
+ * (unless the credential can't see them, when only the readings count).
+ */
 async function refreshIfStale(sessionId: string): Promise<void> {
   const now = Date.now();
   const observedAt = getRateLimitObservedAt();
-  if (
-    (observedAt === null || now - observedAt > STALE_MS) &&
-    now - state.lastRefreshAttemptMs > STALE_MS
-  ) {
+  const isStale = (at: number | null) => at === null || now - at > STALE_MS;
+  const extrasStale = !state.snapshotUnavailable && isStale(state.extras?.fetchedAtMs ?? null);
+  if ((isStale(observedAt) || extrasStale) && now - state.lastRefreshAttemptMs > STALE_MS) {
     // Set before the await, so concurrent reports don't each fetch.
     state.lastRefreshAttemptMs = now;
     await refreshUsage(sessionId);
@@ -126,6 +148,25 @@ export async function getUsageReport(sessionId: string) {
     observedAtMs: getRateLimitObservedAt(),
     extras: state.extras,
     thresholds: await loadThresholds(sessionId),
+    nowMs: Date.now(),
+  });
+}
+
+/**
+ * The usage windows the session view shows. The live query's model wins over
+ * `fallbackModel`; a session on a proxied model isn't using the subscription.
+ */
+export async function getSessionSubscriptionUsage(
+  sessionId: string,
+  fallbackModel: string | null
+): Promise<SessionSubscriptionUsage | null> {
+  const model = state.port?.liveModel(sessionId) ?? fallbackModel;
+  if (usesLlmProxy(model ?? undefined)) return null;
+  await refreshIfStale(sessionId);
+  return sessionSubscriptionUsage({
+    readings: getRateLimitReadings(),
+    modelWindows: state.extras?.modelWindows ?? [],
+    model,
     nowMs: Date.now(),
   });
 }
@@ -221,4 +262,5 @@ export function _resetUsageState(): void {
   state.sentAlerts.clear();
   state.extras = null;
   state.lastRefreshAttemptMs = 0;
+  state.snapshotUnavailable = false;
 }

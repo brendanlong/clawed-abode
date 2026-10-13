@@ -78,6 +78,10 @@ export function useSessionStream(sessionId: string, options: UseSessionStreamOpt
             ) {
               void utils.claude.getTokenUsage.refetch({ sessionId });
             }
+            // Readings move per API call, but a turn's end is often enough.
+            if (event.message.type === 'result') {
+              void utils.rateLimit.getSessionUsage.invalidate({ sessionId });
+            }
             break;
           }
           case 'running': {

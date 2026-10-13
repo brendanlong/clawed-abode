@@ -233,3 +233,92 @@ export function buildUsageReport(input: {
     },
   };
 }
+
+/** One window as the session view's usage bars show it. */
+export interface UsageBar {
+  label: string;
+  percentUsed: number | null;
+  exhausted: boolean;
+  resetsAtMs: number | null;
+}
+
+/** The windows that matter for one session's model; null where unknown. */
+export interface SessionSubscriptionUsage {
+  fiveHour: UsageBar | null;
+  weeklyAllModels: UsageBar | null;
+  /** The weekly window scoped to the session's model, when the plan has one. */
+  weeklyModel: UsageBar | null;
+  /**
+   * The weekly window to show: the model's, unless the all-models window is
+   * exhausted, since then that is the one blocking the session.
+   */
+  weekly: UsageBar | null;
+}
+
+const MODEL_SCOPED_LIMIT_TYPES: Partial<Record<HoldableLimitType, string>> = {
+  seven_day_opus: 'Opus',
+  seven_day_sonnet: 'Sonnet',
+};
+
+function readingBar(reading: RateLimitReading, label: string): UsageBar {
+  return {
+    label,
+    percentUsed: reading.utilization,
+    exhausted: reading.rejected,
+    resetsAtMs: reading.resetsAtMs,
+  };
+}
+
+/** Whether a window named for a model family ("Fable") covers this model id. */
+function modelMatches(model: string, familyName: string): boolean {
+  return model.toLowerCase().includes(familyName.toLowerCase());
+}
+
+/**
+ * Pick the windows for a session running `model`: the 5-hour window, the
+ * all-models weekly window, and the weekly window scoped to the model's family
+ * (from a rate-limit reading, or else from the `/usage` snapshot's per-model
+ * windows), if any.
+ */
+export function sessionSubscriptionUsage(input: {
+  readings: readonly RateLimitReading[];
+  modelWindows: readonly ModelUsageWindow[];
+  model: string | null;
+  nowMs: number;
+}): SessionSubscriptionUsage {
+  const { readings, modelWindows, model, nowMs } = input;
+  const byType = new Map(readings.map((r) => [r.limitType, r] as const));
+  const fiveHour = byType.get('five_hour');
+  const sevenDay = byType.get('seven_day');
+
+  let weeklyModel: UsageBar | null = null;
+  if (model) {
+    for (const [limitType, name] of Object.entries(MODEL_SCOPED_LIMIT_TYPES)) {
+      const reading = byType.get(limitType as HoldableLimitType);
+      if (reading && name && modelMatches(model, name)) {
+        weeklyModel = readingBar(reading, `Weekly (${name})`);
+      }
+    }
+    const window = modelWindows.find(
+      (w) => modelMatches(model, w.name) && (w.resetsAtMs === null || w.resetsAtMs > nowMs)
+    );
+    if (!weeklyModel && window) {
+      weeklyModel = {
+        label: `Weekly (${window.name})`,
+        percentUsed: window.percentUsed,
+        exhausted: false,
+        resetsAtMs: window.resetsAtMs,
+      };
+    }
+  }
+
+  const weeklyAllModels = sevenDay
+    ? readingBar(sevenDay, weeklyModel ? 'Weekly (all models)' : 'Weekly')
+    : null;
+  return {
+    fiveHour: fiveHour ? readingBar(fiveHour, 'Session') : null,
+    weeklyAllModels,
+    weeklyModel,
+    weekly: weeklyAllModels?.exhausted ? weeklyAllModels : (weeklyModel ?? weeklyAllModels),
+  };
+}

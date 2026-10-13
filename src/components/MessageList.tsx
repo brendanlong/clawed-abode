@@ -10,7 +10,9 @@ import { MessageListProvider } from './messages/MessageListContext';
 import { Clock, PauseCircle } from 'lucide-react';
 import { Spinner } from '@/components/ui/spinner';
 import { ContextUsageIndicator } from '@/components/ContextUsageIndicator';
+import { SubscriptionUsageIndicator } from '@/components/SubscriptionUsageIndicator';
 import type { TokenUsageStats } from '@/lib/token-estimation';
+import type { SessionSubscriptionUsage } from '@/lib/usage';
 import { useTranscriptScroll } from '@/hooks/useTranscriptScroll';
 import {
   isToolCallOnlyMessage,
@@ -28,6 +30,7 @@ interface MessageListProps {
   hasMore: boolean;
   onLoadMore: () => void;
   tokenUsage?: TokenUsageStats | null;
+  subscriptionUsage?: SessionSubscriptionUsage | null;
   onAnswerQuestion?: (toolUseId: string, answers: Record<string, string>) => void;
   onRespondToPlan?: (toolUseId: string, approve: boolean, feedback?: string) => void;
   /**
@@ -55,6 +58,7 @@ export function MessageList({
   hasMore,
   onLoadMore,
   tokenUsage,
+  subscriptionUsage,
   onAnswerQuestion,
   onRespondToPlan,
   pendingMessageIds = [],
@@ -126,7 +130,8 @@ export function MessageList({
 
   return (
     <div className="relative flex-1 min-h-0">
-      <div ref={containerRef} className="h-full overflow-y-auto p-4">
+      {/* Bottom padding keeps the floating usage indicators off the newest message. */}
+      <div ref={containerRef} className="h-full overflow-y-auto p-4 pb-16 sm:pb-12">
         {/* Sentinel for triggering infinite scroll - placed before messages */}
         {/* overflow-anchor:none prevents browser from anchoring to these elements */}
         {/* so when new messages load above, the view stays on current messages */}
@@ -247,8 +252,10 @@ export function MessageList({
         <div ref={bottomRef} style={{ overflowAnchor: 'none' }} />
       </div>
 
-      {/* Context usage indicator - positioned in bottom right */}
-      <ContextUsageIndicator stats={tokenUsage} className="absolute bottom-3 right-3 shadow-xs" />
+      <div className="absolute bottom-3 right-3 flex flex-col items-end gap-1 sm:flex-row sm:items-center">
+        <SubscriptionUsageIndicator usage={subscriptionUsage} className="shadow-xs" />
+        <ContextUsageIndicator stats={tokenUsage} className="shadow-xs" />
+      </div>
     </div>
   );
 }

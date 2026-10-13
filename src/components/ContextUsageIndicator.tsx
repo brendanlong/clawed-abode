@@ -3,26 +3,11 @@
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatTokenCount, formatPercentage, type TokenUsageStats } from '@/lib/token-estimation';
 import { cn } from '@/lib/utils';
+import { getUsageColorClass, USAGE_PILL_CLASS } from './usage-indicator-styles';
 
 interface ContextUsageIndicatorProps {
   stats: TokenUsageStats | null | undefined;
   className?: string;
-}
-
-/**
- * Get color classes based on percentage used
- */
-function getUsageColorClass(percentUsed: number): string {
-  if (percentUsed >= 90) {
-    return 'text-red-600 dark:text-red-400';
-  }
-  if (percentUsed >= 75) {
-    return 'text-orange-600 dark:text-orange-400';
-  }
-  if (percentUsed >= 50) {
-    return 'text-yellow-600 dark:text-yellow-400';
-  }
-  return 'text-muted-foreground';
 }
 
 /**
@@ -77,16 +62,7 @@ export function ContextUsageIndicator({ stats, className }: ContextUsageIndicato
     <TooltipProvider>
       <Tooltip delayDuration={300}>
         <TooltipTrigger asChild>
-          <div
-            className={cn(
-              'inline-flex items-center gap-1.5 px-2 py-1 rounded-md',
-              'bg-background/80 backdrop-blur-sm border border-border/50',
-              'text-xs font-medium cursor-default select-none',
-              'transition-colors hover:bg-muted/50',
-              colorClass,
-              className
-            )}
-          >
+          <div className={cn(USAGE_PILL_CLASS, colorClass, className)}>
             <svg
               viewBox="0 0 24 24"
               fill="none"
