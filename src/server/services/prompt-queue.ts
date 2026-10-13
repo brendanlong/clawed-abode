@@ -130,20 +130,16 @@ export async function claimQueuedPrompt(id: string): Promise<boolean> {
 /**
  * Undo a {@link claimQueuedPrompt} whose push could not happen, putting the row
  * back at its original position — free, because positions are never reused — so
- * it keeps its place ahead of anything queued after it.
+ * it keeps its place ahead of anything queued after it. Skipped for an archived
+ * session, whose queue nothing will ever drain (archive clears it after the
+ * status write, so a restore racing it is either cleared or skipped).
  */
 export async function restoreQueuedPrompt(sessionId: string, prompt: QueuedPrompt): Promise<void> {
-  await prisma.queuedPrompt.create({
-    data: {
-      id: prompt.id,
-      sessionId,
-      position: prompt.position,
-      messageId: prompt.messageId,
-      content: prompt.content,
-      text: prompt.text,
-      attachments: JSON.stringify(prompt.attachments),
-    },
-  });
+  await prisma.$executeRaw`
+    INSERT INTO "QueuedPrompt" ("id", "sessionId", "position", "messageId", "content", "text", "attachments", "createdAt")
+    SELECT ${prompt.id}, "id", ${prompt.position}, ${prompt.messageId}, ${prompt.content},
+      ${prompt.text}, ${JSON.stringify(prompt.attachments)}, ${new Date().toISOString()}
+    FROM "Session" WHERE "id" = ${sessionId} AND "status" != 'archived'`;
 }
 
 /**

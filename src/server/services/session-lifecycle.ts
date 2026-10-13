@@ -229,15 +229,15 @@ export async function archiveSession(sessionId: string): Promise<void> {
   // on the stop: while the row still reads `running` with prompts queued, a
   // send or rate-limit drain would revive the session into a fresh scope. The
   // QueuedPrompt cascade never fires for a kept row, so the queue must be
-  // cleared here or it waits forever, badged in a read-only transcript.
-  const [{ applied }] = await Promise.all([
-    transitionSession(sessionId, 'archive', {
-      status: 'archived',
-      attentionAt: null,
-      attentionSummary: null,
-    }),
-    clearQueuedPrompts(sessionId),
-  ]);
+  // cleared here or it waits forever, badged in a read-only transcript. Clear
+  // after the archive write, so a drain restoring a prompt it had claimed
+  // (restoreQueuedPrompt) either lands before the clear or sees the archive.
+  const { applied } = await transitionSession(sessionId, 'archive', {
+    status: 'archived',
+    attentionAt: null,
+    attentionSummary: null,
+  });
+  await clearQueuedPrompts(sessionId);
 
   // Remove the workspace only once the session's processes are dead, or a
   // daemon it left running (e.g. `next dev`) recreates files after the rm.

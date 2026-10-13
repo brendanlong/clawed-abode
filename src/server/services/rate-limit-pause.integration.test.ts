@@ -34,6 +34,7 @@ vi.mock('./github', () => ({ fetchPullRequestForBranch: vi.fn().mockResolvedValu
 vi.mock('./worktree-manager', () => ({
   getCurrentBranch: vi.fn().mockResolvedValue(null),
   getSessionWorkingDir: vi.fn(() => '/tmp/rate-limit-pause-test'),
+  removeWorkspace: vi.fn(async () => {}),
 }));
 vi.mock('./mcp-config-file', () => ({
   writeSessionMcpConfig: vi.fn(async (sessionId: string) => `/tmp/${sessionId}/mcp.json`),
@@ -500,29 +501,56 @@ describe('rate-limit pause', () => {
       expect(stub.revive).toHaveBeenCalledWith(sessionId);
     });
 
-    it('puts a claimed prompt back in place when the query dies during the claim', async () => {
-      const sessionId = await createRunningSession();
-      const { enqueuePrompts } = await import('./prompt-queue');
-      await enqueuePrompts(
-        sessionId,
-        ['first', 'second'].map((text) => ({
-          messageId: `msg-${text}`,
-          content: text,
-          text,
-          attachments: [],
-        }))
-      );
-      // Live when checked before the claim, gone by the time the push would happen.
-      let liveChecks = 0;
-      const push = vi.fn();
-      const stub = stubRunner(sessionId, async () => null);
-      stub.openQuery = vi.fn(async () => ({ isLive: () => liveChecks++ === 0, push }));
-      await pause.initRateLimitPause(stub);
+    describe('a query dying while the drain claims a prompt', () => {
+      async function drainWhileClaimKillsQuery(
+        sessionId: string,
+        duringClaim: () => Promise<unknown> = async () => {}
+      ) {
+        const promptQueue = await import('./prompt-queue');
+        await promptQueue.enqueuePrompts(
+          sessionId,
+          ['first', 'second'].map((text) => ({
+            messageId: `msg-${text}`,
+            content: text,
+            text,
+            attachments: [],
+          }))
+        );
+        let live = true;
+        const realClaim = promptQueue.claimQueuedPrompt;
+        const claim = vi.spyOn(promptQueue, 'claimQueuedPrompt').mockImplementation(async (id) => {
+          const claimed = await realClaim(id);
+          live = false;
+          await duringClaim();
+          return claimed;
+        });
+        const push = vi.fn();
+        const stub = stubRunner(sessionId, async () => null);
+        stub.openQuery = vi.fn(async () => ({ isLive: () => live, push }));
+        await pause.initRateLimitPause(stub);
+        try {
+          await pause.recomputeRateLimitHolds();
+        } finally {
+          claim.mockRestore();
+        }
+        return push;
+      }
 
-      await pause.recomputeRateLimitHolds();
+      it('puts the claimed prompt back in its place', async () => {
+        const sessionId = await createRunningSession();
+        const push = await drainWhileClaimKillsQuery(sessionId);
 
-      expect(push).not.toHaveBeenCalled();
-      expect(await queuedTexts(sessionId)).toEqual(['first', 'second']);
+        expect(push).not.toHaveBeenCalled();
+        expect(await queuedTexts(sessionId)).toEqual(['first', 'second']);
+      });
+
+      it('leaves nothing queued when the session is archived meanwhile', async () => {
+        const sessionId = await createRunningSession();
+        const { archiveSession } = await import('./session-lifecycle');
+        await drainWhileClaimKillsQuery(sessionId, () => archiveSession(sessionId));
+
+        expect(await queuedTexts(sessionId)).toEqual([]);
+      });
     });
   });
 
