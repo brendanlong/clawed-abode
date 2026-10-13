@@ -22,6 +22,7 @@ import {
   getLatestTodoWriteId,
   getPlanContentByToolUseId,
   buildTranscriptLayout,
+  collectRetractedMessages,
   type SubagentLifecycle,
 } from './messageHelpers';
 import type { ContentBlock, DisplayMessage } from './types';
@@ -1211,5 +1212,120 @@ describe('buildTranscriptLayout', () => {
     );
     expect(rowKeys(layout)).toEqual(['m1']);
     expect(layout.relocatedSubagentIds.size).toBe(0);
+  });
+});
+
+describe('collectRetractedMessages', () => {
+  const withUuid = (message: DisplayMessage, uuid: string): DisplayMessage => ({
+    ...message,
+    content: { ...(message.content as object), uuid },
+  });
+  const fallback = (sequence: number, retracted: unknown): DisplayMessage => ({
+    id: `m${sequence}`,
+    type: 'system',
+    sequence,
+    createdAt: new Date(0),
+    content: { subtype: 'model_refusal_fallback', retracted_message_uuids: retracted },
+  });
+  const ids = (map: Map<string, DisplayMessage[]>) =>
+    Object.fromEntries([...map].map(([key, messages]) => [key, messages.map((m) => m.id)]));
+
+  it('groups retracted messages under their fallback in transcript order', () => {
+    const map = collectRetractedMessages([
+      withUuid(assistant(1, [{ type: 'text', text: 'kept' }]), 'u1'),
+      withUuid(assistant(2, [{ type: 'text', text: 'a' }]), 'u2'),
+      withUuid(toolResultMessage(3, [toolResult('x', 'r')]), 'u3'),
+      withUuid(assistant(4, [{ type: 'text', text: 'redo' }]), 'u4'),
+      fallback(5, ['u3', 'u2']),
+    ]);
+    expect(ids(map)).toEqual({ m5: ['m2', 'm3'] });
+  });
+
+  it('keys each retraction to its own fallback', () => {
+    const map = collectRetractedMessages([
+      withUuid(assistant(1, []), 'u1'),
+      fallback(2, ['u1']),
+      withUuid(assistant(3, []), 'u3'),
+      fallback(4, ['u3']),
+    ]);
+    expect(ids(map)).toEqual({ m2: ['m1'], m4: ['m3'] });
+  });
+
+  it('folds only the loaded part of a partial retraction', () => {
+    const map = collectRetractedMessages([
+      withUuid(assistant(2, []), 'u2'),
+      fallback(3, ['u1', 'u2']),
+    ]);
+    expect(ids(map)).toEqual({ m3: ['m2'] });
+  });
+
+  it('leaves a retracted subagent spawn in place, since its subagent still ran', () => {
+    const map = collectRetractedMessages([
+      withUuid(assistant(1, [toolUse('agent-1', 'Agent')]), 'u1'),
+      withUuid(assistant(2, [{ type: 'text', text: 'a' }]), 'u2'),
+      fallback(3, ['u1', 'u2']),
+    ]);
+    expect(ids(map)).toEqual({ m3: ['m2'] });
+  });
+
+  it('ignores fallbacks without a usable uuid list', () => {
+    const map = collectRetractedMessages([
+      withUuid(assistant(1, []), 'u1'),
+      fallback(2, undefined),
+      fallback(3, 'u1'),
+      fallback(4, [42]),
+    ]);
+    expect(map.size).toBe(0);
+  });
+});
+
+describe('buildTranscriptLayout retraction', () => {
+  it('removes retracted messages from the rows and keeps their paired results inline', () => {
+    const withUuid = (message: DisplayMessage, uuid: string): DisplayMessage => ({
+      ...message,
+      content: { ...(message.content as object), uuid },
+    });
+    const layout = buildTranscriptLayout(
+      [
+        withUuid(assistant(1, [toolUse('t1', 'Bash')]), 'u1'),
+        withUuid(toolResultMessage(2, [toolResult('t1', 'out')]), 'u2'),
+        withUuid(assistant(3, [toolUse('t2', 'Bash')]), 'u3'),
+        {
+          id: 'm4',
+          type: 'system',
+          sequence: 4,
+          createdAt: new Date(0),
+          content: { subtype: 'model_refusal_fallback', retracted_message_uuids: ['u1', 'u2'] },
+        },
+      ],
+      true
+    );
+    expect(layout.rows.map((row) => row.kind === 'message' && row.message.id)).toEqual([
+      'm3',
+      'm4',
+    ]);
+    expect(layout.retractedMessagesByFallbackId.get('m4')?.map((m) => m.id)).toEqual(['m1']);
+    expect(layout.resultMap.get('t1')?.content).toBe('out');
+  });
+
+  it('folds nothing when the retracted messages have nothing to render', () => {
+    // The common prod shape: the retracted turn was only empty thinking blocks.
+    const layout = buildTranscriptLayout(
+      [
+        {
+          ...assistant(1, [{ type: 'thinking', thinking: '' }]),
+          content: { uuid: 'u1', message: { content: [{ type: 'thinking', thinking: '' }] } },
+        },
+        {
+          id: 'm2',
+          type: 'system',
+          sequence: 2,
+          createdAt: new Date(0),
+          content: { subtype: 'model_refusal_fallback', retracted_message_uuids: ['u1'] },
+        },
+      ],
+      true
+    );
+    expect(layout.retractedMessagesByFallbackId.size).toBe(0);
   });
 });

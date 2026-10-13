@@ -3,7 +3,7 @@
 import { useCallback, useMemo } from 'react';
 import { cn } from '@/lib/utils';
 import { MessageBubble } from './messages/MessageBubble';
-import { SubagentTranscript } from './messages/SubagentTranscript';
+import { NestedTranscript } from './messages/NestedTranscript';
 import { TaskDisplay } from './messages/TaskDisplay';
 import type { MessageContent, DisplayMessage } from './messages/types';
 import { MessageListProvider } from './messages/MessageListContext';
@@ -79,6 +79,7 @@ export function MessageList({
     rows,
     pinnedSubagents,
     relocatedSubagentIds,
+    retractedMessagesByFallbackId,
   } = useMemo(
     () => buildTranscriptLayout(messages, isSessionRunning),
     [messages, isSessionRunning]
@@ -96,14 +97,32 @@ export function MessageList({
       const children = subagentMessagesByToolUseId.get(toolUseId);
       if (!children || children.length === 0) return null;
       return (
-        <SubagentTranscript
-          messages={children}
+        <div>
+          <div className="text-muted-foreground mb-1">Subagent activity:</div>
+          <NestedTranscript
+            messages={children}
+            toolResults={resultMap}
+            pairedMessageIds={pairedMessageIds}
+          />
+        </div>
+      );
+    },
+    [subagentMessagesByToolUseId, resultMap, pairedMessageIds]
+  );
+
+  const renderRetractedMessages = useCallback(
+    (fallbackMessageId: string) => {
+      const retracted = retractedMessagesByFallbackId.get(fallbackMessageId);
+      if (!retracted) return null;
+      return (
+        <NestedTranscript
+          messages={retracted}
           toolResults={resultMap}
           pairedMessageIds={pairedMessageIds}
         />
       );
     },
-    [subagentMessagesByToolUseId, resultMap, pairedMessageIds]
+    [retractedMessagesByFallbackId, resultMap, pairedMessageIds]
   );
 
   const pendingIds = useMemo(() => new Set(pendingMessageIds), [pendingMessageIds]);
@@ -116,6 +135,7 @@ export function MessageList({
       onRespondToPlan,
       planContentByToolUseId,
       renderSubagentTranscript,
+      renderRetractedMessages,
       relocatedSubagentIds,
     }),
     [
@@ -124,6 +144,7 @@ export function MessageList({
       onRespondToPlan,
       planContentByToolUseId,
       renderSubagentTranscript,
+      renderRetractedMessages,
       relocatedSubagentIds,
     ]
   );

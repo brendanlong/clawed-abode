@@ -18,6 +18,12 @@ interface MessageListContextValue {
    * without importing MessageBubble (which would create an import cycle).
    */
   renderSubagentTranscript: (toolUseId: string) => ReactNode;
+  /**
+   * Render the messages a refusal fallback retracted, keyed by the fallback
+   * message's id, or null if none are loaded. A callback for the same
+   * import-cycle reason as renderSubagentTranscript.
+   */
+  renderRetractedMessages: (fallbackMessageId: string) => ReactNode;
   /** Tool_use ids of subagents whose box MessageList renders somewhere else. */
   relocatedSubagentIds: Set<string>;
 }

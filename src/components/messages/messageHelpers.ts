@@ -570,6 +570,10 @@ export function buildToolResultMap(messages: DisplayMessage[]): {
   return { resultMap, pairedMessageIds, resultSequenceByToolUseId };
 }
 
+function isSubagentCall(block: ContentBlock): boolean {
+  return block.name === 'Agent' || block.name === 'Task';
+}
+
 /**
  * Collect the lifecycle of each top-level (main-agent) subagent `Agent`/`Task`
  * call, and index those call blocks by id so a relocated box can be rebuilt from
@@ -588,7 +592,7 @@ export function collectSubagentLifecycles(
   const notificationSequenceByToolUseId = new Map<string, number>();
 
   for (const { block, message } of toolUseBlocks(messages)) {
-    if (block.name !== 'Agent' && block.name !== 'Task') continue;
+    if (!isSubagentCall(block)) continue;
     if (getParentToolUseId(message.content) !== null) continue;
     agentBlockById.set(block.id, block);
     spawnSequenceByToolUseId.set(block.id, message.sequence);
@@ -683,6 +687,52 @@ export function getPlanContentByToolUseId(messages: DisplayMessage[]): Map<strin
   return reconstructPlansByToolUseId(events);
 }
 
+const retractedUuidsSchema = z.array(z.string()).catch([]);
+
+/**
+ * Fold the messages a `model_refusal_fallback` retracted (the primary model's
+ * attempt, which the fallback model redoes) under that fallback banner, keyed by
+ * the banner's message id. Matches on the SDK `uuid` of each candidate against
+ * the banner's `retracted_message_uuids`; uuids whose message isn't loaded are
+ * ignored, so a partially loaded retraction folds what it can.
+ *
+ * The API retracts only the model's turn, not its side effects, so a retracted
+ * subagent spawn stays put: its subagent really ran, and its box is placed
+ * relative to the spawn row.
+ */
+export function collectRetractedMessages(
+  candidates: DisplayMessage[]
+): Map<string, DisplayMessage[]> {
+  const fallbackIdByUuid = new Map<string, string>();
+  for (const message of candidates) {
+    const content = message.content as MessageContent;
+    if (message.type !== 'system' || content.subtype !== 'model_refusal_fallback') continue;
+    for (const uuid of retractedUuidsSchema.parse(content.retracted_message_uuids)) {
+      fallbackIdByUuid.set(uuid, message.id);
+    }
+  }
+
+  const retracted = new Map<string, DisplayMessage[]>();
+  if (fallbackIdByUuid.size === 0) return retracted;
+  const spawnsSubagent = new Set(
+    [...toolUseBlocks(candidates)]
+      .filter(({ block }) => isSubagentCall(block))
+      .map(({ message }) => message.id)
+  );
+  for (const message of candidates) {
+    const uuid = (message.content as MessageContent).uuid;
+    const fallbackId = uuid === undefined ? undefined : fallbackIdByUuid.get(uuid);
+    if (fallbackId === undefined || spawnsSubagent.has(message.id)) continue;
+    const existing = retracted.get(fallbackId);
+    if (existing) {
+      existing.push(message);
+    } else {
+      retracted.set(fallbackId, [message]);
+    }
+  }
+  return retracted;
+}
+
 /** One top-level transcript row: a message, or a relocated finished-subagent box. */
 export type TranscriptRow =
   | { kind: 'message'; sequence: number; message: DisplayMessage }
@@ -698,12 +748,15 @@ export interface TranscriptLayout {
   pinnedSubagents: { toolUseId: string; tool: ToolCall }[];
   /** Subagents whose box renders in `rows` or `pinnedSubagents`, not at the spawn point. */
   relocatedSubagentIds: Set<string>;
+  /** Retracted messages folded under their refusal-fallback banner, keyed by its message id. */
+  retractedMessagesByFallbackId: Map<string, DisplayMessage[]>;
 }
 
 /**
  * Everything the top-level transcript renders, derived from the chronological
  * message list: tool results paired onto their calls, subagent messages grouped
- * under their Task, and subagent boxes placed (see {@link SubagentPlacements}).
+ * under their Task, retracted messages folded under their refusal-fallback banner,
+ * and subagent boxes placed (see {@link SubagentPlacements}).
  */
 export function buildTranscriptLayout(
   messages: DisplayMessage[],
@@ -719,10 +772,15 @@ export function buildTranscriptLayout(
 
   // The shared transcript-visibility predicate, plus the top-level-only rule that
   // subagent messages render nested inside their Task rather than here.
-  const visibleMessages = messages.filter(
+  const topLevelMessages = messages.filter(
     (msg) =>
       getParentToolUseId(msg.content) === null && isVisibleTranscriptMessage(msg, pairedMessageIds)
   );
+  const retractedMessagesByFallbackId = collectRetractedMessages(topLevelMessages);
+  const retractedIds = new Set(
+    [...retractedMessagesByFallbackId.values()].flat().map((message) => message.id)
+  );
+  const visibleMessages = topLevelMessages.filter((msg) => !retractedIds.has(msg.id));
 
   // Interleaving is measured against the top-level rows that actually render, so
   // a plain foreground wait (subagent with no rows between spawn and finish) stays
@@ -766,5 +824,6 @@ export function buildTranscriptLayout(
     rows,
     pinnedSubagents,
     relocatedSubagentIds: placements.relocatedIds,
+    retractedMessagesByFallbackId,
   };
 }
