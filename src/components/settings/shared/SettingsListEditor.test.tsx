@@ -191,7 +191,7 @@ describe('SettingsListEditor', () => {
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
   });
 
-  it('does not refetch when the delete fails', async () => {
+  it('keeps the dialog open with the error and does not refetch when the delete fails', async () => {
     const { user, onUpdate } = renderEditor({
       onDelete: vi.fn().mockRejectedValue(new Error('nope')),
     });
@@ -200,6 +200,20 @@ describe('SettingsListEditor', () => {
     await user.click(screen.getByRole('button', { name: 'Delete' }));
 
     expect(onUpdate).not.toHaveBeenCalled();
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('Delete failed: nope');
+  });
+
+  it('clears a failed delete error when the dialog is reopened', async () => {
+    const { user } = renderEditor({
+      onDelete: vi.fn().mockRejectedValue(new Error('nope')),
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Delete BETA' }));
+    await user.click(screen.getByRole('button', { name: 'Delete' }));
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    await user.click(screen.getByRole('button', { name: 'Delete BETA' }));
+
+    expect(screen.getByRole('alertdialog')).not.toHaveTextContent('Delete failed');
   });
 
   it('does nothing when the delete is cancelled', async () => {
