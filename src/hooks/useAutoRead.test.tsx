@@ -24,7 +24,10 @@ describe('useAutoRead', () => {
     const stop = vi.fn();
     const { result, rerender } = renderHook(
       ({ messages }: { messages: DisplayMessage[] }) =>
-        useAutoRead({ enqueue, stop }, { isRunning: true, messages, enabled: true }),
+        useAutoRead(
+          { enqueue, stop, setStopHandler: vi.fn() },
+          { isRunning: true, messages, enabled: true }
+        ),
       { initialProps: { messages: [prompt, first] } }
     );
     expect(enqueue).toHaveBeenCalledWith({ messageId: 'a1', text: 'One.' });
@@ -41,7 +44,10 @@ describe('useAutoRead', () => {
     const stop = vi.fn();
     const { result, rerender } = renderHook(
       ({ messages }: { messages: DisplayMessage[] }) =>
-        useAutoRead({ enqueue, stop }, { isRunning: true, messages, enabled: true }),
+        useAutoRead(
+          { enqueue, stop, setStopHandler: vi.fn() },
+          { isRunning: true, messages, enabled: true }
+        ),
       { initialProps: { messages: [prompt] } }
     );
 
@@ -50,5 +56,28 @@ describe('useAutoRead', () => {
 
     rerender({ messages: [prompt, first] });
     expect(enqueue).not.toHaveBeenCalled();
+  });
+
+  it('routes OS media-control Stop through the auto-read stop until unmount', () => {
+    const enqueue = vi.fn();
+    const stop = vi.fn();
+    const setStopHandler = vi.fn();
+    const { rerender, unmount } = renderHook(
+      ({ messages }: { messages: DisplayMessage[] }) =>
+        useAutoRead(
+          { enqueue, stop, setStopHandler },
+          { isRunning: true, messages, enabled: true }
+        ),
+      { initialProps: { messages: [prompt] } }
+    );
+
+    const mediaStop = setStopHandler.mock.lastCall?.[0];
+    act(() => mediaStop());
+    expect(stop).toHaveBeenCalledTimes(1);
+    rerender({ messages: [prompt, first] });
+    expect(enqueue).not.toHaveBeenCalled();
+
+    unmount();
+    expect(setStopHandler).toHaveBeenLastCalledWith(null);
   });
 });
