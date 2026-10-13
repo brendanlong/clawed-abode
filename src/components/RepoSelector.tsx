@@ -132,6 +132,27 @@ export function RepoSelector({
               const isFavorite = favorites.has(repo.fullName);
               return (
                 <li key={repo.fullName} className="relative">
+                  {/* A sibling overlaid on the row's left padding, since a button
+                      can't nest inside the row's button; first so Tab order
+                      matches the visual order. */}
+                  <button
+                    type="button"
+                    onClick={() => handleToggleFavorite(repo.fullName)}
+                    className="absolute left-3 top-1/2 -translate-y-1/2 p-1 hover:bg-muted rounded transition-colors"
+                    title={isFavorite ? 'Remove from favorites' : 'Add to favorites'}
+                    aria-label={
+                      isFavorite
+                        ? `Remove ${repo.fullName} from favorites`
+                        : `Add ${repo.fullName} to favorites`
+                    }
+                  >
+                    <Star
+                      className={cn(
+                        'h-4 w-4',
+                        isFavorite ? 'text-yellow-500 fill-yellow-500' : 'text-muted-foreground'
+                      )}
+                    />
+                  </button>
                   <SelectableRowButton
                     selected={isSelected(repo)}
                     onClick={() => onSelect(repo)}
@@ -165,27 +186,6 @@ export function RepoSelector({
                       <span className="text-xs text-muted-foreground shrink-0">Private</span>
                     )}
                   </SelectableRowButton>
-                  {/* A sibling overlaid on the row's left padding, since a button
-                      can't nest inside the row's button. */}
-                  <button
-                    type="button"
-                    onClick={() => handleToggleFavorite(repo.fullName)}
-                    className="absolute left-3 top-1/2 -translate-y-1/2 p-1 hover:bg-muted rounded transition-colors"
-                    title={isFavorite ? 'Remove from favorites' : 'Add to favorites'}
-                    aria-label={
-                      isFavorite
-                        ? `Remove ${repo.fullName} from favorites`
-                        : `Add ${repo.fullName} to favorites`
-                    }
-                    aria-pressed={isFavorite}
-                  >
-                    <Star
-                      className={cn(
-                        'h-4 w-4',
-                        isFavorite ? 'text-yellow-500 fill-yellow-500' : 'text-muted-foreground'
-                      )}
-                    />
-                  </button>
                 </li>
               );
             })}

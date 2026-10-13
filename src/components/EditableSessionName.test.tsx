@@ -92,9 +92,9 @@ describe('EditableSessionName', () => {
     expect(screen.getByRole('button', { name: 'My Session' })).toHaveFocus();
   });
 
-  it('does not offer renaming when disabled', async () => {
+  it('does not offer renaming without onRename', async () => {
     const user = userEvent.setup();
-    render(<EditableSessionName name="Locked" onRename={vi.fn()} disabled />);
+    render(<EditableSessionName name="Locked" />);
 
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
     await user.click(screen.getByRole('heading', { name: 'Locked' }));

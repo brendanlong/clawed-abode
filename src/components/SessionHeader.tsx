@@ -71,13 +71,7 @@ export function SessionHeader({
             </Link>
           </Button>
           <div className="min-w-0">
-            {onRename ? (
-              <EditableSessionName name={session.name} onRename={onRename} />
-            ) : (
-              <h1 className="font-semibold truncate" title={session.name}>
-                {session.name}
-              </h1>
-            )}
+            <EditableSessionName name={session.name} onRename={onRename} />
             {(repoName || session.agentName) && (
               <p className="text-sm text-muted-foreground truncate flex items-center gap-2">
                 {repoName}

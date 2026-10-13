@@ -7,9 +7,8 @@ import { cn } from '@/lib/utils';
 
 interface EditableSessionNameProps {
   name: string;
-  onRename: (name: string) => void;
-  /** Whether editing is allowed (e.g. disabled for archived sessions). */
-  disabled?: boolean;
+  /** Omit to show the name read-only (e.g. archived sessions). */
+  onRename?: (name: string) => void;
   className?: string;
 }
 
@@ -17,12 +16,7 @@ interface EditableSessionNameProps {
  * Displays a session name that can be renamed inline: activate the title to
  * edit, Enter to save, Escape to cancel. Renaming never touches the session id.
  */
-export function EditableSessionName({
-  name,
-  onRename,
-  disabled = false,
-  className,
-}: EditableSessionNameProps) {
+export function EditableSessionName({ name, onRename, className }: EditableSessionNameProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [value, setValue] = useState(name);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -44,7 +38,6 @@ export function EditableSessionName({
   }, [isEditing]);
 
   const startEditing = () => {
-    if (disabled) return;
     setValue(name);
     setIsEditing(true);
   };
@@ -53,7 +46,7 @@ export function EditableSessionName({
     setIsEditing(false);
     const trimmed = value.trim();
     if (trimmed && trimmed !== name) {
-      onRename(trimmed);
+      onRename?.(trimmed);
     }
   };
 
@@ -87,7 +80,7 @@ export function EditableSessionName({
     );
   }
 
-  if (disabled) {
+  if (!onRename) {
     return (
       <h1 className={cn('font-semibold truncate', className)} title={name}>
         {name}
@@ -104,7 +97,7 @@ export function EditableSessionName({
         type="button"
         onClick={startEditing}
         title={`${name} — click to rename`}
-        className="max-w-full truncate text-left cursor-text rounded hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="block w-full truncate text-left cursor-text rounded hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
       >
         {name}
       </button>
