@@ -1,4 +1,4 @@
-import { afterEach, describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useAutoRead } from './useAutoRead';
 import type { DisplayMessage } from '@/components/messages/types';
@@ -24,7 +24,10 @@ describe('useAutoRead', () => {
     const stop = vi.fn();
     const { result, rerender } = renderHook(
       ({ messages }: { messages: DisplayMessage[] }) =>
-        useAutoRead({ enqueue, stop }, { isRunning: true, messages, enabled: true }),
+        useAutoRead(
+          { enqueue, stop, setStopHandler: vi.fn() },
+          { isRunning: true, messages, enabled: true }
+        ),
       { initialProps: { messages: [prompt, first] } }
     );
     expect(enqueue).toHaveBeenCalledWith({ messageId: 'a1', text: 'One.' });
@@ -41,7 +44,10 @@ describe('useAutoRead', () => {
     const stop = vi.fn();
     const { result, rerender } = renderHook(
       ({ messages }: { messages: DisplayMessage[] }) =>
-        useAutoRead({ enqueue, stop }, { isRunning: true, messages, enabled: true }),
+        useAutoRead(
+          { enqueue, stop, setStopHandler: vi.fn() },
+          { isRunning: true, messages, enabled: true }
+        ),
       { initialProps: { messages: [prompt] } }
     );
 
@@ -52,53 +58,26 @@ describe('useAutoRead', () => {
     expect(enqueue).not.toHaveBeenCalled();
   });
 
-  describe('OS media-control Stop', () => {
-    const handlers = new Map<MediaSessionAction, MediaSessionActionHandler | null>();
+  it('routes OS media-control Stop through the auto-read stop until unmount', () => {
+    const enqueue = vi.fn();
+    const stop = vi.fn();
+    const setStopHandler = vi.fn();
+    const { rerender, unmount } = renderHook(
+      ({ messages }: { messages: DisplayMessage[] }) =>
+        useAutoRead(
+          { enqueue, stop, setStopHandler },
+          { isRunning: true, messages, enabled: true }
+        ),
+      { initialProps: { messages: [prompt] } }
+    );
 
-    function installMediaSession() {
-      Object.defineProperty(navigator, 'mediaSession', {
-        configurable: true,
-        value: {
-          setActionHandler: (action: MediaSessionAction, h: MediaSessionActionHandler | null) =>
-            handlers.set(action, h),
-        },
-      });
-    }
+    const mediaStop = setStopHandler.mock.lastCall?.[0];
+    act(() => mediaStop());
+    expect(stop).toHaveBeenCalledTimes(1);
+    rerender({ messages: [prompt, first] });
+    expect(enqueue).not.toHaveBeenCalled();
 
-    afterEach(() => {
-      handlers.clear();
-      Reflect.deleteProperty(navigator, 'mediaSession');
-    });
-
-    it('mutes the rest of the turn like the in-app Stop', () => {
-      installMediaSession();
-      const enqueue = vi.fn();
-      const stop = vi.fn();
-      const { rerender } = renderHook(
-        ({ messages }: { messages: DisplayMessage[] }) =>
-          useAutoRead({ enqueue, stop }, { isRunning: true, messages, enabled: true }),
-        { initialProps: { messages: [prompt] } }
-      );
-
-      act(() => handlers.get('stop')?.({ action: 'stop' }));
-      expect(stop).toHaveBeenCalledTimes(1);
-
-      rerender({ messages: [prompt, first] });
-      expect(enqueue).not.toHaveBeenCalled();
-    });
-
-    it('hands Stop back to plain playback stop when auto-read turns off', () => {
-      installMediaSession();
-      const enqueue = vi.fn();
-      const stop = vi.fn();
-      const { rerender } = renderHook(
-        ({ enabled }: { enabled: boolean }) =>
-          useAutoRead({ enqueue, stop }, { isRunning: true, messages: [prompt], enabled }),
-        { initialProps: { enabled: true } }
-      );
-
-      rerender({ enabled: false });
-      expect(handlers.get('stop')).toBe(stop);
-    });
+    unmount();
+    expect(setStopHandler).toHaveBeenLastCalledWith(null);
   });
 });

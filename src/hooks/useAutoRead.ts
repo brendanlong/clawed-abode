@@ -18,11 +18,15 @@ interface AutoReadInput {
  * Streams each turn's assistant text into the speech player as it arrives (the
  * rules are the pure `autoReadStep`). Returns the stop to give playback controls
  * and the callback to run when the user sends a prompt; both stop playback.
- * While enabled it also takes over the OS media-control Stop, so stopping from
- * the lock screen or a headset mutes the rest of the turn like the in-app Stop.
+ * OS media-control Stop is routed through the same stop, so stopping from the
+ * lock screen or a headset mutes the rest of the turn like the in-app Stop.
  */
 export function useAutoRead(
-  { enqueue, stop }: Pick<VoicePlaybackState, 'enqueue' | 'stop'>,
+  {
+    enqueue,
+    stop,
+    setStopHandler,
+  }: Pick<VoicePlaybackState, 'enqueue' | 'stop' | 'setStopHandler'>,
   { isRunning, messages, enabled }: AutoReadInput
 ) {
   const stateRef = useRef(INITIAL_AUTO_READ_STATE);
@@ -48,11 +52,9 @@ export function useAutoRead(
   }, [dispatch, stop]);
 
   useEffect(() => {
-    if (!enabled || !('mediaSession' in navigator)) return;
-    const { mediaSession } = navigator;
-    mediaSession.setActionHandler('stop', stopPlayback);
-    return () => mediaSession.setActionHandler('stop', stop);
-  }, [enabled, stopPlayback, stop]);
+    setStopHandler(stopPlayback);
+    return () => setStopHandler(null);
+  }, [setStopHandler, stopPlayback]);
 
   const onPromptSent = useCallback(() => {
     dispatch({ type: 'promptSent', messages: messagesRef.current });

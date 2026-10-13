@@ -17,6 +17,8 @@ export interface VoicePlaybackState extends SpeechPlayerState {
   pause: () => void;
   stop: () => void;
   restart: () => void;
+  /** Route OS media-control Stop through `handler` instead of a plain stop (null to reset). */
+  setStopHandler: (handler: (() => void) | null) => void;
 }
 
 export const defaultPlaybackState: VoicePlaybackState = {
@@ -27,6 +29,7 @@ export const defaultPlaybackState: VoicePlaybackState = {
   pause: () => {},
   stop: () => {},
   restart: () => {},
+  setStopHandler: () => {},
 };
 
 export const VoicePlaybackContext = createContext<VoicePlaybackState>(defaultPlaybackState);
@@ -81,6 +84,7 @@ function setMediaMetadata(item: SpeechItem | null): void {
 export function useVoicePlayback(enabled: boolean, autoRead = false): VoicePlaybackState {
   const [state, setState] = useState<SpeechPlayerState>(IDLE_SPEECH_STATE);
   const playerRef = useRef<SpeechPlayer | null>(null);
+  const stopHandlerRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     if (!enabled) return;
@@ -90,7 +94,7 @@ export function useVoicePlayback(enabled: boolean, autoRead = false): VoicePlayb
     const handlers: [MediaSessionAction, MediaSessionActionHandler][] = [
       ['play', () => player.resume()],
       ['pause', () => player.pause()],
-      ['stop', () => player.stop()],
+      ['stop', () => (stopHandlerRef.current ? stopHandlerRef.current() : player.stop())],
       ['nexttrack', () => player.next()],
       ['previoustrack', () => player.restart()],
     ];
@@ -124,6 +128,9 @@ export function useVoicePlayback(enabled: boolean, autoRead = false): VoicePlayb
   const pause = useCallback(() => playerRef.current?.pause(), []);
   const stop = useCallback(() => playerRef.current?.stop(), []);
   const restart = useCallback(() => playerRef.current?.restart(), []);
+  const setStopHandler = useCallback((handler: (() => void) | null) => {
+    stopHandlerRef.current = handler;
+  }, []);
 
-  return { ...state, enabled, play, enqueue, pause, stop, restart };
+  return { ...state, enabled, play, enqueue, pause, stop, restart, setStopHandler };
 }
