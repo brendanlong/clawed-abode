@@ -13,9 +13,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Plug, Check, X, KeyRound, TriangleAlert, Unplug } from 'lucide-react';
+import { Plug, Check, X, KeyRound, TriangleAlert, Unplug, ListFilter } from 'lucide-react';
 import { SettingsListEditor, SettingsListRow, type SettingsScope } from './SettingsListEditor';
 import { KeyValueListEditor } from './KeyValueListEditor';
+import { McpToolFilterEditor } from './McpToolFilterEditor';
 import { trpc } from '@/lib/trpc';
 import {
   buildMcpServerInput,
@@ -29,11 +30,13 @@ import {
   type ValidationResult,
 } from '@/lib/settings-types';
 import type { McpServerInput } from '@/server/services/settings-helpers';
+import type { McpToolFilter } from '@/lib/mcp-tool-filter';
 
 export interface McpServerMutations {
   deleteMcpServer: (name: string) => Promise<unknown>;
   setMcpServer: (mcpServer: McpServerInput) => Promise<unknown>;
   validateMcpServer: (name: string) => Promise<ValidationResult>;
+  setMcpToolFilter: (name: string, toolFilter: McpToolFilter | null) => Promise<unknown>;
   startMcpOAuth: (name: string) => Promise<{ authorizeUrl: string }>;
   disconnectMcpOAuth: (name: string) => Promise<unknown>;
 }
@@ -93,6 +96,7 @@ function McpServerRow({
   onUpdate: () => void;
 }) {
   const validate = useMutation({ mutationFn: () => mutations.validateMcpServer(server.name) });
+  const [editingTools, setEditingTools] = useState(false);
   // One mutation for both directions, so starting either clears the other's error.
   const oauth = useMutation({
     mutationFn: async (action: OAuthAction) => {
@@ -154,6 +158,15 @@ function McpServerRow({
           <Button
             variant="ghost"
             size="sm"
+            onClick={() => setEditingTools((open) => !open)}
+            title="Choose tools"
+            aria-expanded={editingTools}
+          >
+            <ListFilter className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={() => validate.mutate()}
             disabled={validate.isPending}
             title="Test connection"
@@ -172,12 +185,27 @@ function McpServerRow({
           {oauth.error && <ErrorBadge message={oauth.error.message} />}
           {validate.data && <ValidationResultBadge result={validate.data} />}
           {validate.error && <ErrorBadge message={validate.error.message} />}
+          {editingTools && (
+            <McpToolFilterEditor
+              server={server}
+              listTools={() => mutations.validateMcpServer(server.name)}
+              save={(toolFilter) => mutations.setMcpToolFilter(server.name, toolFilter)}
+              onClose={() => setEditingTools(false)}
+              onSaved={onUpdate}
+            />
+          )}
         </>
       }
     >
       <div className="font-mono text-sm flex items-center gap-2">
         {server.name}
         <span className="text-xs text-muted-foreground font-sans uppercase">{server.type}</span>
+        {server.toolFilter && (
+          <span className="text-xs text-muted-foreground font-sans">
+            {server.toolFilter.allowed.length} of{' '}
+            {server.toolFilter.allowed.length + server.toolFilter.hidden.length} tools
+          </span>
+        )}
       </div>
       <div className="text-xs text-muted-foreground truncate">
         {server.type === 'stdio' ? `${server.command} ${server.args.join(' ')}` : server.url}

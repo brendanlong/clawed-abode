@@ -96,6 +96,16 @@ describe('database CHECK constraints', () => {
       }
     });
 
+    it('accepts null or a JSON object for toolFilter and rejects anything else', async () => {
+      await insertMcpServer(exec, { id: 'unfiltered', type: 'stdio' });
+      const setFilter = (toolFilter: string) =>
+        exec(`UPDATE "McpServer" SET "toolFilter" = ? WHERE "id" = 'unfiltered'`, toolFilter);
+      await setFilter('{"allowed":[],"hidden":[]}');
+      for (const toolFilter of ['not json', '[]', '"x"', 'null']) {
+        await expect(setFilter(toolFilter)).rejects.toThrow(CHECK_FAILED);
+      }
+    });
+
     it('requires a non-empty url for http and sse but not stdio', async () => {
       await insertMcpServer(exec, { id: 'stdio', type: 'stdio', url: null });
       for (const type of ['http', 'sse']) {

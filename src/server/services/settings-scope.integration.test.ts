@@ -190,6 +190,28 @@ describe('settings-scope', () => {
       });
     });
 
+    it('sets and clears a tool filter, which saving the server leaves alone', async () => {
+      const scope = await makeScope();
+      const server = {
+        name: 'srv',
+        type: 'stdio' as const,
+        command: 'node',
+      };
+      await scopeModule.upsertMcpServer(scope, server);
+      const filter = { allowed: ['find'], hidden: ['delete'] };
+      await scopeModule.setMcpToolFilter(scope, 'srv', filter);
+      await scopeModule.upsertMcpServer(scope, { ...server, command: 'node2' });
+
+      const listed = async () => (await scopeModule.listScopeSettings(scope)).mcpServers[0];
+      expect(await listed()).toMatchObject({ command: 'node2', toolFilter: filter });
+
+      await scopeModule.setMcpToolFilter(scope, 'srv', null);
+      expect((await listed()).toolFilter).toBeNull();
+      await expect(scopeModule.setMcpToolFilter(scope, 'nope', filter)).rejects.toMatchObject({
+        code: 'NOT_FOUND',
+      });
+    });
+
     it('upserts the same name concurrently without a unique violation or duplicate rows', async () => {
       const scope = await makeScope();
       await Promise.all(

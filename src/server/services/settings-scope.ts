@@ -16,6 +16,7 @@ import {
   type McpServerInput,
 } from './settings-helpers';
 import { validateMcpServer } from './mcp-validator';
+import type { McpToolFilter } from '@/lib/mcp-tool-filter';
 import {
   applyMcpOAuthHeaders,
   disconnectMcpOAuth,
@@ -172,6 +173,30 @@ async function requireMcpServer(scope: SettingsScope, name: string) {
     throw new TRPCError({ code: 'NOT_FOUND', message: `MCP server "${name}" not found` });
   }
   return row;
+}
+
+/**
+ * Set which tools a server gives the agent (null = all). Its own write, not part
+ * of `upsertMcpServer`, because choosing tools needs the server already saved to
+ * list them, and editing the connection shouldn't resubmit the choice.
+ */
+export async function setMcpToolFilter(
+  scope: SettingsScope,
+  name: string,
+  toolFilter: McpToolFilter | null
+): Promise<void> {
+  const { count } = await prisma.mcpServer.updateMany({
+    where: { ...scope, name },
+    data: { toolFilter: toolFilter && JSON.stringify(toolFilter) },
+  });
+  if (count === 0) {
+    throw new TRPCError({ code: 'NOT_FOUND', message: `MCP server "${name}" not found` });
+  }
+  log.info('Set MCP tool filter', {
+    ...scope,
+    name,
+    allowed: toolFilter?.allowed.length ?? 'all',
+  });
 }
 
 export async function deleteMcpServer(scope: SettingsScope, name: string): Promise<void> {

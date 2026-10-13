@@ -47,6 +47,7 @@ import { interactiveToolAttentionSummary } from '@/lib/session-attention';
 import { createLogger, toError } from '@/lib/logger';
 import { attachToolResultSanitizations } from '@/lib/message-sanitization';
 import { partialMessageId } from '@/lib/message-cache';
+import { isMcpToolBlocked, mcpToolDenyRules } from '@/lib/mcp-tool-filter';
 import { sseEvents } from './events';
 import { getSessionWorkingDir } from './worktree-manager';
 import {
@@ -378,6 +379,11 @@ async function establishSessionQuery(
         }
       }),
     recordSanitization: (toolUseId, info) => toolSanitizations.set(toolUseId, info),
+    isMcpToolBlocked: (toolId) =>
+      isMcpToolBlocked(
+        live ? [...live.boundSettings.mcpServers, ...live.loadedMcpServers] : settings.mcpServers,
+        toolId
+      ),
   });
   // Record the scope name durably BEFORE the subprocess (and thus the scope) is
   // spawned, so a crash between here and teardown can always reap it by exact
@@ -402,6 +408,9 @@ async function establishSessionQuery(
     sessionScope,
     workingDir,
     boundSettings: settings,
+    loadedMcpServers: settings.mcpServers,
+    // A fresh CLI holds none.
+    appliedDenyRules: [],
     builtinMcpServer,
     settingsKey,
     claudeSessionId: null,
@@ -427,7 +436,30 @@ async function establishSessionQuery(
 
   void runSessionLoop(sessionId, state, established);
 
+  // Before the first prompt can be pushed. Best-effort: the PreToolUse hook still
+  // refuses the hidden tools, they just stay in the agent's context until the
+  // next live apply retries.
+  await syncMcpToolDenyRules(established, settings.mcpServers).catch((err) => {
+    log.warn('Failed to hide filtered MCP tools', { sessionId, error: toError(err).message });
+  });
+
   return state;
+}
+
+/**
+ * Hide filtered servers' known, non-allowed tools from the agent with deny rules.
+ * Flag settings rather than the `disallowedTools` option because a later call
+ * replaces the rules, so a live filter change can un-hide a tool too.
+ */
+async function syncMcpToolDenyRules(
+  live: LiveQuery,
+  servers: MergedSessionSettings['mcpServers']
+): Promise<void> {
+  const rules = mcpToolDenyRules(servers);
+  if (live.appliedDenyRules?.join('\n') === rules.join('\n')) return;
+  live.appliedDenyRules = null;
+  await live.query.applyFlagSettings({ permissions: { deny: rules } });
+  live.appliedDenyRules = rules;
 }
 
 /**
@@ -498,7 +530,13 @@ function restartSessionQuery(
  * change to or from a proxied model, which restarts an idle query and waits for
  * the next idle apply otherwise. Best-effort.
  */
-async function applyLiveSettings(sessionId: string, state: SessionState): Promise<void> {
+function applyLiveSettings(sessionId: string, state: SessionState): Promise<void> {
+  const apply = state.settingsApply.then(() => applyLiveSettingsNow(sessionId, state));
+  state.settingsApply = apply;
+  return apply;
+}
+
+async function applyLiveSettingsNow(sessionId: string, state: SessionState): Promise<void> {
   const live = state.live;
   if (!live) return;
   let settings: MergedSessionSettings;
@@ -519,6 +557,7 @@ async function applyLiveSettings(sessionId: string, state: SessionState): Promis
 
   // A concurrent apply already replaced this query.
   if (state.live !== live) return;
+  live.loadedMcpServers = settings.mcpServers;
   const bound = live.boundSettings;
   if (modelChangeNeedsRestart(bound.claudeModel, settings.claudeModel)) {
     // Any background work counts, even a daemon: the restart would kill it.
@@ -552,6 +591,7 @@ async function applyLiveSettings(sessionId: string, state: SessionState): Promis
       );
       log.info('Applied live MCP server change', { sessionId });
     }
+    await syncMcpToolDenyRules(live, settings.mcpServers);
     live.boundSettings = settings;
   } catch (err) {
     log.warn('applyLiveSettings: failed to apply', { sessionId, error: toError(err).message });
@@ -910,6 +950,16 @@ export function isClaudeRunning(sessionId: string): boolean {
 export async function refreshSessionSettings(sessionId: string): Promise<void> {
   const state = sessions.get(sessionId);
   if (state) await applyLiveSettings(sessionId, state);
+}
+
+/**
+ * Apply live settings to every session with a running query, for a change that
+ * shouldn't wait for each session's next send (a tightened MCP tool filter).
+ */
+export async function refreshAllSessionSettings(): Promise<void> {
+  await Promise.all(
+    [...sessions].filter(([, state]) => state.live).map(([id]) => refreshSessionSettings(id))
+  );
 }
 
 /**

@@ -188,7 +188,7 @@ model EnvVar {
 // table silently drops them, so recreate them by hand; changing a Zod enum needs a
 // migration that rebuilds the table with the new list.
 //
-// Has CHECK constraints: type, authType, args, url.
+// Has CHECK constraints: type, authType, args, url, toolFilter.
 model McpServer {
   id             String        @id @default(uuid())
   repoSettingsId String?
@@ -199,6 +199,7 @@ model McpServer {
   args           String? // For stdio: JSON array, e.g., '["@anthropic/mcp-server-memory"]'
   url            String? // For http/sse: server URL
   authType       String        @default("headers") // For http/sse: "headers" (static) or "oauth" (see McpOAuth)
+  toolFilter     String? // JSON { allowed, hidden } tool-name arrays; null = all tools (src/lib/mcp-tool-filter.ts)
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
 

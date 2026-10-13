@@ -159,16 +159,17 @@ export function mergeByName<T extends { name: string }>(globals: T[], repo: T[])
 }
 
 /**
- * Whether two merged MCP server lists are equivalent (order-insensitive), used to
- * decide whether to apply a live `setMcpServers` to a running query when settings
- * change between turns.
+ * Whether two merged MCP server lists connect the same way (order-insensitive),
+ * used to decide whether to apply a live `setMcpServers` to a running query when
+ * settings change between turns. Tool filters are applied separately, so a filter
+ * change alone doesn't reconnect the servers.
  */
 export function mcpServersEqual(a: ResolvedMcpServer[], b: ResolvedMcpServer[]): boolean {
   if (a.length !== b.length) return false;
   const key = (servers: ResolvedMcpServer[]) =>
     [...servers]
       .sort((x, y) => x.name.localeCompare(y.name))
-      .map((s) => JSON.stringify(s))
+      .map(({ toolFilter: _, ...connection }) => JSON.stringify(connection))
       .join('\n');
   return key(a) === key(b);
 }

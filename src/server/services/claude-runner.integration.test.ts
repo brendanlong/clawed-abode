@@ -12,7 +12,13 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi, afterEach } from 'vitest';
-import type { CanUseTool, Query, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import type {
+  CanUseTool,
+  Options,
+  Query,
+  SDKMessage,
+  SDKUserMessage,
+} from '@anthropic-ai/claude-agent-sdk';
 import { setupTestDb, teardownTestDb, testPrisma, clearTestDb } from '@/test/setup-test-db';
 import { waitFor } from '@/test/wait-for';
 
@@ -114,6 +120,7 @@ let reviveSession: typeof import('./claude-runner').reviveSession;
 let _setQueryFactory: typeof import('./claude-runner')._setQueryFactory;
 let submitLiveToolResponse: typeof import('./claude-runner').submitLiveToolResponse;
 let refreshSessionSettings: typeof import('./claude-runner').refreshSessionSettings;
+let refreshAllSessionSettings: typeof import('./claude-runner').refreshAllSessionSettings;
 let deliverAppMessage: typeof import('./claude-runner').deliverAppMessage;
 let mockLoadSettings: ReturnType<
   typeof vi.mocked<typeof import('./settings-merger').loadMergedSessionSettings>
@@ -125,6 +132,11 @@ function makeFakeQuery() {
   const inputs: SDKUserMessage[] = [];
   const setModel = vi.fn(async () => {});
   const setMcpServers = vi.fn(async () => {});
+  // Records how many prompts had reached the CLI when the settings landed.
+  const flagSettingsAt: number[] = [];
+  const applyFlagSettings = vi.fn(async (_settings: unknown) => {
+    flagSettingsAt.push(inputs.length);
+  });
   const stopTask = vi.fn(async (_taskId: string) => {});
   // Default: every still-queued command can be pulled back. A test overrides it
   // to model a command the CLI had already dequeued.
@@ -144,6 +156,7 @@ function makeFakeQuery() {
       stopTask,
       setModel,
       setMcpServers,
+      applyFlagSettings,
       cancelAsyncMessage,
     } as unknown as Query;
   };
@@ -176,6 +189,8 @@ function makeFakeQuery() {
     inputs,
     setModel,
     setMcpServers,
+    applyFlagSettings,
+    flagSettingsAt,
     stopTask,
     cancelAsyncMessage,
     interrupt,
@@ -355,6 +370,7 @@ describe('claude-runner persistent streaming loop', () => {
     _setQueryFactory = mod._setQueryFactory;
     submitLiveToolResponse = mod.submitLiveToolResponse;
     refreshSessionSettings = mod.refreshSessionSettings;
+    refreshAllSessionSettings = mod.refreshAllSessionSettings;
     deliverAppMessage = mod.deliverAppMessage;
     const sm = await import('./settings-merger');
     mockLoadSettings = vi.mocked(sm.loadMergedSessionSettings);
@@ -961,6 +977,163 @@ describe('claude-runner persistent streaming loop', () => {
       'clawed-abode': builtin,
     });
     stopSession(sessionId);
+  });
+
+  describe('MCP tool filtering', () => {
+    const todo = (
+      toolFilter: { allowed: string[]; hidden: string[] } | undefined,
+      command = 'node'
+    ) => ({
+      name: 'todo',
+      type: 'stdio' as const,
+      command,
+      ...(toolFilter && { toolFilter }),
+    });
+    type PreToolUse = (toolName: string) => Promise<unknown>;
+
+    /** Start a session on `server` and return a caller for its PreToolUse hook. */
+    async function startFiltered(
+      fake: ReturnType<typeof makeFakeQuery>,
+      server: ReturnType<typeof todo>
+    ) {
+      let options: Options | undefined;
+      _setQueryFactory((p) => {
+        options = p.options as Options;
+        return fake.factory(p);
+      });
+      mockLoadSettings.mockResolvedValue({ ...baseSettings, mcpServers: [server] });
+      const sessionId = await createRunningSession();
+      await sendUserMessage(sessionId, 'hello');
+      await fake.deliver();
+      fake.emit(result());
+      await waitFor(() => !isClaudeRunning(sessionId));
+      const [hook] = options!.hooks!.PreToolUse![0].hooks;
+      const preToolUse: PreToolUse = (tool_name) =>
+        hook(
+          {
+            hook_event_name: 'PreToolUse',
+            tool_name,
+            tool_input: {},
+            tool_use_id: 't1',
+            session_id: sessionId,
+            transcript_path: '',
+            cwd: '/w',
+          },
+          't1',
+          { signal: new AbortController().signal }
+        );
+      return { sessionId, preToolUse };
+    }
+
+    const denied = { hookSpecificOutput: expect.objectContaining({ permissionDecision: 'deny' }) };
+
+    it('hides the filtered tools before the first prompt and refuses calls outside the allowlist', async () => {
+      const fake = makeFakeQuery();
+      const { sessionId, preToolUse } = await startFiltered(
+        fake,
+        todo({ allowed: ['list'], hidden: ['delete'] })
+      );
+
+      expect(fake.applyFlagSettings).toHaveBeenCalledWith({
+        permissions: { deny: ['mcp__todo__delete'] },
+      });
+      expect(fake.flagSettingsAt).toEqual([0]);
+      expect(await preToolUse('mcp__todo__list')).toEqual({});
+      expect(await preToolUse('mcp__todo__delete')).toMatchObject(denied);
+      expect(await preToolUse('mcp__todo__added-later')).toMatchObject(denied);
+      stopSession(sessionId);
+    });
+
+    it('applies a filter change live without reconnecting the server', async () => {
+      const fake = makeFakeQuery();
+      const { sessionId, preToolUse } = await startFiltered(
+        fake,
+        todo({ allowed: ['list'], hidden: ['delete'] })
+      );
+
+      mockLoadSettings.mockResolvedValue({
+        ...baseSettings,
+        mcpServers: [todo({ allowed: ['list', 'delete'], hidden: [] })],
+      });
+      await sendUserMessage(sessionId, 'again');
+
+      expect(fake.applyFlagSettings).toHaveBeenLastCalledWith({ permissions: { deny: [] } });
+      expect(fake.setMcpServers).not.toHaveBeenCalled();
+      expect(await preToolUse('mcp__todo__delete')).toEqual({});
+      stopSession(sessionId);
+    });
+
+    it('retries hiding the filtered tools after the first attempt fails', async () => {
+      const fake = makeFakeQuery();
+      fake.applyFlagSettings.mockRejectedValueOnce(new Error('not yet'));
+      const filtered = todo({ allowed: ['list'], hidden: ['delete'] });
+      const { sessionId } = await startFiltered(fake, filtered);
+
+      await sendUserMessage(sessionId, 'again');
+
+      expect(fake.applyFlagSettings).toHaveBeenCalledTimes(2);
+      expect(fake.applyFlagSettings).toHaveBeenLastCalledWith({
+        permissions: { deny: ['mcp__todo__delete'] },
+      });
+      stopSession(sessionId);
+    });
+
+    it('enforces a newly saved filter without waiting for the next send', async () => {
+      const fake = makeFakeQuery();
+      const { sessionId, preToolUse } = await startFiltered(fake, todo(undefined));
+
+      mockLoadSettings.mockResolvedValue({
+        ...baseSettings,
+        mcpServers: [todo({ allowed: ['list'], hidden: ['delete'] })],
+      });
+      await refreshAllSessionSettings();
+
+      expect(await preToolUse('mcp__todo__delete')).toMatchObject(denied);
+      expect(fake.applyFlagSettings).toHaveBeenLastCalledWith({
+        permissions: { deny: ['mcp__todo__delete'] },
+      });
+      stopSession(sessionId);
+    });
+
+    it('never lets a stale settings load land after a newer one', async () => {
+      const fake = makeFakeQuery();
+      const { sessionId, preToolUse } = await startFiltered(fake, todo(undefined));
+
+      let releaseStale: (() => void) | undefined;
+      const unfiltered = { ...baseSettings, mcpServers: [todo(undefined)] };
+      mockLoadSettings.mockImplementationOnce(
+        () => new Promise((resolve) => (releaseStale = () => resolve(unfiltered)))
+      );
+      mockLoadSettings.mockResolvedValue({
+        ...baseSettings,
+        mcpServers: [todo({ allowed: ['list'], hidden: ['delete'] })],
+      });
+      const stale = refreshSessionSettings(sessionId);
+      const fresh = refreshSessionSettings(sessionId);
+      await waitFor(() => releaseStale !== undefined);
+      releaseStale!();
+      await Promise.all([stale, fresh]);
+
+      expect(await preToolUse('mcp__todo__delete')).toMatchObject(denied);
+      stopSession(sessionId);
+    });
+
+    it('enforces a tightened filter even when the live apply fails', async () => {
+      const fake = makeFakeQuery();
+      const { sessionId, preToolUse } = await startFiltered(fake, todo(undefined));
+      expect(fake.applyFlagSettings).not.toHaveBeenCalled();
+
+      fake.setMcpServers.mockRejectedValueOnce(new Error('reconnect failed'));
+      mockLoadSettings.mockResolvedValue({
+        ...baseSettings,
+        mcpServers: [todo({ allowed: ['list'], hidden: ['delete'] }, 'node2')],
+      });
+      await sendUserMessage(sessionId, 'again');
+
+      expect(await preToolUse('mcp__todo__delete')).toMatchObject(denied);
+      expect(await preToolUse('mcp__todo__list')).toEqual({});
+      stopSession(sessionId);
+    });
   });
 
   it('passes the resolved settingSources through to the SDK query', async () => {

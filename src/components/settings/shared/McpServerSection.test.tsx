@@ -22,6 +22,7 @@ const MASK = '••••••••';
 const HTTP_SERVER: McpServer = {
   id: 'm1',
   updatedAt: new Date(0),
+  toolFilter: null,
   name: 'remote',
   type: 'http',
   command: '',
@@ -40,6 +41,7 @@ function mutations(overrides: Partial<McpServerMutations> = {}): McpServerMutati
     deleteMcpServer: vi.fn().mockResolvedValue(undefined),
     setMcpServer: vi.fn().mockResolvedValue(undefined),
     validateMcpServer: vi.fn().mockResolvedValue({ success: true }),
+    setMcpToolFilter: vi.fn().mockResolvedValue(undefined),
     startMcpOAuth: vi.fn().mockResolvedValue({ authorizeUrl: 'https://auth.example.com' }),
     disconnectMcpOAuth: vi.fn().mockResolvedValue(undefined),
     ...overrides,
