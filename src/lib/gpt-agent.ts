@@ -15,8 +15,8 @@ import {
 export type GptAgentTier = keyof typeof GPT_AGENT_MODELS;
 export const GPT_AGENT_TIERS = Object.keys(GPT_AGENT_MODELS) as [GptAgentTier, ...GptAgentTier[]];
 
-export const GPT_AGENT_TOOL_DESCRIPTION = `Run a task on an OpenAI GPT-6 model as a subagent: a one-shot agent with your tools, in this session's working directory, that returns its final answer. It knows nothing of this conversation, so the prompt must contain everything it needs. Your own Agent subagents remain the default; use this when a different model family is worth it:
-- sol: strong at coding. Good for independent reviews, e.g. a second code review alongside your own, since a different model family catches different mistakes.
+export const GPT_AGENT_TOOL_DESCRIPTION = `Run a task on an OpenAI GPT-6 model as a subagent: a one-shot agent with your tools, in this session's working directory, that returns its final answer. It knows nothing of this conversation, so the prompt must contain everything it needs. Runs bill a separate pay-per-use API key, so use this only when the user (or their instructions) explicitly asks for a GPT model; for everything else, including reviews and second opinions, use your built-in Agent subagents. When asked, pick the model the user names, or else:
+- sol: strong at coding.
 - luna: cheap and fast, for simple, well-defined tasks.
 - astra: the strongest at conceptual math, and very expensive. Use it only for tasks that need conceptual math (proofs, derivations, checking mathematical reasoning), never for general coding or reviews.
 Set run_in_background for long tasks: you get control back at once and the result arrives later as a message.`;
