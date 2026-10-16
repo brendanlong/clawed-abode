@@ -8,8 +8,12 @@ Image=ghcr.io/berriai/litellm:main-stable
 PublishPort=127.0.0.1:4000:4000
 Volume=%h/.config/litellm/config.yaml:/app/config.yaml:ro,Z
 # The ChatGPT login; writable because LiteLLM saves refreshed tokens back to it.
-Volume=%h/.config/litellm/chatgpt:/chatgpt:Z
+Volume=%h/.config/litellm/chatgpt:/chatgpt:z
 Environment=CHATGPT_TOKEN_DIR=/chatgpt
+Volume=%h/.config/litellm/litellm_chatgpt_hooks.py:/app/litellm_chatgpt_hooks.py:ro,Z
+# Replaces the Codex CLI prompt LiteLLM puts ahead of every system prompt, which
+# names Codex-only tools; the backend needs some instructions, but any will do.
+Environment="CHATGPT_DEFAULT_INSTRUCTIONS=Follow the system instructions below."
 # OPENAI_API_KEY and LITELLM_MASTER_KEY.
 EnvironmentFile=%h/.config/litellm/env
 Exec=--config /app/config.yaml --port 4000

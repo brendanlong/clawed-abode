@@ -2,9 +2,8 @@
 # Each provider is a wildcard entry named "<provider>/*": the app routes models
 # with a provider prefix through the proxy and lists them from /v1/models.
 model_list:
-  # GPT-6 models the ChatGPT plan includes go through the subscription; an exact
-  # name takes precedence over the wildcard below. Delete these entries to use
-  # only the API key: without a ChatGPT login, the proxy won't start.
+  # Subscription entries: models the ChatGPT plan includes. An exact name takes
+  # precedence over the wildcard below.
   - model_name: 'openai/gpt-6.1-sol'
     model_info: { mode: responses }
     litellm_params: { model: 'chatgpt/gpt-6.1-sol' }
@@ -20,6 +19,8 @@ model_list:
       api_key: os.environ/OPENAI_API_KEY
 
 litellm_settings:
+  # Makes Claude Code's requests acceptable to the ChatGPT backend.
+  callbacks: litellm_chatgpt_hooks.chatgpt_system_messages
   # Claude Code sends Anthropic-only parameters; drop what the provider rejects.
   drop_params: true
   # List the provider's real models for a wildcard entry instead of "openai/*".
