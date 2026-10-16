@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createServer, type IncomingMessage, type Server } from 'http';
 import type { AddressInfo } from 'net';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'fs/promises';
+import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import path from 'path';
 import { generateImage, type GenerateImageInput } from './image-generation';
@@ -25,6 +25,8 @@ const PNG_BYTES = Buffer.from('fake png bytes');
 const proxy = {
   status: 200,
   body: '',
+  /** Never answer, so a test can abort mid-request. */
+  hang: false,
   requests: [] as { headers: IncomingMessage['headers']; url?: string; json: unknown }[],
 };
 
@@ -57,6 +59,7 @@ describe('generateImage', () => {
       req.on('data', (chunk) => (body += chunk));
       req.on('end', () => {
         proxy.requests.push({ headers: req.headers, url: req.url, json: JSON.parse(body) });
+        if (proxy.hang) return;
         res.writeHead(proxy.status, { 'Content-Type': 'text/event-stream' });
         res.end(proxy.body);
       });
@@ -66,6 +69,7 @@ describe('generateImage', () => {
   });
 
   afterAll(async () => {
+    server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));
   });
 
@@ -76,6 +80,7 @@ describe('generateImage', () => {
     proxy.status = 200;
     proxy.body = imageStream();
     proxy.requests = [];
+    proxy.hang = false;
     return () => rm(workspace.dir, { recursive: true, force: true });
   });
 
@@ -83,7 +88,7 @@ describe('generateImage', () => {
     const result = await generateImage({ sessionId: 'sid', workingDir }, baseInput);
 
     expect(result.path).toMatch(
-      new RegExp(`^${workspace.dir}/public/images/a-red-circle-[0-9a-f]{6}\\.png$`)
+      new RegExp(`^${workspace.dir}/public/images/a-red-circle-[0-9a-f]{8}\\.png$`)
     );
     expect(result.url).toBe(`https://files.example/sid/images/${path.basename(result.path)}`);
     expect(result).toMatchObject({ size: '1024x1024', revisedPrompt: 'A red circle' });
@@ -162,11 +167,29 @@ describe('generateImage', () => {
     );
   });
 
-  it('stops when the tool call is aborted', async () => {
-    const controller = new AbortController();
-    controller.abort();
+  it('links an output_path inside the public dir', async () => {
+    const result = await generateImage(
+      { sessionId: 'sid', workingDir },
+      { ...baseInput, outputPath: '../public/diagrams/flow chart.png' }
+    );
+    expect(result.url).toBe('https://files.example/sid/diagrams/flow%20chart.png');
+  });
+
+  it('rejects input images over the total size limit without calling the proxy', async () => {
+    await writeFile(path.join(workingDir, 'big.png'), Buffer.alloc(41 * 1024 * 1024));
     await expect(
-      generateImage({ sessionId: 'sid', workingDir }, baseInput, controller.signal)
-    ).rejects.toThrow();
+      generateImage({ sessionId: 'sid', workingDir }, { ...baseInput, inputImages: ['big.png'] })
+    ).rejects.toThrow('the limit is 40 MB');
+    expect(proxy.requests).toHaveLength(0);
+  });
+
+  it('stops and writes nothing when the tool call is aborted mid-request', async () => {
+    proxy.hang = true;
+    const controller = new AbortController();
+    const pending = generateImage({ sessionId: 'sid', workingDir }, baseInput, controller.signal);
+    await vi.waitFor(() => expect(proxy.requests).toHaveLength(1));
+    controller.abort();
+    await expect(pending).rejects.toThrow(/abort/i);
+    await expect(readdir(path.join(workspace.dir, 'public', 'images'))).rejects.toThrow();
   });
 });

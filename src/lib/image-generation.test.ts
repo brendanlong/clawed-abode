@@ -54,19 +54,54 @@ describe('parseImageStream', () => {
   });
 
   it('reports a response that made no image', () => {
-    const stream = sse({
-      type: 'response.output_item.done',
-      item: { type: 'message', content: [{ type: 'output_text', text: "I can't draw that" }] },
+    expect(parseImageStream(sse({ type: 'response.completed', response: {} }))).toEqual({
+      error: 'The model did not generate an image',
     });
-    expect(parseImageStream(stream)).toEqual({ error: 'The model did not generate an image' });
   });
 
-  it('ignores an image call without a result', () => {
+  it('passes on the model’s reply when it answers instead of drawing', () => {
     const stream = sse({
       type: 'response.output_item.done',
-      item: { ...imageItem, result: '' },
+      item: { type: 'message', content: [{ type: 'output_text', text: "I can't draw that." }] },
     });
-    expect(parseImageStream(stream)).toEqual({ error: 'The model did not generate an image' });
+    expect(parseImageStream(stream)).toEqual({
+      error: "The model replied instead of generating an image: I can't draw that.",
+    });
+  });
+
+  it('reports an image call that failed', () => {
+    const stream = sse({
+      type: 'response.output_item.done',
+      item: { type: 'image_generation_call', status: 'failed', result: null },
+    });
+    expect(parseImageStream(stream)).toEqual({ error: 'Image generation failed' });
+  });
+
+  it('reports an incomplete response', () => {
+    const stream = sse({
+      type: 'response.incomplete',
+      response: { incomplete_details: { reason: 'content_filter' } },
+    });
+    expect(parseImageStream(stream)).toEqual({
+      error: 'Image generation stopped: content_filter',
+    });
+  });
+
+  it('reports a proxy error sent in place of the stream', () => {
+    expect(parseImageStream(sse({ error: { message: 'No healthy deployments' } }))).toEqual({
+      error: 'No healthy deployments',
+    });
+  });
+
+  it('takes the first image when a later event repeats it', () => {
+    const stream = sse(
+      { type: 'response.output_item.done', item: imageItem },
+      {
+        type: 'response.output_item.done',
+        item: { ...imageItem, result: 'c2Vjb25k' },
+      }
+    );
+    expect(parseImageStream(stream)).toMatchObject({ image: { base64: 'iVBORw0KGgo=' } });
   });
 });
 
