@@ -167,7 +167,7 @@ journalctl --user -u clawed-abode.service -f
 ./scripts/update.sh
 ```
 
-This pulls the latest code, installs dependencies, applies database migrations, rebuilds, and restarts the service. A plain `git pull` + restart is **not** enough — `next start` serves the prebuilt `.next` bundle, so without a rebuild you keep running the old code. If your service isn't named `clawed-abode.service`, set `CLAWED_ABODE_SERVICE`.
+This pulls the latest code, installs dependencies, rebuilds, then stops the service, applies database migrations, and starts it again (migrations need the database to themselves). A plain `git pull` + restart is **not** enough — `next start` serves the prebuilt `.next` bundle, so without a rebuild you keep running the old code. If your service isn't named `clawed-abode.service`, set `CLAWED_ABODE_SERVICE`.
 
 ### Read-aloud with local Kokoro (optional)
 
