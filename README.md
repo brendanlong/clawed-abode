@@ -195,16 +195,24 @@ Logs: `journalctl --user -u kokoro.service`.
 
 ### Other model providers (optional)
 
-Sessions can run non-Claude models, such as OpenAI's GPT-6, through a [LiteLLM](https://docs.litellm.ai/) proxy. Pick a model with a provider prefix (`openai/gpt-6-astra`) in the model picker. Claude models never go through the proxy (see [`doc/settings.md`](doc/settings.md#proxied-models)). [`scripts/litellm.container`](scripts/litellm.container) runs it as a podman Quadlet user service on `127.0.0.1:4000`, with [`scripts/litellm-config.yaml`](scripts/litellm-config.yaml) serving every OpenAI model. To add another provider, add a `<provider>/*` entry to the config.
+Sessions can run non-Claude models, such as OpenAI's GPT-6, through a [LiteLLM](https://docs.litellm.ai/) proxy. Pick a model with a provider prefix (`openai/gpt-6-astra`) in the model picker. Claude models never go through the proxy (see [`doc/settings.md`](doc/settings.md#proxied-models)). [`scripts/litellm.container`](scripts/litellm.container) runs it as a podman Quadlet user service on `127.0.0.1:4000`, with [`scripts/litellm-config.yaml`](scripts/litellm-config.yaml) (and the hook it loads, [`scripts/litellm_chatgpt_hooks.py`](scripts/litellm_chatgpt_hooks.py)) serving the GPT-6 models a ChatGPT plan includes through the subscription and every other OpenAI model through an API key. To add another provider, add a `<provider>/*` entry to the config.
+
+Setup, including a one-time ChatGPT sign-in: allow device code login in ChatGPT's security settings, and when the `podman run` line prints a URL and code, open the URL and enter the code. Without a ChatGPT plan, skip that line and delete the subscription entries from `~/.config/litellm/config.yaml`, since those models don't work without a login. The models a subscription serves depend on the plan; one it doesn't include fails with "not supported when using Codex with a ChatGPT account", so delete its entry to use the API key for it instead.
 
 ```bash
 mkdir -p ~/.config/litellm ~/.config/containers/systemd
+mkdir -p -m 700 ~/.config/litellm/chatgpt
 cp scripts/litellm-config.yaml ~/.config/litellm/config.yaml
+cp scripts/litellm_chatgpt_hooks.py ~/.config/litellm/
 (umask 077; printf 'OPENAI_API_KEY=%s\nLITELLM_MASTER_KEY=sk-%s\n' "sk-your-openai-key" "$(openssl rand -hex 24)" > ~/.config/litellm/env)
+podman run --rm -it -v ~/.config/litellm/chatgpt:/chatgpt:z -e CHATGPT_TOKEN_DIR=/chatgpt --entrypoint python \
+  ghcr.io/berriai/litellm:main-stable -c 'from litellm.llms.chatgpt.authenticator import Authenticator; Authenticator().get_access_token()'
 cp scripts/litellm.container ~/.config/containers/systemd/
 systemctl --user daemon-reload
 systemctl --user start litellm.service
 ```
+
+LiteLLM keeps the login refreshed. If it's signed out from ChatGPT, delete `~/.config/litellm/chatgpt/auth.json` (the command reuses an unexpired token without checking it), rerun the `podman run` line, and restart `litellm.service`.
 
 Don't quote values in `~/.config/litellm/env`: podman passes quotes through literally, and OpenAI rejects the key.
 
