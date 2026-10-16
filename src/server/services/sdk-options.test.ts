@@ -250,22 +250,42 @@ describe('buildSdkOptions', () => {
     mockScopeConfig.mockResolvedValueOnce({ launcherPath: '/l.sh', claudeBin: '/claude' });
     const { options, sessionScope } = await build(settings({ claudeModel: 'opus' }));
     expect(options.mcpServers).toHaveProperty(BUILTIN_MCP_SERVER_NAME);
-    expect(mockBuildBuiltin).toHaveBeenCalledWith('sid', null, {
-      sessionId: 'sid',
-      workingDir: '/w',
-      settingSources: ['project'],
-      env: expect.objectContaining({ PATH: '/bin' }),
-      scope: { launcherPath: '/l.sh', claudeBin: '/claude', sessionScope },
+    expect(mockBuildBuiltin).toHaveBeenCalledWith('sid', {
+      level: null,
+      gpt: {
+        sessionId: 'sid',
+        workingDir: '/w',
+        settingSources: ['project'],
+        env: expect.objectContaining({ PATH: '/bin' }),
+        scope: { launcherPath: '/l.sh', claudeBin: '/claude', sessionScope },
+      },
+      images: { sessionId: 'sid', workingDir: '/w' },
     });
   });
 
   it('gives no gpt_agent tool without a proxy or to a proxied session', async () => {
     await build(settings({ claudeModel: 'opus' }));
-    expect(mockBuildBuiltin).toHaveBeenLastCalledWith('sid', null, null);
+    expect(mockBuildBuiltin).toHaveBeenLastCalledWith('sid', {
+      level: null,
+      gpt: null,
+      images: null,
+    });
 
     mockEnv.LLM_PROXY_URL = 'http://proxy';
     await build(settings({ claudeModel: 'openai/gpt-6-astra' }));
-    expect(mockBuildBuiltin).toHaveBeenLastCalledWith('sid', null, null);
+    expect(mockBuildBuiltin).toHaveBeenLastCalledWith(
+      'sid',
+      expect.objectContaining({ gpt: null })
+    );
+  });
+
+  it('gives every session the generate_image tool when a proxy is configured', async () => {
+    mockEnv.LLM_PROXY_URL = 'http://proxy';
+    await build(settings({ claudeModel: 'openai/gpt-6-astra' }));
+    expect(mockBuildBuiltin).toHaveBeenLastCalledWith(
+      'sid',
+      expect.objectContaining({ images: { sessionId: 'sid', workingDir: '/w' } })
+    );
   });
 
   it('echoes injected user messages so messages from other sessions can be persisted', async () => {
