@@ -195,7 +195,17 @@ Logs: `journalctl --user -u kokoro.service`.
 
 ### Other model providers (optional)
 
-Sessions can run non-Claude models, such as OpenAI's GPT-6, through a [LiteLLM](https://docs.litellm.ai/) proxy. Pick a model with a provider prefix (`openai/gpt-6-astra`) in the model picker. Claude models never go through the proxy (see [`doc/settings.md`](doc/settings.md#proxied-models)). [`scripts/litellm.container`](scripts/litellm.container) runs it as a podman Quadlet user service on `127.0.0.1:4000`, with [`scripts/litellm-config.yaml`](scripts/litellm-config.yaml) serving every OpenAI model. To add another provider, add a `<provider>/*` entry to the config.
+Sessions can run non-Claude models, such as OpenAI's GPT-6, through a [LiteLLM](https://docs.litellm.ai/) proxy. Pick a model with a provider prefix (`openai/gpt-6-astra`) in the model picker. Claude models never go through the proxy (see [`doc/settings.md`](doc/settings.md#proxied-models)). [`scripts/litellm.container`](scripts/litellm.container) runs it as a podman Quadlet user service on `127.0.0.1:4000`, with [`scripts/litellm-config.yaml`](scripts/litellm-config.yaml) serving the GPT-6 models a ChatGPT plan includes through the subscription and every other OpenAI model through an API key. To add another provider, add a `<provider>/*` entry to the config.
+
+Sign in to ChatGPT first: the proxy can't do the login itself, and waits at startup until it has one. Allow device code login in ChatGPT's security settings, then run this, open the printed URL, and enter the code:
+
+```bash
+mkdir -p ~/.config/litellm/chatgpt
+podman run --rm -it -v ~/.config/litellm/chatgpt:/chatgpt:Z -e CHATGPT_TOKEN_DIR=/chatgpt --entrypoint python \
+  ghcr.io/berriai/litellm:main-stable -c 'from litellm.llms.chatgpt.authenticator import Authenticator; Authenticator().get_access_token()'
+```
+
+The login lasts until it's signed out from ChatGPT (LiteLLM refreshes it); to sign in again, repeat this and restart `litellm.service`. Without a ChatGPT plan, delete the `chatgpt/` entries from the config instead.
 
 ```bash
 mkdir -p ~/.config/litellm ~/.config/containers/systemd

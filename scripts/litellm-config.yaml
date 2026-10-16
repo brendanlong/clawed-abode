@@ -2,6 +2,18 @@
 # Each provider is a wildcard entry named "<provider>/*": the app routes models
 # with a provider prefix through the proxy and lists them from /v1/models.
 model_list:
+  # GPT-6 models the ChatGPT plan includes go through the subscription; an exact
+  # name takes precedence over the wildcard below. Delete these entries to use
+  # only the API key: without a ChatGPT login, the proxy won't start.
+  - model_name: 'openai/gpt-6.1-sol'
+    model_info: { mode: responses }
+    litellm_params: { model: 'chatgpt/gpt-6.1-sol' }
+  - model_name: 'openai/gpt-6-luna'
+    model_info: { mode: responses }
+    litellm_params: { model: 'chatgpt/gpt-6-luna' }
+  - model_name: 'openai/gpt-6-astra'
+    model_info: { mode: responses }
+    litellm_params: { model: 'chatgpt/gpt-6-astra' }
   - model_name: 'openai/*'
     litellm_params:
       model: 'openai/*'

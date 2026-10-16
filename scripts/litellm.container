@@ -7,6 +7,9 @@ ContainerName=litellm
 Image=ghcr.io/berriai/litellm:main-stable
 PublishPort=127.0.0.1:4000:4000
 Volume=%h/.config/litellm/config.yaml:/app/config.yaml:ro,Z
+# The ChatGPT login; writable because LiteLLM saves refreshed tokens back to it.
+Volume=%h/.config/litellm/chatgpt:/chatgpt:Z
+Environment=CHATGPT_TOKEN_DIR=/chatgpt
 # OPENAI_API_KEY and LITELLM_MASTER_KEY.
 EnvironmentFile=%h/.config/litellm/env
 Exec=--config /app/config.yaml --port 4000
