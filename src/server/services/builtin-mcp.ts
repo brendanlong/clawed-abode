@@ -34,8 +34,16 @@ import {
   GPT_AGENT_TIERS,
   GPT_AGENT_TOOL_DESCRIPTION,
 } from '@/lib/gpt-agent';
+import {
+  GENERATE_IMAGE_TOOL_DESCRIPTION,
+  IMAGE_BACKGROUNDS,
+  IMAGE_MODEL_NAMES,
+  IMAGE_SIZES,
+  MAX_INPUT_IMAGES,
+} from '@/lib/image-generation';
 import { DEFAULT_USAGE_ALERT_PERCENT, usageAlertPercentSchema } from '@/lib/usage';
 import { runGptAgent, type GptAgentContext } from './gpt-agent';
+import { generateImage, type ImageToolContext } from './image-generation';
 import { loadHistoryPage } from './message-store';
 import { requestAttention } from './session-attention';
 import { getUsageReport, setUsageAlerts } from './usage';
@@ -342,22 +350,71 @@ function gptTools(ctx: GptAgentContext) {
   ];
 }
 
+function imageTools(ctx: ImageToolContext) {
+  return [
+    tool(
+      'generate_image',
+      GENERATE_IMAGE_TOOL_DESCRIPTION,
+      {
+        prompt: promptSchema,
+        model: z.enum(IMAGE_MODEL_NAMES).default(IMAGE_MODEL_NAMES[0]),
+        input_images: z
+          .array(z.string().min(1))
+          .max(MAX_INPUT_IMAGES)
+          .default([])
+          .describe('Paths of images to edit or use as references'),
+        size: z
+          .enum(IMAGE_SIZES)
+          .default('auto')
+          .describe('A hint; the model may pick another size'),
+        background: z.enum(IMAGE_BACKGROUNDS).default('auto'),
+        output_path: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("Where to save the image; defaults to the session's public directory"),
+      },
+      ({ prompt, model, input_images, size, background, output_path }, extra) =>
+        run('generate_image', async () => {
+          const result = await generateImage(
+            ctx,
+            {
+              prompt,
+              model,
+              inputImages: input_images,
+              size,
+              background,
+              outputPath: output_path,
+            },
+            callSignal(extra)
+          );
+          return textResult(JSON.stringify(result, null, 2));
+        })
+    ),
+  ];
+}
+
 /**
  * A fresh server instance; one instance can serve only one query. Null when the
  * session gets no built-in tools at all.
  */
 export function buildBuiltinMcpServer(
   sessionId: string,
-  level: BuiltinToolsLevel | null,
-  gpt: GptAgentContext | null
+  tools: {
+    level: BuiltinToolsLevel | null;
+    gpt: GptAgentContext | null;
+    images: ImageToolContext | null;
+  }
 ): McpSdkServerConfigWithInstance | null {
-  if (!level && !gpt) return null;
+  const { level, gpt, images } = tools;
+  if (!level && !gpt && !images) return null;
   return createSdkMcpServer({
     name: BUILTIN_MCP_SERVER_NAME,
     tools: [
       ...(level ? basicTools(sessionId) : []),
       ...(level === 'manage' ? manageTools(sessionId) : []),
       ...(gpt ? gptTools(gpt) : []),
+      ...(images ? imageTools(images) : []),
     ],
   });
 }

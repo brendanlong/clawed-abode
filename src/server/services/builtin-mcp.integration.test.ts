@@ -6,6 +6,7 @@ import { createTestSession } from '@/test/fixtures';
 import { attributeMessage, type BuiltinToolsLevel } from '@/lib/builtin-tools';
 import type { SessionToolsPort } from './builtin-mcp';
 import type { GptAgentContext } from './gpt-agent';
+import type { GenerateImageInput, ImageToolContext } from './image-generation';
 
 const mockRunGptAgent = vi.hoisted(() =>
   vi.fn(
@@ -21,6 +22,13 @@ const mockRunGptAgent = vi.hoisted(() =>
   )
 );
 vi.mock('./gpt-agent', () => ({ runGptAgent: mockRunGptAgent }));
+const mockGenerateImage = vi.hoisted(() =>
+  vi.fn(async (_ctx: unknown, _input: unknown, _signal?: AbortSignal) => ({
+    path: '/ws/public/images/cat-abc123.png',
+    url: 'https://files/s/images/cat-abc123.png',
+  }))
+);
+vi.mock('./image-generation', () => ({ generateImage: mockGenerateImage }));
 
 let mcp: typeof import('./builtin-mcp');
 
@@ -35,9 +43,10 @@ const port = {
 async function connect(
   sessionId: string,
   level: BuiltinToolsLevel | null,
-  gpt: GptAgentContext | null = null
+  gpt: GptAgentContext | null = null,
+  images: ImageToolContext | null = null
 ) {
-  const server = mcp.buildBuiltinMcpServer(sessionId, level, gpt);
+  const server = mcp.buildBuiltinMcpServer(sessionId, { level, gpt, images });
   if (!server) throw new Error('no built-in server');
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.instance.connect(serverTransport);
@@ -294,7 +303,7 @@ describe('built-in MCP server', () => {
     });
 
     it('is offered only with a GPT agent context, independent of the other tools', async () => {
-      expect(mcp.buildBuiltinMcpServer('s', null, null)).toBeNull();
+      expect(mcp.buildBuiltinMcpServer('s', { level: null, gpt: null, images: null })).toBeNull();
       const client = await connect('s', null, gpt('s'));
       const { tools } = await client.listTools();
       expect(tools.map((t) => t.name)).toEqual(['gpt_agent']);
@@ -388,6 +397,43 @@ describe('built-in MCP server', () => {
       });
       await new Promise((resolve) => setTimeout(resolve, 20));
       expect(port.deliverMessage).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('generate_image', () => {
+    const images: ImageToolContext = { sessionId: 's', workingDir: '/w' };
+
+    it('is offered only with an image context, independent of the other tools', async () => {
+      const client = await connect('s', null, null, images);
+      const { tools } = await client.listTools();
+      expect(tools.map((t) => t.name)).toEqual(['generate_image']);
+    });
+
+    it('defaults the model and options and returns where the image was saved', async () => {
+      const client = await connect('s', null, null, images);
+      const result = await call(client, 'generate_image', { prompt: 'a cat' });
+      expect(result.isError).toBe(false);
+      expect(JSON.parse(result.text)).toEqual({
+        path: '/ws/public/images/cat-abc123.png',
+        url: 'https://files/s/images/cat-abc123.png',
+      });
+      const [ctx, input] = mockGenerateImage.mock.calls[0];
+      expect(ctx).toEqual(images);
+      expect(input).toEqual({
+        prompt: 'a cat',
+        model: 'gpt-image',
+        inputImages: [],
+        size: 'auto',
+        background: 'auto',
+        outputPath: undefined,
+      } satisfies GenerateImageInput);
+    });
+
+    it('reports a failed generation as a tool error', async () => {
+      mockGenerateImage.mockRejectedValueOnce(new Error('quota exceeded'));
+      const client = await connect('s', null, null, images);
+      const result = await call(client, 'generate_image', { prompt: 'a cat' });
+      expect(result).toEqual({ text: 'quota exceeded', isError: true });
     });
   });
 });

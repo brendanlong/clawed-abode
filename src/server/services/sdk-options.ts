@@ -262,7 +262,11 @@ export async function buildSdkOptions(params: {
 
   // The built-in server is the one `options.mcpServers` entry: an in-process SDK
   // instance is registered over the control channel, never serialized onto argv.
-  const builtinMcpServer = buildBuiltinMcpServer(sessionId, builtinTools, gptAgents);
+  const builtinMcpServer = buildBuiltinMcpServer(sessionId, {
+    level: builtinTools,
+    gpt: gptAgents,
+    images: env.LLM_PROXY_URL ? { sessionId, workingDir } : null,
+  });
   if (builtinMcpServer) {
     options.mcpServers = { [BUILTIN_MCP_SERVER_NAME]: builtinMcpServer };
   }
