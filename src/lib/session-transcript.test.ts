@@ -12,7 +12,8 @@ const messages = [
   {
     sequence: 2,
     content: assistant([
-      { type: 'thinking', thinking: 'hmm' },
+      { type: 'thinking', thinking: '' },
+      { type: 'thinking', thinking: 'Checking the code.' },
       { type: 'text', text: 'Looking.' },
       { type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'ls' } },
     ]),
@@ -35,9 +36,10 @@ const messages = [
 ];
 
 describe('toTranscriptEntries', () => {
-  it('keeps prompts, main-agent text, and errors, dropping tool traffic, subagents, and hidden system messages', () => {
+  it('keeps prompts, main-agent text and progress updates, and errors, dropping tool traffic, subagents, and hidden system messages', () => {
     expect(toTranscriptEntries(messages, { includeToolCalls: false })).toEqual([
       { sequence: 1, role: 'user', text: 'Fix the bug' },
+      { sequence: 2, role: 'assistant', text: 'Checking the code.' },
       { sequence: 2, role: 'assistant', text: 'Looking.' },
       { sequence: 6, role: 'error', text: 'boom' },
       { sequence: 8, role: 'assistant', text: 'Done.' },

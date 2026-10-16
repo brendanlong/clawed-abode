@@ -220,14 +220,14 @@ describe('MessageBubble', () => {
       expect(screen.getByText('May be incomplete')).toBeInTheDocument();
     });
 
-    it('renders thinking blocks as a Thinking section, not a System block', () => {
+    it('renders progress updates (thinking with text) as assistant text, not Thinking', () => {
       const message = {
         type: 'assistant',
         content: {
           message: {
             content: [
-              { type: 'thinking', thinking: 'Let me reason about this.' },
-              { type: 'text', text: 'Here is my answer.' },
+              { type: 'thinking', thinking: '', signature: 'reasoning' },
+              { type: 'thinking', thinking: 'Checking the logs next.', signature: 'update' },
             ],
           },
         } as MessageContent,
@@ -235,57 +235,9 @@ describe('MessageBubble', () => {
 
       render(<MessageBubble message={message} />);
 
-      expect(screen.getByText('Thinking')).toBeInTheDocument();
-      expect(screen.getByText('Here is my answer.')).toBeInTheDocument();
+      expect(screen.getByText('Checking the logs next.')).toBeInTheDocument();
+      expect(screen.queryByText(/Thinking/)).not.toBeInTheDocument();
       expect(screen.queryByText('System')).not.toBeInTheDocument();
-    });
-
-    it('expands short thinking by default', () => {
-      const message = {
-        type: 'assistant',
-        content: {
-          message: { content: [{ type: 'thinking', thinking: 'Short reasoning.' }] },
-        } as MessageContent,
-      };
-
-      render(<MessageBubble message={message} />);
-
-      expect(screen.getByText('Short reasoning.')).toBeInTheDocument();
-    });
-
-    it('collapses long thinking by default and expands it on click', () => {
-      const longThinking = 'Long reasoning. '.repeat(200).trim();
-      const message = {
-        type: 'assistant',
-        content: {
-          message: { content: [{ type: 'thinking', thinking: longThinking }] },
-        } as MessageContent,
-      };
-
-      render(<MessageBubble message={message} />);
-
-      expect(screen.queryByText(longThinking)).not.toBeInTheDocument();
-      fireEvent.click(screen.getByText('Thinking'));
-      expect(screen.getByText(longThinking)).toBeInTheDocument();
-    });
-
-    it('coalesces multiple thinking blocks into a single Thinking section', () => {
-      const message = {
-        type: 'assistant',
-        content: {
-          message: {
-            content: [
-              { type: 'thinking', thinking: 'First thought.' },
-              { type: 'thinking', thinking: 'Second thought.' },
-              { type: 'text', text: 'Done.' },
-            ],
-          },
-        } as MessageContent,
-      };
-
-      render(<MessageBubble message={message} />);
-
-      expect(screen.getAllByText('Thinking')).toHaveLength(1);
     });
 
     it('labels redacted thinking as redacted', () => {
@@ -306,15 +258,14 @@ describe('MessageBubble', () => {
       expect(screen.getByText('Thinking (redacted)')).toBeInTheDocument();
     });
 
-    it('shows both visible and redacted thinking when both are present', () => {
+    it('shows a progress update alongside a redacted thinking indicator', () => {
       const message = {
         type: 'assistant',
         content: {
           message: {
             content: [
-              { type: 'thinking', thinking: 'Visible reasoning.' },
               { type: 'redacted_thinking', data: 'opaque' },
-              { type: 'text', text: 'Answer.' },
+              { type: 'thinking', thinking: 'Visible update.' },
             ],
           },
         } as MessageContent,
@@ -322,8 +273,8 @@ describe('MessageBubble', () => {
 
       render(<MessageBubble message={message} />);
 
-      expect(screen.getByText('Thinking')).toBeInTheDocument();
       expect(screen.getByText('Thinking (redacted)')).toBeInTheDocument();
+      expect(screen.getByText('Visible update.')).toBeInTheDocument();
     });
   });
 

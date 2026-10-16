@@ -14,7 +14,7 @@ Messages the CLI injects itself — another session's `SendMessage`, an MCP chan
 
 The composer's slash commands are not messages: [`session-commands.ts`](../src/server/services/session-commands.ts) keeps the SDK's list per session, replaced wholesale by `supportedCommands()` and each `commands_changed`, and hides init's `terminal_slash_commands` (terminal-UI commands like `/doctor` are meaningless on a phone).
 
-Other rendering-relevant classification: `server_tool_use` (e.g. the advisor, which runs inside the API and never passes `canUseTool`) renders as a one-line indicator; a message whose only block is an encrypted `advisor_tool_result` is hidden (nothing human-readable to show). Thinking blocks are accumulated from `thinking_delta`s, rendered as one collapsed section, and excluded from copy/voice output.
+Other rendering-relevant classification: `server_tool_use` (e.g. the advisor, which runs inside the API and never passes `canUseTool`) renders as a one-line indicator; a message whose only block is an encrypted `advisor_tool_result` is hidden (nothing human-readable to show). Claude Code requests thinking with `display: "updates"`: reasoning arrives as empty `thinking` blocks (rendered as nothing), and a `thinking` block with text is a [progress update](https://platform.claude.com/docs/en/build-with-claude/thinking#progress-updates) addressed to the user, so it is treated as ordinary assistant text everywhere (rendering, copy, voice, cross-session transcripts) via `assistantBlockText` in [`claude-messages.ts`](../src/lib/claude-messages.ts).
 
 ## Storage & Pagination
 

@@ -1,9 +1,10 @@
 import { z } from 'zod';
+import { assistantBlockText } from '@/lib/claude-messages';
 
 /**
  * A condensed, text-only view of a session's transcript, for one agent reading
  * another session's output. Only the main conversation is kept: subagent traffic,
- * thinking, tool results, and hidden system messages are dropped.
+ * reasoning, tool results, and hidden system messages are dropped.
  */
 export interface TranscriptEntry {
   sequence: number;
@@ -15,6 +16,7 @@ const userPromptSchema = z.object({ type: z.literal('user'), content: z.string()
 
 const contentBlockSchema = z.union([
   z.object({ type: z.literal('text'), text: z.string() }),
+  z.object({ type: z.literal('thinking'), thinking: z.string() }),
   z.object({ type: z.literal('tool_use'), name: z.string(), input: z.unknown() }),
   z.object({ type: z.string() }),
 ]);
@@ -60,9 +62,8 @@ export function toTranscriptEntries(
     const assistant = assistantSchema.safeParse(content);
     if (!assistant.success || assistant.data.parent_tool_use_id) return [];
     return assistant.data.message.content.flatMap((block): TranscriptEntry[] => {
-      if (block.type === 'text' && 'text' in block && block.text.trim()) {
-        return [{ sequence, role: 'assistant', text: block.text }];
-      }
+      const text = assistantBlockText(block);
+      if (text !== null) return [{ sequence, role: 'assistant', text }];
       if (includeToolCalls && block.type === 'tool_use' && 'name' in block) {
         const input = truncate(JSON.stringify(block.input) ?? '', TOOL_INPUT_PREVIEW_CHARS);
         return [{ sequence, role: 'tool_call', text: `${block.name} ${input}` }];

@@ -8,6 +8,7 @@ import type {
 } from './types';
 import { formatAsJson, buildToolMessages } from './types';
 import {
+  assistantBlockText,
   getParentToolUseId,
   isTaskNotificationOrigin,
   parseInjectedOrigin,
@@ -46,10 +47,8 @@ export function extractTextContent(content: MessageContent): string | null {
   // For assistant messages, extract text from content.message.content
   if (content.message?.content && Array.isArray(content.message.content)) {
     const textBlocks = content.message.content
-      .filter(
-        (block): block is ContentBlock => block.type === 'text' && typeof block.text === 'string'
-      )
-      .map((block) => block.text!);
+      .map(assistantBlockText)
+      .filter((text) => text !== null);
     if (textBlocks.length > 0) {
       return textBlocks.join('\n');
     }
@@ -130,15 +129,15 @@ export function getToolResults(content: MessageContent): ContentBlock[] {
 /**
  * Whether an assistant content block renders a visible element — e.g. a
  * `thinking` block with empty text (just a continuity signature) renders nothing.
+ * A `thinking` block with text is a progress update (see `assistantBlockText`).
  *
  * Keep the renderable cases in sync with `ContentRenderer.renderContentBlocks`.
  */
 function isRenderableBlock(block: ContentBlock): boolean {
   switch (block?.type) {
     case 'text':
-      return typeof block.text === 'string' && block.text.trim().length > 0;
     case 'thinking':
-      return typeof block.thinking === 'string' && block.thinking.trim().length > 0;
+      return assistantBlockText(block) !== null;
     case 'tool_use':
     case 'redacted_thinking':
     case 'server_tool_use':

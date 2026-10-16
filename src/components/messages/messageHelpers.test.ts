@@ -40,6 +40,18 @@ describe('extractTextContent', () => {
     expect(extractTextContent(content)).toBe('Hello\nWorld');
   });
 
+  it('includes progress updates (thinking with text) but not empty reasoning blocks', () => {
+    const content: MessageContent = {
+      message: {
+        content: [
+          { type: 'thinking', thinking: '' },
+          { type: 'thinking', thinking: 'Found it.' },
+        ],
+      },
+    };
+    expect(extractTextContent(content)).toBe('Found it.');
+  });
+
   it('extracts text from simple content string', () => {
     const content: MessageContent = {
       content: 'Simple text',

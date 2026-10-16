@@ -4,6 +4,7 @@ import React from 'react';
 import { MarkdownContent } from '@/components/MarkdownContent';
 import type { ContentBlock, ToolCall, ToolResultMap } from './types';
 import { buildToolCallFromBlock } from './messageHelpers';
+import { assistantBlockText } from '@/lib/claude-messages';
 import { ToolCallDisplay } from './ToolCallDisplay';
 import { GlobDisplay } from './GlobDisplay';
 import { GrepDisplay } from './GrepDisplay';
@@ -20,7 +21,7 @@ import { EnterPlanModeDisplay } from './EnterPlanModeDisplay';
 import { ExitPlanModeDisplay } from './ExitPlanModeDisplay';
 import { TodoWriteDisplay } from './TodoWriteDisplay';
 import { AskUserQuestionDisplay } from './AskUserQuestionDisplay';
-import { ThinkingDisplay } from './ThinkingDisplay';
+import { RedactedThinkingDisplay } from './RedactedThinkingDisplay';
 import { ServerToolUseDisplay } from './ServerToolUseDisplay';
 
 /**
@@ -48,17 +49,15 @@ const TOOL_DISPLAY_MAP: Record<string, React.ComponentType<{ tool: ToolCall }>> 
 };
 
 function renderContentBlocks(blocks: ContentBlock[], toolResults?: ToolResultMap): React.ReactNode {
-  const thinkingParts: string[] = [];
   const textBlocks: string[] = [];
   const toolUseBlocks: ContentBlock[] = [];
   const serverToolUseBlocks: ContentBlock[] = [];
   let hasRedactedThinking = false;
 
   for (const block of blocks) {
-    if (block.type === 'text' && block.text) {
-      textBlocks.push(block.text);
-    } else if (block.type === 'thinking' && block.thinking) {
-      thinkingParts.push(block.thinking);
+    const text = assistantBlockText(block);
+    if (text !== null) {
+      textBlocks.push(text);
     } else if (block.type === 'redacted_thinking') {
       hasRedactedThinking = true;
     } else if (block.type === 'tool_use') {
@@ -68,15 +67,9 @@ function renderContentBlocks(blocks: ContentBlock[], toolResults?: ToolResultMap
     }
   }
 
-  // Coalesce all visible thinking in this message into a single block. Redacted
-  // thinking carries no text, so it is shown as its own separate indicator (a
-  // message can contain both visible and redacted thinking blocks).
-  const thinking = thinkingParts.join('\n\n');
-
   return (
     <>
-      {thinking.length > 0 && <ThinkingDisplay thinking={thinking} />}
-      {hasRedactedThinking && <ThinkingDisplay thinking="" redacted />}
+      {hasRedactedThinking && <RedactedThinkingDisplay />}
       {textBlocks.length > 0 && <MarkdownContent content={textBlocks.join('\n')} />}
       {serverToolUseBlocks.length > 0 && (
         <div className="mt-2 space-y-1">
