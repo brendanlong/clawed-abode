@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Update a production deployment: pull, install, build, then stop the
-# service, migrate, and start it again.
+# Update a production deployment: pull, install, build, restart (the service
+# applies migrations before starting).
 # Run from anywhere; operates on the repo this script lives in.
 #
 # The whole body is wrapped in braces so bash parses it fully before
@@ -22,35 +22,31 @@
   echo "==> Building"
   pnpm build
 
-  # Prisma's migration engine takes an exclusive SQLite lock, which fails with
-  # "database is locked" while the server holds the database open, so the
-  # server has to be down while migrations run.
+  # Migrations run in the unit's ExecStartPre rather than here: Prisma's
+  # migration engine takes an exclusive SQLite lock, so it fails with "database
+  # is locked" while the server is up, and a separate stop/migrate/start would
+  # leave the server down when this script runs inside a session (stopping the
+  # server kills every session, including this script).
   if systemctl --user is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
     SYSTEMCTL=(systemctl --user)
   elif systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
     SYSTEMCTL=(sudo systemctl)
   else
-    SYSTEMCTL=()
-    echo "No running ${SERVICE_NAME} found — stop any server using the database before migrating."
+    echo "==> Applying database migrations"
+    pnpm prisma migrate deploy
+    echo "No running ${SERVICE_NAME} found — start your server manually."
+    echo "==> Done"
+    exit 0
   fi
 
-  if [ ${#SYSTEMCTL[@]} -gt 0 ]; then
-    echo "==> Stopping ${SERVICE_NAME}"
-    "${SYSTEMCTL[@]}" stop "$SERVICE_NAME"
-  fi
-
-  echo "==> Applying database migrations"
-  if ! pnpm prisma migrate deploy; then
-    echo "Migrations failed; ${SERVICE_NAME} is left stopped." >&2
+  if ! "${SYSTEMCTL[@]}" show -p ExecStartPre --value "$SERVICE_NAME" | grep -q 'migrate deploy'; then
+    echo "${SERVICE_NAME} doesn't run migrations on start. Add this to its [Service] section (see README):" >&2
+    echo "  ExecStartPre=$(command -v node) node_modules/prisma/build/index.js migrate deploy" >&2
     exit 1
   fi
 
-  if [ ${#SYSTEMCTL[@]} -gt 0 ]; then
-    echo "==> Starting ${SERVICE_NAME}"
-    "${SYSTEMCTL[@]}" start "$SERVICE_NAME"
-  else
-    echo "Start your server manually."
-  fi
+  echo "==> Restarting ${SERVICE_NAME} (applies database migrations)"
+  "${SYSTEMCTL[@]}" restart "$SERVICE_NAME"
 
   echo "==> Done"
   exit 0
