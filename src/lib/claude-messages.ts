@@ -67,8 +67,7 @@ export type MessageHandling =
  * System message subtypes that carry no durable value — pure progress ticks or
  * internal state transitions. They are never persisted or shown.
  *
- * - `thinking_tokens`: live token-count estimates while Claude is thinking; the
- *   actual reasoning arrives in the assistant message's thinking content blocks.
+ * - `thinking_tokens`: live token-count estimates while Claude is thinking.
  * - `task_progress`: cumulative progress ticks for a running subagent.
  * - `task_updated`: subagent state-merge patches.
  * - `background_tasks_changed`: the live background-task set, surfaced over the

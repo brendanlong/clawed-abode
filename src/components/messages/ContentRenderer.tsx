@@ -70,7 +70,7 @@ function renderContentBlocks(blocks: ContentBlock[], toolResults?: ToolResultMap
   return (
     <>
       {hasRedactedThinking && <RedactedThinkingDisplay />}
-      {textBlocks.length > 0 && <MarkdownContent content={textBlocks.join('\n')} />}
+      {textBlocks.length > 0 && <MarkdownContent content={textBlocks.join('\n\n')} />}
       {serverToolUseBlocks.length > 0 && (
         <div className="mt-2 space-y-1">
           {serverToolUseBlocks.map((block) => (

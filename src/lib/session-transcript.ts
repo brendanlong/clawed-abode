@@ -40,9 +40,7 @@ export function truncate(text: string, maxChars: number): string {
 }
 
 function blockTexts(blocks: z.infer<typeof contentBlockSchema>[]): string[] {
-  return blocks.flatMap((block) =>
-    block.type === 'text' && 'text' in block && block.text.trim() ? [block.text] : []
-  );
+  return blocks.map(assistantBlockText).filter((text) => text !== null);
 }
 
 /** Condense stored messages (oldest-first) into transcript entries. */

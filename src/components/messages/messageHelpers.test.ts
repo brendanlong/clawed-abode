@@ -457,6 +457,14 @@ describe('hasRenderableAssistantContent', () => {
     expect(hasRenderableAssistantContent(content)).toBe(false);
   });
 
+  it('returns true for a message that is only a progress update', () => {
+    expect(
+      hasRenderableAssistantContent({
+        message: { content: [{ type: 'thinking', thinking: 'Running the tests now.' }] },
+      })
+    ).toBe(true);
+  });
+
   it('returns false for whitespace-only text and an empty block array', () => {
     expect(
       hasRenderableAssistantContent({ message: { content: [{ type: 'text', text: '   ' }] } })
@@ -594,6 +602,19 @@ describe('isToolCallOnlyMessage', () => {
         })
       )
     ).toBe(true);
+  });
+
+  it('is false when a progress update (thinking with text) precedes the tool', () => {
+    expect(
+      isToolCallOnlyMessage(
+        assistant({
+          content: [
+            { type: 'thinking', thinking: 'Checking the config.' },
+            { type: 'tool_use', id: 't1', name: 'Bash', input: {} },
+          ],
+        })
+      )
+    ).toBe(false);
   });
 
   it('is false when there are no tool_use blocks', () => {
