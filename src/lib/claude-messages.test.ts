@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import {
+  assistantBlockText,
   classifyMessage,
   getParentToolUseId,
   parseCommandLifecycle,
@@ -358,5 +359,18 @@ describe('getParentToolUseId', () => {
     it('ignores messages that are not replays', () => {
       expect(isEchoOfPushedPrompt(user({ uuid: 'ours' }), pushed)).toBe(false);
     });
+  });
+});
+
+describe('assistantBlockText', () => {
+  it('returns text blocks and progress updates', () => {
+    expect(assistantBlockText({ type: 'text', text: 'Hi' })).toBe('Hi');
+    expect(assistantBlockText({ type: 'thinking', thinking: 'Next: tests.' })).toBe('Next: tests.');
+  });
+
+  it('returns null for empty reasoning, whitespace, and non-text blocks', () => {
+    expect(assistantBlockText({ type: 'thinking', thinking: '' })).toBeNull();
+    expect(assistantBlockText({ type: 'text', text: '  \n' })).toBeNull();
+    expect(assistantBlockText({ type: 'tool_use', text: 'x' })).toBeNull();
   });
 });

@@ -67,8 +67,7 @@ export type MessageHandling =
  * System message subtypes that carry no durable value — pure progress ticks or
  * internal state transitions. They are never persisted or shown.
  *
- * - `thinking_tokens`: live token-count estimates while Claude is thinking; the
- *   actual reasoning arrives in the assistant message's thinking content blocks.
+ * - `thinking_tokens`: live token-count estimates while Claude is thinking.
  * - `task_progress`: cumulative progress ticks for a running subagent.
  * - `task_updated`: subagent state-merge patches.
  * - `background_tasks_changed`: the live background-task set, surfaced over the
@@ -383,4 +382,21 @@ export function getParentToolUseId(content: unknown): string | null {
   if (!content || typeof content !== 'object') return null;
   const parent = (content as Record<string, unknown>).parent_tool_use_id;
   return typeof parent === 'string' ? parent : null;
+}
+
+/**
+ * The user-facing text of an assistant content block, or null if it has none.
+ * Claude Code requests thinking with `display: "updates"`, under which reasoning
+ * blocks arrive empty and a `thinking` block with text is a progress update
+ * written for the user, not reasoning, so it is shown like any other text
+ * (https://platform.claude.com/docs/en/build-with-claude/thinking#progress-updates).
+ */
+export function assistantBlockText(block: {
+  type: string;
+  text?: unknown;
+  thinking?: unknown;
+}): string | null {
+  const text =
+    block.type === 'text' ? block.text : block.type === 'thinking' ? block.thinking : null;
+  return typeof text === 'string' && text.trim() ? text : null;
 }

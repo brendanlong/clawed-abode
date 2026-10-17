@@ -155,6 +155,17 @@ describe('extractAssistantText', () => {
     expect(extractAssistantText(msg)).toBeNull();
   });
 
+  it('speaks progress updates (thinking with text)', () => {
+    const msg: DisplayMessage = {
+      id: 'a1',
+      type: 'assistant',
+      sequence: 1,
+      createdAt: new Date(0),
+      content: { message: { content: [{ type: 'thinking', thinking: 'Building the APK.' }] } },
+    };
+    expect(extractAssistantText(msg)).toBe('Building the APK.');
+  });
+
   it('returns null for messages with no content blocks', () => {
     const msg: DisplayMessage = {
       id: 'a1',
