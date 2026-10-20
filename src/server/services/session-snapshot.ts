@@ -15,8 +15,10 @@ import { currentHold } from './rate-limit-pause';
 import { getSessionCommands } from './session-commands';
 import { getSessionUsageTotals } from './session-usage';
 import { buildTokenUsageStats } from '@/lib/token-estimation';
+import { taskHasEndState } from '@/lib/session-status';
 import {
   hasMessagesThrough,
+  loadEarliestTaskSpawnSequence,
   loadHistoryPage,
   loadMessagesAfter,
   type ParsedMessage,
@@ -57,22 +59,37 @@ async function loadLiveState(sessionId: string): Promise<SessionLiveState> {
  * connection to everything after its watermark. The newest page is always
  * covered so that the range the client reconciles — where a cancelled prompt's
  * `message_removed` could have been missed — always includes it.
+ *
+ * Also widened back to the spawn of every still-running background task: its
+ * box is pinned live at the bottom, but only once its spawning call is loaded,
+ * and a long-running subagent can have been spawned pages ago.
  */
 async function loadHistorySnapshot(
   sessionId: string,
   resumeAfter: number | null
 ): Promise<HistorySnapshot<ParsedMessage>> {
   const partials = getActivePartials(sessionId);
-  const page = await loadHistoryPage(sessionId, null, HISTORY_PAGE_SIZE);
+  const runningTaskIds = getSessionBackgroundTasks(sessionId)
+    .filter(taskHasEndState)
+    .map((task) => task.taskId);
+  const [page, spawn] = await Promise.all([
+    loadHistoryPage(sessionId, null, HISTORY_PAGE_SIZE),
+    loadEarliestTaskSpawnSequence(sessionId, runningTaskIds),
+  ]);
   const pageFloor = page.messages.length > 0 ? page.messages[0].sequence - 1 : EMPTY_WATERMARK;
-  if (resumeAfter === null || pageFloor <= resumeAfter) {
-    return { after: pageFloor, messages: page.messages, hasMore: page.hasMore, partials };
+  const after = Math.min(
+    pageFloor,
+    resumeAfter ?? pageFloor,
+    spawn === null ? pageFloor : spawn - 1
+  );
+  if (after === pageFloor) {
+    return { after, messages: page.messages, hasMore: page.hasMore, partials };
   }
   const [messages, hasMore] = await Promise.all([
-    loadMessagesAfter(sessionId, resumeAfter),
-    hasMessagesThrough(sessionId, resumeAfter),
+    loadMessagesAfter(sessionId, after),
+    hasMessagesThrough(sessionId, after),
   ]);
-  return { after: resumeAfter, messages, hasMore, partials };
+  return { after, messages, hasMore, partials };
 }
 
 /**

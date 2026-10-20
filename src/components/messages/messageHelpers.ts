@@ -677,8 +677,8 @@ export function buildTranscriptLayout(
     resultSequenceByToolUseId
   );
 
-  // The same classification the server pages history by (`Message.display`), so
-  // a page of N rows renders N rows here.
+  // The same classification the server stores as `Message.display` and pages
+  // history by.
   const topLevelMessages = messages.filter(
     (msg) => messageDisplay(msg.type, msg.content) === 'row'
   );
