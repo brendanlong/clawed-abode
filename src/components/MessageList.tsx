@@ -74,7 +74,6 @@ export function MessageList({
 
   const {
     resultMap,
-    pairedMessageIds,
     subagentMessagesByToolUseId,
     rows,
     pinnedSubagents,
@@ -99,30 +98,20 @@ export function MessageList({
       return (
         <div>
           <div className="text-muted-foreground mb-1">Subagent activity:</div>
-          <NestedTranscript
-            messages={children}
-            toolResults={resultMap}
-            pairedMessageIds={pairedMessageIds}
-          />
+          <NestedTranscript messages={children} toolResults={resultMap} />
         </div>
       );
     },
-    [subagentMessagesByToolUseId, resultMap, pairedMessageIds]
+    [subagentMessagesByToolUseId, resultMap]
   );
 
   const renderRetractedMessages = useCallback(
     (fallbackMessageId: string) => {
       const retracted = retractedMessagesByFallbackId.get(fallbackMessageId);
       if (!retracted) return null;
-      return (
-        <NestedTranscript
-          messages={retracted}
-          toolResults={resultMap}
-          pairedMessageIds={pairedMessageIds}
-        />
-      );
+      return <NestedTranscript messages={retracted} toolResults={resultMap} />;
     },
-    [retractedMessagesByFallbackId, resultMap, pairedMessageIds]
+    [retractedMessagesByFallbackId, resultMap]
   );
 
   const pendingIds = useMemo(() => new Set(pendingMessageIds), [pendingMessageIds]);

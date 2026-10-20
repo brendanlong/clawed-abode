@@ -359,54 +359,21 @@ describe('MessageBubble', () => {
   });
 
   describe('tool result messages', () => {
-    it('renders tool result display for tool_result content', () => {
+    it('renders nothing: a result shows on its tool call, never as a bubble', () => {
       const message = {
         type: 'user',
         content: {
           message: {
             content: [
-              {
-                type: 'tool_result',
-                tool_use_id: 'tool-1',
-                content: 'Tool execution output',
-              },
+              { type: 'tool_result', tool_use_id: 'tool-1', content: 'Tool execution output' },
             ],
           },
         } as MessageContent,
       };
 
-      render(<MessageBubble message={message} />);
+      const { container } = render(<MessageBubble message={message} />);
 
-      // Routed to the collapsed tool-result card, not rendered as a user bubble.
-      expect(screen.getByText('Tool Result')).toBeInTheDocument();
-      expect(screen.getByText('1 result')).toBeInTheDocument();
-      expect(screen.queryByText('Tool execution output')).not.toBeInTheDocument();
-    });
-
-    it('shows a sanitization badge on a filtered tool result', () => {
-      const message = {
-        type: 'user',
-        content: {
-          message: {
-            content: [
-              {
-                type: 'tool_result',
-                tool_use_id: 'toolu_1',
-                content: 'fetched page',
-                sanitization: {
-                  found: ['html-comment'],
-                  warnings: ['1 HTML comment(s) replaced'],
-                  removed: true,
-                },
-              },
-            ],
-          },
-        } as MessageContent,
-      };
-
-      render(<MessageBubble message={message} />);
-
-      expect(screen.getByText('Hidden content removed')).toBeInTheDocument();
+      expect(container).toBeEmptyDOMElement();
     });
   });
 
@@ -852,7 +819,6 @@ describe('turn-boundary timestamps', () => {
           },
         ]}
         toolResults={new Map()}
-        pairedMessageIds={new Set()}
       />
     );
     expect(container.textContent).toContain('go');

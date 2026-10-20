@@ -2,30 +2,28 @@
 
 import { useMemo } from 'react';
 import { MessageBubble } from './MessageBubble';
-import { isOwnPromptMessage, isVisibleTranscriptMessage } from './messageHelpers';
+import { isOwnPromptMessage } from './messageHelpers';
+import { isTranscriptRow } from '@/lib/transcript-display';
 import type { DisplayMessage, ToolResultMap } from './types';
 
 /**
  * A transcript rendered inside another message — a subagent's work under its
  * Task, or a retracted attempt under its refusal-fallback banner. Uses the same
- * visibility predicate as the top-level list so paired tool results and hidden
- * system messages don't clutter it. Returns null when nothing is left to show,
+ * classifier as the top-level list so tool results and hidden system messages
+ * don't clutter it. Returns null when nothing is left to show,
  * so the parent never renders an empty section.
  */
 export function NestedTranscript({
   messages,
   toolResults,
-  pairedMessageIds,
 }: {
   messages: DisplayMessage[];
   /** Tool results map so nested tool calls render their output inline. */
   toolResults: ToolResultMap;
-  /** Message ids whose tool_result blocks are all paired (shown inline instead). */
-  pairedMessageIds: Set<string>;
 }) {
   const visibleMessages = useMemo(
-    () => messages.filter((msg) => isVisibleTranscriptMessage(msg, pairedMessageIds)),
-    [messages, pairedMessageIds]
+    () => messages.filter((msg) => isTranscriptRow(msg.type, msg.content)),
+    [messages]
   );
 
   if (visibleMessages.length === 0) return null;
