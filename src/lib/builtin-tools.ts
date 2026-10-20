@@ -7,7 +7,8 @@ export const BUILTIN_MCP_SERVER_NAME = 'clawed-abode';
  * so a turn ending right after one isn't nudged to "produce a user-visible response".
  */
 export const TERMINAL_TOOLS_ENV = 'CLAUDE_CODE_TERMINAL_MCP_TOOLS';
-export const NOTIFY_USER_TOOL_ID = `mcp__${BUILTIN_MCP_SERVER_NAME}__notify_user`;
+export const NOTIFY_USER_TOOL_NAME = 'notify_user';
+export const NOTIFY_USER_TOOL_ID = `mcp__${BUILTIN_MCP_SERVER_NAME}__${NOTIFY_USER_TOOL_NAME}`;
 
 /**
  * Which built-in tools a session gets; null in merged settings means none.
