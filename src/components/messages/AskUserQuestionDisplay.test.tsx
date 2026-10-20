@@ -4,6 +4,12 @@ import userEvent from '@testing-library/user-event';
 import { AskUserQuestionDisplay } from './AskUserQuestionDisplay';
 import { MessageListProvider } from './MessageListContext';
 import type { ToolCall } from './types';
+import { elidedResult, inlineResult } from '@/test/tool-result-fixtures';
+
+// An elided body would be fetched; these tests never need it to arrive.
+vi.mock('@/hooks/useToolResultText', () => ({
+  useToolResultText: () => ({ data: undefined, isLoading: true, isError: false }),
+}));
 
 const QUESTION_TOOL: ToolCall = {
   name: 'AskUserQuestion',
@@ -30,6 +36,8 @@ function renderWithContext(
   return render(
     <MessageListProvider
       value={{
+        sessionId: 'session-1',
+        loadToolResultText: () => Promise.reject(new Error('unexpected fetch')),
         latestTodoWriteId: null,
         planContentByToolUseId: new Map(),
         renderSubagentTranscript: () => null,
@@ -65,8 +73,17 @@ describe('AskUserQuestionDisplay', () => {
 
   it('is read-only once the tool call has a result', () => {
     const onAnswerQuestion = vi.fn();
-    renderWithContext({ ...QUESTION_TOOL, output: 'Option A' }, { onAnswerQuestion });
+    renderWithContext({ ...QUESTION_TOOL, result: inlineResult('Option A') }, { onAnswerQuestion });
 
     expect(screen.getByRole('button', { name: /Option A/ })).toBeDisabled();
+  });
+
+  it('still waits for an answer when the CLI\'s "Answer questions?" error arrived elided', () => {
+    const onAnswerQuestion = vi.fn();
+    const result = { ...elidedResult('Answer questions?'), is_error: true };
+    renderWithContext({ ...QUESTION_TOOL, result }, { onAnswerQuestion });
+
+    expect(screen.getByText('Waiting for input')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Option A/ })).not.toBeDisabled();
   });
 });

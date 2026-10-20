@@ -3,6 +3,10 @@
 import { createContext, useContext, type ReactNode } from 'react';
 
 interface MessageListContextValue {
+  /** The session whose transcript this is, for fetching elided tool-result bodies. */
+  sessionId: string;
+  /** Fetch (or read from cache) the full text of a result the server elided. */
+  loadToolResultText: (messageId: string, toolUseId: string) => Promise<string>;
   /** The tool ID of the latest TodoWrite call (by sequence), or null */
   latestTodoWriteId: string | null;
   /** Answer an AskUserQuestion tool call */

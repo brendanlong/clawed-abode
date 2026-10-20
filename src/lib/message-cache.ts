@@ -31,11 +31,12 @@ import { getParentToolUseId } from './claude-messages';
 
 /**
  * Top-level rows per history page (the stream snapshot's newest page and each
- * backward `getHistory` page), plus the context between them. 30 fills a couple
- * of phone screens per round trip; on prod that averaged ~780 KB a page, mostly
- * tool-result bodies, so raise it once those load on demand (#653).
+ * backward `getHistory` page), plus the context between them. With tool-result
+ * bodies loaded on demand, 100 rows weigh less than 30 did with them inline
+ * (largest prod session: ~450 KB a page vs ~1 MB), and render in ~1.1 s on a
+ * phone-sized, 4x CPU-throttled first load (50: ~1.0 s).
  */
-export const HISTORY_PAGE_SIZE = 30;
+export const HISTORY_PAGE_SIZE = 100;
 
 /** Prefix for transient streaming (partial) message ids. */
 export const PARTIAL_MESSAGE_ID_PREFIX = 'partial-';

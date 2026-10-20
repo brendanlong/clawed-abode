@@ -6,6 +6,7 @@ import { NestedTranscript } from './NestedTranscript';
 import { formatFullTimestamp, formatMessageTimestamp } from '@/lib/message-timestamp';
 import { VoicePlaybackContext, defaultPlaybackState } from '@/hooks/useVoicePlayback';
 import type { ToolResultMap, MessageContent } from './types';
+import { inlineResult } from '@/test/tool-result-fixtures';
 
 const peerSessions = vi.hoisted(() => new Map<string, { id: string; name: string }>());
 
@@ -185,9 +186,7 @@ describe('MessageBubble', () => {
     });
 
     it('shows tool results when provided', () => {
-      const toolResults: ToolResultMap = new Map([
-        ['tool-1', { content: 'file contents here', is_error: false }],
-      ]);
+      const toolResults: ToolResultMap = new Map([['tool-1', inlineResult('file contents here')]]);
 
       const message = {
         type: 'assistant',
@@ -507,7 +506,9 @@ describe('MessageBubble', () => {
   describe('read aloud', () => {
     function renderWithVoice(message: { id: string; type: string; content: unknown }) {
       const play = vi.fn();
-      const toolResults: ToolResultMap = new Map([['tool-1', { content: 'SECRET FILE CONTENTS' }]]);
+      const toolResults: ToolResultMap = new Map([
+        ['tool-1', inlineResult('SECRET FILE CONTENTS')],
+      ]);
       render(
         <VoicePlaybackContext.Provider value={{ ...defaultPlaybackState, enabled: true, play }}>
           <MessageBubble message={message} toolResults={toolResults} />
@@ -565,6 +566,8 @@ describe('MessageBubble', () => {
       render(
         <MessageListProvider
           value={{
+            sessionId: 'session-1',
+            loadToolResultText: () => Promise.reject(new Error('unexpected fetch')),
             latestTodoWriteId: 'todo-1',
             planContentByToolUseId: new Map(),
             renderSubagentTranscript: () => null,
@@ -601,6 +604,8 @@ describe('MessageBubble', () => {
       return (
         <MessageListProvider
           value={{
+            sessionId: 'session-1',
+            loadToolResultText: () => Promise.reject(new Error('unexpected fetch')),
             latestTodoWriteId,
             planContentByToolUseId: new Map(),
             renderSubagentTranscript: () => null,
@@ -668,6 +673,8 @@ describe('MessageBubble', () => {
         render(
           <MessageListProvider
             value={{
+              sessionId: 'session-1',
+              loadToolResultText: () => Promise.reject(new Error('unexpected fetch')),
               latestTodoWriteId: null,
               planContentByToolUseId: new Map(),
               renderSubagentTranscript: (id: string) => <div>nested transcript for {id}</div>,

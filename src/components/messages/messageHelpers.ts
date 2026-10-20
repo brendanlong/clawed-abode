@@ -4,6 +4,7 @@ import type {
   DisplayMessage,
   MessageContent,
   ToolCall,
+  ToolResult,
   ToolResultMap,
 } from './types';
 import { formatAsJson, buildToolMessages } from './types';
@@ -15,6 +16,7 @@ import {
 } from '@/lib/claude-messages';
 import { isRenderableBlock, isToolResultMessage, messageDisplay } from '@/lib/transcript-display';
 import { isPlanFile, reconstructPlansByToolUseId, type PlanEvent } from './plan-utils';
+import { summarizeToolResult, toolResultSummarySchema, toolResultText } from '@/lib/tool-result';
 
 /**
  * Strip XML wrapper tags from Claude Code local command output.
@@ -73,38 +75,6 @@ export function isOwnPromptMessage(message: { type: string; content: unknown }):
     !parseInjectedOrigin(content.origin) &&
     !isTaskNotificationOrigin(content.origin)
   );
-}
-
-const toolResultPartSchema = z.object({
-  type: z.string().optional(),
-  text: z.string().optional(),
-  tool_name: z.string().optional(),
-});
-
-/** Non-text parts get a short label; their payloads (e.g. base64 images) are never shown. */
-function toolResultPartText(part: unknown): string | null {
-  if (typeof part === 'string') return part;
-  const parsed = toolResultPartSchema.safeParse(part);
-  if (!parsed.success) return null;
-  const { type, text, tool_name } = parsed.data;
-  if (text !== undefined) return text;
-  if (type === 'tool_reference' && tool_name) return `Loaded ${tool_name}`;
-  return `[${type ?? 'unknown'}]`;
-}
-
-/**
- * The display text of a `tool_result`'s content. Any result means the call has
- * finished, so this always returns a string — never undefined, which the tool
- * displays read as still running.
- */
-export function toolResultText(content: unknown): string {
-  if (Array.isArray(content)) {
-    return content
-      .map(toolResultPartText)
-      .filter((text) => text !== null)
-      .join('\n\n');
-  }
-  return toolResultPartText(content) ?? '';
 }
 
 /**
@@ -351,13 +321,7 @@ export function isRecognizedMessage(type: string, content: MessageContent): Reco
  */
 export function buildToolCallFromBlock(block: ContentBlock, toolResults?: ToolResultMap): ToolCall {
   const result = block.id ? toolResults?.get(block.id) : undefined;
-  return {
-    name: block.name || 'Unknown',
-    id: block.id,
-    input: block.input,
-    output: result?.content,
-    is_error: result?.is_error,
-  };
+  return { name: block.name || 'Unknown', id: block.id, input: block.input, result };
 }
 
 /**
@@ -370,6 +334,28 @@ export function buildToolCalls(content: MessageContent, toolResults?: ToolResult
   return messageContent
     .filter((block): block is ContentBlock => block.type === 'tool_use')
     .map((block) => buildToolCallFromBlock(block, toolResults));
+}
+
+/**
+ * Fill in the text of every result the server elided, so the calls carry their
+ * full output (for copying). Fetches run in parallel and share one batch.
+ */
+export async function loadToolResultTexts(
+  toolCalls: ToolCall[],
+  load: (messageId: string, toolUseId: string) => Promise<string>
+): Promise<ToolCall[]> {
+  return Promise.all(
+    toolCalls.map(async (tool) => {
+      const { result } = tool;
+      if (!result || result.text !== undefined || !tool.id) return tool;
+      return { ...tool, result: { ...result, text: await load(result.messageId, tool.id) } };
+    })
+  );
+}
+
+/** Whether any of these calls has a result whose text the server elided. */
+export function hasElidedResults(toolCalls: ToolCall[]): boolean {
+  return toolCalls.some((tool) => tool.result !== undefined && tool.result.text === undefined);
 }
 
 /**
@@ -445,6 +431,25 @@ export function* toolUseBlocks(
   }
 }
 
+/** Badges for an elided result whose summary doesn't validate: blank, but the body still loads. */
+const EMPTY_SUMMARY = summarizeToolResult('');
+
+/**
+ * A `tool_result` block as a {@link ToolResult}. The server sets `summary`
+ * exactly when it elided the body, so its presence (not whether it validates)
+ * decides that the text must be fetched; an inline body is summarized here the
+ * same way the server would.
+ */
+function toToolResult(messageId: string, block: ContentBlock): ToolResult {
+  if (block.summary !== undefined) {
+    const parsed = toolResultSummarySchema.safeParse(block.summary);
+    const summary = parsed.success ? parsed.data : EMPTY_SUMMARY;
+    return { messageId, is_error: block.is_error, summary };
+  }
+  const text = toolResultText(block.content);
+  return { messageId, is_error: block.is_error, summary: summarizeToolResult(text), text };
+}
+
 /**
  * Pair every `tool_result` with its `tool_use`, and report where each result
  * landed, which is a foreground subagent's finish point. A result whose call
@@ -466,10 +471,7 @@ export function buildToolResultMap(messages: DisplayMessage[]): {
     if (msg.type !== 'user') continue;
     for (const block of getToolResults(msg.content as MessageContent)) {
       if (block.tool_use_id && toolUseIds.has(block.tool_use_id)) {
-        resultMap.set(block.tool_use_id, {
-          content: toolResultText(block.content),
-          is_error: block.is_error,
-        });
+        resultMap.set(block.tool_use_id, toToolResult(msg.id, block));
         resultSequenceByToolUseId.set(block.tool_use_id, msg.sequence);
       }
     }

@@ -6,7 +6,15 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Badge } from '@/components/ui/badge';
 import { ColorBadge } from './ColorBadge';
+import { useToolResultText } from '@/hooks/useToolResultText';
 import type { ToolCall } from './types';
+
+/** A call's output as an expanded card renders it. */
+export interface ToolOutput {
+  /** The result text; undefined while the call runs or its elided body loads. */
+  text: string | undefined;
+  isError: boolean;
+}
 
 interface ToolDisplayWrapperProps {
   tool: ToolCall;
@@ -35,8 +43,49 @@ interface ToolDisplayWrapperProps {
   isPendingOverride?: boolean;
   /** Override isError computation (e.g. AskUserQuestionDisplay) */
   isErrorOverride?: boolean;
-  /** Tool-specific content rendered inside the collapsible area */
-  children: React.ReactNode;
+  /**
+   * Tool-specific content rendered inside the collapsible area. A function gets
+   * the call's output, which (for a large result) is fetched only once expanded.
+   */
+  children: React.ReactNode | ((output: ToolOutput) => React.ReactNode);
+}
+
+type RenderBody = (output: ToolOutput) => React.ReactNode;
+
+/** The body of a call whose result the server sent only as a summary. */
+function ElidedToolBody({
+  messageId,
+  tool,
+  isError,
+  children,
+}: {
+  messageId: string;
+  tool: ToolCall;
+  isError: boolean;
+  children: RenderBody;
+}) {
+  const query = useToolResultText(messageId, tool.id);
+  return (
+    <>
+      {children({ text: query.data?.text, isError })}
+      {query.isLoading && <div className="text-muted-foreground italic">Loading output…</div>}
+      {query.isError && <div className="text-destructive">Couldn&apos;t load the output.</div>}
+    </>
+  );
+}
+
+/** The expanded body. Mounted only while expanded, so only then is an elided result fetched. */
+function ToolBody({ tool, children }: { tool: ToolCall; children: RenderBody }) {
+  const result = tool.result;
+  const isError = !!result?.is_error;
+  if (result && result.text === undefined) {
+    return (
+      <ElidedToolBody messageId={result.messageId} tool={tool} isError={isError}>
+        {children}
+      </ElidedToolBody>
+    );
+  }
+  return children({ text: result?.text, isError });
 }
 
 /**
@@ -63,9 +112,8 @@ export function ToolDisplayWrapper({
   const expanded = expandedOverride ? expandedOverride.expanded : localExpanded;
   const onOpenChange = expandedOverride ? expandedOverride.onOpenChange : setLocalExpanded;
 
-  const hasOutput = tool.output !== undefined;
-  const isPending = isPendingOverride ?? !hasOutput;
-  const isError = isErrorOverride ?? !!tool.is_error;
+  const isPending = isPendingOverride ?? tool.result === undefined;
+  const isError = isErrorOverride ?? !!tool.result?.is_error;
 
   // Default done badge: green "Done" text
   const defaultDoneBadge = <ColorBadge color="green">Done</ColorBadge>;
@@ -103,7 +151,13 @@ export function ToolDisplayWrapper({
           </CollapsibleTrigger>
 
           <CollapsibleContent>
-            <CardContent className="p-3 space-y-3 text-xs">{children}</CardContent>
+            <CardContent className="p-3 space-y-3 text-xs">
+              {typeof children === 'function' ? (
+                <ToolBody tool={tool}>{children}</ToolBody>
+              ) : (
+                children
+              )}
+            </CardContent>
           </CollapsibleContent>
         </Card>
       </Collapsible>

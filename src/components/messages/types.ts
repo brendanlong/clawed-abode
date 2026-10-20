@@ -2,17 +2,28 @@
 
 import { z } from 'zod';
 import type { SanitizationInfo } from '@/lib/sanitization';
+import type { ToolResultSummary } from '@/lib/tool-result';
 
-// Map of tool_use_id -> result content
-export type ToolResultMap = Map<string, { content: string; is_error?: boolean }>;
+/** A call's result as the transcript holds it. */
+export interface ToolResult {
+  /** The message carrying it, which `claude.getToolResult` reads an elided body from. */
+  messageId: string;
+  is_error?: boolean;
+  /** What the collapsed card shows. */
+  summary: ToolResultSummary;
+  /** The display text, or undefined when the server elided it (fetched on expand). */
+  text?: string;
+}
+
+/** tool_use_id -> its result. */
+export type ToolResultMap = Map<string, ToolResult>;
 
 export interface ToolCall {
   name: string;
   id?: string;
   input: unknown;
   /** Undefined until the call's tool_result arrives. */
-  output?: string;
-  is_error?: boolean;
+  result?: ToolResult;
 }
 
 export interface ContentBlock {
@@ -42,6 +53,8 @@ export interface ContentBlock {
   is_error?: boolean;
   /** Sanitizer findings attached to a tool_result block whose output was filtered. */
   sanitization?: SanitizationInfo;
+  /** Set instead of `content` on a tool_result whose large body the server elided. */
+  summary?: unknown;
 }
 
 interface AssistantMessage {
@@ -62,7 +75,6 @@ export interface MessageContent {
   content?: string | ContentBlock[];
   // Assistant message wrapper
   message?: AssistantMessage;
-  tool_calls?: ToolCall[];
   result?: unknown;
   // System init fields
   model?: string;
@@ -155,16 +167,17 @@ export function buildToolMessages(tool: ToolCall): unknown[] {
     ],
   });
 
-  // Add the user message with the tool_result if we have output
-  if (tool.output !== undefined) {
+  // Add the user message with the tool_result once the call has one. Callers
+  // load elided bodies first (`loadToolResultTexts`), so `text` is the full output.
+  if (tool.result) {
     messages.push({
       role: 'user',
       content: [
         {
           type: 'tool_result',
           tool_use_id: tool.id,
-          content: tool.output,
-          ...(tool.is_error && { is_error: true }),
+          content: tool.result.text,
+          ...(tool.result.is_error && { is_error: true }),
         },
       ],
     });

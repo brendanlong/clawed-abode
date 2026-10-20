@@ -1,87 +1,14 @@
 'use client';
 
 import { z } from 'zod';
-import { useMemo } from 'react';
 import { ColorBadge } from './ColorBadge';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
 import { ToolOutputBlock } from './ToolOutputBlock';
 import { lenient, parseToolInput } from './tool-input';
 import type { ToolCall } from './types';
+import { parseWebSearchOutput } from '@/lib/web-search-output';
 
 const webSearchInputSchema = z.object({ query: lenient(z.string()) });
-
-interface SearchLink {
-  title: string;
-  url: string;
-}
-
-interface ParsedWebSearchOutput {
-  query: string;
-  links: SearchLink[];
-  summary: string;
-}
-
-/**
- * Parse WebSearch output into structured components.
- * The output format is:
- * - First line: "Web search results for query: \"...\""
- * - Links line: "Links: [{...}, ...]"
- * - Rest: Summary text
- */
-function parseWebSearchOutput(output: string): ParsedWebSearchOutput | null {
-  if (!output) {
-    return null;
-  }
-
-  const result: ParsedWebSearchOutput = {
-    query: '',
-    links: [],
-    summary: '',
-  };
-
-  // Split by newlines and process
-  const lines = output.split('\n');
-  let summaryStartIndex = 0;
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-
-    // Parse query from first line
-    const queryMatch = line.match(/^Web search results for query: "(.+)"$/);
-    if (queryMatch) {
-      result.query = queryMatch[1];
-      summaryStartIndex = i + 1;
-      continue;
-    }
-
-    // Parse links JSON
-    if (line.startsWith('Links: ')) {
-      try {
-        const jsonStr = line.substring('Links: '.length);
-        const parsed = JSON.parse(jsonStr);
-        if (Array.isArray(parsed)) {
-          result.links = parsed.filter(
-            (item): item is SearchLink =>
-              typeof item === 'object' &&
-              item !== null &&
-              typeof item.title === 'string' &&
-              typeof item.url === 'string'
-          );
-        }
-      } catch {
-        // If parsing fails, just skip the links
-      }
-      summaryStartIndex = i + 1;
-      continue;
-    }
-  }
-
-  // Everything after the links line is the summary
-  const summaryLines = lines.slice(summaryStartIndex);
-  result.summary = summaryLines.join('\n').trim();
-
-  return result;
-}
 
 const SearchIcon = () => (
   <svg
@@ -120,12 +47,10 @@ const ExternalLinkIcon = () => (
  * Shows the search query, clickable source links, and a formatted summary.
  */
 export function WebSearchDisplay({ tool }: { tool: ToolCall }) {
-  const hasOutput = tool.output !== undefined;
-
   const inputObj = parseToolInput(tool.input, webSearchInputSchema);
   const query = inputObj?.query ?? '';
 
-  const parsed = useMemo(() => parseWebSearchOutput(tool.output ?? ''), [tool.output]);
+  const sources = tool.result?.summary.webSearchSources ?? null;
 
   return (
     <ToolDisplayWrapper
@@ -135,74 +60,81 @@ export function WebSearchDisplay({ tool }: { tool: ToolCall }) {
       pendingText="Searching..."
       subtitle={<div className="text-muted-foreground text-xs mt-1 truncate">{query}</div>}
       doneBadge={
-        parsed ? (
+        sources === null ? null : (
           <ColorBadge color="blue">
-            {parsed.links.length} {parsed.links.length === 1 ? 'source' : 'sources'}
+            {sources} {sources === 1 ? 'source' : 'sources'}
           </ColorBadge>
-        ) : null
+        )
       }
     >
-      <div>
-        <div className="text-muted-foreground text-xs mb-1">Query:</div>
-        <code className="bg-muted px-2 py-1 rounded text-sm">{query}</code>
-      </div>
+      {(output) => {
+        const parsed = parseWebSearchOutput(output.text ?? '');
+        return (
+          <>
+            <div>
+              <div className="text-muted-foreground text-xs mb-1">Query:</div>
+              <code className="bg-muted px-2 py-1 rounded text-sm">{query}</code>
+            </div>
 
-      {tool.is_error && hasOutput && (
-        <ToolOutputBlock
-          label="Error:"
-          labelClassName="text-xs"
-          output={tool.output}
-          isError
-          maxHeight="max-h-48"
-          preClassName="text-xs"
-        />
-      )}
+            {output.isError && output.text !== undefined && (
+              <ToolOutputBlock
+                label="Error:"
+                labelClassName="text-xs"
+                output={output.text}
+                isError
+                maxHeight="max-h-48"
+                preClassName="text-xs"
+              />
+            )}
 
-      {hasOutput && !tool.is_error && parsed && parsed.links.length > 0 && (
-        <div>
-          <div className="text-muted-foreground text-xs mb-1">Sources:</div>
-          <div className="bg-muted rounded p-2 max-h-48 overflow-y-auto space-y-1">
-            {parsed.links.map((link, index) => (
-              <a
-                key={index}
-                href={link.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="group/link flex items-start gap-2 py-1.5 px-2 -mx-2 hover:bg-background/50 rounded text-xs"
-              >
-                <span className="text-muted-foreground shrink-0 mt-0.5">{index + 1}.</span>
-                <div className="flex-1 min-w-0">
-                  <div className="text-blue-600 dark:text-blue-400 hover:underline font-medium truncate">
-                    {link.title}
-                  </div>
-                  <div className="text-muted-foreground truncate text-xs">{link.url}</div>
+            {output.text !== undefined && !output.isError && parsed && parsed.links.length > 0 && (
+              <div>
+                <div className="text-muted-foreground text-xs mb-1">Sources:</div>
+                <div className="bg-muted rounded p-2 max-h-48 overflow-y-auto space-y-1">
+                  {parsed.links.map((link, index) => (
+                    <a
+                      key={index}
+                      href={link.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="group/link flex items-start gap-2 py-1.5 px-2 -mx-2 hover:bg-background/50 rounded text-xs"
+                    >
+                      <span className="text-muted-foreground shrink-0 mt-0.5">{index + 1}.</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-blue-600 dark:text-blue-400 hover:underline font-medium truncate">
+                          {link.title}
+                        </div>
+                        <div className="text-muted-foreground truncate text-xs">{link.url}</div>
+                      </div>
+                      <ExternalLinkIcon />
+                    </a>
+                  ))}
                 </div>
-                <ExternalLinkIcon />
-              </a>
-            ))}
-          </div>
-        </div>
-      )}
+              </div>
+            )}
 
-      {hasOutput && !tool.is_error && parsed && parsed.summary && (
-        <div>
-          <div className="text-muted-foreground text-xs mb-1">Summary:</div>
-          <div className="bg-muted rounded p-3 max-h-64 overflow-y-auto text-sm whitespace-pre-wrap">
-            {parsed.summary}
-          </div>
-        </div>
-      )}
+            {output.text !== undefined && !output.isError && parsed && parsed.summary && (
+              <div>
+                <div className="text-muted-foreground text-xs mb-1">Summary:</div>
+                <div className="bg-muted rounded p-3 max-h-64 overflow-y-auto text-sm whitespace-pre-wrap">
+                  {parsed.summary}
+                </div>
+              </div>
+            )}
 
-      {/* Fallback if parsing failed */}
-      {hasOutput && !tool.is_error && !parsed && (
-        <ToolOutputBlock
-          label="Result:"
-          labelClassName="text-xs"
-          output={tool.output}
-          maxHeight="max-h-48"
-          preClassName="text-xs font-mono"
-        />
-      )}
+            {/* Fallback if parsing failed */}
+            {output.text !== undefined && !output.isError && !parsed && (
+              <ToolOutputBlock
+                label="Result:"
+                labelClassName="text-xs"
+                output={output.text}
+                maxHeight="max-h-48"
+                preClassName="text-xs font-mono"
+              />
+            )}
+          </>
+        );
+      }}
     </ToolDisplayWrapper>
   );
 }

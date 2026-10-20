@@ -205,6 +205,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
         {session.status === 'archived' && (
           <>
             <MessageList
+              sessionId={sessionId}
               messages={messages}
               isLoading={messagesLoading || isFetchingMore}
               hasMore={hasMore}
@@ -246,6 +247,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
         {actionErrorAlert}
 
         <MessageList
+          sessionId={sessionId}
           messages={messages}
           isLoading={messagesLoading || isFetchingMore}
           hasMore={hasMore}

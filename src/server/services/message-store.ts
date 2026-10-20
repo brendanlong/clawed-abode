@@ -12,6 +12,7 @@ import { resolveUploadPaths } from './uploads';
 import { messageUsageStatement, parseSessionUsageRow } from './session-usage';
 import { buildTokenUsageStats } from '@/lib/token-estimation';
 import { messageDisplay } from '@/lib/transcript-display';
+import { findToolResultText, projectMessageContent } from '@/lib/tool-result';
 import type { Message } from '@/generated/prisma/client';
 
 const log = createLogger('message-store');
@@ -20,13 +21,32 @@ const log = createLogger('message-store');
 const MESSAGE_ID_NAMESPACE = '6ba7b810-9dad-11d1-80b4-00c04fd430c8';
 
 /**
- * A message row with its JSON `content` decoded, as the API and SSE deliver it.
- * `display` stays server-side: clients classify with the same `messageDisplay`.
+ * A message row with its JSON `content` decoded. `display` stays server-side:
+ * clients classify with the same `messageDisplay`.
  */
 export type ParsedMessage = Omit<Message, 'content' | 'display'> & { content: unknown };
 
+/** Decode a row as stored, for server-side readers (e.g. `read_session`). */
 function toParsedMessage({ display: _display, ...row }: Message): ParsedMessage {
   return { ...row, content: JSON.parse(row.content) as unknown };
+}
+
+/**
+ * A message as the API and SSE deliver it to clients: projected by
+ * `projectMessageContent` (large tool-result bodies summarized, unread SDK
+ * fields dropped), which doesn't change its `messageDisplay`.
+ */
+function toClientMessage(message: ParsedMessage): ParsedMessage {
+  return { ...message, content: projectMessageContent(message.content) };
+}
+
+function toClientMessageFromRow(row: Message): ParsedMessage {
+  return toClientMessage(toParsedMessage(row));
+}
+
+/** Announce a persisted message, projected exactly as reads deliver it. */
+function emitPersistedMessage(sessionId: string, message: ParsedMessage): void {
+  sseEvents.emitNewMessage(sessionId, toClientMessage(message));
 }
 
 /** Every message a client may need: the rows plus the context they render with. */
@@ -43,6 +63,7 @@ function rowsBefore(sessionId: string, cursor: number | null | undefined) {
  * of them up to the cursor, oldest-first. Pages are contiguous, so a row's tool
  * results, task events and subagent messages (all newer than it) are loaded by
  * the time it is. The last page reaches back to the start of the session.
+ * Projected for clients.
  */
 export async function loadHistoryPage(
   sessionId: string,
@@ -68,7 +89,7 @@ export async function loadHistoryPage(
     },
     orderBy: { sequence: 'asc' },
   });
-  return { messages: rows.map(toParsedMessage), hasMore };
+  return { messages: rows.map(toClientMessageFromRow), hasMore };
 }
 
 /**
@@ -121,7 +142,23 @@ export async function loadEarliestTaskSpawnSequence(
   return spawn === null || spawn === undefined ? null : Number(spawn);
 }
 
-/** Every non-hidden message after `floor`, oldest-first (a resumed stream's snapshot). */
+/**
+ * The full display text of one tool result, whose body clients get only as a
+ * summary when it is large; null when the session has no such message or result.
+ */
+export async function loadToolResultText(
+  sessionId: string,
+  messageId: string,
+  toolUseId: string
+): Promise<string | null> {
+  const row = await prisma.message.findFirst({
+    where: { id: messageId, sessionId },
+    select: { content: true },
+  });
+  return row ? findToolResultText(JSON.parse(row.content), toolUseId) : null;
+}
+
+/** Every non-hidden message after `floor`, oldest-first (a resumed stream's snapshot), projected for clients. */
 export async function loadMessagesAfter(
   sessionId: string,
   floor: number
@@ -130,7 +167,7 @@ export async function loadMessagesAfter(
     where: { sessionId, display: NOT_HIDDEN, sequence: { gt: floor } },
     orderBy: { sequence: 'asc' },
   });
-  return rows.map(toParsedMessage);
+  return rows.map(toClientMessageFromRow);
 }
 
 /** Whether any non-hidden message has `sequence <= ceiling`. */
@@ -209,7 +246,7 @@ export async function insertMessage(params: {
     throw err;
   }
 
-  sseEvents.emitNewMessage(sessionId, { id, sessionId, sequence, type, content, createdAt });
+  emitPersistedMessage(sessionId, { id, sessionId, sequence, type, content, createdAt });
   if (usageRow !== undefined) {
     // The message is already persisted and announced; a bad row must not fail its insert.
     try {
@@ -315,7 +352,7 @@ export async function markLastMessageAsInterrupted(sessionId: string): Promise<v
         where: { id: lastMainMessage.id },
         data: { content: JSON.stringify(content) },
       });
-      sseEvents.emitNewMessage(sessionId, {
+      emitPersistedMessage(sessionId, {
         id: lastMainMessage.id,
         sessionId,
         sequence: lastMainMessage.sequence,

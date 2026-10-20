@@ -1,8 +1,58 @@
-import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, it, expect, vi } from 'vitest';
+import type { ReactElement } from 'react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { observable } from '@trpc/server/observable';
+import { TRPCClientError, type TRPCLink } from '@trpc/client';
+import { trpc } from '@/lib/trpc';
+import type { AppRouter } from '@/server/routers';
+import { projectMessageContent } from '@/lib/tool-result';
 import { MessageList } from './MessageList';
 import type { DisplayMessage } from './messages/types';
+
+/**
+ * Render inside a tRPC provider whose fake server answers `claude.getToolResult`
+ * from `bodies` (keyed by tool_use id), recording each request.
+ */
+function renderWithTrpc(ui: ReactElement, bodies: Record<string, string> = {}) {
+  const requests: { messageId: string; toolUseId: string }[] = [];
+  const link: TRPCLink<AppRouter> = () => {
+    return ({ op }) =>
+      observable((observer) => {
+        if (op.path === 'claude.getToolResult') {
+          const input = op.input as { messageId: string; toolUseId: string };
+          requests.push({ messageId: input.messageId, toolUseId: input.toolUseId });
+          const text = bodies[input.toolUseId];
+          if (text === undefined) {
+            observer.error(
+              TRPCClientError.from({
+                error: {
+                  code: -32004,
+                  message: 'Tool result not found',
+                  data: { code: 'NOT_FOUND' },
+                },
+              })
+            );
+          } else {
+            observer.next({ result: { type: 'data', data: { text } } });
+            observer.complete();
+          }
+        } else {
+          observer.error(TRPCClientError.from(new Error(`unexpected request: ${op.path}`)));
+        }
+        return () => {};
+      });
+  };
+  const client = trpc.createClient({ links: [link] });
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const view = render(
+    <trpc.Provider client={client} queryClient={queryClient}>
+      <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>
+    </trpc.Provider>
+  );
+  return { ...view, requests };
+}
 
 // Builds a minimal message list around one background Explore subagent:
 //   seq 0  user prompt
@@ -116,8 +166,9 @@ function baseMessages(opts: { withNotification?: boolean } = {}): DisplayMessage
 }
 
 function renderList(messages: DisplayMessage[], isSessionRunning: boolean) {
-  return render(
+  return renderWithTrpc(
     <MessageList
+      sessionId="session-1"
       messages={messages}
       isLoading={false}
       hasMore={false}
@@ -235,8 +286,9 @@ describe('MessageList refusal fallback', () => {
 
 describe('MessageList older-page loader', () => {
   function renderLoader(opts: { hasMore: boolean; isLoading: boolean }) {
-    return render(
+    return renderWithTrpc(
       <MessageList
+        sessionId="session-1"
         messages={baseMessages()}
         isLoading={opts.isLoading}
         hasMore={opts.hasMore}
@@ -266,5 +318,190 @@ describe('MessageList older-page loader', () => {
   it('drops the slot once there are no older pages left to fetch', () => {
     const { container } = renderLoader({ hasMore: false, isLoading: false });
     expect(container.querySelector('[data-older-messages-loader]')).toBeNull();
+  });
+});
+
+describe('MessageList lazy tool-result bodies', () => {
+  const READ_BODY = Array.from(
+    { length: 300 },
+    (_, i) => `${String(i + 1).padStart(6)}→alpha${i + 1}`
+  ).join('\n');
+  const GREP_BODY = Array.from({ length: 200 }, (_, i) => `src/file${i}.ts`).join('\n');
+  const REPORT = `The final report. ${'detail '.repeat(300)}`;
+  const BODIES: Record<string, string> = { r1: READ_BODY, g1: GREP_BODY, fg1: REPORT };
+
+  const at = (sequence: number, type: string, content: unknown): DisplayMessage => ({
+    id: `m${sequence}`,
+    type,
+    sequence,
+    createdAt: new Date(0),
+    // What the server sends: the stored content, projected for clients.
+    content: projectMessageContent(content),
+  });
+  const call = (seq: number, id: string, name: string, input: unknown, parent?: string) =>
+    at(seq, 'assistant', {
+      parent_tool_use_id: parent ?? null,
+      message: { content: [{ type: 'tool_use', id, name, input }] },
+    });
+  const result = (seq: number, id: string, text: string, isError = false, parent?: string) =>
+    at(seq, 'user', {
+      parent_tool_use_id: parent ?? null,
+      tool_use_result: { stdout: text },
+      message: {
+        content: [{ type: 'tool_result', tool_use_id: id, content: text, is_error: isError }],
+      },
+    });
+
+  const messages: DisplayMessage[] = [
+    at(0, 'user', { content: 'look around' }),
+    call(1, 'r1', 'Read', { file_path: '/repo/a.ts' }),
+    result(2, 'r1', READ_BODY),
+    call(3, 'b1', 'Bash', { command: 'false' }),
+    result(4, 'b1', 'command failed', true),
+    call(5, 'q1', 'AskUserQuestion', {
+      questions: [
+        {
+          question: 'Which?',
+          header: 'Pick',
+          multiSelect: false,
+          options: [
+            { label: 'Option A', description: 'a' },
+            { label: 'Option B', description: 'b' },
+          ],
+        },
+      ],
+    }),
+    result(6, 'q1', 'Option A'),
+    call(7, 'fg1', 'Agent', { subagent_type: 'Explore', description: 'Dig in', prompt: 'go' }),
+    call(8, 'g1', 'Grep', { pattern: 'x' }, 'fg1'),
+    result(9, 'g1', GREP_BODY, false, 'fg1'),
+    result(10, 'fg1', REPORT),
+    // A result the server no longer has (BODIES lacks it).
+    call(11, 'gone', 'WebFetch', { url: 'https://example.com', prompt: 'p' }),
+    result(12, 'gone', 'y'.repeat(2000)),
+  ];
+
+  function renderWithServer() {
+    return renderWithTrpc(
+      <MessageList
+        sessionId="session-1"
+        messages={messages}
+        isLoading={false}
+        hasMore={false}
+        loadFailed={false}
+        onLoadMore={() => {}}
+      />,
+      BODIES
+    );
+  }
+
+  const cardTrigger = (title: string) => {
+    const trigger = screen.getAllByText(title, { selector: 'span' })[0].closest('button');
+    if (!trigger) throw new Error(`no ${title} card`);
+    return trigger;
+  };
+
+  it('receives large bodies only as summaries and small ones inline', () => {
+    const blockOf = (message: DisplayMessage) =>
+      (message.content as { message: { content: { content?: unknown }[] } }).message.content[0];
+    expect(blockOf(messages[2]).content).toBeUndefined();
+    expect(blockOf(messages[4]).content).toBe('command failed');
+  });
+
+  it('shows collapsed badges from the summary without fetching anything', () => {
+    const { requests } = renderWithServer();
+
+    expect(screen.getByText('300 lines')).toBeInTheDocument();
+    // The answered question renders expanded, from its inline answer.
+    expect(screen.getByText('Response:').nextSibling?.textContent).toBe('Option A');
+    expect(requests).toEqual([]);
+  });
+
+  it('fetches an elided body once, when its card is first expanded', async () => {
+    const user = userEvent.setup();
+    const { container, requests } = renderWithServer();
+
+    await user.click(cardTrigger('Read'));
+    await waitFor(() => expect(container.textContent).toContain('alpha300'));
+    expect(requests).toEqual([{ messageId: 'm2', toolUseId: 'r1' }]);
+
+    await user.click(cardTrigger('Read'));
+    await user.click(cardTrigger('Read'));
+    expect(container.textContent).toContain('alpha300');
+    expect(requests).toHaveLength(1);
+  });
+
+  it('renders a short error without a fetch', async () => {
+    const user = userEvent.setup();
+    const { requests } = renderWithServer();
+
+    await user.click(cardTrigger('Bash'));
+
+    expect(screen.getByText('command failed')).toBeInTheDocument();
+    expect(requests).toEqual([]);
+  });
+
+  it('expanding a subagent box fetches only its own result, not its nested cards', async () => {
+    const user = userEvent.setup();
+    const { container, requests } = renderWithServer();
+
+    await user.click(cardTrigger('Task'));
+    await waitFor(() => expect(container.textContent).toContain('The final report.'));
+    // The nested Grep card stays collapsed, showing its count from the summary.
+    expect(screen.getByText('200 matches')).toBeInTheDocument();
+    expect(requests).toEqual([{ messageId: 'm10', toolUseId: 'fg1' }]);
+  });
+
+  /** The Copy button of the message bubble holding a tool card. */
+  function copyButtonFor(title: string): HTMLElement {
+    for (let node = cardTrigger(title).parentElement; node; node = node.parentElement) {
+      const copy = within(node).queryByRole('button', { name: 'Copy' });
+      if (copy) return copy;
+    }
+    throw new Error(`no Copy button around the ${title} card`);
+  }
+
+  it('copies a message with its full tool output, fetching the elided body', async () => {
+    const user = userEvent.setup();
+    const { requests } = renderWithServer();
+
+    await user.click(copyButtonFor('Read'));
+
+    await waitFor(async () => expect(await navigator.clipboard.readText()).toContain('alpha300'));
+    expect(requests).toEqual([{ messageId: 'm2', toolUseId: 'r1' }]);
+  });
+
+  it('shows a missing body as an error at once, without retrying', async () => {
+    const user = userEvent.setup();
+    const { requests } = renderWithServer();
+
+    await user.click(cardTrigger('WebFetch'));
+
+    expect(await screen.findByText("Couldn't load the output.")).toBeInTheDocument();
+    expect(requests).toEqual([{ messageId: 'm12', toolUseId: 'gone' }]);
+  });
+
+  it('says the copy failed, and copies nothing, when an output cannot be fetched', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    renderWithServer();
+    await navigator.clipboard.writeText('before');
+
+    await user.click(copyButtonFor('WebFetch'));
+
+    expect(await screen.findByRole('button', { name: 'Copy failed' })).toBeInTheDocument();
+    expect(await navigator.clipboard.readText()).toBe('before');
+  });
+
+  it('copies an inline output without a fetch', async () => {
+    const user = userEvent.setup();
+    const { requests } = renderWithServer();
+
+    await user.click(copyButtonFor('Bash'));
+
+    await waitFor(async () =>
+      expect(await navigator.clipboard.readText()).toContain('command failed')
+    );
+    expect(requests).toEqual([]);
   });
 });

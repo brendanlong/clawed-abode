@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import type { MessageContent } from './types';
 import {
   extractTextContent,
@@ -6,13 +6,14 @@ import {
   isOwnPromptMessage,
   buildToolCalls,
   getCopyText,
+  hasElidedResults,
+  loadToolResultTexts,
   getDisplayContent,
   isToolCallOnlyMessage,
   groupSubagentMessages,
   computeSubagentPlacements,
   toolUseBlocks,
   buildToolResultMap,
-  toolResultText,
   collectSubagentLifecycles,
   getLatestTodoWriteId,
   getPlanContentByToolUseId,
@@ -20,7 +21,9 @@ import {
   collectRetractedMessages,
   type SubagentLifecycle,
 } from './messageHelpers';
-import type { ContentBlock, DisplayMessage } from './types';
+import type { ContentBlock, DisplayMessage, ToolCall } from './types';
+import { elidedResult, inlineResult } from '@/test/tool-result-fixtures';
+import { summarizeToolResult } from '@/lib/tool-result';
 
 describe('extractTextContent', () => {
   it('extracts text from assistant message content array', () => {
@@ -277,7 +280,8 @@ describe('buildToolCalls', () => {
         ],
       },
     };
-    const toolResults = new Map([['tool-1', { content: 'file contents', is_error: false }]]);
+    const result = inlineResult('file contents', false);
+    const toolResults = new Map([['tool-1', result]]);
 
     const calls = buildToolCalls(content, toolResults);
     expect(calls).toHaveLength(1);
@@ -285,8 +289,7 @@ describe('buildToolCalls', () => {
       name: 'Read',
       id: 'tool-1',
       input: { file_path: '/test.txt' },
-      output: 'file contents',
-      is_error: false,
+      result,
     });
   });
 
@@ -316,8 +319,32 @@ describe('buildToolCalls', () => {
       },
     };
     const calls = buildToolCalls(content, new Map());
-    expect(calls[0].output).toBeUndefined();
-    expect(calls[0].is_error).toBeUndefined();
+    expect(calls[0].result).toBeUndefined();
+  });
+});
+
+describe('loadToolResultTexts', () => {
+  const call = (id: string, result?: ToolCall['result']): ToolCall => ({
+    name: 'Bash',
+    id,
+    input: {},
+    result,
+  });
+
+  it('fills in elided outputs and leaves inline and missing ones alone', async () => {
+    const calls = [
+      call('a', elidedResult('big', 'm1')),
+      call('b', inlineResult('small')),
+      call('c'),
+    ];
+    const load = vi.fn(async (messageId: string, toolUseId: string) => `${messageId}/${toolUseId}`);
+
+    expect(hasElidedResults(calls)).toBe(true);
+    const loaded = await loadToolResultTexts(calls, load);
+
+    expect(loaded.map((tool) => tool.result?.text)).toEqual(['m1/a', 'small', undefined]);
+    expect(load).toHaveBeenCalledTimes(1);
+    expect(hasElidedResults(loaded)).toBe(false);
   });
 });
 
@@ -685,14 +712,35 @@ describe('toolUseBlocks', () => {
 });
 
 describe('buildToolResultMap', () => {
+  it('keeps the server summary of an elided result and leaves its text to fetch', () => {
+    const summary = summarizeToolResult('a\nb\n');
+    const { resultMap } = buildToolResultMap([
+      assistant(1, [toolUse('a', 'Glob')]),
+      toolResultMessage(2, [{ type: 'tool_result', tool_use_id: 'a', is_error: true, summary }]),
+    ]);
+    expect(resultMap.get('a')).toEqual({ messageId: 'm2', is_error: true, summary });
+  });
+
+  it('treats a result with a malformed summary as elided, with blank badges', () => {
+    const { resultMap } = buildToolResultMap([
+      assistant(1, [toolUse('a', 'Grep')]),
+      toolResultMessage(2, [{ type: 'tool_result', tool_use_id: 'a', summary: { bogus: 1 } }]),
+    ]);
+    expect(resultMap.get('a')).toEqual({
+      messageId: 'm2',
+      is_error: undefined,
+      summary: summarizeToolResult(''),
+    });
+  });
+
   it('pairs results with their calls and records the result sequence', () => {
     const { resultMap, resultSequenceByToolUseId } = buildToolResultMap([
       assistant(1, [toolUse('a', 'Read'), toolUse('b', 'Bash')]),
       toolResultMessage(2, [toolResult('a', 'file contents')]),
       toolResultMessage(3, [toolResult('b', 'boom', true)]),
     ]);
-    expect(resultMap.get('a')).toEqual({ content: 'file contents', is_error: undefined });
-    expect(resultMap.get('b')).toEqual({ content: 'boom', is_error: true });
+    expect(resultMap.get('a')).toEqual({ ...inlineResult('file contents'), messageId: 'm2' });
+    expect(resultMap.get('b')).toEqual({ ...inlineResult('boom', true), messageId: 'm3' });
     expect(resultSequenceByToolUseId.get('a')).toBe(2);
     expect(resultSequenceByToolUseId.get('b')).toBe(3);
   });
@@ -741,8 +789,8 @@ describe('buildToolResultMap', () => {
         },
       ]),
     ]);
-    expect(resultMap.get('mcp')?.content).toBe('first\n\nsecond');
-    expect(resultMap.get('search')?.content).toBe('Loaded mcp__x__y');
+    expect(resultMap.get('mcp')?.text).toBe('first\n\nsecond');
+    expect(resultMap.get('search')?.text).toBe('Loaded mcp__x__y');
   });
 
   it('stores empty content for a result with no content', () => {
@@ -750,7 +798,7 @@ describe('buildToolResultMap', () => {
       assistant(1, [toolUse('a', 'Bash')]),
       toolResultMessage(2, [toolResult('a')]),
     ]);
-    expect(resultMap.get('a')).toEqual({ content: '', is_error: undefined });
+    expect(resultMap.get('a')).toEqual({ ...inlineResult(''), messageId: 'm2' });
   });
 
   it('ignores user messages that are not tool results', () => {
@@ -764,31 +812,6 @@ describe('buildToolResultMap', () => {
       },
     ]);
     expect(resultMap.size).toBe(0);
-  });
-});
-
-describe('toolResultText', () => {
-  it('passes strings through', () => {
-    expect(toolResultText('hello')).toBe('hello');
-  });
-
-  it('joins text parts and labels non-text parts without their payloads', () => {
-    expect(
-      toolResultText([
-        { type: 'text', text: 'caption' },
-        { type: 'image', source: { type: 'base64', data: 'AAAA' } },
-        { type: 'tool_reference', tool_name: 'Monitor' },
-        { type: 'document', source: { type: 'base64', data: 'BBBB' } },
-      ])
-    ).toBe('caption\n\n[image]\n\nLoaded Monitor\n\n[document]');
-  });
-
-  it('skips malformed parts instead of throwing', () => {
-    expect(toolResultText([null, 7, 'raw', { type: 'text', text: 'ok' }])).toBe('raw\n\nok');
-  });
-
-  it('returns an empty string for missing content', () => {
-    expect(toolResultText(undefined)).toBe('');
   });
 });
 
@@ -947,7 +970,10 @@ describe('buildTranscriptLayout', () => {
     expect([...layout.relocatedSubagentIds]).toEqual(['agent-1']);
     expect(layout.subagentMessagesByToolUseId.get('agent-1')?.map((m) => m.id)).toEqual(['m4']);
     const box = layout.rows[2];
-    expect(box.kind === 'taskbox' && box.tool).toMatchObject({ id: 'agent-1', output: 'launched' });
+    expect(box.kind === 'taskbox' && box.tool).toMatchObject({
+      id: 'agent-1',
+      result: { text: 'launched' },
+    });
   });
 
   it('pins a running subagent below the rows instead of merging it', () => {
@@ -1091,7 +1117,7 @@ describe('buildTranscriptLayout retraction', () => {
       'm4',
     ]);
     expect(layout.retractedMessagesByFallbackId.get('m4')?.map((m) => m.id)).toEqual(['m1']);
-    expect(layout.resultMap.get('t1')?.content).toBe('out');
+    expect(layout.resultMap.get('t1')?.text).toBe('out');
   });
 
   it('folds nothing when the retracted messages have nothing to render', () => {
