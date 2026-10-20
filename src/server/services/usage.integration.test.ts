@@ -19,7 +19,7 @@ const fakeQuery = {
 } as unknown as Query;
 const port = {
   isSessionWorking: vi.fn((id: string) => working.has(id)),
-  deliverMessage: vi.fn(async (_id: string, _text: string) => {}),
+  deliverMessage: vi.fn(async (_id: string, _text: string) => true),
   liveModel: vi.fn((id: string) => liveModels.get(id)),
   subscriptionQuery: vi.fn((_id: string): Query | null => fakeQuery),
 } satisfies UsagePort;

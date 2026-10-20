@@ -39,7 +39,7 @@ export interface UsagePort {
   /** The agent is mid-turn or has a background task that will finish. */
   isSessionWorking(sessionId: string): boolean;
   /** Send a message on the app's behalf, only to a session whose query is live. */
-  deliverMessage(sessionId: string, text: string): Promise<void>;
+  deliverMessage(sessionId: string, text: string): Promise<boolean>;
   /** The model the session's live query was set up with, when one is live and names one. */
   liveModel(sessionId: string): string | undefined;
   /** A live query on the subscription (not a proxied model), preferring this session's. */

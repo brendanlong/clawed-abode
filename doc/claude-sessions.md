@@ -79,6 +79,14 @@ The CLI registers under `CLAUDE_CODE_SESSION_NAME`, set from `Session.agentName`
 
 How the incoming messages reach the transcript is under Classification in [`messages-and-sse.md`](messages-and-sse.md).
 
+## Pull Request Watches
+
+`watch_pull_requests` ([`pull-request-watch.ts`](../src/server/services/pull-request-watch.ts)) lets a session — typically a "manager" the user has told how to triage PRs — hear about PRs in a set of repos without polling `gh` itself. Each minute the server refreshes every open PR in a watched repo (and any last seen open, to learn whether it merged or closed) into the shared PR rows the badges read ([`messages-and-sse.md`](messages-and-sse.md)), then sends each watching session one message listing the PRs whose reportable state it hasn't heard yet: ready (not a draft, CI finished) at a new head commit, merged, or closed (`watchEventKey`). Each entry names the sessions linked to the PR and their `SendMessage` addresses, so the manager can talk to the agent that wrote it.
+
+- **Each state is delivered once**, tracked per watch in `PullRequestWatchEvent` with insert-on-conflict, so restarts and overlapping polls don't repeat it. Keys are recorded before sending and removed again if the session's query went away mid-poll, so the update goes out once it's back. A new watch first records what is already there without delivering it (the tool's reply lists it), and a merge or close is only reported for a PR the watch saw open, so old PRs a badge lookup stores aren't news — which also means a PR opened and closed between two polls goes unreported.
+- **Only running sessions with a live query are processed.** Each poll looks at the PRs it refreshed plus those the watch saw open and hasn't reported finished (a badge lookup or another watch may have stored the merge, and nothing refreshes a merged PR), so its cost tracks the repo's open PRs rather than its history.
+- **A false "ready" costs a second message**, so checks are conservative: a transient checks failure (including a rate-limit 403) skips the PR for that poll rather than reading as unknown, and "no checks" within a couple of minutes of the PR's last update counts as pending, since CI takes a moment to register (`settleChecks`). Checks the token can't read (a fine-grained token without **Checks** / **Commit statuses** read) count as finished, reported as "CI status unknown", or such a repo would never report anything.
+
 ## Process Reaping (cgroup)
 
 Daemons an agent starts (Postgres, Redis, dev servers) double-fork and escape the process tree, so killing the launching command's tree leaks them on the shared host. We don't touch them mid-session — an agent may legitimately keep a service running — we only guarantee **everything a session spawned dies when the session ends**. Implementation: [`src/server/services/session-cgroup.ts`](../src/server/services/session-cgroup.ts), covered by `session-cgroup.integration.test.ts`.

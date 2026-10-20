@@ -6,7 +6,7 @@ export const NOTIFY_USER_TOOL_NAME = 'notify_user';
 
 /**
  * Which built-in tools a session gets; null in merged settings means none.
- * `basic`: rename itself, notify the user, list sessions, and check usage; `manage`: also create, read, and stop them.
+ * `basic`: rename itself, notify the user, list sessions, check usage, and watch PRs; `manage`: also create, read, and stop them.
  */
 export type BuiltinToolsLevel = 'basic' | 'manage';
 

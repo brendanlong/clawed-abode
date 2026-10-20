@@ -15,11 +15,13 @@ import {
   reapOrphanedSessionScopes,
   reviveRunningSessions,
   stopAllSessions,
+  pullRequestWatchRunner,
   usageRunner,
 } from '@/server/services/claude-runner';
 import { initRateLimitPause } from '@/server/services/rate-limit-pause';
 import { initBuiltinMcp } from '@/server/services/builtin-mcp';
 import { initUsage } from '@/server/services/usage';
+import { initPullRequestWatch } from '@/server/services/pull-request-watch';
 import { sessionToolsPort } from '@/server/services/session-lifecycle';
 
 const log = createLogger('startup');
@@ -55,6 +57,7 @@ export async function registerNode() {
   await enableWalMode();
   initBuiltinMcp(sessionToolsPort);
   initUsage(usageRunner);
+  initPullRequestWatch(pullRequestWatchRunner);
   await initRateLimitPause(rateLimitPauseRunner);
   // In the background: other sessions can only message a session whose CLI is up.
   void reviveRunningSessions().catch((err) => log.error('Error reviving sessions', toError(err)));

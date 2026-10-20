@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { createLogger, toError } from '@/lib/logger';
 import { env } from '@/lib/env';
-import type { PullRequestInfo } from '@/lib/pull-request';
+import { rollUpChecks, type ChecksState, type GitHubPullRequest } from '@/lib/pull-request';
 
 const log = createLogger('github');
 
@@ -31,10 +31,26 @@ export async function githubFetchResponse(
 
   const notModified = response.status === 304 && extraHeaders?.['If-None-Match'] !== undefined;
   if (!response.ok && !notModified) {
-    throw new GitHubApiError(response.status, path, await readApiMessage(response));
+    const apiMessage = await readApiMessage(response);
+    throw new GitHubApiError(
+      response.status,
+      path,
+      apiMessage,
+      isRateLimited(response, apiMessage)
+    );
   }
 
   return response;
+}
+
+/** GitHub answers both rate limits with a 403 (or 429), told apart from a permission error by these. */
+function isRateLimited(response: Response, apiMessage: string | undefined): boolean {
+  return (
+    response.status === 429 ||
+    response.headers.get('x-ratelimit-remaining') === '0' ||
+    response.headers.get('retry-after') !== null ||
+    /rate limit/i.test(apiMessage ?? '')
+  );
 }
 
 /**
@@ -135,7 +151,8 @@ export class GitHubApiError extends Error {
   constructor(
     public readonly status: number,
     public readonly path: string,
-    public readonly apiMessage?: string
+    public readonly apiMessage?: string,
+    public readonly rateLimited = false
   ) {
     super(`GitHub API error: ${status} for ${path}${apiMessage ? `: ${apiMessage}` : ''}`);
     this.name = 'GitHubApiError';
@@ -217,7 +234,10 @@ export async function githubFetchAllPages<T>(
 // PR lookup
 // =============================================================================
 
-const prLookupCache = new ConditionalGetCache<PullRequestInfo | null>(500);
+const prLookupCache = new ConditionalGetCache<GitHubPullRequest | null>(500);
+const openPrPageCache = new ConditionalGetCache<ListPage<GitHubPullRequest>>(200);
+const checkRunsCache = new ConditionalGetCache<z.infer<typeof checkRunsSchema>>(500);
+const commitStatusCache = new ConditionalGetCache<z.infer<typeof commitStatusSchema>>(500);
 
 const pullRequestSchema = z.object({
   number: z.number(),
@@ -228,10 +248,16 @@ const pullRequestSchema = z.object({
   html_url: z.string(),
   user: z.object({ login: z.string() }).nullable(),
   updated_at: z.string(),
+  head: z.object({ ref: z.string(), sha: z.string() }),
 });
 const pullRequestListSchema = z.array(pullRequestSchema);
 
-function toPullRequestInfo(pr: z.infer<typeof pullRequestSchema>): PullRequestInfo {
+const checkRunsSchema = z.object({
+  check_runs: z.array(z.object({ status: z.string(), conclusion: z.string().nullable() })),
+});
+const commitStatusSchema = z.object({ statuses: z.array(z.object({ state: z.string() })) });
+
+function toGitHubPullRequest(pr: z.infer<typeof pullRequestSchema>): GitHubPullRequest {
   return {
     number: pr.number,
     title: pr.title,
@@ -240,7 +266,15 @@ function toPullRequestInfo(pr: z.infer<typeof pullRequestSchema>): PullRequestIn
     url: pr.html_url,
     author: pr.user?.login || 'unknown',
     updatedAt: pr.updated_at,
+    headBranch: pr.head.ref,
+    headSha: pr.head.sha,
   };
+}
+
+function requireToken(): string {
+  const token = env.GITHUB_TOKEN;
+  if (!token) throw new Error('GITHUB_TOKEN is not configured');
+  return token;
 }
 
 /**
@@ -251,7 +285,7 @@ function toPullRequestInfo(pr: z.infer<typeof pullRequestSchema>): PullRequestIn
 export async function fetchPullRequestForBranch(
   repoFullName: string,
   branch: string
-): Promise<PullRequestInfo | null | undefined> {
+): Promise<GitHubPullRequest | null | undefined> {
   const token = env.GITHUB_TOKEN;
   if (!token) {
     return undefined;
@@ -264,7 +298,7 @@ export async function fetchPullRequestForBranch(
   try {
     return await prLookupCache.fetch(path, token, async (response) => {
       const pulls = await parseGitHubResponse(response, pullRequestListSchema, path);
-      return pulls.length > 0 ? toPullRequestInfo(pulls[0]) : null;
+      return pulls.length > 0 ? toGitHubPullRequest(pulls[0]) : null;
     });
   } catch (err) {
     log.error('Failed to fetch PR for branch', toError(err), {
@@ -272,5 +306,64 @@ export async function fetchPullRequestForBranch(
       branch,
     });
     return undefined;
+  }
+}
+
+/** Every open PR in a repo (up to the page cap). Throws when the lookup fails. */
+export async function fetchOpenPullRequests(repoFullName: string): Promise<GitHubPullRequest[]> {
+  const path = `/repos/${repoFullName}/pulls?state=open`;
+  const { items } = await githubFetchAllPages(
+    path,
+    pullRequestSchema.transform(toGitHubPullRequest),
+    requireToken(),
+    openPrPageCache
+  );
+  return items;
+}
+
+/** One PR by number. Throws when the lookup fails. */
+export async function fetchPullRequest(
+  repoFullName: string,
+  number: number
+): Promise<GitHubPullRequest> {
+  const path = `/repos/${repoFullName}/pulls/${number}`;
+  const pr = await prLookupCache.fetch(path, requireToken(), async (response) =>
+    toGitHubPullRequest(await parseGitHubResponse(response, pullRequestSchema, path))
+  );
+  if (!pr) throw new Error(`No pull request at ${path}`);
+  return pr;
+}
+
+/**
+ * The CI rollup for a commit, from its check runs (Actions and other apps) and
+ * commit statuses (older integrations). Null when the token can't read them (a
+ * fine-grained token needs Checks and Commit statuses read access); any other
+ * failure throws, so a transient error never reads as "unknown".
+ */
+export async function fetchChecks(repoFullName: string, sha: string): Promise<ChecksState | null> {
+  const token = env.GITHUB_TOKEN;
+  if (!token) return null;
+  const runsPath = `/repos/${repoFullName}/commits/${sha}/check-runs?per_page=100`;
+  const statusPath = `/repos/${repoFullName}/commits/${sha}/status`;
+  try {
+    const [runs, status] = await Promise.all([
+      checkRunsCache.fetch(runsPath, token, (response) =>
+        parseGitHubResponse(response, checkRunsSchema, runsPath)
+      ),
+      commitStatusCache.fetch(statusPath, token, (response) =>
+        parseGitHubResponse(response, commitStatusSchema, statusPath)
+      ),
+    ]);
+    return rollUpChecks(runs.check_runs, status.statuses);
+  } catch (err) {
+    const unreadable =
+      err instanceof GitHubApiError &&
+      !err.rateLimited &&
+      (err.status === 403 || err.status === 404);
+    if (unreadable) {
+      log.debug('Checks are not readable', { repoFullName, sha, error: toError(err).message });
+      return null;
+    }
+    throw err;
   }
 }

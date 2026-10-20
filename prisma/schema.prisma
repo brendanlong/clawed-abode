@@ -34,7 +34,8 @@ model Session {
   status             String    @default("creating") // creating, running, stopped, error, archived
   statusMessage      String? // Human-readable progress message during creation
   currentBranch      String? // Current git branch (detected after each turn)
-  pullRequest        String? // JSON PullRequestInfo for currentBranch; null = none/unknown (see src/lib/pull-request.ts)
+  pullRequestId      String? // The PullRequest for currentBranch; null = none/unknown
+  pullRequest        String? // Copy of the linked PullRequest's info, written only by pull-request-store.ts so it always matches
   prCheckedAt        DateTime? // When GitHub was last asked about pullRequest, successfully or not; drives the staleness refresh (see src/lib/pull-request.ts)
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
@@ -61,13 +62,58 @@ model Session {
   usageAlertFiveHour      Int?
   usageAlertWeekly        Int?
 
-  messages      Message[]
-  queuedPrompts QueuedPrompt[]
-  usage         SessionUsage?
+  linkedPullRequest  PullRequest?       @relation(fields: [pullRequestId], references: [id], onDelete: SetNull)
+  messages           Message[]
+  queuedPrompts      QueuedPrompt[]
+  usage              SessionUsage?
+  pullRequestWatches PullRequestWatch[]
 
   @@index([lastActivityAt, id]) // sessions.list default keyset order (status != 'archived')
   @@index([status, lastActivityAt, id]) // sessions.list keyset order filtered by status
   @@index([agentName]) // sessions.byAgentName: linking a message to the session that sent it
+  @@index([pullRequestId]) // copying a PullRequest's info to the sessions linked to it
+}
+
+// The latest known state of one GitHub pull request, shared by session PR badges
+// and PR watches so both always see the same thing (src/server/services/pull-request-store.ts).
+model PullRequest {
+  id           String   @id @default(uuid())
+  repoFullName String
+  number       Int
+  info         String // JSON PullRequestInfo (src/lib/pull-request.ts)
+  fetchedAt    DateTime // When the GitHub lookup that wrote info started; one that started earlier never overwrites it
+
+  sessions    Session[]
+  watchEvents PullRequestWatchEvent[]
+
+  @@unique([repoFullName, number])
+}
+
+// A session's subscription to a repo's PR changes, set with the watch_pull_requests
+// tool (src/server/services/pull-request-watch.ts).
+model PullRequestWatch {
+  id           String    @id @default(uuid())
+  sessionId    String
+  repoFullName String
+  baselinedAt  DateTime? // When the PRs already in the repo were marked as seen; until then nothing is delivered
+  createdAt    DateTime  @default(now())
+
+  session Session                 @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  events  PullRequestWatchEvent[]
+
+  @@unique([sessionId, repoFullName])
+}
+
+// One state of a PR a watch has already seen, so each is delivered once.
+model PullRequestWatchEvent {
+  watchId       String
+  pullRequestId String
+  key           String // See watchEventKey in src/lib/pull-request-watch.ts
+
+  watch       PullRequestWatch @relation(fields: [watchId], references: [id], onDelete: Cascade)
+  pullRequest PullRequest      @relation(fields: [pullRequestId], references: [id], onDelete: Cascade)
+
+  @@id([watchId, pullRequestId, key])
 }
 
 // A user prompt held back while the session is paused for a subscription rate

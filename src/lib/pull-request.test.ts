@@ -3,7 +3,10 @@ import {
   isPrSnapshotStale,
   mayChangeBranchOrPr,
   parsePullRequestJson,
-  serializePullRequest,
+  reusableChecks,
+  rollUpChecks,
+  settleChecks,
+  NO_CHECKS_GRACE_MS,
   MERGED_PR_SNAPSHOT_TTL_MS,
   PR_SNAPSHOT_TTL_MS,
   type PrRefreshCandidate,
@@ -18,15 +21,14 @@ const pr: PullRequestInfo = {
   url: 'https://github.com/o/r/pull/3',
   author: 'a',
   updatedAt: '2024-01-01T00:00:00Z',
+  headBranch: 'feature',
+  headSha: 'abc',
+  checks: 'pending',
 };
 
 describe('pull-request JSON column', () => {
   it('round-trips a PR', () => {
-    expect(parsePullRequestJson(serializePullRequest(pr))).toEqual(pr);
-  });
-
-  it('serializes "no PR" as null', () => {
-    expect(serializePullRequest(null)).toBeNull();
+    expect(parsePullRequestJson(JSON.stringify(pr))).toEqual(pr);
   });
 
   it('reads null, malformed JSON and wrong shapes as "no PR"', () => {
@@ -34,6 +36,75 @@ describe('pull-request JSON column', () => {
     expect(parsePullRequestJson('{oops')).toBeNull();
     expect(parsePullRequestJson(JSON.stringify({ number: 'x' }))).toBeNull();
     expect(parsePullRequestJson(JSON.stringify({ ...pr, state: 'weird' }))).toBeNull();
+  });
+});
+
+describe('reusableChecks', () => {
+  const { checks: _checks, ...fetched } = pr;
+  const merged = { ...fetched, state: 'merged' as const };
+
+  it('keeps a finished PR’s checks for the same head commit', () => {
+    expect(reusableChecks(merged, { ...pr, checks: 'failure' })).toBe('failure');
+    expect(reusableChecks(merged, { ...pr, checks: null })).toBeNull();
+  });
+
+  it('always refetches an open PR’s checks, which can change without a push', () => {
+    expect(reusableChecks(fetched, { ...pr, checks: 'success' })).toBeUndefined();
+    expect(reusableChecks(fetched, { ...pr, checks: 'none' })).toBeUndefined();
+  });
+
+  it('refetches for a new head commit or a PR never stored', () => {
+    expect(reusableChecks({ ...merged, headSha: 'new' }, { ...pr, checks: 'success' })).toBe(
+      undefined
+    );
+    expect(reusableChecks(merged, null)).toBeUndefined();
+  });
+});
+
+describe('settleChecks', () => {
+  const updatedAt = '2024-01-01T00:00:00Z';
+  const updatedMs = Date.parse(updatedAt);
+
+  it('reads "no checks" just after the PR changed as pending', () => {
+    expect(settleChecks('none', updatedAt, updatedMs + 1000)).toBe('pending');
+    expect(settleChecks('none', updatedAt, updatedMs + NO_CHECKS_GRACE_MS)).toBe('none');
+  });
+
+  it('leaves every other result alone', () => {
+    expect(settleChecks('success', updatedAt, updatedMs)).toBe('success');
+    expect(settleChecks(null, updatedAt, updatedMs)).toBeNull();
+  });
+});
+
+describe('rollUpChecks', () => {
+  const run = (status: string, conclusion: string | null = null) => ({ status, conclusion });
+
+  it('is none without any checks', () => {
+    expect(rollUpChecks([], [])).toBe('none');
+  });
+
+  it('passes when every run and status passed', () => {
+    expect(
+      rollUpChecks(
+        [run('completed', 'success'), run('completed', 'skipped'), run('completed', 'neutral')],
+        [{ state: 'success' }]
+      )
+    ).toBe('success');
+  });
+
+  it('is pending while anything runs', () => {
+    expect(rollUpChecks([run('completed', 'success'), run('in_progress')], [])).toBe('pending');
+    expect(rollUpChecks([], [{ state: 'pending' }])).toBe('pending');
+  });
+
+  it('fails as soon as anything failed, even with checks still running', () => {
+    expect(rollUpChecks([run('queued'), run('completed', 'failure')], [])).toBe('failure');
+    expect(rollUpChecks([run('completed', 'timed_out')], [])).toBe('failure');
+    expect(rollUpChecks([], [{ state: 'error' }])).toBe('failure');
+  });
+
+  it('treats an unknown conclusion as a failure', () => {
+    expect(rollUpChecks([run('completed', 'something_new')], [])).toBe('failure');
   });
 });
 

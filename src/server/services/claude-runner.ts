@@ -81,6 +81,7 @@ import { requestAttention } from './session-attention';
 import { buildLiveMcpServersRecord, buildSdkOptions } from './sdk-options';
 import { cancelBranchPrRefresh, detectBranchAndPr } from './session-branch-pr';
 import { checkUsageAlerts, type UsagePort } from './usage';
+import type { PullRequestWatchPort } from './pull-request-watch';
 
 const log = createLogger('claude-runner');
 
@@ -693,14 +694,16 @@ export async function sendUserMessage(
 /**
  * Send an app-originated message (e.g. a background GPT agent's result) to a
  * session whose query is live. Dropped otherwise, so it can never revive a
- * stopped, archived or crashed session, or one mid-shutdown.
+ * stopped, archived or crashed session, or one mid-shutdown. Resolves to whether
+ * it was sent.
  */
-export async function deliverAppMessage(sessionId: string, text: string): Promise<void> {
+export async function deliverAppMessage(sessionId: string, text: string): Promise<boolean> {
   if (shutdown.started || !sessions.get(sessionId)?.live) {
     log.info('Dropped an app message for a session without a live query', { sessionId });
-    return;
+    return false;
   }
   await sendUserMessage(sessionId, text, [], { userInitiated: false });
+  return true;
 }
 
 /** The runner as the rate-limit pause sees it; handed over at startup. */
@@ -752,6 +755,12 @@ export const usageRunner: UsagePort = {
     }
     return null;
   },
+};
+
+/** The runner as PR watches see it; handed over at startup. */
+export const pullRequestWatchRunner: PullRequestWatchPort = {
+  hasLiveQuery: (sessionId) => !shutdown.started && !!sessions.get(sessionId)?.live,
+  deliverMessage: deliverAppMessage,
 };
 
 /** Transcript ids of a session's not-yet-delivered messages (seeds the client). */

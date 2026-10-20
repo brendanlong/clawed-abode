@@ -10,6 +10,9 @@ vi.mock('@/lib/logger', async () => (await import('@/test/mock-logger')).mockLog
 import {
   _clearConditionalGetCaches,
   ConditionalGetCache,
+  fetchChecks,
+  fetchOpenPullRequests,
+  fetchPullRequest,
   fetchPullRequestForBranch,
   GitHubApiError,
   githubFetchResponse,
@@ -163,6 +166,7 @@ describe('github service', () => {
       draft: false,
       merged_at: null,
       html_url: 'https://github.com/owner/repo/pull/42',
+      head: { ref: 'feature', sha: 'abc' },
       user: { login: 'author' },
       created_at: '2024-01-01T00:00:00Z',
       updated_at: '2024-01-02T00:00:00Z',
@@ -219,6 +223,7 @@ describe('github service', () => {
           draft: false,
           merged_at: null,
           html_url: 'https://github.com/owner/repo/pull/42',
+          head: { ref: 'feature', sha: 'abc' },
           user: { login: 'author' },
           created_at: '2024-01-01T00:00:00Z',
           updated_at: '2024-01-02T00:00:00Z',
@@ -236,6 +241,8 @@ describe('github service', () => {
         url: 'https://github.com/owner/repo/pull/42',
         author: 'author',
         updatedAt: '2024-01-02T00:00:00Z',
+        headBranch: 'feature',
+        headSha: 'abc',
       });
 
       expect(mockFetch).toHaveBeenCalledWith(
@@ -262,6 +269,7 @@ describe('github service', () => {
           draft: false,
           merged_at: '2024-01-03T00:00:00Z',
           html_url: 'https://github.com/owner/repo/pull/10',
+          head: { ref: 'feature', sha: 'abc' },
           user: { login: 'author' },
           created_at: '2024-01-01T00:00:00Z',
           updated_at: '2024-01-03T00:00:00Z',
@@ -284,6 +292,7 @@ describe('github service', () => {
           draft: true,
           merged_at: null,
           html_url: 'https://github.com/owner/repo/pull/5',
+          head: { ref: 'feature', sha: 'abc' },
           user: { login: 'author' },
           created_at: '2024-01-01T00:00:00Z',
           updated_at: '2024-01-02T00:00:00Z',
@@ -331,6 +340,7 @@ describe('github service', () => {
           draft: false,
           merged_at: null,
           html_url: 'https://github.com/owner/repo/pull/7',
+          head: { ref: 'feature', sha: 'abc' },
           user: null,
           created_at: '2024-01-01T00:00:00Z',
           updated_at: '2024-01-02T00:00:00Z',
@@ -352,6 +362,81 @@ describe('github service', () => {
         expect.stringContaining('head=' + encodeURIComponent('myorg:feature/test')),
         expect.any(Object)
       );
+    });
+  });
+  describe('watched-repo lookups', () => {
+    const pull = (number: number) => ({
+      number,
+      title: `PR ${number}`,
+      state: 'open',
+      draft: false,
+      merged_at: null,
+      html_url: `https://github.com/owner/repo/pull/${number}`,
+      head: { ref: `branch-${number}`, sha: `sha-${number}` },
+      user: { login: 'author' },
+      updated_at: '2024-01-02T00:00:00Z',
+    });
+
+    it('lists every open PR in a repo', async () => {
+      mockFetch.mockResolvedValue(createMockResponse([pull(1), pull(2)]));
+
+      const prs = await fetchOpenPullRequests('owner/repo');
+
+      expect(prs.map((pr) => [pr.number, pr.headBranch, pr.headSha])).toEqual([
+        [1, 'branch-1', 'sha-1'],
+        [2, 'branch-2', 'sha-2'],
+      ]);
+      expect(mockFetch.mock.calls[0][0]).toContain('/repos/owner/repo/pulls?state=open');
+    });
+
+    it('throws when the open list or a single PR can’t be read, so the caller can tell', async () => {
+      mockFetch.mockResolvedValue(createMockResponse({}, 404));
+      await expect(fetchOpenPullRequests('owner/repo')).rejects.toThrow(GitHubApiError);
+      await expect(fetchPullRequest('owner/repo', 3)).rejects.toThrow(GitHubApiError);
+    });
+
+    it('fetches one PR by number', async () => {
+      mockFetch.mockResolvedValue(
+        createMockResponse({ ...pull(3), state: 'closed', merged_at: '2024-01-03T00:00:00Z' })
+      );
+
+      expect((await fetchPullRequest('owner/repo', 3)).state).toBe('merged');
+      expect(mockFetch.mock.calls[0][0]).toBe('https://api.github.com/repos/owner/repo/pulls/3');
+    });
+
+    it('rolls a commit’s check runs and statuses up together', async () => {
+      mockFetch.mockImplementation(async (url: string) =>
+        url.includes('/check-runs')
+          ? createMockResponse({ check_runs: [{ status: 'completed', conclusion: 'success' }] })
+          : createMockResponse({ statuses: [{ state: 'pending' }] })
+      );
+
+      expect(await fetchChecks('owner/repo', 'abc')).toBe('pending');
+    });
+
+    it('reads checks the token can’t see as unknown, but throws on a transient failure', async () => {
+      mockFetch.mockResolvedValue(createMockResponse({}, 403));
+      expect(await fetchChecks('owner/repo', 'abc')).toBeNull();
+
+      mockFetch.mockResolvedValue(createMockResponse({}, 502));
+      await expect(fetchChecks('owner/repo', 'abc')).rejects.toThrow(GitHubApiError);
+
+      mockFetch.mockResolvedValue(
+        createMockResponse({ message: 'API rate limit exceeded for user ID 1.' }, 403)
+      );
+      await expect(fetchChecks('owner/repo', 'abc')).rejects.toThrow(GitHubApiError);
+
+      mockFetch.mockResolvedValue({
+        ...createMockResponse({ message: 'Forbidden' }, 403),
+        headers: { get: (name: string) => (name === 'x-ratelimit-remaining' ? '0' : null) },
+      });
+      await expect(fetchChecks('owner/repo', 'abc')).rejects.toThrow(GitHubApiError);
+
+      delete process.env.GITHUB_TOKEN;
+      resetEnvCache();
+      mockFetch.mockClear();
+      expect(await fetchChecks('owner/repo', 'abc')).toBeNull();
+      expect(mockFetch).not.toHaveBeenCalled();
     });
   });
 });

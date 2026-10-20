@@ -5,13 +5,16 @@ type SessionViewRow = { pullRequest: string | null; status: string };
 
 /**
  * The shape of a session as the API returns it: the DB row with the JSON
- * `pullRequest` column decoded, `prCheckedAt` dropped (it only feeds the
- * server's own staleness check), and whether Start / Stop / Archive apply now —
+ * `pullRequest` column decoded, `prCheckedAt` and `pullRequestId` dropped (they
+ * only feed the server's own PR refresh), and whether Start / Stop / Archive apply now —
  * from the server's transition table, so the UI never restates the rule. Every
  * router/SSE path that hands a session to the client goes through
  * {@link toSessionView} so the two can't drift.
  */
-export type SessionView<Row extends SessionViewRow> = Omit<Row, 'pullRequest' | 'prCheckedAt'> & {
+export type SessionView<Row extends SessionViewRow> = Omit<
+  Row,
+  'pullRequest' | 'prCheckedAt' | 'pullRequestId'
+> & {
   pullRequest: PullRequestInfo | null;
   canStart: boolean;
   canStop: boolean;
@@ -19,7 +22,11 @@ export type SessionView<Row extends SessionViewRow> = Omit<Row, 'pullRequest' | 
 };
 
 export function toSessionView<Row extends SessionViewRow>(row: Row): SessionView<Row> {
-  const { prCheckedAt: _prCheckedAt, ...rest } = row as Row & { prCheckedAt?: Date | null };
+  const {
+    prCheckedAt: _prCheckedAt,
+    pullRequestId: _pullRequestId,
+    ...rest
+  } = row as Row & { prCheckedAt?: Date | null; pullRequestId?: string | null };
   return {
     ...rest,
     pullRequest: parsePullRequestJson(row.pullRequest),

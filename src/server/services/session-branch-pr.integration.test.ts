@@ -5,14 +5,22 @@ import { join } from 'node:path';
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { setupTestDb, teardownTestDb, testPrisma, clearTestDb } from '@/test/setup-test-db';
 import { waitFor } from '@/test/wait-for';
-import { parsePullRequestJson, PR_SNAPSHOT_TTL_MS, type PullRequestInfo } from '@/lib/pull-request';
+import {
+  parsePullRequestJson,
+  PR_SNAPSHOT_TTL_MS,
+  type GitHubPullRequest,
+  type PullRequestInfo,
+} from '@/lib/pull-request';
 
 const mockSseEvents = { emitSessionUpdate: vi.fn() };
 vi.mock('./events', () => ({ sseEvents: mockSseEvents }));
 
-vi.mock('./github', () => ({ fetchPullRequestForBranch: vi.fn() }));
+vi.mock('./github', () => ({
+  fetchPullRequestForBranch: vi.fn(),
+  fetchChecks: vi.fn().mockResolvedValue(null),
+}));
 
-const pr: PullRequestInfo = {
+const fetched: GitHubPullRequest = {
   number: 7,
   title: 'A PR',
   state: 'open',
@@ -20,7 +28,10 @@ const pr: PullRequestInfo = {
   url: 'https://github.com/o/r/pull/7',
   author: 'someone',
   updatedAt: '2024-01-01T00:00:00Z',
+  headBranch: 'feat-a',
+  headSha: 'abc',
 };
+const pr: PullRequestInfo = { ...fetched, checks: null };
 
 // Imported after setupTestDb: both modules reach @/lib/prisma at load time.
 let fetchPullRequestForBranch: typeof import('./github').fetchPullRequestForBranch;
@@ -69,7 +80,7 @@ afterAll(async () => {
 beforeEach(async () => {
   await clearTestDb();
   vi.clearAllMocks();
-  vi.mocked(fetchPullRequestForBranch).mockResolvedValue(pr);
+  vi.mocked(fetchPullRequestForBranch).mockResolvedValue(fetched);
 });
 
 describe('refreshStalePullRequests', () => {
@@ -139,7 +150,7 @@ describe('refreshStalePullRequests', () => {
       prCheckedAt: staleCheck,
       pullRequest: JSON.stringify(pr),
     });
-    vi.mocked(fetchPullRequestForBranch).mockResolvedValue({ ...pr, state: 'closed' });
+    vi.mocked(fetchPullRequestForBranch).mockResolvedValue({ ...fetched, state: 'closed' });
 
     refreshStalePullRequests([await sessionRow(id)]);
 
@@ -156,7 +167,7 @@ describe('refreshStalePullRequests', () => {
       vi.mocked(fetchPullRequestForBranch).mockImplementation(async () => {
         resolve();
         await new Promise<void>((r) => (releaseFetch = r));
-        return pr;
+        return fetched;
       });
     });
 
@@ -193,7 +204,7 @@ describe('refreshStalePullRequests', () => {
       peakInFlight = Math.max(peakInFlight, inFlight);
       await new Promise<void>((r) => releases.push(r));
       inFlight--;
-      return pr;
+      return fetched;
     });
 
     refreshStalePullRequests(await Promise.all(sessions.map((s) => sessionRow(s.id))));
@@ -264,12 +275,12 @@ describe('detectBranchAndPr', () => {
 
   it('keeps the answer of the lookup that started last, whatever order they finish in', async () => {
     const { id } = await createSession();
-    const merged: PullRequestInfo = { ...pr, state: 'merged' };
+    const merged: GitHubPullRequest = { ...fetched, state: 'merged' };
     let releaseSlow!: () => void;
     vi.mocked(fetchPullRequestForBranch)
       .mockImplementationOnce(async () => {
         await new Promise<void>((r) => (releaseSlow = r));
-        return pr;
+        return fetched;
       })
       .mockResolvedValueOnce(merged);
 

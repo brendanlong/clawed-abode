@@ -11,6 +11,9 @@ const basePr: PullRequestInfo = {
   url: 'https://github.com/owner/repo/pull/42',
   author: 'testuser',
   updatedAt: '2024-01-01T00:00:00Z',
+  headBranch: 'feature-x',
+  headSha: 'abc123',
+  checks: null,
 };
 
 describe('PrStatusIndicator', () => {
@@ -49,6 +52,26 @@ describe('PrStatusIndicator', () => {
 
     const link = screen.getByRole('link');
     expect(link).toHaveAttribute('aria-label', 'PR #42: Add feature X (Draft)');
+  });
+
+  it('includes the CI status of an open PR in its label', () => {
+    render(<PrStatusIndicator pullRequest={{ ...basePr, checks: 'failure' }} />);
+
+    expect(screen.getByRole('link')).toHaveAttribute(
+      'aria-label',
+      'PR #42: Add feature X (Open, CI failed)'
+    );
+  });
+
+  it('leaves CI out when there is nothing to say or the PR is no longer open', () => {
+    const { rerender } = render(<PrStatusIndicator pullRequest={{ ...basePr, checks: 'none' }} />);
+    expect(screen.getByRole('link')).toHaveAttribute('aria-label', 'PR #42: Add feature X (Open)');
+
+    rerender(<PrStatusIndicator pullRequest={{ ...basePr, state: 'merged', checks: 'success' }} />);
+    expect(screen.getByRole('link')).toHaveAttribute(
+      'aria-label',
+      'PR #42: Add feature X (Merged)'
+    );
   });
 
   it('applies green color class for open PRs', () => {

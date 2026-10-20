@@ -44,6 +44,7 @@ vi.mock('./uploads', () => ({ resolveUploadPaths: mockResolveUploadPaths }));
 
 vi.mock('./github', () => ({
   fetchPullRequestForBranch: vi.fn().mockResolvedValue(undefined),
+  fetchChecks: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock('./worktree-manager', () => ({
@@ -461,7 +462,10 @@ describe('claude-runner persistent streaming loop', () => {
       url: 'https://github.com/o/r/pull/5',
       author: 'me',
       updatedAt: '2024-01-01T00:00:00Z',
+      headBranch: 'feat-a',
+      headSha: 'abc',
     };
+    const storedInfo = JSON.stringify({ ...pr, checks: null });
 
     afterEach(async () => {
       const { getCurrentBranch } = await import('./worktree-manager');
@@ -501,7 +505,7 @@ describe('claude-runner persistent streaming loop', () => {
       );
       const row = await testPrisma.session.findUnique({ where: { id } });
       expect(row?.currentBranch).toBe('feat-a');
-      expect(JSON.parse(row!.pullRequest!)).toEqual(pr);
+      expect(row!.pullRequest).toBe(storedInfo);
       expect(fetchPullRequestForBranch).toHaveBeenCalledWith('o/r', 'feat-a');
       expect(mockSseEvents.emitSessionUpdate).toHaveBeenCalledWith(
         id,
@@ -522,7 +526,10 @@ describe('claude-runner persistent streaming loop', () => {
           status: 'running',
           repoUrl: 'https://github.com/o/r.git',
           currentBranch: 'feat-a',
-          pullRequest: JSON.stringify(pr),
+          pullRequest: storedInfo,
+          linkedPullRequest: {
+            create: { repoFullName: 'o/r', number: 5, info: storedInfo, fetchedAt: new Date() },
+          },
         },
       });
 
@@ -549,7 +556,10 @@ describe('claude-runner persistent streaming loop', () => {
           status: 'running',
           repoUrl: 'https://github.com/o/r.git',
           currentBranch: 'feat-a',
-          pullRequest: JSON.stringify(pr),
+          pullRequest: storedInfo,
+          linkedPullRequest: {
+            create: { repoFullName: 'o/r', number: 5, info: storedInfo, fetchedAt: new Date(0) },
+          },
           // Already named, so establishment announces nothing either.
           agentName: 'named-1234',
         },
@@ -562,7 +572,7 @@ describe('claude-runner persistent streaming loop', () => {
 
       const row = await testPrisma.session.findUnique({ where: { id } });
       expect(row?.currentBranch).toBe('feat-a');
-      expect(JSON.parse(row!.pullRequest!)).toEqual(pr);
+      expect(row!.pullRequest).toBe(storedInfo);
       // The check still counts against the staleness TTL...
       expect(row?.prCheckedAt).not.toBeNull();
       // ...but no session event means no needless list refetch on every turn end.

@@ -37,7 +37,7 @@ const port = {
   createSession: vi.fn(async () => ({ id: 'new-id' })),
   stopSession: vi.fn(async () => ({ status: 'stopped' })),
   isTurnActive: vi.fn(() => false),
-  deliverMessage: vi.fn(async () => {}),
+  deliverMessage: vi.fn(async () => true),
 } satisfies SessionToolsPort;
 
 async function connect(
@@ -88,6 +88,7 @@ describe('built-in MCP server', () => {
       'notify_user',
       'rename_session',
       'set_usage_alerts',
+      'watch_pull_requests',
     ]);
     expect(await names('manage')).toEqual([
       'check_usage',
@@ -98,6 +99,7 @@ describe('built-in MCP server', () => {
       'rename_session',
       'set_usage_alerts',
       'stop_session',
+      'watch_pull_requests',
     ]);
   });
 

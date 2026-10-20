@@ -355,6 +355,9 @@ describe('sessionsRouter integration', () => {
         url: 'https://github.com/owner/repo/pull/7',
         author: 'octocat',
         updatedAt: '2024-01-01T00:00:00Z',
+        headBranch: 'add-thing',
+        headSha: 'abc',
+        checks: 'success',
       };
       await testPrisma.session.createMany({
         data: [

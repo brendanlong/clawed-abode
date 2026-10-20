@@ -18,9 +18,15 @@ describe('toSessionView', () => {
     expect(actions(status)).toEqual(expected);
   });
 
-  it('decodes the pull request and drops prCheckedAt', () => {
-    const view = toSessionView({ status: 'running', pullRequest: '{not json', prCheckedAt: null });
+  it('decodes the pull request and drops the server-only PR fields', () => {
+    const view = toSessionView({
+      status: 'running',
+      pullRequest: '{not json',
+      prCheckedAt: null,
+      pullRequestId: 'pr-1',
+    });
     expect(view.pullRequest).toBeNull();
     expect(view).not.toHaveProperty('prCheckedAt');
+    expect(view).not.toHaveProperty('pullRequestId');
   });
 });

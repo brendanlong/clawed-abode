@@ -43,11 +43,13 @@ import {
   MAX_INPUT_IMAGES,
 } from '@/lib/image-generation';
 import { DEFAULT_USAGE_ALERT_PERCENT, usageAlertPercentSchema } from '@/lib/usage';
+import { formatWatchedPullRequest } from '@/lib/pull-request-watch';
 import { runGptAgent, type GptAgentContext } from './gpt-agent';
 import { generateImage, type ImageToolContext } from './image-generation';
 import { loadHistoryPage } from './message-store';
 import { requestAttention } from './session-attention';
 import { getUsageReport, setUsageAlerts } from './usage';
+import { setPullRequestWatches } from './pull-request-watch';
 
 const log = createLogger('builtin-mcp');
 
@@ -67,7 +69,7 @@ export interface SessionToolsPort {
    * Send a message to a session's agent on the app's behalf (not the user's),
    * only if its query is live: never one that would revive a session.
    */
-  deliverMessage(sessionId: string, text: string): Promise<void>;
+  deliverMessage(sessionId: string, text: string): Promise<boolean>;
 }
 
 const portRef = processSingleton<{ port: SessionToolsPort | null }>('builtin-mcp.port', () => ({
@@ -82,6 +84,8 @@ function requirePort(): SessionToolsPort {
   if (!portRef.port) throw new Error('Built-in session tools are not initialized');
   return portRef.port;
 }
+
+const MAX_WATCHED_REPOS = 20;
 
 const TRANSCRIPT_PAGE_ROWS = 100;
 /** Pages to scan for one read; tool-heavy stretches can have little text per page. */
@@ -215,6 +219,18 @@ function basicTools(sessionId: string) {
           return textResult(
             `${enabled ? 'Usage alerts set' : 'Usage alerts off'}. Windows already past a threshold won't alert again until they reset.\n\n${JSON.stringify(report, null, 2)}`
           );
+        })
+    ),
+    tool(
+      'watch_pull_requests',
+      'Set the GitHub repos whose pull requests this session watches, replacing any earlier list; [] stops watching. While watching, you get a message when a PR in them becomes ready (open, not a draft, CI finished) at a new head commit, or is merged or closed, naming the sessions that wrote it. Returns the open PRs now.',
+      { repos: z.array(repoFullNameSchema).max(MAX_WATCHED_REPOS).describe('owner/repo names') },
+      ({ repos }) =>
+        run('watch_pull_requests', async () => {
+          const open = await setPullRequestWatches(sessionId, repos);
+          if (repos.length === 0) return textResult('Stopped watching pull requests.');
+          const list = open.length > 0 ? open.map(formatWatchedPullRequest).join('\n') : '(none)';
+          return textResult(`Watching ${repos.join(', ')}. Open pull requests:\n\n${list}`);
         })
     ),
   ];
