@@ -249,6 +249,7 @@ const pullRequestSchema = z.object({
   user: z.object({ login: z.string() }).nullable(),
   updated_at: z.string(),
   head: z.object({ ref: z.string(), sha: z.string() }),
+  base: z.object({ ref: z.string(), repo: z.object({ default_branch: z.string() }) }),
 });
 const pullRequestListSchema = z.array(pullRequestSchema);
 
@@ -268,6 +269,7 @@ function toGitHubPullRequest(pr: z.infer<typeof pullRequestSchema>): GitHubPullR
     updatedAt: pr.updated_at,
     headBranch: pr.head.ref,
     headSha: pr.head.sha,
+    stackedOn: pr.base.ref === pr.base.repo.default_branch ? null : pr.base.ref,
   };
 }
 

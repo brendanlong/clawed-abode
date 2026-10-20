@@ -167,6 +167,7 @@ describe('github service', () => {
       merged_at: null,
       html_url: 'https://github.com/owner/repo/pull/42',
       head: { ref: 'feature', sha: 'abc' },
+      base: { ref: 'main', repo: { default_branch: 'main' } },
       user: { login: 'author' },
       created_at: '2024-01-01T00:00:00Z',
       updated_at: '2024-01-02T00:00:00Z',
@@ -185,6 +186,15 @@ describe('github service', () => {
       expect(sentHeaders(1)['If-None-Match']).toBe('"v1"');
       expect(second).toEqual(first);
       expect(second?.number).toBe(42);
+    });
+
+    it('reports the base branch only when it is not the default', async () => {
+      mockFetch.mockResolvedValueOnce(createMockResponse([openPull]));
+      expect((await fetchPullRequestForBranch('owner/repo', 'feature'))?.stackedOn).toBeNull();
+
+      const stacked = { ...openPull, base: { ref: 'feature-a', repo: { default_branch: 'main' } } };
+      mockFetch.mockResolvedValueOnce(createMockResponse([stacked]));
+      expect((await fetchPullRequestForBranch('owner/repo', 'other'))?.stackedOn).toBe('feature-a');
     });
 
     it('replaces the cached answer when the PR changed', async () => {
@@ -224,6 +234,7 @@ describe('github service', () => {
           merged_at: null,
           html_url: 'https://github.com/owner/repo/pull/42',
           head: { ref: 'feature', sha: 'abc' },
+          base: { ref: 'main', repo: { default_branch: 'main' } },
           user: { login: 'author' },
           created_at: '2024-01-01T00:00:00Z',
           updated_at: '2024-01-02T00:00:00Z',
@@ -243,6 +254,7 @@ describe('github service', () => {
         updatedAt: '2024-01-02T00:00:00Z',
         headBranch: 'feature',
         headSha: 'abc',
+        stackedOn: null,
       });
 
       expect(mockFetch).toHaveBeenCalledWith(
@@ -270,6 +282,7 @@ describe('github service', () => {
           merged_at: '2024-01-03T00:00:00Z',
           html_url: 'https://github.com/owner/repo/pull/10',
           head: { ref: 'feature', sha: 'abc' },
+          base: { ref: 'main', repo: { default_branch: 'main' } },
           user: { login: 'author' },
           created_at: '2024-01-01T00:00:00Z',
           updated_at: '2024-01-03T00:00:00Z',
@@ -293,6 +306,7 @@ describe('github service', () => {
           merged_at: null,
           html_url: 'https://github.com/owner/repo/pull/5',
           head: { ref: 'feature', sha: 'abc' },
+          base: { ref: 'main', repo: { default_branch: 'main' } },
           user: { login: 'author' },
           created_at: '2024-01-01T00:00:00Z',
           updated_at: '2024-01-02T00:00:00Z',
@@ -341,6 +355,7 @@ describe('github service', () => {
           merged_at: null,
           html_url: 'https://github.com/owner/repo/pull/7',
           head: { ref: 'feature', sha: 'abc' },
+          base: { ref: 'main', repo: { default_branch: 'main' } },
           user: null,
           created_at: '2024-01-01T00:00:00Z',
           updated_at: '2024-01-02T00:00:00Z',
@@ -373,6 +388,7 @@ describe('github service', () => {
       merged_at: null,
       html_url: `https://github.com/owner/repo/pull/${number}`,
       head: { ref: `branch-${number}`, sha: `sha-${number}` },
+      base: { ref: 'main', repo: { default_branch: 'main' } },
       user: { login: 'author' },
       updated_at: '2024-01-02T00:00:00Z',
     });

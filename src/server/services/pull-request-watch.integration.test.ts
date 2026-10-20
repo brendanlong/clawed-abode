@@ -18,6 +18,7 @@ let savePullRequest: typeof import('./pull-request-store').savePullRequest;
 let remote: Map<number, GitHubPullRequest>;
 let checks: Map<string, ChecksState>;
 const live = new Set<string>();
+const busy = new Set<string>();
 /** Sessions whose query goes away between the poll's start and the delivery. */
 const dropping = new Set<string>();
 const delivered: { sessionId: string; text: string }[] = [];
@@ -33,6 +34,7 @@ function remotePr(number: number, overrides: Partial<GitHubPullRequest> = {}): G
     updatedAt: '2024-01-01T00:00:00Z',
     headBranch: `branch-${number}`,
     headSha: `sha-${number}`,
+    stackedOn: null,
     ...overrides,
   };
 }
@@ -65,6 +67,7 @@ beforeEach(async () => {
   await clearTestDb();
   vi.clearAllMocks();
   live.clear();
+  busy.clear();
   dropping.clear();
   delivered.length = 0;
   setRemote();
@@ -83,6 +86,7 @@ beforeEach(async () => {
   watch._resetPullRequestWatchState();
   watch.initPullRequestWatch({
     hasLiveQuery: (sessionId) => live.has(sessionId),
+    isTurnActive: (sessionId) => busy.has(sessionId),
     deliverMessage: async (sessionId, text) => {
       if (dropping.has(sessionId)) return false;
       delivered.push({ sessionId, text });
@@ -97,7 +101,7 @@ describe('setPullRequestWatches', () => {
     checks.set('sha-1', 'success');
     const manager = await createManager();
     const prId = await savePullRequest('o/r', remotePr(1), new Date(0));
-    await testPrisma.session.create({
+    const author = await testPrisma.session.create({
       data: {
         name: 'Author',
         repoPath: 'r',
@@ -106,12 +110,13 @@ describe('setPullRequestWatches', () => {
         pullRequestId: prId,
       },
     });
+    busy.add(author.id);
 
     const open = await watch.setPullRequestWatches(manager.id, ['O/R']);
 
     expect(open.map((pr) => pr.info.number)).toEqual([1]);
     expect(open[0].info.checks).toBe('success');
-    expect(open[0].sessions.map((s) => s.agentName)).toEqual(['author-1']);
+    expect(open[0].sessions.map((s) => [s.agentName, s.turnActive])).toEqual([['author-1', true]]);
     await watch._pollPullRequestWatches();
     expect(delivered).toEqual([]);
   });
@@ -156,7 +161,7 @@ describe('polling', () => {
     checks.set('sha-1b', 'success');
     await watch._pollPullRequestWatches();
     expect(delivered).toHaveLength(2);
-    expect(delivered[1].text).toContain('CI passed (head sha-1b)');
+    expect(delivered[1].text).toMatch(/CI passed \(head sha-1b/);
   });
 
   it('waits for a draft to be marked ready', async () => {

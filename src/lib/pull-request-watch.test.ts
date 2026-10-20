@@ -17,6 +17,7 @@ const pr: PullRequestInfo = {
   updatedAt: '2024-01-01T00:00:00Z',
   headBranch: 'fix-feeds',
   headSha: '0123456789abcdef',
+  stackedOn: null,
   checks: 'success',
 };
 
@@ -78,18 +79,51 @@ describe('formatWatchedPullRequest', () => {
       repoFullName: 'o/r',
       info: pr,
       sessions: [
-        { id: 's1', name: 'Fix feeds', status: 'running', agentName: 'fix-feeds-ab12' },
-        { id: 's2', name: 'Old try', status: 'archived', agentName: null },
+        {
+          id: 's1',
+          name: 'Fix feeds',
+          status: 'running',
+          agentName: 'fix-feeds-ab12',
+          turnActive: false,
+        },
+        { id: 's2', name: 'Old try', status: 'archived', agentName: null, turnActive: false },
       ],
     });
 
     expect(text).toBe(
       [
-        '- o/r#12 "Fix \\"feeds\\"" by me: ready for review, CI passed (head 0123456) https://github.com/o/r/pull/12',
-        '  From session "Fix feeds" (s1, running); message it with SendMessage to "fix-feeds-ab12".',
+        '- o/r#12 "Fix \\"feeds\\"" by me: ready for review, CI passed (head 0123456, updated 2024-01-01) https://github.com/o/r/pull/12',
+        '  From session "Fix feeds" (s1, running, idle); message it with SendMessage to "fix-feeds-ab12".',
         '  From session "Old try" (s2, archived).',
       ].join('\n')
     );
+  });
+
+  it('shows the day GitHub last saw activity on the PR', () => {
+    const text = formatWatchedPullRequest({
+      repoFullName: 'o/r',
+      info: { ...pr, updatedAt: '2026-09-27T23:59:59Z' },
+      sessions: [],
+    });
+    expect(text).toContain('2026-09-27');
+  });
+
+  it('names the base branch only when the PR is stacked on another', () => {
+    const stacked = (stackedOn: string | null) =>
+      formatWatchedPullRequest({ repoFullName: 'o/r', info: { ...pr, stackedOn }, sessions: [] });
+    expect(stacked('feature-a')).toContain('stacked on feature-a');
+    expect(stacked(null)).not.toContain('stacked');
+  });
+
+  it('says whether a running author session is mid-turn', () => {
+    const author = (turnActive: boolean) =>
+      formatWatchedPullRequest({
+        repoFullName: 'o/r',
+        info: pr,
+        sessions: [{ id: 's1', name: 'Fix', status: 'running', agentName: null, turnActive }],
+      });
+    expect(author(true)).toMatch(/\bbusy\b/);
+    expect(author(false)).toMatch(/\bidle\b/);
   });
 });
 

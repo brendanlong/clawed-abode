@@ -14,6 +14,8 @@ export const pullRequestInfoSchema = z.object({
   updatedAt: z.string(),
   headBranch: z.string(),
   headSha: z.string(),
+  /** The base branch when it isn't the repo's default, i.e. the PR is stacked on another. */
+  stackedOn: z.string().nullable(),
   /** For `headSha`; null when unknown (not fetched yet, or the token can't read checks). */
   checks: z.enum(CHECKS_STATES).nullable(),
 });

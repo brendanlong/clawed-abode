@@ -30,6 +30,7 @@ const fetched: GitHubPullRequest = {
   updatedAt: '2024-01-01T00:00:00Z',
   headBranch: 'feat-a',
   headSha: 'abc',
+  stackedOn: null,
 };
 const pr: PullRequestInfo = { ...fetched, checks: null };
 

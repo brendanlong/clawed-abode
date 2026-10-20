@@ -37,6 +37,7 @@ export interface PullRequestAuthorSession {
   name: string;
   status: string;
   agentName: string | null;
+  turnActive: boolean;
 }
 
 export interface WatchedPullRequest {
@@ -50,7 +51,8 @@ function formatSession(session: PullRequestAuthorSession): string {
   const reach = session.agentName
     ? `; message it with SendMessage to ${JSON.stringify(session.agentName)}`
     : '';
-  return `  From session ${JSON.stringify(session.name)} (${session.id}, ${session.status})${reach}.`;
+  const activity = session.status === 'running' ? (session.turnActive ? ', busy' : ', idle') : '';
+  return `  From session ${JSON.stringify(session.name)} (${session.id}, ${session.status}${activity})${reach}.`;
 }
 
 export function formatWatchedPullRequest({
@@ -58,7 +60,8 @@ export function formatWatchedPullRequest({
   info,
   sessions,
 }: WatchedPullRequest): string {
-  const line = `- ${repoFullName}#${info.number} ${JSON.stringify(info.title)} by ${info.author}: ${describePullRequestState(info)} (head ${info.headSha.slice(0, 7)}) ${info.url}`;
+  const stacked = info.stackedOn ? `, stacked on ${info.stackedOn}` : '';
+  const line = `- ${repoFullName}#${info.number} ${JSON.stringify(info.title)} by ${info.author}: ${describePullRequestState(info)} (head ${info.headSha.slice(0, 7)}, updated ${info.updatedAt.slice(0, 10)}${stacked}) ${info.url}`;
   return [line, ...sessions.map(formatSession)].join('\n');
 }
 

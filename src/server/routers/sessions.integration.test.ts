@@ -363,6 +363,7 @@ describe('sessionsRouter integration', () => {
         draft: false,
         url: 'https://github.com/owner/repo/pull/7',
         author: 'octocat',
+        stackedOn: null,
         updatedAt: '2024-01-01T00:00:00Z',
         headBranch: 'add-thing',
         headSha: 'abc',

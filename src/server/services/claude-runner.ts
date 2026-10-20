@@ -764,6 +764,7 @@ export const usageRunner: UsagePort = {
 /** The runner as PR watches see it; handed over at startup. */
 export const pullRequestWatchRunner: PullRequestWatchPort = {
   hasLiveQuery: (sessionId) => !shutdown.started && !!sessions.get(sessionId)?.live,
+  isTurnActive: isClaudeRunning,
   deliverMessage: deliverAppMessage,
 };
 

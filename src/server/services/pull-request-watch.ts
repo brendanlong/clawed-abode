@@ -28,6 +28,7 @@ const log = createLogger('pull-request-watch');
 
 export interface PullRequestWatchPort {
   hasLiveQuery(sessionId: string): boolean;
+  isTurnActive(sessionId: string): boolean;
   /** Send a message on the app's behalf, only to a session whose query is live. */
   deliverMessage(sessionId: string, text: string): Promise<boolean>;
 }
@@ -180,7 +181,13 @@ function eventKeys(watch: Pick<Watch, 'number'>, prs: StoredPullRequest[]): Watc
   });
 }
 
+function requirePort(): PullRequestWatchPort {
+  if (!state.port) throw new Error('PR watches are not initialized');
+  return state.port;
+}
+
 async function withAuthorSessions(prs: StoredPullRequest[]): Promise<WatchedPullRequest[]> {
+  const port = requirePort();
   const sessions = await prisma.session.findMany({
     where: { pullRequestId: { in: prs.map((pr) => pr.id) } },
     select: { id: true, name: true, status: true, agentName: true, pullRequestId: true },
@@ -191,7 +198,10 @@ async function withAuthorSessions(prs: StoredPullRequest[]): Promise<WatchedPull
     info: pr.info,
     sessions: sessions
       .filter((s) => s.pullRequestId === pr.id)
-      .map(({ pullRequestId: _pullRequestId, ...s }) => s),
+      .map(({ pullRequestId: _pullRequestId, ...s }) => ({
+        ...s,
+        turnActive: port.isTurnActive(s.id),
+      })),
   }));
 }
 
