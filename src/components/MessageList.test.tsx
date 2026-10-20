@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import type { ReactElement } from 'react';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -23,8 +23,21 @@ function renderWithTrpc(ui: ReactElement, bodies: Record<string, string> = {}) {
         if (op.path === 'claude.getToolResult') {
           const input = op.input as { messageId: string; toolUseId: string };
           requests.push({ messageId: input.messageId, toolUseId: input.toolUseId });
-          observer.next({ result: { type: 'data', data: { text: bodies[input.toolUseId] } } });
-          observer.complete();
+          const text = bodies[input.toolUseId];
+          if (text === undefined) {
+            observer.error(
+              TRPCClientError.from({
+                error: {
+                  code: -32004,
+                  message: 'Tool result not found',
+                  data: { code: 'NOT_FOUND' },
+                },
+              })
+            );
+          } else {
+            observer.next({ result: { type: 'data', data: { text } } });
+            observer.complete();
+          }
         } else {
           observer.error(TRPCClientError.from(new Error(`unexpected request: ${op.path}`)));
         }
@@ -363,6 +376,9 @@ describe('MessageList lazy tool-result bodies', () => {
     call(8, 'g1', 'Grep', { pattern: 'x' }, 'fg1'),
     result(9, 'g1', GREP_BODY, false, 'fg1'),
     result(10, 'fg1', REPORT),
+    // A result the server no longer has (BODIES lacks it).
+    call(11, 'gone', 'WebFetch', { url: 'https://example.com', prompt: 'p' }),
+    result(12, 'gone', 'y'.repeat(2000)),
   ];
 
   function renderWithServer() {
@@ -453,6 +469,28 @@ describe('MessageList lazy tool-result bodies', () => {
 
     await waitFor(async () => expect(await navigator.clipboard.readText()).toContain('alpha300'));
     expect(requests).toEqual([{ messageId: 'm2', toolUseId: 'r1' }]);
+  });
+
+  it('shows a missing body as an error at once, without retrying', async () => {
+    const user = userEvent.setup();
+    const { requests } = renderWithServer();
+
+    await user.click(cardTrigger('WebFetch'));
+
+    expect(await screen.findByText("Couldn't load the output.")).toBeInTheDocument();
+    expect(requests).toEqual([{ messageId: 'm12', toolUseId: 'gone' }]);
+  });
+
+  it('says the copy failed, and copies nothing, when an output cannot be fetched', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    renderWithServer();
+    await navigator.clipboard.writeText('before');
+
+    await user.click(copyButtonFor('WebFetch'));
+
+    expect(await screen.findByRole('button', { name: 'Copy failed' })).toBeInTheDocument();
+    expect(await navigator.clipboard.readText()).toBe('before');
   });
 
   it('copies an inline output without a fetch', async () => {

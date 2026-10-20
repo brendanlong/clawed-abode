@@ -75,6 +75,9 @@ export function createTRPCClient() {
         }),
         false: httpBatchLink({
           url: '/api/trpc',
+          // Splits a large batch (e.g. copying a message with many elided tool
+          // results) into several requests rather than one over-long GET URL.
+          maxURLLength: 2083,
           transformer: superjson,
           headers() {
             const token = getAuthToken();
