@@ -26,8 +26,6 @@ const writeInputSchema = z.object({
  * tracking how the plan file changed.
  */
 export function WriteDisplay({ tool }: { tool: ToolCall }) {
-  const hasOutput = tool.output !== undefined;
-
   const input = parseToolInput(tool.input, writeInputSchema);
   const filePath = input?.file_path ?? 'Unknown file';
   const content = input?.content ?? '';
@@ -58,35 +56,39 @@ export function WriteDisplay({ tool }: { tool: ToolCall }) {
         </ColorBadge>
       }
     >
-      {fileType !== 'text' && (
-        <div>
-          <Badge variant="secondary" className="text-xs">
-            {fileType}
-          </Badge>
-        </div>
-      )}
+      {(output) => (
+        <>
+          {fileType !== 'text' && (
+            <div>
+              <Badge variant="secondary" className="text-xs">
+                {fileType}
+              </Badge>
+            </div>
+          )}
 
-      <div>
-        <div className="flex items-center gap-2 mb-1">
-          <span className="text-green-600 dark:text-green-400 font-medium">Content</span>
-          <span className="text-muted-foreground">
-            ({lineCount} {lineCount === 1 ? 'line' : 'lines'})
-          </span>
-        </div>
-        {content ? (
-          <CodeBlock code={content} fileType={fileType} />
-        ) : (
-          <div className="text-muted-foreground italic py-2">(empty file)</div>
-        )}
-      </div>
+          <div>
+            <div className="flex items-center gap-2 mb-1">
+              <span className="text-green-600 dark:text-green-400 font-medium">Content</span>
+              <span className="text-muted-foreground">
+                ({lineCount} {lineCount === 1 ? 'line' : 'lines'})
+              </span>
+            </div>
+            {content ? (
+              <CodeBlock code={content} fileType={fileType} />
+            ) : (
+              <div className="text-muted-foreground italic py-2">(empty file)</div>
+            )}
+          </div>
 
-      {hasOutput && (
-        <ToolOutputBlock
-          label="Result:"
-          output={tool.output}
-          isError={tool.is_error}
-          maxHeight="max-h-32"
-        />
+          {output.text !== undefined && (
+            <ToolOutputBlock
+              label="Result:"
+              output={output.text}
+              isError={output.isError}
+              maxHeight="max-h-32"
+            />
+          )}
+        </>
       )}
     </ToolDisplayWrapper>
   );

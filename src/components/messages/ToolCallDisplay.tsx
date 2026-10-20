@@ -13,8 +13,6 @@ const genericInputSchema = z.object({ description: lenient(z.string()) });
  * Shows tool name, optional description, and collapsible input/output.
  */
 export function ToolCallDisplay({ tool }: { tool: ToolCall }) {
-  const hasOutput = tool.output !== undefined;
-
   const description = parseToolInput(tool.input, genericInputSchema)?.description;
 
   return (
@@ -28,20 +26,24 @@ export function ToolCallDisplay({ tool }: { tool: ToolCall }) {
       }
       doneBadge={null}
     >
-      <div>
-        <div className="text-muted-foreground mb-1">Input:</div>
-        <pre className="bg-muted p-2 rounded overflow-x-auto">
-          {JSON.stringify(tool.input, null, 2)}
-        </pre>
-      </div>
-      {hasOutput && (
-        <ToolOutputBlock
-          label="Output:"
-          output={tool.output}
-          isError={tool.is_error}
-          maxHeight="max-h-48"
-          terminal
-        />
+      {(output) => (
+        <>
+          <div>
+            <div className="text-muted-foreground mb-1">Input:</div>
+            <pre className="bg-muted p-2 rounded overflow-x-auto">
+              {JSON.stringify(tool.input, null, 2)}
+            </pre>
+          </div>
+          {output.text !== undefined && (
+            <ToolOutputBlock
+              label="Output:"
+              output={output.text}
+              isError={output.isError}
+              maxHeight="max-h-48"
+              terminal
+            />
+          )}
+        </>
       )}
     </ToolDisplayWrapper>
   );

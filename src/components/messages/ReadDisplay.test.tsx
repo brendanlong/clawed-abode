@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { ReadDisplay } from './ReadDisplay';
 import type { ToolCall } from './types';
+import { inlineResult } from '@/test/tool-result-fixtures';
 
 describe('ReadDisplay input validation', () => {
   it('keeps rendering the good fields when one input field has the wrong type', () => {
@@ -9,7 +10,7 @@ describe('ReadDisplay input validation', () => {
       name: 'Read',
       id: 'read-1',
       input: { file_path: 'src/app.ts', offset: '10' },
-      output: '1\tconst a = 1;',
+      result: inlineResult('1\tconst a = 1;'),
     };
 
     render(<ReadDisplay tool={tool} />);

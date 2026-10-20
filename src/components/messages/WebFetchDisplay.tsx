@@ -44,8 +44,6 @@ function getHostname(url: string): string {
  * Shows the URL, prompt, and formatted response.
  */
 export function WebFetchDisplay({ tool }: { tool: ToolCall }) {
-  const hasOutput = tool.output !== undefined;
-
   const input = parseToolInput(tool.input, webFetchInputSchema);
   const url = input?.url ?? '';
   const prompt = input?.prompt ?? '';
@@ -61,36 +59,40 @@ export function WebFetchDisplay({ tool }: { tool: ToolCall }) {
       subtitle={<div className="text-muted-foreground text-xs mt-1 truncate">{prompt}</div>}
       doneBadge={<ColorBadge color="cyan">Done</ColorBadge>}
     >
-      <div>
-        <div className="text-muted-foreground mb-1">URL:</div>
-        <a
-          href={url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-blue-600 dark:text-blue-400 hover:underline break-all text-sm"
-        >
-          {url}
-        </a>
-      </div>
+      {(output) => (
+        <>
+          <div>
+            <div className="text-muted-foreground mb-1">URL:</div>
+            <a
+              href={url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-600 dark:text-blue-400 hover:underline break-all text-sm"
+            >
+              {url}
+            </a>
+          </div>
 
-      <div>
-        <div className="text-muted-foreground mb-1">Prompt:</div>
-        <pre className="bg-muted p-2 rounded overflow-x-auto max-h-24 overflow-y-auto whitespace-pre-wrap text-xs">
-          {prompt}
-        </pre>
-      </div>
+          <div>
+            <div className="text-muted-foreground mb-1">Prompt:</div>
+            <pre className="bg-muted p-2 rounded overflow-x-auto max-h-24 overflow-y-auto whitespace-pre-wrap text-xs">
+              {prompt}
+            </pre>
+          </div>
 
-      {hasOutput && (
-        <div>
-          <div className="text-muted-foreground mb-1">Response:</div>
-          {tool.is_error ? (
-            <ToolOutputBlock output={tool.output} isError wrap />
-          ) : (
-            <div className="bg-muted rounded p-3 max-h-96 overflow-y-auto prose prose-sm dark:prose-invert max-w-none">
-              <MarkdownContent content={tool.output ?? ''} />
+          {output.text !== undefined && (
+            <div>
+              <div className="text-muted-foreground mb-1">Response:</div>
+              {output.isError ? (
+                <ToolOutputBlock output={output.text} isError wrap />
+              ) : (
+                <div className="bg-muted rounded p-3 max-h-96 overflow-y-auto prose prose-sm dark:prose-invert max-w-none">
+                  <MarkdownContent content={output.text ?? ''} />
+                </div>
+              )}
             </div>
           )}
-        </div>
+        </>
       )}
     </ToolDisplayWrapper>
   );

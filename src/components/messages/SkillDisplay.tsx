@@ -33,8 +33,6 @@ function SkillIcon() {
  * Shows the skill name, arguments, and output.
  */
 export function SkillDisplay({ tool }: { tool: ToolCall }) {
-  const hasOutput = tool.output !== undefined;
-
   const input = parseToolInput(tool.input, skillInputSchema);
   const skillName = input?.skill ?? 'Unknown';
   const args = input?.args;
@@ -51,24 +49,28 @@ export function SkillDisplay({ tool }: { tool: ToolCall }) {
         ) : undefined
       }
     >
-      {args && (
-        <div>
-          <div className="text-muted-foreground mb-1">Arguments:</div>
-          <code className="bg-muted px-2 py-1 rounded text-sm">{args}</code>
-        </div>
-      )}
-
-      {hasOutput && (
-        <div>
-          <div className="text-muted-foreground mb-1">Output:</div>
-          {tool.is_error ? (
-            <ToolOutputBlock output={tool.output} isError wrap />
-          ) : (
-            <div className="bg-muted rounded p-3 max-h-96 overflow-y-auto prose prose-sm dark:prose-invert max-w-none">
-              <MarkdownContent content={tool.output ?? ''} />
+      {(output) => (
+        <>
+          {args && (
+            <div>
+              <div className="text-muted-foreground mb-1">Arguments:</div>
+              <code className="bg-muted px-2 py-1 rounded text-sm">{args}</code>
             </div>
           )}
-        </div>
+
+          {output.text !== undefined && (
+            <div>
+              <div className="text-muted-foreground mb-1">Output:</div>
+              {output.isError ? (
+                <ToolOutputBlock output={output.text} isError wrap />
+              ) : (
+                <div className="bg-muted rounded p-3 max-h-96 overflow-y-auto prose prose-sm dark:prose-invert max-w-none">
+                  <MarkdownContent content={output.text ?? ''} />
+                </div>
+              )}
+            </div>
+          )}
+        </>
       )}
     </ToolDisplayWrapper>
   );

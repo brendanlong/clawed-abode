@@ -6,7 +6,6 @@ import { Badge } from '@/components/ui/badge';
 import { OctagonX, Loader2 } from 'lucide-react';
 
 import { CopyButton } from './CopyButton';
-import { ToolCallDisplay } from './ToolCallDisplay';
 import { SanitizationBadge } from './SanitizationBadge';
 import { MessageTimestamp } from './MessageTimestamp';
 import { renderContent } from './ContentRenderer';
@@ -104,14 +103,6 @@ export function MainMessageBubble({
         )}
 
         {renderContent(displayContent, toolResults)}
-
-        {content.tool_calls && content.tool_calls.length > 0 && (
-          <div className="mt-2 space-y-2">
-            {content.tool_calls.map((tool, index) => (
-              <ToolCallDisplay key={index} tool={tool} />
-            ))}
-          </div>
-        )}
 
         {sanitization && (
           <div className="mt-2">

@@ -24,8 +24,6 @@ const editInputSchema = z.object({
  * how the plan changed.
  */
 export function EditDisplay({ tool }: { tool: ToolCall }) {
-  const hasOutput = tool.output !== undefined;
-
   const input = parseToolInput(tool.input, editInputSchema);
   const filePath = input?.file_path ?? 'Unknown file';
   const oldString = input?.old_string ?? '';
@@ -52,17 +50,18 @@ export function EditDisplay({ tool }: { tool: ToolCall }) {
       subtitle={<div className="text-muted-foreground text-xs mt-1 truncate">{filePath}</div>}
       doneBadge={null}
     >
-      {/* Inline diff of old vs new content */}
-      <InlineDiff oldString={oldString} newString={newString} />
-
-      {/* Output/Result if available */}
-      {hasOutput && (
-        <ToolOutputBlock
-          label="Result:"
-          output={tool.output}
-          isError={tool.is_error}
-          maxHeight="max-h-32"
-        />
+      {(output) => (
+        <>
+          <InlineDiff oldString={oldString} newString={newString} />
+          {output.text !== undefined && (
+            <ToolOutputBlock
+              label="Result:"
+              output={output.text}
+              isError={output.isError}
+              maxHeight="max-h-32"
+            />
+          )}
+        </>
       )}
     </ToolDisplayWrapper>
   );

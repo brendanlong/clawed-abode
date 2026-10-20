@@ -58,38 +58,19 @@ function buildOptionsSummary(input: GrepInput): string {
 }
 
 /**
- * Parse grep output to count results.
- */
-function countResults(output: string, outputMode?: string): number {
-  if (!output) return 0;
-  const lines = output.split('\n').filter((l) => l.trim().length > 0);
-  if (outputMode === 'count') {
-    // Count mode returns numbers
-    return lines.reduce((sum, line) => {
-      const num = parseInt(line.split(':').pop()?.trim() ?? '0', 10);
-      return sum + (isNaN(num) ? 0 : num);
-    }, 0);
-  }
-  return lines.length;
-}
-
-/**
  * Specialized display for Grep tool calls.
  * Shows the search pattern, options, and formatted results.
  */
 export function GrepDisplay({ tool }: { tool: ToolCall }) {
-  const hasOutput = tool.output !== undefined;
-
   const input = parseToolInput(tool.input, grepInputSchema);
   const pattern = input?.pattern ?? '';
   const searchPath = input?.path;
   const outputMode = input?.output_mode ?? 'files_with_matches';
 
   const optionsSummary = useMemo(() => (input ? buildOptionsSummary(input) : ''), [input]);
-  const resultCount = useMemo(
-    () => countResults(tool.output ?? '', outputMode),
-    [tool.output, outputMode]
-  );
+  // Count mode prints `path:N` per file; the other modes print one match per line.
+  const summary = tool.result?.summary;
+  const resultCount = (outputMode === 'count' ? summary?.countTotal : summary?.nonBlankLines) ?? 0;
 
   return (
     <ToolDisplayWrapper
@@ -109,27 +90,31 @@ export function GrepDisplay({ tool }: { tool: ToolCall }) {
         </ColorBadge>
       }
     >
-      <div>
-        <div className="text-muted-foreground mb-1">Pattern:</div>
-        <code className="bg-muted px-2 py-1 rounded text-sm font-mono">{pattern}</code>
-        {optionsSummary && (
-          <div className="text-muted-foreground mt-1 text-xs">{optionsSummary}</div>
-        )}
-      </div>
+      {(output) => (
+        <>
+          <div>
+            <div className="text-muted-foreground mb-1">Pattern:</div>
+            <code className="bg-muted px-2 py-1 rounded text-sm font-mono">{pattern}</code>
+            {optionsSummary && (
+              <div className="text-muted-foreground mt-1 text-xs">{optionsSummary}</div>
+            )}
+          </div>
 
-      {hasOutput && (
-        <div>
-          <div className="text-muted-foreground mb-1">Results:</div>
-          {tool.is_error ? (
-            <ToolOutputBlock output={tool.output} isError wrap />
-          ) : tool.output?.trim() ? (
-            <pre className="bg-muted rounded p-2 max-h-96 overflow-y-auto overflow-x-auto text-sm font-mono whitespace-pre-wrap break-words">
-              {tool.output}
-            </pre>
-          ) : (
-            <div className="text-muted-foreground italic py-2">No matches found</div>
+          {output.text !== undefined && (
+            <div>
+              <div className="text-muted-foreground mb-1">Results:</div>
+              {output.isError ? (
+                <ToolOutputBlock output={output.text} isError wrap />
+              ) : output.text?.trim() ? (
+                <pre className="bg-muted rounded p-2 max-h-96 overflow-y-auto overflow-x-auto text-sm font-mono whitespace-pre-wrap break-words">
+                  {output.text}
+                </pre>
+              ) : (
+                <div className="text-muted-foreground italic py-2">No matches found</div>
+              )}
+            </div>
           )}
-        </div>
+        </>
       )}
     </ToolDisplayWrapper>
   );

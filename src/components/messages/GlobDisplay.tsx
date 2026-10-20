@@ -1,7 +1,6 @@
 'use client';
 
 import { z } from 'zod';
-import { useMemo } from 'react';
 import { cn } from '@/lib/utils';
 import { ColorBadge } from './ColorBadge';
 import { FileIcon } from './FileIcon';
@@ -75,15 +74,11 @@ const FolderIcon = () => (
  * Shows a nicely formatted list of matched files organized by directory.
  */
 export function GlobDisplay({ tool }: { tool: ToolCall }) {
-  const hasOutput = tool.output !== undefined;
-
   const inputObj = parseToolInput(tool.input, globInputSchema);
   const pattern = inputObj?.pattern ?? '';
   const searchPath = inputObj?.path;
 
-  const files = useMemo(() => parseGlobOutput(tool.output ?? ''), [tool.output]);
-
-  const groupedFiles = useMemo(() => groupByDirectory(files), [files]);
+  const fileCount = tool.result?.summary.nonBlankLines ?? 0;
 
   return (
     <ToolDisplayWrapper
@@ -94,53 +89,59 @@ export function GlobDisplay({ tool }: { tool: ToolCall }) {
       }
       doneBadge={
         <ColorBadge color="green">
-          {files.length} {files.length === 1 ? 'file' : 'files'}
+          {fileCount} {fileCount === 1 ? 'file' : 'files'}
         </ColorBadge>
       }
     >
-      <div>
-        <div className="text-muted-foreground mb-1">Pattern:</div>
-        <code className="bg-muted px-2 py-1 rounded text-sm">{pattern}</code>
-        {searchPath && (
-          <span className="text-muted-foreground ml-2">
-            in <code className="bg-muted px-1.5 py-0.5 rounded">{searchPath}</code>
-          </span>
-        )}
-      </div>
+      {(output) => (
+        <>
+          <div>
+            <div className="text-muted-foreground mb-1">Pattern:</div>
+            <code className="bg-muted px-2 py-1 rounded text-sm">{pattern}</code>
+            {searchPath && (
+              <span className="text-muted-foreground ml-2">
+                in <code className="bg-muted px-1.5 py-0.5 rounded">{searchPath}</code>
+              </span>
+            )}
+          </div>
 
-      {hasOutput && (
-        <div>
-          <div className="text-muted-foreground mb-1">Matches:</div>
-          {tool.is_error ? (
-            <ToolOutputBlock output={tool.output} isError maxHeight="max-h-48" />
-          ) : files.length === 0 ? (
-            <div className="text-muted-foreground italic py-2">No files matched</div>
-          ) : (
-            <div className="bg-muted rounded p-2 max-h-64 overflow-y-auto space-y-2">
-              {Array.from(groupedFiles.entries()).map(([directory, dirFiles]) => (
-                <div key={directory || '__root__'}>
-                  {directory && (
-                    <div className="flex items-center gap-1.5 text-muted-foreground mb-1">
-                      <FolderIcon />
-                      <span className="font-mono text-xs">{directory}/</span>
-                    </div>
+          {output.text !== undefined && (
+            <div>
+              <div className="text-muted-foreground mb-1">Matches:</div>
+              {output.isError ? (
+                <ToolOutputBlock output={output.text} isError maxHeight="max-h-48" />
+              ) : output.text.trim() === '' ? (
+                <div className="text-muted-foreground italic py-2">No files matched</div>
+              ) : (
+                <div className="bg-muted rounded p-2 max-h-64 overflow-y-auto space-y-2">
+                  {Array.from(groupByDirectory(parseGlobOutput(output.text)).entries()).map(
+                    ([directory, dirFiles]) => (
+                      <div key={directory || '__root__'}>
+                        {directory && (
+                          <div className="flex items-center gap-1.5 text-muted-foreground mb-1">
+                            <FolderIcon />
+                            <span className="font-mono text-xs">{directory}/</span>
+                          </div>
+                        )}
+                        <ul className={cn('space-y-0.5', directory && 'ml-5')}>
+                          {dirFiles.map((file) => (
+                            <li
+                              key={file.path}
+                              className="flex items-center gap-1.5 py-0.5 hover:bg-background/50 rounded px-1 -mx-1"
+                            >
+                              <FileIcon />
+                              <span className="font-mono text-foreground">{file.filename}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )
                   )}
-                  <ul className={cn('space-y-0.5', directory && 'ml-5')}>
-                    {dirFiles.map((file) => (
-                      <li
-                        key={file.path}
-                        className="flex items-center gap-1.5 py-0.5 hover:bg-background/50 rounded px-1 -mx-1"
-                      >
-                        <FileIcon />
-                        <span className="font-mono text-foreground">{file.filename}</span>
-                      </li>
-                    ))}
-                  </ul>
                 </div>
-              ))}
+              )}
             </div>
           )}
-        </div>
+        </>
       )}
     </ToolDisplayWrapper>
   );

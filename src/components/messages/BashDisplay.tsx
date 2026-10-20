@@ -36,8 +36,6 @@ function TerminalIcon() {
  * Shows the command, description, and formatted terminal output with ANSI support.
  */
 export function BashDisplay({ tool }: { tool: ToolCall }) {
-  const hasOutput = tool.output !== undefined;
-
   const input = parseToolInput(tool.input, bashInputSchema);
   const command = input?.command ?? '';
   const description = input?.description;
@@ -61,23 +59,26 @@ export function BashDisplay({ tool }: { tool: ToolCall }) {
         ) : undefined
       }
     >
-      <div>
-        <div className="text-muted-foreground mb-1">Command:</div>
-        <pre className="bg-zinc-900 dark:bg-zinc-950 text-green-400 p-2 rounded overflow-x-auto whitespace-pre-wrap break-words text-sm font-mono">
-          <span className="text-gray-500 select-none">$ </span>
-          {command}
-        </pre>
-      </div>
-
-      {hasOutput && (
-        <ToolOutputBlock
-          label="Output:"
-          output={tool.output === '' ? '(no output)' : tool.output}
-          isError={tool.is_error}
-          wrap
-          terminal
-          preClassName="font-mono text-sm"
-        />
+      {(output) => (
+        <>
+          <div>
+            <div className="text-muted-foreground mb-1">Command:</div>
+            <pre className="bg-zinc-900 dark:bg-zinc-950 text-green-400 p-2 rounded overflow-x-auto whitespace-pre-wrap break-words text-sm font-mono">
+              <span className="text-gray-500 select-none">$ </span>
+              {command}
+            </pre>
+          </div>
+          {output.text !== undefined && (
+            <ToolOutputBlock
+              label="Output:"
+              output={output.text === '' ? '(no output)' : output.text}
+              isError={output.isError}
+              wrap
+              terminal
+              preClassName="font-mono text-sm"
+            />
+          )}
+        </>
       )}
     </ToolDisplayWrapper>
   );

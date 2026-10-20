@@ -27,7 +27,7 @@ function PlanIcon() {
  * Shows a compact indicator that Claude has entered planning mode.
  */
 export function EnterPlanModeDisplay({ tool }: { tool: ToolCall }) {
-  const hasOutput = tool.output !== undefined;
+  const hasOutput = tool.result !== undefined;
 
   return (
     <ToolDisplayWrapper

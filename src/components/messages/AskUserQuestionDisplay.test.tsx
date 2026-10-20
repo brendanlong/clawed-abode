@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { AskUserQuestionDisplay } from './AskUserQuestionDisplay';
 import { MessageListProvider } from './MessageListContext';
 import type { ToolCall } from './types';
+import { inlineResult } from '@/test/tool-result-fixtures';
 
 const QUESTION_TOOL: ToolCall = {
   name: 'AskUserQuestion',
@@ -30,6 +31,7 @@ function renderWithContext(
   return render(
     <MessageListProvider
       value={{
+        sessionId: 'session-1',
         latestTodoWriteId: null,
         planContentByToolUseId: new Map(),
         renderSubagentTranscript: () => null,
@@ -65,7 +67,7 @@ describe('AskUserQuestionDisplay', () => {
 
   it('is read-only once the tool call has a result', () => {
     const onAnswerQuestion = vi.fn();
-    renderWithContext({ ...QUESTION_TOOL, output: 'Option A' }, { onAnswerQuestion });
+    renderWithContext({ ...QUESTION_TOOL, result: inlineResult('Option A') }, { onAnswerQuestion });
 
     expect(screen.getByRole('button', { name: /Option A/ })).toBeDisabled();
   });

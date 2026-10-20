@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ToolCallDisplay } from './ToolCallDisplay';
 import type { ToolCall } from './types';
+import { inlineResult } from '@/test/tool-result-fixtures';
 
 describe('ToolCallDisplay', () => {
   describe('rendering', () => {
@@ -11,7 +12,7 @@ describe('ToolCallDisplay', () => {
         name: 'Bash',
         id: 'test-1',
         input: { command: 'ls -la' },
-        output: 'file1.txt\nfile2.txt',
+        result: inlineResult('file1.txt\nfile2.txt'),
       };
 
       render(<ToolCallDisplay tool={tool} />);
@@ -24,7 +25,7 @@ describe('ToolCallDisplay', () => {
         name: 'Bash',
         id: 'test-2',
         input: { command: 'npm test', description: 'Run tests' },
-        output: 'All tests passed',
+        result: inlineResult('All tests passed'),
       };
 
       render(<ToolCallDisplay tool={tool} />);
@@ -39,7 +40,7 @@ describe('ToolCallDisplay', () => {
         name: 'mcp__server__thing',
         id: 'test-2b',
         input: { description: { text: 'nested' } },
-        output: 'done',
+        result: inlineResult('done'),
       };
 
       render(<ToolCallDisplay tool={tool} />);
@@ -66,8 +67,7 @@ describe('ToolCallDisplay', () => {
         name: 'Bash',
         id: 'test-4',
         input: { command: 'invalid-command' },
-        output: 'command not found',
-        is_error: true,
+        result: inlineResult('command not found', true),
       };
 
       render(<ToolCallDisplay tool={tool} />);
@@ -80,7 +80,7 @@ describe('ToolCallDisplay', () => {
         name: 'Read',
         id: 'test-5',
         input: { file_path: '/test/file.txt' },
-        output: 'file contents',
+        result: inlineResult('file contents'),
       };
 
       render(<ToolCallDisplay tool={tool} />);
@@ -95,7 +95,7 @@ describe('ToolCallDisplay', () => {
         name: 'Bash',
         id: 'test-6',
         input: { command: 'echo hello' },
-        output: 'hello',
+        result: inlineResult('hello'),
       };
 
       render(<ToolCallDisplay tool={tool} />);
@@ -110,7 +110,7 @@ describe('ToolCallDisplay', () => {
         name: 'Bash',
         id: 'test-7',
         input: { command: 'echo hello' },
-        output: 'hello',
+        result: inlineResult('hello'),
       };
 
       render(<ToolCallDisplay tool={tool} />);
@@ -128,7 +128,7 @@ describe('ToolCallDisplay', () => {
         name: 'Read',
         id: 'test-8',
         input: { file_path: '/test.txt' },
-        output: 'content',
+        result: inlineResult('content'),
       };
 
       render(<ToolCallDisplay tool={tool} />);
@@ -147,7 +147,7 @@ describe('ToolCallDisplay', () => {
         name: 'SomeTool',
         id: 'test-9',
         input: { command: 'npm run build' },
-        output: 'Build successful',
+        result: inlineResult('Build successful'),
       };
 
       render(<ToolCallDisplay tool={tool} />);
@@ -162,7 +162,7 @@ describe('ToolCallDisplay', () => {
         name: 'Read',
         id: 'test-10',
         input: { file_path: '/test/file.txt', limit: 100 },
-        output: 'file contents',
+        result: inlineResult('file contents'),
       };
 
       render(<ToolCallDisplay tool={tool} />);
@@ -196,7 +196,7 @@ describe('ToolCallDisplay', () => {
         name: 'Bash',
         id: 'test-12',
         input: { command: 'echo test' },
-        output: 'test output here',
+        result: inlineResult('test output here'),
       };
 
       render(<ToolCallDisplay tool={tool} />);
@@ -212,8 +212,7 @@ describe('ToolCallDisplay', () => {
         name: 'Bash',
         id: 'test-14',
         input: { command: 'exit 1' },
-        output: 'Error occurred',
-        is_error: true,
+        result: inlineResult('Error occurred', true),
       };
 
       const { container } = render(<ToolCallDisplay tool={tool} />);

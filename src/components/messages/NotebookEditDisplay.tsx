@@ -40,8 +40,6 @@ function NotebookIcon() {
  * Shows the notebook path, edit mode, cell info, and content.
  */
 export function NotebookEditDisplay({ tool }: { tool: ToolCall }) {
-  const hasOutput = tool.output !== undefined;
-
   const input = parseToolInput(tool.input, notebookEditInputSchema);
   const notebookPath = input?.notebook_path ?? 'Unknown notebook';
   const cellId = input?.cell_id;
@@ -76,38 +74,42 @@ export function NotebookEditDisplay({ tool }: { tool: ToolCall }) {
       subtitle={<div className="text-muted-foreground text-xs mt-1 truncate">{notebookPath}</div>}
       doneBadge={null}
     >
-      {cellId && (
-        <div>
-          <span className="text-muted-foreground">Cell ID: </span>
-          <code className="bg-muted px-1.5 py-0.5 rounded">{cellId}</code>
-        </div>
-      )}
+      {(output) => (
+        <>
+          {cellId && (
+            <div>
+              <span className="text-muted-foreground">Cell ID: </span>
+              <code className="bg-muted px-1.5 py-0.5 rounded">{cellId}</code>
+            </div>
+          )}
 
-      {editMode !== 'delete' && newSource && (
-        <div>
-          <div className="text-muted-foreground mb-1">
-            {editMode === 'insert' ? 'New cell content:' : 'Updated content:'}
-          </div>
-          <pre
-            className={cn(
-              'border p-2 rounded overflow-x-auto max-h-96 overflow-y-auto',
-              editMode === 'insert'
-                ? 'bg-green-50 dark:bg-green-950/50 border-green-200 dark:border-green-800'
-                : 'bg-blue-50 dark:bg-blue-950/50 border-blue-200 dark:border-blue-800'
-            )}
-          >
-            <code className="whitespace-pre-wrap break-words">{newSource}</code>
-          </pre>
-        </div>
-      )}
+          {editMode !== 'delete' && newSource && (
+            <div>
+              <div className="text-muted-foreground mb-1">
+                {editMode === 'insert' ? 'New cell content:' : 'Updated content:'}
+              </div>
+              <pre
+                className={cn(
+                  'border p-2 rounded overflow-x-auto max-h-96 overflow-y-auto',
+                  editMode === 'insert'
+                    ? 'bg-green-50 dark:bg-green-950/50 border-green-200 dark:border-green-800'
+                    : 'bg-blue-50 dark:bg-blue-950/50 border-blue-200 dark:border-blue-800'
+                )}
+              >
+                <code className="whitespace-pre-wrap break-words">{newSource}</code>
+              </pre>
+            </div>
+          )}
 
-      {hasOutput && (
-        <ToolOutputBlock
-          label="Result:"
-          output={tool.output}
-          isError={tool.is_error}
-          maxHeight="max-h-32"
-        />
+          {output.text !== undefined && (
+            <ToolOutputBlock
+              label="Result:"
+              output={output.text}
+              isError={output.isError}
+              maxHeight="max-h-32"
+            />
+          )}
+        </>
       )}
     </ToolDisplayWrapper>
   );

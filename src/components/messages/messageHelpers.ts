@@ -4,6 +4,7 @@ import type {
   DisplayMessage,
   MessageContent,
   ToolCall,
+  ToolResult,
   ToolResultMap,
 } from './types';
 import { formatAsJson, buildToolMessages } from './types';
@@ -15,7 +16,7 @@ import {
 } from '@/lib/claude-messages';
 import { isRenderableBlock, isToolResultMessage, messageDisplay } from '@/lib/transcript-display';
 import { isPlanFile, reconstructPlansByToolUseId, type PlanEvent } from './plan-utils';
-import { toolResultText } from '@/lib/tool-result';
+import { summarizeToolResult, toolResultSummarySchema, toolResultText } from '@/lib/tool-result';
 
 /**
  * Strip XML wrapper tags from Claude Code local command output.
@@ -320,13 +321,7 @@ export function isRecognizedMessage(type: string, content: MessageContent): Reco
  */
 export function buildToolCallFromBlock(block: ContentBlock, toolResults?: ToolResultMap): ToolCall {
   const result = block.id ? toolResults?.get(block.id) : undefined;
-  return {
-    name: block.name || 'Unknown',
-    id: block.id,
-    input: block.input,
-    output: result?.content,
-    is_error: result?.is_error,
-  };
+  return { name: block.name || 'Unknown', id: block.id, input: block.input, result };
 }
 
 /**
@@ -415,6 +410,17 @@ export function* toolUseBlocks(
 }
 
 /**
+ * A `tool_result` block as a {@link ToolResult}: an elided body keeps the
+ * server's summary, an inline one is summarized here the same way.
+ */
+function toToolResult(messageId: string, block: ContentBlock): ToolResult {
+  const summary = toolResultSummarySchema.safeParse(block.summary);
+  if (summary.success) return { messageId, is_error: block.is_error, summary: summary.data };
+  const text = toolResultText(block.content);
+  return { messageId, is_error: block.is_error, summary: summarizeToolResult(text), text };
+}
+
+/**
  * Pair every `tool_result` with its `tool_use`, and report where each result
  * landed, which is a foreground subagent's finish point. A result whose call
  * isn't loaded is left out; tool-result messages never render on their own.
@@ -435,10 +441,7 @@ export function buildToolResultMap(messages: DisplayMessage[]): {
     if (msg.type !== 'user') continue;
     for (const block of getToolResults(msg.content as MessageContent)) {
       if (block.tool_use_id && toolUseIds.has(block.tool_use_id)) {
-        resultMap.set(block.tool_use_id, {
-          content: toolResultText(block.content),
-          is_error: block.is_error,
-        });
+        resultMap.set(block.tool_use_id, toToolResult(msg.id, block));
         resultSequenceByToolUseId.set(block.tool_use_id, msg.sequence);
       }
     }

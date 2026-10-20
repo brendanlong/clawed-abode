@@ -25,6 +25,7 @@ import {
 type Message = DisplayMessage;
 
 interface MessageListProps {
+  sessionId: string;
   messages: Message[];
   isLoading: boolean;
   hasMore: boolean;
@@ -55,6 +56,7 @@ interface MessageListProps {
 }
 
 export function MessageList({
+  sessionId,
   messages,
   isLoading,
   hasMore,
@@ -123,6 +125,7 @@ export function MessageList({
 
   const contextValue = useMemo(
     () => ({
+      sessionId,
       latestTodoWriteId,
       onAnswerQuestion,
       onRespondToPlan,
@@ -132,6 +135,7 @@ export function MessageList({
       relocatedSubagentIds,
     }),
     [
+      sessionId,
       latestTodoWriteId,
       onAnswerQuestion,
       onRespondToPlan,

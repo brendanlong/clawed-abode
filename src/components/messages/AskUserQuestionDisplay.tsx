@@ -100,13 +100,14 @@ export function AskUserQuestionDisplay({ tool }: { tool: ToolCall }) {
   // Track selected options per question. For single-select: Set with 0 or 1 item.
   const [selectedOptions, setSelectedOptions] = useState<Map<number, Set<number>>>(new Map());
 
-  const hasOutput = tool.output !== undefined;
+  const hasOutput = tool.result !== undefined;
 
   // With canUseTool, the tool won't have an error output while waiting.
-  // The query is parked in the canUseTool callback - no output yet.
+  // The query is parked in the canUseTool callback - no output yet. That short
+  // error always arrives inline (never elided), so the check needs no fetch.
   const isWaitingForInput =
-    !hasOutput || (tool.is_error && tool.output?.includes('Answer questions'));
-  const isRealError = tool.is_error && !isWaitingForInput;
+    !hasOutput || (!!tool.result?.is_error && !!tool.result.text?.includes('Answer questions'));
+  const isRealError = !!tool.result?.is_error && !isWaitingForInput;
   const isPending = isWaitingForInput;
 
   const questions = useMemo(() => {
@@ -192,10 +193,10 @@ export function AskUserQuestionDisplay({ tool }: { tool: ToolCall }) {
   };
 
   // Check if an option was the answered option (match output with option label)
-  const isAnsweredOption = (option: QuestionOption) => {
-    if (isPending || tool.output === undefined) return false;
-    const output = tool.output.trim();
-    return output === option.label || output.split(', ').includes(option.label);
+  const isAnsweredOption = (option: QuestionOption, text: string | undefined) => {
+    if (isPending || text === undefined) return false;
+    const answer = text.trim();
+    return answer === option.label || answer.split(', ').includes(option.label);
   };
 
   return (
@@ -214,85 +215,91 @@ export function AskUserQuestionDisplay({ tool }: { tool: ToolCall }) {
       )}
       doneBadge={<ColorBadge color="green">Answered</ColorBadge>}
     >
-      {questions.map((question, qIndex) => (
-        <div key={qIndex} className="space-y-2">
-          {/* Question header badge */}
-          {question.header && (
-            <Badge variant="secondary" className="text-xs">
-              {question.header}
-            </Badge>
+      {(output) => (
+        <>
+          {questions.map((question, qIndex) => (
+            <div key={qIndex} className="space-y-2">
+              {/* Question header badge */}
+              {question.header && (
+                <Badge variant="secondary" className="text-xs">
+                  {question.header}
+                </Badge>
+              )}
+
+              {/* Question text */}
+              <p className="text-sm font-medium text-foreground">{question.question}</p>
+
+              {/* Options */}
+              <div className="space-y-1.5 ml-1">
+                {question.options.map((option, oIndex) => {
+                  const isSelected = isOptionSelected(qIndex, oIndex);
+                  const wasAnswered = isAnsweredOption(option, output.text);
+                  const canClick = canInteract;
+
+                  return (
+                    <button
+                      key={oIndex}
+                      type="button"
+                      disabled={!canClick}
+                      onClick={() => handleOptionClick(qIndex, oIndex, question.multiSelect)}
+                      className={cn(
+                        'flex items-start gap-2 py-1.5 px-2 rounded text-sm w-full text-left',
+                        'transition-colors',
+                        canClick
+                          ? 'bg-muted/50 hover:bg-purple-100 dark:hover:bg-purple-900/50 cursor-pointer'
+                          : 'bg-muted/50',
+                        isSelected && 'bg-purple-100 dark:bg-purple-900/50 ring-1 ring-purple-400',
+                        wasAnswered && 'bg-green-100 dark:bg-green-900/50 ring-1 ring-green-400'
+                      )}
+                    >
+                      {question.multiSelect ? (
+                        <CheckboxIcon checked={isSelected || wasAnswered} />
+                      ) : (
+                        <RadioIcon selected={isSelected || wasAnswered} />
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium text-foreground">{option.label}</div>
+                        {option.description && (
+                          <div className="text-xs text-muted-foreground mt-0.5">
+                            {option.description}
+                          </div>
+                        )}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+
+          {/* Submit button - shown when there are multiple questions or multi-select */}
+          {needsSubmitButton && canInteract && allQuestionsAnswered && (
+            <button
+              type="button"
+              onClick={submitAllAnswers}
+              className="mt-3 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white text-sm rounded transition-colors w-full"
+            >
+              Submit Answers
+            </button>
           )}
 
-          {/* Question text */}
-          <p className="text-sm font-medium text-foreground">{question.question}</p>
-
-          {/* Options */}
-          <div className="space-y-1.5 ml-1">
-            {question.options.map((option, oIndex) => {
-              const isSelected = isOptionSelected(qIndex, oIndex);
-              const wasAnswered = isAnsweredOption(option);
-              const canClick = canInteract;
-
-              return (
-                <button
-                  key={oIndex}
-                  type="button"
-                  disabled={!canClick}
-                  onClick={() => handleOptionClick(qIndex, oIndex, question.multiSelect)}
-                  className={cn(
-                    'flex items-start gap-2 py-1.5 px-2 rounded text-sm w-full text-left',
-                    'transition-colors',
-                    canClick
-                      ? 'bg-muted/50 hover:bg-purple-100 dark:hover:bg-purple-900/50 cursor-pointer'
-                      : 'bg-muted/50',
-                    isSelected && 'bg-purple-100 dark:bg-purple-900/50 ring-1 ring-purple-400',
-                    wasAnswered && 'bg-green-100 dark:bg-green-900/50 ring-1 ring-green-400'
-                  )}
-                >
-                  {question.multiSelect ? (
-                    <CheckboxIcon checked={isSelected || wasAnswered} />
-                  ) : (
-                    <RadioIcon selected={isSelected || wasAnswered} />
-                  )}
-                  <div className="flex-1 min-w-0">
-                    <div className="font-medium text-foreground">{option.label}</div>
-                    {option.description && (
-                      <div className="text-xs text-muted-foreground mt-0.5">
-                        {option.description}
-                      </div>
-                    )}
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      ))}
-
-      {/* Submit button - shown when there are multiple questions or multi-select */}
-      {needsSubmitButton && canInteract && allQuestionsAnswered && (
-        <button
-          type="button"
-          onClick={submitAllAnswers}
-          className="mt-3 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white text-sm rounded transition-colors w-full"
-        >
-          Submit Answers
-        </button>
-      )}
-
-      {/* Show the response if answered (but not the "Answer questions?" error) */}
-      {hasOutput && !isWaitingForInput && (
-        <div className="pt-2 border-t">
-          <div className="text-xs text-muted-foreground mb-1">Response:</div>
-          <pre
-            className={cn(
-              'text-xs p-2 rounded overflow-x-auto',
-              isRealError ? 'bg-red-50 dark:bg-red-950 text-red-800 dark:text-red-200' : 'bg-muted'
-            )}
-          >
-            {tool.output}
-          </pre>
-        </div>
+          {/* Show the response if answered (but not the "Answer questions?" error) */}
+          {output.text !== undefined && !isWaitingForInput && (
+            <div className="pt-2 border-t">
+              <div className="text-xs text-muted-foreground mb-1">Response:</div>
+              <pre
+                className={cn(
+                  'text-xs p-2 rounded overflow-x-auto',
+                  isRealError
+                    ? 'bg-red-50 dark:bg-red-950 text-red-800 dark:text-red-200'
+                    : 'bg-muted'
+                )}
+              >
+                {output.text}
+              </pre>
+            </div>
+          )}
+        </>
       )}
     </ToolDisplayWrapper>
   );

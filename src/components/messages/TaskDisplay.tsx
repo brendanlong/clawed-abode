@@ -76,8 +76,6 @@ export function TaskDisplay({
    */
   isPendingOverride?: boolean;
 }) {
-  const hasOutput = tool.output !== undefined;
-
   const inputObj = parseToolInput(tool.input, taskInputSchema);
   const subagentType = inputObj?.subagent_type ?? 'Unknown';
   const description = inputObj?.description ?? '';
@@ -92,11 +90,6 @@ export function TaskDisplay({
   // collapsed here rather than cluttering the top-level transcript (issue #312).
   const context = useMessageListContext();
   const subagentTranscript = tool.id ? context?.renderSubagentTranscript(tool.id) : null;
-
-  const { text: outputText, agentId } = useMemo(
-    () => parseTaskOutput(tool.output ?? ''),
-    [tool.output]
-  );
 
   return (
     <ToolDisplayWrapper
@@ -115,38 +108,45 @@ export function TaskDisplay({
         ) : undefined
       }
     >
-      <div>
-        <div className="text-muted-foreground mb-1">Prompt:</div>
-        <pre className="bg-muted p-2 rounded overflow-x-auto max-h-32 overflow-y-auto whitespace-pre-wrap text-xs">
-          {prompt}
-        </pre>
-      </div>
-
-      {agentId && (
-        <div>
-          <div className="text-muted-foreground mb-1">Agent ID:</div>
-          <code className="bg-muted px-2 py-1 rounded text-xs">{agentId}</code>
-        </div>
-      )}
-
-      {/* Subagent activity: the subagent's own nested transcript (renders its own
-          "Subagent activity:" heading, or nothing when there's nothing to show). */}
-      {subagentTranscript}
-
-      {hasOutput && (
-        <div>
-          <div className="text-muted-foreground mb-1">Output:</div>
-          {tool.is_error ? (
-            <ToolOutputBlock output={outputText || tool.output} isError wrap />
-          ) : outputText ? (
-            <div className="bg-muted rounded p-3 max-h-96 overflow-y-auto prose prose-sm dark:prose-invert max-w-none">
-              <MarkdownContent content={outputText} />
+      {(output) => {
+        const { text: outputText, agentId } = parseTaskOutput(output.text ?? '');
+        return (
+          <>
+            <div>
+              <div className="text-muted-foreground mb-1">Prompt:</div>
+              <pre className="bg-muted p-2 rounded overflow-x-auto max-h-32 overflow-y-auto whitespace-pre-wrap text-xs">
+                {prompt}
+              </pre>
             </div>
-          ) : (
-            <div className="text-muted-foreground italic py-2">No output</div>
-          )}
-        </div>
-      )}
+
+            {agentId && (
+              <div>
+                <div className="text-muted-foreground mb-1">Agent ID:</div>
+                <code className="bg-muted px-2 py-1 rounded text-xs">{agentId}</code>
+              </div>
+            )}
+
+            {/* Subagent activity: the subagent's own nested transcript (renders its own
+              "Subagent activity:" heading, or nothing when there's nothing to show). */}
+            {subagentTranscript}
+
+            {output.text !== undefined && (
+              <div>
+                <div className="text-muted-foreground mb-1">Output:</div>
+                {output.isError ? (
+                  <ToolOutputBlock output={outputText || output.text} isError wrap />
+                ) : outputText ? (
+                  <div className="bg-muted rounded p-3 max-h-96 overflow-y-auto prose prose-sm dark:prose-invert max-w-none">
+                    <MarkdownContent content={outputText} />
+                  </div>
+                ) : (
+                  <div className="text-muted-foreground italic py-2">No output</div>
+                )}
+              </div>
+            )}
+          </>
+        );
+      }}
     </ToolDisplayWrapper>
   );
 }
