@@ -65,6 +65,8 @@ The only notification is the agent asking for the user: the built-in `notify_use
 
 **Why the agent says so, rather than the server inferring it from turn state:** a turn ending idle is ambiguous. The agent may be done, or waiting on a Monitor, a backgrounded command, or another session's reply, none of which the busy axes can see (see [Two-Axis Status](#two-axis-status)). Only the agent knows. We have it declare "I have something for you" rather than "I'm still waiting", because it says the former at the moment it writes its report. If it forgets, the user is back to scanning the list. Notifying on every idle turn end was too noisy to be useful.
 
+Agents usually end a turn right after `notify_user` with no further text, which Claude Code treats as an empty response and answers with a fake "[Your previous response had no visible output…]" prompt, so the agent repeats itself ([anthropics/claude-code#70422](https://github.com/anthropics/claude-code/issues/70422)). We list `notify_user` in the undocumented `CLAUDE_CODE_TERMINAL_MCP_TOOLS` env var ([`sdk-options.ts`](../src/server/services/sdk-options.ts)), which exempts turns that called it. Recheck it still exists when upgrading the SDK.
+
 The flag lives in the DB, not live state, so it survives a restart. It clears on any user interaction (`bumpSessionActivity`) and whenever the session's page is visible (`sessions.markSeen`), i.e. once seen, not once answered.
 
 Client side, `AttentionNotifier` (mounted once in `Providers`, fed by the global SSE stream) notifies for **any** session except the one actively watched — its page open _and_ the tab visible (pure helpers in [`src/lib/attention-notification.ts`](../src/lib/attention-notification.ts)).
