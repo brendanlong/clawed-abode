@@ -12,8 +12,8 @@ interface ConnectionStatusIndicatorProps {
 
 /**
  * Shows a small banner when the live SSE stream is not connected, so the user knows
- * updates are paused. The stream auto-reconnects and catches up via lastEventId; the
- * queries also refetch on reconnect, so this is informational only.
+ * updates are paused. The stream auto-reconnects and opens with a fresh snapshot,
+ * so this is informational only.
  */
 export function ConnectionStatusIndicator({ status }: ConnectionStatusIndicatorProps) {
   if (status !== 'connecting' && status !== 'error') {

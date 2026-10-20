@@ -33,10 +33,13 @@ import { trpc } from '@/lib/trpc';
 const SUBSCRIPTION_USAGE_POLL_MS = 60_000;
 
 function SessionView({ sessionId }: { sessionId: string }) {
+  // Single multiplexed SSE stream: opens with a snapshot of the session, its live
+  // state, and the newest messages, then keeps all three current.
+  const { status: streamStatus } = useSessionStream(sessionId);
+
   // Session state: data, start/stop/archive
   const {
     session,
-    isLoading: sessionLoading,
     start,
     stop,
     archive,
@@ -56,8 +59,6 @@ function SessionView({ sessionId }: { sessionId: string }) {
     hasMore,
     fetchMore,
     tokenUsage,
-    historyLoaded,
-    newestSequence,
   } = useSessionMessages(sessionId);
 
   const { data: subscriptionUsage } = trpc.rateLimit.getSessionUsage.useQuery(
@@ -67,10 +68,6 @@ function SessionView({ sessionId }: { sessionId: string }) {
       refetchInterval: SUBSCRIPTION_USAGE_POLL_MS,
     }
   );
-
-  // Single multiplexed SSE stream: fans live events into the relevant caches.
-  // Anchored to the loaded history so no messages are missed between snapshots.
-  const { status: streamStatus } = useSessionStream(sessionId, { historyLoaded, newestSequence });
 
   // Claude state: running (main turn), background tasks, send, interrupt, commands
   const {
@@ -145,7 +142,8 @@ function SessionView({ sessionId }: { sessionId: string }) {
     />
   );
 
-  if (sessionLoading) {
+  // A terminal stream error before any snapshot means the server rejected the session.
+  if (!session && streamStatus !== 'error') {
     return (
       <div className="flex-1 flex items-center justify-center">
         <Spinner size="lg" />

@@ -89,11 +89,6 @@ export const sessionsRouter = router({
       return { sessions, nextCursor };
     }),
 
-  get: sessionProcedure.query(({ ctx }) => {
-    refreshStalePullRequests([ctx.session]);
-    return { session: toSessionView(ctx.session) };
-  }),
-
   // Resolves the sender of a message from another session. Archived sessions
   // are included: their transcripts are still viewable.
   byAgentName: protectedProcedure

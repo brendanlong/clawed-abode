@@ -6,20 +6,14 @@ import {
   interruptClaude,
   isClaudeRunning,
   submitLiveToolResponse,
-  getSessionRetry,
-  getSessionBackgroundTasks,
   stopBackgroundTask,
-  getPendingMessageIds,
 } from '../services/claude-runner';
-import { queuedMessageIds } from '../services/prompt-queue';
-import { currentHold } from '../services/rate-limit-pause';
 import {
   loadHistoryPage,
   loadLastTopLevelAssistantContent,
   markLastMessageAsInterrupted,
   persistSyntheticToolResult,
 } from '../services/message-store';
-import { getSessionCommands } from '../services/session-commands';
 import { buildTokenUsageStats } from '@/lib/token-estimation';
 import { PROMPT_MAX_LENGTH } from '@/lib/types';
 import { getSessionUsageTotals } from '../services/session-usage';
@@ -135,6 +129,7 @@ export const claudeRouter = router({
     return { success: interrupted, cancelled };
   }),
 
+  // Backward pagination; the newest page arrives in the session stream's snapshot.
   getHistory: sessionProcedure
     .input(
       z.object({
@@ -152,35 +147,6 @@ export const claudeRouter = router({
     ]);
     return buildTokenUsageStats(totals, assistantContent);
   }),
-
-  // Initial value of every live per-session field; each then streams over its
-  // own SSE channel (`running`, `commands`, `retry`, `background`, `pending`,
-  // `queued`, `rate_limit`), and this is refetched to resync on mount, focus,
-  // reconnect, and stream error. All but `queuedMessageIds` are in-memory only
-  // (lost on restart; `rateLimitHold` is recomputed from persisted readings).
-  getLiveState: protectedProcedure
-    .input(z.object({ sessionId: z.string().uuid() }))
-    .query(async ({ input }) => {
-      const { sessionId } = input;
-      const queuedIds = await queuedMessageIds(sessionId);
-      return {
-        // A main-agent turn is active (gates the composer).
-        running: isClaudeRunning(sessionId),
-        commands: getSessionCommands(sessionId),
-        // Ephemeral API-retry status (rate limit / overload).
-        retry: getSessionRetry(sessionId),
-        // run_in_background subagents / Monitor / backgrounded Bash.
-        backgroundTasks: getSessionBackgroundTasks(sessionId),
-        // Transcript ids the SDK has accepted but not yet handed to the agent.
-        pendingMessageIds: getPendingMessageIds(sessionId),
-        // Transcript ids held back by a rate-limit pause, in queue order.
-        queuedMessageIds: queuedIds,
-        // This session's subscription rate-limit pause, or null when it may work.
-        // The recompute's snapshot, the same source as the `rate_limit` channel
-        // and the session list, so a resync can't contradict them.
-        rateLimitHold: currentHold(sessionId),
-      };
-    }),
 
   // Stop a single running background task.
   stopBackgroundTask: protectedProcedure

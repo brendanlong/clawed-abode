@@ -67,7 +67,7 @@ awaiting it waits for a run that started after the call, so a policy change's
 caller sees its own effect.
 
 The last run's per-session result (`currentHold`) is the one source for showing
-a hold: the session list, `getLiveState` and the `rate_limit` SSE channel, which
+a hold: the session list and the session stream (its snapshot and `rate_limit` event), which
 therefore can't disagree. Only the send path also reads the policy fresh
 (`resolveSessionHold`), because sending into a refusing window is the one thing
 the pause exists to prevent, and before the first startup recompute the snapshot

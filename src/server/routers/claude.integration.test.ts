@@ -18,12 +18,6 @@ vi.mock('../services/claude-runner', async (importOriginal) => {
   };
 });
 
-const mockCurrentHold = vi.hoisted(() => vi.fn().mockReturnValue(null));
-vi.mock('../services/rate-limit-pause', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../services/rate-limit-pause')>();
-  return { ...actual, currentHold: mockCurrentHold };
-});
-
 // Use real token estimation (pure function)
 vi.mock('../services/message-store', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../services/message-store')>();
@@ -431,95 +425,6 @@ describe('claudeRouter integration', () => {
       // Should be sequences 30-49 in chronological order
       expect(result.messages[0].sequence).toBe(30);
       expect(result.messages[19].sequence).toBe(49);
-    });
-  });
-
-  describe('getLiveState', () => {
-    it('returns idle defaults for a session with no live state', async () => {
-      const session = await createTestSession({ name: 'Idle Session' });
-      mockIsClaudeRunning.mockReturnValue(false);
-
-      const caller = createCaller('auth-session-id');
-      const result = await caller.claude.getLiveState({ sessionId: session.id });
-
-      expect(result).toEqual({
-        running: false,
-        commands: [],
-        retry: null,
-        backgroundTasks: [],
-        pendingMessageIds: [],
-        queuedMessageIds: [],
-        rateLimitHold: null,
-      });
-    });
-
-    it('reports whether a turn is running', async () => {
-      const session = await createTestSession({ name: 'Running Session' });
-      mockIsClaudeRunning.mockReturnValue(true);
-
-      const caller = createCaller('auth-session-id');
-      const result = await caller.claude.getLiveState({ sessionId: session.id });
-
-      expect(result.running).toBe(true);
-      expect(mockIsClaudeRunning).toHaveBeenCalledWith(session.id);
-    });
-
-    it('returns queued prompt ids in queue order', async () => {
-      const session = await createTestSession({ name: 'Queued Session' });
-      mockIsClaudeRunning.mockReturnValue(false);
-      await testPrisma.queuedPrompt.createMany({
-        data: [
-          {
-            sessionId: session.id,
-            position: 1,
-            messageId: 'second',
-            content: 'b',
-            text: 'b',
-            attachments: '[]',
-          },
-          {
-            sessionId: session.id,
-            position: 0,
-            messageId: 'first',
-            content: 'a',
-            text: 'a',
-            attachments: '[]',
-          },
-        ],
-      });
-
-      const caller = createCaller('auth-session-id');
-      const result = await caller.claude.getLiveState({ sessionId: session.id });
-
-      expect(result.queuedMessageIds).toEqual(['first', 'second']);
-    });
-
-    it("reports the last recompute's hold, the same one the list and SSE use", async () => {
-      const session = await createTestSession({ name: 'Paused Session' });
-      mockIsClaudeRunning.mockReturnValue(false);
-      const hold = {
-        untilMs: Date.now() + 60_000,
-        limitType: 'five_hour' as const,
-        reason: 'threshold' as const,
-        utilization: 97,
-      };
-      mockCurrentHold.mockReturnValueOnce(hold);
-
-      const caller = createCaller('auth-session-id');
-      const result = await caller.claude.getLiveState({ sessionId: session.id });
-
-      expect(result.rateLimitHold).toEqual(hold);
-      expect(mockCurrentHold).toHaveBeenCalledWith(session.id);
-    });
-
-    it('should require authentication', async () => {
-      const caller = createCaller(null);
-
-      await expect(
-        caller.claude.getLiveState({ sessionId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' })
-      ).rejects.toMatchObject({
-        code: 'UNAUTHORIZED',
-      });
     });
   });
 

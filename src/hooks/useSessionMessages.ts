@@ -1,42 +1,37 @@
 import { useMemo } from 'react';
 import { trpc } from '@/lib/trpc';
-import { STREAM_ERROR_RESYNC_META } from '@/lib/live-query';
+import { HISTORY_PAGE_SIZE } from '@/lib/message-cache';
 import type { DisplayMessage } from '@/components/messages/types';
 
-const MESSAGE_PAGE_SIZE = 20;
-
 /**
- * The `getHistory` cache key. Shared with `useSessionStream`, which writes live
- * messages into this exact cache — a differing input would land them in one
- * nobody reads.
+ * The `getHistory` cache key. Shared with `useSessionStream`, which writes the
+ * newest page and live messages into this exact cache — a differing input would
+ * land them in one nobody reads.
  */
 export function historyQueryInput(sessionId: string) {
-  return { sessionId, limit: MESSAGE_PAGE_SIZE };
+  return { sessionId, limit: HISTORY_PAGE_SIZE };
 }
 
 /**
  * Hook for reading message history with infinite-scroll pagination and token usage.
  *
- * Live messages are delivered by the single SSE stream in `useSessionStream`, which
- * writes them directly into this query's cache. This hook is read-only over that
- * cache plus backward pagination.
+ * The newest page and every live message come from the session stream
+ * (`useSessionStream`), which writes them directly into this query's cache; the
+ * query itself only ever fetches older pages, when the user scrolls up.
  */
 export function useSessionMessages(sessionId: string) {
-  // Infinite query for message history
-  // - fetchNextPage: loads older messages (backward) when user scrolls up
-  // - New messages arrive via SSE (useSessionStream) and are added to the cache
   const {
     data: historyData,
-    isLoading,
     isFetchingNextPage,
     hasNextPage,
     fetchNextPage,
   } = trpc.claude.getHistory.useInfiniteQuery(historyQueryInput(sessionId), {
+    // Never fetch the first page: the stream's snapshot seeds it. fetchNextPage
+    // still runs on demand.
+    enabled: false,
     // Limit stored pages to prevent memory growth
-    // With MESSAGE_PAGE_SIZE messages per page, this keeps up to 10000 messages in memory
+    // With HISTORY_PAGE_SIZE messages per page, this keeps up to 10000 messages in memory
     maxPages: 500,
-    // Message data is immutable - never refetch automatically
-    staleTime: Infinity,
     // For loading OLDER messages (user scrolls up)
     getNextPageParam: (lastPage, allPages) => {
       if (!lastPage.hasMore) return undefined;
@@ -57,7 +52,7 @@ export function useSessionMessages(sessionId: string) {
   // Refetched by useSessionStream when complete messages arrive.
   const { data: tokenUsageData } = trpc.claude.getTokenUsage.useQuery(
     { sessionId },
-    { refetchOnWindowFocus: false, meta: STREAM_ERROR_RESYNC_META }
+    { refetchOnWindowFocus: false }
   );
 
   // Flatten the pages into chronological order. pages[0] is the newest (it is
@@ -74,19 +69,13 @@ export function useSessionMessages(sessionId: string) {
     return result;
   }, [historyData]);
 
-  // Because `messages` is chronological, the newest cached sequence is the last
-  // one. useSessionStream reads this once as its SSE catch-up anchor.
-  const newestSequence = messages.length > 0 ? messages[messages.length - 1].sequence : undefined;
-
   return {
     messages,
-    isLoading,
+    // Until the stream's first snapshot lands.
+    isLoading: historyData === undefined,
     isFetchingMore: isFetchingNextPage,
     hasMore: hasNextPage ?? false,
     fetchMore: fetchNextPage,
     tokenUsage: tokenUsageData,
-    // Whether the initial history load has completed (used to anchor the SSE stream).
-    historyLoaded: !isLoading,
-    newestSequence,
   };
 }

@@ -385,21 +385,6 @@ describe('sessionsRouter integration', () => {
     });
   });
 
-  describe('get', () => {
-    it('should get a session by ID from the database', async () => {
-      const session = await createNoRepoSession({
-        name: 'Test Session',
-      });
-
-      const caller = createCaller('auth-session-id');
-      const result = await caller.sessions.get({ sessionId: session.id });
-
-      expect(result.session.id).toBe(session.id);
-      expect(result.session.name).toBe('Test Session');
-      expect(result.session.status).toBe('running');
-    });
-  });
-
   describe('byAgentName', () => {
     it('finds the session with that agent name, including archived ones', async () => {
       const session = await createNoRepoSession({
@@ -529,13 +514,14 @@ describe('sessionsRouter integration', () => {
         expect(row.status).toBe('error');
       });
 
-      const { session: view } = await caller.sessions.get({ sessionId: session.id });
-      expect(view).toMatchObject({ canStart: false, canStop: false });
-
       await expect(caller.sessions.start({ sessionId: session.id })).rejects.toMatchObject({
         code: 'PRECONDITION_FAILED',
       });
-      expect((await caller.sessions.stop({ sessionId: session.id })).session.status).toBe('error');
+      expect((await caller.sessions.stop({ sessionId: session.id })).session).toMatchObject({
+        status: 'error',
+        canStart: false,
+        canStop: false,
+      });
       await expect(caller.sessions.start({ sessionId: session.id })).rejects.toMatchObject({
         code: 'PRECONDITION_FAILED',
       });

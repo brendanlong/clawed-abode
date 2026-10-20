@@ -87,7 +87,7 @@ const BACKGROUND_BASH_TASK_TYPE = 'local_bash';
  *   `persistent: true` Monitor ambient, so this check is what excludes it.
  *
  * This gates ONLY the background-vs-waiting badge; excluded tasks still appear in
- * the stoppable task list (`getLiveState`). Accepted imperfection: a FINITE
+ * the stoppable task list (the session stream's `backgroundTasks`). Accepted imperfection: a FINITE
  * backgrounded Bash is also excluded, so the session reads "waiting" while one runs.
  */
 export function taskHasEndState(task: BackgroundTask): boolean {

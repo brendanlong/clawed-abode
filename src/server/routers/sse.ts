@@ -2,24 +2,31 @@ import { z } from 'zod';
 import { router, protectedProcedure } from '../trpc';
 import { sseEvents } from '../services/events';
 import type { SessionStreamEvent, SessionListEvent } from '../services/events';
-import { tracked } from '@trpc/server';
-import { latestSequence, loadMessagesAfter } from '../services/message-store';
+import { TRPCError, tracked } from '@trpc/server';
+import { loadSessionSnapshot, type SessionSnapshot } from '../services/session-snapshot';
 import { isPartialMessageId } from '@/lib/message-cache';
 import { formatResumeToken, parseResumeToken, EMPTY_WATERMARK } from '@/lib/sse-resume';
 
 /**
- * Yielded on either stream after the server dropped buffered events (see
- * {@link createEventQueue}). The client refetches every live query, and that
- * includes `getHistory`: a dropped `message_removed` can't be replayed from the
- * DB (the row is gone), so the transcript refetch is what heals it.
+ * Yielded on the session-list stream after the server dropped buffered events
+ * (see {@link createEventQueue}); the client refetches the list.
  */
 type ResyncEvent = { kind: 'resync' };
 
 export type SessionListStreamEvent = SessionListEvent | ResyncEvent;
 
 /**
+ * The per-session stream's first event on every (re)connect, and its answer to a
+ * buffer overflow: the session row, every latest-value field, and the transcript
+ * (see {@link loadSessionSnapshot}).
+ */
+type SessionSnapshotEvent = { kind: 'snapshot' } & SessionSnapshot;
+
+export type SessionStreamOutput = SessionSnapshotEvent | SessionStreamEvent;
+
+/**
  * Most events buffered for one subscriber before the buffer is discarded and
- * replaced by a single `resync`. The generator only pulls when the response
+ * replaced by a single resync. The generator only pulls when the response
  * stream has capacity, so a stalled SSE consumer would otherwise grow the buffer
  * without limit.
  */
@@ -95,18 +102,17 @@ export function createEventQueue<T>(
 const RESYNC: ResyncEvent = { kind: 'resync' };
 
 /**
- * Yield buffered events until the subscription aborts, substituting one `resync`
- * for anything the queue dropped. Dropped persisted messages are not replayed
- * here: the client's history refetch covers them, and a later reconnect replays
- * from the (now lagging) watermark, which the client dedupes by id.
+ * Yield buffered events until the subscription aborts, substituting one
+ * `resync()` for anything the queue dropped.
  */
-async function* drainEventQueue<T>(
+async function* drainEventQueue<T, R>(
   { queue, takeOverflow, waitForEvent }: ReturnType<typeof createEventQueue<T>>,
-  signal: AbortSignal | undefined
-): AsyncGenerator<T | ResyncEvent> {
+  signal: AbortSignal | undefined,
+  resync: () => Promise<R>
+): AsyncGenerator<T | R> {
   while (!signal?.aborted) {
     if (takeOverflow()) {
-      yield RESYNC;
+      yield await resync();
     } else if (queue.length > 0) {
       yield queue.shift()!;
     } else {
@@ -119,65 +125,57 @@ const partialMessageKey = (event: SessionStreamEvent) =>
   event.kind === 'message' && isPartialMessageId(event.message.id) ? event.message.id : undefined;
 
 export const sseRouter = router({
-  // Single multiplexed stream of all event kinds for one session.
+  // Single multiplexed stream of all event kinds for one session, self-sufficient:
+  // the first event on every (re)connect is a snapshot, then deltas follow. We
+  // subscribe before reading the snapshot, so anything that changes during the
+  // read arrives afterwards as a delta — snapshot + deltas has no gap, and
+  // re-applying a delta the snapshot already reflects is harmless (messages dedupe
+  // by id, latest-value events converge on the last one).
   //
-  // Catch-up uses a replay floor: messages with `sequence > floor` are replayed
-  // before live streaming begins. The floor comes from one of two places:
-  //   - `lastEventId` — supplied by tRPC automatically on reconnect (from the SSE
-  //     `Last-Event-ID` header); its token encodes the high-water mark.
-  //   - `afterSequence` — the client's newest cached message sequence, captured
-  //     once at mount and sent on the *initial* connect (no lastEventId yet). This
-  //     closes the window between the client's `getHistory` snapshot and the stream
-  //     attaching, during which messages could otherwise be missed by both paths.
-  // With neither, we anchor at the current max (nothing to replay).
-  //
-  // Non-message events are "latest value" and are resynced by the client's React
-  // Query refetch — they are streamed live but never replayed.
+  // A fresh connection's snapshot carries the newest history page. A reconnect
+  // (tRPC passes the last tracked id as `lastEventId`) resumes from that token's
+  // watermark: the snapshot carries every message after it, plus fresh
+  // latest-value state.
   onSessionEvents: protectedProcedure
-    .input(
-      z.object({
-        sessionId: z.string().uuid(),
-        afterSequence: z.number().int().optional(),
-        lastEventId: z.string().nullish(),
-      })
-    )
+    .input(z.object({ sessionId: z.string().uuid(), lastEventId: z.string().nullish() }))
     .subscription(async function* ({ input, signal }) {
+      const { sessionId } = input;
       const resume = parseResumeToken(input.lastEventId);
       let counter = resume?.counter ?? 0;
+      let watermark = resume?.watermark ?? EMPTY_WATERMARK;
 
-      // Replay floor: lastEventId (reconnect) takes precedence over the initial
-      // afterSequence anchor; with neither we don't replay.
-      const replayFloor = resume ? resume.watermark : input.afterSequence;
-      let watermark = replayFloor ?? EMPTY_WATERMARK;
-
-      const track = (event: SessionStreamEvent | ResyncEvent) => {
+      const track = (event: SessionStreamOutput) => {
         // Only persisted (complete) messages advance the resume watermark. Max, not
         // assign: a rewritten row (markLastMessageAsInterrupted) re-emits its
         // original, older sequence.
         if (event.kind === 'message' && !isPartialMessageId(event.message.id)) {
           watermark = Math.max(watermark, event.message.sequence);
+        } else if (event.kind === 'snapshot') {
+          for (const message of event.history.messages) {
+            watermark = Math.max(watermark, message.sequence);
+          }
         }
         return tracked(formatResumeToken(watermark, ++counter), event);
       };
 
-      // Subscribe before any awaits so we don't miss live events during replay.
+      const snapshot = async (resumeAfter: number | null): Promise<SessionSnapshotEvent> => {
+        const loaded = await loadSessionSnapshot(sessionId, resumeAfter);
+        if (!loaded) throw new TRPCError({ code: 'NOT_FOUND', message: 'Session not found' });
+        return { kind: 'snapshot', ...loaded };
+      };
+
+      // Subscribe before any awaits so nothing emitted during the snapshot read is missed.
       const events = createEventQueue<SessionStreamEvent>(
-        (push) => sseEvents.onSessionEvents(input.sessionId, push),
+        (push) => sseEvents.onSessionEvents(sessionId, push),
         { coalesceKey: partialMessageKey }
       );
 
       try {
-        if (replayFloor !== undefined) {
-          for (const message of await loadMessagesAfter(input.sessionId, replayFloor)) {
-            yield track({ kind: 'message', message });
-          }
-        } else {
-          // No catch-up requested: anchor the watermark at the current max so a
-          // later reconnect replays only messages created from here on.
-          watermark = (await latestSequence(input.sessionId)) ?? EMPTY_WATERMARK;
-        }
-
-        for await (const event of drainEventQueue(events, signal)) yield track(event);
+        yield track(await snapshot(resume ? watermark : null));
+        // On overflow, a resumed-style snapshot: the dropped events may include a
+        // `message_removed`, which only the snapshot's reconciled range can heal.
+        const resync = () => snapshot(watermark);
+        for await (const event of drainEventQueue(events, signal, resync)) yield track(event);
       } finally {
         events.unsubscribe();
       }
@@ -200,7 +198,8 @@ export const sseRouter = router({
         sseEvents.onSessionListChanged(push)
       );
       try {
-        for await (const event of drainEventQueue(events, signal)) yield track(event);
+        const resync = async () => RESYNC;
+        for await (const event of drainEventQueue(events, signal, resync)) yield track(event);
       } finally {
         events.unsubscribe();
       }

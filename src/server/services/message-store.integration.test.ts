@@ -46,14 +46,6 @@ describe('message-store reads', () => {
     ]);
   });
 
-  it('reports the latest sequence, or null for an empty transcript', async () => {
-    const session = await createTestSession();
-    expect(await store.latestSequence(session.id)).toBeNull();
-
-    await seed(session.id, [{}, {}, {}]);
-    expect(await store.latestSequence(session.id)).toBe(2);
-  });
-
   it('pages history backward and reports whether older messages remain', async () => {
     const session = await createTestSession();
     await seed(

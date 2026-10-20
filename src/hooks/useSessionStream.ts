@@ -1,75 +1,57 @@
 'use client';
 
-import { useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { skipToken, useQuery, useQueryClient } from '@tanstack/react-query';
 import { trpc } from '@/lib/trpc';
-import { resyncLiveQueries } from '@/lib/live-query';
 import {
+  applyHistorySnapshot,
   mergeMessageIntoCache,
   removeMessageFromCache,
   isPartialMessageId,
 } from '@/lib/message-cache';
-import { assertNeverFallback } from '@/lib/claude-messages';
+import { applySessionStateEvent, type SessionStreamState } from '@/lib/session-stream-state';
 import { affectsTokenUsage } from '@/lib/token-estimation';
 import { historyQueryInput } from '@/hooks/useSessionMessages';
-import type { inferRouterOutputs } from '@trpc/server';
-import type { AppRouter } from '@/server/routers';
 
-type SessionGetOutput = inferRouterOutputs<AppRouter>['sessions']['get'];
-type LiveState = inferRouterOutputs<AppRouter>['claude']['getLiveState'];
+/**
+ * Cache key of a session's {@link SessionStreamState}. Only the stream writes it;
+ * readers use {@link useSessionStreamState}.
+ */
+const sessionStreamStateKey = (sessionId: string) => ['sessionStream', sessionId] as const;
 
-interface UseSessionStreamOptions {
-  /** True once the initial `getHistory` load has completed. */
-  historyLoaded: boolean;
-  /** Newest message sequence in the cache at the time history first loaded. */
-  newestSequence: number | undefined;
+/**
+ * The session row and latest-value state the session's stream maintains.
+ * Undefined until the stream's first snapshot (or what an earlier mount left).
+ */
+export function useSessionStreamState(sessionId: string): SessionStreamState | undefined {
+  return useQuery<SessionStreamState>({
+    queryKey: sessionStreamStateKey(sessionId),
+    queryFn: skipToken,
+  }).data;
 }
 
 /**
  * Single multiplexed SSE subscription for a session: one `EventSource`, fanning
- * each event kind out to the relevant React Query cache.
+ * each event out to the relevant React Query cache. It is the only source of the
+ * session row, its live state, and the newest transcript page — every (re)connect
+ * opens with a snapshot of all three, so nothing needs refetching around it (see
+ * `sse.onSessionEvents`).
  *
- * Catch-up: the subscription is gated until history has loaded, then started with
- * a one-time `afterSequence` anchor (the client's newest cached sequence, frozen in
- * a ref so it never changes — feeding it reactively would tear the stream down each
- * turn). That closes the gap between the `getHistory` snapshot and the stream
- * attaching. Subsequent reconnects use tRPC's native `lastEventId` resume instead.
- *
- * On a connection error, or a server `resync` (its event buffer overflowed), we
- * refetch every mounted live query (resyncLiveQueries). Returns the subscription connection status
- * for a UI indicator.
+ * Returns the subscription status for a UI indicator. `error` is terminal (tRPC
+ * reconnects on its own from anything transient): the server rejected the
+ * session, e.g. it doesn't exist.
  */
-export function useSessionStream(sessionId: string, options: UseSessionStreamOptions) {
+export function useSessionStream(sessionId: string) {
   const utils = trpc.useUtils();
   const queryClient = useQueryClient();
 
-  // Freeze the catch-up anchor the first time history is loaded so the subscription
-  // input stays stable across the rest of the session (feeding the live newest
-  // sequence reactively would tear the stream down every turn).
-  const [anchor, setAnchor] = useState<{ captured: boolean; afterSequence: number | undefined }>({
-    captured: false,
-    afterSequence: undefined,
-  });
-  // Capture the anchor once, during render (React's supported "adjust state from a
-  // prior render" pattern). The guard makes it fire at most once, so no loop.
-  if (!anchor.captured && options.historyLoaded) {
-    setAnchor({ captured: true, afterSequence: options.newestSequence });
-  }
-
-  // Patch one field of the live-state cache. Before the initial fetch lands
-  // there's nothing to patch; that fetch returns current values anyway.
-  const patchLiveState = (patch: Partial<LiveState>) =>
-    utils.claude.getLiveState.setData({ sessionId }, (old) => (old ? { ...old, ...patch } : old));
-
   const subscription = trpc.sse.onSessionEvents.useSubscription(
-    { sessionId, afterSequence: anchor.afterSequence },
+    { sessionId },
     {
-      enabled: anchor.captured,
-      onData: (tracked) => {
-        const event = tracked.data;
+      onData: ({ data: event }) => {
+        const setHistory = utils.claude.getHistory.setInfiniteData;
         switch (event.kind) {
-          case 'message': {
-            utils.claude.getHistory.setInfiniteData(historyQueryInput(sessionId), (old) =>
+          case 'message':
+            setHistory(historyQueryInput(sessionId), (old) =>
               mergeMessageIntoCache(old, event.message)
             );
             if (
@@ -82,62 +64,23 @@ export function useSessionStream(sessionId: string, options: UseSessionStreamOpt
             if (event.message.type === 'result') {
               void utils.rateLimit.getSessionUsage.invalidate({ sessionId });
             }
-            break;
-          }
-          case 'running': {
-            patchLiveState({ running: event.running });
-            break;
-          }
-          case 'commands': {
-            patchLiveState({ commands: event.commands });
-            break;
-          }
-          case 'session': {
-            utils.sessions.get.setData(
-              { sessionId },
-              { session: event.session as SessionGetOutput['session'] }
-            );
-            break;
-          }
-          case 'retry': {
-            patchLiveState({ retry: event.retry });
-            break;
-          }
-          case 'background': {
-            patchLiveState({ backgroundTasks: event.tasks });
-            break;
-          }
-          case 'message_removed': {
-            utils.claude.getHistory.setInfiniteData(historyQueryInput(sessionId), (old) =>
+            return;
+          case 'message_removed':
+            setHistory(historyQueryInput(sessionId), (old) =>
               removeMessageFromCache(old, event.messageId)
             );
+            return;
+          case 'snapshot':
+            setHistory(historyQueryInput(sessionId), (old) =>
+              applyHistorySnapshot(old, event.history)
+            );
+            // Messages may have arrived while disconnected.
+            void utils.claude.getTokenUsage.invalidate({ sessionId });
             break;
-          }
-          case 'pending': {
-            patchLiveState({ pendingMessageIds: event.messageIds });
-            break;
-          }
-          case 'queued': {
-            patchLiveState({ queuedMessageIds: event.messageIds });
-            break;
-          }
-          case 'rate_limit': {
-            patchLiveState({ rateLimitHold: event.hold });
-            break;
-          }
-          case 'resync': {
-            void resyncLiveQueries(queryClient);
-            break;
-          }
-          default:
-            // Compile-time guard: a new SessionStreamEvent kind must be handled here.
-            assertNeverFallback(event, undefined);
         }
-      },
-      onError: (err) => {
-        console.error('Session stream SSE error:', err);
-        // The stream will auto-reconnect; refetch so the UI is correct meanwhile.
-        void resyncLiveQueries(queryClient);
+        queryClient.setQueryData<SessionStreamState>(sessionStreamStateKey(sessionId), (old) =>
+          applySessionStateEvent(old, event)
+        );
       },
     }
   );
