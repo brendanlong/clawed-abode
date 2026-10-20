@@ -69,7 +69,7 @@ export interface SessionToolsPort {
    * Send a message to a session's agent on the app's behalf (not the user's),
    * only if its query is live: never one that would revive a session.
    */
-  deliverMessage(sessionId: string, text: string): Promise<void>;
+  deliverMessage(sessionId: string, text: string): Promise<boolean>;
 }
 
 const portRef = processSingleton<{ port: SessionToolsPort | null }>('builtin-mcp.port', () => ({

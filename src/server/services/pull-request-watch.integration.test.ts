@@ -17,6 +17,8 @@ let savePullRequest: typeof import('./pull-request-store').savePullRequest;
 let remote: Map<number, GitHubPullRequest>;
 let checks: Map<string, ChecksState>;
 const live = new Set<string>();
+/** Sessions whose query goes away between the poll's start and the delivery. */
+const dropping = new Set<string>();
 const delivered: { sessionId: string; text: string }[] = [];
 
 function remotePr(number: number, overrides: Partial<GitHubPullRequest> = {}): GitHubPullRequest {
@@ -62,6 +64,7 @@ beforeEach(async () => {
   await clearTestDb();
   vi.clearAllMocks();
   live.clear();
+  dropping.clear();
   delivered.length = 0;
   setRemote();
   checks = new Map();
@@ -79,7 +82,11 @@ beforeEach(async () => {
   watch._resetPullRequestWatchState();
   watch.initPullRequestWatch({
     hasLiveQuery: (sessionId) => live.has(sessionId),
-    deliverMessage: async (sessionId, text) => void delivered.push({ sessionId, text }),
+    deliverMessage: async (sessionId, text) => {
+      if (dropping.has(sessionId)) return false;
+      delivered.push({ sessionId, text });
+      return true;
+    },
   });
 });
 
@@ -206,5 +213,46 @@ describe('polling', () => {
     live.add(manager.id);
     await watch._pollPullRequestWatches();
     expect(delivered).toHaveLength(1);
+  });
+
+  it('sends an update again if its delivery was dropped', async () => {
+    setRemote(remotePr(1));
+    const manager = await createManager();
+    await watch.setPullRequestWatches(manager.id, ['o/r']);
+
+    checks.set('sha-1', 'success');
+    dropping.add(manager.id);
+    await watch._pollPullRequestWatches();
+    expect(delivered).toEqual([]);
+
+    dropping.delete(manager.id);
+    await watch._pollPullRequestWatches();
+    expect(delivered).toHaveLength(1);
+  });
+
+  it('reports nothing for a PR whose checks failed to load, until they load', async () => {
+    setRemote(remotePr(1));
+    const manager = await createManager();
+    await watch.setPullRequestWatches(manager.id, ['o/r']);
+
+    vi.mocked(github.fetchChecks).mockRejectedValueOnce(new Error('502'));
+    await watch._pollPullRequestWatches();
+    expect(delivered).toEqual([]);
+
+    checks.set('sha-1', 'success');
+    await watch._pollPullRequestWatches();
+    expect(delivered.map((d) => d.text)).toEqual([expect.stringContaining('CI passed')]);
+  });
+
+  it('reports a PR closed without merging', async () => {
+    setRemote(remotePr(4));
+    const manager = await createManager();
+    await watch.setPullRequestWatches(manager.id, ['o/r']);
+
+    setRemote(remotePr(4, { state: 'closed' }));
+    await watch._pollPullRequestWatches();
+    expect(delivered.map((d) => d.text)).toEqual([
+      expect.stringContaining('#4 "PR 4" by me: closed without merging'),
+    ]);
   });
 });

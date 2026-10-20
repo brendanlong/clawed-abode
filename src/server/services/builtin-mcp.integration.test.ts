@@ -37,7 +37,7 @@ const port = {
   createSession: vi.fn(async () => ({ id: 'new-id' })),
   stopSession: vi.fn(async () => ({ status: 'stopped' })),
   isTurnActive: vi.fn(() => false),
-  deliverMessage: vi.fn(async () => {}),
+  deliverMessage: vi.fn(async () => true),
 } satisfies SessionToolsPort;
 
 async function connect(

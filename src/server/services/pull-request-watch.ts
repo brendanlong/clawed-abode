@@ -27,7 +27,7 @@ const log = createLogger('pull-request-watch');
 export interface PullRequestWatchPort {
   hasLiveQuery(sessionId: string): boolean;
   /** Send a message on the app's behalf, only to a session whose query is live. */
-  deliverMessage(sessionId: string, text: string): Promise<void>;
+  deliverMessage(sessionId: string, text: string): Promise<boolean>;
 }
 
 /** Unchanged lookups are free conditional requests, so this only bounds latency. */
@@ -53,12 +53,14 @@ interface StoredPullRequest {
   info: PullRequestInfo;
 }
 
-async function loadPullRequests(repoKeys: string[]): Promise<StoredPullRequest[]> {
-  const rows = await prisma.pullRequest.findMany({
-    where: { repoFullName: { in: repoKeys } },
-    select: { id: true, repoFullName: true, info: true },
-    orderBy: [{ repoFullName: 'asc' }, { number: 'desc' }],
-  });
+const isOpen = Prisma.sql`json_extract("info", '$.state') = 'open'`;
+
+/** Rows are filtered in SQL so a poll's work doesn't grow with the repo's history. */
+async function loadPullRequests(where: Prisma.Sql): Promise<StoredPullRequest[]> {
+  const rows = await prisma.$queryRaw<{ id: string; repoFullName: string; info: string }[]>`
+    SELECT "id", "repoFullName", "info" FROM "PullRequest"
+    WHERE ${where}
+    ORDER BY "repoFullName", "number" DESC`;
   return rows.flatMap((row) => {
     const info = parsePullRequestJson(row.info);
     return info ? [{ ...row, info }] : [];
@@ -76,15 +78,16 @@ async function forEachConcurrently(jobs: (() => Promise<void>)[]): Promise<void>
 /**
  * Refresh every open PR in the repo, plus the ones last stored as open that no
  * longer are (to learn whether they merged or closed). Throws if the open list
- * can't be read; a single PR that fails is skipped until the next poll.
+ * can't be read; a single PR that fails is skipped until the next poll. Every
+ * row refreshed has a `fetchedAt` at or after the returned time.
  */
-async function syncRepo(repoKey: string): Promise<void> {
+async function syncRepo(repoKey: string): Promise<Date> {
   const startedAt = new Date();
   const open = await fetchOpenPullRequests(repoKey);
   const openNumbers = new Set(open.map((pr) => pr.number));
-  const left = (await loadPullRequests([repoKey])).filter(
-    (pr) => pr.info.state === 'open' && !openNumbers.has(pr.info.number)
-  );
+  const left = (
+    await loadPullRequests(Prisma.sql`"repoFullName" = ${repoKey} AND ${isOpen}`)
+  ).filter((pr) => !openNumbers.has(pr.info.number));
 
   const save = (number: number, lookup: () => Promise<void>) => async () => {
     try {
@@ -108,24 +111,32 @@ async function syncRepo(repoKey: string): Promise<void> {
       })
     ),
   ]);
+  return startedAt;
 }
 
-/** Record states as seen by the watch; returns the PR ids that had a key newly recorded. */
-async function recordKeys(
-  watchId: string,
-  keys: { pullRequestId: string; key: string }[]
-): Promise<Set<string>> {
-  if (keys.length === 0) return new Set();
+interface WatchKey {
+  pullRequestId: string;
+  key: string;
+}
+
+/** Record states as seen by the watch; returns the ones that weren't recorded before. */
+async function recordKeys(watchId: string, keys: WatchKey[]): Promise<WatchKey[]> {
+  if (keys.length === 0) return [];
   const values = keys.map((k) => Prisma.sql`(${watchId}, ${k.pullRequestId}, ${k.key})`);
-  const inserted = await prisma.$queryRaw<{ pullRequestId: string }[]>`
+  return prisma.$queryRaw<WatchKey[]>`
     INSERT INTO "PullRequestWatchEvent" ("watchId", "pullRequestId", "key")
     VALUES ${Prisma.join(values)}
     ON CONFLICT DO NOTHING
-    RETURNING "pullRequestId"`;
-  return new Set(inserted.map((row) => row.pullRequestId));
+    RETURNING "pullRequestId", "key"`;
 }
 
-function eventKeys(prs: StoredPullRequest[]): { pullRequestId: string; key: string }[] {
+async function forgetKeys(watchId: string, keys: WatchKey[]): Promise<void> {
+  await prisma.pullRequestWatchEvent.deleteMany({
+    where: { watchId, OR: keys.map((k) => ({ pullRequestId: k.pullRequestId, key: k.key })) },
+  });
+}
+
+function eventKeys(prs: StoredPullRequest[]): WatchKey[] {
   return prs.flatMap((pr) => {
     const key = watchEventKey(pr.info);
     return key ? [{ pullRequestId: pr.id, key }] : [];
@@ -151,13 +162,17 @@ async function withAuthorSessions(prs: StoredPullRequest[]): Promise<WatchedPull
  * Deliver the states of the repo's PRs this watch hasn't reported yet. A PR's
  * merge or close is only reported once the watch has seen it open, so old PRs
  * a badge lookup happens to store don't show up as news. A new watch's first
- * pass only records what is already there: the tool's reply listed it.
+ * pass only records what is already there: the tool's reply listed it. Only PRs
+ * refreshed since `syncedAt` are considered; nothing else can have changed.
  */
 async function processWatch(
   watch: { id: string; sessionId: string; repoFullName: string; baselinedAt: Date | null },
+  syncedAt: Date,
   port: PullRequestWatchPort
 ): Promise<void> {
-  const prs = await loadPullRequests([watch.repoFullName]);
+  const prs = await loadPullRequests(
+    Prisma.sql`"repoFullName" = ${watch.repoFullName} AND "fetchedAt" >= ${syncedAt}`
+  );
   const open = prs.filter((pr) => pr.info.state === 'open');
   const seenOpen = open.map((pr) => ({ pullRequestId: pr.id, key: SEEN_KEY }));
 
@@ -172,22 +187,30 @@ async function processWatch(
 
   await recordKeys(watch.id, seenOpen);
   const seen = await prisma.pullRequestWatchEvent.findMany({
-    where: { watchId: watch.id, key: SEEN_KEY },
+    where: { watchId: watch.id, key: SEEN_KEY, pullRequestId: { in: prs.map((pr) => pr.id) } },
     select: { pullRequestId: true },
   });
   const seenIds = new Set(seen.map((row) => row.pullRequestId));
-  const changed = await recordKeys(watch.id, eventKeys(prs.filter((pr) => seenIds.has(pr.id))));
-  if (changed.size === 0) return;
+  // Recorded before delivery so overlapping work can't send them twice, and
+  // forgotten again if they couldn't be sent, so they go out once the session is back.
+  const fresh = await recordKeys(watch.id, eventKeys(prs.filter((pr) => seenIds.has(pr.id))));
+  if (fresh.length === 0) return;
 
+  const freshIds = new Set(fresh.map((k) => k.pullRequestId));
   const message = formatWatchMessage(
-    await withAuthorSessions(prs.filter((pr) => changed.has(pr.id)))
+    await withAuthorSessions(prs.filter((pr) => freshIds.has(pr.id)))
   );
   log.info('Delivering PR watch update', {
     sessionId: watch.sessionId,
     repoFullName: watch.repoFullName,
-    count: changed.size,
+    count: fresh.length,
   });
-  await port.deliverMessage(watch.sessionId, message);
+  let delivered = false;
+  try {
+    delivered = await port.deliverMessage(watch.sessionId, message);
+  } finally {
+    if (!delivered) await forgetKeys(watch.id, fresh);
+  }
 }
 
 async function poll(): Promise<void> {
@@ -201,11 +224,10 @@ async function poll(): Promise<void> {
     })
   ).filter((watch) => port.hasLiveQuery(watch.sessionId));
 
-  const synced = new Set<string>();
+  const syncedAt = new Map<string, Date>();
   for (const repoKey of new Set(watches.map((watch) => watch.repoFullName))) {
     try {
-      await syncRepo(repoKey);
-      synced.add(repoKey);
+      syncedAt.set(repoKey, await syncRepo(repoKey));
     } catch (err) {
       log.warn('Failed to sync a watched repo', {
         repoFullName: repoKey,
@@ -215,9 +237,10 @@ async function poll(): Promise<void> {
   }
 
   for (const watch of watches) {
-    if (!synced.has(watch.repoFullName)) continue;
+    const repoSyncedAt = syncedAt.get(watch.repoFullName);
+    if (!repoSyncedAt) continue;
     try {
-      await processWatch(watch, port);
+      await processWatch(watch, repoSyncedAt, port);
     } catch (err) {
       log.warn('Failed to process a PR watch', {
         sessionId: watch.sessionId,
@@ -270,7 +293,10 @@ export async function setPullRequestWatches(
     await pollWatches();
   }
 
-  const open = (await loadPullRequests(repoKeys)).filter((pr) => pr.info.state === 'open');
+  if (repoKeys.length === 0) return [];
+  const open = await loadPullRequests(
+    Prisma.sql`"repoFullName" IN (${Prisma.join(repoKeys)}) AND ${isOpen}`
+  );
   return withAuthorSessions(open);
 }
 

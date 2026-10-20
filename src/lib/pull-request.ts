@@ -23,6 +23,36 @@ export type PrState = PullRequestInfo['state'];
 /** A PR as GitHub's pulls endpoints describe it; the checks come from separate calls. */
 export type GitHubPullRequest = Omit<PullRequestInfo, 'checks'>;
 
+/**
+ * Stored checks that needn't be fetched again: same head commit, and either the
+ * PR is finished or the result can only change with a re-run (a failure is the
+ * one result people re-run, so it is refetched). Undefined means fetch.
+ */
+export function reusableChecks(
+  fetched: GitHubPullRequest,
+  stored: PullRequestInfo | null
+): PullRequestInfo['checks'] | undefined {
+  if (!stored || stored.headSha !== fetched.headSha) return undefined;
+  if (fetched.state !== 'open') return stored.checks;
+  return stored.checks === 'pending' || stored.checks === 'failure' ? undefined : stored.checks;
+}
+
+/** CI providers take a while after a push to register their first check. */
+export const NO_CHECKS_GRACE_MS = 2 * 60 * 1000;
+
+/**
+ * "No checks" right after the PR changed most likely means CI hasn't registered
+ * yet, so it counts as pending until the grace period passes.
+ */
+export function settleChecks(
+  checks: ChecksState | null,
+  prUpdatedAt: string,
+  nowMs: number
+): ChecksState | null {
+  const recent = nowMs - Date.parse(prUpdatedAt) < NO_CHECKS_GRACE_MS;
+  return checks === 'none' && recent ? 'pending' : checks;
+}
+
 const CHECKS_DESCRIPTIONS: Record<ChecksState, string> = {
   pending: 'CI running',
   success: 'CI passed',

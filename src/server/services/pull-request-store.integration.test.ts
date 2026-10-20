@@ -141,3 +141,38 @@ describe('copyLinkedPullRequest', () => {
     expect(await sessionPr(session.id)).toBeNull();
   });
 });
+
+describe('savePullRequest checks', () => {
+  it('reuses settled checks for the same head commit instead of refetching them', async () => {
+    vi.mocked(fetchChecks).mockResolvedValue('success');
+    await savePullRequest('o/r', fetched, new Date(1000));
+    vi.mocked(fetchChecks).mockClear();
+
+    await savePullRequest('o/r', fetched, new Date(2000));
+    expect(fetchChecks).not.toHaveBeenCalled();
+
+    await savePullRequest('o/r', { ...fetched, headSha: 'def' }, new Date(3000));
+    expect(fetchChecks).toHaveBeenCalledWith('o/r', 'def');
+  });
+
+  it('leaves the stored row alone when the checks fail to load', async () => {
+    await savePullRequest('o/r', fetched, new Date(1000));
+    vi.mocked(fetchChecks).mockRejectedValue(new Error('502'));
+
+    await expect(
+      savePullRequest('o/r', { ...fetched, title: 'Renamed' }, new Date(2000))
+    ).rejects.toThrow('502');
+    expect(await storedInfo('o/r', 7)).toEqual({ ...fetched, checks: 'pending' });
+  });
+
+  it('counts "no checks" on a just-updated PR as pending, since CI may not have registered', async () => {
+    vi.mocked(fetchChecks).mockResolvedValue('none');
+    const justPushed = { ...fetched, updatedAt: new Date().toISOString() };
+
+    await savePullRequest('o/r', justPushed, new Date(1000));
+    expect((await storedInfo('o/r', 7))?.checks).toBe('pending');
+
+    await savePullRequest('o/r', fetched, new Date(2000));
+    expect((await storedInfo('o/r', 7))?.checks).toBe('none');
+  });
+});

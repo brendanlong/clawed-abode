@@ -414,9 +414,12 @@ describe('github service', () => {
       expect(await fetchChecks('owner/repo', 'abc')).toBe('pending');
     });
 
-    it('reads checks it can’t fetch as unknown rather than throwing', async () => {
+    it('reads checks the token can’t see as unknown, but throws on a transient failure', async () => {
       mockFetch.mockResolvedValue(createMockResponse({}, 403));
       expect(await fetchChecks('owner/repo', 'abc')).toBeNull();
+
+      mockFetch.mockResolvedValue(createMockResponse({}, 502));
+      await expect(fetchChecks('owner/repo', 'abc')).rejects.toThrow(GitHubApiError);
 
       delete process.env.GITHUB_TOKEN;
       resetEnvCache();

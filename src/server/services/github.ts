@@ -319,8 +319,9 @@ export async function fetchPullRequest(
 
 /**
  * The CI rollup for a commit, from its check runs (Actions and other apps) and
- * commit statuses (older integrations). Null when either can't be read: a
- * fine-grained token needs Checks and Commit statuses read access.
+ * commit statuses (older integrations). Null when the token can't read them (a
+ * fine-grained token needs Checks and Commit statuses read access); any other
+ * failure throws, so a transient error never reads as "unknown".
  */
 export async function fetchChecks(repoFullName: string, sha: string): Promise<ChecksState | null> {
   const token = env.GITHUB_TOKEN;
@@ -338,7 +339,10 @@ export async function fetchChecks(repoFullName: string, sha: string): Promise<Ch
     ]);
     return rollUpChecks(runs.check_runs, status.statuses);
   } catch (err) {
-    log.debug('Failed to fetch checks', { repoFullName, sha, error: toError(err).message });
-    return null;
+    if (err instanceof GitHubApiError && (err.status === 403 || err.status === 404)) {
+      log.debug('Checks are not readable', { repoFullName, sha, error: err.message });
+      return null;
+    }
+    throw err;
   }
 }

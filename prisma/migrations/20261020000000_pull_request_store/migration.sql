@@ -31,8 +31,13 @@ CREATE TABLE "PullRequestWatchEvent" (
 -- AlterTable
 ALTER TABLE "Session" ADD COLUMN "pullRequestId" TEXT REFERENCES "PullRequest" ("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
--- The old snapshots aren't linked to a PullRequest row; refetch them on next view.
-UPDATE "Session" SET "pullRequest" = NULL, "prCheckedAt" = NULL;
+-- Archived sessions are never refreshed, so keep their badges, filled out to the new shape.
+UPDATE "Session"
+SET "pullRequest" = json_set("pullRequest", '$.headBranch', COALESCE("currentBranch", ''), '$.headSha', '', '$.checks', json('null'))
+WHERE "status" = 'archived' AND json_valid("pullRequest");
+
+-- The rest aren't linked to a PullRequest row yet; refetch them on next view.
+UPDATE "Session" SET "pullRequest" = NULL, "prCheckedAt" = NULL WHERE "status" != 'archived';
 
 -- CreateIndex
 CREATE INDEX "Session_pullRequestId_idx" ON "Session"("pullRequestId");

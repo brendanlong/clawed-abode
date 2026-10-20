@@ -3,7 +3,10 @@ import {
   isPrSnapshotStale,
   mayChangeBranchOrPr,
   parsePullRequestJson,
+  reusableChecks,
   rollUpChecks,
+  settleChecks,
+  NO_CHECKS_GRACE_MS,
   MERGED_PR_SNAPSHOT_TTL_MS,
   PR_SNAPSHOT_TTL_MS,
   type PrRefreshCandidate,
@@ -33,6 +36,47 @@ describe('pull-request JSON column', () => {
     expect(parsePullRequestJson('{oops')).toBeNull();
     expect(parsePullRequestJson(JSON.stringify({ number: 'x' }))).toBeNull();
     expect(parsePullRequestJson(JSON.stringify({ ...pr, state: 'weird' }))).toBeNull();
+  });
+});
+
+describe('reusableChecks', () => {
+  const { checks: _checks, ...fetched } = pr;
+  const open = { ...pr, draft: false };
+
+  it('reuses checks that can only change with a new push', () => {
+    expect(reusableChecks(fetched, { ...open, checks: 'success' })).toBe('success');
+    expect(reusableChecks(fetched, { ...open, checks: 'none' })).toBe('none');
+    expect(reusableChecks(fetched, { ...open, checks: null })).toBeNull();
+  });
+
+  it('refetches running and failed checks, since failures get re-run', () => {
+    expect(reusableChecks(fetched, { ...open, checks: 'pending' })).toBeUndefined();
+    expect(reusableChecks(fetched, { ...open, checks: 'failure' })).toBeUndefined();
+  });
+
+  it('never refetches for a finished PR, and always refetches for a new commit', () => {
+    expect(reusableChecks({ ...fetched, state: 'merged' }, { ...open, checks: 'failure' })).toBe(
+      'failure'
+    );
+    expect(reusableChecks({ ...fetched, headSha: 'new' }, { ...open, checks: 'success' })).toBe(
+      undefined
+    );
+    expect(reusableChecks(fetched, null)).toBeUndefined();
+  });
+});
+
+describe('settleChecks', () => {
+  const updatedAt = '2024-01-01T00:00:00Z';
+  const updatedMs = Date.parse(updatedAt);
+
+  it('reads "no checks" just after the PR changed as pending', () => {
+    expect(settleChecks('none', updatedAt, updatedMs + 1000)).toBe('pending');
+    expect(settleChecks('none', updatedAt, updatedMs + NO_CHECKS_GRACE_MS)).toBe('none');
+  });
+
+  it('leaves every other result alone', () => {
+    expect(settleChecks('success', updatedAt, updatedMs)).toBe('success');
+    expect(settleChecks(null, updatedAt, updatedMs)).toBeNull();
   });
 });
 
