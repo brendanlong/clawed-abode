@@ -44,5 +44,6 @@ export function buildCreateSessionInput(
     branch: isNoRepo ? undefined : branch,
     initialPrompt: form.initialPrompt.trim() || undefined,
     claudeModel: form.claudeModel?.trim() || undefined,
+    sessionToolsEnabled: form.sessionToolsEnabled,
   };
 }

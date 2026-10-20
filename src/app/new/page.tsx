@@ -23,6 +23,7 @@ import { Cpu } from 'lucide-react';
 import type { Issue } from '@/lib/types';
 import { SESSION_NAME_MAX_LENGTH } from '@/lib/types';
 import { generateIssuePrompt } from '@/lib/issue-prompt';
+import { SessionToolsSwitch } from '@/components/SessionToolsSwitch';
 import { formReducer, initialFormState } from './form-reducer';
 import {
   buildCreateSessionInput,
@@ -142,6 +143,11 @@ function NewSessionForm() {
               header.
             </p>
           </div>
+
+          <SessionToolsSwitch
+            checked={form.sessionToolsEnabled}
+            onCheckedChange={(enabled) => dispatch({ type: 'setSessionTools', enabled })}
+          />
         </>
       )}
 

@@ -1640,7 +1640,7 @@ describe('claude-runner persistent streaming loop', () => {
     stopSession(sessionId);
   });
 
-  describe('switching to a proxied model', () => {
+  describe('settings that restart the query', () => {
     const PROXY_URL = 'http://127.0.0.1:4000';
     const ASTRA = 'openai/gpt-6-astra';
 
@@ -1758,6 +1758,33 @@ describe('claude-runner persistent streaming loop', () => {
       expect(fakes).toHaveLength(2);
       await fakes[1].deliver();
       expect(fakes[1].inputs.map((m) => m.message.content)).toEqual(['during restart']);
+
+      stopSession(sessionId);
+    });
+
+    it('restarts an idle query when its built-in tools change, so the prompt describes them', async () => {
+      const appends: unknown[] = [];
+      const fakes: ReturnType<typeof makeFakeQuery>[] = [];
+      _setQueryFactory((params) => {
+        appends.push((params.options as { systemPrompt: { append: string } }).systemPrompt.append);
+        const fake = makeFakeQuery();
+        fakes.push(fake);
+        return fake.factory(params);
+      });
+      mockLoadSettings.mockResolvedValue({ ...baseSettings, builtinTools: 'basic' });
+      const sessionId = await createRunningSession();
+
+      await sendUserMessage(sessionId, 'first');
+      await finishTurn(fakes[0], sessionId);
+
+      mockLoadSettings.mockResolvedValue({ ...baseSettings, builtinTools: 'manage' });
+      await sendUserMessage(sessionId, 'second');
+
+      expect(fakes).toHaveLength(2);
+      expect(appends[0]).not.toContain('create_session');
+      expect(appends[1]).toContain('create_session');
+      await fakes[1].deliver();
+      expect(fakes[1].inputs.map((m) => m.message.content)).toEqual(['second']);
 
       stopSession(sessionId);
     });

@@ -8,7 +8,7 @@ import { isSessionRateLimitPaused, recomputeRateLimitHolds } from '../services/r
 import {
   archiveSession,
   createSession,
-  setSessionModel,
+  configureSession,
   shutDownSession,
   startSession,
   updateSession,
@@ -51,6 +51,7 @@ export const sessionsRouter = router({
         branch: z.string().min(1).optional(),
         initialPrompt: z.string().max(PROMPT_MAX_LENGTH).optional(),
         claudeModel: modelSchema.optional(),
+        sessionToolsEnabled: z.boolean().optional(),
       })
     )
     .mutation(async ({ input }) => ({ session: toSessionView(await createSession(input)) })),
@@ -169,7 +170,18 @@ export const sessionsRouter = router({
   setModel: sessionProcedure
     .input(z.object({ claudeModel: nullableModelSchema }))
     .mutation(async ({ input }) => ({
-      session: toSessionView(await setSessionModel(input.sessionId, input.claudeModel)),
+      session: toSessionView(
+        await configureSession(input.sessionId, { claudeModel: input.claudeModel })
+      ),
+    })),
+
+  /** Restarts an idle session's query so the agent gets (or loses) the tools now. */
+  setSessionTools: sessionProcedure
+    .input(z.object({ enabled: z.boolean() }))
+    .mutation(async ({ input }) => ({
+      session: toSessionView(
+        await configureSession(input.sessionId, { sessionToolsEnabled: input.enabled })
+      ),
     })),
 
   stop: sessionProcedure.mutation(async ({ input }) => ({

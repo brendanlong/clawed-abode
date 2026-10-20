@@ -26,28 +26,28 @@ model AuthSession {
 }
 
 model Session {
-  id                 String    @id @default(uuid())
-  name               String
-  repoUrl            String? // null for no-repo sessions
-  branch             String? // null for no-repo sessions
-  repoPath           String    @default("") // Path to repo relative to workspace (e.g., "my-repo")
-  status             String    @default("creating") // creating, running, stopped, error, archived
-  statusMessage      String? // Human-readable progress message during creation
-  currentBranch      String? // Current git branch (detected after each turn)
-  pullRequestId      String? // The PullRequest for currentBranch; null = none/unknown
-  pullRequest        String? // Copy of the linked PullRequest's info, written only by pull-request-store.ts so it always matches
-  prCheckedAt        DateTime? // When GitHub was last asked about pullRequest, successfully or not; drives the staleness refresh (see src/lib/pull-request.ts)
-  createdAt          DateTime  @default(now())
-  updatedAt          DateTime  @updatedAt
-  lastActivityAt     DateTime  @default(now()) // Bumped only on user interactions (prompt, answer); drives session-list ordering
-  messageSequence    Int       @default(0) // Monotonic counter for atomic message sequence assignment (next sequence to assign)
-  sessionScope       String? // systemd user scope unit this session's CLI runs in; recorded so a crash-restart can reap the exact orphaned scope (null when not scoped / after clean teardown)
-  claudeModel        String? // If set, overrides the repo/global/env Claude model for this session only (highest precedence)
-  claudeSessionId    String? // The Claude Code conversation to resume, recorded from each system/init (the CLI starts a new one on /clear). null = no conversation started yet, so the next query starts fresh
-  agentName          String? // CLAUDE_CODE_SESSION_NAME: set once, so other sessions can address this one across restarts
-  createdBySessionId String? // Session whose agent created this one with the create_session tool; such sessions never get the session-management tools
-  attentionAt        DateTime? // When the agent last asked for the user (notify_user, or a question/plan awaiting an answer); null once the user has seen it
-  attentionSummary   String? // One line saying what the agent has for the user; set and cleared with attentionAt
+  id                  String    @id @default(uuid())
+  name                String
+  repoUrl             String? // null for no-repo sessions
+  branch              String? // null for no-repo sessions
+  repoPath            String    @default("") // Path to repo relative to workspace (e.g., "my-repo")
+  status              String    @default("creating") // creating, running, stopped, error, archived
+  statusMessage       String? // Human-readable progress message during creation
+  currentBranch       String? // Current git branch (detected after each turn)
+  pullRequestId       String? // The PullRequest for currentBranch; null = none/unknown
+  pullRequest         String? // Copy of the linked PullRequest's info, written only by pull-request-store.ts so it always matches
+  prCheckedAt         DateTime? // When GitHub was last asked about pullRequest, successfully or not; drives the staleness refresh (see src/lib/pull-request.ts)
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+  lastActivityAt      DateTime  @default(now()) // Bumped only on user interactions (prompt, answer); drives session-list ordering
+  messageSequence     Int       @default(0) // Monotonic counter for atomic message sequence assignment (next sequence to assign)
+  sessionScope        String? // systemd user scope unit this session's CLI runs in; recorded so a crash-restart can reap the exact orphaned scope (null when not scoped / after clean teardown)
+  claudeModel         String? // If set, overrides the repo/global/env Claude model for this session only (highest precedence)
+  claudeSessionId     String? // The Claude Code conversation to resume, recorded from each system/init (the CLI starts a new one on /clear). null = no conversation started yet, so the next query starts fresh
+  agentName           String? // CLAUDE_CODE_SESSION_NAME: set once, so other sessions can address this one across restarts
+  sessionToolsEnabled Boolean   @default(false) // Give this session's agent the tools to create, read, and stop other sessions (needs the global built-in tools switch)
+  attentionAt         DateTime? // When the agent last asked for the user (notify_user, or a question/plan awaiting an answer); null once the user has seen it
+  attentionSummary    String? // One line saying what the agent has for the user; set and cleared with attentionAt
 
   // Rate-limit pause overrides; null means "inherit the global setting" (see src/lib/rate-limit.ts).
   rateLimitPauseEnabled   Boolean? // If set, overrides whether this session pauses when the subscription window fills
@@ -329,7 +329,6 @@ model GlobalSettings {
   rateLimitPauseEnabled       Boolean  @default(false) // Default for whether sessions pause when a subscription window fills
   rateLimitPauseThreshold     Int      @default(95) // Default 5-hour-window utilization percent at which sessions pause
   builtinToolsEnabled         Boolean  @default(true) // Give agents the built-in clawed-abode MCP server (rename own session)
-  sessionToolsEnabled         Boolean  @default(false) // Also give it tools to create, read, and stop other sessions
   createdAt                   DateTime @default(now())
   updatedAt                   DateTime @updatedAt
 }

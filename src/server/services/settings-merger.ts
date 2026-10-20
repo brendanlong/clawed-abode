@@ -16,6 +16,7 @@ import { loadGlobalSettings } from './global-settings';
 import { applyMcpOAuthHeaders } from './mcp-oauth';
 import { getSessionPublicDir } from './public-dir';
 import { resolveBuiltinTools, type BuiltinToolsLevel } from '@/lib/builtin-tools';
+import type { Session } from '@/generated/prisma/client';
 
 /** Per-repo settings with secrets decrypted, ready to merge. */
 export interface ResolvedRepoSettings {
@@ -34,7 +35,7 @@ export interface ResolvedGlobalSettings {
   advisorModel: string | null;
   claudeApiKey: string | null;
   settingSources: SettingSourceFlags;
-  builtinTools: BuiltinToolsLevel | null;
+  builtinToolsEnabled: boolean;
   envVars: ResolvedEnvVar[];
   mcpServers: ResolvedMcpServer[];
 }
@@ -69,7 +70,7 @@ export async function loadResolvedGlobalSettings(): Promise<ResolvedGlobalSettin
     advisorModel: settings.advisorModel,
     claudeApiKey: settings.claudeApiKey ? decrypt(settings.claudeApiKey) : null,
     settingSources: settingSourceFlagsFromRow(settings),
-    builtinTools: resolveBuiltinTools(settings),
+    builtinToolsEnabled: settings.builtinToolsEnabled,
     envVars: decryptEnvVars(envVarRows),
     mcpServers: decryptMcpServers(mcpServerRows),
   };
@@ -102,6 +103,9 @@ export interface MergedSessionSettings {
   builtinTools: BuiltinToolsLevel | null;
 }
 
+/** The per-session settings, which take precedence over the repo and global ones. */
+export type SessionOverrides = Pick<Session, 'claudeModel' | 'sessionToolsEnabled'>;
+
 /**
  * Load and merge global + per-repo settings into a single object.
  * Fetches repo and global settings in parallel, builds the system prompt,
@@ -110,7 +114,7 @@ export interface MergedSessionSettings {
 export async function loadMergedSessionSettings(
   sessionId: string,
   repoFullName: string | null | undefined,
-  sessionModel?: string | null | undefined
+  session: SessionOverrides = { claudeModel: null, sessionToolsEnabled: false }
 ): Promise<MergedSessionSettings> {
   const [repoSettings, globalSettings] = await Promise.all([
     repoFullName ? loadResolvedRepoSettings(repoFullName) : null,
@@ -140,12 +144,18 @@ export async function loadMergedSessionSettings(
     envVars,
     mcpServers,
     claudeModel:
-      sessionModel ?? repoSettings?.claudeModel ?? globalSettings.claudeModel ?? env.CLAUDE_MODEL,
+      session.claudeModel ??
+      repoSettings?.claudeModel ??
+      globalSettings.claudeModel ??
+      env.CLAUDE_MODEL,
     // No default advisor: the tool is opt-in, and a blank setting disables it.
     advisorModel: globalSettings.advisorModel?.trim() || null,
     claudeApiKey: globalSettings.claudeApiKey ?? undefined,
     settingSources: resolveSettingSources(globalSettings.settingSources),
-    builtinTools: globalSettings.builtinTools,
+    builtinTools: resolveBuiltinTools({
+      builtinToolsEnabled: globalSettings.builtinToolsEnabled,
+      sessionToolsEnabled: session.sessionToolsEnabled,
+    }),
   };
 }
 

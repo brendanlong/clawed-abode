@@ -326,7 +326,7 @@ async function establishSessionQuery(
       name: true,
       repoUrl: true,
       branch: true,
-      createdBySessionId: true,
+      sessionToolsEnabled: true,
       repoPath: true,
       claudeModel: true,
       claudeSessionId: true,
@@ -343,7 +343,7 @@ async function establishSessionQuery(
 
   const repoFullName = session.repoUrl ? extractRepoFullName(session.repoUrl) : null;
   const settingsKey = repoFullName ?? '__no_repo__';
-  const settings = await loadMergedSessionSettings(sessionId, settingsKey, session.claudeModel);
+  const settings = await loadMergedSessionSettings(sessionId, settingsKey, session);
   const workingDir = getSessionWorkingDir(sessionId, session.repoPath);
 
   // Only a conversation the CLI announced has a transcript to resume; app-side
@@ -361,7 +361,6 @@ async function establishSessionQuery(
       return null;
     }),
     sessionNameIsDefault: isDefaultSessionName(session),
-    createdBySessionId: session.createdBySessionId,
     workingDir,
     settings,
     resumeId,
@@ -528,7 +527,8 @@ function restartSessionQuery(
  * Apply the settings the SDK supports changing live (model, MCP servers) to a
  * running query, so edits take effect on the next turn without a Stop→Start.
  * Everything else is bound at construction (doc/settings.md), except a model
- * change to or from a proxied model, which restarts an idle query and waits for
+ * change to or from a proxied model and a change of built-in tools (whose
+ * guidance is in the system prompt), which restart an idle query and wait for
  * the next idle apply otherwise. Best-effort.
  */
 function applyLiveSettings(sessionId: string, state: SessionState): Promise<void> {
@@ -542,12 +542,12 @@ async function applyLiveSettingsNow(sessionId: string, state: SessionState): Pro
   if (!live) return;
   let settings: MergedSessionSettings;
   try {
-    // Re-read the per-session model override too, so sessions.setModel applies live.
-    const session = await prisma.session.findUnique({
+    // Re-read the per-session overrides too, so changing them applies live.
+    const session = await prisma.session.findUniqueOrThrow({
       where: { id: sessionId },
-      select: { claudeModel: true },
+      select: { claudeModel: true, sessionToolsEnabled: true },
     });
-    settings = await loadMergedSessionSettings(sessionId, live.settingsKey, session?.claudeModel);
+    settings = await loadMergedSessionSettings(sessionId, live.settingsKey, session);
   } catch (err) {
     log.debug('applyLiveSettings: failed to load settings', {
       sessionId,
@@ -560,26 +560,29 @@ async function applyLiveSettingsNow(sessionId: string, state: SessionState): Pro
   if (state.live !== live) return;
   live.loadedMcpServers = settings.mcpServers;
   const bound = live.boundSettings;
-  if (modelChangeNeedsRestart(bound.claudeModel, settings.claudeModel)) {
+  if (
+    modelChangeNeedsRestart(bound.claudeModel, settings.claudeModel) ||
+    bound.builtinTools !== settings.builtinTools
+  ) {
     // Any background work counts, even a daemon: the restart would kill it.
     if (
       !isRunning(state.turn) &&
       state.turn.status.backgroundTasks.size === 0 &&
       !hasActiveGptRuns(sessionId)
     ) {
-      log.info('Restarting query for a proxied model change', {
+      log.info('Restarting query for a settings change', {
         sessionId,
-        from: bound.claudeModel,
-        to: settings.claudeModel,
+        model: { from: bound.claudeModel, to: settings.claudeModel },
+        builtinTools: { from: bound.builtinTools, to: settings.builtinTools },
       });
       try {
         await restartSessionQuery(sessionId, state, live);
       } catch (err) {
-        log.error('Failed to restart query for a model change', toError(err), { sessionId });
+        log.error('Failed to restart query for a settings change', toError(err), { sessionId });
       }
       return;
     }
-    settings = { ...settings, claudeModel: bound.claudeModel };
+    settings = { ...settings, claudeModel: bound.claudeModel, builtinTools: bound.builtinTools };
   }
   try {
     if (settings.claudeModel !== bound.claudeModel) {

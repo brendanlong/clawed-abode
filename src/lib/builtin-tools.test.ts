@@ -1,10 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import {
-  attributeMessage,
-  builtinToolsPrompt,
-  resolveBuiltinTools,
-  sessionBuiltinTools,
-} from './builtin-tools';
+import { attributeMessage, builtinToolsPrompt, resolveBuiltinTools } from './builtin-tools';
 
 describe('resolveBuiltinTools', () => {
   it('gives no tools when disabled, even with session management on', () => {
@@ -20,18 +15,6 @@ describe('resolveBuiltinTools', () => {
     expect(resolveBuiltinTools({ builtinToolsEnabled: true, sessionToolsEnabled: true })).toBe(
       'manage'
     );
-  });
-});
-
-describe('sessionBuiltinTools', () => {
-  it('withholds management tools from sessions another agent created', () => {
-    expect(sessionBuiltinTools('manage', 'creator')).toBe('basic');
-    expect(sessionBuiltinTools('basic', 'creator')).toBe('basic');
-    expect(sessionBuiltinTools(null, 'creator')).toBeNull();
-  });
-
-  it('leaves user-created sessions at the configured level', () => {
-    expect(sessionBuiltinTools('manage', null)).toBe('manage');
   });
 });
 

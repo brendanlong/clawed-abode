@@ -35,10 +35,8 @@ const globalSettingsUpdateSchema = z
     /** When true, speech-to-text transcripts are sent as prompts immediately. */
     voiceAutoSend: z.boolean(),
     systemPromptOverrideEnabled: z.boolean(),
-    /** Give agents the built-in MCP server; takes effect on the next Stop→Start. */
+    /** Give agents the built-in MCP server; a session picks it up at its next message. */
     builtinToolsEnabled: z.boolean(),
-    /** Include the tools that create, read, and stop other sessions (needs builtinToolsEnabled). */
-    sessionToolsEnabled: z.boolean(),
   })
   .partial();
 
@@ -69,7 +67,6 @@ export const globalSettingsRouter = router({
       voiceAutoSend: settings.voiceAutoSend,
       settingSources: settingSourceFlagsFromRow(settings),
       builtinToolsEnabled: settings.builtinToolsEnabled,
-      sessionToolsEnabled: settings.sessionToolsEnabled,
       defaultClaudeModel: env.CLAUDE_MODEL,
       suggestedAdvisorModel: SUGGESTED_ADVISOR_MODEL,
       hasEnvApiKey: !!env.CLAUDE_CODE_OAUTH_TOKEN,

@@ -65,14 +65,12 @@ const isMcpToolBlocked = vi.fn((toolId: string) => toolId === 'mcp__todo__delete
 const build = (
   s: MergedSessionSettings,
   resumeId: string | null = null,
-  agentName: string | null = 'math-fable-d37e',
-  createdBySessionId: string | null = null
+  agentName: string | null = 'math-fable-d37e'
 ) =>
   buildSdkOptions({
     sessionId: 'sid',
     agentName,
     sessionNameIsDefault: true,
-    createdBySessionId,
     workingDir: '/w',
     settings: s,
     resumeId,
@@ -167,14 +165,6 @@ describe('buildSdkOptions', () => {
       `prompt\n\n${builtinToolsPrompt('basic', true)}`
     );
     expect(await append(settings({ builtinTools: null }))).toBe('prompt');
-  });
-
-  it('gives a session another agent created the basic tools even when management is on', async () => {
-    const { options } = await build(settings({ builtinTools: 'manage' }), null, null, 'creator');
-    const { systemPrompt } = options;
-    expect(
-      typeof systemPrompt === 'object' && 'append' in systemPrompt && systemPrompt.append
-    ).toBe(`prompt\n\n${builtinToolsPrompt('basic', true)}`);
   });
 
   it('registers the built-in server in-process only when enabled, keeping configured servers in the file', async () => {

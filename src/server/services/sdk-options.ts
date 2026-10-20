@@ -19,11 +19,7 @@ import {
   sessionScopeUnitName,
 } from '@/lib/session-scope';
 import { buildAgentEnv } from './agent-env';
-import {
-  BUILTIN_MCP_SERVER_NAME,
-  builtinToolsPrompt,
-  sessionBuiltinTools,
-} from '@/lib/builtin-tools';
+import { BUILTIN_MCP_SERVER_NAME, builtinToolsPrompt } from '@/lib/builtin-tools';
 import { buildBuiltinMcpServer } from './builtin-mcp';
 import type { GptAgentContext } from './gpt-agent';
 import { sanitizeToolOutputHook } from './input-sanitizer';
@@ -123,8 +119,6 @@ export async function buildSdkOptions(params: {
   agentName: string | null;
   /** Whether the session still has its auto-generated name, so the agent is asked to rename it. */
   sessionNameIsDefault: boolean;
-  /** The session whose agent created this one, if any; caps its built-in tools. */
-  createdBySessionId: string | null;
   workingDir: string;
   settings: MergedSessionSettings;
   /** Claude Code conversation to resume, or null to start one under `sessionId`. */
@@ -140,7 +134,6 @@ export async function buildSdkOptions(params: {
     sessionId,
     agentName,
     sessionNameIsDefault,
-    createdBySessionId,
     workingDir,
     settings,
     resumeId,
@@ -149,7 +142,7 @@ export async function buildSdkOptions(params: {
     isMcpToolBlocked,
   } = params;
   const agentEnv = await buildAgentEnv(settings.envVars, settings.claudeApiKey);
-  const builtinTools = sessionBuiltinTools(settings.builtinTools, createdBySessionId);
+  const { builtinTools } = settings;
   if (agentName) agentEnv[AGENT_NAME_ENV] = agentName;
   const proxiedModel = usesLlmProxy(settings.claudeModel) ? settings.claudeModel : null;
   if (proxiedModel) {

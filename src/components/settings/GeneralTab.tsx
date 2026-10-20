@@ -49,11 +49,7 @@ export function GeneralTab() {
       />
       <SystemPromptAppendCard currentAppend={settings.systemPromptAppend} onUpdate={refetch} />
       <SettingSourcesCard current={settings.settingSources} onUpdate={refetch} />
-      <BuiltinToolsCard
-        builtinToolsEnabled={settings.builtinToolsEnabled}
-        sessionToolsEnabled={settings.sessionToolsEnabled}
-        onUpdate={refetch}
-      />
+      <BuiltinToolsCard builtinToolsEnabled={settings.builtinToolsEnabled} onUpdate={refetch} />
       <RateLimitPauseCard />
       <GlobalEnvVarsCard />
       <GlobalMcpServersCard />

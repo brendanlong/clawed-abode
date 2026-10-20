@@ -10,21 +10,13 @@ export const NOTIFY_USER_TOOL_NAME = 'notify_user';
  */
 export type BuiltinToolsLevel = 'basic' | 'manage';
 
-/** Management tools are a superset of the basic ones, so they need the master switch too. */
+/** Management tools (a per-session switch) are a superset of the basic ones, so they need the global switch too. */
 export function resolveBuiltinTools(flags: {
   builtinToolsEnabled: boolean;
   sessionToolsEnabled: boolean;
 }): BuiltinToolsLevel | null {
   if (!flags.builtinToolsEnabled) return null;
   return flags.sessionToolsEnabled ? 'manage' : 'basic';
-}
-
-/** A session created by another agent never gets management tools, so agents can't spawn chains. */
-export function sessionBuiltinTools(
-  level: BuiltinToolsLevel | null,
-  createdBySessionId: string | null
-): BuiltinToolsLevel | null {
-  return level === 'manage' && createdBySessionId ? 'basic' : level;
 }
 
 const NOTIFY =

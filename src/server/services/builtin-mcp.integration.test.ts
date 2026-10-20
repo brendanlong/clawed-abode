@@ -165,7 +165,6 @@ describe('built-in MCP server', () => {
         { id: self.id, name: 'Boss', agentName: 'boss-a1b2' },
         'do it'
       ),
-      createdBySessionId: self.id,
     });
   });
 
