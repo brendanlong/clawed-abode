@@ -193,6 +193,15 @@ describe('applyHistorySnapshot', () => {
     );
   });
 
+  it('takes its hasMore when it reaches back past everything cached', () => {
+    // Widened to a running background task's spawn, older than the cached page.
+    const result = applyHistorySnapshot(
+      cache([complete('c', 5), complete('d', 6)], true),
+      snapshot(-1, [complete('a', 0), complete('c', 5), complete('d', 6)], { hasMore: false })
+    );
+    expect(result).toEqual(cache([complete('a', 0), complete('c', 5), complete('d', 6)], false));
+  });
+
   it('drops cached messages in its range that the server no longer has', () => {
     // A `message_removed` lost while disconnected (or to a buffer overflow).
     const result = applyHistorySnapshot(

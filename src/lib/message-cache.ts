@@ -145,9 +145,12 @@ export interface HistorySnapshot<M> {
  * Apply a stream snapshot's transcript to the cache. When the cache reaches into
  * the snapshot's range, the two join without a gap, so the snapshot replaces the
  * cache's part of its range and older cached messages (the user's scroll-back)
- * stay. Otherwise — an empty cache, or one an earlier mount left behind that
- * many messages have since passed — the snapshot replaces it. Either way the
- * cached partials are replaced by the snapshot's.
+ * stay, with the cache's `hasMore`. Otherwise — an empty cache, or one an
+ * earlier mount left behind that many messages have since passed — the snapshot
+ * replaces it. Either way, when no cached message is older than the snapshot's
+ * range (e.g. it reached back to a running background task's spawn), the
+ * snapshot's `hasMore` is the one that describes the oldest message. The cached
+ * partials are replaced by the snapshot's.
  */
 export function applyHistorySnapshot<M extends MessageLike>(
   old: TranscriptCache<M> | undefined,
@@ -156,17 +159,12 @@ export function applyHistorySnapshot<M extends MessageLike>(
   const joins = old?.messages.some(
     (m) => !isPartialMessageId(m.id) && m.sequence >= snapshot.after
   );
+  const scrollBack = joins
+    ? (old?.messages ?? []).filter((m) => !isPartialMessageId(m.id) && m.sequence <= snapshot.after)
+    : [];
   let result: TranscriptCache<M> =
-    old && joins
-      ? {
-          hasMore: old.hasMore,
-          messages: [
-            ...old.messages.filter(
-              (m) => !isPartialMessageId(m.id) && m.sequence <= snapshot.after
-            ),
-            ...snapshot.messages,
-          ],
-        }
+    old && scrollBack.length > 0
+      ? { messages: [...scrollBack, ...snapshot.messages], hasMore: old.hasMore }
       : { messages: snapshot.messages, hasMore: snapshot.hasMore };
   for (const partial of snapshot.partials) result = mergeMessageIntoCache(result, partial);
   return result;
