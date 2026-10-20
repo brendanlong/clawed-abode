@@ -88,6 +88,7 @@ describe('built-in MCP server', () => {
       'notify_user',
       'rename_session',
       'set_usage_alerts',
+      'watch_pull_requests',
     ]);
     expect(await names('manage')).toEqual([
       'check_usage',
@@ -98,6 +99,7 @@ describe('built-in MCP server', () => {
       'rename_session',
       'set_usage_alerts',
       'stop_session',
+      'watch_pull_requests',
     ]);
   });
 

@@ -81,6 +81,7 @@ import { requestAttention } from './session-attention';
 import { buildLiveMcpServersRecord, buildSdkOptions } from './sdk-options';
 import { cancelBranchPrRefresh, detectBranchAndPr } from './session-branch-pr';
 import { checkUsageAlerts, type UsagePort } from './usage';
+import type { PullRequestWatchPort } from './pull-request-watch';
 
 const log = createLogger('claude-runner');
 
@@ -752,6 +753,12 @@ export const usageRunner: UsagePort = {
     }
     return null;
   },
+};
+
+/** The runner as PR watches see it; handed over at startup. */
+export const pullRequestWatchRunner: PullRequestWatchPort = {
+  hasLiveQuery: (sessionId) => !shutdown.started && !!sessions.get(sessionId)?.live,
+  deliverMessage: deliverAppMessage,
 };
 
 /** Transcript ids of a session's not-yet-delivered messages (seeds the client). */
