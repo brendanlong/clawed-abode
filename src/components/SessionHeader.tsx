@@ -27,7 +27,7 @@ interface SessionHeaderProps {
     claudeModel?: string | null;
     rateLimitPauseEnabled?: boolean | null;
     rateLimitPauseThreshold?: number | null;
-    sessionToolsEnabled?: boolean;
+    sessionToolsEnabled: boolean;
     pullRequest?: PullRequestInfo | null;
     agentName?: string | null;
   };
@@ -98,7 +98,7 @@ export function SessionHeader({
                 claudeModel={session.claudeModel ?? null}
                 rateLimitPauseEnabled={session.rateLimitPauseEnabled ?? null}
                 rateLimitPauseThreshold={session.rateLimitPauseThreshold ?? null}
-                sessionToolsEnabled={session.sessionToolsEnabled ?? false}
+                sessionToolsEnabled={session.sessionToolsEnabled}
               />
             )}
             <OpenInEditorButton sessionId={session.id} />

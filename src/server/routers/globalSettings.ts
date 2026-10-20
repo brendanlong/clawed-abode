@@ -35,7 +35,7 @@ const globalSettingsUpdateSchema = z
     /** When true, speech-to-text transcripts are sent as prompts immediately. */
     voiceAutoSend: z.boolean(),
     systemPromptOverrideEnabled: z.boolean(),
-    /** Give agents the built-in MCP server; a session picks it up at its next message. */
+    /** Give agents the built-in MCP server; restarts each session's query once idle. */
     builtinToolsEnabled: z.boolean(),
   })
   .partial();

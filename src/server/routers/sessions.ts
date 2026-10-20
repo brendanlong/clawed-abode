@@ -175,7 +175,7 @@ export const sessionsRouter = router({
       ),
     })),
 
-  /** Restarts an idle session's query so the agent gets (or loses) the tools now. */
+  /** Takes effect by restarting the session's query once it's idle (see applyLiveSettings). */
   setSessionTools: sessionProcedure
     .input(z.object({ enabled: z.boolean() }))
     .mutation(async ({ input }) => ({

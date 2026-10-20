@@ -16,7 +16,7 @@ export function BuiltinToolsCard({
   return (
     <SettingsCard
       title="Built-in Tools"
-      description="Tools this app gives every agent through its own MCP server. A session picks up a change at its next message."
+      description="Tools this app gives every agent through its own MCP server. A change restarts each session's agent (resuming its conversation) once it's idle."
     >
       <div className="space-y-4">
         <SwitchSetting

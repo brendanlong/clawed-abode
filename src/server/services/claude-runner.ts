@@ -560,10 +560,9 @@ async function applyLiveSettingsNow(sessionId: string, state: SessionState): Pro
   if (state.live !== live) return;
   live.loadedMcpServers = settings.mcpServers;
   const bound = live.boundSettings;
-  if (
-    modelChangeNeedsRestart(bound.claudeModel, settings.claudeModel) ||
-    bound.builtinTools !== settings.builtinTools
-  ) {
+  const modelNeedsRestart = modelChangeNeedsRestart(bound.claudeModel, settings.claudeModel);
+  const toolsNeedRestart = bound.builtinTools !== settings.builtinTools;
+  if (modelNeedsRestart || toolsNeedRestart) {
     // Any background work counts, even a daemon: the restart would kill it.
     if (
       !isRunning(state.turn) &&
@@ -582,7 +581,9 @@ async function applyLiveSettingsNow(sessionId: string, state: SessionState): Pro
       }
       return;
     }
-    settings = { ...settings, claudeModel: bound.claudeModel, builtinTools: bound.builtinTools };
+    // Hold back only what needs the restart; the rest still applies live.
+    if (modelNeedsRestart) settings = { ...settings, claudeModel: bound.claudeModel };
+    if (toolsNeedRestart) settings = { ...settings, builtinTools: bound.builtinTools };
   }
   try {
     if (settings.claudeModel !== bound.claudeModel) {
