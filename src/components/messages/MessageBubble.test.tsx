@@ -506,7 +506,9 @@ describe('MessageBubble', () => {
   describe('read aloud', () => {
     function renderWithVoice(message: { id: string; type: string; content: unknown }) {
       const play = vi.fn();
-      const toolResults: ToolResultMap = new Map([['tool-1', { content: 'SECRET FILE CONTENTS' }]]);
+      const toolResults: ToolResultMap = new Map([
+        ['tool-1', inlineResult('SECRET FILE CONTENTS')],
+      ]);
       render(
         <VoicePlaybackContext.Provider value={{ ...defaultPlaybackState, enabled: true, play }}>
           <MessageBubble message={message} toolResults={toolResults} />
