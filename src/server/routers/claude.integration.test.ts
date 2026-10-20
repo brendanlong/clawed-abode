@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { setupTestDb, teardownTestDb, testPrisma, clearTestDb } from '@/test/setup-test-db';
 import { createNoRepoSession, createTestSession } from '@/test/fixtures';
+import { INLINE_TOOL_RESULT_MAX_CHARS, summarizeToolResult } from '@/lib/tool-result';
 
 // Mock the runner's live-query entry points (no real SDK)
 const mockSendUserMessage = vi.hoisted(() => vi.fn());
@@ -425,6 +426,88 @@ describe('claudeRouter integration', () => {
       // Should be sequences 30-49 in chronological order
       expect(result.messages[0].sequence).toBe(30);
       expect(result.messages[19].sequence).toBe(49);
+    });
+  });
+
+  describe('tool result bodies', () => {
+    const body = 'line\n'.repeat(INLINE_TOOL_RESULT_MAX_CHARS);
+    const resultContent = (toolUseId: string, content: unknown) => ({
+      type: 'user',
+      tool_use_result: { stdout: body },
+      message: { content: [{ type: 'tool_result', tool_use_id: toolUseId, content }] },
+    });
+
+    async function seedResults(sessionId: string) {
+      await testPrisma.message.createMany({
+        data: [
+          {
+            id: 'call',
+            sessionId,
+            sequence: 0,
+            type: 'assistant',
+            content: JSON.stringify({
+              type: 'assistant',
+              message: { content: [{ type: 'tool_use', id: 't-big', name: 'Bash', input: {} }] },
+            }),
+          },
+          {
+            id: 'big',
+            sessionId,
+            sequence: 1,
+            type: 'user',
+            display: 'context',
+            content: JSON.stringify(resultContent('t-big', [{ type: 'text', text: body }])),
+          },
+        ],
+      });
+    }
+
+    it('ships a large body in history only as its summary', async () => {
+      const session = await createTestSession();
+      await seedResults(session.id);
+
+      const { messages } = await createCaller('auth-session-id').claude.getHistory({
+        sessionId: session.id,
+      });
+
+      expect(messages.find((m) => m.id === 'big')?.content).toEqual({
+        type: 'user',
+        message: {
+          content: [
+            { type: 'tool_result', tool_use_id: 't-big', summary: summarizeToolResult(body) },
+          ],
+        },
+      });
+    });
+
+    it('serves the full text on request', async () => {
+      const session = await createTestSession();
+      await seedResults(session.id);
+
+      const result = await createCaller('auth-session-id').claude.getToolResult({
+        sessionId: session.id,
+        messageId: 'big',
+        toolUseId: 't-big',
+      });
+
+      expect(result).toEqual({ text: body });
+    });
+
+    it('is NOT_FOUND for another session, another message or an unknown call', async () => {
+      const session = await createTestSession();
+      const other = await createTestSession();
+      await seedResults(session.id);
+      const caller = createCaller('auth-session-id');
+
+      for (const input of [
+        { sessionId: other.id, messageId: 'big', toolUseId: 't-big' },
+        { sessionId: session.id, messageId: 'call', toolUseId: 't-big' },
+        { sessionId: session.id, messageId: 'big', toolUseId: 't-other' },
+      ]) {
+        await expect(caller.claude.getToolResult(input)).rejects.toMatchObject({
+          code: 'NOT_FOUND',
+        });
+      }
     });
   });
 });

@@ -3,6 +3,8 @@ import { setupTestDb, teardownTestDb, testPrisma, clearTestDb } from '@/test/set
 import { createTestSession } from '@/test/fixtures';
 import { runMigrationBackfill } from '@/test/migration-backfill';
 import { messageDisplay } from '@/lib/transcript-display';
+import { projectMessageContent } from '@/lib/tool-result';
+import { sseEvents } from './events';
 
 vi.mock('./events', () => ({ sseEvents: { emitNewMessage: vi.fn(), emitTokenUsage: vi.fn() } }));
 
@@ -219,6 +221,29 @@ describe('message-store reads', () => {
       expect(sequences(oldest.messages)).toEqual([1, 2]);
       expect(oldest.hasMore).toBe(false);
     });
+  });
+});
+
+describe('client projection', () => {
+  it('stores a tool result raw but announces it as reads deliver it', async () => {
+    const session = await createTestSession();
+    const content = {
+      type: 'user',
+      tool_use_result: { stdout: 'raw' },
+      ...blocks({ type: 'tool_result', tool_use_id: 't1', content: 'x'.repeat(5000) }),
+    };
+
+    await store.insertMessage({ sessionId: session.id, id: 'r1', type: 'user', content });
+
+    const stored = await testPrisma.message.findUniqueOrThrow({ where: { id: 'r1' } });
+    expect(JSON.parse(stored.content)).toEqual(content);
+    const [read] = await store.loadMessagesAfter(session.id, -1);
+    expect(read.content).toEqual(projectMessageContent(content));
+    expect(sseEvents.emitNewMessage).toHaveBeenCalledWith(
+      session.id,
+      expect.objectContaining({ id: 'r1', content: read.content })
+    );
+    expect(await store.loadToolResultText(session.id, 'r1', 't1')).toBe('x'.repeat(5000));
   });
 });
 

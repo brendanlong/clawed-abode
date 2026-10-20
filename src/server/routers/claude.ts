@@ -10,6 +10,7 @@ import {
 } from '../services/claude-runner';
 import {
   loadHistoryPage,
+  loadToolResultText,
   markLastMessageAsInterrupted,
   persistSyntheticToolResult,
 } from '../services/message-store';
@@ -136,6 +137,24 @@ export const claudeRouter = router({
       })
     )
     .query(({ input }) => loadHistoryPage(input.sessionId, input.cursor, input.limit)),
+
+  // The full text of a tool result whose body history and SSE sent only as a
+  // summary. Immutable, so clients cache it for good.
+  getToolResult: protectedProcedure
+    .input(
+      z.object({
+        sessionId: z.string().uuid(),
+        messageId: z.string().min(1),
+        toolUseId: z.string().min(1),
+      })
+    )
+    .query(async ({ input }) => {
+      const text = await loadToolResultText(input.sessionId, input.messageId, input.toolUseId);
+      if (text === null) {
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'Tool result not found' });
+      }
+      return { text };
+    }),
 
   // Stop a single running background task.
   stopBackgroundTask: protectedProcedure
