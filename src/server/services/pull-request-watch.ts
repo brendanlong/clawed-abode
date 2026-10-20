@@ -1,7 +1,7 @@
 /**
  * PR watches (doc/claude-sessions.md "Pull Request Watches"): a session that
  * called watch_pull_requests (or watch_pull_request, for one PR) gets a message
- * when a watched PR becomes ready, or is merged or closed. Repos are polled
+ * when a watched PR becomes ready, is merged or closed, or gets a comment. Repos are polled
  * into the same PullRequest rows the session badges read. The runner is reached
  * only through the {@link PullRequestWatchPort} handed to {@link initPullRequestWatch}.
  */
@@ -19,9 +19,15 @@ import {
   FINISHED_KEYS,
   SEEN_KEY,
   watchEventKey,
+  type PullRequestComment,
   type WatchedPullRequest,
 } from '@/lib/pull-request-watch';
-import { fetchOpenPullRequests, fetchPullRequest, fetchPullRequestForBranch } from './github';
+import {
+  fetchOpenPullRequests,
+  fetchPullRequest,
+  fetchPullRequestForBranch,
+  fetchRecentComments,
+} from './github';
 import { savePullRequest } from './pull-request-store';
 
 const log = createLogger('pull-request-watch');
@@ -186,7 +192,11 @@ function requirePort(): PullRequestWatchPort {
   return state.port;
 }
 
-async function withAuthorSessions(prs: StoredPullRequest[]): Promise<WatchedPullRequest[]> {
+/** `comments` are keyed by PR row id. */
+async function withAuthorSessions(
+  prs: StoredPullRequest[],
+  comments = new Map<string, PullRequestComment[]>()
+): Promise<WatchedPullRequest[]> {
   const port = requirePort();
   const sessions = await prisma.session.findMany({
     where: { pullRequestId: { in: prs.map((pr) => pr.id) } },
@@ -202,6 +212,7 @@ async function withAuthorSessions(prs: StoredPullRequest[]): Promise<WatchedPull
         ...s,
         turnActive: port.isTurnActive(s.id),
       })),
+    comments: comments.get(pr.id) ?? [],
   }));
 }
 
@@ -216,10 +227,15 @@ async function withAuthorSessions(prs: StoredPullRequest[]): Promise<WatchedPull
  * stored its merge, after which no poll refreshes it. Both sets track the open
  * PRs, not the repo's history. A watch on one PR ends once its merge or close
  * is delivered.
+ *
+ * A comment is news on a PR the watch has seen open, once, if it was made
+ * after the watch's baseline. It goes out with whatever state change the same
+ * poll found, so a reason left when closing arrives with the close.
  */
 async function processWatch(
   watch: Watch,
   syncedAt: Date,
+  comments: PullRequestComment[],
   port: PullRequestWatchPort
 ): Promise<void> {
   const inRepo = watchedRows(watch);
@@ -253,20 +269,36 @@ async function processWatch(
     select: { pullRequestId: true },
   });
   const seenIds = new Set(seen.map((row) => row.pullRequestId));
+  const seenPrs = prs.filter((pr) => seenIds.has(pr.id));
+  const seenByNumber = new Map(seenPrs.map((pr) => [pr.info.number, pr.id]));
+  // GitHub's timestamps are whole seconds.
+  const baselineSecond = Math.floor(watch.baselinedAt.getTime() / 1000) * 1000;
+  const newComments = comments.flatMap((comment) => {
+    const pullRequestId = seenByNumber.get(comment.number);
+    const afterBaseline = Date.parse(comment.createdAt) >= baselineSecond;
+    return pullRequestId && afterBaseline ? [{ pullRequestId, comment }] : [];
+  });
   // Recorded before delivery so overlapping work can't send them twice, and
   // forgotten again if they couldn't be sent, so they go out once the session is back.
-  const fresh = await recordKeys(
-    watch.id,
-    eventKeys(
-      watch,
-      prs.filter((pr) => seenIds.has(pr.id))
-    )
-  );
+  const fresh = await recordKeys(watch.id, [
+    ...eventKeys(watch, seenPrs),
+    ...newComments.map(({ pullRequestId, comment }) => ({ pullRequestId, key: comment.key })),
+  ]);
   if (fresh.length === 0) return;
 
   const freshIds = new Set(fresh.map((k) => k.pullRequestId));
+  const freshKeys = new Set(fresh.map((k) => k.key));
+  const freshComments = new Map<string, PullRequestComment[]>();
+  newComments.sort((a, b) => a.comment.createdAt.localeCompare(b.comment.createdAt));
+  for (const { pullRequestId, comment } of newComments) {
+    if (!freshKeys.has(comment.key)) continue;
+    freshComments.set(pullRequestId, [...(freshComments.get(pullRequestId) ?? []), comment]);
+  }
   const message = formatWatchMessage(
-    await withAuthorSessions(prs.filter((pr) => freshIds.has(pr.id)))
+    await withAuthorSessions(
+      prs.filter((pr) => freshIds.has(pr.id)),
+      freshComments
+    )
   );
   log.info('Delivering PR watch update', {
     sessionId: watch.sessionId,
@@ -329,11 +361,28 @@ async function poll(): Promise<void> {
     })
   );
 
+  // After the PRs, so a comment left when closing is in hand by the time the close is.
+  const comments = new Map<string, PullRequestComment[]>();
+  await forEachConcurrently(
+    [...new Set(watches.map((w) => w.repoFullName))].map((repoKey) => async () => {
+      try {
+        comments.set(repoKey, await fetchRecentComments(repoKey));
+      } catch (err) {
+        log.warn('Failed to read a watched repo’s comments', {
+          repoFullName: repoKey,
+          error: toError(err).message,
+        });
+      }
+    })
+  );
+
   for (const watch of watches) {
     const repoSyncedAt = syncedAt.get(watch.repoFullName) ?? syncedAt.get(syncTarget(watch));
-    if (!repoSyncedAt) continue;
+    // Without the comments, a close could go out without the reason left with it.
+    const repoComments = comments.get(watch.repoFullName);
+    if (!repoSyncedAt || !repoComments) continue;
     try {
-      await processWatch(watch, repoSyncedAt, port);
+      await processWatch(watch, repoSyncedAt, repoComments, port);
     } catch (err) {
       log.warn('Failed to process a PR watch', {
         sessionId: watch.sessionId,

@@ -14,6 +14,7 @@ import {
   fetchOpenPullRequests,
   fetchPullRequest,
   fetchPullRequestForBranch,
+  fetchRecentComments,
   GitHubApiError,
   githubFetchResponse,
   parseLinkHeader,
@@ -453,6 +454,61 @@ describe('github service', () => {
       mockFetch.mockClear();
       expect(await fetchChecks('owner/repo', 'abc')).toBeNull();
       expect(mockFetch).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('fetchRecentComments', () => {
+    const base = {
+      body: 'Looks good',
+      author_association: 'OWNER',
+      created_at: '2024-01-01T00:00:00Z',
+    };
+    const person = { login: 'brendan', type: 'User' };
+    const bot = { login: 'dependabot[bot]', type: 'Bot' };
+
+    it('returns conversation and review comments by people, tied to their PR numbers', async () => {
+      mockFetch.mockImplementation(async (url: string) =>
+        url.includes('/issues/comments')
+          ? createMockResponse([
+              {
+                ...base,
+                id: 1,
+                html_url: 'https://github.com/o/r/pull/12#issuecomment-1',
+                user: person,
+                issue_url: 'https://api.github.com/repos/o/r/issues/12',
+              },
+              {
+                ...base,
+                id: 2,
+                html_url: 'https://github.com/o/r/pull/12#issuecomment-2',
+                user: bot,
+                issue_url: 'https://api.github.com/repos/o/r/issues/12',
+              },
+            ])
+          : createMockResponse([
+              {
+                ...base,
+                id: 1,
+                html_url: 'https://github.com/o/r/pull/7#discussion_r1',
+                user: person,
+                pull_request_url: 'https://api.github.com/repos/o/r/pulls/7',
+                path: 'src/a.ts',
+              },
+            ])
+      );
+
+      const comments = await fetchRecentComments('o/r');
+
+      expect(comments.map((c) => [c.number, c.author, c.path])).toEqual([
+        [12, 'brendan', null],
+        [7, 'brendan', 'src/a.ts'],
+      ]);
+      expect(new Set(comments.map((c) => c.key)).size).toBe(2);
+    });
+
+    it('throws when the comments can’t be read', async () => {
+      mockFetch.mockResolvedValue(createMockResponse({ message: 'Not Found' }, 404));
+      await expect(fetchRecentComments('o/r')).rejects.toThrow(GitHubApiError);
     });
   });
 });

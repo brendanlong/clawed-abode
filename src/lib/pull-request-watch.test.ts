@@ -1,10 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import type { PullRequestInfo } from './pull-request';
 import {
+  commentExcerpt,
   describePullRequestState,
   formatWatchMessage,
   formatWatchedPullRequest,
   watchEventKey,
+  type PullRequestComment,
 } from './pull-request-watch';
 
 const pr: PullRequestInfo = {
@@ -88,6 +90,7 @@ describe('formatWatchedPullRequest', () => {
         },
         { id: 's2', name: 'Old try', status: 'archived', agentName: null, turnActive: false },
       ],
+      comments: [],
     });
 
     expect(text).toBe(
@@ -104,13 +107,19 @@ describe('formatWatchedPullRequest', () => {
       repoFullName: 'o/r',
       info: { ...pr, updatedAt: '2026-09-27T23:59:59Z' },
       sessions: [],
+      comments: [],
     });
     expect(text).toContain('2026-09-27');
   });
 
   it('names the base branch only when the PR is stacked on another', () => {
     const stacked = (stackedOn: string | null) =>
-      formatWatchedPullRequest({ repoFullName: 'o/r', info: { ...pr, stackedOn }, sessions: [] });
+      formatWatchedPullRequest({
+        repoFullName: 'o/r',
+        info: { ...pr, stackedOn },
+        sessions: [],
+        comments: [],
+      });
     expect(stacked('feature-a')).toContain('stacked on feature-a');
     expect(stacked(null)).not.toContain('stacked');
   });
@@ -121,15 +130,68 @@ describe('formatWatchedPullRequest', () => {
         repoFullName: 'o/r',
         info: pr,
         sessions: [{ id: 's1', name: 'Fix', status: 'running', agentName: null, turnActive }],
+        comments: [],
       });
     expect(author(true)).toMatch(/\bbusy\b/);
     expect(author(false)).toMatch(/\bidle\b/);
   });
 });
 
+const comment: PullRequestComment = {
+  key: 'comment:1',
+  number: 12,
+  author: 'brendan',
+  association: 'OWNER',
+  path: null,
+  body: 'Closing: considering removing this feature entirely.',
+  url: 'https://github.com/o/r/pull/12#issuecomment-1',
+  createdAt: '2024-01-02T00:00:00Z',
+};
+
+describe('commentExcerpt', () => {
+  it('keeps the first few non-blank lines and marks the rest', () => {
+    expect(commentExcerpt('one\n\ntwo\nthree\nfour')).toEqual(['one', 'two', 'three', '…']);
+    expect(commentExcerpt('one\ntwo')).toEqual(['one', 'two']);
+  });
+
+  it('cuts a very long line short', () => {
+    const [line] = commentExcerpt('x'.repeat(5000));
+    expect(line.length).toBeLessThan(1000);
+    expect(line.endsWith('…')).toBe(true);
+  });
+});
+
+describe('formatWatchedPullRequest comments', () => {
+  it('quotes each comment under its PR with who wrote it and where', () => {
+    const text = formatWatchedPullRequest({
+      repoFullName: 'o/r',
+      info: pr,
+      sessions: [],
+      comments: [comment, { ...comment, key: 'review-comment:2', path: 'src/a.ts', body: 'nit' }],
+    });
+    expect(text).toContain('brendan');
+    expect(text).toContain('considering removing this feature entirely');
+    expect(text).toContain('src/a.ts');
+    expect(text).toContain(comment.url);
+  });
+});
+
 describe('formatWatchMessage', () => {
+  it('says quoted comments are from GitHub, only when there are some', () => {
+    const withComment = formatWatchMessage([
+      { repoFullName: 'o/r', info: pr, sessions: [], comments: [comment] },
+    ]);
+    const without = formatWatchMessage([
+      { repoFullName: 'o/r', info: pr, sessions: [], comments: [] },
+    ]);
+    expect(withComment).toMatch(/quoted from GitHub/);
+    expect(without).not.toMatch(/quoted/);
+  });
+
   it('says it comes from the watcher, not the user', () => {
-    const text = formatWatchMessage([{ repoFullName: 'o/r', info: pr, sessions: [] }]);
+    const text = formatWatchMessage([
+      { repoFullName: 'o/r', info: pr, sessions: [], comments: [] },
+    ]);
     expect(text).toMatch(/^\[From a pull request watch .*not from the user\.\]\n\n- o\/r#12/);
   });
 });

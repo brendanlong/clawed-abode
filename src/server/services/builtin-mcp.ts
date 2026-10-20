@@ -237,7 +237,7 @@ function basicTools(sessionId: string) {
     ),
     tool(
       'watch_pull_requests',
-      'Set the GitHub repos whose pull requests this session watches, replacing any earlier list; [] stops watching. While watching, you get a message when a PR in them becomes ready (open, not a draft, CI finished) at a new head commit, or is merged or closed, naming the sessions that wrote it. Returns the open PRs now.',
+      'Set the GitHub repos whose pull requests this session watches, replacing any earlier list; [] stops watching. While watching, you get a message when a PR in them becomes ready (open, not a draft, CI finished) at a new head commit, or is merged or closed, naming the sessions that wrote it, and when people (not bots) comment on one. Comments are not filtered by author, so yours come back too. Returns the open PRs now.',
       { repos: z.array(repoFullNameSchema).max(MAX_WATCHED_REPOS).describe('owner/repo names') },
       ({ repos }) =>
         run('watch_pull_requests', async () => {
@@ -249,7 +249,7 @@ function basicTools(sessionId: string) {
     ),
     tool(
       'watch_pull_request',
-      'Watch one pull request, by default the one for your current branch, instead of polling gh or sleeping: end your turn, and you get a message when its CI finishes on a new head commit (drafts included), and when it is merged or closed, which ends the watch. Returns its current state. Set stop to end the watch early.',
+      'Watch one pull request, by default the one for your current branch, instead of polling gh or sleeping: end your turn, and you get a message when its CI finishes on a new head commit (drafts included), when people (not bots, but including you) comment on it, and when it is merged or closed, which ends the watch. Returns its current state. Set stop to end the watch early.',
       {
         number: z
           .number()
