@@ -52,7 +52,6 @@ describe('globalSettings router', () => {
         voiceAutoSend: true,
         settingSources: { user: false, project: true, local: false },
         builtinToolsEnabled: true,
-        sessionToolsEnabled: false,
         defaultClaudeModel: 'opus[1m]',
         suggestedAdvisorModel: 'claude-fable-5',
         hasEnvApiKey: true,

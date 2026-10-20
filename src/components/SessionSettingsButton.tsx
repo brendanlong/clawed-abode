@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Settings, Cpu, PauseCircle } from 'lucide-react';
+import { Settings, Cpu, PauseCircle, Wrench } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Sheet,
@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/sheet';
 import { ModelOverrideField } from '@/components/settings/shared/ModelOverrideField';
 import { SessionRateLimitPauseFields } from '@/components/SessionRateLimitPauseFields';
+import { SessionToolsSwitch } from '@/components/SessionToolsSwitch';
 import { Separator } from '@/components/ui/separator';
 import { trpc } from '@/lib/trpc';
 import { fallbackClaudeModel } from '@/lib/claude-model';
@@ -23,25 +24,33 @@ interface SessionSettingsButtonProps {
   /** Per-session rate-limit pause overrides; null on either field inherits the global default. */
   rateLimitPauseEnabled: boolean | null;
   rateLimitPauseThreshold: number | null;
+  sessionToolsEnabled: boolean;
 }
 
 /**
  * Per-session gear button in the session header. Opens a panel of overrides that
  * apply to this session alone and take precedence over the repo/global settings:
- * the Claude model (see loadMergedSessionSettings) and the rate-limit pause (see
- * resolvePausePolicy).
+ * the Claude model (see loadMergedSessionSettings), the rate-limit pause (see
+ * resolvePausePolicy), and the session-management tools.
  */
 export function SessionSettingsButton({
   sessionId,
   claudeModel,
   rateLimitPauseEnabled,
   rateLimitPauseThreshold,
+  sessionToolsEnabled,
 }: SessionSettingsButtonProps) {
   const [open, setOpen] = useState(false);
   const utils = trpc.useUtils();
   const { data: globalSettings } = trpc.globalSettings.get.useQuery();
 
   const mutation = trpc.sessions.setModel.useMutation({
+    onSuccess: () => {
+      void utils.sessions.get.invalidate({ sessionId });
+    },
+  });
+
+  const toolsMutation = trpc.sessions.setSessionTools.useMutation({
     onSuccess: () => {
       void utils.sessions.get.invalidate({ sessionId });
     },
@@ -107,6 +116,22 @@ export function SessionSettingsButton({
               rateLimitPauseEnabled={rateLimitPauseEnabled}
               rateLimitPauseThreshold={rateLimitPauseThreshold}
             />
+
+            <Separator />
+
+            <div className="flex items-center gap-2">
+              <Wrench className="h-4 w-4 text-muted-foreground" />
+              <h3 className="font-medium">Tools</h3>
+            </div>
+
+            <SessionToolsSwitch
+              checked={sessionToolsEnabled}
+              pending={toolsMutation.isPending}
+              onCheckedChange={(enabled) => toolsMutation.mutate({ sessionId, enabled })}
+            />
+            {toolsMutation.error && (
+              <p className="text-sm text-destructive">{toolsMutation.error.message}</p>
+            )}
           </div>
         </SheetContent>
       </Sheet>

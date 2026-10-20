@@ -1,6 +1,6 @@
 /**
  * The app's own in-process MCP server, handed to every session's query when
- * enabled in global settings (doc/settings.md "Built-in Tools"). Tools that act
+ * enabled in settings (doc/settings.md "Built-in Tools"). Tools that act
  * on sessions reach the lifecycle and runner only through the {@link SessionToolsPort}
  * handed to {@link initBuiltinMcp}, since the runner imports this module.
  */
@@ -66,7 +66,6 @@ export interface SessionToolsPort {
     repoFullName?: string;
     branch?: string;
     initialPrompt: string;
-    createdBySessionId: string;
   }): Promise<{ id: string }>;
   /** Resolves to the session's status afterwards, which is unchanged if it wasn't running. */
   stopSession(sessionId: string): Promise<{ status: string }>;
@@ -306,7 +305,6 @@ function manageTools(sessionId: string) {
             repoFullName,
             branch: repoFullName ? branch : undefined,
             initialPrompt: attributeMessage(caller, prompt),
-            createdBySessionId: sessionId,
           });
           return textResult(
             `Created session ${created.id}. It will receive the prompt once setup finishes; find its agentName with list_sessions to message it, or check on it with read_session.`

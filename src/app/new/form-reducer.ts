@@ -12,6 +12,7 @@ export interface FormState {
   promptManuallyEdited: boolean;
   /** Per-session model override, or null to use the repo/global/env default. */
   claudeModel: string | null;
+  sessionToolsEnabled: boolean;
 }
 
 export type FormAction =
@@ -20,7 +21,8 @@ export type FormAction =
   | { type: 'selectIssue'; issue: Issue | null; generatedPrompt?: string }
   | { type: 'editName'; name: string }
   | { type: 'editPrompt'; prompt: string }
-  | { type: 'editModel'; claudeModel: string | null };
+  | { type: 'editModel'; claudeModel: string | null }
+  | { type: 'setSessionTools'; enabled: boolean };
 
 export const initialFormState: FormState = {
   selectedRepo: null,
@@ -31,6 +33,7 @@ export const initialFormState: FormState = {
   initialPrompt: '',
   promptManuallyEdited: false,
   claudeModel: null,
+  sessionToolsEnabled: false,
 };
 
 export function formReducer(state: FormState, action: FormAction): FormState {
@@ -69,5 +72,7 @@ export function formReducer(state: FormState, action: FormAction): FormState {
       };
     case 'editModel':
       return { ...state, claudeModel: action.claudeModel };
+    case 'setSessionTools':
+      return { ...state, sessionToolsEnabled: action.enabled };
   }
 }

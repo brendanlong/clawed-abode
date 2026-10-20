@@ -46,6 +46,7 @@ describe('formReducer', () => {
         initialPrompt: 'some prompt',
         promptManuallyEdited: true,
         claudeModel: 'sonnet',
+        sessionToolsEnabled: true,
       };
 
       const result = formReducer(state, { type: 'selectRepo', repo: mockRepo2 });
@@ -59,6 +60,7 @@ describe('formReducer', () => {
         initialPrompt: '',
         promptManuallyEdited: false,
         claudeModel: null,
+        sessionToolsEnabled: false,
       });
     });
   });
@@ -74,6 +76,7 @@ describe('formReducer', () => {
         initialPrompt: 'my prompt',
         promptManuallyEdited: true,
         claudeModel: null,
+        sessionToolsEnabled: false,
       };
 
       const result = formReducer(state, { type: 'selectBranch', branch: 'develop' });
@@ -162,5 +165,15 @@ describe('formReducer', () => {
   it('editModel sets the per-session model override', () => {
     const result = formReducer(initialFormState, { type: 'editModel', claudeModel: 'sonnet' });
     expect(result.claudeModel).toBe('sonnet');
+  });
+  describe('setSessionTools', () => {
+    it('toggles the session-management tools', () => {
+      expect(initialFormState.sessionToolsEnabled).toBe(false);
+      const on = formReducer(initialFormState, { type: 'setSessionTools', enabled: true });
+      expect(on.sessionToolsEnabled).toBe(true);
+      expect(formReducer(on, { type: 'setSessionTools', enabled: false }).sessionToolsEnabled).toBe(
+        false
+      );
+    });
   });
 });

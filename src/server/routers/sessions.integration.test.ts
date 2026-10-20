@@ -151,6 +151,15 @@ describe('sessionsRouter integration', () => {
       expect(dbSession!.claudeModel).toBe('sonnet');
     });
 
+    it('should enable the session-management tools only when asked', async () => {
+      const caller = createCaller('auth-session-id');
+      const enabled = await caller.sessions.create({ name: 'Boss', sessionToolsEnabled: true });
+      const omitted = await caller.sessions.create({ name: 'Worker' });
+
+      expect(enabled.session.sessionToolsEnabled).toBe(true);
+      expect(omitted.session.sessionToolsEnabled).toBe(false);
+    });
+
     it('should store null claudeModel when omitted or blank', async () => {
       const caller = createCaller('auth-session-id');
       const omitted = await caller.sessions.create({ name: 'No Model' });
@@ -752,6 +761,34 @@ describe('sessionsRouter integration', () => {
       const caller = createCaller('auth-session-id');
       await expect(
         caller.sessions.setModel({ sessionId: session.id, claudeModel: 'sonnet' })
+      ).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+    });
+  });
+
+  describe('setSessionTools', () => {
+    it('should toggle the tools and apply the change to the live query', async () => {
+      const session = await createNoRepoSession({ name: 'Boss' });
+      mockRefreshSessionSettings.mockClear();
+
+      const caller = createCaller('auth-session-id');
+      const on = await caller.sessions.setSessionTools({ sessionId: session.id, enabled: true });
+      expect(on.session.sessionToolsEnabled).toBe(true);
+      expect(mockRefreshSessionSettings).toHaveBeenCalledWith(session.id);
+
+      const off = await caller.sessions.setSessionTools({ sessionId: session.id, enabled: false });
+      expect(off.session.sessionToolsEnabled).toBe(false);
+      const row = await testPrisma.session.findUniqueOrThrow({ where: { id: session.id } });
+      expect(row.sessionToolsEnabled).toBe(false);
+    });
+
+    it('should reject changing an archived session', async () => {
+      const session = await createNoRepoSession({ name: 'Archived', status: 'archived' });
+
+      await expect(
+        createCaller('auth-session-id').sessions.setSessionTools({
+          sessionId: session.id,
+          enabled: true,
+        })
       ).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
     });
   });

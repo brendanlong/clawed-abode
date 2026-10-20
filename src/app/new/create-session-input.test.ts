@@ -69,6 +69,7 @@ describe('buildCreateSessionInput', () => {
       branch: 'main',
       initialPrompt: undefined,
       claudeModel: undefined,
+      sessionToolsEnabled: false,
     });
   });
 
@@ -84,6 +85,7 @@ describe('buildCreateSessionInput', () => {
       branch: undefined,
       initialPrompt: undefined,
       claudeModel: undefined,
+      sessionToolsEnabled: false,
     });
   });
 
@@ -99,12 +101,19 @@ describe('buildCreateSessionInput', () => {
       branch: 'dev',
       initialPrompt: 'do it',
       claudeModel: 'opus',
+      sessionToolsEnabled: false,
     });
 
     const blank = withRepo(repo, { initialPrompt: '   ', claudeModel: '  ' });
     expect(buildCreateSessionInput(blank, 'dev')).toMatchObject({
       initialPrompt: undefined,
       claudeModel: undefined,
+      sessionToolsEnabled: false,
     });
+  });
+
+  it('passes the session-management choice through', () => {
+    const form = withRepo(repo, { sessionToolsEnabled: true });
+    expect(buildCreateSessionInput(form, 'main')).toMatchObject({ sessionToolsEnabled: true });
   });
 });

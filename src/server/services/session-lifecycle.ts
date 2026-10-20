@@ -20,6 +20,7 @@ import { resolveAgentName } from './agent-name';
 import { clearQueuedPrompts } from './prompt-queue';
 import { recomputeRateLimitHolds } from './rate-limit-pause';
 import type { SessionToolsPort } from './builtin-mcp';
+import type { SessionOverrides } from './settings-merger';
 
 const log = createLogger('session-lifecycle');
 
@@ -69,8 +70,7 @@ interface CreateSessionInput {
   branch?: string;
   initialPrompt?: string;
   claudeModel?: string;
-  /** Set when another session's agent creates this one (see `sessionBuiltinTools`). */
-  createdBySessionId?: string;
+  sessionToolsEnabled?: boolean;
 }
 
 /**
@@ -91,7 +91,7 @@ export async function createSession(input: CreateSessionInput): Promise<Session>
       status: 'creating',
       statusMessage: repo ? 'Cloning repository...' : 'Creating workspace...',
       claudeModel: input.claudeModel?.trim() || null,
-      createdBySessionId: input.createdBySessionId ?? null,
+      sessionToolsEnabled: input.sessionToolsEnabled ?? false,
     },
   });
 
@@ -246,16 +246,16 @@ export async function archiveSession(sessionId: string): Promise<void> {
   if (applied) await removeWorkspace(sessionId);
 }
 
-/** Set the per-session model override and apply it to the live query. Archived sessions are read-only. */
-export async function setSessionModel(
+/** Change per-session settings and apply them to the live query. Archived sessions are read-only. */
+export async function configureSession(
   sessionId: string,
-  claudeModel: string | null
+  overrides: Partial<SessionOverrides>
 ): Promise<Session> {
-  const { applied, session } = await transitionSession(sessionId, 'configure', { claudeModel });
+  const { applied, session } = await transitionSession(sessionId, 'configure', overrides);
   if (!applied) {
     throw new TRPCError({
       code: 'PRECONDITION_FAILED',
-      message: 'Cannot change the model of an archived session',
+      message: 'Cannot change the settings of an archived session',
     });
   }
   // No-op if the session isn't running.
