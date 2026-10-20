@@ -1,10 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import {
-  hasRenderableAssistantContent,
-  isToolResultMessage,
-  isTranscriptRow,
-  messageDisplay,
-} from './transcript-display';
+import { isToolResultMessage, isTranscriptRow, messageDisplay } from './transcript-display';
 
 const textBlocks = (text: string) => ({ message: { content: [{ type: 'text', text }] } });
 const toolResult = {
@@ -101,72 +96,54 @@ describe('isToolResultMessage', () => {
   });
 });
 
-describe('hasRenderableAssistantContent', () => {
-  it('is false when the only block is empty thinking', () => {
+describe('assistant messages that render nothing', () => {
+  const isRow = (...content: unknown[]) =>
+    messageDisplay('assistant', { message: { content } }) === 'row';
+
+  it('hides a message whose only block is empty thinking', () => {
+    expect(isRow({ type: 'thinking', thinking: '', signature: 'sig' })).toBe(false);
+  });
+
+  it('shows a message that is only a progress update', () => {
+    expect(isRow({ type: 'thinking', thinking: 'Running the tests now.' })).toBe(true);
+  });
+
+  it('hides ASCII-whitespace-only text and an empty block array', () => {
+    expect(isRow({ type: 'text', text: ' \t\n\v\f\r' })).toBe(false);
+    expect(isRow()).toBe(false);
+  });
+
+  it('counts only ASCII whitespace as blank, matching the backfill SQL', () => {
+    // A no-break space is not ASCII whitespace, so it is text.
+    expect(isRow({ type: 'text', text: '\u00a0' })).toBe(true);
+  });
+
+  it('shows a message when any block has real content', () => {
+    expect(isRow({ type: 'thinking', thinking: '' }, { type: 'text', text: 'hi' })).toBe(true);
+    expect(isRow({ type: 'tool_use', id: 't1', name: 'Bash', input: {} })).toBe(true);
+    expect(isRow({ type: 'redacted_thinking' })).toBe(true);
+    expect(isRow({ type: 'server_tool_use', id: 'srvtoolu_1', name: 'advisor', input: {} })).toBe(
+      true
+    );
+  });
+
+  it('hides a message whose only block is an advisor_tool_result (encrypted)', () => {
     expect(
-      hasRenderableAssistantContent({
-        message: { content: [{ type: 'thinking', thinking: '', signature: 'sig' }] },
+      isRow({
+        type: 'advisor_tool_result',
+        tool_use_id: 'srvtoolu_1',
+        content: { type: 'advisor_redacted_result', encrypted_content: 'abc' },
       })
     ).toBe(false);
   });
 
-  it('is true for a message that is only a progress update', () => {
-    expect(
-      hasRenderableAssistantContent({
-        message: { content: [{ type: 'thinking', thinking: 'Running the tests now.' }] },
-      })
-    ).toBe(true);
+  it('ignores blocks that are not objects', () => {
+    expect(isRow('hello', null, 3)).toBe(false);
+    expect(isRow(null, { type: 'text', text: 'hi' })).toBe(true);
   });
 
-  it('is false for whitespace-only text and an empty block array', () => {
-    expect(hasRenderableAssistantContent(textBlocks('   '))).toBe(false);
-    expect(hasRenderableAssistantContent({ message: { content: [] } })).toBe(false);
-  });
-
-  it('is true when any block has real content', () => {
-    expect(
-      hasRenderableAssistantContent({
-        message: {
-          content: [
-            { type: 'thinking', thinking: '' },
-            { type: 'text', text: 'hi' },
-          ],
-        },
-      })
-    ).toBe(true);
-    for (const block of [
-      { type: 'tool_use', id: 't1', name: 'Bash', input: {} },
-      { type: 'redacted_thinking' },
-      { type: 'server_tool_use', id: 'srvtoolu_1', name: 'advisor', input: {} },
-    ]) {
-      expect(hasRenderableAssistantContent({ message: { content: [block] } })).toBe(true);
-    }
-  });
-
-  it('is false when the only block is an advisor_tool_result (encrypted, nothing to show)', () => {
-    expect(
-      hasRenderableAssistantContent({
-        message: {
-          content: [
-            {
-              type: 'advisor_tool_result',
-              tool_use_id: 'srvtoolu_1',
-              content: { type: 'advisor_redacted_result', encrypted_content: 'abc' },
-            },
-          ],
-        },
-      })
-    ).toBe(false);
-  });
-
-  it('is true for non-array content (handled elsewhere)', () => {
-    expect(hasRenderableAssistantContent({ content: 'plain' })).toBe(true);
-  });
-
-  it('does not throw on null content or null blocks', () => {
-    expect(hasRenderableAssistantContent(null)).toBe(true);
-    expect(
-      hasRenderableAssistantContent({ message: { content: [null, { type: 'text', text: 'hi' }] } })
-    ).toBe(true);
+  it('shows non-array content (handled elsewhere) and null content', () => {
+    expect(messageDisplay('assistant', { content: 'plain' })).toBe('row');
+    expect(messageDisplay('assistant', null)).toBe('row');
   });
 });

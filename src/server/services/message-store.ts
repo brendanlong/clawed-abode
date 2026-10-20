@@ -89,6 +89,38 @@ export async function loadTranscriptRows(
   return { messages: rows.slice(0, limit).reverse().map(toParsedMessage), hasMore };
 }
 
+/**
+ * Sequence of the earliest message that spawned one of these background tasks
+ * (by SDK `task_id`), or null when none is found. Each task's `task_started`
+ * names its `tool_use_id`; the spawn is the nearest assistant message before it
+ * carrying that id. One statement however many tasks there are.
+ */
+export async function loadEarliestTaskSpawnSequence(
+  sessionId: string,
+  taskIds: string[]
+): Promise<number | null> {
+  if (taskIds.length === 0) return null;
+  const rows = await prisma.$queryRaw<{ spawn: number | bigint | null }[]>`
+    SELECT MIN((
+      SELECT "spawn"."sequence" FROM "Message" AS "spawn"
+      WHERE "spawn"."sessionId" = "started"."sessionId"
+        AND "spawn"."type" = 'assistant'
+        AND "spawn"."sequence" < "started"."sequence"
+        AND instr("spawn"."content", '"' || json_extract("started"."content", '$.tool_use_id') || '"') > 0
+      ORDER BY "spawn"."sequence" DESC
+      LIMIT 1
+    )) AS "spawn"
+    FROM "Message" AS "started"
+    WHERE "started"."sessionId" = ${sessionId}
+      AND "started"."display" = 'context'
+      AND "started"."type" = 'system'
+      AND json_extract("started"."content", '$.subtype') = 'task_started'
+      AND json_extract("started"."content", '$.task_id') IN (SELECT "value" FROM json_each(${JSON.stringify(taskIds)}))
+  `;
+  const spawn = rows[0]?.spawn;
+  return spawn === null || spawn === undefined ? null : Number(spawn);
+}
+
 /** Every non-hidden message after `floor`, oldest-first (a resumed stream's snapshot). */
 export async function loadMessagesAfter(
   sessionId: string,
@@ -262,14 +294,15 @@ export async function persistSyntheticToolResult(
 
 /**
  * Mark the last main-agent message as interrupted and append an interrupt marker.
- * Targets the last assistant/result message (skipping interleaved background and
- * system task messages, which can otherwise be the highest-sequence row).
+ * Targets the last assistant/result message the transcript shows as a row,
+ * skipping subagent messages, empty fragments, and interleaved system task
+ * messages, any of which can otherwise be the highest-sequence message.
  */
 export async function markLastMessageAsInterrupted(sessionId: string): Promise<void> {
   log.info('markLastMessageAsInterrupted', { sessionId });
 
   const lastMainMessage = await prisma.message.findFirst({
-    where: { sessionId, type: { in: ['assistant', 'result'] } },
+    where: { sessionId, display: 'row', type: { in: ['assistant', 'result'] } },
     orderBy: { sequence: 'desc' },
     select: { id: true, sequence: true, type: true, content: true, createdAt: true },
   });

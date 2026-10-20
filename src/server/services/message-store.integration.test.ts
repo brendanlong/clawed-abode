@@ -66,6 +66,21 @@ const DISPLAY_FIXTURES: [MessageType, unknown][] = [
   ['system', { type: 'rate_limit_event' }],
   ['system', { type: 'tool_progress', parent_tool_use_id: 'task-1' }],
   ['result', { type: 'result', subtype: 'success', session_id: 's' }],
+  // Odd shapes the backfill must classify like the live path, not abort on.
+  ['user', { type: 'user', message: { content: ['hello', null, 7] } }],
+  ['assistant', { type: 'assistant', message: { content: ['hello', null, 7] } }],
+  [
+    'assistant',
+    { type: 'assistant', message: { content: { type: 'text', text: 'not an array' } } },
+  ],
+  ['assistant', { type: 'assistant', ...blocks({ type: 7, text: 'numeric type' }) }],
+  ['assistant', { type: 'assistant', ...blocks({ type: 'text', text: '\u00a0' }) }],
+  ['assistant', { type: 'assistant', ...blocks({ type: 'text', text: ' \u000b\f\r' }) }],
+  ['assistant', 'just a string'],
+  ['user', null],
+  ['assistant', null],
+  ['system', null],
+  ['system', { type: 'system', subtype: 5 }],
 ];
 
 let store: typeof import('./message-store');
@@ -204,6 +219,31 @@ describe('message-store reads', () => {
       expect(sequences(oldest.messages)).toEqual([1, 2]);
       expect(oldest.hasMore).toBe(false);
     });
+  });
+});
+
+describe('markLastMessageAsInterrupted', () => {
+  it('marks the last assistant row, not a later subagent message or empty fragment', async () => {
+    const session = await createTestSession();
+    const insert = (id: string, content: unknown) =>
+      store.insertMessage({ sessionId: session.id, id, type: 'assistant', content });
+    await insert('reply', { type: 'assistant', ...blocks({ type: 'text', text: 'working' }) });
+    await insert('child', {
+      type: 'assistant',
+      parent_tool_use_id: 'task-1',
+      ...blocks({ type: 'text', text: 'child' }),
+    });
+    await insert('fragment', { type: 'assistant', ...blocks({ type: 'thinking', thinking: '' }) });
+
+    await store.markLastMessageAsInterrupted(session.id);
+
+    const rows = await testPrisma.message.findMany({
+      where: { sessionId: session.id },
+      orderBy: { sequence: 'asc' },
+    });
+    const interrupted = rows.filter((r) => JSON.parse(r.content).interrupted === true);
+    expect(interrupted.map((r) => r.id)).toEqual(['reply']);
+    expect(JSON.parse(rows[rows.length - 1].content)).toMatchObject({ subtype: 'interrupt' });
   });
 });
 

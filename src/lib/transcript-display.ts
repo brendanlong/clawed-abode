@@ -8,7 +8,6 @@
  */
 
 import { z } from 'zod';
-import { assistantBlockText } from './claude-messages';
 
 /**
  * - `row`: renders as its own top-level transcript row (counts toward a history page).
@@ -43,6 +42,15 @@ const contentSchema = z
   .catch({ subtype: undefined, parent_tool_use_id: null, message: undefined });
 
 /**
+ * Whether a block's text has anything but ASCII whitespace (space, \t, \n, \v,
+ * \f, \r) — exactly the set the backfill migration trims in SQL, so the stored
+ * and live classifications can't disagree.
+ */
+function hasText(text: unknown): boolean {
+  return typeof text === 'string' && /[^ \t\n\v\f\r]/.test(text);
+}
+
+/**
  * Whether an assistant content block renders a visible element — e.g. a
  * `thinking` block with empty text (just a continuity signature) renders nothing.
  * A `thinking` block with text is a progress update (see `assistantBlockText`).
@@ -57,8 +65,9 @@ export function isRenderableBlock(block: {
 }): boolean {
   switch (block.type) {
     case 'text':
+      return hasText(block.text);
     case 'thinking':
-      return assistantBlockText(block) !== null;
+      return hasText(block.thinking);
     case 'tool_use':
     case 'redacted_thinking':
     case 'server_tool_use':
@@ -99,14 +108,6 @@ function isRow(type: string, parsed: ParsedContent): boolean {
   if (type === 'user' && hasToolResultBlocks(parsed)) return false;
   if (type === 'assistant' && !hasRenderableBlocks(parsed)) return false;
   return true;
-}
-
-/**
- * Whether an assistant message has anything worth rendering, so fragments whose
- * blocks all render to nothing don't show as an empty bubble.
- */
-export function hasRenderableAssistantContent(content: unknown): boolean {
-  return hasRenderableBlocks(parseContent(content));
 }
 
 /** Whether a message carries `tool_result` blocks (a `user` message reporting tool output). */
