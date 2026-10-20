@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { skipToken, useQuery, useQueryClient } from '@tanstack/react-query';
 import { trpc } from '@/lib/trpc';
 import {
@@ -49,6 +49,7 @@ export function useSessionStreamState(sessionId: string): SessionStreamState | u
 export function useSessionStream(sessionId: string) {
   const utils = trpc.useUtils();
   const queryClient = useQueryClient();
+  const [quietReconnect, setQuietReconnect] = useState(false);
 
   const subscription = trpc.sse.onSessionEvents.useSubscription(
     { sessionId },
@@ -93,20 +94,33 @@ export function useSessionStream(sessionId: string) {
 
   const { reset } = subscription;
   useEffect(() => {
+    const reconnectQuietly = () => {
+      setQuietReconnect(true);
+      reset();
+    };
     const onVisibilityChange = () => {
-      if (document.visibilityState === 'visible') reset();
+      if (document.visibilityState === 'visible') reconnectQuietly();
     };
     document.addEventListener('visibilitychange', onVisibilityChange);
-    window.addEventListener('online', reset);
+    window.addEventListener('online', reconnectQuietly);
     return () => {
       document.removeEventListener('visibilitychange', onVisibilityChange);
-      window.removeEventListener('online', reset);
+      window.removeEventListener('online', reconnectQuietly);
     };
   }, [reset]);
 
+  // A reconnect we started ourselves isn't news: hide its connecting phase, but
+  // not a failure (a connecting state carrying an error, or a terminal error).
+  const { status, error } = subscription;
+  const quiet = quietReconnect && status === 'connecting' && !error;
+  // Adjust state during render (React's supported pattern): once that reconnect
+  // settles either way, later connecting phases are tRPC's own and show.
+  if (quietReconnect && !quiet) setQuietReconnect(false);
+
   return {
-    status: subscription.status,
-    notFound: subscription.error?.data?.code === 'NOT_FOUND',
+    /** For display: a self-initiated reconnect reads as still connected. */
+    status: quiet ? 'pending' : status,
+    notFound: error?.data?.code === 'NOT_FOUND',
     reconnect: reset,
   };
 }
