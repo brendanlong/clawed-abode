@@ -123,7 +123,7 @@ function makeResult(id: string, sequence: number): DisplayMessage {
 describe('extractAssistantText', () => {
   it('extracts text from a message with text blocks', () => {
     const msg = makeAssistantText('a1', 1, 'Hello world');
-    expect(extractAssistantText(msg)).toBe('Hello world');
+    expect(extractAssistantText(msg.content)).toBe('Hello world');
   });
 
   it('concatenates multiple text blocks', () => {
@@ -142,17 +142,17 @@ describe('extractAssistantText', () => {
         },
       },
     };
-    expect(extractAssistantText(msg)).toBe('First part\nSecond part');
+    expect(extractAssistantText(msg.content)).toBe('First part\nSecond part');
   });
 
   it('returns null for tool-use-only messages', () => {
     const msg = makeAssistantToolUse('a1', 1);
-    expect(extractAssistantText(msg)).toBeNull();
+    expect(extractAssistantText(msg.content)).toBeNull();
   });
 
   it('returns null for messages with only whitespace text', () => {
     const msg = makeAssistantText('a1', 1, '   \n  ');
-    expect(extractAssistantText(msg)).toBeNull();
+    expect(extractAssistantText(msg.content)).toBeNull();
   });
 
   it('speaks progress updates (thinking with text)', () => {
@@ -163,7 +163,7 @@ describe('extractAssistantText', () => {
       createdAt: new Date(0),
       content: { message: { content: [{ type: 'thinking', thinking: 'Building the APK.' }] } },
     };
-    expect(extractAssistantText(msg)).toBe('Building the APK.');
+    expect(extractAssistantText(msg.content)).toBe('Building the APK.');
   });
 
   it('returns null for messages with no content blocks', () => {
@@ -174,7 +174,7 @@ describe('extractAssistantText', () => {
       createdAt: new Date(0),
       content: { message: { content: [] } },
     };
-    expect(extractAssistantText(msg)).toBeNull();
+    expect(extractAssistantText(msg.content)).toBeNull();
   });
 
   it('returns null for malformed content', () => {
@@ -185,7 +185,7 @@ describe('extractAssistantText', () => {
       createdAt: new Date(0),
       content: {},
     };
-    expect(extractAssistantText(msg)).toBeNull();
+    expect(extractAssistantText(msg.content)).toBeNull();
   });
 });
 
