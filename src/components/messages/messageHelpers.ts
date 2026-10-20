@@ -15,6 +15,7 @@ import {
 } from '@/lib/claude-messages';
 import { isRenderableBlock, isToolResultMessage, messageDisplay } from '@/lib/transcript-display';
 import { isPlanFile, reconstructPlansByToolUseId, type PlanEvent } from './plan-utils';
+import { toolResultText } from '@/lib/tool-result';
 
 /**
  * Strip XML wrapper tags from Claude Code local command output.
@@ -73,38 +74,6 @@ export function isOwnPromptMessage(message: { type: string; content: unknown }):
     !parseInjectedOrigin(content.origin) &&
     !isTaskNotificationOrigin(content.origin)
   );
-}
-
-const toolResultPartSchema = z.object({
-  type: z.string().optional(),
-  text: z.string().optional(),
-  tool_name: z.string().optional(),
-});
-
-/** Non-text parts get a short label; their payloads (e.g. base64 images) are never shown. */
-function toolResultPartText(part: unknown): string | null {
-  if (typeof part === 'string') return part;
-  const parsed = toolResultPartSchema.safeParse(part);
-  if (!parsed.success) return null;
-  const { type, text, tool_name } = parsed.data;
-  if (text !== undefined) return text;
-  if (type === 'tool_reference' && tool_name) return `Loaded ${tool_name}`;
-  return `[${type ?? 'unknown'}]`;
-}
-
-/**
- * The display text of a `tool_result`'s content. Any result means the call has
- * finished, so this always returns a string — never undefined, which the tool
- * displays read as still running.
- */
-export function toolResultText(content: unknown): string {
-  if (Array.isArray(content)) {
-    return content
-      .map(toolResultPartText)
-      .filter((text) => text !== null)
-      .join('\n\n');
-  }
-  return toolResultPartText(content) ?? '';
 }
 
 /**

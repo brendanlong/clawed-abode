@@ -7,81 +7,9 @@ import { ToolDisplayWrapper } from './ToolDisplayWrapper';
 import { ToolOutputBlock } from './ToolOutputBlock';
 import { lenient, parseToolInput } from './tool-input';
 import type { ToolCall } from './types';
+import { parseWebSearchOutput } from '@/lib/web-search-output';
 
 const webSearchInputSchema = z.object({ query: lenient(z.string()) });
-
-interface SearchLink {
-  title: string;
-  url: string;
-}
-
-interface ParsedWebSearchOutput {
-  query: string;
-  links: SearchLink[];
-  summary: string;
-}
-
-/**
- * Parse WebSearch output into structured components.
- * The output format is:
- * - First line: "Web search results for query: \"...\""
- * - Links line: "Links: [{...}, ...]"
- * - Rest: Summary text
- */
-function parseWebSearchOutput(output: string): ParsedWebSearchOutput | null {
-  if (!output) {
-    return null;
-  }
-
-  const result: ParsedWebSearchOutput = {
-    query: '',
-    links: [],
-    summary: '',
-  };
-
-  // Split by newlines and process
-  const lines = output.split('\n');
-  let summaryStartIndex = 0;
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-
-    // Parse query from first line
-    const queryMatch = line.match(/^Web search results for query: "(.+)"$/);
-    if (queryMatch) {
-      result.query = queryMatch[1];
-      summaryStartIndex = i + 1;
-      continue;
-    }
-
-    // Parse links JSON
-    if (line.startsWith('Links: ')) {
-      try {
-        const jsonStr = line.substring('Links: '.length);
-        const parsed = JSON.parse(jsonStr);
-        if (Array.isArray(parsed)) {
-          result.links = parsed.filter(
-            (item): item is SearchLink =>
-              typeof item === 'object' &&
-              item !== null &&
-              typeof item.title === 'string' &&
-              typeof item.url === 'string'
-          );
-        }
-      } catch {
-        // If parsing fails, just skip the links
-      }
-      summaryStartIndex = i + 1;
-      continue;
-    }
-  }
-
-  // Everything after the links line is the summary
-  const summaryLines = lines.slice(summaryStartIndex);
-  result.summary = summaryLines.join('\n').trim();
-
-  return result;
-}
 
 const SearchIcon = () => (
   <svg

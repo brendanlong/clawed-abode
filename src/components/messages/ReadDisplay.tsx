@@ -9,7 +9,7 @@ import { FileIcon } from './FileIcon';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
 import { ToolOutputBlock } from './ToolOutputBlock';
 import { CodeBlock } from './CodeBlock';
-import { parseReadOutput } from './read-output';
+import { parseReadOutput } from '@/lib/read-output';
 import { lenient, parseToolInput } from './tool-input';
 import type { ToolCall } from './types';
 

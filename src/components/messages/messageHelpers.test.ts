@@ -12,7 +12,6 @@ import {
   computeSubagentPlacements,
   toolUseBlocks,
   buildToolResultMap,
-  toolResultText,
   collectSubagentLifecycles,
   getLatestTodoWriteId,
   getPlanContentByToolUseId,
@@ -764,31 +763,6 @@ describe('buildToolResultMap', () => {
       },
     ]);
     expect(resultMap.size).toBe(0);
-  });
-});
-
-describe('toolResultText', () => {
-  it('passes strings through', () => {
-    expect(toolResultText('hello')).toBe('hello');
-  });
-
-  it('joins text parts and labels non-text parts without their payloads', () => {
-    expect(
-      toolResultText([
-        { type: 'text', text: 'caption' },
-        { type: 'image', source: { type: 'base64', data: 'AAAA' } },
-        { type: 'tool_reference', tool_name: 'Monitor' },
-        { type: 'document', source: { type: 'base64', data: 'BBBB' } },
-      ])
-    ).toBe('caption\n\n[image]\n\nLoaded Monitor\n\n[document]');
-  });
-
-  it('skips malformed parts instead of throwing', () => {
-    expect(toolResultText([null, 7, 'raw', { type: 'text', text: 'ok' }])).toBe('raw\n\nok');
-  });
-
-  it('returns an empty string for missing content', () => {
-    expect(toolResultText(undefined)).toBe('');
   });
 });
 
