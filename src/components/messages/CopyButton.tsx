@@ -2,11 +2,13 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
+import { writeClipboardText } from '@/lib/clipboard';
 
 /**
- * Copy button component that shows a brief "Copied!" feedback.
+ * Copy button component that shows a brief "Copied!" feedback. `getText` may
+ * return a promise when part of the text has to be fetched first.
  */
-export function CopyButton({ getText }: { getText: () => string }) {
+export function CopyButton({ getText }: { getText: () => string | Promise<string> }) {
   const [copied, setCopied] = useState(false);
   // MessageList unmounts rows freely (relocated subagent boxes), so the reset
   // timer has to be cancelled or it fires setState on an unmounted component.
@@ -16,8 +18,7 @@ export function CopyButton({ getText }: { getText: () => string }) {
 
   const handleCopy = useCallback(async () => {
     try {
-      const text = getText();
-      await navigator.clipboard.writeText(text);
+      await writeClipboardText(getText());
       setCopied(true);
       clearTimeout(resetTimer.current);
       resetTimer.current = setTimeout(() => setCopied(false), 2000);

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import type { ReactElement } from 'react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { observable } from '@trpc/server/observable';
@@ -9,6 +10,36 @@ import type { AppRouter } from '@/server/routers';
 import { projectMessageContent } from '@/lib/tool-result';
 import { MessageList } from './MessageList';
 import type { DisplayMessage } from './messages/types';
+
+/**
+ * Render inside a tRPC provider whose fake server answers `claude.getToolResult`
+ * from `bodies` (keyed by tool_use id), recording each request.
+ */
+function renderWithTrpc(ui: ReactElement, bodies: Record<string, string> = {}) {
+  const requests: { messageId: string; toolUseId: string }[] = [];
+  const link: TRPCLink<AppRouter> = () => {
+    return ({ op }) =>
+      observable((observer) => {
+        if (op.path === 'claude.getToolResult') {
+          const input = op.input as { messageId: string; toolUseId: string };
+          requests.push({ messageId: input.messageId, toolUseId: input.toolUseId });
+          observer.next({ result: { type: 'data', data: { text: bodies[input.toolUseId] } } });
+          observer.complete();
+        } else {
+          observer.error(TRPCClientError.from(new Error(`unexpected request: ${op.path}`)));
+        }
+        return () => {};
+      });
+  };
+  const client = trpc.createClient({ links: [link] });
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const view = render(
+    <trpc.Provider client={client} queryClient={queryClient}>
+      <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>
+    </trpc.Provider>
+  );
+  return { ...view, requests };
+}
 
 // Builds a minimal message list around one background Explore subagent:
 //   seq 0  user prompt
@@ -122,7 +153,7 @@ function baseMessages(opts: { withNotification?: boolean } = {}): DisplayMessage
 }
 
 function renderList(messages: DisplayMessage[], isSessionRunning: boolean) {
-  return render(
+  return renderWithTrpc(
     <MessageList
       sessionId="session-1"
       messages={messages}
@@ -242,7 +273,7 @@ describe('MessageList refusal fallback', () => {
 
 describe('MessageList older-page loader', () => {
   function renderLoader(opts: { hasMore: boolean; isLoading: boolean }) {
-    return render(
+    return renderWithTrpc(
       <MessageList
         sessionId="session-1"
         messages={baseMessages()}
@@ -335,38 +366,17 @@ describe('MessageList lazy tool-result bodies', () => {
   ];
 
   function renderWithServer() {
-    const requests: { messageId: string; toolUseId: string }[] = [];
-    const link: TRPCLink<AppRouter> = () => {
-      return ({ op }) =>
-        observable((observer) => {
-          if (op.path === 'claude.getToolResult') {
-            const input = op.input as { messageId: string; toolUseId: string };
-            requests.push({ messageId: input.messageId, toolUseId: input.toolUseId });
-            observer.next({ result: { type: 'data', data: { text: BODIES[input.toolUseId] } } });
-            observer.complete();
-          } else {
-            observer.error(TRPCClientError.from(new Error(`unexpected request: ${op.path}`)));
-          }
-          return () => {};
-        });
-    };
-    const client = trpc.createClient({ links: [link] });
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const view = render(
-      <trpc.Provider client={client} queryClient={queryClient}>
-        <QueryClientProvider client={queryClient}>
-          <MessageList
-            sessionId="session-1"
-            messages={messages}
-            isLoading={false}
-            hasMore={false}
-            loadFailed={false}
-            onLoadMore={() => {}}
-          />
-        </QueryClientProvider>
-      </trpc.Provider>
+    return renderWithTrpc(
+      <MessageList
+        sessionId="session-1"
+        messages={messages}
+        isLoading={false}
+        hasMore={false}
+        loadFailed={false}
+        onLoadMore={() => {}}
+      />,
+      BODIES
     );
-    return { ...view, requests };
   }
 
   const cardTrigger = (title: string) => {
@@ -424,5 +434,36 @@ describe('MessageList lazy tool-result bodies', () => {
     // The nested Grep card stays collapsed, showing its count from the summary.
     expect(screen.getByText('200 matches')).toBeInTheDocument();
     expect(requests).toEqual([{ messageId: 'm10', toolUseId: 'fg1' }]);
+  });
+
+  /** The Copy button of the message bubble holding a tool card. */
+  function copyButtonFor(title: string): HTMLElement {
+    for (let node = cardTrigger(title).parentElement; node; node = node.parentElement) {
+      const copy = within(node).queryByRole('button', { name: 'Copy' });
+      if (copy) return copy;
+    }
+    throw new Error(`no Copy button around the ${title} card`);
+  }
+
+  it('copies a message with its full tool output, fetching the elided body', async () => {
+    const user = userEvent.setup();
+    const { requests } = renderWithServer();
+
+    await user.click(copyButtonFor('Read'));
+
+    await waitFor(async () => expect(await navigator.clipboard.readText()).toContain('alpha300'));
+    expect(requests).toEqual([{ messageId: 'm2', toolUseId: 'r1' }]);
+  });
+
+  it('copies an inline output without a fetch', async () => {
+    const user = userEvent.setup();
+    const { requests } = renderWithServer();
+
+    await user.click(copyButtonFor('Bash'));
+
+    await waitFor(async () =>
+      expect(await navigator.clipboard.readText()).toContain('command failed')
+    );
+    expect(requests).toEqual([]);
   });
 });

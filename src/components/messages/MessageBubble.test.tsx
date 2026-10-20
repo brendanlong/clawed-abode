@@ -565,6 +565,7 @@ describe('MessageBubble', () => {
         <MessageListProvider
           value={{
             sessionId: 'session-1',
+            loadToolResultText: () => Promise.reject(new Error('unexpected fetch')),
             latestTodoWriteId: 'todo-1',
             planContentByToolUseId: new Map(),
             renderSubagentTranscript: () => null,
@@ -602,6 +603,7 @@ describe('MessageBubble', () => {
         <MessageListProvider
           value={{
             sessionId: 'session-1',
+            loadToolResultText: () => Promise.reject(new Error('unexpected fetch')),
             latestTodoWriteId,
             planContentByToolUseId: new Map(),
             renderSubagentTranscript: () => null,
@@ -670,6 +672,7 @@ describe('MessageBubble', () => {
           <MessageListProvider
             value={{
               sessionId: 'session-1',
+              loadToolResultText: () => Promise.reject(new Error('unexpected fetch')),
               latestTodoWriteId: null,
               planContentByToolUseId: new Map(),
               renderSubagentTranscript: (id: string) => <div>nested transcript for {id}</div>,

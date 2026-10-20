@@ -32,6 +32,7 @@ function renderWithContext(
     <MessageListProvider
       value={{
         sessionId: 'session-1',
+        loadToolResultText: () => Promise.reject(new Error('unexpected fetch')),
         latestTodoWriteId: null,
         planContentByToolUseId: new Map(),
         renderSubagentTranscript: () => null,

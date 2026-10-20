@@ -9,6 +9,7 @@ import { CopyButton } from './CopyButton';
 import { SanitizationBadge } from './SanitizationBadge';
 import { MessageTimestamp } from './MessageTimestamp';
 import { renderContent } from './ContentRenderer';
+import { useMessageListContext } from './MessageListContext';
 import { parseSanitizationInfo } from '@/lib/sanitization';
 import { MessagePlayButton } from '@/components/voice/MessagePlayButton';
 import { extractAssistantText } from '@/components/voice/playable-messages';
@@ -17,6 +18,8 @@ import {
   buildToolCalls,
   getCopyText,
   getDisplayContent,
+  hasElidedResults,
+  loadToolResultTexts,
   type MessageCategory,
 } from './messageHelpers';
 import type { MessageContent, ToolCall, ToolResultMap } from './types';
@@ -52,9 +55,16 @@ export function MainMessageBubble({
     return buildToolCalls(content, toolResults);
   }, [isAssistant, content, toolResults]);
 
+  // Copying includes every tool output, so outputs not yet loaded are fetched first.
+  const loadToolResultText = useMessageListContext()?.loadToolResultText;
   const handleGetCopyText = useCallback(() => {
-    return getCopyText(content, category, toolCalls);
-  }, [content, category, toolCalls]);
+    if (!loadToolResultText || !hasElidedResults(toolCalls)) {
+      return getCopyText(content, category, toolCalls);
+    }
+    return loadToolResultTexts(toolCalls, loadToolResultText).then((loaded) =>
+      getCopyText(content, category, loaded)
+    );
+  }, [content, category, toolCalls, loadToolResultText]);
 
   const displayContent = getDisplayContent(content, category);
 

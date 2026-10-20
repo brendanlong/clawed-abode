@@ -14,6 +14,8 @@ import { SubscriptionUsageIndicator } from '@/components/SubscriptionUsageIndica
 import type { TokenUsageStats } from '@/lib/token-estimation';
 import type { SessionSubscriptionUsage } from '@/lib/usage';
 import { useTranscriptScroll } from '@/hooks/useTranscriptScroll';
+import { TOOL_RESULT_QUERY_OPTIONS } from '@/hooks/useToolResultText';
+import { trpc } from '@/lib/trpc';
 import {
   isToolCallOnlyMessage,
   isOwnPromptMessage,
@@ -120,12 +122,23 @@ export function MessageList({
     [retractedMessagesByFallbackId, resultMap]
   );
 
+  // Shares the expanded cards' query cache, so copying what was already opened is free.
+  const utils = trpc.useUtils();
+  const loadToolResultText = useCallback(
+    async (messageId: string, toolUseId: string) => {
+      const input = { sessionId, messageId, toolUseId };
+      return (await utils.claude.getToolResult.fetch(input, TOOL_RESULT_QUERY_OPTIONS)).text;
+    },
+    [utils, sessionId]
+  );
+
   const pendingIds = useMemo(() => new Set(pendingMessageIds), [pendingMessageIds]);
   const queuedIds = useMemo(() => new Set(queuedMessageIds), [queuedMessageIds]);
 
   const contextValue = useMemo(
     () => ({
       sessionId,
+      loadToolResultText,
       latestTodoWriteId,
       onAnswerQuestion,
       onRespondToPlan,
@@ -136,6 +149,7 @@ export function MessageList({
     }),
     [
       sessionId,
+      loadToolResultText,
       latestTodoWriteId,
       onAnswerQuestion,
       onRespondToPlan,

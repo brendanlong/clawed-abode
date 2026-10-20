@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import type { MessageContent } from './types';
 import {
   extractTextContent,
@@ -6,6 +6,8 @@ import {
   isOwnPromptMessage,
   buildToolCalls,
   getCopyText,
+  hasElidedResults,
+  loadToolResultTexts,
   getDisplayContent,
   isToolCallOnlyMessage,
   groupSubagentMessages,
@@ -19,8 +21,8 @@ import {
   collectRetractedMessages,
   type SubagentLifecycle,
 } from './messageHelpers';
-import type { ContentBlock, DisplayMessage } from './types';
-import { inlineResult } from '@/test/tool-result-fixtures';
+import type { ContentBlock, DisplayMessage, ToolCall } from './types';
+import { elidedResult, inlineResult } from '@/test/tool-result-fixtures';
 import { summarizeToolResult } from '@/lib/tool-result';
 
 describe('extractTextContent', () => {
@@ -318,6 +320,31 @@ describe('buildToolCalls', () => {
     };
     const calls = buildToolCalls(content, new Map());
     expect(calls[0].result).toBeUndefined();
+  });
+});
+
+describe('loadToolResultTexts', () => {
+  const call = (id: string, result?: ToolCall['result']): ToolCall => ({
+    name: 'Bash',
+    id,
+    input: {},
+    result,
+  });
+
+  it('fills in elided outputs and leaves inline and missing ones alone', async () => {
+    const calls = [
+      call('a', elidedResult('big', 'm1')),
+      call('b', inlineResult('small')),
+      call('c'),
+    ];
+    const load = vi.fn(async (messageId: string, toolUseId: string) => `${messageId}/${toolUseId}`);
+
+    expect(hasElidedResults(calls)).toBe(true);
+    const loaded = await loadToolResultTexts(calls, load);
+
+    expect(loaded.map((tool) => tool.result?.text)).toEqual(['m1/a', 'small', undefined]);
+    expect(load).toHaveBeenCalledTimes(1);
+    expect(hasElidedResults(loaded)).toBe(false);
   });
 });
 

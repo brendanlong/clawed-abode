@@ -337,6 +337,28 @@ export function buildToolCalls(content: MessageContent, toolResults?: ToolResult
 }
 
 /**
+ * Fill in the text of every result the server elided, so the calls carry their
+ * full output (for copying). Fetches run in parallel and share one batch.
+ */
+export async function loadToolResultTexts(
+  toolCalls: ToolCall[],
+  load: (messageId: string, toolUseId: string) => Promise<string>
+): Promise<ToolCall[]> {
+  return Promise.all(
+    toolCalls.map(async (tool) => {
+      const { result } = tool;
+      if (!result || result.text !== undefined || !tool.id) return tool;
+      return { ...tool, result: { ...result, text: await load(result.messageId, tool.id) } };
+    })
+  );
+}
+
+/** Whether any of these calls has a result whose text the server elided. */
+export function hasElidedResults(toolCalls: ToolCall[]): boolean {
+  return toolCalls.some((tool) => tool.result !== undefined && tool.result.text === undefined);
+}
+
+/**
  * Get the text to copy for a message.
  */
 export function getCopyText(
