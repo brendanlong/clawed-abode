@@ -245,6 +245,20 @@ describe('client projection', () => {
     );
     expect(await store.loadToolResultText(session.id, 'r1', 't1')).toBe('x'.repeat(5000));
   });
+
+  it('leaves server-side transcript reads raw', async () => {
+    const session = await createTestSession();
+    const content = {
+      type: 'assistant',
+      wire_tool_inputs: { t1: {} },
+      message: { content: [{ type: 'text', text: 'hi' }], input_transformations: [{}] },
+    };
+    await store.insertMessage({ sessionId: session.id, id: 'a1', type: 'assistant', content });
+
+    const { messages } = await store.loadTranscriptRows(session.id, null, 10);
+
+    expect(messages.map((m) => m.content)).toEqual([content]);
+  });
 });
 
 describe('markLastMessageAsInterrupted', () => {

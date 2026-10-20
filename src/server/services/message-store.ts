@@ -21,23 +21,32 @@ const log = createLogger('message-store');
 const MESSAGE_ID_NAMESPACE = '6ba7b810-9dad-11d1-80b4-00c04fd430c8';
 
 /**
- * A message as the API and SSE deliver it: `content` decoded and projected for
- * clients (`projectMessageContent`: large tool-result bodies summarized, unread
- * SDK fields dropped). `display` stays server-side: clients classify with the
- * same `messageDisplay`, which the projection doesn't change.
+ * A message row with its JSON `content` decoded. `display` stays server-side:
+ * clients classify with the same `messageDisplay`.
  */
 export type ParsedMessage = Omit<Message, 'content' | 'display'> & { content: unknown };
 
+/** Decode a row as stored, for server-side readers (e.g. `read_session`). */
 function toParsedMessage({ display: _display, ...row }: Message): ParsedMessage {
-  return { ...row, content: projectMessageContent(JSON.parse(row.content)) };
+  return { ...row, content: JSON.parse(row.content) as unknown };
+}
+
+/**
+ * A message as the API and SSE deliver it to clients: projected by
+ * `projectMessageContent` (large tool-result bodies summarized, unread SDK
+ * fields dropped), which doesn't change its `messageDisplay`.
+ */
+function toClientMessage(message: ParsedMessage): ParsedMessage {
+  return { ...message, content: projectMessageContent(message.content) };
+}
+
+function toClientMessageFromRow(row: Message): ParsedMessage {
+  return toClientMessage(toParsedMessage(row));
 }
 
 /** Announce a persisted message, projected exactly as reads deliver it. */
 function emitPersistedMessage(sessionId: string, message: ParsedMessage): void {
-  sseEvents.emitNewMessage(sessionId, {
-    ...message,
-    content: projectMessageContent(message.content),
-  });
+  sseEvents.emitNewMessage(sessionId, toClientMessage(message));
 }
 
 /** Every message a client may need: the rows plus the context they render with. */
@@ -54,6 +63,7 @@ function rowsBefore(sessionId: string, cursor: number | null | undefined) {
  * of them up to the cursor, oldest-first. Pages are contiguous, so a row's tool
  * results, task events and subagent messages (all newer than it) are loaded by
  * the time it is. The last page reaches back to the start of the session.
+ * Projected for clients.
  */
 export async function loadHistoryPage(
   sessionId: string,
@@ -79,7 +89,7 @@ export async function loadHistoryPage(
     },
     orderBy: { sequence: 'asc' },
   });
-  return { messages: rows.map(toParsedMessage), hasMore };
+  return { messages: rows.map(toClientMessageFromRow), hasMore };
 }
 
 /**
@@ -148,7 +158,7 @@ export async function loadToolResultText(
   return row ? findToolResultText(JSON.parse(row.content), toolUseId) : null;
 }
 
-/** Every non-hidden message after `floor`, oldest-first (a resumed stream's snapshot). */
+/** Every non-hidden message after `floor`, oldest-first (a resumed stream's snapshot), projected for clients. */
 export async function loadMessagesAfter(
   sessionId: string,
   floor: number
@@ -157,7 +167,7 @@ export async function loadMessagesAfter(
     where: { sessionId, display: NOT_HIDDEN, sequence: { gt: floor } },
     orderBy: { sequence: 'asc' },
   });
-  return rows.map(toParsedMessage);
+  return rows.map(toClientMessageFromRow);
 }
 
 /** Whether any non-hidden message has `sequence <= ceiling`. */
