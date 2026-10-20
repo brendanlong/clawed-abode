@@ -23,6 +23,7 @@ const pr: PullRequestInfo = {
   updatedAt: '2024-01-01T00:00:00Z',
   headBranch: 'feature',
   headSha: 'abc',
+  stackedOn: null,
   checks: 'pending',
 };
 

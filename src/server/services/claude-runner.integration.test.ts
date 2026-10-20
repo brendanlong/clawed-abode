@@ -464,6 +464,7 @@ describe('claude-runner persistent streaming loop', () => {
       updatedAt: '2024-01-01T00:00:00Z',
       headBranch: 'feat-a',
       headSha: 'abc',
+      stackedOn: null,
     };
     const storedInfo = JSON.stringify({ ...pr, checks: null });
 

@@ -13,6 +13,7 @@ const basePr: PullRequestInfo = {
   updatedAt: '2024-01-01T00:00:00Z',
   headBranch: 'feature-x',
   headSha: 'abc123',
+  stackedOn: null,
   checks: null,
 };
 
