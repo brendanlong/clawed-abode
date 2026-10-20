@@ -4,6 +4,7 @@ import {
   findToolResultText,
   projectMessageContent,
   summarizeToolResult,
+  toolResultSummarySchema,
   toolResultText,
 } from './tool-result';
 
@@ -51,6 +52,17 @@ describe('summarizeToolResult', () => {
 
   it('sums trailing counts for Grep count mode', () => {
     expect(summarizeToolResult('src/a.ts:3\nsrc/b.ts:4\nnoise').countTotal).toBe(7);
+  });
+
+  it('ignores counts too large to be real, so the summary stays finite', () => {
+    const summary = summarizeToolResult(`a.ts:${'9'.repeat(400)}\nb.ts:2`);
+    expect(summary.countTotal).toBe(2);
+    expect(toolResultSummarySchema.safeParse(summary).success).toBe(true);
+  });
+
+  it("flags the CLI's unanswered-question error", () => {
+    expect(summarizeToolResult('Answer questions?').awaitingAnswer).toBe(true);
+    expect(summarizeToolResult('Option A').awaitingAnswer).toBe(false);
   });
 
   it('counts WebSearch sources, and null for empty output', () => {

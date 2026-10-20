@@ -721,14 +721,16 @@ describe('buildToolResultMap', () => {
     expect(resultMap.get('a')).toEqual({ messageId: 'm2', is_error: true, summary });
   });
 
-  it('summarizes an inline result whose summary is malformed', () => {
+  it('treats a result with a malformed summary as elided, with blank badges', () => {
     const { resultMap } = buildToolResultMap([
-      assistant(1, [toolUse('a', 'Glob')]),
-      toolResultMessage(2, [
-        { type: 'tool_result', tool_use_id: 'a', content: 'x\ny', summary: { bogus: 1 } },
-      ]),
+      assistant(1, [toolUse('a', 'Grep')]),
+      toolResultMessage(2, [{ type: 'tool_result', tool_use_id: 'a', summary: { bogus: 1 } }]),
     ]);
-    expect(resultMap.get('a')).toEqual({ ...inlineResult('x\ny'), messageId: 'm2' });
+    expect(resultMap.get('a')).toEqual({
+      messageId: 'm2',
+      is_error: undefined,
+      summary: summarizeToolResult(''),
+    });
   });
 
   it('pairs results with their calls and records the result sequence', () => {

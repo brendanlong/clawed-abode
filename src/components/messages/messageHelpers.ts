@@ -431,13 +431,21 @@ export function* toolUseBlocks(
   }
 }
 
+/** Badges for an elided result whose summary doesn't validate: blank, but the body still loads. */
+const EMPTY_SUMMARY = summarizeToolResult('');
+
 /**
- * A `tool_result` block as a {@link ToolResult}: an elided body keeps the
- * server's summary, an inline one is summarized here the same way.
+ * A `tool_result` block as a {@link ToolResult}. The server sets `summary`
+ * exactly when it elided the body, so its presence (not whether it validates)
+ * decides that the text must be fetched; an inline body is summarized here the
+ * same way the server would.
  */
 function toToolResult(messageId: string, block: ContentBlock): ToolResult {
-  const summary = toolResultSummarySchema.safeParse(block.summary);
-  if (summary.success) return { messageId, is_error: block.is_error, summary: summary.data };
+  if (block.summary !== undefined) {
+    const parsed = toolResultSummarySchema.safeParse(block.summary);
+    const summary = parsed.success ? parsed.data : EMPTY_SUMMARY;
+    return { messageId, is_error: block.is_error, summary };
+  }
   const text = toolResultText(block.content);
   return { messageId, is_error: block.is_error, summary: summarizeToolResult(text), text };
 }

@@ -62,21 +62,25 @@ export const toolResultSummarySchema = z.object({
   countTotal: z.number(),
   /** WebSearch's sources, or null for empty output. */
   webSearchSources: z.number().nullable(),
+  /** The CLI's "Answer questions?" error: an AskUserQuestion still waiting for its answer. */
+  awaitingAnswer: z.boolean(),
 });
 export type ToolResultSummary = z.infer<typeof toolResultSummarySchema>;
 
 /** Summarize a result's display text (see {@link toolResultText}). */
 export function summarizeToolResult(text: string): ToolResultSummary {
   const nonBlank = text.split('\n').filter((line) => line.trim().length > 0);
+  // Only plausible counts: a long digit run would parse to a huge or infinite number.
   const countTotal = nonBlank.reduce((sum, line) => {
     const count = parseInt(line.split(':').pop()?.trim() ?? '0', 10);
-    return sum + (isNaN(count) ? 0 : count);
+    return Number.isSafeInteger(count) ? Math.min(sum + count, Number.MAX_SAFE_INTEGER) : sum;
   }, 0);
   return {
     readLines: parseReadOutput(text).lineCount,
     nonBlankLines: nonBlank.length,
     countTotal,
     webSearchSources: parseWebSearchOutput(text)?.links.length ?? null,
+    awaitingAnswer: text.includes('Answer questions'),
   };
 }
 

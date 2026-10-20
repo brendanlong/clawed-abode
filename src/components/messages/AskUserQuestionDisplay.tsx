@@ -103,10 +103,11 @@ export function AskUserQuestionDisplay({ tool }: { tool: ToolCall }) {
   const hasOutput = tool.result !== undefined;
 
   // With canUseTool, the tool won't have an error output while waiting.
-  // The query is parked in the canUseTool callback - no output yet. That short
-  // error always arrives inline (never elided), so the check needs no fetch.
+  // The query is parked in the canUseTool callback - no output yet. Older
+  // sessions recorded the CLI's "Answer questions?" error instead; the summary
+  // flags it whether or not the body arrived inline.
   const isWaitingForInput =
-    !hasOutput || (!!tool.result?.is_error && !!tool.result.text?.includes('Answer questions'));
+    !hasOutput || (!!tool.result?.is_error && tool.result.summary.awaitingAnswer);
   const isRealError = !!tool.result?.is_error && !isWaitingForInput;
   const isPending = isWaitingForInput;
 
