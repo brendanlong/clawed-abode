@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { createLogger, toError } from '@/lib/logger';
 import { env } from '@/lib/env';
 import { rollUpChecks, type ChecksState, type GitHubPullRequest } from '@/lib/pull-request';
+import type { PullRequestComment } from '@/lib/pull-request-watch';
 
 const log = createLogger('github');
 
@@ -334,6 +335,85 @@ export async function fetchPullRequest(
   );
   if (!pr) throw new Error(`No pull request at ${path}`);
   return pr;
+}
+
+// =============================================================================
+// PR comments
+// =============================================================================
+
+const commentPageCache = new ConditionalGetCache<PullRequestComment[]>(200);
+
+const commentFields = {
+  id: z.number(),
+  html_url: z.string(),
+  body: z.string().nullable(),
+  user: z.object({ login: z.string(), type: z.string() }).nullable(),
+  author_association: z.string(),
+  created_at: z.string(),
+};
+const issueCommentSchema = z.object({ ...commentFields, issue_url: z.string() });
+const reviewCommentSchema = z.object({
+  ...commentFields,
+  pull_request_url: z.string(),
+  path: z.string(),
+});
+
+function trailingNumber(url: string): number {
+  return Number(url.slice(url.lastIndexOf('/') + 1));
+}
+
+/** Bots (dependabot, github-actions, CI reporters) aren't people talking about the PR. */
+function fromPerson(comment: { user: { type: string } | null }): boolean {
+  return comment.user?.type !== 'Bot';
+}
+
+function toComment(
+  comment: z.infer<typeof issueCommentSchema> | z.infer<typeof reviewCommentSchema>,
+  fields: Pick<PullRequestComment, 'key' | 'number' | 'path'>
+): PullRequestComment {
+  return {
+    ...fields,
+    author: comment.user?.login ?? 'ghost',
+    association: comment.author_association,
+    body: comment.body ?? '',
+    url: comment.html_url,
+    createdAt: comment.created_at,
+  };
+}
+
+/**
+ * The repo's newest comments by people: conversation comments (on PRs and
+ * issues alike; GitHub doesn't tell them apart here) and inline review comments.
+ * One page of each, so a watch polled every minute misses only comments past
+ * the 100th in that minute. Unchanged pages are free conditional requests.
+ * Throws when either can't be read.
+ */
+export async function fetchRecentComments(repoFullName: string): Promise<PullRequestComment[]> {
+  const token = requireToken();
+  const recent = '?sort=created&direction=desc&per_page=100';
+  const issuePath = `/repos/${repoFullName}/issues/comments${recent}`;
+  const reviewPath = `/repos/${repoFullName}/pulls/comments${recent}`;
+  const [conversation, review] = await Promise.all([
+    commentPageCache.fetch(issuePath, token, async (response) =>
+      (await parseGitHubResponse(response, z.array(issueCommentSchema), issuePath))
+        .filter(fromPerson)
+        .map((c) =>
+          toComment(c, { key: `comment:${c.id}`, number: trailingNumber(c.issue_url), path: null })
+        )
+    ),
+    commentPageCache.fetch(reviewPath, token, async (response) =>
+      (await parseGitHubResponse(response, z.array(reviewCommentSchema), reviewPath))
+        .filter(fromPerson)
+        .map((c) =>
+          toComment(c, {
+            key: `review-comment:${c.id}`,
+            number: trailingNumber(c.pull_request_url),
+            path: c.path,
+          })
+        )
+    ),
+  ]);
+  return [...conversation, ...review];
 }
 
 /**

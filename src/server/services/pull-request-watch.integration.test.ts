@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { setupTestDb, teardownTestDb, testPrisma, clearTestDb } from '@/test/setup-test-db';
 import type { ChecksState, GitHubPullRequest } from '@/lib/pull-request';
+import type { PullRequestComment } from '@/lib/pull-request-watch';
 
 vi.mock('./events', () => ({ sseEvents: { emitSessionUpdate: vi.fn() } }));
 vi.mock('./github', () => ({
@@ -8,6 +9,7 @@ vi.mock('./github', () => ({
   fetchPullRequest: vi.fn(),
   fetchPullRequestForBranch: vi.fn(),
   fetchChecks: vi.fn(),
+  fetchRecentComments: vi.fn(),
 }));
 
 let watch: typeof import('./pull-request-watch');
@@ -17,6 +19,7 @@ let savePullRequest: typeof import('./pull-request-store').savePullRequest;
 /** What GitHub currently says, keyed by PR number; tests edit it between polls. */
 let remote: Map<number, GitHubPullRequest>;
 let checks: Map<string, ChecksState>;
+let comments: PullRequestComment[];
 const live = new Set<string>();
 const busy = new Set<string>();
 /** Sessions whose query goes away between the poll's start and the delivery. */
@@ -37,6 +40,21 @@ function remotePr(number: number, overrides: Partial<GitHubPullRequest> = {}): G
     stackedOn: null,
     ...overrides,
   };
+}
+
+let commentId = 0;
+function addComment(number: number, body: string, createdAt = new Date(Date.now() + 1000)) {
+  commentId += 1;
+  comments.push({
+    key: `comment:${commentId}`,
+    number,
+    author: 'brendan',
+    association: 'OWNER',
+    path: null,
+    body,
+    url: `https://github.com/o/r/pull/${number}#issuecomment-${commentId}`,
+    createdAt: createdAt.toISOString(),
+  });
 }
 
 function setRemote(...prs: GitHubPullRequest[]) {
@@ -72,6 +90,8 @@ beforeEach(async () => {
   delivered.length = 0;
   setRemote();
   checks = new Map();
+  comments = [];
+  vi.mocked(github.fetchRecentComments).mockImplementation(async () => comments);
   vi.mocked(github.fetchOpenPullRequests).mockImplementation(async () =>
     [...remote.values()].filter((pr) => pr.state === 'open')
   );
@@ -291,6 +311,76 @@ describe('polling', () => {
     expect(delivered.map((d) => d.text)).toEqual([
       expect.stringContaining('#6 "PR 6" by me: merged'),
     ]);
+  });
+});
+
+describe('comments', () => {
+  it('reports a new comment on a watched PR once, quoting it', async () => {
+    setRemote(remotePr(1));
+    const manager = await createManager();
+    await watch.setPullRequestWatches(manager.id, ['o/r']);
+
+    addComment(1, 'Please split this up');
+    await watch._pollPullRequestWatches();
+    await watch._pollPullRequestWatches();
+
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0].text).toContain('#1 "PR 1"');
+    expect(delivered[0].text).toContain('Please split this up');
+  });
+
+  it('doesn’t replay comments from before the watch, or ones on issues', async () => {
+    setRemote(remotePr(1));
+    addComment(1, 'old', new Date('2024-01-01T00:00:00Z'));
+    const manager = await createManager();
+    await watch.setPullRequestWatches(manager.id, ['o/r']);
+
+    addComment(99, 'on an issue');
+    await watch._pollPullRequestWatches();
+
+    expect(delivered).toEqual([]);
+  });
+
+  it('sends a close and the comment left with it in one message', async () => {
+    setRemote(remotePr(2));
+    const manager = await createManager();
+    await watch.setPullRequestWatches(manager.id, ['o/r']);
+
+    addComment(2, 'Considering removing this feature entirely');
+    setRemote(remotePr(2, { state: 'closed' }));
+    await watch._pollPullRequestWatches();
+
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0].text).toContain('closed without merging');
+    expect(delivered[0].text).toContain('Considering removing this feature entirely');
+  });
+
+  it('sends a dropped comment again once the session is back', async () => {
+    setRemote(remotePr(3));
+    const manager = await createManager();
+    await watch.setPullRequestWatches(manager.id, ['o/r']);
+
+    addComment(3, 'ping');
+    dropping.add(manager.id);
+    await watch._pollPullRequestWatches();
+    dropping.delete(manager.id);
+    await watch._pollPullRequestWatches();
+
+    expect(delivered.map((d) => d.text)).toEqual([expect.stringContaining('ping')]);
+  });
+
+  it('reports only its own PR’s comments to a single-PR watch', async () => {
+    setRemote(remotePr(1), remotePr(2));
+    const author = await createManager();
+    await watch.watchPullRequest(author.id, 'o/r', 1);
+
+    addComment(2, 'not yours');
+    addComment(1, 'yours');
+    await watch._pollPullRequestWatches();
+
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0].text).toContain('yours');
+    expect(delivered[0].text).not.toContain('not yours');
   });
 });
 
