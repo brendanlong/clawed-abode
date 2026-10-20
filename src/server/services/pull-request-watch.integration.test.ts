@@ -312,6 +312,19 @@ describe('watching one PR', () => {
     expect(await testPrisma.pullRequestWatch.count()).toBe(0);
   });
 
+  it('doesn’t repeat the state its reply showed, even when watched twice', async () => {
+    setRemote(remotePr(1));
+    checks.set('sha-1', 'success');
+    const author = await createManager();
+
+    await watch.watchPullRequest(author.id, 'o/r', 1);
+    await watch.watchPullRequest(author.id, 'o/r', 1);
+    await watch._pollPullRequestWatches();
+
+    expect(delivered).toEqual([]);
+    expect(await testPrisma.pullRequestWatch.count()).toBe(1);
+  });
+
   it('doesn’t watch a PR that is already finished', async () => {
     setRemote(remotePr(1, { state: 'closed' }));
     const author = await createManager();
@@ -406,7 +419,7 @@ describe('findOwnPullRequest', () => {
     expect(github.fetchPullRequestForBranch).toHaveBeenCalledWith('o/r', 'branch-8');
   });
 
-  it('asks for a number when the branch has no PR or the session no repo', async () => {
+  it('asks for a number when the branch has no PR, the lookup fails, or the session has no repo', async () => {
     vi.mocked(github.fetchPullRequestForBranch).mockResolvedValue(null);
     const withRepo = await testPrisma.session.create({
       data: {
@@ -421,5 +434,8 @@ describe('findOwnPullRequest', () => {
 
     await expect(watch.findOwnPullRequest(withRepo.id)).rejects.toThrow('pass number');
     await expect(watch.findOwnPullRequest(noRepo.id)).rejects.toThrow('pass repo and number');
+
+    vi.mocked(github.fetchPullRequestForBranch).mockResolvedValue(undefined);
+    await expect(watch.findOwnPullRequest(withRepo.id)).rejects.toThrow("Couldn't look up");
   });
 });

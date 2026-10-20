@@ -263,6 +263,9 @@ function basicTools(sessionId: string) {
       },
       ({ number: givenNumber, repo, stop }) =>
         run('watch_pull_request', async () => {
+          if (repo && givenNumber === undefined) {
+            throw new Error('Pass number along with repo');
+          }
           const { repoFullName, number } =
             givenNumber === undefined
               ? await findOwnPullRequest(sessionId)

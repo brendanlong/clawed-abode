@@ -172,7 +172,7 @@ async function forgetKeys(watchId: string, keys: WatchKey[]): Promise<void> {
   });
 }
 
-function eventKeys(watch: Watch, prs: StoredPullRequest[]): WatchKey[] {
+function eventKeys(watch: Pick<Watch, 'number'>, prs: StoredPullRequest[]): WatchKey[] {
   const includeDrafts = watch.number !== 0;
   return prs.flatMap((pr) => {
     const key = watchEventKey(pr.info, { includeDrafts });
@@ -404,19 +404,23 @@ export async function watchPullRequest(
 
   const watching = stored.info.state === 'open';
   if (watching) {
+    const id = randomUUID();
     const now = new Date();
-    const [created] = await prisma.$queryRaw<Watch[]>`
-      INSERT INTO "PullRequestWatch" ("id", "sessionId", "repoFullName", "number", "baselinedAt", "createdAt")
-      VALUES (${randomUUID()}, ${sessionId}, ${repoKey}, ${number}, ${now}, ${now})
-      ON CONFLICT("sessionId", "repoFullName", "number") DO NOTHING
-      RETURNING "id", "sessionId", "repoFullName", "number", "baselinedAt"`;
-    // An existing watch keeps what it has already reported.
-    if (created) {
-      await recordKeys(created.id, [
-        { pullRequestId: stored.id, key: SEEN_KEY },
-        ...eventKeys(created, [stored]),
-      ]);
-    }
+    const keys = [SEEN_KEY, ...eventKeys({ number }, [stored]).map((k) => k.key)];
+    const values = keys.map((key) => Prisma.sql`(${stored.id}, ${key})`);
+    // One batch, so a concurrent poll never sees the watch without its baseline.
+    // The keys go in only if this insert made the watch: an existing one keeps
+    // what it has already reported.
+    await prisma.$transaction([
+      prisma.$executeRaw`
+        INSERT INTO "PullRequestWatch" ("id", "sessionId", "repoFullName", "number", "baselinedAt", "createdAt")
+        VALUES (${id}, ${sessionId}, ${repoKey}, ${number}, ${now}, ${now})
+        ON CONFLICT("sessionId", "repoFullName", "number") DO NOTHING`,
+      prisma.$executeRaw`
+        INSERT INTO "PullRequestWatchEvent" ("watchId", "pullRequestId", "key")
+        SELECT w."id", v.column1, v.column2
+        FROM (VALUES ${Prisma.join(values)}) v JOIN "PullRequestWatch" w ON w."id" = ${id}`,
+    ]);
   }
   const [pullRequest] = await withAuthorSessions([stored]);
   return { pullRequest, watching };
@@ -435,6 +439,9 @@ export async function findOwnPullRequest(
   }
   const repoFullName = extractRepoFullName(session.repoUrl);
   const pr = await fetchPullRequestForBranch(repoFullName, session.currentBranch);
+  if (pr === undefined) {
+    throw new Error(`Couldn't look up the PR for branch ${session.currentBranch}; pass number`);
+  }
   if (!pr) {
     throw new Error(`No pull request found for branch ${session.currentBranch}; pass number`);
   }
