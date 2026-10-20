@@ -220,6 +220,53 @@ describe('sse.onSessionEvents', () => {
     stream.close();
   });
 
+  it('pages the snapshot by rendered rows and never sends hidden messages', async () => {
+    const session = await createNoRepoSession();
+    const toolResult = {
+      type: 'user',
+      message: { content: [{ type: 'tool_result', tool_use_id: 't', content: 'ok' }] },
+    };
+    const init = { type: 'system', subtype: 'init' };
+    // Every prompt is followed by a tool result and a hidden init.
+    for (let i = 0; i < HISTORY_PAGE_SIZE + 1; i++) {
+      await insert(session.id, `p${i}`);
+      await store.insertMessage({
+        sessionId: session.id,
+        id: `r${i}`,
+        type: 'user',
+        content: toolResult,
+      });
+      await store.insertMessage({
+        sessionId: session.id,
+        id: `i${i}`,
+        type: 'system',
+        content: init,
+      });
+    }
+
+    const stream = await open(session.id);
+    const { event } = await stream.next();
+    if (event.kind !== 'snapshot') throw new Error('expected a snapshot');
+    const ids = event.history.messages.map((m) => m.id);
+    expect(ids.filter((id) => id.startsWith('p'))).toHaveLength(HISTORY_PAGE_SIZE);
+    expect(ids.filter((id) => id.startsWith('r'))).toHaveLength(HISTORY_PAGE_SIZE);
+    expect(ids.some((id) => id.startsWith('i'))).toBe(false);
+    expect(event.history).toMatchObject({ after: 2, hasMore: true });
+
+    await store.insertMessage({
+      sessionId: session.id,
+      id: 'late-init',
+      type: 'system',
+      content: init,
+    });
+    await insert(session.id, 'after');
+    expect((await stream.next()).event).toMatchObject({
+      kind: 'message',
+      message: { id: 'after' },
+    });
+    stream.close();
+  });
+
   it('carries token usage in the snapshot and pushes it when a message moves it', async () => {
     const session = await createNoRepoSession();
     const insertTyped = (

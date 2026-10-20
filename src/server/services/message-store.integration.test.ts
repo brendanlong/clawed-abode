@@ -125,6 +125,86 @@ describe('message-store reads', () => {
     expect(oldest.messages.map((m) => m.content)).toEqual([{ n: 0 }, { n: 1 }]);
     expect(oldest.hasMore).toBe(false);
   });
+
+  describe('with context and hidden messages', () => {
+    const prompt = (text: string): [MessageType, unknown] => [
+      'user',
+      { type: 'user', content: text },
+    ];
+    const call = (id: string): [MessageType, unknown] => [
+      'assistant',
+      { type: 'assistant', ...blocks({ type: 'tool_use', id, name: 'Bash', input: {} }) },
+    ];
+    const result = (id: string): [MessageType, unknown] => [
+      'user',
+      { type: 'user', ...blocks({ type: 'tool_result', tool_use_id: id, content: 'ok' }) },
+    ];
+    const init: [MessageType, unknown] = ['system', { type: 'system', subtype: 'init' }];
+    const child: [MessageType, unknown] = [
+      'assistant',
+      { type: 'assistant', parent_tool_use_id: 'c1', ...blocks({ type: 'text', text: 'child' }) },
+    ];
+
+    // Sequence: 0 init, 1 prompt, 2 call c1, 3 child, 4 init, 5 result c1, 6 prompt,
+    // 7 call c2, 8 result c2.
+    const TRANSCRIPT = [
+      init,
+      prompt('first'),
+      call('c1'),
+      child,
+      init,
+      result('c1'),
+      prompt('second'),
+      call('c2'),
+      result('c2'),
+    ];
+
+    async function insertAll(sessionId: string) {
+      for (const [n, [type, content]] of TRANSCRIPT.entries()) {
+        await store.insertMessage({ sessionId, id: `${sessionId}-${n}`, type, content });
+      }
+    }
+    const sequences = (messages: { sequence: number }[]) => messages.map((m) => m.sequence);
+
+    it('counts only rows toward a page, and ships the context between them', async () => {
+      const session = await createTestSession();
+      await insertAll(session.id);
+
+      const newest = await store.loadHistoryPage(session.id, null, 2);
+      expect(sequences(newest.messages)).toEqual([6, 7, 8]);
+      expect(newest.hasMore).toBe(true);
+
+      const middle = await store.loadHistoryPage(session.id, 6, 1);
+      expect(sequences(middle.messages)).toEqual([2, 3, 5]);
+      expect(middle.hasMore).toBe(true);
+
+      // The last page reaches back to the start, leaving out only hidden messages.
+      const oldest = await store.loadHistoryPage(session.id, 2, 1);
+      expect(sequences(oldest.messages)).toEqual([1]);
+      expect(oldest.hasMore).toBe(false);
+    });
+
+    it('leaves hidden messages out of a resumed snapshot', async () => {
+      const session = await createTestSession();
+      await insertAll(session.id);
+
+      expect(sequences(await store.loadMessagesAfter(session.id, 3))).toEqual([5, 6, 7, 8]);
+      expect(await store.hasMessagesThrough(session.id, 0)).toBe(false);
+      expect(await store.hasMessagesThrough(session.id, 1)).toBe(true);
+    });
+
+    it('reads transcript rows alone for another agent', async () => {
+      const session = await createTestSession();
+      await insertAll(session.id);
+
+      const newest = await store.loadTranscriptRows(session.id, null, 2);
+      expect(sequences(newest.messages)).toEqual([6, 7]);
+      expect(newest.hasMore).toBe(true);
+      const oldest = await store.loadTranscriptRows(session.id, 6, 5);
+      expect(sequences(oldest.messages)).toEqual([1, 2]);
+      expect(oldest.hasMore).toBe(false);
+    });
+  });
 });
 
 describe('message-store display classification', () => {

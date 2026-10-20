@@ -6,6 +6,7 @@ import { TRPCError, tracked } from '@trpc/server';
 import { loadSessionSnapshot, type SessionSnapshot } from '../services/session-snapshot';
 import { isPartialMessageId } from '@/lib/message-cache';
 import { assertNeverFallback } from '@/lib/claude-messages';
+import { messageDisplay } from '@/lib/transcript-display';
 import { formatResumeToken, parseResumeToken, EMPTY_WATERMARK } from '@/lib/sse-resume';
 
 /**
@@ -151,6 +152,17 @@ export function sessionEventCoalesceKey(event: SessionStreamEvent): string | und
   }
 }
 
+/**
+ * Whether the per-session stream delivers an event. A persisted message no
+ * client reads (`hidden`, see `messageDisplay`) isn't sent, matching what
+ * history and snapshots leave out. Partials always go: they are transient and
+ * replaced by their stream's next snapshot.
+ */
+export function isStreamedSessionEvent(event: SessionStreamEvent): boolean {
+  if (event.kind !== 'message' || isPartialMessageId(event.message.id)) return true;
+  return messageDisplay(event.message.type, event.message.content) !== 'hidden';
+}
+
 export const sseRouter = router({
   // Single multiplexed stream of all event kinds for one session, self-sufficient:
   // the first event on every (re)connect is a snapshot, then deltas follow. We
@@ -193,7 +205,10 @@ export const sseRouter = router({
 
       // Subscribe before any awaits so nothing emitted during the snapshot read is missed.
       const events = createEventQueue<SessionStreamEvent>(
-        (push) => sseEvents.onSessionEvents(sessionId, push),
+        (push) =>
+          sseEvents.onSessionEvents(sessionId, (event) => {
+            if (isStreamedSessionEvent(event)) push(event);
+          }),
         { coalesceKey: sessionEventCoalesceKey }
       );
 
