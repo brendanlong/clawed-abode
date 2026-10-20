@@ -37,7 +37,7 @@ const USAGE =
   'check_usage shows how much of the Claude subscription’s 5-hour and weekly usage limits is used; consult it before fanning out to many or long-running subagents. set_usage_alerts tells you when usage crosses a threshold while you work.';
 
 const PR_WATCH =
-  "To wait on a pull request's CI or merge, call watch_pull_request rather than polling gh: you get a message when its CI finishes or it is merged or closed.";
+  "To wait on a pull request's CI or merge, call watch_pull_request rather than polling gh or sleeping, then end your turn: the update arrives as a message when its CI finishes on a new commit or it is merged or closed.";
 
 /** Appended to the system prompt (doc/settings.md "Built-in Tools"). */
 export function builtinToolsPrompt(level: BuiltinToolsLevel, nameIsDefault: boolean): string {

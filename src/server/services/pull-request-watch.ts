@@ -1,9 +1,9 @@
 /**
  * PR watches (doc/claude-sessions.md "Pull Request Watches"): a session that
  * called watch_pull_requests (or watch_pull_request, for one PR) gets a message
- * when a watched PR becomes ready, or is merged or closed. Repos are polled into the same PullRequest rows
- * the session badges read. The runner is reached only through the
- * {@link PullRequestWatchPort} handed to {@link initPullRequestWatch}.
+ * when a watched PR becomes ready, or is merged or closed. Repos are polled
+ * into the same PullRequest rows the session badges read. The runner is reached
+ * only through the {@link PullRequestWatchPort} handed to {@link initPullRequestWatch}.
  */
 
 import { randomUUID } from 'crypto';
@@ -12,6 +12,7 @@ import { prisma } from '@/lib/prisma';
 import { coalesce } from '@/lib/coalesce';
 import { processSingleton } from '@/lib/process-singleton';
 import { createLogger, toError } from '@/lib/logger';
+import { extractRepoFullName } from '@/lib/utils';
 import { parsePullRequestJson, pullRequestRepoKey, type PullRequestInfo } from '@/lib/pull-request';
 import {
   formatWatchMessage,
@@ -20,7 +21,7 @@ import {
   watchEventKey,
   type WatchedPullRequest,
 } from '@/lib/pull-request-watch';
-import { fetchOpenPullRequests, fetchPullRequest } from './github';
+import { fetchOpenPullRequests, fetchPullRequest, fetchPullRequestForBranch } from './github';
 import { savePullRequest } from './pull-request-store';
 
 const log = createLogger('pull-request-watch');
@@ -270,7 +271,8 @@ async function processWatch(
   }
   const finished = fresh.some((k) => (FINISHED_KEYS as readonly string[]).includes(k.key));
   if (delivered && watch.number !== 0 && finished) {
-    await prisma.pullRequestWatch.delete({ where: { id: watch.id } });
+    // deleteMany: a stop or archive may already have removed it.
+    await prisma.pullRequestWatch.deleteMany({ where: { id: watch.id } });
   }
 }
 
@@ -384,6 +386,9 @@ export async function setPullRequestWatches(
 /**
  * Watch one PR (until it's merged or closed) and return its current state. A
  * PR that is already finished isn't watched: there's nothing left to report.
+ * The watch is baselined here, on exactly the state the reply shows, rather
+ * than by the next poll, so a change in between can't be lost (or a PR that
+ * finishes before then leave a watch that never ends).
  */
 export async function watchPullRequest(
   sessionId: string,
@@ -399,14 +404,41 @@ export async function watchPullRequest(
 
   const watching = stored.info.state === 'open';
   if (watching) {
-    await prisma.$executeRaw`
-      INSERT INTO "PullRequestWatch" ("id", "sessionId", "repoFullName", "number", "createdAt")
-      VALUES (${randomUUID()}, ${sessionId}, ${repoKey}, ${number}, ${new Date()})
-      ON CONFLICT("sessionId", "repoFullName", "number") DO NOTHING`;
-    await pollWatches();
+    const now = new Date();
+    const [created] = await prisma.$queryRaw<Watch[]>`
+      INSERT INTO "PullRequestWatch" ("id", "sessionId", "repoFullName", "number", "baselinedAt", "createdAt")
+      VALUES (${randomUUID()}, ${sessionId}, ${repoKey}, ${number}, ${now}, ${now})
+      ON CONFLICT("sessionId", "repoFullName", "number") DO NOTHING
+      RETURNING "id", "sessionId", "repoFullName", "number", "baselinedAt"`;
+    // An existing watch keeps what it has already reported.
+    if (created) {
+      await recordKeys(created.id, [
+        { pullRequestId: stored.id, key: SEEN_KEY },
+        ...eventKeys(created, [stored]),
+      ]);
+    }
   }
   const [pullRequest] = await withAuthorSessions([stored]);
   return { pullRequest, watching };
+}
+
+/** The PR for the session's current branch, which is what "watch my PR" means. */
+export async function findOwnPullRequest(
+  sessionId: string
+): Promise<{ repoFullName: string; number: number }> {
+  const session = await prisma.session.findUnique({
+    where: { id: sessionId },
+    select: { repoUrl: true, currentBranch: true },
+  });
+  if (!session?.repoUrl || !session.currentBranch) {
+    throw new Error('This session has no repository branch; pass repo and number');
+  }
+  const repoFullName = extractRepoFullName(session.repoUrl);
+  const pr = await fetchPullRequestForBranch(repoFullName, session.currentBranch);
+  if (!pr) {
+    throw new Error(`No pull request found for branch ${session.currentBranch}; pass number`);
+  }
+  return { repoFullName, number: pr.number };
 }
 
 export async function unwatchPullRequest(

@@ -56,7 +56,9 @@ describe('builtinToolsPrompt', () => {
   });
 
   it('points the agent at watch_pull_request at every level', () => {
-    expect(builtinToolsPrompt('basic', true)).toMatch(/watch_pull_request rather than polling gh/);
+    expect(builtinToolsPrompt('basic', true)).toMatch(
+      /watch_pull_request rather than polling gh or sleeping, then end your turn/
+    );
     expect(builtinToolsPrompt('manage', false)).toContain('watch_pull_request');
   });
 

@@ -50,7 +50,12 @@ import { generateImage, type ImageToolContext } from './image-generation';
 import { loadHistoryPage } from './message-store';
 import { requestAttention } from './session-attention';
 import { getUsageReport, setUsageAlerts } from './usage';
-import { setPullRequestWatches, unwatchPullRequest, watchPullRequest } from './pull-request-watch';
+import {
+  findOwnPullRequest,
+  setPullRequestWatches,
+  unwatchPullRequest,
+  watchPullRequest,
+} from './pull-request-watch';
 
 const log = createLogger('builtin-mcp');
 
@@ -245,15 +250,23 @@ function basicTools(sessionId: string) {
     ),
     tool(
       'watch_pull_request',
-      'Watch one pull request, such as the one you just opened, instead of polling gh: you get a message when its CI finishes on a new head commit (drafts included), and when it is merged or closed, which ends the watch. Returns its current state. Set stop to end the watch early.',
+      'Watch one pull request, by default the one for your current branch, instead of polling gh or sleeping: end your turn, and you get a message when its CI finishes on a new head commit (drafts included), and when it is merged or closed, which ends the watch. Returns its current state. Set stop to end the watch early.',
       {
-        number: z.number().int().positive().describe('The PR number'),
+        number: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe('The PR number; defaults to the PR for this session’s current branch'),
         repo: repoFullNameSchema.optional().describe('owner/repo; defaults to this session’s repo'),
         stop: z.boolean().default(false),
       },
-      ({ number, repo, stop }) =>
+      ({ number: givenNumber, repo, stop }) =>
         run('watch_pull_request', async () => {
-          const repoFullName = repo ?? (await loadSessionRepo(sessionId));
+          const { repoFullName, number } =
+            givenNumber === undefined
+              ? await findOwnPullRequest(sessionId)
+              : { repoFullName: repo ?? (await loadSessionRepo(sessionId)), number: givenNumber };
           if (stop) {
             await unwatchPullRequest(sessionId, repoFullName, number);
             return textResult(`Stopped watching ${repoFullName}#${number}.`);
