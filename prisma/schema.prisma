@@ -193,10 +193,13 @@ model Message {
   type      String // system, user, assistant, result
   content   String // JSON stored as string
   createdAt DateTime @default(now())
+  /// row, context or hidden: messageDisplay() in src/lib/transcript-display.ts, set at insert.
+  display   String   @default("row")
 
   session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   @@unique([sessionId, sequence])
+  @@index([sessionId, display, sequence]) // history pages count `row` messages
 }
 
 // Per-repository settings for favorites, env vars, and MCP servers

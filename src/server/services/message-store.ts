@@ -11,6 +11,7 @@ import { sanitizeUntrustedInput } from './input-sanitizer';
 import { resolveUploadPaths } from './uploads';
 import { messageUsageStatement, parseSessionUsageRow } from './session-usage';
 import { buildTokenUsageStats } from '@/lib/token-estimation';
+import { messageDisplay } from '@/lib/transcript-display';
 import type { Message } from '@/generated/prisma/client';
 
 const log = createLogger('message-store');
@@ -18,10 +19,13 @@ const log = createLogger('message-store');
 /** Namespace for deterministic (idempotent) message ids derived from content. */
 const MESSAGE_ID_NAMESPACE = '6ba7b810-9dad-11d1-80b4-00c04fd430c8';
 
-/** A message row with its JSON `content` decoded, as the API and SSE deliver it. */
-export type ParsedMessage = Omit<Message, 'content'> & { content: unknown };
+/**
+ * A message row with its JSON `content` decoded, as the API and SSE deliver it.
+ * `display` stays server-side: clients classify with the same `messageDisplay`.
+ */
+export type ParsedMessage = Omit<Message, 'content' | 'display'> & { content: unknown };
 
-function toParsedMessage(row: Message): ParsedMessage {
+function toParsedMessage({ display: _display, ...row }: Message): ParsedMessage {
   return { ...row, content: JSON.parse(row.content) as unknown };
 }
 
@@ -105,7 +109,14 @@ export async function insertMessage(params: {
   let usageRow: unknown;
   try {
     const create = prisma.message.create({
-      data: { id, sessionId, sequence, type, content: contentJson },
+      data: {
+        id,
+        sessionId,
+        sequence,
+        type,
+        content: contentJson,
+        display: messageDisplay(type, content),
+      },
     });
     const usage = messageUsageStatement(sessionId, type, content);
     // A batch (not interactive) transaction: a duplicate id rolls back the usage fold too.
