@@ -306,7 +306,8 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
     <AuthGuard>
       <div className="h-dvh bg-background flex flex-col overflow-hidden">
         <Header />
-        <SessionView sessionId={resolvedParams.id} />
+        {/* Keyed so each session gets fresh per-session state (see useSessionStream). */}
+        <SessionView key={resolvedParams.id} sessionId={resolvedParams.id} />
       </div>
     </AuthGuard>
   );

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { skipToken, useQuery, useQueryClient } from '@tanstack/react-query';
 import { trpc } from '@/lib/trpc';
 import {
@@ -49,7 +49,10 @@ export function useSessionStreamState(sessionId: string): SessionStreamState | u
 export function useSessionStream(sessionId: string) {
   const utils = trpc.useUtils();
   const queryClient = useQueryClient();
-  const [quietReconnect, setQuietReconnect] = useState(false);
+  // Starts true: the first connection is quiet too (see `quiet` below). The
+  // session page remounts per session id (it is keyed by it), so each session's
+  // first connection gets this.
+  const [quietReconnect, setQuietReconnect] = useState(true);
 
   const subscription = trpc.sse.onSessionEvents.useSubscription(
     { sessionId },
@@ -92,35 +95,46 @@ export function useSessionStream(sessionId: string) {
     }
   );
 
-  const { reset } = subscription;
+  // The first connection and a reconnect we start from a healthy stream aren't
+  // news: hide their connecting phase, but not a failure (a connecting state
+  // carrying an error, or a terminal error).
+  const { reset, status, error } = subscription;
+  const quiet = quietReconnect && status === 'connecting' && !error;
+  // Adjust state during render (React's supported pattern): once that connection
+  // settles either way, later connecting phases are tRPC's own and show.
+  if (quietReconnect && !quiet) setQuietReconnect(false);
+  const displayedStatus = quiet ? 'pending' : status;
+  const notFound = error?.data?.code === 'NOT_FOUND';
+
+  // What the tab-return handler needs to know about the stream right now.
+  const current = useRef({ healthy: false, notFound: false });
   useEffect(() => {
-    const reconnectQuietly = () => {
-      setQuietReconnect(true);
+    current.current = { healthy: displayedStatus === 'pending', notFound };
+  });
+
+  useEffect(() => {
+    const reconnect = () => {
+      // The session is gone; a reset would only flicker the page to the spinner.
+      if (current.current.notFound) return;
+      // During an outage the banner is already up and must stay up.
+      if (current.current.healthy) setQuietReconnect(true);
       reset();
     };
     const onVisibilityChange = () => {
-      if (document.visibilityState === 'visible') reconnectQuietly();
+      if (document.visibilityState === 'visible') reconnect();
     };
     document.addEventListener('visibilitychange', onVisibilityChange);
-    window.addEventListener('online', reconnectQuietly);
+    window.addEventListener('online', reconnect);
     return () => {
       document.removeEventListener('visibilitychange', onVisibilityChange);
-      window.removeEventListener('online', reconnectQuietly);
+      window.removeEventListener('online', reconnect);
     };
   }, [reset]);
 
-  // A reconnect we started ourselves isn't news: hide its connecting phase, but
-  // not a failure (a connecting state carrying an error, or a terminal error).
-  const { status, error } = subscription;
-  const quiet = quietReconnect && status === 'connecting' && !error;
-  // Adjust state during render (React's supported pattern): once that reconnect
-  // settles either way, later connecting phases are tRPC's own and show.
-  if (quietReconnect && !quiet) setQuietReconnect(false);
-
   return {
-    /** For display: a self-initiated reconnect reads as still connected. */
-    status: quiet ? 'pending' : status,
-    notFound: error?.data?.code === 'NOT_FOUND',
+    /** For display: a quiet (re)connect reads as connected. */
+    status: displayedStatus,
+    notFound,
     reconnect: reset,
   };
 }
