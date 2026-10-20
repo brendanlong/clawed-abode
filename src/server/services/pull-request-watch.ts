@@ -1,7 +1,7 @@
 /**
  * PR watches (doc/claude-sessions.md "Pull Request Watches"): a session that
  * called watch_pull_requests (or watch_pull_request, for one PR) gets a message
- * when a watched PR becomes ready, or is merged or closed. Repos are polled
+ * when a watched PR becomes ready, is merged or closed, or gets a comment. Repos are polled
  * into the same PullRequest rows the session badges read. The runner is reached
  * only through the {@link PullRequestWatchPort} handed to {@link initPullRequestWatch}.
  */
@@ -271,10 +271,11 @@ async function processWatch(
   const seenIds = new Set(seen.map((row) => row.pullRequestId));
   const seenPrs = prs.filter((pr) => seenIds.has(pr.id));
   const seenByNumber = new Map(seenPrs.map((pr) => [pr.info.number, pr.id]));
-  const baselinedAt = watch.baselinedAt.getTime();
+  // GitHub's timestamps are whole seconds.
+  const baselineSecond = Math.floor(watch.baselinedAt.getTime() / 1000) * 1000;
   const newComments = comments.flatMap((comment) => {
     const pullRequestId = seenByNumber.get(comment.number);
-    const afterBaseline = Date.parse(comment.createdAt) > baselinedAt;
+    const afterBaseline = Date.parse(comment.createdAt) >= baselineSecond;
     return pullRequestId && afterBaseline ? [{ pullRequestId, comment }] : [];
   });
   // Recorded before delivery so overlapping work can't send them twice, and
@@ -377,9 +378,11 @@ async function poll(): Promise<void> {
 
   for (const watch of watches) {
     const repoSyncedAt = syncedAt.get(watch.repoFullName) ?? syncedAt.get(syncTarget(watch));
-    if (!repoSyncedAt) continue;
+    // Without the comments, a close could go out without the reason left with it.
+    const repoComments = comments.get(watch.repoFullName);
+    if (!repoSyncedAt || !repoComments) continue;
     try {
-      await processWatch(watch, repoSyncedAt, comments.get(watch.repoFullName) ?? [], port);
+      await processWatch(watch, repoSyncedAt, repoComments, port);
     } catch (err) {
       log.warn('Failed to process a PR watch', {
         sessionId: watch.sessionId,

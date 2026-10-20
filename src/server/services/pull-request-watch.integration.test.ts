@@ -43,7 +43,7 @@ function remotePr(number: number, overrides: Partial<GitHubPullRequest> = {}): G
 }
 
 let commentId = 0;
-function addComment(number: number, body: string, createdAt = new Date(Date.now() + 1000)) {
+function addComment(number: number, body: string, createdAt = new Date()) {
   commentId += 1;
   comments.push({
     key: `comment:${commentId}`,
@@ -367,6 +367,23 @@ describe('comments', () => {
     await watch._pollPullRequestWatches();
 
     expect(delivered.map((d) => d.text)).toEqual([expect.stringContaining('ping')]);
+  });
+
+  it('holds a close until the comments can be read too', async () => {
+    setRemote(remotePr(4));
+    const manager = await createManager();
+    await watch.setPullRequestWatches(manager.id, ['o/r']);
+
+    addComment(4, 'Closing: superseded');
+    setRemote(remotePr(4, { state: 'closed' }));
+    vi.mocked(github.fetchRecentComments).mockRejectedValueOnce(new Error('502'));
+    await watch._pollPullRequestWatches();
+    expect(delivered).toEqual([]);
+
+    await watch._pollPullRequestWatches();
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0].text).toContain('closed without merging');
+    expect(delivered[0].text).toContain('Closing: superseded');
   });
 
   it('reports only its own PR’s comments to a single-PR watch', async () => {
