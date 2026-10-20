@@ -88,6 +88,7 @@ describe('built-in MCP server', () => {
       'notify_user',
       'rename_session',
       'set_usage_alerts',
+      'stop_this_session',
       'watch_pull_request',
       'watch_pull_requests',
     ]);
@@ -100,6 +101,7 @@ describe('built-in MCP server', () => {
       'rename_session',
       'set_usage_alerts',
       'stop_session',
+      'stop_this_session',
       'watch_pull_request',
       'watch_pull_requests',
     ]);
@@ -145,6 +147,23 @@ describe('built-in MCP server', () => {
     const row = await testPrisma.session.findUniqueOrThrow({ where: { id: self.id } });
     expect(row.attentionSummary).toBe('PR #3 ready');
     expect(row.attentionAt).toBeInstanceOf(Date);
+  });
+
+  it('stops the calling session and tells the user why', async () => {
+    const self = await createTestSession();
+    const client = await connect(self.id, 'basic');
+
+    expect(
+      await call(client, 'stop_this_session', { reason: 'PR comments keep waking me' })
+    ).toMatchObject({ isError: false });
+    expect(port.stopSession).toHaveBeenCalledWith(self.id);
+    const row = await testPrisma.session.findUniqueOrThrow({ where: { id: self.id } });
+    expect(row.attentionSummary).toBe('PR comments keep waking me');
+
+    port.stopSession.mockResolvedValueOnce({ status: 'archived' });
+    expect(await call(client, 'stop_this_session', { reason: 'again' })).toMatchObject({
+      isError: true,
+    });
   });
 
   it('creates a session marked as agent-created, with a labeled initial prompt', async () => {

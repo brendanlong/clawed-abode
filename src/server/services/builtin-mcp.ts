@@ -177,6 +177,21 @@ function basicTools(sessionId: string) {
       { alwaysLoad: true }
     ),
     tool(
+      'stop_this_session',
+      'Last resort: stop this session’s agent, ending your work until the user restarts it (the workspace is kept). Only use it when messages keep waking you and the tool that set them up can’t turn them off (set_usage_alerts with enabled false, watch_pull_requests with [], watch_pull_request with stop), or when the user asks. Commit and push first; the user is notified with your reason.',
+      {
+        reason: attentionSummarySchema.describe('One line telling the user why you stopped'),
+      },
+      ({ reason }) =>
+        run('stop_this_session', async () => {
+          const { status } = await requirePort().stopSession(sessionId);
+          if (status !== 'stopped')
+            throw new Error(`This session is ${status} and can't be stopped`);
+          await requestAttention(sessionId, reason);
+          return textResult('Stopped this session.');
+        })
+    ),
+    tool(
       'list_sessions',
       'List the user’s non-archived sessions, most recently used first. agentName is the address to use with SendMessage (null until assigned).',
       { cursor: keysetPageInputSchema.shape.cursor },
