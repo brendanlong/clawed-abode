@@ -156,7 +156,7 @@ describe('polling', () => {
     checks.set('sha-1b', 'success');
     await watch._pollPullRequestWatches();
     expect(delivered).toHaveLength(2);
-    expect(delivered[1].text).toContain('head sha-1b');
+    expect(delivered[1].text).toMatch(/CI passed \(head sha-1b/);
   });
 
   it('waits for a draft to be marked ready', async () => {
