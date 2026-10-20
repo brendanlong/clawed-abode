@@ -36,13 +36,17 @@ const MESSAGING =
 const USAGE =
   'check_usage shows how much of the Claude subscription’s 5-hour and weekly usage limits is used; consult it before fanning out to many or long-running subagents. set_usage_alerts tells you when usage crosses a threshold while you work.';
 
+const PR_WATCH =
+  "To wait on a pull request's CI or merge, call watch_pull_request rather than polling gh or sleeping, then end your turn: the update arrives as a message when its CI finishes on a new commit or it is merged or closed.";
+
 /** Appended to the system prompt (doc/settings.md "Built-in Tools"). */
 export function builtinToolsPrompt(level: BuiltinToolsLevel, nameIsDefault: boolean): string {
   const rename = nameIsDefault
     ? "This session's name in the user's session list is an auto-generated default. Call the rename_session tool with a short (2–6 word) description of the task as soon as you understand it, before doing the work. Rename again if the task changes substantially."
     : "The user chose this session's name; only use rename_session if they ask.";
-  if (level === 'basic') return `${rename}\n\n${NOTIFY}\n\n${MESSAGING}\n\n${USAGE}`;
-  return `${rename}\n\n${NOTIFY}\n\n${MESSAGING}\n\n${USAGE}
+  const shared = `${rename}\n\n${NOTIFY}\n\n${MESSAGING}\n\n${USAGE}\n\n${PR_WATCH}`;
+  if (level === 'basic') return shared;
+  return `${shared}
 
 The create_session, read_session, and stop_session tools act on the user's other sessions. Only use them when the user asks you to; for ordinary parallel or delegated work, use subagents instead. After creating a session, talk to it with SendMessage and check on it with read_session rather than doing its work yourself.`;
 }

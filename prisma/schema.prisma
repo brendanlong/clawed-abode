@@ -89,19 +89,20 @@ model PullRequest {
   @@unique([repoFullName, number])
 }
 
-// A session's subscription to a repo's PR changes, set with the watch_pull_requests
-// tool (src/server/services/pull-request-watch.ts).
+// A session's subscription to PR changes in a repo (watch_pull_requests) or to one
+// PR (watch_pull_request); see src/server/services/pull-request-watch.ts.
 model PullRequestWatch {
   id           String    @id @default(uuid())
   sessionId    String
   repoFullName String
+  number       Int       @default(0) // The one PR watched; 0 watches every PR in the repo
   baselinedAt  DateTime? // When the PRs already in the repo were marked as seen; until then nothing is delivered
   createdAt    DateTime  @default(now())
 
   session Session                 @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   events  PullRequestWatchEvent[]
 
-  @@unique([sessionId, repoFullName])
+  @@unique([sessionId, repoFullName, number])
 }
 
 // One state of a PR a watch has already seen, so each is delivered once.

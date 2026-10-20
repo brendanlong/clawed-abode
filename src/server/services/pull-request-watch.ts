@@ -1,9 +1,9 @@
 /**
  * PR watches (doc/claude-sessions.md "Pull Request Watches"): a session that
- * called watch_pull_requests gets a message when a PR in a watched repo becomes
- * ready, or is merged or closed. Repos are polled into the same PullRequest rows
- * the session badges read. The runner is reached only through the
- * {@link PullRequestWatchPort} handed to {@link initPullRequestWatch}.
+ * called watch_pull_requests (or watch_pull_request, for one PR) gets a message
+ * when a watched PR becomes ready, or is merged or closed. Repos are polled
+ * into the same PullRequest rows the session badges read. The runner is reached
+ * only through the {@link PullRequestWatchPort} handed to {@link initPullRequestWatch}.
  */
 
 import { randomUUID } from 'crypto';
@@ -12,6 +12,7 @@ import { prisma } from '@/lib/prisma';
 import { coalesce } from '@/lib/coalesce';
 import { processSingleton } from '@/lib/process-singleton';
 import { createLogger, toError } from '@/lib/logger';
+import { extractRepoFullName } from '@/lib/utils';
 import { parsePullRequestJson, pullRequestRepoKey, type PullRequestInfo } from '@/lib/pull-request';
 import {
   formatWatchMessage,
@@ -20,7 +21,7 @@ import {
   watchEventKey,
   type WatchedPullRequest,
 } from '@/lib/pull-request-watch';
-import { fetchOpenPullRequests, fetchPullRequest } from './github';
+import { fetchOpenPullRequests, fetchPullRequest, fetchPullRequestForBranch } from './github';
 import { savePullRequest } from './pull-request-store';
 
 const log = createLogger('pull-request-watch');
@@ -115,6 +116,40 @@ async function syncRepo(repoKey: string): Promise<Date> {
   return startedAt;
 }
 
+/** Refresh one PR; throws if it can't be read. Same contract as {@link syncRepo}. */
+async function syncPullRequest(repoKey: string, number: number): Promise<Date> {
+  const startedAt = new Date();
+  await savePullRequest(repoKey, await fetchPullRequest(repoKey, number), startedAt);
+  return startedAt;
+}
+
+interface Watch {
+  id: string;
+  sessionId: string;
+  repoFullName: string;
+  /** 0 watches every PR in the repo. */
+  number: number;
+  baselinedAt: Date | null;
+}
+
+const watchSelect = {
+  id: true,
+  sessionId: true,
+  repoFullName: true,
+  number: true,
+  baselinedAt: true,
+} as const;
+
+/** What a poll has to refresh for a watch: its whole repo, or just its one PR. */
+function syncTarget(watch: Pick<Watch, 'repoFullName' | 'number'>): string {
+  return watch.number === 0 ? watch.repoFullName : `${watch.repoFullName}#${watch.number}`;
+}
+
+function watchedRows(watch: Watch): Prisma.Sql {
+  const inRepo = Prisma.sql`"repoFullName" = ${watch.repoFullName}`;
+  return watch.number === 0 ? inRepo : Prisma.sql`${inRepo} AND "number" = ${watch.number}`;
+}
+
 interface WatchKey {
   pullRequestId: string;
   key: string;
@@ -137,9 +172,10 @@ async function forgetKeys(watchId: string, keys: WatchKey[]): Promise<void> {
   });
 }
 
-function eventKeys(prs: StoredPullRequest[]): WatchKey[] {
+function eventKeys(watch: Pick<Watch, 'number'>, prs: StoredPullRequest[]): WatchKey[] {
+  const includeDrafts = watch.number !== 0;
   return prs.flatMap((pr) => {
-    const key = watchEventKey(pr.info);
+    const key = watchEventKey(pr.info, { includeDrafts });
     return key ? [{ pullRequestId: pr.id, key }] : [];
   });
 }
@@ -168,18 +204,19 @@ async function withAuthorSessions(prs: StoredPullRequest[]): Promise<WatchedPull
  * Considered: the PRs this poll refreshed, plus every PR the watch saw open and
  * hasn't reported finished — a badge lookup or another watch's poll may have
  * stored its merge, after which no poll refreshes it. Both sets track the open
- * PRs, not the repo's history.
+ * PRs, not the repo's history. A watch on one PR ends once its merge or close
+ * is delivered.
  */
 async function processWatch(
-  watch: { id: string; sessionId: string; repoFullName: string; baselinedAt: Date | null },
+  watch: Watch,
   syncedAt: Date,
   port: PullRequestWatchPort
 ): Promise<void> {
-  const inRepo = Prisma.sql`"repoFullName" = ${watch.repoFullName}`;
+  const inRepo = watchedRows(watch);
   if (!watch.baselinedAt) {
     const open = await loadPullRequests(Prisma.sql`${inRepo} AND ${isOpen}`);
     const seenOpen = open.map((pr) => ({ pullRequestId: pr.id, key: SEEN_KEY }));
-    await recordKeys(watch.id, [...seenOpen, ...eventKeys(open)]);
+    await recordKeys(watch.id, [...seenOpen, ...eventKeys(watch, open)]);
     await prisma.pullRequestWatch.update({
       where: { id: watch.id },
       data: { baselinedAt: new Date() },
@@ -208,7 +245,13 @@ async function processWatch(
   const seenIds = new Set(seen.map((row) => row.pullRequestId));
   // Recorded before delivery so overlapping work can't send them twice, and
   // forgotten again if they couldn't be sent, so they go out once the session is back.
-  const fresh = await recordKeys(watch.id, eventKeys(prs.filter((pr) => seenIds.has(pr.id))));
+  const fresh = await recordKeys(
+    watch.id,
+    eventKeys(
+      watch,
+      prs.filter((pr) => seenIds.has(pr.id))
+    )
+  );
   if (fresh.length === 0) return;
 
   const freshIds = new Set(fresh.map((k) => k.pullRequestId));
@@ -226,6 +269,11 @@ async function processWatch(
   } finally {
     if (!delivered) await forgetKeys(watch.id, fresh);
   }
+  const finished = fresh.some((k) => (FINISHED_KEYS as readonly string[]).includes(k.key));
+  if (delivered && watch.number !== 0 && finished) {
+    // deleteMany: a stop or archive may already have removed it.
+    await prisma.pullRequestWatch.deleteMany({ where: { id: watch.id } });
+  }
 }
 
 async function poll(): Promise<void> {
@@ -235,12 +283,14 @@ async function poll(): Promise<void> {
   const watches = (
     await prisma.pullRequestWatch.findMany({
       where: { session: { status: 'running' } },
-      select: { id: true, sessionId: true, repoFullName: true, baselinedAt: true },
+      select: watchSelect,
     })
   ).filter((watch) => port.hasLiveQuery(watch.sessionId));
 
+  // A whole-repo sync covers that repo's single-PR watches too.
   const syncedAt = new Map<string, Date>();
-  for (const repoKey of new Set(watches.map((watch) => watch.repoFullName))) {
+  const fullRepos = new Set(watches.filter((w) => w.number === 0).map((w) => w.repoFullName));
+  for (const repoKey of fullRepos) {
     try {
       syncedAt.set(repoKey, await syncRepo(repoKey));
     } catch (err) {
@@ -250,9 +300,27 @@ async function poll(): Promise<void> {
       });
     }
   }
+  const singles = new Map(
+    watches
+      .filter((w) => w.number !== 0 && !fullRepos.has(w.repoFullName))
+      .map((w) => [syncTarget(w), w])
+  );
+  await forEachConcurrently(
+    [...singles].map(([target, w]) => async () => {
+      try {
+        syncedAt.set(target, await syncPullRequest(w.repoFullName, w.number));
+      } catch (err) {
+        log.warn('Failed to sync a watched PR', {
+          repoFullName: w.repoFullName,
+          number: w.number,
+          error: toError(err).message,
+        });
+      }
+    })
+  );
 
   for (const watch of watches) {
-    const repoSyncedAt = syncedAt.get(watch.repoFullName);
+    const repoSyncedAt = syncedAt.get(watch.repoFullName) ?? syncedAt.get(syncTarget(watch));
     if (!repoSyncedAt) continue;
     try {
       await processWatch(watch, repoSyncedAt, port);
@@ -288,14 +356,14 @@ export async function setPullRequestWatches(
 ): Promise<WatchedPullRequest[]> {
   const repoKeys = [...new Set(repoFullNames.map(pullRequestRepoKey))];
   const existing = await prisma.pullRequestWatch.findMany({
-    where: { sessionId },
+    where: { sessionId, number: 0 },
     select: { repoFullName: true },
   });
   const added = repoKeys.filter((key) => !existing.some((w) => w.repoFullName === key));
   for (const repoKey of added) await syncRepo(repoKey);
 
   await prisma.pullRequestWatch.deleteMany({
-    where: { sessionId, repoFullName: { notIn: repoKeys } },
+    where: { sessionId, number: 0, repoFullName: { notIn: repoKeys } },
   });
   if (added.length > 0) {
     const values = added.map(
@@ -304,7 +372,7 @@ export async function setPullRequestWatches(
     await prisma.$executeRaw`
       INSERT INTO "PullRequestWatch" ("id", "sessionId", "repoFullName", "createdAt")
       VALUES ${Prisma.join(values)}
-      ON CONFLICT("sessionId", "repoFullName") DO NOTHING`;
+      ON CONFLICT("sessionId", "repoFullName", "number") DO NOTHING`;
     await pollWatches();
   }
 
@@ -313,6 +381,81 @@ export async function setPullRequestWatches(
     Prisma.sql`"repoFullName" IN (${Prisma.join(repoKeys)}) AND ${isOpen}`
   );
   return withAuthorSessions(open);
+}
+
+/**
+ * Watch one PR (until it's merged or closed) and return its current state. A
+ * PR that is already finished isn't watched: there's nothing left to report.
+ * The watch is baselined here, on exactly the state the reply shows, rather
+ * than by the next poll, so a change in between can't be lost (or a PR that
+ * finishes before then leave a watch that never ends).
+ */
+export async function watchPullRequest(
+  sessionId: string,
+  repoFullName: string,
+  number: number
+): Promise<{ pullRequest: WatchedPullRequest; watching: boolean }> {
+  const repoKey = pullRequestRepoKey(repoFullName);
+  await syncPullRequest(repoKey, number);
+  const [stored] = await loadPullRequests(
+    Prisma.sql`"repoFullName" = ${repoKey} AND "number" = ${number}`
+  );
+  if (!stored) throw new Error(`Could not read ${repoKey}#${number}`);
+
+  const watching = stored.info.state === 'open';
+  if (watching) {
+    const id = randomUUID();
+    const now = new Date();
+    const keys = [SEEN_KEY, ...eventKeys({ number }, [stored]).map((k) => k.key)];
+    const values = keys.map((key) => Prisma.sql`(${stored.id}, ${key})`);
+    // One batch, so a concurrent poll never sees the watch without its baseline.
+    // The keys go in only if this insert made the watch: an existing one keeps
+    // what it has already reported.
+    await prisma.$transaction([
+      prisma.$executeRaw`
+        INSERT INTO "PullRequestWatch" ("id", "sessionId", "repoFullName", "number", "baselinedAt", "createdAt")
+        VALUES (${id}, ${sessionId}, ${repoKey}, ${number}, ${now}, ${now})
+        ON CONFLICT("sessionId", "repoFullName", "number") DO NOTHING`,
+      prisma.$executeRaw`
+        INSERT INTO "PullRequestWatchEvent" ("watchId", "pullRequestId", "key")
+        SELECT w."id", v.column1, v.column2
+        FROM (VALUES ${Prisma.join(values)}) v JOIN "PullRequestWatch" w ON w."id" = ${id}`,
+    ]);
+  }
+  const [pullRequest] = await withAuthorSessions([stored]);
+  return { pullRequest, watching };
+}
+
+/** The PR for the session's current branch, which is what "watch my PR" means. */
+export async function findOwnPullRequest(
+  sessionId: string
+): Promise<{ repoFullName: string; number: number }> {
+  const session = await prisma.session.findUnique({
+    where: { id: sessionId },
+    select: { repoUrl: true, currentBranch: true },
+  });
+  if (!session?.repoUrl || !session.currentBranch) {
+    throw new Error('This session has no repository branch; pass repo and number');
+  }
+  const repoFullName = extractRepoFullName(session.repoUrl);
+  const pr = await fetchPullRequestForBranch(repoFullName, session.currentBranch);
+  if (pr === undefined) {
+    throw new Error(`Couldn't look up the PR for branch ${session.currentBranch}; pass number`);
+  }
+  if (!pr) {
+    throw new Error(`No pull request found for branch ${session.currentBranch}; pass number`);
+  }
+  return { repoFullName, number: pr.number };
+}
+
+export async function unwatchPullRequest(
+  sessionId: string,
+  repoFullName: string,
+  number: number
+): Promise<void> {
+  await prisma.pullRequestWatch.deleteMany({
+    where: { sessionId, repoFullName: pullRequestRepoKey(repoFullName), number },
+  });
 }
 
 /** Test seam. */

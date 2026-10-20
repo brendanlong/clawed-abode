@@ -55,6 +55,13 @@ describe('builtinToolsPrompt', () => {
     expect(builtinToolsPrompt('manage', false)).toContain('check_usage');
   });
 
+  it('points the agent at watch_pull_request at every level', () => {
+    expect(builtinToolsPrompt('basic', true)).toMatch(
+      /watch_pull_request rather than polling gh or sleeping, then end your turn/
+    );
+    expect(builtinToolsPrompt('manage', false)).toContain('watch_pull_request');
+  });
+
   it('describes the management tools only at the manage level', () => {
     expect(builtinToolsPrompt('basic', true)).not.toContain('create_session');
     expect(builtinToolsPrompt('manage', true)).toContain('create_session');

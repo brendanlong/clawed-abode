@@ -6,6 +6,7 @@ vi.mock('./events', () => ({ sseEvents: { emitSessionUpdate: vi.fn() } }));
 vi.mock('./github', () => ({
   fetchOpenPullRequests: vi.fn(),
   fetchPullRequest: vi.fn(),
+  fetchPullRequestForBranch: vi.fn(),
   fetchChecks: vi.fn(),
 }));
 
@@ -285,5 +286,156 @@ describe('polling', () => {
     expect(delivered.map((d) => d.text)).toEqual([
       expect.stringContaining('#6 "PR 6" by me: merged'),
     ]);
+  });
+});
+
+describe('watching one PR', () => {
+  it('reports a draft’s CI without syncing the whole repo, and ends after the merge', async () => {
+    setRemote(remotePr(1, { draft: true }), remotePr(2));
+    checks.set('sha-2', 'success');
+    const author = await createManager();
+
+    const { watching, pullRequest } = await watch.watchPullRequest(author.id, 'o/r', 1);
+    expect(watching).toBe(true);
+    expect(pullRequest.info.checks).toBe('pending');
+
+    checks.set('sha-1', 'failure');
+    await watch._pollPullRequestWatches();
+    expect(delivered.map((d) => d.text)).toEqual([
+      expect.stringContaining('#1 "PR 1" by me: draft, CI failed'),
+    ]);
+    expect(github.fetchOpenPullRequests).not.toHaveBeenCalled();
+
+    setRemote(remotePr(1, { state: 'merged' }));
+    await watch._pollPullRequestWatches();
+    expect(delivered[1].text).toContain('#1 "PR 1" by me: merged');
+    expect(await testPrisma.pullRequestWatch.count()).toBe(0);
+  });
+
+  it('doesn’t repeat the state its reply showed, even when watched twice', async () => {
+    setRemote(remotePr(1));
+    checks.set('sha-1', 'success');
+    const author = await createManager();
+
+    await watch.watchPullRequest(author.id, 'o/r', 1);
+    await watch.watchPullRequest(author.id, 'o/r', 1);
+    await watch._pollPullRequestWatches();
+
+    expect(delivered).toEqual([]);
+    expect(await testPrisma.pullRequestWatch.count()).toBe(1);
+  });
+
+  it('doesn’t watch a PR that is already finished', async () => {
+    setRemote(remotePr(1, { state: 'closed' }));
+    const author = await createManager();
+
+    const { watching } = await watch.watchPullRequest(author.id, 'o/r', 1);
+
+    expect(watching).toBe(false);
+    expect(await testPrisma.pullRequestWatch.count()).toBe(0);
+  });
+
+  it('fails for a PR that can’t be read', async () => {
+    const author = await createManager();
+    await expect(watch.watchPullRequest(author.id, 'o/r', 404)).rejects.toThrow('not found');
+    expect(await testPrisma.pullRequestWatch.count()).toBe(0);
+  });
+
+  it('stays separate from the session’s repo watches', async () => {
+    setRemote(remotePr(1));
+    const session = await createManager();
+    await watch.watchPullRequest(session.id, 'o/r', 1);
+    await watch.setPullRequestWatches(session.id, ['o/r']);
+    await watch.setPullRequestWatches(session.id, []);
+    expect(await testPrisma.pullRequestWatch.findMany({ select: { number: true } })).toEqual([
+      { number: 1 },
+    ]);
+
+    await watch.unwatchPullRequest(session.id, 'O/R', 1);
+    expect(await testPrisma.pullRequestWatch.count()).toBe(0);
+  });
+
+  it('reports what changed between its reply and the next poll', async () => {
+    setRemote(remotePr(1));
+    const author = await createManager();
+    await watch.watchPullRequest(author.id, 'o/r', 1);
+
+    setRemote(remotePr(1, { state: 'merged' }));
+    await watch._pollPullRequestWatches();
+
+    expect(delivered.map((d) => d.text)).toEqual([
+      expect.stringContaining('#1 "PR 1" by me: merged'),
+    ]);
+    expect(await testPrisma.pullRequestWatch.count()).toBe(0);
+  });
+
+  it('keeps the watch when the merge couldn’t be delivered, and ends it once it is', async () => {
+    setRemote(remotePr(1));
+    const author = await createManager();
+    await watch.watchPullRequest(author.id, 'o/r', 1);
+
+    setRemote(remotePr(1, { state: 'merged' }));
+    dropping.add(author.id);
+    await watch._pollPullRequestWatches();
+    expect(await testPrisma.pullRequestWatch.count()).toBe(1);
+
+    dropping.delete(author.id);
+    await watch._pollPullRequestWatches();
+    expect(delivered).toHaveLength(1);
+    expect(await testPrisma.pullRequestWatch.count()).toBe(0);
+  });
+
+  it('rides along on a repo another session watches, still reporting draft CI', async () => {
+    setRemote(remotePr(1, { draft: true }));
+    const manager = await createManager();
+    const author = await createManager();
+    await watch.setPullRequestWatches(manager.id, ['o/r']);
+    await watch.watchPullRequest(author.id, 'o/r', 1);
+    vi.mocked(github.fetchPullRequest).mockClear();
+
+    checks.set('sha-1', 'success');
+    await watch._pollPullRequestWatches();
+
+    expect(github.fetchPullRequest).not.toHaveBeenCalled();
+    expect(delivered.map((d) => d.sessionId)).toEqual([author.id]);
+    expect(delivered[0].text).toContain('draft, CI passed');
+  });
+});
+
+describe('findOwnPullRequest', () => {
+  it('finds the PR for the session’s current branch', async () => {
+    vi.mocked(github.fetchPullRequestForBranch).mockResolvedValue(remotePr(8));
+    const session = await testPrisma.session.create({
+      data: {
+        name: 'Author',
+        repoPath: 'r',
+        status: 'running',
+        repoUrl: 'https://github.com/o/r.git',
+        currentBranch: 'branch-8',
+      },
+    });
+
+    expect(await watch.findOwnPullRequest(session.id)).toEqual({ repoFullName: 'o/r', number: 8 });
+    expect(github.fetchPullRequestForBranch).toHaveBeenCalledWith('o/r', 'branch-8');
+  });
+
+  it('asks for a number when the branch has no PR, the lookup fails, or the session has no repo', async () => {
+    vi.mocked(github.fetchPullRequestForBranch).mockResolvedValue(null);
+    const withRepo = await testPrisma.session.create({
+      data: {
+        name: 'A',
+        repoPath: 'r',
+        status: 'running',
+        repoUrl: 'https://github.com/o/r.git',
+        currentBranch: 'b',
+      },
+    });
+    const noRepo = await createManager();
+
+    await expect(watch.findOwnPullRequest(withRepo.id)).rejects.toThrow('pass number');
+    await expect(watch.findOwnPullRequest(noRepo.id)).rejects.toThrow('pass repo and number');
+
+    vi.mocked(github.fetchPullRequestForBranch).mockResolvedValue(undefined);
+    await expect(watch.findOwnPullRequest(withRepo.id)).rejects.toThrow("Couldn't look up");
   });
 });
