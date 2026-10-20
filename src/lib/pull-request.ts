@@ -1,5 +1,9 @@
 import { z } from 'zod';
 
+/** The CI rollup for a PR's head commit: `none` means it has no checks at all. */
+export const CHECKS_STATES = ['pending', 'success', 'failure', 'none'] as const;
+export type ChecksState = (typeof CHECKS_STATES)[number];
+
 export const pullRequestInfoSchema = z.object({
   number: z.number().int(),
   title: z.string(),
@@ -8,14 +12,36 @@ export const pullRequestInfoSchema = z.object({
   url: z.string(),
   author: z.string(),
   updatedAt: z.string(),
+  headBranch: z.string(),
+  headSha: z.string(),
+  /** For `headSha`; null when unknown (not fetched yet, or the token can't read checks). */
+  checks: z.enum(CHECKS_STATES).nullable(),
 });
 
 export type PullRequestInfo = z.infer<typeof pullRequestInfoSchema>;
 export type PrState = PullRequestInfo['state'];
+/** A PR as GitHub's pulls endpoints describe it; the checks come from separate calls. */
+export type GitHubPullRequest = Omit<PullRequestInfo, 'checks'>;
+
+const CHECKS_DESCRIPTIONS: Record<ChecksState, string> = {
+  pending: 'CI running',
+  success: 'CI passed',
+  failure: 'CI failed',
+  none: 'no CI checks',
+};
+
+export function describeChecks(checks: ChecksState | null): string {
+  return checks ? CHECKS_DESCRIPTIONS[checks] : 'CI status unknown';
+}
+
+/** GitHub repo names are case-insensitive; PullRequest and PullRequestWatch rows key on this. */
+export function pullRequestRepoKey(repoFullName: string): string {
+  return repoFullName.toLowerCase();
+}
 
 /**
- * Decode the `Session.pullRequest` JSON column. Unparseable or absent values read
- * as "no PR" so a bad row can never break the session list.
+ * Decode a `PullRequest.info` / `Session.pullRequest` JSON column. Unparseable or
+ * absent values read as "no PR" so a bad row can never break the session list.
  */
 export function parsePullRequestJson(json: string | null): PullRequestInfo | null {
   if (!json) return null;
@@ -27,8 +53,28 @@ export function parsePullRequestJson(json: string | null): PullRequestInfo | nul
   }
 }
 
-export function serializePullRequest(pullRequest: PullRequestInfo | null): string | null {
-  return pullRequest ? JSON.stringify(pullRequest) : null;
+const PASSING_CONCLUSIONS = new Set(['success', 'neutral', 'skipped']);
+
+/**
+ * Roll a commit's check runs and commit statuses up into one state. A failure
+ * wins even while other checks still run, since it can't turn green without a
+ * re-run; any conclusion we don't know counts as a failure rather than a pass.
+ */
+export function rollUpChecks(
+  checkRuns: { status: string; conclusion: string | null }[],
+  statuses: { state: string }[]
+): ChecksState {
+  const runStates = checkRuns.map((run): ChecksState => {
+    if (run.status !== 'completed') return 'pending';
+    return run.conclusion && PASSING_CONCLUSIONS.has(run.conclusion) ? 'success' : 'failure';
+  });
+  const statusStates = statuses.map(({ state }): ChecksState =>
+    state === 'success' ? 'success' : state === 'pending' ? 'pending' : 'failure'
+  );
+  const all = [...runStates, ...statusStates];
+  if (all.includes('failure')) return 'failure';
+  if (all.includes('pending')) return 'pending';
+  return all.length > 0 ? 'success' : 'none';
 }
 
 /**

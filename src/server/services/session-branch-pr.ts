@@ -5,30 +5,32 @@ import { extractRepoFullName } from '@/lib/utils';
 import {
   isPrSnapshotStale,
   parsePullRequestJson,
-  serializePullRequest,
   type PrRefreshCandidate,
 } from '@/lib/pull-request';
 import { sseEvents } from './events';
 import { fetchPullRequestForBranch } from './github';
+import { copyLinkedPullRequest, savePullRequest } from './pull-request-store';
 import { getCurrentBranch } from './worktree-manager';
 
 const log = createLogger('session-branch-pr');
 
 /** The row a caller hands us; `pullRequest` is still the raw JSON column. */
 type SessionRow = Omit<PrRefreshCandidate, 'pullRequest'> & { pullRequest: string | null };
+type SnapshotRow = SessionRow & { pullRequestId: string | null };
 
 const prSnapshotSelect = {
   id: true,
   status: true,
   repoUrl: true,
   currentBranch: true,
+  pullRequestId: true,
   pullRequest: true,
   prCheckedAt: true,
 } as const;
 
 /**
- * Ask GitHub about `branch` and persist the answer on the session. `prCheckedAt`
- * is always written (that's what the TTL reads); the SSE update only fires when a
+ * Ask GitHub which PR `branch` has and link the session to it. `prCheckedAt` is
+ * always written (that's what the TTL reads); the SSE update only fires when a
  * client-visible field actually changed, so a poll that finds nothing new doesn't
  * make every open list re-render.
  *
@@ -36,40 +38,42 @@ const prSnapshotSelect = {
  * so a turn that switches branches mid-fetch wins and we never pin one branch's
  * PR onto another's row. It's also conditional on no lookup that *started* later
  * having written first — turn ends, tool calls and list polls overlap, and a slow
- * pre-merge answer must not overwrite a post-merge one. Archived rows are
- * read-only history (a refresh can be in flight when the session is deleted).
+ * answer must not overwrite a newer one. Archived rows are read-only history (a
+ * refresh can be in flight when the session is deleted).
  */
 async function persistPrSnapshot(
-  session: SessionRow,
+  session: SnapshotRow,
   branch: string | null,
   branchUpdate?: { currentBranch: string }
 ): Promise<void> {
   if (session.status === 'archived') return;
   const startedAt = new Date();
 
-  // A snapshot belongs to one branch: never carry it over to a new one.
-  let pullRequest = branchUpdate ? null : session.pullRequest;
+  // A link belongs to one branch: never carry it over to a new one.
+  let pullRequestId = branchUpdate ? null : session.pullRequestId;
   if (session.repoUrl && branch) {
-    const pr = await fetchPullRequestForBranch(extractRepoFullName(session.repoUrl), branch);
+    const repoFullName = extractRepoFullName(session.repoUrl);
+    const pr = await fetchPullRequestForBranch(repoFullName, branch);
     // undefined = lookup unavailable (no token / API error): keep what we had.
-    if (pr !== undefined) pullRequest = serializePullRequest(pr);
+    if (pr !== undefined) {
+      pullRequestId = pr ? await savePullRequest(repoFullName, pr, startedAt) : null;
+    }
   }
 
-  const visibleChanges = {
-    ...branchUpdate,
-    ...(pullRequest !== session.pullRequest ? { pullRequest } : {}),
-  };
-  const [updated] = await prisma.session.updateManyAndReturn({
+  const { count } = await prisma.session.updateMany({
     where: {
       id: session.id,
       status: { not: 'archived' },
       currentBranch: session.currentBranch,
       OR: [{ prCheckedAt: null }, { prCheckedAt: { lt: startedAt } }],
     },
-    data: { ...visibleChanges, prCheckedAt: startedAt },
+    data: { ...branchUpdate, pullRequestId, prCheckedAt: startedAt },
   });
-  if (updated && Object.keys(visibleChanges).length > 0) {
-    sseEvents.emitSessionUpdate(session.id, updated);
+  if (count === 0) return;
+  const announced = await copyLinkedPullRequest(session.id);
+  if (branchUpdate && !announced) {
+    const row = await prisma.session.findUnique({ where: { id: session.id } });
+    if (row) sseEvents.emitSessionUpdate(session.id, row);
   }
 }
 

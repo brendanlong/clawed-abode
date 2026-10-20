@@ -84,7 +84,8 @@ Use a **Fine-grained Personal Access Token** for security:
    - **Contents**: Read and write (for push/pull, and to list branches)
    - **Metadata**: Read-only (automatically included)
    - **Issues**: Read-only (to browse issues when starting a session)
-   - **Pull requests**: Read-only (for the session PR status indicator)
+   - **Pull requests**: Read-only (for the session PR status indicator and PR watches)
+   - **Checks** and **Commit statuses**: Read-only (for CI status on PRs)
 5. Generate the token and add it to your `.env` file
 
 Public repos work even without these permissions, so a token missing **Contents**

@@ -3,7 +3,12 @@
 import { GitPullRequest, GitPullRequestClosed, GitPullRequestDraft, GitMerge } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
-import type { PullRequestInfo, PrState } from '@/lib/pull-request';
+import {
+  describeChecks,
+  type ChecksState,
+  type PullRequestInfo,
+  type PrState,
+} from '@/lib/pull-request';
 
 type EffectivePrState = PrState | 'draft';
 
@@ -36,6 +41,13 @@ const prStateConfig: Record<EffectivePrState, PrStateConfig> = {
   },
 };
 
+/** Only for open PRs, and only once there's something to say. */
+const checksDotClass: Partial<Record<ChecksState, string>> = {
+  pending: 'bg-amber-500',
+  success: 'bg-green-600 dark:bg-green-400',
+  failure: 'bg-red-600 dark:bg-red-400',
+};
+
 interface PrStatusIndicatorProps {
   pullRequest: PullRequestInfo;
   className?: string;
@@ -47,6 +59,11 @@ export function PrStatusIndicator({ pullRequest, className }: PrStatusIndicatorP
 
   const config = prStateConfig[effectiveState];
   const Icon = config.icon;
+  const dotClass =
+    pullRequest.state === 'open' && pullRequest.checks
+      ? checksDotClass[pullRequest.checks]
+      : undefined;
+  const label = `PR #${pullRequest.number}: ${pullRequest.title} (${config.label}${dotClass ? `, ${describeChecks(pullRequest.checks)}` : ''})`;
 
   return (
     <TooltipProvider>
@@ -57,20 +74,26 @@ export function PrStatusIndicator({ pullRequest, className }: PrStatusIndicatorP
             target="_blank"
             rel="noopener noreferrer"
             className={cn(
-              'inline-flex items-center justify-center p-1 rounded-md',
+              'relative inline-flex items-center justify-center p-1 rounded-md',
               'hover:bg-muted/50 transition-colors',
               config.colorClass,
               className
             )}
             onClick={(e) => e.stopPropagation()}
-            aria-label={`PR #${pullRequest.number}: ${pullRequest.title} (${config.label})`}
+            aria-label={label}
           >
             <Icon className="w-4 h-4" />
+            {dotClass && (
+              <span
+                className={cn(
+                  'absolute bottom-0.5 right-0.5 h-1.5 w-1.5 rounded-full ring-1 ring-background',
+                  dotClass
+                )}
+              />
+            )}
           </a>
         </TooltipTrigger>
-        <TooltipContent side="top">
-          PR #{pullRequest.number}: {pullRequest.title} ({config.label})
-        </TooltipContent>
+        <TooltipContent side="top">{label}</TooltipContent>
       </Tooltip>
     </TooltipProvider>
   );
