@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  applyHistorySnapshot,
   mergeMessageIntoCache,
   removeMessageFromCache,
   isPartialMessageId,
@@ -163,6 +164,76 @@ describe('mergeMessageIntoCache', () => {
     const existing = cache([[complete('a', 0)], [complete('b', 1)]]);
     const result = mergeMessageIntoCache(existing, complete('b', 1));
     expect(result).toBe(existing);
+  });
+
+  it('still drops the partial a re-delivered complete message supersedes', () => {
+    // A snapshot can carry the complete message before the queued partial that
+    // preceded its live event; the re-delivered message must clear that partial.
+    const result = mergeMessageIntoCache(
+      cache([[assistant('a', 0, null), partial(null, 0)]]),
+      assistant('a', 0, null)
+    );
+    expect(result.pages[0].messages).toEqual([assistant('a', 0, null)]);
+  });
+});
+
+describe('applyHistorySnapshot', () => {
+  it('replaces the whole cache with a fresh connection’s newest page', () => {
+    const result = applyHistorySnapshot(cache([[complete('x', 50)], [complete('w', 10)]]), {
+      kind: 'page',
+      messages: [complete('a', 90), complete('b', 91)],
+      hasMore: true,
+    });
+    expect(result).toEqual({
+      pages: [{ messages: [complete('a', 90), complete('b', 91)], hasMore: true }],
+      pageParams: [null],
+    });
+  });
+
+  it('bootstraps from a page when nothing is cached', () => {
+    const result = applyHistorySnapshot<Msg>(undefined, {
+      kind: 'page',
+      messages: [],
+      hasMore: false,
+    });
+    expect(result).toEqual({ pages: [{ messages: [], hasMore: false }], pageParams: [null] });
+  });
+
+  it('merges a resumed connection’s messages after the watermark, keeping older pages', () => {
+    const result = applyHistorySnapshot(
+      cache([[complete('b', 1), complete('c', 2)], [complete('a', 0)]]),
+      {
+        kind: 'since',
+        after: 1,
+        messages: [complete('c', 2), complete('d', 3)],
+      }
+    );
+    expect(result.pages.map((p) => p.messages)).toEqual([
+      [complete('b', 1), complete('c', 2), complete('d', 3)],
+      [complete('a', 0)],
+    ]);
+  });
+
+  it('drops cached messages in the resumed range that the server no longer has', () => {
+    // A `message_removed` lost while disconnected (or to a buffer overflow).
+    const result = applyHistorySnapshot(
+      cache([[complete('a', 0), complete('gone', 1), complete('c', 2)]]),
+      {
+        kind: 'since',
+        after: 0,
+        messages: [complete('c', 2)],
+      }
+    );
+    expect(result.pages[0].messages).toEqual([complete('a', 0), complete('c', 2)]);
+  });
+
+  it('drops partials, which the stream re-sends whole', () => {
+    const result = applyHistorySnapshot(cache([[complete('a', 0), partial(null, 0)]]), {
+      kind: 'since',
+      after: 0,
+      messages: [],
+    });
+    expect(result.pages[0].messages).toEqual([complete('a', 0)]);
   });
 });
 
