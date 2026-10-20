@@ -1,73 +1,72 @@
-import { useMemo } from 'react';
+import { useCallback } from 'react';
+import { skipToken, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import type { inferRouterOutputs } from '@trpc/server';
 import { trpc } from '@/lib/trpc';
-import { HISTORY_PAGE_SIZE } from '@/lib/message-cache';
-import type { DisplayMessage } from '@/components/messages/types';
+import {
+  HISTORY_PAGE_SIZE,
+  olderPageCursor,
+  prependOlderPage,
+  type TranscriptCache,
+} from '@/lib/message-cache';
+import type { AppRouter } from '@/server/routers';
+
+type HistoryMessage = inferRouterOutputs<AppRouter>['claude']['getHistory']['messages'][number];
+
+/** A session's cached transcript, as the stream and older-page loads write it. */
+export type SessionTranscript = TranscriptCache<HistoryMessage>;
 
 /**
- * The `getHistory` cache key. Shared with `useSessionStream`, which writes the
- * newest page and live messages into this exact cache — a differing input would
- * land them in one nobody reads.
+ * Cache key of a session's {@link SessionTranscript}. Shared with
+ * `useSessionStream`, which writes the newest page and live messages into it.
  */
-export function historyQueryInput(sessionId: string) {
-  return { sessionId, limit: HISTORY_PAGE_SIZE };
-}
+export const sessionTranscriptKey = (sessionId: string) =>
+  ['sessionTranscript', sessionId] as const;
 
 /**
- * Hook for reading message history with infinite-scroll pagination.
+ * A session's transcript, with backward pagination.
  *
  * The newest page and every live message come from the session stream
- * (`useSessionStream`), which writes them directly into this query's cache; the
- * query itself only ever fetches older pages, when the user scrolls up.
+ * (`useSessionStream`); this hook only loads older pages, when the user scrolls
+ * up. Each one is prepended onto the cache as it is when the page lands (see
+ * `prependOlderPage`), so a live write during the load is kept. A mutation runs
+ * the load because it is an imperative one-off whose result is merged into
+ * another cache entry, not a cache entry of its own.
  */
 export function useSessionMessages(sessionId: string) {
-  const {
-    data: historyData,
-    isFetchingNextPage,
-    hasNextPage,
-    fetchNextPage,
-  } = trpc.claude.getHistory.useInfiniteQuery(historyQueryInput(sessionId), {
-    // Never fetch the first page: the stream's snapshot seeds it. fetchNextPage
-    // still runs on demand.
-    enabled: false,
-    // Limit stored pages to prevent memory growth (HISTORY_PAGE_SIZE rows each,
-    // plus their context).
-    maxPages: 500,
-    // For loading OLDER messages (user scrolls up)
-    getNextPageParam: (lastPage, allPages) => {
-      if (!lastPage.hasMore) return undefined;
-      // Find the oldest sequence across ALL pages (not just lastPage, which might be empty)
-      let oldestSequence: number | undefined;
-      for (const page of allPages) {
-        for (const msg of page.messages) {
-          if (oldestSequence === undefined || msg.sequence < oldestSequence) {
-            oldestSequence = msg.sequence;
-          }
-        }
-      }
-      return oldestSequence;
+  const utils = trpc.useUtils();
+  const queryClient = useQueryClient();
+  const transcript = useQuery<SessionTranscript>({
+    queryKey: sessionTranscriptKey(sessionId),
+    queryFn: skipToken,
+  }).data;
+
+  const { mutate: loadOlder, isPending: isFetchingMore } = useMutation({
+    mutationFn: async (cursor: number) => ({
+      cursor,
+      page: await utils.client.claude.getHistory.query({
+        sessionId,
+        cursor,
+        limit: HISTORY_PAGE_SIZE,
+      }),
+    }),
+    onSuccess: ({ cursor, page }) => {
+      queryClient.setQueryData<SessionTranscript>(sessionTranscriptKey(sessionId), (old) =>
+        prependOlderPage(old, cursor, page)
+      );
     },
   });
 
-  // Flatten the pages into chronological order. pages[0] is the newest (it is
-  // also where the SSE stream inserts live messages, by sequence); each later
-  // page is an older backward fetch. Each page's messages are already chronological.
-  const messages = useMemo(() => {
-    if (!historyData?.pages) return [];
-    const result: DisplayMessage[] = [];
-    for (let i = historyData.pages.length - 1; i >= 0; i--) {
-      for (const msg of historyData.pages[i].messages) {
-        result.push(msg);
-      }
-    }
-    return result;
-  }, [historyData]);
+  const cursor = olderPageCursor(transcript);
+  const fetchMore = useCallback(() => {
+    if (cursor !== undefined && !isFetchingMore) loadOlder(cursor);
+  }, [cursor, isFetchingMore, loadOlder]);
 
   return {
-    messages,
+    messages: transcript?.messages ?? [],
     // Until the stream's first snapshot lands.
-    isLoading: historyData === undefined,
-    isFetchingMore: isFetchingNextPage,
-    hasMore: hasNextPage ?? false,
-    fetchMore: fetchNextPage,
+    isLoading: transcript === undefined,
+    isFetchingMore,
+    hasMore: cursor !== undefined,
+    fetchMore,
   };
 }
