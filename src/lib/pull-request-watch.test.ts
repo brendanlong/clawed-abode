@@ -85,11 +85,20 @@ describe('formatWatchedPullRequest', () => {
 
     expect(text).toBe(
       [
-        '- o/r#12 "Fix \\"feeds\\"" by me: ready for review, CI passed (head 0123456) https://github.com/o/r/pull/12',
+        '- o/r#12 "Fix \\"feeds\\"" by me: ready for review, CI passed (head 0123456, updated 2024-01-01) https://github.com/o/r/pull/12',
         '  From session "Fix feeds" (s1, running); message it with SendMessage to "fix-feeds-ab12".',
         '  From session "Old try" (s2, archived).',
       ].join('\n')
     );
+  });
+
+  it('shows the day GitHub last saw activity on the PR', () => {
+    const text = formatWatchedPullRequest({
+      repoFullName: 'o/r',
+      info: { ...pr, updatedAt: '2026-09-27T23:59:59Z' },
+      sessions: [],
+    });
+    expect(text).toContain('2026-09-27');
   });
 });
 

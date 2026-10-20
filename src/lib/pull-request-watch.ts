@@ -58,7 +58,7 @@ export function formatWatchedPullRequest({
   info,
   sessions,
 }: WatchedPullRequest): string {
-  const line = `- ${repoFullName}#${info.number} ${JSON.stringify(info.title)} by ${info.author}: ${describePullRequestState(info)} (head ${info.headSha.slice(0, 7)}) ${info.url}`;
+  const line = `- ${repoFullName}#${info.number} ${JSON.stringify(info.title)} by ${info.author}: ${describePullRequestState(info)} (head ${info.headSha.slice(0, 7)}, updated ${info.updatedAt.slice(0, 10)}) ${info.url}`;
   return [line, ...sessions.map(formatSession)].join('\n');
 }
 
