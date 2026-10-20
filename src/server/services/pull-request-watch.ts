@@ -15,6 +15,7 @@ import { createLogger, toError } from '@/lib/logger';
 import { parsePullRequestJson, pullRequestRepoKey, type PullRequestInfo } from '@/lib/pull-request';
 import {
   formatWatchMessage,
+  FINISHED_KEYS,
   SEEN_KEY,
   watchEventKey,
   type WatchedPullRequest,
@@ -162,21 +163,22 @@ async function withAuthorSessions(prs: StoredPullRequest[]): Promise<WatchedPull
  * Deliver the states of the repo's PRs this watch hasn't reported yet. A PR's
  * merge or close is only reported once the watch has seen it open, so old PRs
  * a badge lookup happens to store don't show up as news. A new watch's first
- * pass only records what is already there: the tool's reply listed it. Only PRs
- * refreshed since `syncedAt` are considered; nothing else can have changed.
+ * pass only records what is already there: the tool's reply listed it.
+ *
+ * Considered: the PRs this poll refreshed, plus every PR the watch saw open and
+ * hasn't reported finished — a badge lookup or another watch's poll may have
+ * stored its merge, after which no poll refreshes it. Both sets track the open
+ * PRs, not the repo's history.
  */
 async function processWatch(
   watch: { id: string; sessionId: string; repoFullName: string; baselinedAt: Date | null },
   syncedAt: Date,
   port: PullRequestWatchPort
 ): Promise<void> {
-  const prs = await loadPullRequests(
-    Prisma.sql`"repoFullName" = ${watch.repoFullName} AND "fetchedAt" >= ${syncedAt}`
-  );
-  const open = prs.filter((pr) => pr.info.state === 'open');
-  const seenOpen = open.map((pr) => ({ pullRequestId: pr.id, key: SEEN_KEY }));
-
+  const inRepo = Prisma.sql`"repoFullName" = ${watch.repoFullName}`;
   if (!watch.baselinedAt) {
+    const open = await loadPullRequests(Prisma.sql`${inRepo} AND ${isOpen}`);
+    const seenOpen = open.map((pr) => ({ pullRequestId: pr.id, key: SEEN_KEY }));
     await recordKeys(watch.id, [...seenOpen, ...eventKeys(open)]);
     await prisma.pullRequestWatch.update({
       where: { id: watch.id },
@@ -185,6 +187,19 @@ async function processWatch(
     return;
   }
 
+  const unfinished = Prisma.sql`
+    SELECT "pullRequestId" FROM "PullRequestWatchEvent" seen
+    WHERE seen."watchId" = ${watch.id} AND seen."key" = ${SEEN_KEY} AND NOT EXISTS (
+      SELECT 1 FROM "PullRequestWatchEvent" done
+      WHERE done."watchId" = seen."watchId" AND done."pullRequestId" = seen."pullRequestId"
+        AND done."key" IN (${Prisma.join(FINISHED_KEYS)})
+    )`;
+  const prs = await loadPullRequests(
+    Prisma.sql`${inRepo} AND ("fetchedAt" >= ${syncedAt} OR "id" IN (${unfinished}))`
+  );
+  const seenOpen = prs
+    .filter((pr) => pr.info.state === 'open')
+    .map((pr) => ({ pullRequestId: pr.id, key: SEEN_KEY }));
   await recordKeys(watch.id, seenOpen);
   const seen = await prisma.pullRequestWatchEvent.findMany({
     where: { watchId: watch.id, key: SEEN_KEY, pullRequestId: { in: prs.map((pr) => pr.id) } },

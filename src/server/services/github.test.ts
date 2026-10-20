@@ -421,6 +421,11 @@ describe('github service', () => {
       mockFetch.mockResolvedValue(createMockResponse({}, 502));
       await expect(fetchChecks('owner/repo', 'abc')).rejects.toThrow(GitHubApiError);
 
+      mockFetch.mockResolvedValue(
+        createMockResponse({ message: 'API rate limit exceeded for user ID 1.' }, 403)
+      );
+      await expect(fetchChecks('owner/repo', 'abc')).rejects.toThrow(GitHubApiError);
+
       delete process.env.GITHUB_TOKEN;
       resetEnvCache();
       mockFetch.mockClear();

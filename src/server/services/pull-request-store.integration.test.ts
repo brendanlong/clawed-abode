@@ -143,16 +143,16 @@ describe('copyLinkedPullRequest', () => {
 });
 
 describe('savePullRequest checks', () => {
-  it('reuses settled checks for the same head commit instead of refetching them', async () => {
+  it('keeps a finished PR’s checks instead of refetching them, but refetches an open one’s', async () => {
     vi.mocked(fetchChecks).mockResolvedValue('success');
     await savePullRequest('o/r', fetched, new Date(1000));
+    await savePullRequest('o/r', fetched, new Date(2000));
+    expect(fetchChecks).toHaveBeenCalledTimes(2);
     vi.mocked(fetchChecks).mockClear();
 
-    await savePullRequest('o/r', fetched, new Date(2000));
+    await savePullRequest('o/r', { ...fetched, state: 'merged' }, new Date(3000));
     expect(fetchChecks).not.toHaveBeenCalled();
-
-    await savePullRequest('o/r', { ...fetched, headSha: 'def' }, new Date(3000));
-    expect(fetchChecks).toHaveBeenCalledWith('o/r', 'def');
+    expect((await storedInfo('o/r', 7))?.checks).toBe('success');
   });
 
   it('leaves the stored row alone when the checks fail to load', async () => {

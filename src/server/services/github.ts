@@ -31,10 +31,26 @@ export async function githubFetchResponse(
 
   const notModified = response.status === 304 && extraHeaders?.['If-None-Match'] !== undefined;
   if (!response.ok && !notModified) {
-    throw new GitHubApiError(response.status, path, await readApiMessage(response));
+    const apiMessage = await readApiMessage(response);
+    throw new GitHubApiError(
+      response.status,
+      path,
+      apiMessage,
+      isRateLimited(response, apiMessage)
+    );
   }
 
   return response;
+}
+
+/** GitHub answers both rate limits with a 403 (or 429), told apart from a permission error by these. */
+function isRateLimited(response: Response, apiMessage: string | undefined): boolean {
+  return (
+    response.status === 429 ||
+    response.headers.get('x-ratelimit-remaining') === '0' ||
+    response.headers.get('retry-after') !== null ||
+    /rate limit/i.test(apiMessage ?? '')
+  );
 }
 
 /**
@@ -135,7 +151,8 @@ export class GitHubApiError extends Error {
   constructor(
     public readonly status: number,
     public readonly path: string,
-    public readonly apiMessage?: string
+    public readonly apiMessage?: string,
+    public readonly rateLimited = false
   ) {
     super(`GitHub API error: ${status} for ${path}${apiMessage ? `: ${apiMessage}` : ''}`);
     this.name = 'GitHubApiError';
@@ -339,8 +356,12 @@ export async function fetchChecks(repoFullName: string, sha: string): Promise<Ch
     ]);
     return rollUpChecks(runs.check_runs, status.statuses);
   } catch (err) {
-    if (err instanceof GitHubApiError && (err.status === 403 || err.status === 404)) {
-      log.debug('Checks are not readable', { repoFullName, sha, error: err.message });
+    const unreadable =
+      err instanceof GitHubApiError &&
+      !err.rateLimited &&
+      (err.status === 403 || err.status === 404);
+    if (unreadable) {
+      log.debug('Checks are not readable', { repoFullName, sha, error: toError(err).message });
       return null;
     }
     throw err;

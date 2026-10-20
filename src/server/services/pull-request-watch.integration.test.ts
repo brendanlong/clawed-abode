@@ -255,4 +255,35 @@ describe('polling', () => {
       expect.stringContaining('#4 "PR 4" by me: closed without merging'),
     ]);
   });
+
+  it('reports a merge a badge lookup stored between polls', async () => {
+    setRemote(remotePr(5));
+    checks.set('sha-5', 'success');
+    const manager = await createManager();
+    await watch.setPullRequestWatches(manager.id, ['o/r']);
+
+    setRemote(remotePr(5, { state: 'merged' }));
+    await savePullRequest('o/r', remotePr(5, { state: 'merged' }), new Date());
+    await watch._pollPullRequestWatches();
+
+    expect(delivered.map((d) => d.text)).toEqual([
+      expect.stringContaining('#5 "PR 5" by me: merged'),
+    ]);
+  });
+
+  it('sends a dropped merge again once the session is back', async () => {
+    setRemote(remotePr(6));
+    const manager = await createManager();
+    await watch.setPullRequestWatches(manager.id, ['o/r']);
+
+    setRemote(remotePr(6, { state: 'merged' }));
+    dropping.add(manager.id);
+    await watch._pollPullRequestWatches();
+    dropping.delete(manager.id);
+    await watch._pollPullRequestWatches();
+
+    expect(delivered.map((d) => d.text)).toEqual([
+      expect.stringContaining('#6 "PR 6" by me: merged'),
+    ]);
+  });
 });

@@ -24,17 +24,17 @@ export type PrState = PullRequestInfo['state'];
 export type GitHubPullRequest = Omit<PullRequestInfo, 'checks'>;
 
 /**
- * Stored checks that needn't be fetched again: same head commit, and either the
- * PR is finished or the result can only change with a re-run (a failure is the
- * one result people re-run, so it is refetched). Undefined means fetch.
+ * Stored checks a lookup can keep instead of refetching: only a finished PR's,
+ * for the same head commit. An open PR's are always refetched (unchanged ones
+ * are free), since even settled checks can change without a push: a re-run, a
+ * chained workflow, or CI that registers late. Undefined means fetch.
  */
 export function reusableChecks(
   fetched: GitHubPullRequest,
   stored: PullRequestInfo | null
 ): PullRequestInfo['checks'] | undefined {
-  if (!stored || stored.headSha !== fetched.headSha) return undefined;
-  if (fetched.state !== 'open') return stored.checks;
-  return stored.checks === 'pending' || stored.checks === 'failure' ? undefined : stored.checks;
+  if (!stored || stored.headSha !== fetched.headSha || fetched.state === 'open') return undefined;
+  return stored.checks;
 }
 
 /** CI providers take a while after a push to register their first check. */

@@ -5,6 +5,9 @@ import { describeChecks, type PullRequestInfo } from './pull-request';
 /** Marks a PR the watch has seen open, which is what makes its merge or close reportable. */
 export const SEEN_KEY = 'seen';
 
+/** The keys {@link watchEventKey} gives a PR that can't change any more. */
+export const FINISHED_KEYS = ['merged', 'closed'] as const;
+
 /**
  * The state of a PR a watch reports, once per value: ready (open, not a draft,
  * CI finished) at a head commit with its CI outcome, merged, or closed. Null

@@ -41,27 +41,23 @@ describe('pull-request JSON column', () => {
 
 describe('reusableChecks', () => {
   const { checks: _checks, ...fetched } = pr;
-  const open = { ...pr, draft: false };
+  const merged = { ...fetched, state: 'merged' as const };
 
-  it('reuses checks that can only change with a new push', () => {
-    expect(reusableChecks(fetched, { ...open, checks: 'success' })).toBe('success');
-    expect(reusableChecks(fetched, { ...open, checks: 'none' })).toBe('none');
-    expect(reusableChecks(fetched, { ...open, checks: null })).toBeNull();
+  it('keeps a finished PR’s checks for the same head commit', () => {
+    expect(reusableChecks(merged, { ...pr, checks: 'failure' })).toBe('failure');
+    expect(reusableChecks(merged, { ...pr, checks: null })).toBeNull();
   });
 
-  it('refetches running and failed checks, since failures get re-run', () => {
-    expect(reusableChecks(fetched, { ...open, checks: 'pending' })).toBeUndefined();
-    expect(reusableChecks(fetched, { ...open, checks: 'failure' })).toBeUndefined();
+  it('always refetches an open PR’s checks, which can change without a push', () => {
+    expect(reusableChecks(fetched, { ...pr, checks: 'success' })).toBeUndefined();
+    expect(reusableChecks(fetched, { ...pr, checks: 'none' })).toBeUndefined();
   });
 
-  it('never refetches for a finished PR, and always refetches for a new commit', () => {
-    expect(reusableChecks({ ...fetched, state: 'merged' }, { ...open, checks: 'failure' })).toBe(
-      'failure'
-    );
-    expect(reusableChecks({ ...fetched, headSha: 'new' }, { ...open, checks: 'success' })).toBe(
+  it('refetches for a new head commit or a PR never stored', () => {
+    expect(reusableChecks({ ...merged, headSha: 'new' }, { ...pr, checks: 'success' })).toBe(
       undefined
     );
-    expect(reusableChecks(fetched, null)).toBeUndefined();
+    expect(reusableChecks(merged, null)).toBeUndefined();
   });
 });
 
