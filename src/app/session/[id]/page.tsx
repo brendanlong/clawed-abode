@@ -33,10 +33,17 @@ import { trpc } from '@/lib/trpc';
 const SUBSCRIPTION_USAGE_POLL_MS = 60_000;
 
 function SessionView({ sessionId }: { sessionId: string }) {
+  // Single multiplexed SSE stream: opens with a snapshot of the session, its live
+  // state, and the newest messages, then keeps all three current.
+  const {
+    status: streamStatus,
+    notFound: sessionNotFound,
+    reconnect: reconnectStream,
+  } = useSessionStream(sessionId);
+
   // Session state: data, start/stop/archive
   const {
     session,
-    isLoading: sessionLoading,
     start,
     stop,
     archive,
@@ -56,8 +63,6 @@ function SessionView({ sessionId }: { sessionId: string }) {
     hasMore,
     fetchMore,
     tokenUsage,
-    historyLoaded,
-    newestSequence,
   } = useSessionMessages(sessionId);
 
   const { data: subscriptionUsage } = trpc.rateLimit.getSessionUsage.useQuery(
@@ -67,10 +72,6 @@ function SessionView({ sessionId }: { sessionId: string }) {
       refetchInterval: SUBSCRIPTION_USAGE_POLL_MS,
     }
   );
-
-  // Single multiplexed SSE stream: fans live events into the relevant caches.
-  // Anchored to the loaded history so no messages are missed between snapshots.
-  const { status: streamStatus } = useSessionStream(sessionId, { historyLoaded, newestSequence });
 
   // Claude state: running (main turn), background tasks, send, interrupt, commands
   const {
@@ -145,10 +146,17 @@ function SessionView({ sessionId }: { sessionId: string }) {
     />
   );
 
-  if (sessionLoading) {
+  const connectionStatus = (
+    <ConnectionStatusIndicator status={streamStatus} onReconnect={reconnectStream} />
+  );
+
+  if (!session && !sessionNotFound) {
     return (
-      <div className="flex-1 flex items-center justify-center">
-        <Spinner size="lg" />
+      <div className="flex-1 flex flex-col min-h-0">
+        <div className="flex-1 flex items-center justify-center">
+          <Spinner size="lg" />
+        </div>
+        {connectionStatus}
       </div>
     );
   }
@@ -208,6 +216,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
             </div>
           </>
         )}
+        {connectionStatus}
       </div>
     );
   }
@@ -261,7 +270,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
           />
         ) : (
           <>
-            <ConnectionStatusIndicator status={streamStatus} />
+            {connectionStatus}
             <ClaudeStatusIndicator
               isRunning={isClaudeRunning}
               retry={claudeRetry}
@@ -297,7 +306,8 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
     <AuthGuard>
       <div className="h-dvh bg-background flex flex-col overflow-hidden">
         <Header />
-        <SessionView sessionId={resolvedParams.id} />
+        {/* Keyed so each session gets fresh per-session state (see useSessionStream). */}
+        <SessionView key={resolvedParams.id} sessionId={resolvedParams.id} />
       </div>
     </AuthGuard>
   );

@@ -1,17 +1,15 @@
 import { useCallback } from 'react';
 import { trpc } from '@/lib/trpc';
 import { taskHasEndState } from '@/lib/session-status';
-import { LIVE_QUERY_OPTIONS } from '@/lib/live-query';
+import { useSessionStreamState } from '@/hooks/useSessionStream';
 
 /**
  * Hook for managing Claude process state: running status, send prompts, interrupt, and commands.
  *
- * The live state is seeded by one query and then kept current by the multiplexed
- * SSE stream (useSessionStream), which patches fields of its cache directly; see
- * LIVE_QUERY_OPTIONS for the focus/reconnect resync policy.
+ * The live state is kept by the session stream (useSessionStream).
  */
 export function useClaudeState(sessionId: string) {
-  const { data: live } = trpc.claude.getLiveState.useQuery({ sessionId }, LIVE_QUERY_OPTIONS);
+  const live = useSessionStreamState(sessionId)?.live;
 
   // Callbacks depend on the stable mutate functions, not the mutation result
   // objects (a new identity every render).

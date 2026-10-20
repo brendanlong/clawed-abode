@@ -43,7 +43,7 @@ export async function loadHistoryPage(
   return { messages: rows.reverse().map(toParsedMessage), hasMore };
 }
 
-/** Every message after `floor`, oldest-first (SSE catch-up replay). */
+/** Every message after `floor`, oldest-first (a resumed stream's snapshot). */
 export async function loadMessagesAfter(
   sessionId: string,
   floor: number
@@ -55,14 +55,13 @@ export async function loadMessagesAfter(
   return rows.map(toParsedMessage);
 }
 
-/** The highest persisted sequence, or null when the session has no messages. */
-export async function latestSequence(sessionId: string): Promise<number | null> {
-  const last = await prisma.message.findFirst({
-    where: { sessionId },
-    orderBy: { sequence: 'desc' },
-    select: { sequence: true },
+/** Whether any message has `sequence <= ceiling`. */
+export async function hasMessagesThrough(sessionId: string, ceiling: number): Promise<boolean> {
+  const row = await prisma.message.findFirst({
+    where: { sessionId, sequence: { lte: ceiling } },
+    select: { id: true },
   });
-  return last?.sequence ?? null;
+  return row !== null;
 }
 
 /**

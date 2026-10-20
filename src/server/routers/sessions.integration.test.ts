@@ -385,21 +385,6 @@ describe('sessionsRouter integration', () => {
     });
   });
 
-  describe('get', () => {
-    it('should get a session by ID from the database', async () => {
-      const session = await createNoRepoSession({
-        name: 'Test Session',
-      });
-
-      const caller = createCaller('auth-session-id');
-      const result = await caller.sessions.get({ sessionId: session.id });
-
-      expect(result.session.id).toBe(session.id);
-      expect(result.session.name).toBe('Test Session');
-      expect(result.session.status).toBe('running');
-    });
-  });
-
   describe('byAgentName', () => {
     it('finds the session with that agent name, including archived ones', async () => {
       const session = await createNoRepoSession({
@@ -485,11 +470,8 @@ describe('sessionsRouter integration', () => {
       });
 
       const caller = createCaller('auth-session-id');
-      const result = await caller.sessions.start({ sessionId: session.id });
+      await caller.sessions.start({ sessionId: session.id });
 
-      expect(result.session.status).toBe('running');
-
-      // Verify database was updated
       const dbSession = await testPrisma.session.findUnique({ where: { id: session.id } });
       expect(dbSession!.status).toBe('running');
       // Its CLI starts now, so other sessions can reach it before it gets a prompt.
@@ -502,9 +484,10 @@ describe('sessionsRouter integration', () => {
       });
 
       const caller = createCaller('auth-session-id');
-      const result = await caller.sessions.start({ sessionId: session.id });
+      await caller.sessions.start({ sessionId: session.id });
 
-      expect(result.session.status).toBe('running');
+      const dbSession = await testPrisma.session.findUniqueOrThrow({ where: { id: session.id } });
+      expect(dbSession.status).toBe('running');
     });
 
     it('should reject starting a session that is still being set up', async () => {
@@ -529,13 +512,10 @@ describe('sessionsRouter integration', () => {
         expect(row.status).toBe('error');
       });
 
-      const { session: view } = await caller.sessions.get({ sessionId: session.id });
-      expect(view).toMatchObject({ canStart: false, canStop: false });
-
       await expect(caller.sessions.start({ sessionId: session.id })).rejects.toMatchObject({
         code: 'PRECONDITION_FAILED',
       });
-      expect((await caller.sessions.stop({ sessionId: session.id })).session.status).toBe('error');
+      await caller.sessions.stop({ sessionId: session.id });
       await expect(caller.sessions.start({ sessionId: session.id })).rejects.toMatchObject({
         code: 'PRECONDITION_FAILED',
       });
@@ -561,11 +541,8 @@ describe('sessionsRouter integration', () => {
     it('should leave a session that is still being set up to its setup', async () => {
       const session = await createNoRepoSession({ name: 'Creating', status: 'creating' });
 
-      const result = await createCaller('auth-session-id').sessions.stop({
-        sessionId: session.id,
-      });
+      await createCaller('auth-session-id').sessions.stop({ sessionId: session.id });
 
-      expect(result.session.status).toBe('creating');
       const dbSession = await testPrisma.session.findUniqueOrThrow({ where: { id: session.id } });
       expect(dbSession.status).toBe('creating');
     });
@@ -576,13 +553,8 @@ describe('sessionsRouter integration', () => {
       });
 
       const caller = createCaller('auth-session-id');
-      const result = await caller.sessions.stop({ sessionId: session.id });
+      await caller.sessions.stop({ sessionId: session.id });
 
-      expect(result.session.status).toBe('stopped');
-      // The UI offers Start/Stop from these, not from its own copy of the rule.
-      expect(result.session).toMatchObject({ canStart: true, canStop: false });
-
-      // Verify database was updated
       const dbSession = await testPrisma.session.findUnique({ where: { id: session.id } });
       expect(dbSession!.status).toBe('stopped');
     });
@@ -608,9 +580,7 @@ describe('sessionsRouter integration', () => {
       });
 
       const caller = createCaller('auth-session-id');
-      const result = await caller.sessions.stop({ sessionId: session.id });
-
-      expect(result.session.status).toBe('archived');
+      await caller.sessions.stop({ sessionId: session.id });
 
       // A query can be re-established on an archived session by a concurrent
       // send, so stop still has to kill it — it just must not un-archive.
@@ -628,10 +598,7 @@ describe('sessionsRouter integration', () => {
       });
 
       const caller = createCaller('auth-session-id');
-      const result = await caller.sessions.rename({ sessionId: session.id, name: 'New Name' });
-
-      expect(result.session.id).toBe(session.id);
-      expect(result.session.name).toBe('New Name');
+      await caller.sessions.rename({ sessionId: session.id, name: 'New Name' });
 
       const dbSession = await testPrisma.session.findUnique({ where: { id: session.id } });
       expect(dbSession!.name).toBe('New Name');
@@ -644,12 +611,10 @@ describe('sessionsRouter integration', () => {
       });
 
       const caller = createCaller('auth-session-id');
-      const result = await caller.sessions.rename({
-        sessionId: session.id,
-        name: '  Trimmed Name  ',
-      });
+      await caller.sessions.rename({ sessionId: session.id, name: '  Trimmed Name  ' });
 
-      expect(result.session.name).toBe('Trimmed Name');
+      const dbSession = await testPrisma.session.findUniqueOrThrow({ where: { id: session.id } });
+      expect(dbSession.name).toBe('Trimmed Name');
     });
 
     it('should reject an empty name', async () => {
@@ -690,12 +655,7 @@ describe('sessionsRouter integration', () => {
       const session = await createRunningSession();
 
       const caller = createCaller('auth-session-id');
-      const result = await caller.sessions.setModel({
-        sessionId: session.id,
-        claudeModel: 'sonnet',
-      });
-
-      expect(result.session.claudeModel).toBe('sonnet');
+      await caller.sessions.setModel({ sessionId: session.id, claudeModel: 'sonnet' });
 
       const dbSession = await testPrisma.session.findUnique({ where: { id: session.id } });
       expect(dbSession!.claudeModel).toBe('sonnet');
@@ -705,29 +665,23 @@ describe('sessionsRouter integration', () => {
       const session = await createRunningSession('opus');
 
       const caller = createCaller('auth-session-id');
-      const trimmed = await caller.sessions.setModel({
-        sessionId: session.id,
-        claudeModel: '  haiku  ',
-      });
-      expect(trimmed.session.claudeModel).toBe('haiku');
+      const modelOf = async () =>
+        (await testPrisma.session.findUniqueOrThrow({ where: { id: session.id } })).claudeModel;
+      await caller.sessions.setModel({ sessionId: session.id, claudeModel: '  haiku  ' });
+      expect(await modelOf()).toBe('haiku');
 
-      const cleared = await caller.sessions.setModel({
-        sessionId: session.id,
-        claudeModel: '   ',
-      });
-      expect(cleared.session.claudeModel).toBeNull();
+      await caller.sessions.setModel({ sessionId: session.id, claudeModel: '   ' });
+      expect(await modelOf()).toBeNull();
     });
 
     it('should clear the override with null', async () => {
       const session = await createRunningSession('opus');
 
       const caller = createCaller('auth-session-id');
-      const result = await caller.sessions.setModel({
-        sessionId: session.id,
-        claudeModel: null,
-      });
+      await caller.sessions.setModel({ sessionId: session.id, claudeModel: null });
 
-      expect(result.session.claudeModel).toBeNull();
+      const dbSession = await testPrisma.session.findUniqueOrThrow({ where: { id: session.id } });
+      expect(dbSession.claudeModel).toBeNull();
     });
 
     it('should apply the change to the live query', async () => {
@@ -772,12 +726,14 @@ describe('sessionsRouter integration', () => {
       mockRefreshSessionSettings.mockClear();
 
       const caller = createCaller('auth-session-id');
-      const on = await caller.sessions.setSessionTools({ sessionId: session.id, enabled: true });
-      expect(on.session.sessionToolsEnabled).toBe(true);
+      const toolsOf = async () =>
+        (await testPrisma.session.findUniqueOrThrow({ where: { id: session.id } }))
+          .sessionToolsEnabled;
+      await caller.sessions.setSessionTools({ sessionId: session.id, enabled: true });
+      expect(await toolsOf()).toBe(true);
       expect(mockRefreshSessionSettings).toHaveBeenCalledWith(session.id);
 
-      const off = await caller.sessions.setSessionTools({ sessionId: session.id, enabled: false });
-      expect(off.session.sessionToolsEnabled).toBe(false);
+      await caller.sessions.setSessionTools({ sessionId: session.id, enabled: false });
       const row = await testPrisma.session.findUniqueOrThrow({ where: { id: session.id } });
       expect(row.sessionToolsEnabled).toBe(false);
     });
@@ -881,11 +837,8 @@ describe('sessionsRouter integration', () => {
     it('stop leaves the session archived', async () => {
       const session = await archivedBehindTheLoad('running');
 
-      const result = await createCaller('auth-session-id').sessions.stop({
-        sessionId: session.id,
-      });
+      await createCaller('auth-session-id').sessions.stop({ sessionId: session.id });
 
-      expect(result.session.status).toBe('archived');
       expect(await statusOf(session.id)).toBe('archived');
       expect(mockStopSession).toHaveBeenCalledWith(session.id);
     });

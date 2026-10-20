@@ -9,6 +9,7 @@ import { INITIAL_LIVE_TURN, type LiveTurnState } from '@/lib/live-turn';
 import type { SanitizationInfo } from '@/lib/sanitization';
 import type { UserInputRequest } from './sdk-options';
 import type { MergedSessionSettings } from './settings-merger';
+import type { ParsedMessage } from './message-store';
 
 /**
  * A pending interactive tool request: the `canUseTool` callback parks a promise
@@ -65,6 +66,12 @@ export interface LiveQuery {
   toolSanitizations: Map<string, SanitizationInfo>;
   /** uuids of the prompts pushed into this query, to drop the CLI's replays of them. */
   pushedUuids: Set<string>;
+  /**
+   * The last partial emitted for each in-progress assistant message, keyed by
+   * partial id, so a stream snapshot can carry the output the user is watching.
+   * Dropped as its complete message (or the turn's result) arrives.
+   */
+  partials: Map<string, ParsedMessage>;
 }
 
 /** In-memory state for one active session. */

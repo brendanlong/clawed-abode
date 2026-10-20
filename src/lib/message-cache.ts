@@ -10,10 +10,12 @@
  *   sit after the complete messages on the newest page.
  * - **Complete** messages are persisted. An assistant or user message supersedes
  *   its own stream's partial; a turn `result` or an error supersedes them all (a
- *   stream cut off by an interrupt, crash, or stop never completes). It is inserted by `sequence`, deduped by id — a re-delivered id is
- *   ignored rather than merged, so the cache never reconciles an edit. The one way
- *   a complete message leaves is {@link removeMessageFromCache}, when the server
- *   deletes the row outright.
+ *   stream cut off by an interrupt, crash, or stop never completes). It is
+ *   inserted by `sequence`, deduped by id — a re-delivered id is not merged, so
+ *   the cache never reconciles an edit, but it still supersedes partials (a
+ *   snapshot can deliver a message ahead of the partials that preceded its live
+ *   event). A complete message leaves through {@link removeMessageFromCache}, when
+ *   the server deletes the row outright, or {@link applyHistorySnapshot}.
  *
  * page[0] holds the newest messages (matching `getHistory`'s backward pagination),
  * so live messages land in page[0]. Inserting by sequence (not arrival order)
@@ -23,6 +25,9 @@
  */
 
 import { getParentToolUseId } from './claude-messages';
+
+/** Messages per history page: the stream snapshot's newest page and each backward `getHistory` page. */
+export const HISTORY_PAGE_SIZE = 20;
 
 /** Prefix for transient streaming (partial) message ids. */
 export const PARTIAL_MESSAGE_ID_PREFIX = 'partial-';
@@ -99,21 +104,24 @@ export function mergeMessageIntoCache<M extends MessageLike, P = unknown>(
     return { ...old, pages: newPages };
   }
 
-  // Complete message: dedupe by id across all pages first.
-  for (const page of old.pages) {
-    if (page.messages.some((m) => m.id === message.id)) {
-      return old;
-    }
-  }
-
-  // Insert at the sequence position among the newest page's complete messages,
-  // keeping the partials this message doesn't supersede after them. Scans from the
-  // end: the common case is an append.
+  // Complete message: drop the partials it supersedes, then insert it unless an
+  // earlier delivery (live or snapshot) already did.
   const newPages = [...old.pages];
   const firstPageMessages = newPages[0].messages.filter((m) => !isPartialMessageId(m.id));
   const livePartials = newPages[0].messages.filter(
     (m) => isPartialMessageId(m.id) && !supersedesPartial(message, m.id)
   );
+  if (old.pages.some((page) => page.messages.some((m) => m.id === message.id))) {
+    if (firstPageMessages.length + livePartials.length === newPages[0].messages.length) {
+      return old;
+    }
+    newPages[0] = { ...newPages[0], messages: [...firstPageMessages, ...livePartials] };
+    return { ...old, pages: newPages };
+  }
+
+  // Insert at the sequence position among the newest page's complete messages,
+  // keeping the partials this message doesn't supersede after them. Scans from the
+  // end: the common case is an append.
   let insertAt = firstPageMessages.length;
   while (insertAt > 0 && firstPageMessages[insertAt - 1].sequence > message.sequence) {
     insertAt--;
@@ -141,4 +149,58 @@ export function removeMessageFromCache<M extends MessageLike, P = unknown>(
       messages: page.messages.filter((m) => m.id !== messageId),
     })),
   };
+}
+
+/**
+ * The transcript part of a stream snapshot (see `sse.onSessionEvents`): every
+ * persisted message with `sequence > after` (oldest-first), whether older ones
+ * exist, and the in-progress partials. Authoritative for that range: what the
+ * server no longer has is gone, and its rows win over cached ones.
+ */
+export interface HistorySnapshot<M> {
+  after: number;
+  messages: M[];
+  hasMore: boolean;
+  partials: M[];
+}
+
+/**
+ * Apply a stream snapshot's transcript to the infinite-query cache. When the
+ * cache reaches into the snapshot's range, the two join without a gap, so the
+ * range is reconciled in place and older cached pages (the user's scroll-back)
+ * stay. Otherwise — an empty cache, or one an earlier mount left behind that
+ * many messages have since passed — the snapshot replaces it. Either way the
+ * cached partials are replaced by the snapshot's.
+ */
+export function applyHistorySnapshot<M extends MessageLike, P = unknown>(
+  old: MessageInfiniteCache<M, P> | undefined,
+  snapshot: HistorySnapshot<M>
+): MessageInfiniteCache<M, P> {
+  const joins = old?.pages.some((page) =>
+    page.messages.some((m) => !isPartialMessageId(m.id) && m.sequence >= snapshot.after)
+  );
+  let result: MessageInfiniteCache<M, P>;
+  if (!old || !joins) {
+    result = {
+      pages: [{ messages: snapshot.messages, hasMore: snapshot.hasMore }],
+      pageParams: [null] as P[],
+    };
+  } else {
+    const fromSnapshot = new Map(snapshot.messages.map((m) => [m.id, m]));
+    result = {
+      ...old,
+      pages: old.pages.map((page) => ({
+        ...page,
+        messages: page.messages.flatMap((m) => {
+          if (isPartialMessageId(m.id)) return [];
+          if (m.sequence <= snapshot.after) return [m];
+          const current = fromSnapshot.get(m.id);
+          return current ? [current] : [];
+        }),
+      })),
+    };
+    for (const message of snapshot.messages) result = mergeMessageIntoCache(result, message);
+  }
+  for (const partial of snapshot.partials) result = mergeMessageIntoCache(result, partial);
+  return result;
 }

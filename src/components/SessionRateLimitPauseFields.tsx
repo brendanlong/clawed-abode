@@ -44,18 +44,14 @@ export function SessionRateLimitPauseFields({
   rateLimitPauseEnabled,
   rateLimitPauseThreshold,
 }: SessionRateLimitPauseFieldsProps) {
-  const utils = trpc.useUtils();
   const { data: status } = trpc.rateLimit.getStatus.useQuery();
   const [draft, setDraft] = useState<{ enabled: boolean | null; threshold: number | null } | null>(
     null
   );
 
+  // The new overrides and any resulting hold arrive on the session stream.
   const mutation = trpc.sessions.setRateLimitPause.useMutation({
-    onSuccess: () => {
-      setDraft(null);
-      void utils.sessions.get.invalidate({ sessionId });
-      void utils.claude.getLiveState.invalidate({ sessionId });
-    },
+    onSuccess: () => setDraft(null),
   });
 
   const saved = { enabled: rateLimitPauseEnabled, threshold: rateLimitPauseThreshold };

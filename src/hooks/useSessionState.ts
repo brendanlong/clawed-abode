@@ -1,44 +1,24 @@
 import { useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { trpc } from '@/lib/trpc';
-import { LIVE_QUERY_OPTIONS } from '@/lib/live-query';
 import { useActionError } from '@/hooks/useActionError';
+import { useSessionStreamState } from '@/hooks/useSessionStream';
 
 /**
- * Hook for managing session state: fetching session data, SSE updates, and start/stop mutations.
+ * Hook for managing session state: the session row (kept by the session stream)
+ * and start/stop/rename/archive mutations. Every mutation that changes the row
+ * announces it on the stream, so none writes the row itself.
  */
 export function useSessionState(sessionId: string) {
   const router = useRouter();
   const utils = trpc.useUtils();
   const { error: actionError, dismiss: dismissActionError, handlersFor } = useActionError();
 
-  // Live session updates arrive via the multiplexed SSE stream (useSessionStream).
-  const { data: sessionData, isLoading } = trpc.sessions.get.useQuery(
-    { sessionId },
-    LIVE_QUERY_OPTIONS
-  );
+  const session = useSessionStreamState(sessionId)?.session;
 
-  // Mutations - update cache directly from returned data
-  const startMutation = trpc.sessions.start.useMutation({
-    ...handlersFor('start session'),
-    onSuccess: (data) => {
-      utils.sessions.get.setData({ sessionId }, { session: data.session });
-    },
-  });
-
-  const stopMutation = trpc.sessions.stop.useMutation({
-    ...handlersFor('stop session'),
-    onSuccess: (data) => {
-      utils.sessions.get.setData({ sessionId }, { session: data.session });
-    },
-  });
-
-  const renameMutation = trpc.sessions.rename.useMutation({
-    ...handlersFor('rename session'),
-    onSuccess: (data) => {
-      utils.sessions.get.setData({ sessionId }, { session: data.session });
-    },
-  });
+  const startMutation = trpc.sessions.start.useMutation(handlersFor('start session'));
+  const stopMutation = trpc.sessions.stop.useMutation(handlersFor('stop session'));
+  const renameMutation = trpc.sessions.rename.useMutation(handlersFor('rename session'));
 
   // The API endpoint is "delete" but it now archives instead of permanently deleting
   const archiveMutation = trpc.sessions.delete.useMutation({
@@ -69,8 +49,7 @@ export function useSessionState(sessionId: string) {
   );
 
   return {
-    session: sessionData?.session,
-    isLoading,
+    session,
     start,
     stop,
     archive,

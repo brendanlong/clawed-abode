@@ -41,20 +41,11 @@ export function SessionSettingsButton({
   sessionToolsEnabled,
 }: SessionSettingsButtonProps) {
   const [open, setOpen] = useState(false);
-  const utils = trpc.useUtils();
   const { data: globalSettings } = trpc.globalSettings.get.useQuery();
 
-  const mutation = trpc.sessions.setModel.useMutation({
-    onSuccess: () => {
-      void utils.sessions.get.invalidate({ sessionId });
-    },
-  });
-
-  const toolsMutation = trpc.sessions.setSessionTools.useMutation({
-    onSuccess: () => {
-      void utils.sessions.get.invalidate({ sessionId });
-    },
-  });
+  // The updated row arrives on the session stream.
+  const mutation = trpc.sessions.setModel.useMutation();
+  const toolsMutation = trpc.sessions.setSessionTools.useMutation();
 
   const fallbackModel = fallbackClaudeModel(globalSettings);
 
