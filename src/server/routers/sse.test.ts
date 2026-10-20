@@ -1,5 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
-import { createEventQueue } from './sse';
+import { createEventQueue, sessionEventCoalesceKey } from './sse';
+import { partialMessageId } from '@/lib/message-cache';
+import { buildTokenUsageStats, EMPTY_SESSION_USAGE_TOTALS } from '@/lib/token-estimation';
+import type { SessionStreamEvent } from '../services/events';
+import type { ParsedMessage } from '../services/message-store';
 
 /**
  * Wire up a createEventQueue with a controllable fake subscription. Returns the
@@ -170,5 +174,64 @@ describe('createEventQueue', () => {
     expect(h.unsubscribed).toBe(false);
     h.unsubscribe();
     expect(h.unsubscribed).toBe(true);
+  });
+});
+
+describe('sessionEventCoalesceKey', () => {
+  const message = (id: string): ParsedMessage => ({
+    id,
+    sessionId: 's1',
+    sequence: 0,
+    type: 'assistant',
+    content: {},
+    createdAt: new Date(0),
+  });
+  const usage = (resultCount: number) =>
+    buildTokenUsageStats({ ...EMPTY_SESSION_USAGE_TOTALS, resultCount });
+
+  it('keeps only the newest of each latest-value kind and each partial stream, never deltas', () => {
+    const h = harness<SessionStreamEvent>({ coalesceKey: sessionEventCoalesceKey });
+    const main = partialMessageId(null);
+    const sub = partialMessageId('toolu_1');
+    h.push({ kind: 'running', running: true });
+    h.push({ kind: 'token_usage', usage: usage(1) });
+    h.push({ kind: 'message', message: message(main) });
+    h.push({ kind: 'message', message: message(sub) });
+    h.push({ kind: 'message', message: message('a') });
+    h.push({ kind: 'message_removed', messageId: 'x' });
+    h.push({ kind: 'message', message: message('b') });
+    h.push({ kind: 'message_removed', messageId: 'y' });
+    h.push({ kind: 'running', running: false });
+    h.push({ kind: 'token_usage', usage: usage(2) });
+    h.push({ kind: 'message', message: message(main) });
+
+    expect(h.queue).toEqual([
+      { kind: 'message', message: message(sub) },
+      { kind: 'message', message: message('a') },
+      { kind: 'message_removed', messageId: 'x' },
+      { kind: 'message', message: message('b') },
+      { kind: 'message_removed', messageId: 'y' },
+      { kind: 'running', running: false },
+      { kind: 'token_usage', usage: usage(2) },
+      { kind: 'message', message: message(main) },
+    ]);
+  });
+
+  it('coalesces every latest-value kind by kind alone', () => {
+    const latestValue: SessionStreamEvent[] = [
+      { kind: 'running', running: true },
+      { kind: 'commands', commands: [] },
+      { kind: 'retry', retry: null },
+      { kind: 'background', tasks: [] },
+      { kind: 'pending', messageIds: [] },
+      { kind: 'queued', messageIds: [] },
+      { kind: 'rate_limit', hold: null },
+      { kind: 'token_usage', usage: usage(0) },
+    ];
+    for (const event of latestValue) expect(sessionEventCoalesceKey(event)).toBe(event.kind);
+    // A complete message's id can never collide with a kind's key.
+    expect(sessionEventCoalesceKey({ kind: 'message', message: message('running') })).toBe(
+      undefined
+    );
   });
 });

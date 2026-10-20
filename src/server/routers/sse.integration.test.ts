@@ -343,9 +343,10 @@ describe('sse.onSessionEvents', () => {
     const client: Client = { history: undefined, state: undefined };
     apply(client, (await stream.next()).event);
 
-    // A stalled consumer: the removal and a flood behind it overflow the buffer.
+    // A stalled consumer: the removal and a flood of deltas behind it overflow the
+    // buffer (latest-value events would coalesce instead).
     await store.removeMessages(session.id, ['cancelled']);
-    for (let i = 0; i < 1001; i++) sseEvents.emitClaudeRunning(session.id, i % 2 === 0);
+    for (let i = 0; i < 1001; i++) sseEvents.emitMessageRemoved(session.id, `gone-${i}`);
 
     const { event } = await stream.next();
     stream.close();

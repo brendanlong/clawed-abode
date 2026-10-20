@@ -19,7 +19,7 @@ import {
  * happens here: a cumulative cost below the current one closes the current
  * segment. A top-level assistant message replaces `lastCall*`; the runner
  * persists its query's messages one at a time, so the last write is the latest
- * message. The migrations that added these columns backfill the same fold in SQL.
+ * message. One without usage isn't folded, so the previous call's values stand. The migrations that added these columns backfill the same fold in SQL.
  */
 export function messageUsageStatement(
   sessionId: string,
