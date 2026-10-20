@@ -426,6 +426,12 @@ describe('github service', () => {
       );
       await expect(fetchChecks('owner/repo', 'abc')).rejects.toThrow(GitHubApiError);
 
+      mockFetch.mockResolvedValue({
+        ...createMockResponse({ message: 'Forbidden' }, 403),
+        headers: { get: (name: string) => (name === 'x-ratelimit-remaining' ? '0' : null) },
+      });
+      await expect(fetchChecks('owner/repo', 'abc')).rejects.toThrow(GitHubApiError);
+
       delete process.env.GITHUB_TOKEN;
       resetEnvCache();
       mockFetch.mockClear();
