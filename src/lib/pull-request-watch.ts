@@ -13,10 +13,15 @@ export const FINISHED_KEYS = ['merged', 'closed'] as const;
  * CI finished) at a head commit with its CI outcome, merged, or closed. Null
  * while there's nothing to report. Unknown checks (the token can't read them)
  * count as finished, or a watch on such a repo would never report anything.
+ * A watch on one PR also reports its drafts, since its author is usually
+ * waiting on CI before marking it ready.
  */
-export function watchEventKey(pr: PullRequestInfo): string | null {
+export function watchEventKey(
+  pr: PullRequestInfo,
+  { includeDrafts }: { includeDrafts: boolean }
+): string | null {
   if (pr.state !== 'open') return pr.state;
-  if (pr.draft || pr.checks === 'pending') return null;
+  if ((pr.draft && !includeDrafts) || pr.checks === 'pending') return null;
   return `ready:${pr.headSha}:${pr.checks ?? 'unknown'}`;
 }
 
@@ -59,5 +64,5 @@ export function formatWatchedPullRequest({
 
 /** The message a watching session gets for the PRs that changed since the last one. */
 export function formatWatchMessage(prs: WatchedPullRequest[]): string {
-  return `[From the pull request watcher you set up with watch_pull_requests, not from the user.]\n\n${prs.map(formatWatchedPullRequest).join('\n')}`;
+  return `[From a pull request watch you set up, not from the user.]\n\n${prs.map(formatWatchedPullRequest).join('\n')}`;
 }

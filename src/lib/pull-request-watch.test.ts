@@ -21,25 +21,37 @@ const pr: PullRequestInfo = {
 };
 
 describe('watchEventKey', () => {
+  const repoWatch = { includeDrafts: false };
+
   it('reports a ready PR once per head commit and CI outcome', () => {
-    expect(watchEventKey(pr)).toBe('ready:0123456789abcdef:success');
-    expect(watchEventKey({ ...pr, checks: 'failure' })).toBe('ready:0123456789abcdef:failure');
-    expect(watchEventKey({ ...pr, headSha: 'fff' })).toBe('ready:fff:success');
-    expect(watchEventKey({ ...pr, checks: 'none' })).toBe('ready:0123456789abcdef:none');
+    expect(watchEventKey(pr, repoWatch)).toBe('ready:0123456789abcdef:success');
+    expect(watchEventKey({ ...pr, checks: 'failure' }, repoWatch)).toBe(
+      'ready:0123456789abcdef:failure'
+    );
+    expect(watchEventKey({ ...pr, headSha: 'fff' }, repoWatch)).toBe('ready:fff:success');
+    expect(watchEventKey({ ...pr, checks: 'none' }, repoWatch)).toBe('ready:0123456789abcdef:none');
   });
 
   it('waits while the PR is a draft or CI is still running', () => {
-    expect(watchEventKey({ ...pr, draft: true })).toBeNull();
-    expect(watchEventKey({ ...pr, checks: 'pending' })).toBeNull();
+    expect(watchEventKey({ ...pr, draft: true }, repoWatch)).toBeNull();
+    expect(watchEventKey({ ...pr, checks: 'pending' }, repoWatch)).toBeNull();
+  });
+
+  it('reports a draft’s finished CI when watching that one PR', () => {
+    const draft = { ...pr, draft: true };
+    expect(watchEventKey(draft, { includeDrafts: true })).toBe('ready:0123456789abcdef:success');
+    expect(watchEventKey({ ...draft, checks: 'pending' }, { includeDrafts: true })).toBeNull();
   });
 
   it('reports a PR whose checks the token can’t read rather than never reporting it', () => {
-    expect(watchEventKey({ ...pr, checks: null })).toBe('ready:0123456789abcdef:unknown');
+    expect(watchEventKey({ ...pr, checks: null }, repoWatch)).toBe(
+      'ready:0123456789abcdef:unknown'
+    );
   });
 
   it('reports merges and closes, whatever the checks or draft state', () => {
-    expect(watchEventKey({ ...pr, state: 'merged', checks: 'pending' })).toBe('merged');
-    expect(watchEventKey({ ...pr, state: 'closed', draft: true })).toBe('closed');
+    expect(watchEventKey({ ...pr, state: 'merged', checks: 'pending' }, repoWatch)).toBe('merged');
+    expect(watchEventKey({ ...pr, state: 'closed', draft: true }, repoWatch)).toBe('closed');
   });
 });
 
@@ -84,6 +96,6 @@ describe('formatWatchedPullRequest', () => {
 describe('formatWatchMessage', () => {
   it('says it comes from the watcher, not the user', () => {
     const text = formatWatchMessage([{ repoFullName: 'o/r', info: pr, sessions: [] }]);
-    expect(text).toMatch(/^\[From the pull request watcher .*not from the user\.\]\n\n- o\/r#12/);
+    expect(text).toMatch(/^\[From a pull request watch .*not from the user\.\]\n\n- o\/r#12/);
   });
 });

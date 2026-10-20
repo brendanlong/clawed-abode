@@ -44,12 +44,13 @@ import {
 } from '@/lib/image-generation';
 import { DEFAULT_USAGE_ALERT_PERCENT, usageAlertPercentSchema } from '@/lib/usage';
 import { formatWatchedPullRequest } from '@/lib/pull-request-watch';
+import { extractRepoFullName } from '@/lib/utils';
 import { runGptAgent, type GptAgentContext } from './gpt-agent';
 import { generateImage, type ImageToolContext } from './image-generation';
 import { loadHistoryPage } from './message-store';
 import { requestAttention } from './session-attention';
 import { getUsageReport, setUsageAlerts } from './usage';
-import { setPullRequestWatches } from './pull-request-watch';
+import { setPullRequestWatches, unwatchPullRequest, watchPullRequest } from './pull-request-watch';
 
 const log = createLogger('builtin-mcp');
 
@@ -136,6 +137,15 @@ async function loadCaller(sessionId: string) {
   });
   if (!caller) throw new Error('Calling session not found');
   return caller;
+}
+
+async function loadSessionRepo(sessionId: string): Promise<string> {
+  const session = await prisma.session.findUnique({
+    where: { id: sessionId },
+    select: { repoUrl: true },
+  });
+  if (!session?.repoUrl) throw new Error('This session has no repository; pass repo');
+  return extractRepoFullName(session.repoUrl);
 }
 
 function basicTools(sessionId: string) {
@@ -231,6 +241,30 @@ function basicTools(sessionId: string) {
           if (repos.length === 0) return textResult('Stopped watching pull requests.');
           const list = open.length > 0 ? open.map(formatWatchedPullRequest).join('\n') : '(none)';
           return textResult(`Watching ${repos.join(', ')}. Open pull requests:\n\n${list}`);
+        })
+    ),
+    tool(
+      'watch_pull_request',
+      'Watch one pull request, such as the one you just opened, instead of polling gh: you get a message when its CI finishes on a new head commit (drafts included), and when it is merged or closed, which ends the watch. Returns its current state. Set stop to end the watch early.',
+      {
+        number: z.number().int().positive().describe('The PR number'),
+        repo: repoFullNameSchema.optional().describe('owner/repo; defaults to this session’s repo'),
+        stop: z.boolean().default(false),
+      },
+      ({ number, repo, stop }) =>
+        run('watch_pull_request', async () => {
+          const repoFullName = repo ?? (await loadSessionRepo(sessionId));
+          if (stop) {
+            await unwatchPullRequest(sessionId, repoFullName, number);
+            return textResult(`Stopped watching ${repoFullName}#${number}.`);
+          }
+          const { pullRequest, watching } = await watchPullRequest(sessionId, repoFullName, number);
+          const state = formatWatchedPullRequest(pullRequest);
+          return textResult(
+            watching
+              ? `Watching ${repoFullName}#${number}. Now:\n\n${state}`
+              : `${repoFullName}#${number} is already finished, so it isn't being watched:\n\n${state}`
+          );
         })
     ),
   ];

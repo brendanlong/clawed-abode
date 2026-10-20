@@ -287,3 +287,57 @@ describe('polling', () => {
     ]);
   });
 });
+
+describe('watching one PR', () => {
+  it('reports a draft’s CI without syncing the whole repo, and ends after the merge', async () => {
+    setRemote(remotePr(1, { draft: true }), remotePr(2));
+    checks.set('sha-2', 'success');
+    const author = await createManager();
+
+    const { watching, pullRequest } = await watch.watchPullRequest(author.id, 'o/r', 1);
+    expect(watching).toBe(true);
+    expect(pullRequest.info.checks).toBe('pending');
+
+    checks.set('sha-1', 'failure');
+    await watch._pollPullRequestWatches();
+    expect(delivered.map((d) => d.text)).toEqual([
+      expect.stringContaining('#1 "PR 1" by me: draft, CI failed'),
+    ]);
+    expect(github.fetchOpenPullRequests).not.toHaveBeenCalled();
+
+    setRemote(remotePr(1, { state: 'merged' }));
+    await watch._pollPullRequestWatches();
+    expect(delivered[1].text).toContain('#1 "PR 1" by me: merged');
+    expect(await testPrisma.pullRequestWatch.count()).toBe(0);
+  });
+
+  it('doesn’t watch a PR that is already finished', async () => {
+    setRemote(remotePr(1, { state: 'closed' }));
+    const author = await createManager();
+
+    const { watching } = await watch.watchPullRequest(author.id, 'o/r', 1);
+
+    expect(watching).toBe(false);
+    expect(await testPrisma.pullRequestWatch.count()).toBe(0);
+  });
+
+  it('fails for a PR that can’t be read', async () => {
+    const author = await createManager();
+    await expect(watch.watchPullRequest(author.id, 'o/r', 404)).rejects.toThrow('not found');
+    expect(await testPrisma.pullRequestWatch.count()).toBe(0);
+  });
+
+  it('stays separate from the session’s repo watches', async () => {
+    setRemote(remotePr(1));
+    const session = await createManager();
+    await watch.watchPullRequest(session.id, 'o/r', 1);
+    await watch.setPullRequestWatches(session.id, ['o/r']);
+    await watch.setPullRequestWatches(session.id, []);
+    expect(await testPrisma.pullRequestWatch.findMany({ select: { number: true } })).toEqual([
+      { number: 1 },
+    ]);
+
+    await watch.unwatchPullRequest(session.id, 'O/R', 1);
+    expect(await testPrisma.pullRequestWatch.count()).toBe(0);
+  });
+});
