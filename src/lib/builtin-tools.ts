@@ -2,6 +2,8 @@
 
 export const BUILTIN_MCP_SERVER_NAME = 'clawed-abode';
 
+export const NOTIFY_USER_TOOL_NAME = 'notify_user';
+
 /**
  * Which built-in tools a session gets; null in merged settings means none.
  * `basic`: rename itself, notify the user, list sessions, and check usage; `manage`: also create, read, and stop them.
@@ -26,7 +28,7 @@ export function sessionBuiltinTools(
 }
 
 const NOTIFY =
-  "Call notify_user with a one-line summary right before ending a turn in which you have something for the user: a result, a finished PR, a question, or a blocker. It is the only way the user is notified, so don't skip it. Don't call it for progress updates, or when you are ending a turn only to wait on a background task or another session. AskUserQuestion and ExitPlanMode notify on their own.";
+  "When you're about to end a turn in which you have something for the user (a result, a finished PR, a question, or a blocker), call notify_user with a one-line summary, then write your final message to the user. Never end the turn on the notify_user call itself. It is the only way the user is notified, so don't skip it. Don't call it for progress updates, or when you are ending a turn only to wait on a background task or another session. AskUserQuestion and ExitPlanMode notify on their own.";
 
 const MESSAGING =
   "To find other sessions' agents, call list_sessions: each session's agentName is its address for the SendMessage tool.";

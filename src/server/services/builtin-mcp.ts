@@ -22,6 +22,7 @@ import { attentionSummarySchema } from '@/lib/session-attention';
 import {
   attributeMessage,
   BUILTIN_MCP_SERVER_NAME,
+  NOTIFY_USER_TOOL_NAME,
   type BuiltinToolsLevel,
 } from '@/lib/builtin-tools';
 import {
@@ -147,11 +148,11 @@ function basicTools(sessionId: string) {
       { alwaysLoad: true }
     ),
     tool(
-      'notify_user',
-      'Flag this session in the user’s session list and send them a notification. Call it when you have something for the user (a result, a finished PR, a question, a blocker), right before ending your turn.',
+      NOTIFY_USER_TOOL_NAME,
+      'Flag this session in the user’s session list and send them a notification. Call it when you have something for the user (a result, a finished PR, a question, a blocker), then write your final message to end the turn.',
       { summary: attentionSummarySchema.describe('One line saying what you have for the user') },
       ({ summary }) =>
-        run('notify_user', async () => {
+        run(NOTIFY_USER_TOOL_NAME, async () => {
           await requestAttention(sessionId, summary);
           return textResult('Notified the user.');
         }),
