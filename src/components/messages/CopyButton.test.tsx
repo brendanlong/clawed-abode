@@ -14,6 +14,19 @@ describe('CopyButton', () => {
     expect(await navigator.clipboard.readText()).toBe('hello');
   });
 
+  it('shows that it is working while the text loads', async () => {
+    const user = userEvent.setup();
+    let resolve!: (text: string) => void;
+    render(<CopyButton getText={() => new Promise<string>((r) => (resolve = r))} />);
+
+    await user.click(screen.getByRole('button', { name: 'Copy' }));
+    expect(await screen.findByRole('button', { name: 'Copying…' })).toBeInTheDocument();
+
+    resolve('later');
+    expect(await screen.findByRole('button', { name: 'Copied!' })).toBeInTheDocument();
+    expect(await navigator.clipboard.readText()).toBe('later');
+  });
+
   it('shows the failure, and copies nothing, when the text cannot be loaded', async () => {
     const user = userEvent.setup();
     vi.spyOn(console, 'error').mockImplementation(() => {});
