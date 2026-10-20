@@ -2,13 +2,7 @@
 
 export const BUILTIN_MCP_SERVER_NAME = 'clawed-abode';
 
-/**
- * Undocumented Claude Code env var listing tools that count as replying to the user,
- * so a turn ending right after one isn't nudged to "produce a user-visible response".
- */
-export const TERMINAL_TOOLS_ENV = 'CLAUDE_CODE_TERMINAL_MCP_TOOLS';
 export const NOTIFY_USER_TOOL_NAME = 'notify_user';
-export const NOTIFY_USER_TOOL_ID = `mcp__${BUILTIN_MCP_SERVER_NAME}__${NOTIFY_USER_TOOL_NAME}`;
 
 /**
  * Which built-in tools a session gets; null in merged settings means none.
@@ -34,7 +28,7 @@ export function sessionBuiltinTools(
 }
 
 const NOTIFY =
-  "Call notify_user with a one-line summary right before ending a turn in which you have something for the user: a result, a finished PR, a question, or a blocker. It is the only way the user is notified, so don't skip it. Don't call it for progress updates, or when you are ending a turn only to wait on a background task or another session. AskUserQuestion and ExitPlanMode notify on their own.";
+  "When you're about to end a turn in which you have something for the user (a result, a finished PR, a question, or a blocker), call notify_user with a one-line summary, then write your final message to the user. Never end the turn on the notify_user call itself. It is the only way the user is notified, so don't skip it. Don't call it for progress updates, or when you are ending a turn only to wait on a background task or another session. AskUserQuestion and ExitPlanMode notify on their own.";
 
 const MESSAGING =
   "To find other sessions' agents, call list_sessions: each session's agentName is its address for the SendMessage tool.";

@@ -22,9 +22,7 @@ import { buildAgentEnv } from './agent-env';
 import {
   BUILTIN_MCP_SERVER_NAME,
   builtinToolsPrompt,
-  NOTIFY_USER_TOOL_ID,
   sessionBuiltinTools,
-  TERMINAL_TOOLS_ENV,
 } from '@/lib/builtin-tools';
 import { buildBuiltinMcpServer } from './builtin-mcp';
 import type { GptAgentContext } from './gpt-agent';
@@ -153,7 +151,6 @@ export async function buildSdkOptions(params: {
   const agentEnv = await buildAgentEnv(settings.envVars, settings.claudeApiKey);
   const builtinTools = sessionBuiltinTools(settings.builtinTools, createdBySessionId);
   if (agentName) agentEnv[AGENT_NAME_ENV] = agentName;
-  if (builtinTools) agentEnv[TERMINAL_TOOLS_ENV] = NOTIFY_USER_TOOL_ID;
   const proxiedModel = usesLlmProxy(settings.claudeModel) ? settings.claudeModel : null;
   if (proxiedModel) {
     if (!env.LLM_PROXY_URL) {

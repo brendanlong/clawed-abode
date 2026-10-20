@@ -149,7 +149,7 @@ function basicTools(sessionId: string) {
     ),
     tool(
       NOTIFY_USER_TOOL_NAME,
-      'Flag this session in the user’s session list and send them a notification. Call it when you have something for the user (a result, a finished PR, a question, a blocker), right before ending your turn.',
+      'Flag this session in the user’s session list and send them a notification. Call it when you have something for the user (a result, a finished PR, a question, a blocker), then write your final message to end the turn.',
       { summary: attentionSummarySchema.describe('One line saying what you have for the user') },
       ({ summary }) =>
         run(NOTIFY_USER_TOOL_NAME, async () => {

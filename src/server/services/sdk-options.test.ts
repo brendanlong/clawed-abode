@@ -300,15 +300,6 @@ describe('buildSdkOptions', () => {
     expect(unnamed.env).not.toHaveProperty('CLAUDE_CODE_SESSION_NAME');
   });
 
-  it('marks notify_user as a reply to the user when built-in tools are on', async () => {
-    const { options } = await build(settings({ builtinTools: 'basic' }));
-    expect(options.env).toMatchObject({
-      CLAUDE_CODE_TERMINAL_MCP_TOOLS: 'mcp__clawed-abode__notify_user',
-    });
-    const disabled = (await build(settings({ builtinTools: null }))).options;
-    expect(disabled.env).not.toHaveProperty('CLAUDE_CODE_TERMINAL_MCP_TOOLS');
-  });
-
   it('wires the systemd scope launcher and returns the unit for the runner to record', async () => {
     mockScopeConfig.mockResolvedValueOnce({ launcherPath: '/l.sh', claudeBin: '/claude' });
     const { options, sessionScope } = await build(settings());
