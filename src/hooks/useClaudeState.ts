@@ -78,6 +78,8 @@ export function useClaudeState(sessionId: string) {
     // The session's subscription rate-limit pause, or null. Sends still succeed
     // while paused — the server queues them — so this never gates the composer.
     rateLimitHold: live?.rateLimitHold ?? null,
+    // Token totals, cost, and context fill; undefined until the first snapshot.
+    tokenUsage: live?.tokenUsage,
     send,
     interrupt,
     isInterrupting,

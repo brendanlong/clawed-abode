@@ -7,6 +7,7 @@ import { EMPTY_SESSION_USAGE_TOTALS } from '@/lib/token-estimation';
 
 let getSessionUsageTotals: (typeof import('./session-usage'))['getSessionUsageTotals'];
 let messageUsageStatement: (typeof import('./session-usage'))['messageUsageStatement'];
+let parseSessionUsageRow: (typeof import('./session-usage'))['parseSessionUsageRow'];
 
 type TestMessage = { type: 'system' | 'user' | 'assistant' | 'result'; content: unknown };
 
@@ -18,6 +19,21 @@ const init = (model: string): TestMessage => ({
   type: 'system',
   content: { type: 'system', subtype: 'init', model },
 });
+const assistant = (
+  usage: Record<string, number>,
+  { model, parent = null }: { model?: string; parent?: string | null } = {}
+): TestMessage => ({
+  type: 'assistant',
+  content: { type: 'assistant', parent_tool_use_id: parent, message: { model, usage } },
+});
+
+/** Run a migration's backfill (everything from its `-- Backfill` comment on). */
+async function runBackfill(migrationSuffix: string) {
+  const migrationsDir = join(process.cwd(), 'prisma/migrations');
+  const migration = readdirSync(migrationsDir).find((d) => d.endsWith(migrationSuffix));
+  const sql = readFileSync(join(migrationsDir, migration!, 'migration.sql'), 'utf8');
+  await testPrisma.$executeRawUnsafe(sql.slice(sql.indexOf('-- Backfill')));
+}
 
 async function record(sessionId: string, messages: TestMessage[]) {
   for (const m of messages) {
@@ -29,7 +45,8 @@ describe('session-usage', () => {
   beforeAll(async () => {
     await setupTestDb();
     // After setupTestDb, so @/lib/prisma binds to the test database.
-    ({ getSessionUsageTotals, messageUsageStatement } = await import('./session-usage'));
+    ({ getSessionUsageTotals, messageUsageStatement, parseSessionUsageRow } =
+      await import('./session-usage'));
   });
 
   afterAll(async () => {
@@ -109,6 +126,36 @@ describe('session-usage', () => {
     });
   });
 
+  it('should return the updated totals from each fold', async () => {
+    const session = await createTestSession();
+    const rows = await messageUsageStatement(session.id, 'result', {
+      type: 'result',
+      usage: { input_tokens: 7 },
+    });
+    expect(parseSessionUsageRow(rows?.[0])).toEqual(await getSessionUsageTotals(session.id));
+    expect((await getSessionUsageTotals(session.id)).inputTokens).toBe(7);
+  });
+
+  it('should keep the latest top-level assistant call, ignoring subagents', async () => {
+    const session = await createTestSession();
+    await record(session.id, [
+      assistant({ input_tokens: 1, output_tokens: 2 }, { model: 'claude-opus-4-5' }),
+      assistant(
+        { input_tokens: 10, output_tokens: 20, cache_read_input_tokens: 30 },
+        { model: 'claude-sonnet-4-6' }
+      ),
+      assistant({ input_tokens: 999 }, { parent: 'toolu_1', model: 'claude-haiku-4-5' }),
+    ]);
+
+    expect((await getSessionUsageTotals(session.id)).lastCall).toEqual({
+      inputTokens: 10,
+      outputTokens: 20,
+      cacheReadTokens: 30,
+      cacheCreationTokens: 0,
+      model: 'claude-sonnet-4-6',
+    });
+  });
+
   it('should keep the first init model and ignore other messages', async () => {
     const session = await createTestSession();
     await record(session.id, [
@@ -116,10 +163,7 @@ describe('session-usage', () => {
       { type: 'system', content: { type: 'system', subtype: 'error' } },
       init('claude-opus-4-5'),
       init('claude-sonnet-4-6'),
-      {
-        type: 'assistant',
-        content: { type: 'assistant', message: { usage: { input_tokens: 5 } } },
-      },
+      assistant({ input_tokens: 5 }, { parent: 'toolu_1' }),
     ]);
 
     expect(await getSessionUsageTotals(session.id)).toEqual({
@@ -164,10 +208,7 @@ describe('session-usage', () => {
       ],
     });
 
-    const migrationsDir = join(process.cwd(), 'prisma/migrations');
-    const migration = readdirSync(migrationsDir).find((d) => d.endsWith('_add_session_usage'));
-    const sql = readFileSync(join(migrationsDir, migration!, 'migration.sql'), 'utf8');
-    await testPrisma.$executeRawUnsafe(sql.slice(sql.indexOf('-- Backfill')));
+    await runBackfill('_add_session_usage');
 
     const expected = await getSessionUsageTotals(live.id);
     expect(expected.closedSegmentsCostUsd + expected.currentSegmentCostUsd).toBeCloseTo(0.7, 6);
@@ -176,5 +217,51 @@ describe('session-usage', () => {
       ...EMPTY_SESSION_USAGE_TOTALS,
       model: 'claude-haiku-4-5',
     });
+  });
+
+  it('should backfill the latest top-level assistant call exactly as the live fold does', async () => {
+    const messages: TestMessage[] = [
+      init('claude-opus-4-5'),
+      assistant({ input_tokens: 1, output_tokens: 2 }, { model: 'claude-opus-4-5' }),
+      result({ usage: { input_tokens: 1 } }),
+      assistant(
+        { input_tokens: 10, cache_read_input_tokens: 30, cache_creation_input_tokens: 4 },
+        { model: 'claude-sonnet-4-6' }
+      ),
+      assistant({ input_tokens: 999 }, { parent: 'toolu_1' }),
+      { type: 'assistant', content: { type: 'assistant', message: {} } },
+    ];
+    const live = await createTestSession();
+    const backfilled = await createTestSession();
+    const subagentOnly = await createTestSession();
+    await record(live.id, messages);
+    // The earlier backfill already ran for this session; this one fills in lastCall.
+    await record(
+      backfilled.id,
+      messages.filter((m) => m.type !== 'assistant')
+    );
+    await testPrisma.message.createMany({
+      data: [
+        ...messages.map((m, sequence) => ({
+          sessionId: backfilled.id,
+          sequence,
+          type: m.type,
+          content: JSON.stringify(m.content),
+        })),
+        {
+          sessionId: subagentOnly.id,
+          sequence: 0,
+          type: 'assistant',
+          content: JSON.stringify(assistant({ input_tokens: 5 }, { parent: 'toolu_1' }).content),
+        },
+      ],
+    });
+
+    await runBackfill('_session_usage_last_call');
+
+    const expected = await getSessionUsageTotals(live.id);
+    expect(expected.lastCall).toMatchObject({ inputTokens: 10, model: 'claude-sonnet-4-6' });
+    expect(await getSessionUsageTotals(backfilled.id)).toEqual(expected);
+    expect(await getSessionUsageTotals(subagentOnly.id)).toEqual(EMPTY_SESSION_USAGE_TOTALS);
   });
 });

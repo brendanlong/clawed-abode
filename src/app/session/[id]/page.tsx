@@ -55,14 +55,13 @@ function SessionView({ sessionId }: { sessionId: string }) {
     dismissActionError,
   } = useSessionState(sessionId);
 
-  // Message state: history, pagination, token usage
+  // Message state: history, pagination
   const {
     messages,
     isLoading: messagesLoading,
     isFetchingMore,
     hasMore,
     fetchMore,
-    tokenUsage,
   } = useSessionMessages(sessionId);
 
   const { data: subscriptionUsage } = trpc.rateLimit.getSessionUsage.useQuery(
@@ -82,6 +81,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
     pendingMessageIds,
     queuedMessageIds,
     rateLimitHold,
+    tokenUsage,
     send: sendPrompt,
     interrupt,
     isInterrupting,

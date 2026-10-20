@@ -102,7 +102,7 @@ const ResultContentSchema = z.object({
   modelUsage: z.record(z.string(), z.object({ contextWindow: z.number().optional() })).optional(),
 });
 
-interface ExtractedUsage {
+export interface ExtractedUsage {
   inputTokens: number;
   outputTokens: number;
   cacheReadTokens: number;
@@ -118,24 +118,22 @@ function extractUsageTokens(usage: z.infer<typeof MessageUsageSchema>): Extracte
   };
 }
 
-/**
- * Extract usage from an assistant message.
- */
-function extractAssistantUsage(content: unknown): {
-  usage: ExtractedUsage;
+/** The API call a top-level (main-agent) assistant message reports. */
+export interface LastCallUsage extends ExtractedUsage {
   model?: string;
-  isTopLevel: boolean;
-} | null {
+}
+
+/**
+ * Usage of a top-level assistant message, or null for anything else. Subagent
+ * messages (`parent_tool_use_id` set) run in their own context, so they would
+ * misreport the main conversation's size.
+ */
+export function extractTopLevelAssistantUsage(content: unknown): LastCallUsage | null {
   const parsed = AssistantContentSchema.safeParse(content);
-  if (!parsed.success || !parsed.data.message.usage) {
+  if (!parsed.success || !parsed.data.message.usage || parsed.data.parent_tool_use_id != null) {
     return null;
   }
-
-  return {
-    usage: extractUsageTokens(parsed.data.message.usage),
-    model: parsed.data.message.model,
-    isTopLevel: parsed.data.parent_tool_use_id == null,
-  };
+  return { ...extractUsageTokens(parsed.data.message.usage), model: parsed.data.message.model };
 }
 
 export interface ResultUsage {
@@ -175,17 +173,9 @@ export function extractModelFromInit(content: unknown): string | undefined {
 }
 
 /**
- * Whether a persisted message can change the stats: results and system/init
- * move the running totals, a top-level assistant message moves the context %.
+ * Running totals folded from a session's result, system/init and top-level
+ * assistant messages.
  */
-export function affectsTokenUsage(type: string, content: unknown): boolean {
-  if (type === 'result') return true;
-  if (type === 'system') return extractModelFromInit(content) !== undefined;
-  if (type === 'assistant') return extractAssistantUsage(content)?.isTopLevel ?? false;
-  return false;
-}
-
-/** Running totals folded from a session's result and system/init messages. */
 export interface SessionUsageTotals {
   resultCount: number;
   inputTokens: number;
@@ -200,6 +190,8 @@ export interface SessionUsageTotals {
   contextWindowByModel: Record<string, number>;
   /** From the first system/init. */
   model?: string;
+  /** The latest top-level assistant message's API call; zeros before the first. */
+  lastCall: LastCallUsage;
 }
 
 export const EMPTY_SESSION_USAGE_TOTALS: SessionUsageTotals = {
@@ -211,41 +203,31 @@ export const EMPTY_SESSION_USAGE_TOTALS: SessionUsageTotals = {
   closedSegmentsCostUsd: 0,
   currentSegmentCostUsd: 0,
   contextWindowByModel: {},
+  lastCall: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 },
 };
 
 /**
- * Build the stats from a session's running totals and the content of its most
- * recent top-level (main-agent) assistant message, if any.
+ * Build the stats from a session's running totals.
  *
  * See the module docstring for the SDK semantics this relies on.
  */
-export function buildTokenUsageStats(
-  totals: SessionUsageTotals,
-  lastTopLevelAssistant: unknown
-): TokenUsageStats {
-  let { inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens } = totals;
-  let detectedModel = totals.model;
+export function buildTokenUsageStats(totals: SessionUsageTotals): TokenUsageStats {
+  const { lastCall } = totals;
+  const detectedModel = totals.model ?? lastCall.model;
 
   // The prompt of the latest API call is input + cache read + cache creation
   // (newly cached tokens are part of the prompt too); output tokens become
   // input in the next call. Together they are the current occupancy.
-  const assistant = extractAssistantUsage(lastTopLevelAssistant);
-  const lastAssistantUsage = assistant?.isTopLevel ? assistant.usage : undefined;
-  const lastAssistantContextTokens = lastAssistantUsage
-    ? lastAssistantUsage.inputTokens +
-      lastAssistantUsage.cacheReadTokens +
-      lastAssistantUsage.cacheCreationTokens +
-      lastAssistantUsage.outputTokens
-    : 0;
-  if (lastAssistantUsage && !detectedModel) {
-    detectedModel = assistant?.model;
-  }
+  const lastCallContextTokens =
+    lastCall.inputTokens +
+    lastCall.cacheReadTokens +
+    lastCall.cacheCreationTokens +
+    lastCall.outputTokens;
 
   // With no result messages yet (mid-first-turn), the latest assistant call's
   // usage is the best available total.
-  if (totals.resultCount === 0 && lastAssistantUsage) {
-    ({ inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens } = lastAssistantUsage);
-  }
+  const { inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens } =
+    totals.resultCount === 0 ? lastCall : totals;
 
   const totalTokens = inputTokens + outputTokens;
 
@@ -258,8 +240,7 @@ export function buildTokenUsageStats(
     (knownWindows.length > 0 ? Math.max(...knownWindows) : DEFAULT_CONTEXT_WINDOW);
 
   // Fall back to total tokens if no assistant messages found (shouldn't happen in practice).
-  const currentContextTokens =
-    lastAssistantContextTokens > 0 ? lastAssistantContextTokens : totalTokens;
+  const currentContextTokens = lastCallContextTokens > 0 ? lastCallContextTokens : totalTokens;
   const percentUsed = contextWindow > 0 ? (currentContextTokens / contextWindow) * 100 : 0;
 
   return {

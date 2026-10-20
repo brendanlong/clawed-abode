@@ -9,7 +9,8 @@ import { sseEvents } from './events';
 import { clearAttention } from './session-attention';
 import { sanitizeUntrustedInput } from './input-sanitizer';
 import { resolveUploadPaths } from './uploads';
-import { messageUsageStatement } from './session-usage';
+import { messageUsageStatement, parseSessionUsageRow } from './session-usage';
+import { buildTokenUsageStats } from '@/lib/token-estimation';
 import type { Message } from '@/generated/prisma/client';
 
 const log = createLogger('message-store');
@@ -65,23 +66,6 @@ export async function hasMessagesThrough(sessionId: string, ceiling: number): Pr
 }
 
 /**
- * Decoded content of the latest top-level (main-agent) assistant message.
- * Subagent messages (`parent_tool_use_id` set) run in their own context, so they
- * would misreport the main conversation's size.
- */
-export async function loadLastTopLevelAssistantContent(sessionId: string): Promise<unknown> {
-  const [row] = await prisma.$queryRaw<{ content: string }[]>`
-    SELECT content FROM Message
-    WHERE sessionId = ${sessionId}
-      AND type = 'assistant'
-      AND json_extract(content, '$.parent_tool_use_id') IS NULL
-    ORDER BY sequence DESC
-    LIMIT 1
-  `;
-  return row ? (JSON.parse(row.content) as unknown) : undefined;
-}
-
-/**
  * Insert a message, assigning its per-session `sequence` atomically: one autocommit
  * `UPDATE ... RETURNING` on `Session.messageSequence`, which SQLite serializes on
  * the write lock, so concurrent inserts never collide on `@@unique([sessionId,
@@ -92,7 +76,9 @@ export async function loadLastTopLevelAssistantContent(sessionId: string): Promi
  * A duplicate `id` (e.g. an idempotent synthetic tool_result) is a no-op returning
  * `inserted: false`; the reserved sequence is skipped, a harmless gap since
  * pagination never assumes contiguity. A real insert folds the message into the
- * session's usage totals in the same batch and emits a `message` event.
+ * session's usage totals in the same batch and emits a `message` event, then a
+ * `token_usage` event if the totals moved (built from the fold's own `RETURNING`,
+ * so announcing them costs no extra query).
  * Throws if the session does not exist.
  */
 export async function insertMessage(params: {
@@ -116,14 +102,20 @@ export async function insertMessage(params: {
   const sequence = Number(rows[0].messageSequence) - 1;
 
   let createdAt: Date;
+  let usageRow: unknown;
   try {
     const create = prisma.message.create({
       data: { id, sessionId, sequence, type, content: contentJson },
     });
     const usage = messageUsageStatement(sessionId, type, content);
     // A batch (not interactive) transaction: a duplicate id rolls back the usage fold too.
-    const message = usage ? (await prisma.$transaction([create, usage]))[0] : await create;
-    createdAt = message.createdAt;
+    if (usage) {
+      const [message, usageRows] = await prisma.$transaction([create, usage]);
+      createdAt = message.createdAt;
+      usageRow = usageRows[0];
+    } else {
+      createdAt = (await create).createdAt;
+    }
   } catch (err) {
     // The only unique key left to violate is the primary-key `id` (the sequence is race-free).
     if (err && typeof err === 'object' && 'code' in err && err.code === 'P2002') {
@@ -134,6 +126,14 @@ export async function insertMessage(params: {
   }
 
   sseEvents.emitNewMessage(sessionId, { id, sessionId, sequence, type, content, createdAt });
+  if (usageRow !== undefined) {
+    // The message is already persisted and announced; a bad row must not fail its insert.
+    try {
+      sseEvents.emitTokenUsage(sessionId, buildTokenUsageStats(parseSessionUsageRow(usageRow)));
+    } catch (err) {
+      log.error('insertMessage: failed to announce token usage', toError(err), { sessionId, id });
+    }
+  }
   return { inserted: true, sequence };
 }
 

@@ -12,6 +12,7 @@ import {
 } from '@/lib/message-cache';
 import { applySessionStateEvent, type SessionStreamState } from '@/lib/session-stream-state';
 import { formatResumeToken } from '@/lib/sse-resume';
+import { buildTokenUsageStats, EMPTY_SESSION_USAGE_TOTALS } from '@/lib/token-estimation';
 import type { ParsedMessage } from '../services/message-store';
 import type { SessionStreamOutput } from './sse';
 
@@ -127,6 +128,7 @@ describe('sse.onSessionEvents', () => {
         pendingMessageIds: [],
         queuedMessageIds: [],
         rateLimitHold: null,
+        tokenUsage: buildTokenUsageStats(EMPTY_SESSION_USAGE_TOTALS),
       },
       history: { after: 1, hasMore: true, partials: [] },
     });
@@ -216,6 +218,73 @@ describe('sse.onSessionEvents', () => {
     sseEvents.emitClaudeRunning(session.id, true);
     expect((await stream.next()).event).toEqual({ kind: 'running', running: true });
     stream.close();
+  });
+
+  it('carries token usage in the snapshot and pushes it when a message moves it', async () => {
+    const session = await createNoRepoSession();
+    const insertTyped = (
+      type: 'system' | 'user' | 'assistant' | 'result',
+      content: unknown,
+      id: string = crypto.randomUUID()
+    ) => store.insertMessage({ sessionId: session.id, id, type, content });
+    const assistant = (usage: Record<string, number>, parent: string | null = null) => ({
+      type: 'assistant',
+      parent_tool_use_id: parent,
+      message: { model: 'claude-opus-4-5', usage },
+    });
+
+    await insertTyped('system', { type: 'system', subtype: 'init', model: 'claude-opus-4-5' });
+    await insertTyped('assistant', assistant({ input_tokens: 40_000, output_tokens: 1_000 }));
+    await insertTyped('result', {
+      type: 'result',
+      total_cost_usd: 0.3,
+      usage: {
+        input_tokens: 1000,
+        output_tokens: 500,
+        cache_read_input_tokens: 100,
+        cache_creation_input_tokens: 50,
+      },
+      modelUsage: { 'claude-opus-4-5': { contextWindow: 1_000_000 } },
+    });
+    // A subagent runs in its own context, so it doesn't move the context fill.
+    await insertTyped('assistant', assistant({ input_tokens: 5, output_tokens: 5 }, 'toolu_1'));
+    const lastResult = {
+      type: 'result',
+      total_cost_usd: 0.5,
+      usage: { input_tokens: 2000, output_tokens: 800 },
+    };
+    await insertTyped('result', lastResult, 'result-2');
+    // A replayed duplicate is not inserted, so it must not be counted again.
+    expect(await insertTyped('result', lastResult, 'result-2')).toEqual({ inserted: false });
+
+    const stream = await open(session.id);
+    const client: Client = { history: undefined, state: undefined };
+    apply(client, (await stream.next()).event);
+    expect(client.state?.live.tokenUsage).toEqual({
+      inputTokens: 3000,
+      outputTokens: 1300,
+      cacheReadTokens: 100,
+      cacheCreationTokens: 50,
+      totalTokens: 4300,
+      contextWindow: 1_000_000,
+      percentUsed: expect.closeTo(4.1, 6),
+      model: 'claude-opus-4-5',
+      totalCostUsd: 0.5,
+    });
+
+    // A message that can't move the stats announces nothing beyond itself; the
+    // next top-level call moves the context fill.
+    await insertTyped('user', { type: 'user', message: 'hi' }, 'hi');
+    await insertTyped('assistant', assistant({ input_tokens: 100_000, output_tokens: 0 }), 'a2');
+    const kinds: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const { event } = await stream.next();
+      kinds.push(event.kind);
+      apply(client, event);
+    }
+    stream.close();
+    expect(kinds).toEqual(['message', 'message', 'token_usage']);
+    expect(client.state?.live.tokenUsage).toMatchObject({ totalTokens: 4300, percentUsed: 10 });
   });
 
   it('resumes from the token’s watermark with fresh latest-value state', async () => {
