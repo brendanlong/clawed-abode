@@ -184,10 +184,10 @@ function basicTools(sessionId: string) {
       },
       ({ reason }) =>
         run('stop_this_session', async () => {
-          await requestAttention(sessionId, reason);
           const { status } = await requirePort().stopSession(sessionId);
           if (status !== 'stopped')
             throw new Error(`This session is ${status} and can't be stopped`);
+          await requestAttention(sessionId, reason);
           return textResult('Stopped this session.');
         })
     ),
