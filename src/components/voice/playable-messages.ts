@@ -15,16 +15,17 @@ export interface PlayableMessage {
   text: string;
 }
 
-function asContent(msg: DisplayMessage): MessageContent {
-  return (msg.content ?? {}) as MessageContent;
+function asContent(content: unknown): MessageContent {
+  return (content ?? {}) as MessageContent;
 }
 
 /**
- * The concatenated text blocks of an assistant message, or null when there is
- * nothing to speak (tool-only, whitespace-only, or malformed content).
+ * The concatenated text blocks of an assistant message's content, or null when
+ * there is nothing to speak (tool-only, whitespace-only, or malformed content).
+ * Tool calls and their results are never spoken.
  */
-export function extractAssistantText(msg: DisplayMessage): string | null {
-  const text = extractTextContent(asContent(msg));
+export function extractAssistantText(content: unknown): string | null {
+  const text = extractTextContent(asContent(content));
   return text && text.trim() ? text : null;
 }
 
@@ -41,7 +42,7 @@ export function getAssistantTextMessages(messages: DisplayMessage[]): PlayableMe
     if (msg.type !== 'assistant' || isPartialMessageId(msg.id) || retractedIds.has(msg.id)) {
       continue;
     }
-    const text = extractAssistantText(msg);
+    const text = extractAssistantText(msg.content);
     if (text !== null) results.push({ id: msg.id, text });
   }
   return results;
@@ -60,7 +61,7 @@ export function getNewAutoReadMessages(
   let turnStartIndex = 0;
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i];
-    if (msg.type === 'user' && !isToolResultMessage(asContent(msg))) {
+    if (msg.type === 'user' && !isToolResultMessage(msg.content)) {
       turnStartIndex = i + 1;
       break;
     }

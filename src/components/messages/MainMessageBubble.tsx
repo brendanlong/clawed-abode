@@ -12,6 +12,7 @@ import { MessageTimestamp } from './MessageTimestamp';
 import { renderContent } from './ContentRenderer';
 import { parseSanitizationInfo } from '@/lib/sanitization';
 import { MessagePlayButton } from '@/components/voice/MessagePlayButton';
+import { extractAssistantText } from '@/components/voice/playable-messages';
 import { useVoicePlaybackContext } from '@/hooks/useVoicePlayback';
 import {
   buildToolCalls,
@@ -68,9 +69,8 @@ export function MainMessageBubble({
   const playback = useVoicePlaybackContext();
   const textForPlayback = useMemo(() => {
     if (!isAssistant || isPartial || !messageId || !playback.enabled) return null;
-    const text = getCopyText(content, category, toolCalls);
-    return text.trim().length > 0 ? text : null;
-  }, [isAssistant, isPartial, messageId, playback.enabled, content, category, toolCalls]);
+    return extractAssistantText(content);
+  }, [isAssistant, isPartial, messageId, playback.enabled, content]);
 
   return (
     <div className="max-w-[85%]">

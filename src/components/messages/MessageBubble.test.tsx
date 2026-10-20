@@ -4,6 +4,7 @@ import { MessageBubble } from './MessageBubble';
 import { MessageListProvider } from './MessageListContext';
 import { NestedTranscript } from './NestedTranscript';
 import { formatFullTimestamp, formatMessageTimestamp } from '@/lib/message-timestamp';
+import { VoicePlaybackContext, defaultPlaybackState } from '@/hooks/useVoicePlayback';
 import type { ToolResultMap, MessageContent } from './types';
 
 const peerSessions = vi.hoisted(() => new Map<string, { id: string; name: string }>());
@@ -499,6 +500,44 @@ describe('MessageBubble', () => {
       render(<MessageBubble message={message} />);
 
       // CopyButton should be present
+      expect(screen.getByRole('button', { name: /copy/i })).toBeInTheDocument();
+    });
+  });
+
+  describe('read aloud', () => {
+    function renderWithVoice(message: { id: string; type: string; content: unknown }) {
+      const play = vi.fn();
+      const toolResults: ToolResultMap = new Map([['tool-1', { content: 'SECRET FILE CONTENTS' }]]);
+      render(
+        <VoicePlaybackContext.Provider value={{ ...defaultPlaybackState, enabled: true, play }}>
+          <MessageBubble message={message} toolResults={toolResults} />
+        </VoicePlaybackContext.Provider>
+      );
+      return play;
+    }
+
+    const readCall = { type: 'tool_use', id: 'tool-1', name: 'Read', input: { file_path: '/a' } };
+
+    it('speaks only the text, never tool calls or their output', () => {
+      const play = renderWithVoice({
+        id: 'm1',
+        type: 'assistant',
+        content: { message: { content: [{ type: 'text', text: 'Let me check.' }, readCall] } },
+      });
+
+      fireEvent.click(screen.getByTitle('Read aloud'));
+
+      expect(play).toHaveBeenCalledWith('m1', 'Let me check.');
+    });
+
+    it('has no play button on a tool-only message', () => {
+      renderWithVoice({
+        id: 'm2',
+        type: 'assistant',
+        content: { message: { content: [readCall] } },
+      });
+
+      expect(screen.queryByTitle('Read aloud')).not.toBeInTheDocument();
       expect(screen.getByRole('button', { name: /copy/i })).toBeInTheDocument();
     });
   });
