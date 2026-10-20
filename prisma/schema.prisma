@@ -67,6 +67,7 @@ model Session {
   queuedPrompts      QueuedPrompt[]
   usage              SessionUsage?
   pullRequestWatches PullRequestWatch[]
+  pullRequests       SessionPullRequest[]
 
   @@index([lastActivityAt, id]) // sessions.list default keyset order (status != 'archived')
   @@index([status, lastActivityAt, id]) // sessions.list keyset order filtered by status
@@ -84,9 +85,23 @@ model PullRequest {
   fetchedAt    DateTime // When the GitHub lookup that wrote info started; one that started earlier never overwrites it
 
   sessions    Session[]
+  authors     SessionPullRequest[]
   watchEvents PullRequestWatchEvent[]
 
   @@unique([repoFullName, number])
+}
+
+// A PR a session created (in any repo) or pushed to. Unlike Session.pullRequestId
+// (the current branch's PR, for the badge), it outlives a branch switch.
+model SessionPullRequest {
+  sessionId     String
+  pullRequestId String
+
+  session     Session     @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  pullRequest PullRequest @relation(fields: [pullRequestId], references: [id], onDelete: Cascade)
+
+  @@id([sessionId, pullRequestId])
+  @@index([pullRequestId])
 }
 
 // A session's subscription to PR changes in a repo (watch_pull_requests) or to one
