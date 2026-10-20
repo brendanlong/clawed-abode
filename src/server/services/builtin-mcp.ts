@@ -47,7 +47,7 @@ import { formatWatchedPullRequest } from '@/lib/pull-request-watch';
 import { extractRepoFullName } from '@/lib/utils';
 import { runGptAgent, type GptAgentContext } from './gpt-agent';
 import { generateImage, type ImageToolContext } from './image-generation';
-import { loadHistoryPage } from './message-store';
+import { loadTranscriptRows } from './message-store';
 import { requestAttention } from './session-attention';
 import { getUsageReport, setUsageAlerts } from './usage';
 import {
@@ -93,7 +93,7 @@ function requirePort(): SessionToolsPort {
 const MAX_WATCHED_REPOS = 20;
 
 const TRANSCRIPT_PAGE_ROWS = 100;
-/** Pages to scan for one read; tool-heavy stretches can have little text per page. */
+/** Pages to scan for one read; a page of tool calls has little text without includeToolCalls. */
 const TRANSCRIPT_MAX_PAGES = 5;
 const SUMMARY_CHARS_PER_ENTRY = 1500;
 const FULL_CHARS_PER_ENTRY = 20000;
@@ -345,7 +345,7 @@ function manageTools(sessionId: string) {
           let hasMore = true;
           let fit = fitNewestEntries(entries, maxCharsPerEntry, TRANSCRIPT_BUDGET_CHARS);
           for (let page = 0; page < TRANSCRIPT_MAX_PAGES && hasMore && fit.complete; page++) {
-            const history = await loadHistoryPage(target.id, pageCursor, TRANSCRIPT_PAGE_ROWS);
+            const history = await loadTranscriptRows(target.id, pageCursor, TRANSCRIPT_PAGE_ROWS);
             entries = [...toTranscriptEntries(history.messages, { includeToolCalls }), ...entries];
             hasMore = history.hasMore;
             pageCursor = history.messages[0]?.sequence;

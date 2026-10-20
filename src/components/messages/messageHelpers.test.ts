@@ -2,17 +2,12 @@ import { describe, it, expect } from 'vitest';
 import type { MessageContent } from './types';
 import {
   extractTextContent,
-  isToolResultMessage,
-  getToolResults,
   isRecognizedMessage,
   isOwnPromptMessage,
   buildToolCalls,
   getCopyText,
   getDisplayContent,
-  hasRenderableAssistantContent,
-  isHiddenSystemMessage,
   isToolCallOnlyMessage,
-  isVisibleTranscriptMessage,
   groupSubagentMessages,
   computeSubagentPlacements,
   toolUseBlocks,
@@ -114,65 +109,6 @@ describe('isOwnPromptMessage', () => {
   });
 });
 
-describe('isToolResultMessage', () => {
-  it('returns true for messages with tool_result content', () => {
-    const content: MessageContent = {
-      message: {
-        content: [{ type: 'tool_result', tool_use_id: 'tool-1', content: 'result' }],
-      },
-    };
-    expect(isToolResultMessage(content)).toBe(true);
-  });
-
-  it('returns false for messages without tool_result content', () => {
-    const content: MessageContent = {
-      message: {
-        content: [{ type: 'text', text: 'hello' }],
-      },
-    };
-    expect(isToolResultMessage(content)).toBe(false);
-  });
-
-  it('returns false when message has no content array', () => {
-    const content: MessageContent = {
-      content: 'text',
-    };
-    expect(isToolResultMessage(content)).toBe(false);
-  });
-});
-
-describe('getToolResults', () => {
-  it('extracts tool_result blocks', () => {
-    const content: MessageContent = {
-      message: {
-        content: [
-          { type: 'tool_result', tool_use_id: 'tool-1', content: 'result 1' },
-          { type: 'text', text: 'hello' },
-          { type: 'tool_result', tool_use_id: 'tool-2', content: 'result 2' },
-        ],
-      },
-    };
-    const results = getToolResults(content);
-    expect(results).toHaveLength(2);
-    expect(results[0].tool_use_id).toBe('tool-1');
-    expect(results[1].tool_use_id).toBe('tool-2');
-  });
-
-  it('returns empty array when no tool_result blocks exist', () => {
-    const content: MessageContent = {
-      message: {
-        content: [{ type: 'text', text: 'hello' }],
-      },
-    };
-    expect(getToolResults(content)).toEqual([]);
-  });
-
-  it('returns empty array when message has no content', () => {
-    const content: MessageContent = {};
-    expect(getToolResults(content)).toEqual([]);
-  });
-});
-
 describe('isRecognizedMessage', () => {
   it('recognizes assistant messages with valid content array', () => {
     const content: MessageContent = {
@@ -189,16 +125,13 @@ describe('isRecognizedMessage', () => {
     expect(isRecognizedMessage('assistant', content)).toEqual({ recognized: false });
   });
 
-  it('recognizes user tool result messages', () => {
+  it('gives tool result messages no category (they render on their call)', () => {
     const content: MessageContent = {
       message: {
         content: [{ type: 'tool_result', tool_use_id: 'tool-1' }],
       },
     };
-    expect(isRecognizedMessage('user', content)).toEqual({
-      recognized: true,
-      category: 'toolResult',
-    });
+    expect(isRecognizedMessage('user', content)).toEqual({ recognized: false });
   });
 
   it('recognizes user interrupt messages', () => {
@@ -449,124 +382,6 @@ describe('getDisplayContent', () => {
   });
 });
 
-describe('hasRenderableAssistantContent', () => {
-  it('returns false when the only block is empty thinking', () => {
-    const content: MessageContent = {
-      message: { content: [{ type: 'thinking', thinking: '', signature: 'sig' }] },
-    };
-    expect(hasRenderableAssistantContent(content)).toBe(false);
-  });
-
-  it('returns true for a message that is only a progress update', () => {
-    expect(
-      hasRenderableAssistantContent({
-        message: { content: [{ type: 'thinking', thinking: 'Running the tests now.' }] },
-      })
-    ).toBe(true);
-  });
-
-  it('returns false for whitespace-only text and an empty block array', () => {
-    expect(
-      hasRenderableAssistantContent({ message: { content: [{ type: 'text', text: '   ' }] } })
-    ).toBe(false);
-    expect(hasRenderableAssistantContent({ message: { content: [] } })).toBe(false);
-  });
-
-  it('returns true when any block has real content', () => {
-    expect(
-      hasRenderableAssistantContent({
-        message: {
-          content: [
-            { type: 'thinking', thinking: '' },
-            { type: 'text', text: 'hi' },
-          ],
-        },
-      })
-    ).toBe(true);
-    expect(
-      hasRenderableAssistantContent({
-        message: { content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: {} }] },
-      })
-    ).toBe(true);
-    expect(
-      hasRenderableAssistantContent({
-        message: { content: [{ type: 'redacted_thinking' }] },
-      })
-    ).toBe(true);
-  });
-
-  it('returns true for a server_tool_use block (e.g. the advisor tool)', () => {
-    expect(
-      hasRenderableAssistantContent({
-        message: {
-          content: [{ type: 'server_tool_use', id: 'srvtoolu_1', name: 'advisor', input: {} }],
-        },
-      })
-    ).toBe(true);
-  });
-
-  it('returns false when the only block is an advisor_tool_result (encrypted, nothing to show)', () => {
-    expect(
-      hasRenderableAssistantContent({
-        message: {
-          content: [
-            {
-              type: 'advisor_tool_result',
-              tool_use_id: 'srvtoolu_1',
-              content: { type: 'advisor_redacted_result', encrypted_content: 'abc' },
-            },
-          ],
-        },
-      })
-    ).toBe(false);
-  });
-
-  it('returns true for non-array content (handled elsewhere)', () => {
-    expect(hasRenderableAssistantContent({ content: 'plain' })).toBe(true);
-  });
-
-  it('does not throw on null content or null blocks', () => {
-    expect(hasRenderableAssistantContent(null as unknown as MessageContent)).toBe(true);
-    expect(
-      hasRenderableAssistantContent({
-        message: { content: [null, { type: 'text', text: 'hi' }] as never },
-      })
-    ).toBe(true);
-  });
-});
-
-describe('isHiddenSystemMessage', () => {
-  it('hides generic system subtypes, init banners, and hooks', () => {
-    for (const subtype of [
-      'init',
-      'hook_started',
-      'hook_response',
-      'notification',
-      'task_started',
-    ]) {
-      expect(isHiddenSystemMessage('system', { subtype } as MessageContent)).toBe(true);
-    }
-    // A system message with no subtype at all is also hidden.
-    expect(isHiddenSystemMessage('system', {} as MessageContent)).toBe(true);
-  });
-
-  it('keeps errors, compact boundaries, and refusal fallbacks visible', () => {
-    expect(isHiddenSystemMessage('system', { subtype: 'error' } as MessageContent)).toBe(false);
-    expect(isHiddenSystemMessage('system', { subtype: 'compact_boundary' } as MessageContent)).toBe(
-      false
-    );
-    expect(
-      isHiddenSystemMessage('system', { subtype: 'model_refusal_fallback' } as MessageContent)
-    ).toBe(false);
-  });
-
-  it('never hides non-system messages', () => {
-    expect(isHiddenSystemMessage('assistant', { subtype: 'init' } as MessageContent)).toBe(false);
-    expect(isHiddenSystemMessage('user', {} as MessageContent)).toBe(false);
-    expect(isHiddenSystemMessage('result', { subtype: 'success' } as MessageContent)).toBe(false);
-  });
-});
-
 describe('isToolCallOnlyMessage', () => {
   const assistant = (content: MessageContent['message']): MessageContent => ({ message: content });
 
@@ -645,49 +460,6 @@ describe('isToolCallOnlyMessage', () => {
             { type: 'tool_use', id: 't1', name: 'Bash', input: {} },
           ] as never,
         })
-      )
-    ).toBe(false);
-  });
-});
-
-describe('isVisibleTranscriptMessage', () => {
-  const message = (over: Partial<DisplayMessage>): DisplayMessage => ({
-    id: 'm1',
-    type: 'assistant',
-    sequence: 0,
-    createdAt: new Date(0),
-    content: { message: { content: [{ type: 'text', text: 'hi' }] } },
-    ...over,
-  });
-
-  it('shows a normal assistant message', () => {
-    expect(isVisibleTranscriptMessage(message({}), new Set())).toBe(true);
-  });
-
-  it('hides messages whose id is in the paired set', () => {
-    expect(isVisibleTranscriptMessage(message({ id: 'paired' }), new Set(['paired']))).toBe(false);
-  });
-
-  it('hides system messages except errors and compact boundaries', () => {
-    expect(
-      isVisibleTranscriptMessage(
-        message({ type: 'system', content: { subtype: 'init' } }),
-        new Set()
-      )
-    ).toBe(false);
-    expect(
-      isVisibleTranscriptMessage(
-        message({ type: 'system', content: { subtype: 'error' } }),
-        new Set()
-      )
-    ).toBe(true);
-  });
-
-  it('hides empty assistant fragments', () => {
-    expect(
-      isVisibleTranscriptMessage(
-        message({ content: { message: { content: [{ type: 'thinking', thinking: '' }] } } }),
-        new Set()
       )
     ).toBe(false);
   });
@@ -914,44 +686,40 @@ describe('toolUseBlocks', () => {
 
 describe('buildToolResultMap', () => {
   it('pairs results with their calls and records the result sequence', () => {
-    const { resultMap, pairedMessageIds, resultSequenceByToolUseId } = buildToolResultMap([
+    const { resultMap, resultSequenceByToolUseId } = buildToolResultMap([
       assistant(1, [toolUse('a', 'Read'), toolUse('b', 'Bash')]),
       toolResultMessage(2, [toolResult('a', 'file contents')]),
       toolResultMessage(3, [toolResult('b', 'boom', true)]),
     ]);
     expect(resultMap.get('a')).toEqual({ content: 'file contents', is_error: undefined });
     expect(resultMap.get('b')).toEqual({ content: 'boom', is_error: true });
-    expect([...pairedMessageIds]).toEqual(['m2', 'm3']);
     expect(resultSequenceByToolUseId.get('a')).toBe(2);
     expect(resultSequenceByToolUseId.get('b')).toBe(3);
   });
 
   it('pairs results from subagent calls too', () => {
-    const { resultMap, pairedMessageIds } = buildToolResultMap([
+    const { resultMap } = buildToolResultMap([
       assistant(1, [toolUse('child', 'Read')], 'parent-1'),
       toolResultMessage(2, [toolResult('child', 'x')]),
     ]);
     expect(resultMap.has('child')).toBe(true);
-    expect(pairedMessageIds.has('m2')).toBe(true);
   });
 
   it('pairs a result whose tool_use appears later in the transcript', () => {
-    const { resultMap, pairedMessageIds } = buildToolResultMap([
+    const { resultMap } = buildToolResultMap([
       toolResultMessage(1, [toolResult('late', 'x')]),
       assistant(2, [toolUse('late', 'Read')]),
     ]);
     expect(resultMap.has('late')).toBe(true);
-    expect(pairedMessageIds.has('m1')).toBe(true);
   });
 
-  it('leaves a message unpaired when any of its results has no matching call', () => {
-    const { resultMap, pairedMessageIds } = buildToolResultMap([
+  it('leaves out a result whose call is not loaded', () => {
+    const { resultMap } = buildToolResultMap([
       assistant(1, [toolUse('a', 'Read')]),
       toolResultMessage(2, [toolResult('a', 'ok'), toolResult('orphan', 'lost')]),
     ]);
     expect(resultMap.has('a')).toBe(true);
     expect(resultMap.has('orphan')).toBe(false);
-    expect(pairedMessageIds.size).toBe(0);
   });
 
   it('flattens array result content so MCP and ToolSearch calls show as finished', () => {
@@ -986,7 +754,7 @@ describe('buildToolResultMap', () => {
   });
 
   it('ignores user messages that are not tool results', () => {
-    const { pairedMessageIds } = buildToolResultMap([
+    const { resultMap } = buildToolResultMap([
       {
         id: 'p',
         type: 'user',
@@ -995,7 +763,7 @@ describe('buildToolResultMap', () => {
         content: { message: { content: [{ type: 'text', text: 'hi' }] } },
       },
     ]);
-    expect(pairedMessageIds.size).toBe(0);
+    expect(resultMap.size).toBe(0);
   });
 });
 
@@ -1177,7 +945,6 @@ describe('buildTranscriptLayout', () => {
     expect(rowKeys(layout)).toEqual(['m1', 'm5', 'box:agent-1@7', 'm8']);
     expect(layout.pinnedSubagents).toEqual([]);
     expect([...layout.relocatedSubagentIds]).toEqual(['agent-1']);
-    expect(layout.pairedMessageIds.has('m3')).toBe(true);
     expect(layout.subagentMessagesByToolUseId.get('agent-1')?.map((m) => m.id)).toEqual(['m4']);
     const box = layout.rows[2];
     expect(box.kind === 'taskbox' && box.tool).toMatchObject({ id: 'agent-1', output: 'launched' });
@@ -1199,20 +966,6 @@ describe('buildTranscriptLayout', () => {
     );
     expect(rowKeys(layout)).toEqual(['m1', 'm5', 'box:agent-1@6']);
     expect(layout.pinnedSubagents).toEqual([]);
-  });
-
-  it('places a box after the message row that shares its sequence', () => {
-    // The result message also carries an unpaired result, so it stays visible at
-    // the same sequence the foreground subagent finishes at.
-    const layout = buildTranscriptLayout(
-      [
-        assistant(1, [toolUse('task-1', 'Task')]),
-        assistant(2, [text('main work')]),
-        toolResultMessage(3, [toolResult('task-1', 'done'), toolResult('unknown', 'stray')]),
-      ],
-      true
-    );
-    expect(rowKeys(layout)).toEqual(['m1', 'm2', 'm3', 'box:task-1@3']);
   });
 
   it('orders several relocated and pinned boxes', () => {

@@ -11,6 +11,7 @@ import { sanitizeUntrustedInput } from './input-sanitizer';
 import { resolveUploadPaths } from './uploads';
 import { messageUsageStatement, parseSessionUsageRow } from './session-usage';
 import { buildTokenUsageStats } from '@/lib/token-estimation';
+import { messageDisplay } from '@/lib/transcript-display';
 import type { Message } from '@/generated/prisma/client';
 
 const log = createLogger('message-store');
@@ -18,48 +19,124 @@ const log = createLogger('message-store');
 /** Namespace for deterministic (idempotent) message ids derived from content. */
 const MESSAGE_ID_NAMESPACE = '6ba7b810-9dad-11d1-80b4-00c04fd430c8';
 
-/** A message row with its JSON `content` decoded, as the API and SSE deliver it. */
-export type ParsedMessage = Omit<Message, 'content'> & { content: unknown };
+/**
+ * A message row with its JSON `content` decoded, as the API and SSE deliver it.
+ * `display` stays server-side: clients classify with the same `messageDisplay`.
+ */
+export type ParsedMessage = Omit<Message, 'content' | 'display'> & { content: unknown };
 
-function toParsedMessage(row: Message): ParsedMessage {
+function toParsedMessage({ display: _display, ...row }: Message): ParsedMessage {
   return { ...row, content: JSON.parse(row.content) as unknown };
 }
 
+/** Every message a client may need: the rows plus the context they render with. */
+const NOT_HIDDEN = { not: 'hidden' } as const;
+
+/** Top-level rows older than `cursor` (or all of them), the unit history pages count. */
+function rowsBefore(sessionId: string, cursor: number | null | undefined) {
+  return { sessionId, display: 'row', ...(cursor != null && { sequence: { lt: cursor } }) };
+}
+
 /**
- * One page of history, paging backward: the newest `limit` messages older than
- * `cursor` (or the newest overall), returned oldest-first.
+ * One page of history, paging backward: `limit` top-level rows older than
+ * `cursor` (or the newest overall) and every non-hidden message from the oldest
+ * of them up to the cursor, oldest-first. Pages are contiguous, so a row's tool
+ * results, task events and subagent messages (all newer than it) are loaded by
+ * the time it is. The last page reaches back to the start of the session.
  */
 export async function loadHistoryPage(
   sessionId: string,
   cursor: number | null | undefined,
   limit: number
 ): Promise<{ messages: ParsedMessage[]; hasMore: boolean }> {
+  const newestRows = await prisma.message.findMany({
+    where: rowsBefore(sessionId, cursor),
+    orderBy: { sequence: 'desc' },
+    take: limit + 1,
+    select: { sequence: true },
+  });
+  const hasMore = newestRows.length > limit;
+  const floor = hasMore ? newestRows[limit - 1].sequence : undefined;
   const rows = await prisma.message.findMany({
-    where: { sessionId, ...(cursor != null && { sequence: { lt: cursor } }) },
+    where: {
+      sessionId,
+      display: NOT_HIDDEN,
+      sequence: {
+        ...(floor !== undefined && { gte: floor }),
+        ...(cursor != null && { lt: cursor }),
+      },
+    },
+    orderBy: { sequence: 'asc' },
+  });
+  return { messages: rows.map(toParsedMessage), hasMore };
+}
+
+/**
+ * The newest `limit` top-level rows older than `cursor`, oldest-first, without
+ * their context: what an agent reading another session's transcript needs.
+ */
+export async function loadTranscriptRows(
+  sessionId: string,
+  cursor: number | null | undefined,
+  limit: number
+): Promise<{ messages: ParsedMessage[]; hasMore: boolean }> {
+  const rows = await prisma.message.findMany({
+    where: rowsBefore(sessionId, cursor),
     orderBy: { sequence: 'desc' },
     take: limit + 1,
   });
   const hasMore = rows.length > limit;
-  if (hasMore) rows.pop();
-  return { messages: rows.reverse().map(toParsedMessage), hasMore };
+  return { messages: rows.slice(0, limit).reverse().map(toParsedMessage), hasMore };
 }
 
-/** Every message after `floor`, oldest-first (a resumed stream's snapshot). */
+/**
+ * Sequence of the earliest message that spawned one of these background tasks
+ * (by SDK `task_id`), or null when none is found. Each task's `task_started`
+ * names its `tool_use_id`; the spawn is the nearest assistant message before it
+ * carrying that id. One statement however many tasks there are.
+ */
+export async function loadEarliestTaskSpawnSequence(
+  sessionId: string,
+  taskIds: string[]
+): Promise<number | null> {
+  if (taskIds.length === 0) return null;
+  const rows = await prisma.$queryRaw<{ spawn: number | bigint | null }[]>`
+    SELECT MIN((
+      SELECT "spawn"."sequence" FROM "Message" AS "spawn"
+      WHERE "spawn"."sessionId" = "started"."sessionId"
+        AND "spawn"."type" = 'assistant'
+        AND "spawn"."sequence" < "started"."sequence"
+        AND instr("spawn"."content", '"' || json_extract("started"."content", '$.tool_use_id') || '"') > 0
+      ORDER BY "spawn"."sequence" DESC
+      LIMIT 1
+    )) AS "spawn"
+    FROM "Message" AS "started"
+    WHERE "started"."sessionId" = ${sessionId}
+      AND "started"."display" = 'context'
+      AND "started"."type" = 'system'
+      AND json_extract("started"."content", '$.subtype') = 'task_started'
+      AND json_extract("started"."content", '$.task_id') IN (SELECT "value" FROM json_each(${JSON.stringify(taskIds)}))
+  `;
+  const spawn = rows[0]?.spawn;
+  return spawn === null || spawn === undefined ? null : Number(spawn);
+}
+
+/** Every non-hidden message after `floor`, oldest-first (a resumed stream's snapshot). */
 export async function loadMessagesAfter(
   sessionId: string,
   floor: number
 ): Promise<ParsedMessage[]> {
   const rows = await prisma.message.findMany({
-    where: { sessionId, sequence: { gt: floor } },
+    where: { sessionId, display: NOT_HIDDEN, sequence: { gt: floor } },
     orderBy: { sequence: 'asc' },
   });
   return rows.map(toParsedMessage);
 }
 
-/** Whether any message has `sequence <= ceiling`. */
+/** Whether any non-hidden message has `sequence <= ceiling`. */
 export async function hasMessagesThrough(sessionId: string, ceiling: number): Promise<boolean> {
   const row = await prisma.message.findFirst({
-    where: { sessionId, sequence: { lte: ceiling } },
+    where: { sessionId, display: NOT_HIDDEN, sequence: { lte: ceiling } },
     select: { id: true },
   });
   return row !== null;
@@ -105,7 +182,14 @@ export async function insertMessage(params: {
   let usageRow: unknown;
   try {
     const create = prisma.message.create({
-      data: { id, sessionId, sequence, type, content: contentJson },
+      data: {
+        id,
+        sessionId,
+        sequence,
+        type,
+        content: contentJson,
+        display: messageDisplay(type, content),
+      },
     });
     const usage = messageUsageStatement(sessionId, type, content);
     // A batch (not interactive) transaction: a duplicate id rolls back the usage fold too.
@@ -210,14 +294,15 @@ export async function persistSyntheticToolResult(
 
 /**
  * Mark the last main-agent message as interrupted and append an interrupt marker.
- * Targets the last assistant/result message (skipping interleaved background and
- * system task messages, which can otherwise be the highest-sequence row).
+ * Targets the last assistant/result message the transcript shows as a row,
+ * skipping subagent messages, empty fragments, and interleaved system task
+ * messages, any of which can otherwise be the highest-sequence message.
  */
 export async function markLastMessageAsInterrupted(sessionId: string): Promise<void> {
   log.info('markLastMessageAsInterrupted', { sessionId });
 
   const lastMainMessage = await prisma.message.findFirst({
-    where: { sessionId, type: { in: ['assistant', 'result'] } },
+    where: { sessionId, display: 'row', type: { in: ['assistant', 'result'] } },
     orderBy: { sequence: 'desc' },
     select: { id: true, sequence: true, type: true, content: true, createdAt: true },
   });

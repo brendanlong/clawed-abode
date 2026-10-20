@@ -29,8 +29,8 @@ export function useSessionMessages(sessionId: string) {
     // Never fetch the first page: the stream's snapshot seeds it. fetchNextPage
     // still runs on demand.
     enabled: false,
-    // Limit stored pages to prevent memory growth
-    // With HISTORY_PAGE_SIZE messages per page, this keeps up to 10000 messages in memory
+    // Limit stored pages to prevent memory growth (HISTORY_PAGE_SIZE rows each,
+    // plus their context).
     maxPages: 500,
     // For loading OLDER messages (user scrolls up)
     getNextPageParam: (lastPage, allPages) => {

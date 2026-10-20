@@ -14,6 +14,7 @@ import { applySessionStateEvent, type SessionStreamState } from '@/lib/session-s
 import { formatResumeToken } from '@/lib/sse-resume';
 import { buildTokenUsageStats, EMPTY_SESSION_USAGE_TOTALS } from '@/lib/token-estimation';
 import type { ParsedMessage } from '../services/message-store';
+import type { BackgroundTask } from '@/lib/session-status';
 import type { SessionStreamOutput } from './sse';
 
 const mockRefreshStalePullRequests = vi.hoisted(() => vi.fn());
@@ -23,9 +24,11 @@ vi.mock('../services/session-branch-pr', () => ({
 
 // The runner holds partials only for a live SDK query, which these tests don't run.
 const mockGetActivePartials = vi.hoisted(() => vi.fn((): ParsedMessage[] => []));
+const mockGetSessionBackgroundTasks = vi.hoisted(() => vi.fn((): BackgroundTask[] => []));
 vi.mock('../services/claude-runner', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../services/claude-runner')>()),
   getActivePartials: mockGetActivePartials,
+  getSessionBackgroundTasks: mockGetSessionBackgroundTasks,
 }));
 
 let sseRouter: typeof import('./sse').sseRouter;
@@ -75,6 +78,7 @@ describe('sse.onSessionEvents', () => {
   beforeEach(async () => {
     await clearTestDb();
     vi.clearAllMocks();
+    mockGetSessionBackgroundTasks.mockReturnValue([]);
   });
 
   async function open(sessionId: string, lastEventId?: string) {
@@ -218,6 +222,98 @@ describe('sse.onSessionEvents', () => {
     sseEvents.emitClaudeRunning(session.id, true);
     expect((await stream.next()).event).toEqual({ kind: 'running', running: true });
     stream.close();
+  });
+
+  it('pages the snapshot by rendered rows and never sends hidden messages', async () => {
+    const session = await createNoRepoSession();
+    const toolResult = {
+      type: 'user',
+      message: { content: [{ type: 'tool_result', tool_use_id: 't', content: 'ok' }] },
+    };
+    const init = { type: 'system', subtype: 'init' };
+    // Every prompt is followed by a tool result and a hidden init.
+    for (let i = 0; i < HISTORY_PAGE_SIZE + 1; i++) {
+      await insert(session.id, `p${i}`);
+      await store.insertMessage({
+        sessionId: session.id,
+        id: `r${i}`,
+        type: 'user',
+        content: toolResult,
+      });
+      await store.insertMessage({
+        sessionId: session.id,
+        id: `i${i}`,
+        type: 'system',
+        content: init,
+      });
+    }
+
+    const stream = await open(session.id);
+    const { event } = await stream.next();
+    if (event.kind !== 'snapshot') throw new Error('expected a snapshot');
+    const ids = event.history.messages.map((m) => m.id);
+    expect(ids.filter((id) => id.startsWith('p'))).toHaveLength(HISTORY_PAGE_SIZE);
+    expect(ids.filter((id) => id.startsWith('r'))).toHaveLength(HISTORY_PAGE_SIZE);
+    expect(ids.some((id) => id.startsWith('i'))).toBe(false);
+    expect(event.history).toMatchObject({ after: 2, hasMore: true });
+
+    await store.insertMessage({
+      sessionId: session.id,
+      id: 'late-init',
+      type: 'system',
+      content: init,
+    });
+    await insert(session.id, 'after');
+    expect((await stream.next()).event).toMatchObject({
+      kind: 'message',
+      message: { id: 'after' },
+    });
+    stream.close();
+  });
+
+  it('reaches back to the spawn of a still-running background subagent', async () => {
+    const session = await createNoRepoSession();
+    await insert(session.id, 'before');
+    await store.insertMessage({
+      sessionId: session.id,
+      id: 'spawn',
+      type: 'assistant',
+      content: {
+        type: 'assistant',
+        message: { content: [{ type: 'tool_use', id: 'agent-1', name: 'Agent', input: {} }] },
+      },
+    });
+    await store.insertMessage({
+      sessionId: session.id,
+      id: 'started',
+      type: 'system',
+      content: {
+        type: 'system',
+        subtype: 'task_started',
+        task_id: 'task-a',
+        tool_use_id: 'agent-1',
+      },
+    });
+    for (let i = 0; i < HISTORY_PAGE_SIZE + 1; i++) await insert(session.id, `m${i}`);
+
+    const snapshotIds = async () => {
+      const stream = await open(session.id);
+      const { event } = await stream.next();
+      stream.close();
+      if (event.kind !== 'snapshot') throw new Error('expected a snapshot');
+      return { ids: event.history.messages.map((m) => m.id), after: event.history.after };
+    };
+
+    // Settled (or never background): just the newest page.
+    expect((await snapshotIds()).ids).not.toContain('spawn');
+
+    mockGetSessionBackgroundTasks.mockReturnValue([
+      { taskId: 'task-a', taskType: 'local_agent', description: 'a', ambient: false },
+    ]);
+    const { ids, after } = await snapshotIds();
+    expect(after).toBe(0);
+    expect(ids.slice(0, 2)).toEqual(['spawn', 'started']);
+    expect(ids).toHaveLength(HISTORY_PAGE_SIZE + 3);
   });
 
   it('carries token usage in the snapshot and pushes it when a message moves it', async () => {

@@ -1,8 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import { readFileSync, readdirSync } from 'fs';
-import { join } from 'path';
 import { setupTestDb, teardownTestDb, testPrisma, clearTestDb } from '@/test/setup-test-db';
 import { createTestSession } from '@/test/fixtures';
+import { runMigrationBackfill } from '@/test/migration-backfill';
 import { EMPTY_SESSION_USAGE_TOTALS } from '@/lib/token-estimation';
 
 let getSessionUsageTotals: (typeof import('./session-usage'))['getSessionUsageTotals'];
@@ -26,14 +25,6 @@ const assistant = (
   type: 'assistant',
   content: { type: 'assistant', parent_tool_use_id: parent, message: { model, usage } },
 });
-
-/** Run a migration's backfill (everything from its `-- Backfill` comment on). */
-async function runBackfill(migrationSuffix: string) {
-  const migrationsDir = join(process.cwd(), 'prisma/migrations');
-  const migration = readdirSync(migrationsDir).find((d) => d.endsWith(migrationSuffix));
-  const sql = readFileSync(join(migrationsDir, migration!, 'migration.sql'), 'utf8');
-  await testPrisma.$executeRawUnsafe(sql.slice(sql.indexOf('-- Backfill')));
-}
 
 async function record(sessionId: string, messages: TestMessage[]) {
   for (const m of messages) {
@@ -208,7 +199,7 @@ describe('session-usage', () => {
       ],
     });
 
-    await runBackfill('_add_session_usage');
+    await runMigrationBackfill('_add_session_usage');
 
     const expected = await getSessionUsageTotals(live.id);
     expect(expected.closedSegmentsCostUsd + expected.currentSegmentCostUsd).toBeCloseTo(0.7, 6);
@@ -257,7 +248,7 @@ describe('session-usage', () => {
       ],
     });
 
-    await runBackfill('_session_usage_last_call');
+    await runMigrationBackfill('_session_usage_last_call');
 
     const expected = await getSessionUsageTotals(live.id);
     expect(expected.lastCall).toMatchObject({ inputTokens: 10, model: 'claude-sonnet-4-6' });

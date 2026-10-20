@@ -5,11 +5,8 @@
  */
 
 import { isPartialMessageId } from '@/lib/message-cache';
-import {
-  collectRetractedMessages,
-  extractTextContent,
-  isToolResultMessage,
-} from '@/components/messages/messageHelpers';
+import { collectRetractedMessages, extractTextContent } from '@/components/messages/messageHelpers';
+import { isToolResultMessage } from '@/lib/transcript-display';
 import type { DisplayMessage, MessageContent } from '@/components/messages/types';
 
 /** An assistant message with meaningful text content, ready for TTS. */

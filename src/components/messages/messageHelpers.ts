@@ -13,6 +13,7 @@ import {
   isTaskNotificationOrigin,
   parseInjectedOrigin,
 } from '@/lib/claude-messages';
+import { isRenderableBlock, isToolResultMessage, messageDisplay } from '@/lib/transcript-display';
 import { isPlanFile, reconstructPlansByToolUseId, type PlanEvent } from './plan-utils';
 
 /**
@@ -30,7 +31,6 @@ export type MessageCategory =
   | 'userInterrupt'
   | 'injectedMessage'
   | 'taskNotification'
-  | 'toolResult'
   | 'systemError'
   | 'systemCompactBoundary'
   | 'systemRefusalFallback'
@@ -62,14 +62,6 @@ export function extractTextContent(content: MessageContent): string | null {
     return content.content;
   }
   return null;
-}
-
-/**
- * Check if a message is a tool result (comes as type "user" but contains tool_result content).
- */
-export function isToolResultMessage(content: MessageContent): boolean {
-  const innerContent = content.message?.content;
-  return Array.isArray(innerContent) && innerContent.some((block) => block.type === 'tool_result');
 }
 
 /** Whether a message is the user's own prompt, which renders right-aligned. */
@@ -118,64 +110,12 @@ export function toolResultText(content: unknown): string {
 /**
  * Extract tool result blocks from a message.
  */
-export function getToolResults(content: MessageContent): ContentBlock[] {
+function getToolResults(content: MessageContent): ContentBlock[] {
   const innerContent = content.message?.content;
   if (Array.isArray(innerContent)) {
     return innerContent.filter((block) => block.type === 'tool_result');
   }
   return [];
-}
-
-/**
- * Whether an assistant content block renders a visible element — e.g. a
- * `thinking` block with empty text (just a continuity signature) renders nothing.
- * A `thinking` block with text is a progress update (see `assistantBlockText`).
- *
- * Keep the renderable cases in sync with `ContentRenderer.renderContentBlocks`.
- */
-function isRenderableBlock(block: ContentBlock): boolean {
-  switch (block?.type) {
-    case 'text':
-    case 'thinking':
-      return assistantBlockText(block) !== null;
-    case 'tool_use':
-    case 'redacted_thinking':
-    case 'server_tool_use':
-      return true;
-    // advisor_tool_result is deliberately not renderable: its content is
-    // encrypted, so the server_tool_use block is the visible indicator.
-    default:
-      return false;
-  }
-}
-
-/**
- * Whether an assistant message has any content worth rendering, so fragments
- * whose blocks all render to nothing don't show as an empty bubble.
- */
-export function hasRenderableAssistantContent(content: MessageContent): boolean {
-  const blocks = content?.message?.content;
-  // Non-array content (e.g. a string) is handled by other display paths.
-  return !Array.isArray(blocks) || blocks.some(isRenderableBlock);
-}
-
-/**
- * System subtypes still surfaced in the transcript. Everything else — session
- * init banners, hook lifecycle, task/notification chatter, generic notices — is
- * hidden to cut noise (issue #312). Errors, compact boundaries, and
- * model_refusal_fallback (a silent Fable→Opus downgrade the user needs to know
- * about) are kept because they carry meaningful signal the user needs to see.
- */
-const VISIBLE_SYSTEM_SUBTYPES = new Set(['error', 'compact_boundary', 'model_refusal_fallback']);
-
-/**
- * Whether a `system` message should be hidden from the transcript entirely.
- * Non-system messages are never hidden by this. Pure so it can gate both the
- * list-level filter (no empty spacer row) and the bubble-level render.
- */
-export function isHiddenSystemMessage(type: string, content: MessageContent): boolean {
-  if (type !== 'system') return false;
-  return !(typeof content.subtype === 'string' && VISIBLE_SYSTEM_SUBTYPES.has(content.subtype));
 }
 
 /**
@@ -340,28 +280,6 @@ export function groupSubagentMessages(messages: DisplayMessage[]): Map<string, D
 }
 
 /**
- * Whether a message should render as its own row in a transcript (top-level list
- * or a nested subagent transcript). Shared by both so the two can't drift.
- *
- * Excludes: tool-result messages already paired inline onto their tool call,
- * hidden system messages (see {@link isHiddenSystemMessage} — which subsumes the
- * ignored-subtype set, and skip_transcript messages are never persisted), and
- * empty assistant fragments. Does NOT apply the top-level "no subagent messages"
- * rule — callers add that separately, since a subagent transcript renders exactly
- * those messages.
- */
-export function isVisibleTranscriptMessage(
-  message: DisplayMessage,
-  pairedMessageIds: Set<string>
-): boolean {
-  if (pairedMessageIds.has(message.id)) return false;
-  const content = message.content as MessageContent;
-  if (isHiddenSystemMessage(message.type, content)) return false;
-  if (message.type === 'assistant' && !hasRenderableAssistantContent(content)) return false;
-  return true;
-}
-
-/**
  * Check if a message can be recognized and displayed with our typed components.
  * Returns the message category if recognized, or { recognized: false } for unknown types.
  */
@@ -375,7 +293,8 @@ export function isRecognizedMessage(type: string, content: MessageContent): Reco
   }
 
   if (type === 'user') {
-    if (isToolResultMessage(content)) return { recognized: true, category: 'toolResult' };
+    // Tool results render on their call, never as a bubble (see isTranscriptRow).
+    if (isToolResultMessage(content)) return { recognized: false };
     if (content.subtype === 'interrupt') return { recognized: true, category: 'userInterrupt' };
     if (parseInjectedOrigin(content.origin))
       return { recognized: true, category: 'injectedMessage' };
@@ -391,9 +310,9 @@ export function isRecognizedMessage(type: string, content: MessageContent): Reco
   }
 
   // The only system messages shown in the transcript are errors, compact
-  // boundaries, and refusal fallbacks (see isHiddenSystemMessage). Every other
-  // system subtype — init, hooks, generic notices — is hidden upstream in
-  // MessageBubble/MessageList, so it is intentionally not given a category here.
+  // boundaries, and refusal fallbacks (see isTranscriptRow). Every other system
+  // subtype — init, hooks, generic notices — is filtered out before rendering,
+  // so it is intentionally not given a category here.
   if (type === 'system' && content.subtype === 'error') {
     if (Array.isArray(content.content)) {
       return { recognized: true, category: 'systemError' };
@@ -527,18 +446,15 @@ export function* toolUseBlocks(
 }
 
 /**
- * Pair every `tool_result` with its `tool_use`. Also reports which tool-result
- * messages are fully paired (every result matched a known call) so the list can
- * hide them — they render inline on the call instead — and where each result
- * landed, which is a foreground subagent's finish point.
+ * Pair every `tool_result` with its `tool_use`, and report where each result
+ * landed, which is a foreground subagent's finish point. A result whose call
+ * isn't loaded is left out; tool-result messages never render on their own.
  */
 export function buildToolResultMap(messages: DisplayMessage[]): {
   resultMap: ToolResultMap;
-  pairedMessageIds: Set<string>;
   resultSequenceByToolUseId: Map<string, number>;
 } {
   const resultMap: ToolResultMap = new Map();
-  const pairedMessageIds = new Set<string>();
   const resultSequenceByToolUseId = new Map<string, number>();
 
   const toolUseIds = new Set<string>();
@@ -548,25 +464,18 @@ export function buildToolResultMap(messages: DisplayMessage[]): {
 
   for (const msg of messages) {
     if (msg.type !== 'user') continue;
-    const resultBlocks = getToolResults(msg.content as MessageContent);
-    if (resultBlocks.length === 0) continue;
-
-    let allPaired = true;
-    for (const block of resultBlocks) {
+    for (const block of getToolResults(msg.content as MessageContent)) {
       if (block.tool_use_id && toolUseIds.has(block.tool_use_id)) {
         resultMap.set(block.tool_use_id, {
           content: toolResultText(block.content),
           is_error: block.is_error,
         });
         resultSequenceByToolUseId.set(block.tool_use_id, msg.sequence);
-      } else {
-        allPaired = false;
       }
     }
-    if (allPaired) pairedMessageIds.add(msg.id);
   }
 
-  return { resultMap, pairedMessageIds, resultSequenceByToolUseId };
+  return { resultMap, resultSequenceByToolUseId };
 }
 
 function isSubagentCall(block: ContentBlock): boolean {
@@ -739,7 +648,6 @@ export type TranscriptRow =
 
 export interface TranscriptLayout {
   resultMap: ToolResultMap;
-  pairedMessageIds: Set<string>;
   subagentMessagesByToolUseId: Map<string, DisplayMessage[]>;
   /** Top-level rows in sequence order. */
   rows: TranscriptRow[];
@@ -761,7 +669,7 @@ export function buildTranscriptLayout(
   messages: DisplayMessage[],
   isSessionRunning: boolean
 ): TranscriptLayout {
-  const { resultMap, pairedMessageIds, resultSequenceByToolUseId } = buildToolResultMap(messages);
+  const { resultMap, resultSequenceByToolUseId } = buildToolResultMap(messages);
   const subagentMessagesByToolUseId = groupSubagentMessages(messages);
   const { lifecycles, agentBlockById } = collectSubagentLifecycles(
     messages,
@@ -769,11 +677,10 @@ export function buildTranscriptLayout(
     resultSequenceByToolUseId
   );
 
-  // The shared transcript-visibility predicate, plus the top-level-only rule that
-  // subagent messages render nested inside their Task rather than here.
+  // The same classification the server stores as `Message.display` and pages
+  // history by.
   const topLevelMessages = messages.filter(
-    (msg) =>
-      getParentToolUseId(msg.content) === null && isVisibleTranscriptMessage(msg, pairedMessageIds)
+    (msg) => messageDisplay(msg.type, msg.content) === 'row'
   );
   const retractedMessagesByFallbackId = collectRetractedMessages(topLevelMessages);
   const retractedIds = new Set(
@@ -818,7 +725,6 @@ export function buildTranscriptLayout(
 
   return {
     resultMap,
-    pairedMessageIds,
     subagentMessagesByToolUseId,
     rows,
     pinnedSubagents,

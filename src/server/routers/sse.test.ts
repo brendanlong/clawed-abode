@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { createEventQueue, sessionEventCoalesceKey } from './sse';
+import { createEventQueue, isStreamedSessionEvent, sessionEventCoalesceKey } from './sse';
 import { partialMessageId } from '@/lib/message-cache';
 import { buildTokenUsageStats, EMPTY_SESSION_USAGE_TOTALS } from '@/lib/token-estimation';
 import type { SessionStreamEvent } from '../services/events';
@@ -233,5 +233,40 @@ describe('sessionEventCoalesceKey', () => {
     expect(sessionEventCoalesceKey({ kind: 'message', message: message('running') })).toBe(
       undefined
     );
+  });
+});
+
+describe('isStreamedSessionEvent', () => {
+  const message = (id: string, type: string, content: unknown): SessionStreamEvent => ({
+    kind: 'message',
+    message: { id, sessionId: 's1', sequence: 0, type, content, createdAt: new Date(0) },
+  });
+
+  it('drops persisted messages no client reads', () => {
+    expect(isStreamedSessionEvent(message('a', 'system', { subtype: 'init' }))).toBe(false);
+    expect(
+      isStreamedSessionEvent(
+        message('b', 'assistant', { message: { content: [{ type: 'thinking', thinking: '' }] } })
+      )
+    ).toBe(false);
+  });
+
+  it('sends rows and their context', () => {
+    expect(isStreamedSessionEvent(message('a', 'user', { content: 'hi' }))).toBe(true);
+    expect(
+      isStreamedSessionEvent(
+        message('b', 'user', { message: { content: [{ type: 'tool_result', tool_use_id: 't' }] } })
+      )
+    ).toBe(true);
+    expect(isStreamedSessionEvent(message('c', 'system', { subtype: 'task_started' }))).toBe(true);
+  });
+
+  it('always sends partials and non-message events', () => {
+    const emptyPartial = { message: { content: [{ type: 'thinking', thinking: '' }] } };
+    expect(isStreamedSessionEvent(message(partialMessageId(null), 'assistant', emptyPartial))).toBe(
+      true
+    );
+    expect(isStreamedSessionEvent({ kind: 'message_removed', messageId: 'a' })).toBe(true);
+    expect(isStreamedSessionEvent({ kind: 'running', running: true })).toBe(true);
   });
 });
