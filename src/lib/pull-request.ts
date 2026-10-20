@@ -147,14 +147,15 @@ export function isPrSnapshotStale(session: PrRefreshCandidate, now: number): boo
   return session.prCheckedAt === null || now - session.prCheckedAt.getTime() >= ttlMs;
 }
 
+const GIT = String.raw`\bgit\b[^;&|\n]*\s`;
+const GH_PR = String.raw`\bgh\b[^;&|\n]*\spr\s+`;
 const BRANCH_OR_PR_COMMAND = new RegExp(
-  [
-    String.raw`\bgit\b[^;&|\n]*\s(?:checkout|switch|push|merge|branch\s+-[mM])\b`,
-    String.raw`\bgh\b[^;&|\n]*\spr\s+(?:create|new|checkout|merge|close|reopen|ready|edit)\b`,
-  ].join('|')
+  String.raw`${GIT}(?:checkout|switch|push|merge|branch\s+-[mM])\b|` +
+    String.raw`${GH_PR}(?:create|new|checkout|merge|close|reopen|ready|edit)\b`
 );
+const PUSH_COMMAND = new RegExp(String.raw`${GIT}push\b`);
+const CREATE_PR_COMMAND = new RegExp(String.raw`${GH_PR}(?:create|new)\b`);
 const PR_MCP_TOOL = /^mcp__.+__(?:create|merge|update)_pull_request/;
-const CREATE_PR_COMMAND = /\bgh\b[^;&|\n]*\spr\s+(?:create|new)\b/;
 const CREATE_PR_MCP_TOOL = /^mcp__.+__create_pull_request$/;
 const PR_URL = /https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)/g;
 
@@ -162,50 +163,79 @@ const bashInputSchema = z.object({
   command: z.string(),
   run_in_background: z.boolean().optional(),
 });
-
-/**
- * Whether a finished tool call may have moved the session's branch or changed
- * its PR, so the snapshot should be refreshed now rather than at turn end. False
- * positives only cost one (usually free) lookup. Backgrounded Bash is skipped:
- * its hook fires at launch, before the command has done anything.
- */
-export function mayChangeBranchOrPr(toolName: string, toolInput: unknown): boolean {
-  if (PR_MCP_TOOL.test(toolName)) return true;
-  if (toolName !== 'Bash') return false;
-  const parsed = bashInputSchema.safeParse(toolInput);
-  return (
-    parsed.success &&
-    !parsed.data.run_in_background &&
-    BRANCH_OR_PR_COMMAND.test(parsed.data.command)
-  );
-}
+const bashOutputSchema = z.object({ stdout: z.string() });
+const mcpTextBlocksSchema = z.array(z.object({ type: z.string(), text: z.unknown() }));
+const createdPrSchema = z.object({ html_url: z.string().optional(), url: z.string().optional() });
 
 export interface PullRequestRef {
   repoFullName: string;
   number: number;
 }
 
-/**
- * The PRs a finished tool call created, read from the URLs in its output
- * (`gh pr create` prints one; the GitHub MCP tool returns one). This finds a
- * session's PRs in any repo, not just on its clone's current branch.
- */
-export function createdPullRequests(
-  toolName: string,
-  toolInput: unknown,
-  toolResponse: unknown
-): PullRequestRef[] {
-  const creates =
-    CREATE_PR_MCP_TOOL.test(toolName) ||
-    (toolName === 'Bash' &&
-      CREATE_PR_COMMAND.test(bashInputSchema.safeParse(toolInput).data?.command ?? ''));
-  if (!creates) return [];
+function pullRequestUrls(text: string): PullRequestRef[] {
   const refs = new Map<string, PullRequestRef>();
-  for (const [, repoFullName, number] of JSON.stringify(toolResponse ?? null).matchAll(PR_URL)) {
+  for (const [, repoFullName, number] of text.matchAll(PR_URL)) {
     refs.set(`${pullRequestRepoKey(repoFullName)}#${number}`, {
       repoFullName,
       number: Number(number),
     });
   }
   return [...refs.values()];
+}
+
+/** The PR a create_pull_request MCP tool returned: its `html_url`, or `url`. */
+function createdByMcpTool(response: unknown): PullRequestRef[] {
+  const blocks = mcpTextBlocksSchema.safeParse(response);
+  const texts = blocks.success
+    ? blocks.data.flatMap((b) => (b.type === 'text' && typeof b.text === 'string' ? [b.text] : []))
+    : [response];
+  return texts.flatMap((text) => {
+    let value: unknown = text;
+    if (typeof text === 'string') {
+      try {
+        value = JSON.parse(text);
+      } catch {
+        return [];
+      }
+    }
+    const pr = createdPrSchema.safeParse(value);
+    const url = pr.success ? (pr.data.html_url ?? pr.data.url) : undefined;
+    return url ? pullRequestUrls(url).slice(0, 1) : [];
+  });
+}
+
+export interface PrToolEffect {
+  /**
+   * May have moved the branch or changed its PR, so the snapshot should be
+   * refreshed now rather than at turn end. False positives only cost one
+   * (usually free) lookup.
+   */
+  refresh: boolean;
+  /** Pushed, so the checked-out branch's PR is one the session worked on. */
+  pushed: boolean;
+  /** PRs it created in any repo, read from the URLs `gh pr create` prints or the MCP tool returns. */
+  created: PullRequestRef[];
+}
+
+/**
+ * What a finished tool call did to the session's branches and PRs. Backgrounded
+ * Bash did nothing yet: its hook fires at launch.
+ */
+export function prToolEffect(
+  toolName: string,
+  toolInput: unknown,
+  toolResponse: unknown
+): PrToolEffect {
+  if (PR_MCP_TOOL.test(toolName)) {
+    const created = CREATE_PR_MCP_TOOL.test(toolName) ? createdByMcpTool(toolResponse) : [];
+    return { refresh: true, pushed: false, created };
+  }
+  const input = toolName === 'Bash' ? bashInputSchema.safeParse(toolInput).data : undefined;
+  if (!input || input.run_in_background) return { refresh: false, pushed: false, created: [] };
+  const stdout = bashOutputSchema.safeParse(toolResponse).data?.stdout ?? '';
+  return {
+    refresh: BRANCH_OR_PR_COMMAND.test(input.command),
+    pushed: PUSH_COMMAND.test(input.command),
+    created: CREATE_PR_COMMAND.test(input.command) ? pullRequestUrls(stdout) : [],
+  };
 }

@@ -91,9 +91,8 @@ model PullRequest {
   @@unique([repoFullName, number])
 }
 
-// A PR a session worked on: one it created, or one its checked-out branch had. Unlike
-// Session.pullRequestId (the current branch's PR, for the badge), this outlives a
-// branch switch and covers PRs in repos other than the session's own clone.
+// A PR a session created (in any repo) or pushed to. Unlike Session.pullRequestId
+// (the current branch's PR, for the badge), it outlives a branch switch.
 model SessionPullRequest {
   sessionId     String
   pullRequestId String

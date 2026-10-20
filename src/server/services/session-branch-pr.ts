@@ -49,7 +49,8 @@ const prSnapshotSelect = {
 async function persistPrSnapshot(
   session: SnapshotRow,
   branch: string | null,
-  branchUpdate?: { currentBranch: string }
+  branchUpdate?: { currentBranch: string },
+  pushed = false
 ): Promise<void> {
   if (session.status === 'archived') return;
   const startedAt = new Date();
@@ -62,7 +63,7 @@ async function persistPrSnapshot(
     // undefined = lookup unavailable (no token / API error): keep what we had.
     if (pr !== undefined) {
       pullRequestId = pr ? await savePullRequest(repoFullName, pr, startedAt) : null;
-      if (pullRequestId) await linkSessionPullRequest(session.id, pullRequestId);
+      if (pullRequestId && pushed) await linkSessionPullRequest(session.id, pullRequestId);
     }
   }
 
@@ -87,9 +88,14 @@ async function persistPrSnapshot(
  * Detect a branch change and refresh the persisted PR status for the session
  * (fire-and-forget, called at each turn end and after branch/PR tool calls). PR status lives on the Session row
  * so the list never has to ask GitHub per row; one `session` event carries both
- * fields.
+ * fields. After a push, the session is also recorded as working on the branch's
+ * PR; merely having it checked out (e.g. to review it) doesn't count.
  */
-export async function detectBranchAndPr(sessionId: string, workingDir: string): Promise<void> {
+export async function detectBranchAndPr(
+  sessionId: string,
+  workingDir: string,
+  pushed = false
+): Promise<void> {
   try {
     const session = await prisma.session.findUnique({
       where: { id: sessionId },
@@ -103,7 +109,8 @@ export async function detectBranchAndPr(sessionId: string, workingDir: string): 
     await persistPrSnapshot(
       session,
       detectedBranch ?? session.currentBranch,
-      branchChanged ? { currentBranch: detectedBranch } : undefined
+      branchChanged ? { currentBranch: detectedBranch } : undefined,
+      pushed
     );
   } catch (err) {
     log.debug('Failed to detect branch or check PR', { sessionId, error: toError(err).message });
@@ -117,27 +124,33 @@ export async function detectBranchAndPr(sessionId: string, workingDir: string): 
 const TOOL_REFRESH_DEBOUNCE_MS = 2000;
 const toolRefreshTimers = processSingleton(
   'session-branch-pr.toolRefreshTimers',
-  () => new Map<string, NodeJS.Timeout>()
+  () => new Map<string, { timer: NodeJS.Timeout; pushed: boolean }>()
 );
 
 /**
  * Refresh branch and PR soon after a tool call that may have changed them
- * (`mayChangeBranchOrPr`), so the header doesn't wait for the turn to end.
+ * (`prToolEffect`), so the header doesn't wait for the turn to end.
  */
-export function scheduleBranchPrRefresh(sessionId: string, workingDir: string): void {
-  clearTimeout(toolRefreshTimers.get(sessionId));
-  toolRefreshTimers.set(
-    sessionId,
-    setTimeout(() => {
+export function scheduleBranchPrRefresh(
+  sessionId: string,
+  workingDir: string,
+  pushed: boolean
+): void {
+  const pending = toolRefreshTimers.get(sessionId);
+  clearTimeout(pending?.timer);
+  const anyPushed = pushed || (pending?.pushed ?? false);
+  toolRefreshTimers.set(sessionId, {
+    pushed: anyPushed,
+    timer: setTimeout(() => {
       toolRefreshTimers.delete(sessionId);
-      void detectBranchAndPr(sessionId, workingDir);
-    }, TOOL_REFRESH_DEBOUNCE_MS)
-  );
+      void detectBranchAndPr(sessionId, workingDir, anyPushed);
+    }, TOOL_REFRESH_DEBOUNCE_MS),
+  });
 }
 
 /** Drop a pending tool-call refresh, e.g. when the session's workspace is going away. */
 export function cancelBranchPrRefresh(sessionId: string): void {
-  clearTimeout(toolRefreshTimers.get(sessionId));
+  clearTimeout(toolRefreshTimers.get(sessionId)?.timer);
   toolRefreshTimers.delete(sessionId);
 }
 

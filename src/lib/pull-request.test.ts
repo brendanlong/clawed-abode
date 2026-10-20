@@ -1,8 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
-  createdPullRequests,
   isPrSnapshotStale,
-  mayChangeBranchOrPr,
+  prToolEffect,
   parsePullRequestJson,
   reusableChecks,
   rollUpChecks,
@@ -172,8 +171,9 @@ describe('isPrSnapshotStale', () => {
   });
 });
 
-describe('mayChangeBranchOrPr', () => {
-  const bash = (command: string) => mayChangeBranchOrPr('Bash', { command });
+describe('prToolEffect', () => {
+  const bash = (command: string, stdout = '') =>
+    prToolEffect('Bash', { command }, { stdout, stderr: '', interrupted: false });
 
   it.each([
     'git checkout -b feature',
@@ -189,8 +189,8 @@ describe('mayChangeBranchOrPr', () => {
     'gh pr checkout 12',
     'gh -R owner/repo pr create --fill',
     'git branch -m renamed',
-  ])('matches %s', (command) => {
-    expect(bash(command)).toBe(true);
+  ])('refreshes after %s', (command) => {
+    expect(bash(command).refresh).toBe(true);
   });
 
   it.each([
@@ -203,62 +203,74 @@ describe('mayChangeBranchOrPr', () => {
     'echo git; push',
     'git branch -a',
   ])('ignores %s', (command) => {
-    expect(bash(command)).toBe(false);
+    expect(bash(command)).toEqual({ refresh: false, pushed: false, created: [] });
   });
 
-  it('matches GitHub MCP tools that change a PR', () => {
-    expect(mayChangeBranchOrPr('mcp__GitHub__create_pull_request', {})).toBe(true);
-    expect(mayChangeBranchOrPr('mcp__github__merge_pull_request', {})).toBe(true);
-    expect(mayChangeBranchOrPr('mcp__GitHub__update_pull_request_branch', {})).toBe(true);
-    expect(mayChangeBranchOrPr('mcp__GitHub__pull_request_read', {})).toBe(false);
+  it('counts a push, but not a checkout, as working on the branch', () => {
+    expect(bash('git add . && git commit -m x && git -C repo push').pushed).toBe(true);
+    expect(bash('gh pr checkout 12').pushed).toBe(false);
+    expect(bash('git checkout feat').pushed).toBe(false);
+  });
+
+  it('refreshes after GitHub MCP tools that change a PR', () => {
+    const refresh = (tool: string) => prToolEffect(tool, {}, []).refresh;
+    expect(refresh('mcp__GitHub__create_pull_request')).toBe(true);
+    expect(refresh('mcp__github__merge_pull_request')).toBe(true);
+    expect(refresh('mcp__GitHub__update_pull_request_branch')).toBe(true);
+    expect(refresh('mcp__GitHub__pull_request_read')).toBe(false);
   });
 
   it('ignores backgrounded Bash, whose hook fires before the command runs', () => {
-    expect(mayChangeBranchOrPr('Bash', { command: 'git push', run_in_background: true })).toBe(
-      false
-    );
+    expect(
+      prToolEffect('Bash', { command: 'git push', run_in_background: true }, undefined)
+    ).toEqual({ refresh: false, pushed: false, created: [] });
   });
 
   it('ignores non-Bash tools and malformed Bash input', () => {
-    expect(mayChangeBranchOrPr('Read', { command: 'git push' })).toBe(false);
-    expect(mayChangeBranchOrPr('Bash', { cmd: 'git push' })).toBe(false);
+    expect(prToolEffect('Read', { command: 'git push' }, undefined).refresh).toBe(false);
+    expect(prToolEffect('Bash', { cmd: 'git push' }, undefined).refresh).toBe(false);
   });
-});
 
-describe('createdPullRequests', () => {
-  it('reads the PR URL gh pr create prints, in any repo', () => {
+  it('reads the PRs gh pr create prints, in any repo', () => {
+    const stdout = 'https://github.com/Other/Repo/pull/42\nhttps://github.com/o/r/pull/43\n';
     expect(
-      createdPullRequests(
-        'Bash',
-        { command: 'git push -u origin HEAD && gh -R Other/Repo pr create --fill' },
-        { stdout: 'https://github.com/Other/Repo/pull/42\n', stderr: '' }
-      )
-    ).toEqual([{ repoFullName: 'Other/Repo', number: 42 }]);
+      bash('git push -u origin HEAD && gh -R Other/Repo pr create --fill', stdout).created
+    ).toEqual([
+      { repoFullName: 'Other/Repo', number: 42 },
+      { repoFullName: 'o/r', number: 43 },
+    ]);
   });
 
-  it('reads the PR URL from the GitHub MCP tool, once per PR', () => {
+  it('reads the created PR from the MCP tool, not other PRs its body mentions', () => {
+    const created = (response: unknown) =>
+      prToolEffect('mcp__GitHub__create_pull_request', {}, response).created;
     const url = 'https://github.com/o/r.js/pull/7';
+    const body = 'Stacked on https://github.com/o/r.js/pull/5';
+    const expected = [{ repoFullName: 'o/r.js', number: 7 }];
+
+    expect(created([{ type: 'text', text: JSON.stringify({ id: 1, url }) }])).toEqual(expected);
     expect(
-      createdPullRequests('mcp__GitHub__create_pull_request', {}, [
-        { type: 'text', text: JSON.stringify({ url, html_url: url }) },
-      ])
-    ).toEqual([{ repoFullName: 'o/r.js', number: 7 }]);
+      created([{ type: 'text', text: JSON.stringify({ body, html_url: url, url: 'api' }) }])
+    ).toEqual(expected);
+    expect(created({ body, html_url: url })).toEqual(expected);
+    expect(created([{ type: 'text', text: `Created ${url}` }])).toEqual([]);
   });
 
   it('ignores PRs a tool only mentions without creating them', () => {
-    const response = { stdout: 'https://github.com/o/r/pull/7' };
-    expect(createdPullRequests('Bash', { command: 'gh pr view 7' }, response)).toEqual([]);
-    expect(createdPullRequests('mcp__GitHub__pull_request_read', {}, response)).toEqual([]);
-    expect(createdPullRequests('Read', { command: 'gh pr create' }, response)).toEqual([]);
+    const stdout = 'https://github.com/o/r/pull/7';
+    expect(bash('gh pr view 7 --json url', stdout).created).toEqual([]);
+    expect(
+      prToolEffect('mcp__GitHub__pull_request_read', {}, [{ type: 'text', text: stdout }]).created
+    ).toEqual([]);
   });
 
   it('ignores the link git push suggests for a branch with no PR yet', () => {
     expect(
-      createdPullRequests(
+      prToolEffect(
         'Bash',
         { command: 'git push && gh pr create --fill' },
-        { stderr: 'remote:   https://github.com/o/r/pull/new/feat\n', stdout: '' }
-      )
+        { stdout: '', stderr: 'remote:   https://github.com/o/r/pull/new/feat\n' }
+      ).created
     ).toEqual([]);
   });
 });

@@ -336,7 +336,7 @@ describe('buildSdkOptions', () => {
   it('schedules a branch/PR refresh after a tool call that may change them', async () => {
     const { options } = await build(settings());
     const hooks = options.hooks!.PostToolUse![0].hooks;
-    const runHooks = (tool_name: string, command: string, tool_response = '') =>
+    const runHooks = (tool_name: string, command: string, stdout = '') =>
       Promise.all(
         hooks.map((hook) =>
           hook(
@@ -344,7 +344,7 @@ describe('buildSdkOptions', () => {
               hook_event_name: 'PostToolUse',
               tool_name,
               tool_input: { command },
-              tool_response,
+              tool_response: { stdout, stderr: '', interrupted: false },
               tool_use_id: 't1',
               session_id: 'sid',
               transcript_path: '',
@@ -360,11 +360,11 @@ describe('buildSdkOptions', () => {
     expect(mockScheduleRefresh).not.toHaveBeenCalled();
 
     await runHooks('Bash', 'git push -u origin HEAD');
-    expect(mockScheduleRefresh).toHaveBeenCalledWith('sid', '/w');
+    expect(mockScheduleRefresh).toHaveBeenCalledWith('sid', '/w', true);
 
     mockScheduleRefresh.mockClear();
     await runHooks('mcp__GitHub__merge_pull_request', '');
-    expect(mockScheduleRefresh).toHaveBeenCalledWith('sid', '/w');
+    expect(mockScheduleRefresh).toHaveBeenCalledWith('sid', '/w', false);
     expect(mockLinkCreated).not.toHaveBeenCalled();
 
     await runHooks('Bash', 'gh pr create --fill', 'https://github.com/o/r/pull/3\n');

@@ -255,19 +255,30 @@ describe('scheduleBranchPrRefresh', () => {
     const { id } = await createSession();
     execFileSync('git', ['-C', repoDir, 'switch', '-q', '-c', 'feat-b']);
 
-    scheduleBranchPrRefresh(id, repoDir);
-    scheduleBranchPrRefresh(id, repoDir);
+    scheduleBranchPrRefresh(id, repoDir, false);
+    scheduleBranchPrRefresh(id, repoDir, false);
 
     await waitFor(async () => (await sessionRow(id)).currentBranch === 'feat-b', 5000);
     expect(await storedPr(id)).toEqual(pr);
     expect(fetchPullRequestForBranch).toHaveBeenCalledTimes(1);
     expect(fetchPullRequestForBranch).toHaveBeenCalledWith('o/r', 'feat-b');
+    expect(await linkedPrNumbers(id)).toEqual([]);
+  });
+
+  it('records the PR as the session’s when any call in the burst pushed', async () => {
+    const { id } = await createSession();
+
+    scheduleBranchPrRefresh(id, repoDir, true);
+    scheduleBranchPrRefresh(id, repoDir, false);
+
+    await waitFor(async () => (await linkedPrNumbers(id)).length > 0, 5000);
+    expect(await linkedPrNumbers(id)).toEqual([7]);
   });
 
   it('cancelBranchPrRefresh drops the pending refresh', () => {
     vi.useFakeTimers();
     try {
-      scheduleBranchPrRefresh('gone', repoDir);
+      scheduleBranchPrRefresh('gone', repoDir, false);
       expect(vi.getTimerCount()).toBe(1);
       cancelBranchPrRefresh('gone');
       expect(vi.getTimerCount()).toBe(0);
@@ -310,9 +321,10 @@ describe('detectBranchAndPr', () => {
     await slow;
     expect((await storedPr(id))?.state).toBe('merged');
   });
-  it('keeps the session linked to a PR after it switches to another branch', async () => {
+
+  it('keeps the session linked to a PR it pushed to after it switches branches', async () => {
     const { id } = await createSession();
-    await detectBranchAndPr(id, noRepo);
+    await detectBranchAndPr(id, noRepo, true);
 
     await testPrisma.session.update({ where: { id }, data: { currentBranch: 'feat-b' } });
     vi.mocked(fetchPullRequestForBranch).mockResolvedValue({
@@ -320,10 +332,19 @@ describe('detectBranchAndPr', () => {
       number: 8,
       headBranch: 'feat-b',
     });
-    await detectBranchAndPr(id, noRepo);
+    await detectBranchAndPr(id, noRepo, true);
 
     expect((await storedPr(id))?.number).toBe(8);
     expect(await linkedPrNumbers(id)).toEqual([7, 8]);
+  });
+
+  it('doesn’t record a PR the session only has checked out', async () => {
+    const { id } = await createSession();
+
+    await detectBranchAndPr(id, noRepo);
+
+    expect((await storedPr(id))?.number).toBe(7);
+    expect(await linkedPrNumbers(id)).toEqual([]);
   });
 });
 
