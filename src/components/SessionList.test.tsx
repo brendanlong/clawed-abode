@@ -49,6 +49,7 @@ function paged(sessions: Session[], overrides: Partial<PagedSessions> = {}): Pag
     isLoading: false,
     hasMore: false,
     isFetchingMore: false,
+    loadFailed: false,
     fetchMore: vi.fn(),
     ...overrides,
   };

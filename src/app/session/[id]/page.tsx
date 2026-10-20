@@ -61,6 +61,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
     isLoading: messagesLoading,
     isFetchingMore,
     hasMore,
+    loadFailed,
     fetchMore,
   } = useSessionMessages(sessionId);
 
@@ -207,6 +208,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
               messages={messages}
               isLoading={messagesLoading || isFetchingMore}
               hasMore={hasMore}
+              loadFailed={loadFailed}
               onLoadMore={fetchMore}
               tokenUsage={tokenUsage}
             />
@@ -247,6 +249,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
           messages={messages}
           isLoading={messagesLoading || isFetchingMore}
           hasMore={hasMore}
+          loadFailed={loadFailed}
           onLoadMore={fetchMore}
           tokenUsage={tokenUsage}
           subscriptionUsage={subscriptionUsage}

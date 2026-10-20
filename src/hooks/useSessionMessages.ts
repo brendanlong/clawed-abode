@@ -40,7 +40,11 @@ export function useSessionMessages(sessionId: string) {
     queryFn: skipToken,
   }).data;
 
-  const { mutate: loadOlder, isPending: isFetchingMore } = useMutation({
+  const {
+    mutate: loadOlder,
+    isPending: isFetchingMore,
+    isError: loadFailed,
+  } = useMutation({
     mutationFn: async (cursor: number) => ({
       cursor,
       page: await utils.client.claude.getHistory.query({
@@ -66,6 +70,8 @@ export function useSessionMessages(sessionId: string) {
     // Until the stream's first snapshot lands.
     isLoading: transcript === undefined,
     isFetchingMore,
+    /** The last older-page load failed (retried when the user next scrolls up). */
+    loadFailed,
     hasMore: cursor !== undefined,
     fetchMore,
   };

@@ -28,6 +28,8 @@ interface MessageListProps {
   messages: Message[];
   isLoading: boolean;
   hasMore: boolean;
+  /** The last older-page load failed: retry only once the user scrolls back up. */
+  loadFailed: boolean;
   onLoadMore: () => void;
   tokenUsage?: TokenUsageStats | null;
   subscriptionUsage?: SessionSubscriptionUsage | null;
@@ -56,6 +58,7 @@ export function MessageList({
   messages,
   isLoading,
   hasMore,
+  loadFailed,
   onLoadMore,
   tokenUsage,
   subscriptionUsage,
@@ -69,6 +72,7 @@ export function MessageList({
     messages,
     hasMore,
     isLoading,
+    loadFailed,
     onLoadMore,
   });
 

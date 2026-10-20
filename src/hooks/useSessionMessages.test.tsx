@@ -1,9 +1,9 @@
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import { useState, type ReactNode } from 'react';
-import { act, renderHook, waitFor } from '@testing-library/react';
+import { act, render, renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { observable } from '@trpc/server/observable';
-import type { TRPCLink } from '@trpc/client';
+import { TRPCClientError, type TRPCLink } from '@trpc/client';
 import { trpc } from '@/lib/trpc';
 import type { AppRouter } from '@/server/routers';
 import type { SessionStreamOutput } from '@/server/routers/sse';
@@ -13,6 +13,7 @@ import { toSessionView } from '@/lib/session-view';
 import { buildTokenUsageStats, EMPTY_SESSION_USAGE_TOTALS } from '@/lib/token-estimation';
 import { useSessionMessages } from './useSessionMessages';
 import { useSessionStream } from './useSessionStream';
+import { useTranscriptScroll } from './useTranscriptScroll';
 
 const SESSION_ID = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11';
 
@@ -84,7 +85,11 @@ function snapshotEvent(messages: ParsedMessage[], hasMore: boolean): SessionStre
 function fakeServer() {
   let push: ((event: SessionStreamOutput) => void) | undefined;
   let eventId = 0;
-  const historyRequests: { cursor: unknown; respond: (page: HistoryPage) => void }[] = [];
+  const historyRequests: {
+    cursor: unknown;
+    respond: (page: HistoryPage) => void;
+    fail: () => void;
+  }[] = [];
 
   const link: TRPCLink<AppRouter> = () => {
     return ({ op }) =>
@@ -108,10 +113,11 @@ function fakeServer() {
               observer.next({ result: { type: 'data', data: page } });
               observer.complete();
             },
+            fail: () => observer.error(TRPCClientError.from(new Error('history unavailable'))),
           });
           return () => {};
         }
-        observer.error(new Error(`unexpected request: ${op.path}`) as never);
+        observer.error(TRPCClientError.from(new Error(`unexpected request: ${op.path}`)));
         return () => {};
       });
   };
@@ -217,5 +223,114 @@ describe('useSessionMessages with the session stream', () => {
     act(() => void result.current.fetchMore());
     await waitFor(() => expect(server.historyRequests).toHaveLength(2));
     expect(server.historyRequests[1].cursor).toBe(90);
+  });
+});
+
+/**
+ * An IntersectionObserver the test drives: `setVisible` moves an element in or
+ * out of view, notifying its observers, and `observe` delivers an initial entry
+ * asynchronously, as the real one does.
+ */
+class FakeIntersectionObserver {
+  static visible = new Map<Element, boolean>();
+  static instances = new Set<FakeIntersectionObserver>();
+  private targets = new Set<Element>();
+
+  constructor(private callback: IntersectionObserverCallback) {
+    FakeIntersectionObserver.instances.add(this);
+  }
+
+  static setVisible(target: Element, visible: boolean) {
+    FakeIntersectionObserver.visible.set(target, visible);
+    for (const observer of FakeIntersectionObserver.instances) {
+      if (observer.targets.has(target)) observer.notify(target);
+    }
+  }
+
+  private notify(target: Element) {
+    const entry = {
+      target,
+      isIntersecting: FakeIntersectionObserver.visible.get(target) ?? false,
+    } as IntersectionObserverEntry;
+    this.callback([entry], this as unknown as IntersectionObserver);
+  }
+
+  observe(target: Element) {
+    this.targets.add(target);
+    setTimeout(() => {
+      if (this.targets.has(target)) this.notify(target);
+    }, 0);
+  }
+  unobserve(target: Element) {
+    this.targets.delete(target);
+  }
+  disconnect() {
+    this.targets.clear();
+    FakeIntersectionObserver.instances.delete(this);
+  }
+  takeRecords(): IntersectionObserverEntry[] {
+    return [];
+  }
+}
+
+function Transcript() {
+  useSessionStream(SESSION_ID);
+  const { messages, isLoading, isFetchingMore, loadFailed, hasMore, fetchMore } =
+    useSessionMessages(SESSION_ID);
+  const { containerRef, topSentinelRef, bottomRef } = useTranscriptScroll({
+    messages,
+    hasMore,
+    isLoading: isLoading || isFetchingMore,
+    loadFailed,
+    onLoadMore: fetchMore,
+  });
+  return (
+    <div ref={containerRef}>
+      <div ref={topSentinelRef} data-testid="top-sentinel" />
+      {messages.map((m) => (
+        <div key={m.id}>{m.id}</div>
+      ))}
+      <div ref={bottomRef} />
+    </div>
+  );
+}
+
+describe('scrolling back through the transcript', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    FakeIntersectionObserver.visible.clear();
+    FakeIntersectionObserver.instances.clear();
+  });
+
+  it('does not re-request a failed page until the sentinel scrolls into view again', async () => {
+    vi.stubGlobal('IntersectionObserver', FakeIntersectionObserver);
+    const server = fakeServer();
+    const { getByTestId } = render(<Transcript />, { wrapper: server.Wrapper });
+    const sentinel = getByTestId('top-sentinel');
+    // A short transcript: the top sentinel stays in view at the bottom.
+    FakeIntersectionObserver.visible.set(sentinel, true);
+
+    await waitFor(() => expect(server.isStreamOpen()).toBe(true));
+    act(() => server.emit(snapshotEvent([message('c', 10)], true)));
+    await waitFor(() => expect(server.historyRequests).toHaveLength(1));
+    expect(server.historyRequests[0].cursor).toBe(10);
+
+    await act(async () => server.historyRequests[0].fail());
+    // Give any re-observation time to deliver its entry.
+    await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+    expect(server.historyRequests).toHaveLength(1);
+
+    // The user scrolls away and back: a real intersection retries.
+    act(() => FakeIntersectionObserver.setVisible(sentinel, false));
+    act(() => FakeIntersectionObserver.setVisible(sentinel, true));
+    await waitFor(() => expect(server.historyRequests).toHaveLength(2));
+    expect(server.historyRequests[1].cursor).toBe(10);
+
+    // A short page that leaves the sentinel in view keeps loading.
+    await act(async () =>
+      server.historyRequests[1].respond({ messages: [message('b', 9)], hasMore: true })
+    );
+    await waitFor(() => expect(server.historyRequests).toHaveLength(3));
+    expect(server.historyRequests[2].cursor).toBe(9);
   });
 });

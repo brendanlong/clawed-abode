@@ -121,6 +121,7 @@ function renderList(messages: DisplayMessage[], isSessionRunning: boolean) {
       messages={messages}
       isLoading={false}
       hasMore={false}
+      loadFailed={false}
       onLoadMore={() => {}}
       isSessionRunning={isSessionRunning}
     />
@@ -239,6 +240,7 @@ describe('MessageList older-page loader', () => {
         messages={baseMessages()}
         isLoading={opts.isLoading}
         hasMore={opts.hasMore}
+        loadFailed={false}
         onLoadMore={() => {}}
       />
     );

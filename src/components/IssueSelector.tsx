@@ -24,22 +24,30 @@ export function IssueSelector({
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebounce(search, 300);
 
-  const { data, isLoading, error, fetchNextPage, hasNextPage, isFetchingNextPage } =
-    trpc.github.listIssues.useInfiniteQuery(
-      { repoFullName, search: debouncedSearch || undefined, perPage: 15 },
-      {
-        getNextPageParam: (lastPage) => lastPage.nextCursor,
-        enabled: !!repoFullName,
-      }
-    );
+  const {
+    data,
+    isLoading,
+    error,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+    isFetchNextPageError,
+  } = trpc.github.listIssues.useInfiniteQuery(
+    { repoFullName, search: debouncedSearch || undefined, perPage: 15 },
+    {
+      getNextPageParam: (lastPage) => lastPage.nextCursor,
+      enabled: !!repoFullName,
+    }
+  );
 
   const issues = data?.pages.flatMap((p) => p.issues) || [];
   const state = resolveListQueryState({ isLoading, hasError: !!error, itemCount: issues.length });
 
-  const { scrollRef, sentinelRef } = useInfiniteScroll({
-    hasNextPage: hasNextPage ?? false,
-    isFetchingNextPage,
-    fetchNextPage,
+  const { rootRef, sentinelRef } = useInfiniteScroll({
+    hasMore: hasNextPage ?? false,
+    isLoading: isFetchingNextPage,
+    loadFailed: isFetchNextPageError,
+    onLoadMore: () => void fetchNextPage(),
   });
 
   return (
@@ -54,7 +62,7 @@ export function IssueSelector({
         />
       </div>
 
-      <div ref={scrollRef} className="border rounded-lg max-h-48 overflow-y-auto">
+      <div ref={rootRef} className="border rounded-lg max-h-48 overflow-y-auto">
         {state === 'loading' ? (
           <div className="flex justify-center py-6">
             <Spinner />
