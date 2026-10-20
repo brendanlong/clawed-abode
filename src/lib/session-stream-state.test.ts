@@ -7,6 +7,7 @@ import {
   type SessionStreamState,
 } from './session-stream-state';
 import { toSessionView } from './session-view';
+import { buildTokenUsageStats, EMPTY_SESSION_USAGE_TOTALS } from './token-estimation';
 
 const at = new Date('2026-01-01T00:00:00Z');
 
@@ -52,6 +53,7 @@ const idle: SessionStreamState['live'] = {
   pendingMessageIds: [],
   queuedMessageIds: [],
   rateLimitHold: null,
+  tokenUsage: buildTokenUsageStats(EMPTY_SESSION_USAGE_TOTALS),
 };
 
 const state: SessionStreamState = { session: toSessionView(sessionRow()), live: idle };
@@ -87,6 +89,7 @@ describe('applySessionStateEvent', () => {
       utilization: 97,
     };
     const command = { name: 'review', description: 'Review', argumentHint: '' };
+    const usage = buildTokenUsageStats({ ...EMPTY_SESSION_USAGE_TOTALS, resultCount: 1 });
     const cases: [SessionStateEvent, Partial<SessionLiveState>][] = [
       [{ kind: 'running', running: true }, { running: true }],
       [{ kind: 'commands', commands: [command] }, { commands: [command] }],
@@ -108,6 +111,7 @@ describe('applySessionStateEvent', () => {
       [{ kind: 'pending', messageIds: ['p'] }, { pendingMessageIds: ['p'] }],
       [{ kind: 'queued', messageIds: ['q'] }, { queuedMessageIds: ['q'] }],
       [{ kind: 'rate_limit', hold }, { rateLimitHold: hold }],
+      [{ kind: 'token_usage', usage }, { tokenUsage: usage }],
     ];
     for (const [event, patch] of cases) {
       expect(applySessionStateEvent(state, event)).toEqual({

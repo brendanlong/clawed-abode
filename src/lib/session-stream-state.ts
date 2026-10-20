@@ -4,6 +4,7 @@ import { assertNeverFallback, type RetryState } from './claude-messages';
 import type { RateLimitHold } from './rate-limit';
 import type { BackgroundTask } from './session-status';
 import type { SessionView } from './session-view';
+import type { TokenUsageStats } from './token-estimation';
 import type { SessionStreamOutput } from '@/server/routers/sse';
 
 /** Every latest-value field of a session, each kept current by its own stream event. */
@@ -21,6 +22,8 @@ export interface SessionLiveState {
   queuedMessageIds: string[];
   /** This session's subscription rate-limit pause, or null when it may work. */
   rateLimitHold: RateLimitHold | null;
+  /** Token totals, cost, and context fill. */
+  tokenUsage: TokenUsageStats;
 }
 
 /** The non-transcript state the per-session stream maintains on the client. */
@@ -68,6 +71,8 @@ export function applySessionStateEvent(
       return live({ queuedMessageIds: event.messageIds });
     case 'rate_limit':
       return live({ rateLimitHold: event.hold });
+    case 'token_usage':
+      return live({ tokenUsage: event.usage });
     default:
       // Compile-time guard: a new stream event kind must be handled here.
       return assertNeverFallback(event, state);

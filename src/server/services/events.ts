@@ -3,6 +3,7 @@ import type { Session } from '@/generated/prisma/client';
 import type { SlashCommand } from '@anthropic-ai/claude-agent-sdk';
 import type { RetryState } from '@/lib/claude-messages';
 import type { RateLimitHold } from '@/lib/rate-limit';
+import type { TokenUsageStats } from '@/lib/token-estimation';
 import { toSessionView, type SessionView } from '@/lib/session-view';
 import { processSingleton } from '@/lib/process-singleton';
 import { taskHasEndState, type BackgroundTask } from '@/lib/session-status';
@@ -24,6 +25,7 @@ import type { ParsedMessage } from './message-store';
  *   likewise the full set. Distinct from `pending`: those are with the SDK, these
  *   have never left the server (see doc/rate-limit-pause.md).
  * - `rate_limit`: this session's rate-limit hold, or null when it may work.
+ * - `token_usage`: the session's token/cost stats, after a persisted message moved them.
  */
 export type SessionStreamEvent =
   | { kind: 'message'; message: ParsedMessage }
@@ -35,7 +37,8 @@ export type SessionStreamEvent =
   | { kind: 'background'; tasks: BackgroundTask[] }
   | { kind: 'pending'; messageIds: string[] }
   | { kind: 'queued'; messageIds: string[] }
-  | { kind: 'rate_limit'; hold: RateLimitHold | null };
+  | { kind: 'rate_limit'; hold: RateLimitHold | null }
+  | { kind: 'token_usage'; usage: TokenUsageStats };
 
 /**
  * Events fanned out to the global session-list channel (`sse.onSessionListEvents`),
@@ -126,6 +129,10 @@ class SSEEventEmitter {
   emitRateLimitHold(sessionId: string, hold: RateLimitHold | null): void {
     this.emitSession(sessionId, { kind: 'rate_limit', hold });
     this.emitList({ kind: 'rate_limit', sessionId, paused: hold !== null });
+  }
+
+  emitTokenUsage(sessionId: string, usage: TokenUsageStats): void {
+    this.emitSession(sessionId, { kind: 'token_usage', usage });
   }
 
   onSessionEvents(sessionId: string, callback: (event: SessionStreamEvent) => void): () => void {

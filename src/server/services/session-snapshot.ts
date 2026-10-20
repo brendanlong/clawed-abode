@@ -13,6 +13,8 @@ import {
 import { queuedMessageIds } from './prompt-queue';
 import { currentHold } from './rate-limit-pause';
 import { getSessionCommands } from './session-commands';
+import { getSessionUsageTotals } from './session-usage';
+import { buildTokenUsageStats } from '@/lib/token-estimation';
 import {
   hasMessagesThrough,
   loadHistoryPage,
@@ -28,20 +30,25 @@ export interface SessionSnapshot extends SessionStreamState {
 
 /**
  * Current value of every latest-value field the per-session stream carries. All
- * but `queuedMessageIds` are in-memory only (lost on restart; `rateLimitHold` is
- * recomputed from persisted readings).
+ * but `queuedMessageIds` and `tokenUsage` are in-memory only (lost on restart;
+ * `rateLimitHold` is recomputed from persisted readings).
  */
 async function loadLiveState(sessionId: string): Promise<SessionLiveState> {
+  const [queued, usageTotals] = await Promise.all([
+    queuedMessageIds(sessionId),
+    getSessionUsageTotals(sessionId),
+  ]);
   return {
     running: isClaudeRunning(sessionId),
     commands: getSessionCommands(sessionId),
     retry: getSessionRetry(sessionId),
     backgroundTasks: getSessionBackgroundTasks(sessionId),
     pendingMessageIds: getPendingMessageIds(sessionId),
-    queuedMessageIds: await queuedMessageIds(sessionId),
+    queuedMessageIds: queued,
     // The recompute's snapshot, the same source as the `rate_limit` channel and
     // the session list, so a snapshot can't contradict them.
     rateLimitHold: currentHold(sessionId),
+    tokenUsage: buildTokenUsageStats(usageTotals),
   };
 }
 

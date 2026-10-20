@@ -7,10 +7,8 @@ import {
   applyHistorySnapshot,
   mergeMessageIntoCache,
   removeMessageFromCache,
-  isPartialMessageId,
 } from '@/lib/message-cache';
 import { applySessionStateEvent, type SessionStreamState } from '@/lib/session-stream-state';
-import { affectsTokenUsage } from '@/lib/token-estimation';
 import { historyQueryInput } from '@/hooks/useSessionMessages';
 
 /**
@@ -64,12 +62,6 @@ export function useSessionStream(sessionId: string) {
             setHistory(historyQueryInput(sessionId), (old) =>
               mergeMessageIntoCache(old, event.message)
             );
-            if (
-              !isPartialMessageId(event.message.id) &&
-              affectsTokenUsage(event.message.type, event.message.content)
-            ) {
-              void utils.claude.getTokenUsage.refetch({ sessionId });
-            }
             // Readings move per API call, but a turn's end is often enough.
             if (event.message.type === 'result') {
               void utils.rateLimit.getSessionUsage.invalidate({ sessionId });
@@ -84,8 +76,6 @@ export function useSessionStream(sessionId: string) {
             setHistory(historyQueryInput(sessionId), (old) =>
               applyHistorySnapshot(old, event.history)
             );
-            // Messages may have arrived while disconnected.
-            void utils.claude.getTokenUsage.invalidate({ sessionId });
             break;
         }
         queryClient.setQueryData<SessionStreamState>(sessionStreamStateKey(sessionId), (old) =>

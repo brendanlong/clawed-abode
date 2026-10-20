@@ -61,30 +61,4 @@ describe('message-store reads', () => {
     expect(oldest.messages.map((m) => m.content)).toEqual([{ n: 0 }, { n: 1 }]);
     expect(oldest.hasMore).toBe(false);
   });
-
-  it('finds the latest top-level assistant message, skipping subagents', async () => {
-    const session = await createTestSession();
-    expect(await store.loadLastTopLevelAssistantContent(session.id)).toBeUndefined();
-
-    await seed(session.id, [
-      { parent_tool_use_id: null, n: 0 },
-      { parent_tool_use_id: 'toolu_1', n: 1 },
-    ]);
-
-    expect(await store.loadLastTopLevelAssistantContent(session.id)).toEqual({
-      parent_tool_use_id: null,
-      n: 0,
-    });
-  });
-
-  it('picks the newest top-level assistant message, ignoring other types', async () => {
-    const session = await createTestSession();
-    // The newest has no parent_tool_use_id key at all, which is top-level too.
-    await seed(session.id, [{ parent_tool_use_id: null, n: 0 }, { n: 1 }]);
-    await testPrisma.message.create({
-      data: { sessionId: session.id, sequence: 2, type: 'result', content: '{"n":2}' },
-    });
-
-    expect(await store.loadLastTopLevelAssistantContent(session.id)).toEqual({ n: 1 });
-  });
 });

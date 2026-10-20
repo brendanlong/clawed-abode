@@ -5,6 +5,7 @@ import type { SessionStreamEvent, SessionListEvent } from '../services/events';
 import { TRPCError, tracked } from '@trpc/server';
 import { loadSessionSnapshot, type SessionSnapshot } from '../services/session-snapshot';
 import { isPartialMessageId } from '@/lib/message-cache';
+import { assertNeverFallback } from '@/lib/claude-messages';
 import { formatResumeToken, parseResumeToken, EMPTY_WATERMARK } from '@/lib/sse-resume';
 
 /**
@@ -36,9 +37,8 @@ interface EventQueueOptions<T> {
   maxQueued?: number;
   /**
    * Events with the same key supersede each other: a new one drops the buffered one
-   * and is appended, so it stays ordered after anything pushed in between. Used for
-   * partial-message snapshots, which each carry the whole accumulated message, so a
-   * stalled consumer holds one snapshot per stream rather than one per delta.
+   * and is appended, so it stays ordered after anything pushed in between. Only for
+   * events that carry their whole state (see {@link sessionEventCoalesceKey}).
    */
   coalesceKey?: (event: T) => string | undefined;
 }
@@ -121,8 +121,35 @@ async function* drainEventQueue<T, R>(
   }
 }
 
-const partialMessageKey = (event: SessionStreamEvent) =>
-  event.kind === 'message' && isPartialMessageId(event.message.id) ? event.message.id : undefined;
+/**
+ * Coalescing key for the per-session stream's buffer. Latest-value events each
+ * carry the field's whole value, so only the newest of each kind matters; a
+ * partial message carries the whole accumulated message, so only the newest per
+ * stream matters. Complete messages and removals are deltas and never coalesce.
+ * This bounds what a stalled consumer buffers by the number of persisted
+ * messages rather than by every state flip.
+ */
+export function sessionEventCoalesceKey(event: SessionStreamEvent): string | undefined {
+  switch (event.kind) {
+    case 'message':
+      return isPartialMessageId(event.message.id) ? `partial:${event.message.id}` : undefined;
+    case 'message_removed':
+      return undefined;
+    case 'running':
+    case 'commands':
+    case 'session':
+    case 'retry':
+    case 'background':
+    case 'pending':
+    case 'queued':
+    case 'rate_limit':
+    case 'token_usage':
+      return event.kind;
+    default:
+      // Compile-time guard: a new event kind must decide whether it coalesces.
+      return assertNeverFallback(event, undefined);
+  }
+}
 
 export const sseRouter = router({
   // Single multiplexed stream of all event kinds for one session, self-sufficient:
@@ -167,7 +194,7 @@ export const sseRouter = router({
       // Subscribe before any awaits so nothing emitted during the snapshot read is missed.
       const events = createEventQueue<SessionStreamEvent>(
         (push) => sseEvents.onSessionEvents(sessionId, push),
-        { coalesceKey: partialMessageKey }
+        { coalesceKey: sessionEventCoalesceKey }
       );
 
       try {

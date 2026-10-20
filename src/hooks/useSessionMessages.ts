@@ -13,7 +13,7 @@ export function historyQueryInput(sessionId: string) {
 }
 
 /**
- * Hook for reading message history with infinite-scroll pagination and token usage.
+ * Hook for reading message history with infinite-scroll pagination.
  *
  * The newest page and every live message come from the session stream
  * (`useSessionStream`), which writes them directly into this query's cache; the
@@ -48,13 +48,6 @@ export function useSessionMessages(sessionId: string) {
     },
   });
 
-  // Fetch token usage stats (computed server-side from all messages).
-  // Refetched by useSessionStream when complete messages arrive.
-  const { data: tokenUsageData } = trpc.claude.getTokenUsage.useQuery(
-    { sessionId },
-    { refetchOnWindowFocus: false }
-  );
-
   // Flatten the pages into chronological order. pages[0] is the newest (it is
   // also where the SSE stream inserts live messages, by sequence); each later
   // page is an older backward fetch. Each page's messages are already chronological.
@@ -76,6 +69,5 @@ export function useSessionMessages(sessionId: string) {
     isFetchingMore: isFetchingNextPage,
     hasMore: hasNextPage ?? false,
     fetchMore: fetchNextPage,
-    tokenUsage: tokenUsageData,
   };
 }

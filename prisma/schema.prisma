@@ -62,7 +62,7 @@ model Session {
   usageAlertFiveHour      Int?
   usageAlertWeekly        Int?
 
-  linkedPullRequest  PullRequest?       @relation(fields: [pullRequestId], references: [id], onDelete: SetNull)
+  linkedPullRequest  PullRequest?         @relation(fields: [pullRequestId], references: [id], onDelete: SetNull)
   messages           Message[]
   queuedPrompts      QueuedPrompt[]
   usage              SessionUsage?
@@ -161,21 +161,27 @@ model RateLimitWindow {
   resetsAt    DateTime
 }
 
-// Running token/cost totals, folded in as result and system/init messages are
-// inserted so reading them never rescans the transcript (see src/server/services/session-usage.ts).
+// Running token/cost totals, folded in as result, system/init and top-level assistant
+// messages are inserted so reading them never rescans the transcript (see src/server/services/session-usage.ts).
 // A separate table so the counters stay out of every Session payload.
 // Has CHECK constraints (see McpServer): contextWindows.
 model SessionUsage {
-  sessionId             String  @id
-  resultCount           Int     @default(0)
-  inputTokens           BigInt  @default(0) // Sum of per-turn result usage
-  outputTokens          BigInt  @default(0)
-  cacheReadTokens       BigInt  @default(0)
-  cacheCreationTokens   BigInt  @default(0)
-  closedSegmentsCostUsd Float   @default(0) // Final cumulative cost of each query process that has since reset
-  currentSegmentCostUsd Float   @default(0) // Latest cumulative cost reported by the current query process
-  contextWindows        String  @default("{}") // JSON: model -> latest reported context window
-  model                 String? // From the first system/init
+  sessionId                   String  @id
+  resultCount                 Int     @default(0)
+  inputTokens                 BigInt  @default(0) // Sum of per-turn result usage
+  outputTokens                BigInt  @default(0)
+  cacheReadTokens             BigInt  @default(0)
+  cacheCreationTokens         BigInt  @default(0)
+  closedSegmentsCostUsd       Float   @default(0) // Final cumulative cost of each query process that has since reset
+  currentSegmentCostUsd       Float   @default(0) // Latest cumulative cost reported by the current query process
+  contextWindows              String  @default("{}") // JSON: model -> latest reported context window
+  model                       String? // From the first system/init
+  // Usage of the latest top-level (main-agent) assistant message: the current context fill
+  lastCallInputTokens         BigInt  @default(0)
+  lastCallOutputTokens        BigInt  @default(0)
+  lastCallCacheReadTokens     BigInt  @default(0)
+  lastCallCacheCreationTokens BigInt  @default(0)
+  lastCallModel               String?
 
   session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 }

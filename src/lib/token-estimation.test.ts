@@ -1,11 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import {
-  affectsTokenUsage,
   buildTokenUsageStats,
   EMPTY_SESSION_USAGE_TOTALS,
   extractResultUsage,
+  extractTopLevelAssistantUsage,
   formatPercentage,
   formatTokenCount,
+  type LastCallUsage,
   type SessionUsageTotals,
 } from './token-estimation';
 
@@ -56,17 +57,13 @@ describe('token-estimation', () => {
       ...EMPTY_SESSION_USAGE_TOTALS,
       ...overrides,
     });
-    const assistant = (
-      usage: Record<string, number>,
-      extra: { model?: string; parent_tool_use_id?: string | null } = {}
-    ) => ({
-      type: 'assistant',
-      parent_tool_use_id: extra.parent_tool_use_id ?? null,
-      message: { usage, ...(extra.model && { model: extra.model }) },
+    const lastCall = (usage: Partial<LastCallUsage>): LastCallUsage => ({
+      ...EMPTY_SESSION_USAGE_TOTALS.lastCall,
+      ...usage,
     });
 
     it('should return zero stats for an empty session', () => {
-      const result = buildTokenUsageStats(totals(), undefined);
+      const result = buildTokenUsageStats(totals());
 
       expect(result.inputTokens).toBe(0);
       expect(result.outputTokens).toBe(0);
@@ -76,14 +73,15 @@ describe('token-estimation', () => {
       expect(result.totalCostUsd).toBe(0);
     });
 
-    it('should use the last assistant usage as totals before the first result', () => {
+    it('should use the last call usage as totals before the first result', () => {
       const result = buildTokenUsageStats(
-        totals(),
-        assistant({
-          input_tokens: 1000,
-          output_tokens: 500,
-          cache_read_input_tokens: 100,
-          cache_creation_input_tokens: 50,
+        totals({
+          lastCall: lastCall({
+            inputTokens: 1000,
+            outputTokens: 500,
+            cacheReadTokens: 100,
+            cacheCreationTokens: 50,
+          }),
         })
       );
 
@@ -96,25 +94,30 @@ describe('token-estimation', () => {
 
     it('should use the result totals once a result exists', () => {
       const result = buildTokenUsageStats(
-        totals({ resultCount: 1, inputTokens: 80_000, outputTokens: 10_000 }),
-        assistant({ input_tokens: 50_000, output_tokens: 500, cache_read_input_tokens: 50_000 })
+        totals({
+          resultCount: 1,
+          inputTokens: 80_000,
+          outputTokens: 10_000,
+          lastCall: lastCall({ inputTokens: 50_000, outputTokens: 500, cacheReadTokens: 50_000 }),
+        })
       );
 
       expect(result.inputTokens).toBe(80_000);
       expect(result.outputTokens).toBe(10_000);
       expect(result.totalTokens).toBe(90_000);
-      // Context % from the assistant message: (50000 + 50000 + 500) / 200000
+      // Context % from the last call: (50000 + 50000 + 500) / 200000
       expect(result.percentUsed).toBeCloseTo(50.25, 1);
     });
 
     it('should count input, cache read, cache creation, and output toward context %', () => {
       const result = buildTokenUsageStats(
-        totals(),
-        assistant({
-          input_tokens: 1000,
-          output_tokens: 500,
-          cache_read_input_tokens: 40_000,
-          cache_creation_input_tokens: 8_500,
+        totals({
+          lastCall: lastCall({
+            inputTokens: 1000,
+            outputTokens: 500,
+            cacheReadTokens: 40_000,
+            cacheCreationTokens: 8_500,
+          }),
         })
       );
 
@@ -122,20 +125,9 @@ describe('token-estimation', () => {
       expect(result.percentUsed).toBeCloseTo(25, 1);
     });
 
-    it('should ignore a subagent assistant message', () => {
+    it('should fall back to total tokens for % before any top-level assistant message', () => {
       const result = buildTokenUsageStats(
-        totals({ resultCount: 1, inputTokens: 100_000, outputTokens: 50_000 }),
-        assistant({ input_tokens: 5_000, output_tokens: 200 }, { parent_tool_use_id: 'toolu_1' })
-      );
-
-      // Falls back to total tokens: (100k + 50k) / 200k
-      expect(result.percentUsed).toBe(75);
-    });
-
-    it('should fall back to total tokens for % when there is no assistant message', () => {
-      const result = buildTokenUsageStats(
-        totals({ resultCount: 1, inputTokens: 100_000, outputTokens: 50_000 }),
-        undefined
+        totals({ resultCount: 1, inputTokens: 100_000, outputTokens: 50_000 })
       );
 
       expect(result.percentUsed).toBe(75);
@@ -143,32 +135,31 @@ describe('token-estimation', () => {
 
     it('should cap percentage at 100%', () => {
       const result = buildTokenUsageStats(
-        totals(),
-        assistant({ input_tokens: 250_000, output_tokens: 1_000 })
+        totals({ lastCall: lastCall({ inputTokens: 250_000, outputTokens: 1_000 }) })
       );
 
       expect(result.percentUsed).toBe(100);
     });
 
-    it('should use the init model, falling back to the assistant model', () => {
-      expect(
-        buildTokenUsageStats(
-          totals({ model: 'claude-opus-4-5' }),
-          assistant({ input_tokens: 1 }, { model: 'claude-sonnet-4-6' })
-        ).model
-      ).toBe('claude-opus-4-5');
-      expect(
-        buildTokenUsageStats(
-          totals(),
-          assistant({ input_tokens: 1 }, { model: 'claude-sonnet-4-6' })
-        ).model
-      ).toBe('claude-sonnet-4-6');
+    it('should use the init model, falling back to the last call model', () => {
+      const call = lastCall({ inputTokens: 1, model: 'claude-sonnet-4-6' });
+      expect(buildTokenUsageStats(totals({ model: 'claude-opus-4-5', lastCall: call })).model).toBe(
+        'claude-opus-4-5'
+      );
+      expect(buildTokenUsageStats(totals({ lastCall: call })).model).toBe('claude-sonnet-4-6');
     });
 
     it('should use the reported context window', () => {
       const result = buildTokenUsageStats(
-        totals({ resultCount: 1, contextWindowByModel: { 'claude-opus-4-8[1m]': 1_000_000 } }),
-        assistant({ input_tokens: 250_000, output_tokens: 1_000, cache_read_input_tokens: 50_000 })
+        totals({
+          resultCount: 1,
+          contextWindowByModel: { 'claude-opus-4-8[1m]': 1_000_000 },
+          lastCall: lastCall({
+            inputTokens: 250_000,
+            outputTokens: 1_000,
+            cacheReadTokens: 50_000,
+          }),
+        })
       );
 
       expect(result.contextWindow).toBe(1_000_000);
@@ -180,8 +171,7 @@ describe('token-estimation', () => {
         totals({
           model: 'claude-sonnet-4-6',
           contextWindowByModel: { 'claude-opus-4-8[1m]': 1_000_000, 'claude-sonnet-4-6': 200_000 },
-        }),
-        undefined
+        })
       );
 
       expect(result.contextWindow).toBe(200_000);
@@ -189,8 +179,7 @@ describe('token-estimation', () => {
 
     it('should fall back to the largest context window when the main model has none', () => {
       const result = buildTokenUsageStats(
-        totals({ contextWindowByModel: { a: 150_000, b: 1_000_000 } }),
-        undefined
+        totals({ contextWindowByModel: { a: 150_000, b: 1_000_000 } })
       );
 
       expect(result.contextWindow).toBe(1_000_000);
@@ -198,8 +187,7 @@ describe('token-estimation', () => {
 
     it('should add the closed and current cost segments', () => {
       const result = buildTokenUsageStats(
-        totals({ resultCount: 4, closedSegmentsCostUsd: 0.5, currentSegmentCostUsd: 0.2 }),
-        undefined
+        totals({ resultCount: 4, closedSegmentsCostUsd: 0.5, currentSegmentCostUsd: 0.2 })
       );
 
       expect(result.totalCostUsd).toBeCloseTo(0.7, 4);
@@ -238,31 +226,36 @@ describe('token-estimation', () => {
     });
   });
 
-  describe('affectsTokenUsage', () => {
-    it('should be true for results, system/init, and top-level assistant messages', () => {
-      expect(affectsTokenUsage('result', { type: 'result' })).toBe(true);
+  describe('extractTopLevelAssistantUsage', () => {
+    it('should extract the usage and model of a top-level assistant message', () => {
       expect(
-        affectsTokenUsage('system', { type: 'system', subtype: 'init', model: 'claude-opus-4-5' })
-      ).toBe(true);
-      expect(
-        affectsTokenUsage('assistant', {
+        extractTopLevelAssistantUsage({
           type: 'assistant',
           parent_tool_use_id: null,
-          message: { usage: { input_tokens: 1 } },
+          message: {
+            model: 'claude-opus-4-5',
+            usage: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 3 },
+          },
         })
-      ).toBe(true);
+      ).toEqual({
+        inputTokens: 10,
+        outputTokens: 5,
+        cacheReadTokens: 3,
+        cacheCreationTokens: 0,
+        model: 'claude-opus-4-5',
+      });
     });
 
-    it('should be false for user, subagent, and other system messages', () => {
-      expect(affectsTokenUsage('user', { type: 'user', message: 'hi' })).toBe(false);
+    it('should ignore subagent messages, messages without usage, and other types', () => {
       expect(
-        affectsTokenUsage('assistant', {
+        extractTopLevelAssistantUsage({
           type: 'assistant',
           parent_tool_use_id: 'toolu_1',
           message: { usage: { input_tokens: 1 } },
         })
-      ).toBe(false);
-      expect(affectsTokenUsage('system', { type: 'system', subtype: 'error' })).toBe(false);
+      ).toBeNull();
+      expect(extractTopLevelAssistantUsage({ type: 'assistant', message: {} })).toBeNull();
+      expect(extractTopLevelAssistantUsage({ type: 'user', message: 'hi' })).toBeNull();
     });
   });
 });

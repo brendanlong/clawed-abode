@@ -10,13 +10,10 @@ import {
 } from '../services/claude-runner';
 import {
   loadHistoryPage,
-  loadLastTopLevelAssistantContent,
   markLastMessageAsInterrupted,
   persistSyntheticToolResult,
 } from '../services/message-store';
-import { buildTokenUsageStats } from '@/lib/token-estimation';
 import { PROMPT_MAX_LENGTH } from '@/lib/types';
-import { getSessionUsageTotals } from '../services/session-usage';
 import {
   type ToolResponse,
   summarizeToolResponse,
@@ -139,14 +136,6 @@ export const claudeRouter = router({
       })
     )
     .query(({ input }) => loadHistoryPage(input.sessionId, input.cursor, input.limit)),
-
-  getTokenUsage: sessionProcedure.query(async ({ input }) => {
-    const [totals, assistantContent] = await Promise.all([
-      getSessionUsageTotals(input.sessionId),
-      loadLastTopLevelAssistantContent(input.sessionId),
-    ]);
-    return buildTokenUsageStats(totals, assistantContent);
-  }),
 
   // Stop a single running background task.
   stopBackgroundTask: protectedProcedure
