@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react';
+import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
 import { useVoicePlaybackContext } from '@/hooks/useVoicePlayback';
 import type { DisplayMessage } from '@/components/messages/types';
 
@@ -6,6 +7,8 @@ interface TranscriptScrollOptions {
   messages: DisplayMessage[];
   hasMore: boolean;
   isLoading: boolean;
+  /** The last older-page load failed (see `useInfiniteScroll`). */
+  loadFailed: boolean;
   onLoadMore: () => void;
 }
 
@@ -19,10 +22,10 @@ export function useTranscriptScroll({
   messages,
   hasMore,
   isLoading,
+  loadFailed,
   onLoadMore,
 }: TranscriptScrollOptions) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const topSentinelRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const isAtBottomRef = useRef(true);
   const hasInitialScrolled = useRef(false);
@@ -31,30 +34,25 @@ export function useTranscriptScroll({
   const { isPlaying: voiceIsPlaying, currentMessageId: voiceCurrentMessageId } =
     useVoicePlaybackContext();
 
-  // Manual IntersectionObserver to detect when sentinel enters viewport
-  // Uses the scroll container as root so rootMargin works relative to the container
-  useEffect(() => {
-    const container = containerRef.current;
-    const sentinel = topSentinelRef.current;
-    if (!container || !sentinel) return;
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        const entry = entries[0];
-        if (entry?.isIntersecting && hasMore && !isLoading && hasInitialScrolled.current) {
-          onLoadMore();
-        }
-      },
-      {
-        root: container,
-        rootMargin: '100% 0px 0px 0px',
-        threshold: 0,
-      }
-    );
-
-    observer.observe(sentinel);
-    return () => observer.disconnect();
-  }, [hasMore, isLoading, onLoadMore]);
+  // Load older pages from the top sentinel, relative to the container so the
+  // margin reaches a container-height above it. Not before the initial scroll to
+  // the bottom: until then the top sentinel is in view of every transcript.
+  const { rootRef, sentinelRef: topSentinelRef } = useInfiniteScroll({
+    hasMore,
+    isLoading,
+    loadFailed,
+    onLoadMore: () => {
+      if (hasInitialScrolled.current) onLoadMore();
+    },
+    rootMargin: '100% 0px 0px 0px',
+  });
+  const setContainer = useCallback(
+    (element: HTMLDivElement | null) => {
+      containerRef.current = element;
+      rootRef(element);
+    },
+    [rootRef]
+  );
 
   const scrollToBottom = useCallback(() => {
     // Always use instant scroll to avoid race conditions with smooth animation.
@@ -186,5 +184,5 @@ export function useTranscriptScroll({
     }
   }, [voiceIsPlaying, scrollToBottom]);
 
-  return { containerRef, topSentinelRef, bottomRef };
+  return { containerRef: setContainer, topSentinelRef, bottomRef };
 }

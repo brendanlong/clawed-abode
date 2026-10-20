@@ -13,6 +13,8 @@ export interface PagedSessions {
   isLoading: boolean;
   hasMore: boolean;
   isFetchingMore: boolean;
+  /** The last next-page load failed. */
+  loadFailed: boolean;
   fetchMore: () => void;
 }
 
@@ -43,6 +45,7 @@ export function useSessionList({
     isLoading: query.isPending,
     hasMore: query.hasNextPage,
     isFetchingMore: query.isFetchingNextPage,
+    loadFailed: query.isFetchNextPageError,
     fetchMore: useCallback(() => void fetchNextPage(), [fetchNextPage]),
     refetch: useCallback(() => void refetch(), [refetch]),
   };

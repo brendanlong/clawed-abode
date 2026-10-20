@@ -16,11 +16,18 @@ export interface SessionListProps {
 }
 
 /** One paginated list of sessions; loads the next page as the sentinel scrolls into view. */
-function SessionListSection({ sessions, hasMore, isFetchingMore, fetchMore }: PagedSessions) {
+function SessionListSection({
+  sessions,
+  hasMore,
+  isFetchingMore,
+  loadFailed,
+  fetchMore,
+}: PagedSessions) {
   const { sentinelRef } = useInfiniteScroll({
-    hasNextPage: hasMore,
-    isFetchingNextPage: isFetchingMore,
-    fetchNextPage: fetchMore,
+    hasMore,
+    isLoading: isFetchingMore,
+    loadFailed,
+    onLoadMore: fetchMore,
   });
 
   return (

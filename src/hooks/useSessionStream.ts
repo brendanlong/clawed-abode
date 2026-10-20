@@ -9,7 +9,7 @@ import {
   removeMessageFromCache,
 } from '@/lib/message-cache';
 import { applySessionStateEvent, type SessionStreamState } from '@/lib/session-stream-state';
-import { historyQueryInput } from '@/hooks/useSessionMessages';
+import { sessionTranscriptKey, type SessionTranscript } from '@/hooks/useSessionMessages';
 
 /**
  * Cache key of a session's {@link SessionStreamState}. Only the stream writes it;
@@ -56,26 +56,22 @@ export function useSessionStream(sessionId: string) {
     { sessionId },
     {
       onData: ({ data: event }) => {
-        const setHistory = utils.claude.getHistory.setInfiniteData;
+        const setTranscript = (
+          update: (old: SessionTranscript | undefined) => SessionTranscript | undefined
+        ) => queryClient.setQueryData<SessionTranscript>(sessionTranscriptKey(sessionId), update);
         switch (event.kind) {
           case 'message':
-            setHistory(historyQueryInput(sessionId), (old) =>
-              mergeMessageIntoCache(old, event.message)
-            );
+            setTranscript((old) => mergeMessageIntoCache(old, event.message));
             // Readings move per API call, but a turn's end is often enough.
             if (event.message.type === 'result') {
               void utils.rateLimit.getSessionUsage.invalidate({ sessionId });
             }
             return;
           case 'message_removed':
-            setHistory(historyQueryInput(sessionId), (old) =>
-              removeMessageFromCache(old, event.messageId)
-            );
+            setTranscript((old) => removeMessageFromCache(old, event.messageId));
             return;
           case 'snapshot':
-            setHistory(historyQueryInput(sessionId), (old) =>
-              applyHistorySnapshot(old, event.history)
-            );
+            setTranscript((old) => applyHistorySnapshot(old, event.history));
             break;
         }
         queryClient.setQueryData<SessionStreamState>(sessionStreamStateKey(sessionId), (old) =>

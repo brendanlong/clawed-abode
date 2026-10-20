@@ -8,7 +8,7 @@ import {
   removeMessageFromCache,
   HISTORY_PAGE_SIZE,
   partialMessageId,
-  type MessageInfiniteCache,
+  type TranscriptCache,
 } from '@/lib/message-cache';
 import { applySessionStateEvent, type SessionStreamState } from '@/lib/session-stream-state';
 import { formatResumeToken } from '@/lib/sse-resume';
@@ -38,7 +38,7 @@ let store: typeof import('../services/message-store');
 
 /** What the client keeps, maintained the way `useSessionStream` does. */
 interface Client {
-  history: MessageInfiniteCache<ParsedMessage> | undefined;
+  history: TranscriptCache<ParsedMessage> | undefined;
   state: SessionStreamState | undefined;
 }
 
@@ -57,9 +57,8 @@ function apply(client: Client, event: SessionStreamOutput): void {
   client.state = applySessionStateEvent(client.state, event);
 }
 
-/** Chronological ids: pages[0] is the newest page, each page oldest-first. */
-const messageIds = (client: Client) =>
-  [...(client.history?.pages ?? [])].reverse().flatMap((page) => page.messages.map((m) => m.id));
+/** Chronological ids. */
+const messageIds = (client: Client) => (client.history?.messages ?? []).map((m) => m.id);
 
 describe('sse.onSessionEvents', () => {
   beforeAll(async () => {
@@ -475,7 +474,7 @@ describe('sse.onSessionEvents', () => {
     const resumed = await open(session.id, token);
     apply(client, (await resumed.next()).event);
     resumed.close();
-    expect(client.history?.pages[0].messages.map((m) => [m.id, m.content])).toEqual([
+    expect(client.history?.messages.map((m) => [m.id, m.content])).toEqual([
       ['prompt', { text: 'prompt' }],
       [partialMessageId(null), { text: 'Hello there' }],
     ]);
