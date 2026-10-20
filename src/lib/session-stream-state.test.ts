@@ -64,7 +64,7 @@ describe('applySessionStateEvent', () => {
       kind: 'snapshot' as const,
       session,
       live,
-      history: { kind: 'page' as const, messages: [], hasMore: false },
+      history: { after: -1, messages: [], hasMore: false, partials: [] },
     };
     expect(applySessionStateEvent(undefined, snapshot)).toEqual({ session, live });
     expect(applySessionStateEvent(state, snapshot)).toEqual({ session, live });

@@ -1,6 +1,6 @@
 import type { SlashCommand } from '@anthropic-ai/claude-agent-sdk';
 import type { Session } from '@/generated/prisma/client';
-import type { RetryState } from './claude-messages';
+import { assertNeverFallback, type RetryState } from './claude-messages';
 import type { RateLimitHold } from './rate-limit';
 import type { BackgroundTask } from './session-status';
 import type { SessionView } from './session-view';
@@ -68,5 +68,8 @@ export function applySessionStateEvent(
       return live({ queuedMessageIds: event.messageIds });
     case 'rate_limit':
       return live({ rateLimitHold: event.hold });
+    default:
+      // Compile-time guard: a new stream event kind must be handled here.
+      return assertNeverFallback(event, state);
   }
 }

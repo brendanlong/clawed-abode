@@ -55,6 +55,15 @@ export async function loadMessagesAfter(
   return rows.map(toParsedMessage);
 }
 
+/** Whether any message has `sequence <= ceiling`. */
+export async function hasMessagesThrough(sessionId: string, ceiling: number): Promise<boolean> {
+  const row = await prisma.message.findFirst({
+    where: { sessionId, sequence: { lte: ceiling } },
+    select: { id: true },
+  });
+  return row !== null;
+}
+
 /**
  * Decoded content of the latest top-level (main-agent) assistant message.
  * Subagent messages (`parent_tool_use_id` set) run in their own context, so they

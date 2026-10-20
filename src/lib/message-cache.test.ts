@@ -5,6 +5,7 @@ import {
   removeMessageFromCache,
   isPartialMessageId,
   partialMessageId,
+  type HistorySnapshot,
   type MessageInfiniteCache,
 } from './message-cache';
 
@@ -178,62 +179,79 @@ describe('mergeMessageIntoCache', () => {
 });
 
 describe('applyHistorySnapshot', () => {
-  it('replaces the whole cache with a fresh connection’s newest page', () => {
-    const result = applyHistorySnapshot(cache([[complete('x', 50)], [complete('w', 10)]]), {
-      kind: 'page',
-      messages: [complete('a', 90), complete('b', 91)],
-      hasMore: true,
-    });
+  const snapshot = (
+    after: number,
+    messages: Msg[],
+    extra: Partial<HistorySnapshot<Msg>> = {}
+  ): HistorySnapshot<Msg> => ({ after, messages, hasMore: after >= 0, partials: [], ...extra });
+
+  it('replaces a cache the snapshot doesn’t join, taking its hasMore', () => {
+    // An earlier mount's cache that many messages have since passed: a gap.
+    const result = applyHistorySnapshot(
+      cache([[complete('x', 50)], [complete('w', 10)]]),
+      snapshot(89, [complete('a', 90), complete('b', 91)], { hasMore: true })
+    );
     expect(result).toEqual({
       pages: [{ messages: [complete('a', 90), complete('b', 91)], hasMore: true }],
       pageParams: [null],
     });
   });
 
-  it('bootstraps from a page when nothing is cached', () => {
-    const result = applyHistorySnapshot<Msg>(undefined, {
-      kind: 'page',
-      messages: [],
-      hasMore: false,
-    });
-    expect(result).toEqual({ pages: [{ messages: [], hasMore: false }], pageParams: [null] });
-  });
-
-  it('merges a resumed connection’s messages after the watermark, keeping older pages', () => {
-    const result = applyHistorySnapshot(
-      cache([[complete('b', 1), complete('c', 2)], [complete('a', 0)]]),
-      {
-        kind: 'since',
-        after: 1,
-        messages: [complete('c', 2), complete('d', 3)],
-      }
+  it('bootstraps from the snapshot when nothing is cached, with the server’s hasMore', () => {
+    const result = applyHistorySnapshot<Msg>(
+      undefined,
+      snapshot(4, [complete('e', 5)], { hasMore: false })
     );
-    expect(result.pages.map((p) => p.messages)).toEqual([
-      [complete('b', 1), complete('c', 2), complete('d', 3)],
-      [complete('a', 0)],
-    ]);
+    expect(result).toEqual({
+      pages: [{ messages: [complete('e', 5)], hasMore: false }],
+      pageParams: [null],
+    });
   });
 
-  it('drops cached messages in the resumed range that the server no longer has', () => {
+  it('merges into a cache it joins, keeping older pages (the scroll-back)', () => {
+    const older = { messages: [complete('a', 0)], hasMore: true };
+    const result = applyHistorySnapshot(
+      {
+        pages: [{ messages: [complete('b', 1), complete('c', 2)], hasMore: true }, older],
+        pageParams: [null, 1],
+      },
+      snapshot(1, [complete('c', 2), complete('d', 3)])
+    );
+    expect(result).toEqual({
+      pages: [
+        { messages: [complete('b', 1), complete('c', 2), complete('d', 3)], hasMore: true },
+        older,
+      ],
+      pageParams: [null, 1],
+    });
+  });
+
+  it('drops cached messages in its range that the server no longer has', () => {
     // A `message_removed` lost while disconnected (or to a buffer overflow).
     const result = applyHistorySnapshot(
       cache([[complete('a', 0), complete('gone', 1), complete('c', 2)]]),
-      {
-        kind: 'since',
-        after: 0,
-        messages: [complete('c', 2)],
-      }
+      snapshot(0, [complete('c', 2)])
     );
     expect(result.pages[0].messages).toEqual([complete('a', 0), complete('c', 2)]);
   });
 
-  it('drops partials, which the stream re-sends whole', () => {
-    const result = applyHistorySnapshot(cache([[complete('a', 0), partial(null, 0)]]), {
-      kind: 'since',
-      after: 0,
-      messages: [],
-    });
-    expect(result.pages[0].messages).toEqual([complete('a', 0)]);
+  it('replaces cached rows in its range with its own, in place', () => {
+    // E.g. a row marked interrupted while the client was disconnected.
+    const updated = { ...complete('b', 1), content: { interrupted: true } };
+    const result = applyHistorySnapshot(
+      cache([[complete('b', 1)], [complete('a', 0)]]),
+      snapshot(0, [updated])
+    );
+    expect(result.pages.map((p) => p.messages)).toEqual([[updated], [complete('a', 0)]]);
+  });
+
+  it('replaces the cached partials with the snapshot’s', () => {
+    const live = { ...partial('tool-1', 1), content: { text: 'now' } };
+    const result = applyHistorySnapshot(
+      cache([[complete('a', 0), partial(null, 1)]]),
+      snapshot(-1, [complete('a', 0)], { partials: [live] })
+    );
+    expect(result.pages[0].messages).toEqual([complete('a', 0), live]);
   });
 });
 

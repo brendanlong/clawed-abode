@@ -35,7 +35,11 @@ const SUBSCRIPTION_USAGE_POLL_MS = 60_000;
 function SessionView({ sessionId }: { sessionId: string }) {
   // Single multiplexed SSE stream: opens with a snapshot of the session, its live
   // state, and the newest messages, then keeps all three current.
-  const { status: streamStatus } = useSessionStream(sessionId);
+  const {
+    status: streamStatus,
+    notFound: sessionNotFound,
+    reconnect: reconnectStream,
+  } = useSessionStream(sessionId);
 
   // Session state: data, start/stop/archive
   const {
@@ -142,11 +146,17 @@ function SessionView({ sessionId }: { sessionId: string }) {
     />
   );
 
-  // A terminal stream error before any snapshot means the server rejected the session.
-  if (!session && streamStatus !== 'error') {
+  const connectionStatus = (
+    <ConnectionStatusIndicator status={streamStatus} onReconnect={reconnectStream} />
+  );
+
+  if (!session && !sessionNotFound) {
     return (
-      <div className="flex-1 flex items-center justify-center">
-        <Spinner size="lg" />
+      <div className="flex-1 flex flex-col min-h-0">
+        <div className="flex-1 flex items-center justify-center">
+          <Spinner size="lg" />
+        </div>
+        {connectionStatus}
       </div>
     );
   }
@@ -206,6 +216,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
             </div>
           </>
         )}
+        {connectionStatus}
       </div>
     );
   }
@@ -259,7 +270,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
           />
         ) : (
           <>
-            <ConnectionStatusIndicator status={streamStatus} />
+            {connectionStatus}
             <ClaudeStatusIndicator
               isRunning={isClaudeRunning}
               retry={claudeRetry}

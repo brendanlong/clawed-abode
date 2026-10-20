@@ -65,6 +65,7 @@ import {
   insertPreparedMessage,
   prepareUserMessage,
   removeMessages,
+  type ParsedMessage,
 } from './message-store';
 import { cancelUnstartedCommands, discardUnreadPrompts } from './in-flight-commands';
 import { emitQueuedPrompts, enqueuePrompts, type PromptPayload } from './prompt-queue';
@@ -251,22 +252,26 @@ async function runSessionLoop(
       if (message.type === 'stream_event') {
         const partial = accumulator.accumulate(message);
         if (partial) {
-          sseEvents.emitNewMessage(sessionId, {
+          const event = {
             id: partialMessageId(partial.parent_tool_use_id),
             sessionId,
             sequence: nextPartialSequence,
             type: 'assistant',
             content: partial,
             createdAt: new Date(),
-          });
+          };
+          live.partials.set(event.id, event);
+          sseEvents.emitNewMessage(sessionId, event);
         }
         continue;
       }
 
       if (message.type === 'assistant') {
         accumulator.completeMessage(message.parent_tool_use_id);
+        live.partials.delete(partialMessageId(message.parent_tool_use_id));
       } else if (message.type === 'result') {
         accumulator.resetAll();
+        live.partials.clear();
       }
 
       applyCommandMessage(sessionId, message);
@@ -417,6 +422,7 @@ async function establishSessionQuery(
     pendingInput: null,
     toolSanitizations,
     pushedUuids: new Set(),
+    partials: new Map(),
   };
   live = established;
   state.live = established;
@@ -767,6 +773,11 @@ export const pullRequestWatchRunner: PullRequestWatchPort = {
   isTurnActive: isClaudeRunning,
   deliverMessage: deliverAppMessage,
 };
+
+/** The in-progress assistant messages' latest partials (seeds the client). */
+export function getActivePartials(sessionId: string): ParsedMessage[] {
+  return [...(sessions.get(sessionId)?.live?.partials.values() ?? [])];
+}
 
 /** Transcript ids of a session's not-yet-delivered messages (seeds the client). */
 export function getPendingMessageIds(sessionId: string): string[] {

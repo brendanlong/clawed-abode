@@ -4,6 +4,7 @@ import { HISTORY_PAGE_SIZE, type HistorySnapshot } from '@/lib/message-cache';
 import { EMPTY_WATERMARK } from '@/lib/sse-resume';
 import type { SessionLiveState, SessionStreamState } from '@/lib/session-stream-state';
 import {
+  getActivePartials,
   getPendingMessageIds,
   getSessionBackgroundTasks,
   getSessionRetry,
@@ -12,7 +13,12 @@ import {
 import { queuedMessageIds } from './prompt-queue';
 import { currentHold } from './rate-limit-pause';
 import { getSessionCommands } from './session-commands';
-import { loadHistoryPage, loadMessagesAfter, type ParsedMessage } from './message-store';
+import {
+  hasMessagesThrough,
+  loadHistoryPage,
+  loadMessagesAfter,
+  type ParsedMessage,
+} from './message-store';
 import { refreshStalePullRequests } from './session-branch-pr';
 
 /** What the per-session stream opens with (and re-sends on a buffer overflow). */
@@ -40,24 +46,26 @@ async function loadLiveState(sessionId: string): Promise<SessionLiveState> {
 }
 
 /**
- * The transcript part of a snapshot. Fresh connections get the newest page. A
- * resumed one gets everything after its watermark, widened to at least the newest
- * page so that the range the client must reconcile — where a cancelled prompt's
- * `message_removed` could have been missed — is always covered.
+ * The transcript part of a snapshot: the newest page, widened on a resumed
+ * connection to everything after its watermark. The newest page is always
+ * covered so that the range the client reconciles — where a cancelled prompt's
+ * `message_removed` could have been missed — always includes it.
  */
 async function loadHistorySnapshot(
   sessionId: string,
   resumeAfter: number | null
 ): Promise<HistorySnapshot<ParsedMessage>> {
+  const partials = getActivePartials(sessionId);
   const page = await loadHistoryPage(sessionId, null, HISTORY_PAGE_SIZE);
-  if (resumeAfter === null) return { kind: 'page', ...page };
   const pageFloor = page.messages.length > 0 ? page.messages[0].sequence - 1 : EMPTY_WATERMARK;
-  if (pageFloor <= resumeAfter) return { kind: 'since', after: pageFloor, messages: page.messages };
-  return {
-    kind: 'since',
-    after: resumeAfter,
-    messages: await loadMessagesAfter(sessionId, resumeAfter),
-  };
+  if (resumeAfter === null || pageFloor <= resumeAfter) {
+    return { after: pageFloor, messages: page.messages, hasMore: page.hasMore, partials };
+  }
+  const [messages, hasMore] = await Promise.all([
+    loadMessagesAfter(sessionId, resumeAfter),
+    hasMessagesThrough(sessionId, resumeAfter),
+  ]);
+  return { after: resumeAfter, messages, hasMore, partials };
 }
 
 /**

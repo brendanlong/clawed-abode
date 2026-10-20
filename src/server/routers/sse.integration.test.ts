@@ -7,6 +7,7 @@ import {
   mergeMessageIntoCache,
   removeMessageFromCache,
   HISTORY_PAGE_SIZE,
+  partialMessageId,
   type MessageInfiniteCache,
 } from '@/lib/message-cache';
 import { applySessionStateEvent, type SessionStreamState } from '@/lib/session-stream-state';
@@ -17,6 +18,13 @@ import type { SessionStreamOutput } from './sse';
 const mockRefreshStalePullRequests = vi.hoisted(() => vi.fn());
 vi.mock('../services/session-branch-pr', () => ({
   refreshStalePullRequests: mockRefreshStalePullRequests,
+}));
+
+// The runner holds partials only for a live SDK query, which these tests don't run.
+const mockGetActivePartials = vi.hoisted(() => vi.fn((): ParsedMessage[] => []));
+vi.mock('../services/claude-runner', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../services/claude-runner')>()),
+  getActivePartials: mockGetActivePartials,
 }));
 
 let sseRouter: typeof import('./sse').sseRouter;
@@ -120,7 +128,7 @@ describe('sse.onSessionEvents', () => {
         queuedMessageIds: [],
         rateLimitHold: null,
       },
-      history: { kind: 'page', hasMore: true },
+      history: { after: 1, hasMore: true, partials: [] },
     });
     if (event.kind !== 'snapshot') throw new Error('unreachable');
     expect(event.history.messages.map((m) => m.sequence)).toEqual(
@@ -218,14 +226,10 @@ describe('sse.onSessionEvents', () => {
     const { id, event } = await stream.next();
     stream.close();
 
-    expect(event).toMatchObject({
-      kind: 'snapshot',
-      session: { id: session.id },
-      history: { kind: 'since' },
-    });
-    if (event.kind !== 'snapshot' || event.history.kind !== 'since') throw new Error('unreachable');
+    expect(event).toMatchObject({ kind: 'snapshot', session: { id: session.id } });
+    if (event.kind !== 'snapshot') throw new Error('unreachable');
     // Everything after the watermark, widened to the whole newest page.
-    expect(event.history.after).toBe(-1);
+    expect(event.history).toMatchObject({ after: -1, hasMore: false });
     expect(event.history.messages.map((m) => m.id)).toEqual(['a', 'b', 'c']);
     // The counter keeps increasing across the reconnect (tRPC drops repeated ids).
     expect(id).toBe(formatResumeToken(2, 8));
@@ -239,8 +243,9 @@ describe('sse.onSessionEvents', () => {
     const { event } = await stream.next();
     stream.close();
 
-    if (event.kind !== 'snapshot' || event.history.kind !== 'since') throw new Error('unreachable');
-    expect(event.history.after).toBe(1);
+    if (event.kind !== 'snapshot') throw new Error('unreachable');
+    // Messages through the watermark exist, so the client may page back to them.
+    expect(event.history).toMatchObject({ after: 1, hasMore: true });
     expect(event.history.messages[0].sequence).toBe(2);
     expect(event.history.messages).toHaveLength(HISTORY_PAGE_SIZE + 3);
   });
@@ -275,9 +280,39 @@ describe('sse.onSessionEvents', () => {
 
     const { event } = await stream.next();
     stream.close();
-    expect(event).toMatchObject({ kind: 'snapshot', history: { kind: 'since' } });
+    expect(event).toMatchObject({ kind: 'snapshot', history: { after: -1 } });
     apply(client, event);
     expect(messageIds(client)).toEqual(['a', 'c']);
+  });
+
+  it('carries the in-progress output, which replaces the client’s stale partials', async () => {
+    const session = await createNoRepoSession();
+    await insert(session.id, 'prompt');
+    const client: Client = { history: undefined, state: undefined };
+    const first = await open(session.id);
+    const { id: token, event } = await first.next();
+    apply(client, event);
+    first.close();
+
+    // While disconnected the agent streamed further; the client's partial is stale.
+    const partialAt = (text: string) => ({
+      id: partialMessageId(null),
+      sessionId: session.id,
+      sequence: 1,
+      type: 'assistant',
+      content: { text },
+      createdAt: new Date(),
+    });
+    client.history = mergeMessageIntoCache(client.history, partialAt('Hel'));
+    mockGetActivePartials.mockReturnValueOnce([partialAt('Hello there')]);
+
+    const resumed = await open(session.id, token);
+    apply(client, (await resumed.next()).event);
+    resumed.close();
+    expect(client.history?.pages[0].messages.map((m) => [m.id, m.content])).toEqual([
+      ['prompt', { text: 'prompt' }],
+      [partialMessageId(null), { text: 'Hello there' }],
+    ]);
   });
 
   it('rejects an unknown session', async () => {

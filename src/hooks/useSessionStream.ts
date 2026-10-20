@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect } from 'react';
 import { skipToken, useQuery, useQueryClient } from '@tanstack/react-query';
 import { trpc } from '@/lib/trpc';
 import {
@@ -36,9 +37,14 @@ export function useSessionStreamState(sessionId: string): SessionStreamState | u
  * opens with a snapshot of all three, so nothing needs refetching around it (see
  * `sse.onSessionEvents`).
  *
- * Returns the subscription status for a UI indicator. `error` is terminal (tRPC
- * reconnects on its own from anything transient): the server rejected the
- * session, e.g. it doesn't exist.
+ * Returning to the tab (or coming back online) reconnects from scratch, so every
+ * return gets a fresh snapshot — which also re-arms the server's poll of the
+ * session's PR. A half-open connection would otherwise go unnoticed until tRPC's
+ * inactivity timeout, and a connection the `EventSource` gave up on (e.g. after an
+ * HTTP 503) would never come back.
+ *
+ * Returns the subscription status for a UI indicator, whether the server said the
+ * session doesn't exist, and `reconnect` for a manual retry after a terminal error.
  */
 export function useSessionStream(sessionId: string) {
   const utils = trpc.useUtils();
@@ -85,5 +91,22 @@ export function useSessionStream(sessionId: string) {
     }
   );
 
-  return { status: subscription.status };
+  const { reset } = subscription;
+  useEffect(() => {
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') reset();
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('online', reset);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('online', reset);
+    };
+  }, [reset]);
+
+  return {
+    status: subscription.status,
+    notFound: subscription.error?.data?.code === 'NOT_FOUND',
+    reconnect: reset,
+  };
 }

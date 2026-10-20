@@ -109,6 +109,7 @@ import type { PartialAssistantMessage } from './stream-accumulator';
 // claude-runner pulls in @/lib/prisma at module load.
 let sendUserMessage: typeof import('./claude-runner').sendUserMessage;
 let getPendingMessageIds: typeof import('./claude-runner').getPendingMessageIds;
+let getActivePartials: typeof import('./claude-runner').getActivePartials;
 let interruptClaude: typeof import('./claude-runner').interruptClaude;
 let stopSession: typeof import('./claude-runner').stopSession;
 let isClaudeRunning: typeof import('./claude-runner').isClaudeRunning;
@@ -359,6 +360,7 @@ describe('claude-runner persistent streaming loop', () => {
     const mod = await import('./claude-runner');
     sendUserMessage = mod.sendUserMessage;
     getPendingMessageIds = mod.getPendingMessageIds;
+    getActivePartials = mod.getActivePartials;
     interruptClaude = mod.interruptClaude;
     stopSession = mod.stopSession;
     isClaudeRunning = mod.isClaudeRunning;
@@ -707,6 +709,41 @@ describe('claude-runner persistent streaming loop', () => {
     const mainText = [{ type: 'text', text: 'main agent' }];
     await waitFor(() => isDeepStrictEqual(latestPartialContent(null), mainText));
     expect(latestPartialContent('task-1')).toEqual([{ type: 'text', text: 'sub' }]);
+
+    stopSession(sessionId);
+  });
+
+  it('holds each in-progress message’s latest partial until it completes', async () => {
+    const fake = makeFakeQuery();
+    _setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+    await sendUserMessage(sessionId, 'hello');
+    const activeText = () =>
+      getActivePartials(sessionId).map((m) => [
+        m.id,
+        (m.content as PartialAssistantMessage).message.content,
+      ]);
+
+    fake.emit(messageStart());
+    fake.emit(textBlockStart());
+    fake.emit(textDelta('main'));
+    fake.emit(messageStart('task-1'));
+    fake.emit(textBlockStart('task-1'));
+    fake.emit(textDelta('sub', 'task-1'));
+    await waitFor(() => getActivePartials(sessionId).length === 2);
+    expect(activeText()).toEqual([
+      [partialMessageId(null), [{ type: 'text', text: 'main' }]],
+      [partialMessageId('task-1'), [{ type: 'text', text: 'sub' }]],
+    ]);
+
+    // A complete message supersedes its own stream's partial…
+    fake.emit(assistant('sub', 'task-1'));
+    await waitFor(() => getActivePartials(sessionId).length === 1);
+    expect(activeText()).toEqual([[partialMessageId(null), [{ type: 'text', text: 'main' }]]]);
+
+    // …and the turn's result all of them.
+    fake.emit(result());
+    await waitFor(() => getActivePartials(sessionId).length === 0);
 
     stopSession(sessionId);
   });

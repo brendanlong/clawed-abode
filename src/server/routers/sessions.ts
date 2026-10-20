@@ -120,9 +120,11 @@ export const sessionsRouter = router({
     return { url: buildEditorUrl(env.CODE_SERVER_URL, workspaceDir) };
   }),
 
-  start: sessionProcedure.mutation(async ({ input }) => ({
-    session: toSessionView(await startSession(input.sessionId)),
-  })),
+  // Session-changing mutations return nothing: the change reaches clients on the
+  // session stream.
+  start: sessionProcedure.mutation(async ({ input }) => {
+    await startSession(input.sessionId);
+  }),
 
   rename: sessionProcedure
     .input(z.object({ name: sessionNameSchema }))
@@ -130,8 +132,7 @@ export const sessionsRouter = router({
       // Renaming only changes the display name; the session id and workspace
       // are untouched. lastActivityAt is deliberately not bumped so renaming
       // doesn't reorder the session list.
-      const session = await updateSession(input.sessionId, { name: input.name });
-      return { session: toSessionView(session) };
+      await updateSession(input.sessionId, { name: input.name });
     }),
 
   /**
@@ -147,12 +148,11 @@ export const sessionsRouter = router({
       })
     )
     .mutation(async ({ input }) => {
-      const session = await updateSession(input.sessionId, {
+      await updateSession(input.sessionId, {
         rateLimitPauseEnabled: input.enabled,
         rateLimitPauseThreshold: input.threshold,
       });
       await recomputeRateLimitHolds();
-      return { session: toSessionView(session) };
     }),
 
   // The session page calls this while it is on screen, so an agent's request for
@@ -164,24 +164,20 @@ export const sessionsRouter = router({
 
   setModel: sessionProcedure
     .input(z.object({ claudeModel: nullableModelSchema }))
-    .mutation(async ({ input }) => ({
-      session: toSessionView(
-        await configureSession(input.sessionId, { claudeModel: input.claudeModel })
-      ),
-    })),
+    .mutation(async ({ input }) => {
+      await configureSession(input.sessionId, { claudeModel: input.claudeModel });
+    }),
 
   /** Takes effect by restarting the session's query once it's idle (see applyLiveSettings). */
   setSessionTools: sessionProcedure
     .input(z.object({ enabled: z.boolean() }))
-    .mutation(async ({ input }) => ({
-      session: toSessionView(
-        await configureSession(input.sessionId, { sessionToolsEnabled: input.enabled })
-      ),
-    })),
+    .mutation(async ({ input }) => {
+      await configureSession(input.sessionId, { sessionToolsEnabled: input.enabled });
+    }),
 
-  stop: sessionProcedure.mutation(async ({ input }) => ({
-    session: toSessionView(await shutDownSession(input.sessionId)),
-  })),
+  stop: sessionProcedure.mutation(async ({ input }) => {
+    await shutDownSession(input.sessionId);
+  }),
 
   delete: sessionProcedure.mutation(async ({ input }) => {
     await archiveSession(input.sessionId);

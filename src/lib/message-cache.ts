@@ -152,39 +152,55 @@ export function removeMessageFromCache<M extends MessageLike, P = unknown>(
 }
 
 /**
- * The transcript part of a stream snapshot (see `sse.onSessionEvents`):
- * - `page`: a fresh connection's newest page. Replaces the cache — whatever an
- *   earlier mount cached may be separated from it by a gap.
- * - `since`: a resumed connection's every persisted message with
- *   `sequence > after`. Authoritative for that range, so it also heals a
- *   `message_removed` the client missed; older cached pages stay.
+ * The transcript part of a stream snapshot (see `sse.onSessionEvents`): every
+ * persisted message with `sequence > after` (oldest-first), whether older ones
+ * exist, and the in-progress partials. Authoritative for that range: what the
+ * server no longer has is gone, and its rows win over cached ones.
  */
-export type HistorySnapshot<M> =
-  | { kind: 'page'; messages: M[]; hasMore: boolean }
-  | { kind: 'since'; after: number; messages: M[] };
+export interface HistorySnapshot<M> {
+  after: number;
+  messages: M[];
+  hasMore: boolean;
+  partials: M[];
+}
 
 /**
- * Apply a stream snapshot's transcript to the infinite-query cache. Partials are
- * always dropped: the stream re-sends each in-progress one whole with its next delta.
+ * Apply a stream snapshot's transcript to the infinite-query cache. When the
+ * cache reaches into the snapshot's range, the two join without a gap, so the
+ * range is reconciled in place and older cached pages (the user's scroll-back)
+ * stay. Otherwise — an empty cache, or one an earlier mount left behind that
+ * many messages have since passed — the snapshot replaces it. Either way the
+ * cached partials are replaced by the snapshot's.
  */
 export function applyHistorySnapshot<M extends MessageLike, P = unknown>(
   old: MessageInfiniteCache<M, P> | undefined,
   snapshot: HistorySnapshot<M>
 ): MessageInfiniteCache<M, P> {
-  if (snapshot.kind === 'page' || !old || old.pages.length === 0) {
-    const hasMore = snapshot.kind === 'page' ? snapshot.hasMore : snapshot.after >= 0;
-    return { pages: [{ messages: snapshot.messages, hasMore }], pageParams: [null] as P[] };
+  const joins = old?.pages.some((page) =>
+    page.messages.some((m) => !isPartialMessageId(m.id) && m.sequence >= snapshot.after)
+  );
+  let result: MessageInfiniteCache<M, P>;
+  if (!old || !joins) {
+    result = {
+      pages: [{ messages: snapshot.messages, hasMore: snapshot.hasMore }],
+      pageParams: [null] as P[],
+    };
+  } else {
+    const fromSnapshot = new Map(snapshot.messages.map((m) => [m.id, m]));
+    result = {
+      ...old,
+      pages: old.pages.map((page) => ({
+        ...page,
+        messages: page.messages.flatMap((m) => {
+          if (isPartialMessageId(m.id)) return [];
+          if (m.sequence <= snapshot.after) return [m];
+          const current = fromSnapshot.get(m.id);
+          return current ? [current] : [];
+        }),
+      })),
+    };
+    for (const message of snapshot.messages) result = mergeMessageIntoCache(result, message);
   }
-  const present = new Set(snapshot.messages.map((m) => m.id));
-  let result: MessageInfiniteCache<M, P> = {
-    ...old,
-    pages: old.pages.map((page) => ({
-      ...page,
-      messages: page.messages.filter(
-        (m) => !isPartialMessageId(m.id) && (m.sequence <= snapshot.after || present.has(m.id))
-      ),
-    })),
-  };
-  for (const message of snapshot.messages) result = mergeMessageIntoCache(result, message);
+  for (const partial of snapshot.partials) result = mergeMessageIntoCache(result, partial);
   return result;
 }
