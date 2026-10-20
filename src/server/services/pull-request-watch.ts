@@ -198,20 +198,20 @@ async function withAuthorSessions(
   comments = new Map<string, PullRequestComment[]>()
 ): Promise<WatchedPullRequest[]> {
   const port = requirePort();
-  const sessions = await prisma.session.findMany({
+  const links = await prisma.sessionPullRequest.findMany({
     where: { pullRequestId: { in: prs.map((pr) => pr.id) } },
-    select: { id: true, name: true, status: true, agentName: true, pullRequestId: true },
-    orderBy: { lastActivityAt: 'desc' },
+    select: {
+      pullRequestId: true,
+      session: { select: { id: true, name: true, status: true, agentName: true } },
+    },
+    orderBy: { session: { lastActivityAt: 'desc' } },
   });
   return prs.map((pr) => ({
     repoFullName: pr.repoFullName,
     info: pr.info,
-    sessions: sessions
-      .filter((s) => s.pullRequestId === pr.id)
-      .map(({ pullRequestId: _pullRequestId, ...s }) => ({
-        ...s,
-        turnActive: port.isTurnActive(s.id),
-      })),
+    sessions: links
+      .filter((link) => link.pullRequestId === pr.id)
+      .map(({ session }) => ({ ...session, turnActive: port.isTurnActive(session.id) })),
     comments: comments.get(pr.id) ?? [],
   }));
 }

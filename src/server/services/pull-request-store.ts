@@ -77,3 +77,14 @@ async function copyToSessions(where: Prisma.Sql): Promise<string[]> {
 export async function copyLinkedPullRequest(sessionId: string): Promise<boolean> {
   return (await copyToSessions(Prisma.sql`"id" = ${sessionId}`)).length > 0;
 }
+
+/** Record that a session worked on a PR (see `SessionPullRequest`). */
+export async function linkSessionPullRequest(
+  sessionId: string,
+  pullRequestId: string
+): Promise<void> {
+  await prisma.$executeRaw`
+    INSERT INTO "SessionPullRequest" ("sessionId", "pullRequestId")
+    VALUES (${sessionId}, ${pullRequestId})
+    ON CONFLICT DO NOTHING`;
+}

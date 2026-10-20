@@ -6,10 +6,15 @@ import {
   isPrSnapshotStale,
   parsePullRequestJson,
   type PrRefreshCandidate,
+  type PullRequestRef,
 } from '@/lib/pull-request';
 import { sseEvents } from './events';
-import { fetchPullRequestForBranch } from './github';
-import { copyLinkedPullRequest, savePullRequest } from './pull-request-store';
+import { fetchPullRequest, fetchPullRequestForBranch } from './github';
+import {
+  copyLinkedPullRequest,
+  linkSessionPullRequest,
+  savePullRequest,
+} from './pull-request-store';
 import { getCurrentBranch } from './worktree-manager';
 
 const log = createLogger('session-branch-pr');
@@ -57,6 +62,7 @@ async function persistPrSnapshot(
     // undefined = lookup unavailable (no token / API error): keep what we had.
     if (pr !== undefined) {
       pullRequestId = pr ? await savePullRequest(repoFullName, pr, startedAt) : null;
+      if (pullRequestId) await linkSessionPullRequest(session.id, pullRequestId);
     }
   }
 
@@ -133,6 +139,30 @@ export function scheduleBranchPrRefresh(sessionId: string, workingDir: string): 
 export function cancelBranchPrRefresh(sessionId: string): void {
   clearTimeout(toolRefreshTimers.get(sessionId));
   toolRefreshTimers.delete(sessionId);
+}
+
+/**
+ * Store the PRs a session's tool call created and link the session to them
+ * (fire-and-forget, from the tool-call hook).
+ */
+export async function linkCreatedPullRequests(
+  sessionId: string,
+  refs: PullRequestRef[]
+): Promise<void> {
+  for (const { repoFullName, number } of refs) {
+    try {
+      const startedAt = new Date();
+      const pr = await fetchPullRequest(repoFullName, number);
+      await linkSessionPullRequest(sessionId, await savePullRequest(repoFullName, pr, startedAt));
+    } catch (err) {
+      log.warn('Failed to link a created PR', {
+        sessionId,
+        repoFullName,
+        number,
+        error: toError(err).message,
+      });
+    }
+  }
 }
 
 /**

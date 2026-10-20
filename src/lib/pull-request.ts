@@ -154,6 +154,9 @@ const BRANCH_OR_PR_COMMAND = new RegExp(
   ].join('|')
 );
 const PR_MCP_TOOL = /^mcp__.+__(?:create|merge|update)_pull_request/;
+const CREATE_PR_COMMAND = /\bgh\b[^;&|\n]*\spr\s+(?:create|new)\b/;
+const CREATE_PR_MCP_TOOL = /^mcp__.+__create_pull_request$/;
+const PR_URL = /https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)/g;
 
 const bashInputSchema = z.object({
   command: z.string(),
@@ -175,4 +178,34 @@ export function mayChangeBranchOrPr(toolName: string, toolInput: unknown): boole
     !parsed.data.run_in_background &&
     BRANCH_OR_PR_COMMAND.test(parsed.data.command)
   );
+}
+
+export interface PullRequestRef {
+  repoFullName: string;
+  number: number;
+}
+
+/**
+ * The PRs a finished tool call created, read from the URLs in its output
+ * (`gh pr create` prints one; the GitHub MCP tool returns one). This finds a
+ * session's PRs in any repo, not just on its clone's current branch.
+ */
+export function createdPullRequests(
+  toolName: string,
+  toolInput: unknown,
+  toolResponse: unknown
+): PullRequestRef[] {
+  const creates =
+    CREATE_PR_MCP_TOOL.test(toolName) ||
+    (toolName === 'Bash' &&
+      CREATE_PR_COMMAND.test(bashInputSchema.safeParse(toolInput).data?.command ?? ''));
+  if (!creates) return [];
+  const refs = new Map<string, PullRequestRef>();
+  for (const [, repoFullName, number] of JSON.stringify(toolResponse ?? null).matchAll(PR_URL)) {
+    refs.set(`${pullRequestRepoKey(repoFullName)}#${number}`, {
+      repoFullName,
+      number: Number(number),
+    });
+  }
+  return [...refs.values()];
 }

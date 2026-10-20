@@ -41,7 +41,11 @@ vi.mock('./builtin-mcp', async (importOriginal) => {
 });
 vi.mock('./input-sanitizer', () => ({ sanitizeToolOutputHook: vi.fn() }));
 const mockScheduleRefresh = vi.hoisted(() => vi.fn());
-vi.mock('./session-branch-pr', () => ({ scheduleBranchPrRefresh: mockScheduleRefresh }));
+const mockLinkCreated = vi.hoisted(() => vi.fn());
+vi.mock('./session-branch-pr', () => ({
+  scheduleBranchPrRefresh: mockScheduleRefresh,
+  linkCreatedPullRequests: mockLinkCreated,
+}));
 
 const settings = (overrides: Partial<MergedSessionSettings> = {}): MergedSessionSettings => ({
   systemPrompt: 'prompt',
@@ -332,7 +336,7 @@ describe('buildSdkOptions', () => {
   it('schedules a branch/PR refresh after a tool call that may change them', async () => {
     const { options } = await build(settings());
     const hooks = options.hooks!.PostToolUse![0].hooks;
-    const runHooks = (tool_name: string, command: string) =>
+    const runHooks = (tool_name: string, command: string, tool_response = '') =>
       Promise.all(
         hooks.map((hook) =>
           hook(
@@ -340,7 +344,7 @@ describe('buildSdkOptions', () => {
               hook_event_name: 'PostToolUse',
               tool_name,
               tool_input: { command },
-              tool_response: '',
+              tool_response,
               tool_use_id: 't1',
               session_id: 'sid',
               transcript_path: '',
@@ -361,6 +365,10 @@ describe('buildSdkOptions', () => {
     mockScheduleRefresh.mockClear();
     await runHooks('mcp__GitHub__merge_pull_request', '');
     expect(mockScheduleRefresh).toHaveBeenCalledWith('sid', '/w');
+    expect(mockLinkCreated).not.toHaveBeenCalled();
+
+    await runHooks('Bash', 'gh pr create --fill', 'https://github.com/o/r/pull/3\n');
+    expect(mockLinkCreated).toHaveBeenCalledWith('sid', [{ repoFullName: 'o/r', number: 3 }]);
   });
 });
 

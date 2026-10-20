@@ -127,7 +127,7 @@ describe('setPullRequestWatches', () => {
         repoPath: 'r',
         status: 'running',
         agentName: 'author-1',
-        pullRequestId: prId,
+        pullRequests: { create: { pullRequestId: prId } },
       },
     });
     busy.add(author.id);

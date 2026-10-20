@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  createdPullRequests,
   isPrSnapshotStale,
   mayChangeBranchOrPr,
   parsePullRequestJson,
@@ -221,5 +222,43 @@ describe('mayChangeBranchOrPr', () => {
   it('ignores non-Bash tools and malformed Bash input', () => {
     expect(mayChangeBranchOrPr('Read', { command: 'git push' })).toBe(false);
     expect(mayChangeBranchOrPr('Bash', { cmd: 'git push' })).toBe(false);
+  });
+});
+
+describe('createdPullRequests', () => {
+  it('reads the PR URL gh pr create prints, in any repo', () => {
+    expect(
+      createdPullRequests(
+        'Bash',
+        { command: 'git push -u origin HEAD && gh -R Other/Repo pr create --fill' },
+        { stdout: 'https://github.com/Other/Repo/pull/42\n', stderr: '' }
+      )
+    ).toEqual([{ repoFullName: 'Other/Repo', number: 42 }]);
+  });
+
+  it('reads the PR URL from the GitHub MCP tool, once per PR', () => {
+    const url = 'https://github.com/o/r.js/pull/7';
+    expect(
+      createdPullRequests('mcp__GitHub__create_pull_request', {}, [
+        { type: 'text', text: JSON.stringify({ url, html_url: url }) },
+      ])
+    ).toEqual([{ repoFullName: 'o/r.js', number: 7 }]);
+  });
+
+  it('ignores PRs a tool only mentions without creating them', () => {
+    const response = { stdout: 'https://github.com/o/r/pull/7' };
+    expect(createdPullRequests('Bash', { command: 'gh pr view 7' }, response)).toEqual([]);
+    expect(createdPullRequests('mcp__GitHub__pull_request_read', {}, response)).toEqual([]);
+    expect(createdPullRequests('Read', { command: 'gh pr create' }, response)).toEqual([]);
+  });
+
+  it('ignores the link git push suggests for a branch with no PR yet', () => {
+    expect(
+      createdPullRequests(
+        'Bash',
+        { command: 'git push && gh pr create --fill' },
+        { stderr: 'remote:   https://github.com/o/r/pull/new/feat\n', stdout: '' }
+      )
+    ).toEqual([]);
   });
 });

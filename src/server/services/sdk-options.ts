@@ -9,7 +9,7 @@ import { AGENT_NAME_ENV } from '@/lib/agent-name';
 import { env } from '@/lib/env';
 import { CLAUDE_CREDENTIAL_ENV_VARS, llmProxyEnv, usesLlmProxy } from '@/lib/llm-proxy';
 import { createLogger } from '@/lib/logger';
-import { mayChangeBranchOrPr } from '@/lib/pull-request';
+import { createdPullRequests, mayChangeBranchOrPr } from '@/lib/pull-request';
 import type { SanitizationInfo } from '@/lib/sanitization';
 import {
   CLAUDE_BIN_ENV,
@@ -24,7 +24,7 @@ import { buildBuiltinMcpServer } from './builtin-mcp';
 import type { GptAgentContext } from './gpt-agent';
 import { sanitizeToolOutputHook } from './input-sanitizer';
 import { writeSessionMcpConfig, removeSessionMcpConfig } from './mcp-config-file';
-import { scheduleBranchPrRefresh } from './session-branch-pr';
+import { linkCreatedPullRequests, scheduleBranchPrRefresh } from './session-branch-pr';
 import {
   ensureSessionsSliceLimits,
   getSessionScopeConfig,
@@ -219,12 +219,16 @@ export async function buildSdkOptions(params: {
           hooks: [
             (input) => sanitizeToolOutputHook(input, sessionId, recordSanitization),
             async (input) => {
-              if (
-                input.hook_event_name === 'PostToolUse' &&
-                mayChangeBranchOrPr(input.tool_name, input.tool_input)
-              ) {
+              if (input.hook_event_name !== 'PostToolUse') return {};
+              if (mayChangeBranchOrPr(input.tool_name, input.tool_input)) {
                 scheduleBranchPrRefresh(sessionId, workingDir);
               }
+              const created = createdPullRequests(
+                input.tool_name,
+                input.tool_input,
+                input.tool_response
+              );
+              if (created.length > 0) void linkCreatedPullRequests(sessionId, created);
               return {};
             },
           ],

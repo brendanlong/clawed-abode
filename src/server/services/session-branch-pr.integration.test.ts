@@ -16,6 +16,7 @@ const mockSseEvents = { emitSessionUpdate: vi.fn() };
 vi.mock('./events', () => ({ sseEvents: mockSseEvents }));
 
 vi.mock('./github', () => ({
+  fetchPullRequest: vi.fn(),
   fetchPullRequestForBranch: vi.fn(),
   fetchChecks: vi.fn().mockResolvedValue(null),
 }));
@@ -35,7 +36,9 @@ const fetched: GitHubPullRequest = {
 const pr: PullRequestInfo = { ...fetched, checks: null };
 
 // Imported after setupTestDb: both modules reach @/lib/prisma at load time.
+let fetchPullRequest: typeof import('./github').fetchPullRequest;
 let fetchPullRequestForBranch: typeof import('./github').fetchPullRequestForBranch;
+let linkCreatedPullRequests: typeof import('./session-branch-pr').linkCreatedPullRequests;
 let refreshStalePullRequests: typeof import('./session-branch-pr').refreshStalePullRequests;
 let scheduleBranchPrRefresh: typeof import('./session-branch-pr').scheduleBranchPrRefresh;
 let detectBranchAndPr: typeof import('./session-branch-pr').detectBranchAndPr;
@@ -63,15 +66,28 @@ function sessionRow(id: string) {
   return testPrisma.session.findUniqueOrThrow({ where: { id } });
 }
 
+async function linkedPrNumbers(sessionId: string): Promise<number[]> {
+  const links = await testPrisma.sessionPullRequest.findMany({
+    where: { sessionId },
+    select: { pullRequest: { select: { number: true } } },
+  });
+  return links.map((link) => link.pullRequest.number).sort((a, b) => a - b);
+}
+
 async function storedPr(id: string): Promise<PullRequestInfo | null> {
   return parsePullRequestJson((await sessionRow(id)).pullRequest);
 }
 
 beforeAll(async () => {
   await setupTestDb();
-  ({ fetchPullRequestForBranch } = await import('./github'));
-  ({ refreshStalePullRequests, scheduleBranchPrRefresh, detectBranchAndPr, cancelBranchPrRefresh } =
-    await import('./session-branch-pr'));
+  ({ fetchPullRequest, fetchPullRequestForBranch } = await import('./github'));
+  ({
+    refreshStalePullRequests,
+    scheduleBranchPrRefresh,
+    detectBranchAndPr,
+    cancelBranchPrRefresh,
+    linkCreatedPullRequests,
+  } = await import('./session-branch-pr'));
 });
 
 afterAll(async () => {
@@ -293,5 +309,50 @@ describe('detectBranchAndPr', () => {
     releaseSlow();
     await slow;
     expect((await storedPr(id))?.state).toBe('merged');
+  });
+  it('keeps the session linked to a PR after it switches to another branch', async () => {
+    const { id } = await createSession();
+    await detectBranchAndPr(id, noRepo);
+
+    await testPrisma.session.update({ where: { id }, data: { currentBranch: 'feat-b' } });
+    vi.mocked(fetchPullRequestForBranch).mockResolvedValue({
+      ...fetched,
+      number: 8,
+      headBranch: 'feat-b',
+    });
+    await detectBranchAndPr(id, noRepo);
+
+    expect((await storedPr(id))?.number).toBe(8);
+    expect(await linkedPrNumbers(id)).toEqual([7, 8]);
+  });
+});
+
+describe('linkCreatedPullRequests', () => {
+  it('stores and links a PR the session created outside its own clone', async () => {
+    const noRepo = await testPrisma.session.create({
+      data: { name: 'T', repoPath: '', status: 'running' },
+    });
+    vi.mocked(fetchPullRequest).mockResolvedValue({ ...fetched, number: 12 });
+
+    await linkCreatedPullRequests(noRepo.id, [{ repoFullName: 'Other/Repo', number: 12 }]);
+
+    expect(fetchPullRequest).toHaveBeenCalledWith('Other/Repo', 12);
+    expect(await linkedPrNumbers(noRepo.id)).toEqual([12]);
+    // The badge is still only for the current branch.
+    expect(await storedPr(noRepo.id)).toBeNull();
+  });
+
+  it('links the rest when one PR can’t be read', async () => {
+    const { id } = await createSession();
+    vi.mocked(fetchPullRequest)
+      .mockRejectedValueOnce(new Error('404'))
+      .mockResolvedValueOnce({ ...fetched, number: 13 });
+
+    await linkCreatedPullRequests(id, [
+      { repoFullName: 'o/r', number: 99 },
+      { repoFullName: 'o/r', number: 13 },
+    ]);
+
+    expect(await linkedPrNumbers(id)).toEqual([13]);
   });
 });
