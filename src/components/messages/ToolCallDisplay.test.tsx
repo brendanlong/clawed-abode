@@ -20,6 +20,35 @@ describe('ToolCallDisplay', () => {
       expect(screen.getByText('Bash')).toBeInTheDocument();
     });
 
+    it('shows a sanitization badge when the result was filtered', () => {
+      const tool: ToolCall = {
+        name: 'Bash',
+        id: 'test-san',
+        input: { command: 'curl example.com' },
+        result: {
+          ...inlineResult('page'),
+          sanitization: { found: ['html-comments'], warnings: [], removed: true },
+        },
+      };
+
+      render(<ToolCallDisplay tool={tool} />);
+
+      expect(screen.getByText('Hidden content removed')).toBeInTheDocument();
+    });
+
+    it('shows no sanitization badge on a clean result', () => {
+      const tool: ToolCall = {
+        name: 'Bash',
+        id: 'test-clean',
+        input: { command: 'ls' },
+        result: inlineResult('file1.txt'),
+      };
+
+      render(<ToolCallDisplay tool={tool} />);
+
+      expect(screen.queryByText('Hidden content removed')).not.toBeInTheDocument();
+    });
+
     it('renders description from input when present', () => {
       const tool: ToolCall = {
         name: 'Bash',
