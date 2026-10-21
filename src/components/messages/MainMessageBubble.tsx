@@ -9,7 +9,7 @@ import { CopyButton } from './CopyButton';
 import { SanitizationBadge } from './SanitizationBadge';
 import { MessageTimestamp } from './MessageTimestamp';
 import { renderContent } from './ContentRenderer';
-import { useMessageListContext } from './MessageListContext';
+import { useMessageListActions } from './MessageListContext';
 import { parseSanitizationInfo } from '@/lib/sanitization';
 import { MessagePlayButton } from '@/components/voice/MessagePlayButton';
 import { extractAssistantText } from '@/components/voice/playable-messages';
@@ -56,7 +56,7 @@ export function MainMessageBubble({
   }, [isAssistant, content, toolResults]);
 
   // Copying includes every tool output, so outputs not yet loaded are fetched first.
-  const loadToolResultText = useMessageListContext()?.loadToolResultText;
+  const loadToolResultText = useMessageListActions()?.loadToolResultText;
   const handleGetCopyText = useCallback(() => {
     if (!loadToolResultText || !hasElidedResults(toolCalls)) {
       return getCopyText(content, category, toolCalls);

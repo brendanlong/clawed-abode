@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useContext, type ReactNode } from 'react';
+import { createContext, useContext, useMemo, type ReactNode } from 'react';
 
 interface MessageListContextValue {
   /** The session whose transcript this is, for fetching elided tool-result bodies. */
@@ -32,8 +32,21 @@ interface MessageListContextValue {
   relocatedSubagentIds: Set<string>;
 }
 
-const MessageListContext = createContext<MessageListContextValue | null>(null);
+/** The fields that stay the same while the transcript changes. */
+type MessageListActions = Pick<
+  MessageListContextValue,
+  'sessionId' | 'loadToolResultText' | 'onAnswerQuestion' | 'onRespondToPlan'
+>;
 
+const MessageListContext = createContext<MessageListContextValue | null>(null);
+const MessageListActionsContext = createContext<MessageListActions | null>(null);
+
+/**
+ * Provides the whole value, plus its stable fields as a context of their own:
+ * the whole value changes with every transcript update, and every component
+ * reading it re-renders then, so message bubbles read only the stable part
+ * (see `messageBubblePropsEqual`).
+ */
 export function MessageListProvider({
   children,
   value,
@@ -41,9 +54,24 @@ export function MessageListProvider({
   children: React.ReactNode;
   value: MessageListContextValue;
 }) {
-  return <MessageListContext.Provider value={value}>{children}</MessageListContext.Provider>;
+  const { sessionId, loadToolResultText, onAnswerQuestion, onRespondToPlan } = value;
+  const actions = useMemo(
+    () => ({ sessionId, loadToolResultText, onAnswerQuestion, onRespondToPlan }),
+    [sessionId, loadToolResultText, onAnswerQuestion, onRespondToPlan]
+  );
+  return (
+    <MessageListActionsContext.Provider value={actions}>
+      <MessageListContext.Provider value={value}>{children}</MessageListContext.Provider>
+    </MessageListActionsContext.Provider>
+  );
 }
 
+/** The whole value; re-renders the caller on every transcript update. */
 export function useMessageListContext(): MessageListContextValue | null {
   return useContext(MessageListContext);
+}
+
+/** Only the stable fields; doesn't re-render the caller when the transcript changes. */
+export function useMessageListActions(): MessageListActions | null {
+  return useContext(MessageListActionsContext);
 }

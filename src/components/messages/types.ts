@@ -128,6 +128,20 @@ export interface DisplayMessage {
   createdAt: Date;
 }
 
+/** What a `MessageBubble` renders: a {@link DisplayMessage}, minus what it doesn't need. */
+export interface BubbleMessage {
+  id?: string;
+  type: string;
+  content: unknown;
+  createdAt?: Date;
+}
+
+export interface MessageBubbleProps {
+  message: BubbleMessage;
+  /** Results by tool_use id; the bubble reads only its own calls' entries. */
+  toolResults?: ToolResultMap;
+}
+
 export const todoItemSchema = z.object({
   content: z.string().catch(''),
   status: z.enum(['pending', 'in_progress', 'completed']).catch('pending'),
