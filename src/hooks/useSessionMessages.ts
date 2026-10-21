@@ -38,6 +38,12 @@ export function useSessionMessages(sessionId: string) {
   const transcript = useQuery<SessionTranscript>({
     queryKey: sessionTranscriptKey(sessionId),
     queryFn: skipToken,
+    // Every write already reuses the message objects it keeps (see message-cache),
+    // which is what lets unchanged bubbles skip re-rendering. Structural sharing
+    // would deep-compare the whole transcript on every write, and on a prepended
+    // page it compares each message with whichever one used to sit at its index,
+    // handing every bubble a new object.
+    structuralSharing: false,
   }).data;
 
   const {

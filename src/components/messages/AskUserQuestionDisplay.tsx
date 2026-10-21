@@ -6,7 +6,7 @@ import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { ColorBadge } from './ColorBadge';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
-import { useMessageListContext } from './MessageListContext';
+import { useMessageListActions } from './MessageListContext';
 import { lenient, lenientString, parseToolInput } from './tool-input';
 import type { ToolCall } from './types';
 
@@ -93,8 +93,7 @@ function RadioIcon({ selected }: { selected?: boolean }) {
  * For multiple questions or multi-select, selections are collected and a submit button appears.
  */
 export function AskUserQuestionDisplay({ tool }: { tool: ToolCall }) {
-  const ctx = useMessageListContext();
-  const onAnswerQuestion = ctx?.onAnswerQuestion;
+  const onAnswerQuestion = useMessageListActions()?.onAnswerQuestion;
   const toolUseId = tool.id;
 
   // Track selected options per question. For single-select: Set with 0 or 1 item.

@@ -2,7 +2,7 @@
 
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
-import { useMessageListContext } from './MessageListContext';
+import { useMessageListTranscript } from './MessageListContext';
 import { TaskDisplay, AgentIcon, getSubagentLabel, taskInputSchema } from './TaskDisplay';
 import { parseToolInput } from './tool-input';
 import type { ToolCall } from './types';
@@ -31,7 +31,7 @@ function SubagentStartedMarker({ tool }: { tool: ToolCall }) {
  * breadcrumb when MessageList is rendering the box somewhere else.
  */
 export function SubagentToolDisplay({ tool }: { tool: ToolCall }) {
-  const context = useMessageListContext();
+  const context = useMessageListTranscript();
   const relocated = tool.id ? context?.relocatedSubagentIds?.has(tool.id) : false;
   if (relocated) return <SubagentStartedMarker tool={tool} />;
   return <TaskDisplay tool={tool} />;

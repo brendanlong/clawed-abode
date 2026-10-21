@@ -10,6 +10,21 @@ import type { AppRouter } from '@/server/routers';
 import { projectMessageContent } from '@/lib/tool-result';
 import { MessageList } from './MessageList';
 import type { DisplayMessage } from './messages/types';
+import { VoicePlaybackProvider, defaultPlaybackState } from '@/hooks/useVoicePlayback';
+
+/** How many times each markdown text has rendered, to tell which bubbles re-rendered. */
+const markdownRenders = vi.hoisted(() => new Map<string, number>());
+
+vi.mock('@/components/MarkdownContent', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/components/MarkdownContent')>();
+  return {
+    ...actual,
+    MarkdownContent: (props: Parameters<typeof actual.MarkdownContent>[0]) => {
+      markdownRenders.set(props.content, (markdownRenders.get(props.content) ?? 0) + 1);
+      return actual.MarkdownContent(props);
+    },
+  };
+});
 
 /**
  * Render inside a tRPC provider whose fake server answers `claude.getToolResult`
@@ -46,12 +61,13 @@ function renderWithTrpc(ui: ReactElement, bodies: Record<string, string> = {}) {
   };
   const client = trpc.createClient({ links: [link] });
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const view = render(
+  const wrap = (node: ReactElement) => (
     <trpc.Provider client={client} queryClient={queryClient}>
-      <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>
+      <QueryClientProvider client={queryClient}>{node}</QueryClientProvider>
     </trpc.Provider>
   );
-  return { ...view, requests };
+  const view = render(wrap(ui));
+  return { ...view, rerender: (next: ReactElement) => view.rerender(wrap(next)), requests };
 }
 
 // Builds a minimal message list around one background Explore subagent:
@@ -503,5 +519,113 @@ describe('MessageList lazy tool-result bodies', () => {
       expect(await navigator.clipboard.readText()).toContain('command failed')
     );
     expect(requests).toEqual([]);
+  });
+});
+
+describe('MessageList re-rendering', () => {
+  const text = (id: string, sequence: number, body: string): DisplayMessage => ({
+    id,
+    type: 'assistant',
+    sequence,
+    createdAt: new Date(0),
+    content: { parent_tool_use_id: null, message: { content: [{ type: 'text', text: body }] } },
+  });
+  const call: DisplayMessage = {
+    id: 'call',
+    type: 'assistant',
+    sequence: 11,
+    createdAt: new Date(0),
+    content: {
+      parent_tool_use_id: null,
+      message: {
+        content: [
+          { type: 'text', text: 'running it' },
+          { type: 'tool_use', id: 'toolu_bash', name: 'Bash', input: { command: 'ls' } },
+        ],
+      },
+    },
+  };
+  const result: DisplayMessage = {
+    id: 'result',
+    type: 'user',
+    sequence: 12,
+    createdAt: new Date(0),
+    content: {
+      message: {
+        content: [{ type: 'tool_result', tool_use_id: 'toolu_bash', content: 'a.txt' }],
+      },
+    },
+  };
+  const partial = (body: string): DisplayMessage => ({
+    ...text('partial-main', 13, body),
+    content: {
+      partial: true,
+      parent_tool_use_id: null,
+      message: { content: [{ type: 'text', text: body }] },
+    },
+  });
+  const list = (messages: DisplayMessage[]) => (
+    <MessageList
+      sessionId="session-1"
+      messages={messages}
+      isLoading={false}
+      hasMore={false}
+      loadFailed={false}
+      onLoadMore={() => {}}
+    />
+  );
+  const renders = (body: string) => markdownRenders.get(body) ?? 0;
+  const loaded = [text('reply', 10, 'an earlier reply'), call];
+
+  it('re-renders only the streaming bubble on each partial', () => {
+    markdownRenders.clear();
+    const { rerender } = renderWithTrpc(list(loaded));
+    rerender(list([...loaded, partial('partial one')]));
+    rerender(list([...loaded, partial('partial one two')]));
+
+    expect(screen.getByText('partial one two')).toBeInTheDocument();
+    expect(renders('an earlier reply')).toBe(1);
+    expect(renders('running it')).toBe(1);
+  });
+
+  it('re-renders a bubble when its own result arrives, and no other', () => {
+    markdownRenders.clear();
+    const { rerender } = renderWithTrpc(list(loaded));
+    rerender(list([...loaded, result]));
+
+    expect(renders('running it')).toBe(2);
+    expect(renders('an earlier reply')).toBe(1);
+  });
+
+  it('renders only the new bubbles when an older page is prepended', () => {
+    markdownRenders.clear();
+    const { rerender } = renderWithTrpc(list(loaded));
+    rerender(list([text('older', 1, 'an older message'), ...loaded]));
+
+    expect(renders('an older message')).toBe(1);
+    expect(renders('an earlier reply')).toBe(1);
+    expect(renders('running it')).toBe(1);
+  });
+
+  it('does not re-render bubbles when the voice playback value changes', () => {
+    markdownRenders.clear();
+    // A new value on every render, as playback state moves, with read-aloud on.
+    const withVoice = (messages: DisplayMessage[], currentMessageId: string | null) => (
+      <VoicePlaybackProvider
+        value={{ ...defaultPlaybackState, enabled: true, isPlaying: true, currentMessageId }}
+      >
+        {list(messages)}
+      </VoicePlaybackProvider>
+    );
+    const { rerender } = renderWithTrpc(withVoice(loaded, null));
+    expect(screen.getAllByTitle('Read aloud')).toHaveLength(2);
+
+    rerender(withVoice(loaded, 'reply'));
+    rerender(withVoice([...loaded, partial('partial one')], 'reply'));
+
+    expect(renders('an earlier reply')).toBe(1);
+    expect(renders('running it')).toBe(1);
+    // The play button still follows playback: the playing message offers Pause.
+    expect(screen.getAllByTitle('Read aloud')).toHaveLength(1);
   });
 });

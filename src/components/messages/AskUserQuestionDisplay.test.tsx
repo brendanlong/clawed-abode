@@ -2,7 +2,8 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { AskUserQuestionDisplay } from './AskUserQuestionDisplay';
-import { MessageListProvider } from './MessageListContext';
+import type { MessageListActions } from './MessageListContext';
+import { TestMessageListProvider } from '@/test/message-list-provider';
 import type { ToolCall } from './types';
 import { elidedResult, inlineResult } from '@/test/tool-result-fixtures';
 
@@ -29,25 +30,11 @@ const QUESTION_TOOL: ToolCall = {
   },
 };
 
-function renderWithContext(
-  tool: ToolCall,
-  ctx: Partial<React.ComponentProps<typeof MessageListProvider>['value']> = {}
-) {
+function renderWithContext(tool: ToolCall, actions: Partial<MessageListActions> = {}) {
   return render(
-    <MessageListProvider
-      value={{
-        sessionId: 'session-1',
-        loadToolResultText: () => Promise.reject(new Error('unexpected fetch')),
-        latestTodoWriteId: null,
-        planContentByToolUseId: new Map(),
-        renderSubagentTranscript: () => null,
-        renderRetractedMessages: () => null,
-        relocatedSubagentIds: new Set(),
-        ...ctx,
-      }}
-    >
+    <TestMessageListProvider actions={actions}>
       <AskUserQuestionDisplay tool={tool} />
-    </MessageListProvider>
+    </TestMessageListProvider>
   );
 }
 

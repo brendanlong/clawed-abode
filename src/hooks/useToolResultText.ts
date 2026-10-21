@@ -3,7 +3,7 @@
 import { skipToken } from '@tanstack/react-query';
 import { TRPCClientError } from '@trpc/client';
 import { trpc } from '@/lib/trpc';
-import { useMessageListContext } from '@/components/messages/MessageListContext';
+import { useMessageListActions } from '@/components/messages/MessageListContext';
 
 /** TanStack's default retry count, kept for transient failures. */
 const MAX_RETRIES = 3;
@@ -30,7 +30,7 @@ export const TOOL_RESULT_QUERY_OPTIONS = {
  * concurrent fetches share one HTTP request through the batch link.
  */
 export function useToolResultText(messageId: string, toolUseId: string | undefined) {
-  const sessionId = useMessageListContext()?.sessionId;
+  const sessionId = useMessageListActions()?.sessionId;
   return trpc.claude.getToolResult.useQuery(
     sessionId && toolUseId ? { sessionId, messageId, toolUseId } : skipToken,
     TOOL_RESULT_QUERY_OPTIONS

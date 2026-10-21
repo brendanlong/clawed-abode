@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { MessageBubble } from './MessageBubble';
-import { MessageListProvider } from './MessageListContext';
+import { TestMessageListProvider } from '@/test/message-list-provider';
 import { NestedTranscript } from './NestedTranscript';
 import { formatFullTimestamp, formatMessageTimestamp } from '@/lib/message-timestamp';
-import { VoicePlaybackContext, defaultPlaybackState } from '@/hooks/useVoicePlayback';
+import { VoicePlaybackProvider, defaultPlaybackState } from '@/hooks/useVoicePlayback';
 import type { ToolResultMap, MessageContent } from './types';
 import { inlineResult } from '@/test/tool-result-fixtures';
 
@@ -510,9 +510,9 @@ describe('MessageBubble', () => {
         ['tool-1', inlineResult('SECRET FILE CONTENTS')],
       ]);
       render(
-        <VoicePlaybackContext.Provider value={{ ...defaultPlaybackState, enabled: true, play }}>
+        <VoicePlaybackProvider value={{ ...defaultPlaybackState, enabled: true, play }}>
           <MessageBubble message={message} toolResults={toolResults} />
-        </VoicePlaybackContext.Provider>
+        </VoicePlaybackProvider>
       );
       return play;
     }
@@ -564,19 +564,9 @@ describe('MessageBubble', () => {
       };
 
       render(
-        <MessageListProvider
-          value={{
-            sessionId: 'session-1',
-            loadToolResultText: () => Promise.reject(new Error('unexpected fetch')),
-            latestTodoWriteId: 'todo-1',
-            planContentByToolUseId: new Map(),
-            renderSubagentTranscript: () => null,
-            renderRetractedMessages: () => null,
-            relocatedSubagentIds: new Set(),
-          }}
-        >
+        <TestMessageListProvider transcript={{ latestTodoWriteId: 'todo-1' }}>
           <MessageBubble message={message} />
-        </MessageListProvider>
+        </TestMessageListProvider>
       );
 
       // TodoWriteDisplay should be rendered (check for its specific elements)
@@ -602,19 +592,9 @@ describe('MessageBubble', () => {
         } as MessageContent,
       };
       return (
-        <MessageListProvider
-          value={{
-            sessionId: 'session-1',
-            loadToolResultText: () => Promise.reject(new Error('unexpected fetch')),
-            latestTodoWriteId,
-            planContentByToolUseId: new Map(),
-            renderSubagentTranscript: () => null,
-            renderRetractedMessages: () => null,
-            relocatedSubagentIds: new Set(),
-          }}
-        >
+        <TestMessageListProvider transcript={{ latestTodoWriteId }}>
           <MessageBubble message={message} />
-        </MessageListProvider>
+        </TestMessageListProvider>
       );
     }
 
@@ -671,19 +651,13 @@ describe('MessageBubble', () => {
         };
 
         render(
-          <MessageListProvider
-            value={{
-              sessionId: 'session-1',
-              loadToolResultText: () => Promise.reject(new Error('unexpected fetch')),
-              latestTodoWriteId: null,
-              planContentByToolUseId: new Map(),
+          <TestMessageListProvider
+            transcript={{
               renderSubagentTranscript: (id: string) => <div>nested transcript for {id}</div>,
-              renderRetractedMessages: () => null,
-              relocatedSubagentIds: new Set(),
             }}
           >
             <MessageBubble message={message} />
-          </MessageListProvider>
+          </TestMessageListProvider>
         );
 
         expect(screen.getByText('Task')).toBeInTheDocument();

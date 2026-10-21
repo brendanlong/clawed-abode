@@ -9,11 +9,11 @@ import { CopyButton } from './CopyButton';
 import { SanitizationBadge } from './SanitizationBadge';
 import { MessageTimestamp } from './MessageTimestamp';
 import { renderContent } from './ContentRenderer';
-import { useMessageListContext } from './MessageListContext';
+import { useMessageListActions } from './MessageListContext';
 import { parseSanitizationInfo } from '@/lib/sanitization';
 import { MessagePlayButton } from '@/components/voice/MessagePlayButton';
 import { extractAssistantText } from '@/components/voice/playable-messages';
-import { useVoicePlaybackContext } from '@/hooks/useVoicePlayback';
+import { useVoicePlaybackEnabled } from '@/hooks/useVoicePlayback';
 import {
   buildToolCalls,
   getCopyText,
@@ -56,7 +56,7 @@ export function MainMessageBubble({
   }, [isAssistant, content, toolResults]);
 
   // Copying includes every tool output, so outputs not yet loaded are fetched first.
-  const loadToolResultText = useMessageListContext()?.loadToolResultText;
+  const loadToolResultText = useMessageListActions()?.loadToolResultText;
   const handleGetCopyText = useCallback(() => {
     if (!loadToolResultText || !hasElidedResults(toolCalls)) {
       return getCopyText(content, category, toolCalls);
@@ -75,11 +75,11 @@ export function MainMessageBubble({
   );
 
   // Voice playback: show play button on completed assistant messages with text
-  const playback = useVoicePlaybackContext();
+  const playbackEnabled = useVoicePlaybackEnabled();
   const textForPlayback = useMemo(() => {
-    if (!isAssistant || isPartial || !messageId || !playback.enabled) return null;
+    if (!isAssistant || isPartial || !messageId || !playbackEnabled) return null;
     return extractAssistantText(content);
-  }, [isAssistant, isPartial, messageId, playback.enabled, content]);
+  }, [isAssistant, isPartial, messageId, playbackEnabled, content]);
 
   return (
     <div className="max-w-[85%]">

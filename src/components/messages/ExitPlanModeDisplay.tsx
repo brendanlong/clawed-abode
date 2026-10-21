@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { MarkdownContent } from '@/components/MarkdownContent';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
-import { useMessageListContext } from './MessageListContext';
+import { useMessageListActions, useMessageListTranscript } from './MessageListContext';
 import { lenient, lenientString, parseToolInput } from './tool-input';
 import type { ToolCall } from './types';
 
@@ -74,12 +74,12 @@ function CheckIcon() {
  * Shows the full rendered plan content and approval status.
  */
 export function ExitPlanModeDisplay({ tool }: { tool: ToolCall }) {
-  const ctx = useMessageListContext();
-  const onRespondToPlan = ctx?.onRespondToPlan;
+  const onRespondToPlan = useMessageListActions()?.onRespondToPlan;
+  const transcript = useMessageListTranscript();
   const hasOutput = tool.result !== undefined;
   const isPending = !hasOutput;
   const toolUseId = tool.id;
-  const planContent = toolUseId ? ctx?.planContentByToolUseId?.get(toolUseId) : undefined;
+  const planContent = toolUseId ? transcript?.planContentByToolUseId.get(toolUseId) : undefined;
   const [copied, setCopied] = useState(false);
   const copyResetTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const [showFeedback, setShowFeedback] = useState(false);

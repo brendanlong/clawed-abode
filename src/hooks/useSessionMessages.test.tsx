@@ -184,6 +184,26 @@ describe('useSessionMessages with the session stream', () => {
     expect(result.current.hasMore).toBe(false);
   });
 
+  it('keeps the loaded message objects when an older page is prepended', async () => {
+    const { server, result } = renderSession();
+    await waitFor(() => expect(server.isStreamOpen()).toBe(true));
+    act(() =>
+      server.emit(snapshotEvent([message('c', 10), message('d', 11), message('e', 12)], true))
+    );
+    await waitFor(() => expect(ids(result.current.messages)).toEqual(['c', 'd', 'e']));
+    const loaded = result.current.messages;
+
+    act(() => void result.current.fetchMore());
+    await waitFor(() => expect(server.historyRequests).toHaveLength(1));
+    await act(async () =>
+      server.historyRequests[0].respond({ messages: [message('b', 9)], hasMore: false })
+    );
+    await waitFor(() => expect(ids(result.current.messages)).toEqual(['b', 'c', 'd', 'e']));
+
+    // The same objects, so their bubbles skip re-rendering (see messageBubblePropsEqual).
+    result.current.messages.slice(1).forEach((m, i) => expect(m).toBe(loaded[i]));
+  });
+
   it('keeps a removal that arrives while an older page is loading', async () => {
     const { server, result } = renderSession();
     await waitFor(() => expect(server.isStreamOpen()).toBe(true));

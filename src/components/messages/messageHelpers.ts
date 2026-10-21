@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type {
   ContentBlock,
   DisplayMessage,
+  MessageBubbleProps,
   MessageContent,
   ToolCall,
   ToolResult,
@@ -17,6 +18,7 @@ import {
 import { isRenderableBlock, isToolResultMessage, messageDisplay } from '@/lib/transcript-display';
 import { isPlanFile, reconstructPlansByToolUseId, type PlanEvent } from './plan-utils';
 import { summarizeToolResult, toolResultSummarySchema, toolResultText } from '@/lib/tool-result';
+import { memoizeByObject } from '@/lib/memoize-by-object';
 
 /**
  * Strip XML wrapper tags from Claude Code local command output.
@@ -337,6 +339,38 @@ export function buildToolCalls(content: MessageContent, toolResults?: ToolResult
 }
 
 /**
+ * Whether a `MessageBubble` can skip re-rendering. Lists hand every bubble the
+ * whole transcript's result map, rebuilt on every update (each streamed partial,
+ * each older page), so the bubble compares only the entries its own calls read;
+ * the rest of the transcript changing doesn't concern it. Results are compared
+ * by reference, which holds while their message stays cached (see `toToolResult`).
+ */
+export function messageBubblePropsEqual(
+  prev: MessageBubbleProps,
+  next: MessageBubbleProps
+): boolean {
+  const a = prev.message;
+  const b = next.message;
+  if (
+    a.id !== b.id ||
+    a.type !== b.type ||
+    a.content !== b.content ||
+    a.createdAt !== b.createdAt
+  ) {
+    return false;
+  }
+  if (prev.toolResults === next.toolResults) return true;
+  const blocks = (b.content as MessageContent | null | undefined)?.message?.content;
+  if (!Array.isArray(blocks)) return true;
+  return blocks.every(
+    (block) =>
+      block.type !== 'tool_use' ||
+      !block.id ||
+      prev.toolResults?.get(block.id) === next.toolResults?.get(block.id)
+  );
+}
+
+/**
  * Fill in the text of every result the server elided, so the calls carry their
  * full output (for copying). Fetches run in parallel and share one batch.
  */
@@ -438,9 +472,11 @@ const EMPTY_SUMMARY = summarizeToolResult('');
  * A `tool_result` block as a {@link ToolResult}. The server sets `summary`
  * exactly when it elided the body, so its presence (not whether it validates)
  * decides that the text must be fetched; an inline body is summarized here the
- * same way the server would.
+ * same way the server would. Memoized by block, so a result keeps its identity
+ * while its message stays cached and {@link messageBubblePropsEqual} can compare
+ * by reference (a block belongs to one message, so the id is fixed per block).
  */
-function toToolResult(messageId: string, block: ContentBlock): ToolResult {
+const toToolResult = memoizeByObject((block: ContentBlock, messageId: string): ToolResult => {
   if (block.summary !== undefined) {
     const parsed = toolResultSummarySchema.safeParse(block.summary);
     const summary = parsed.success ? parsed.data : EMPTY_SUMMARY;
@@ -448,7 +484,7 @@ function toToolResult(messageId: string, block: ContentBlock): ToolResult {
   }
   const text = toolResultText(block.content);
   return { messageId, is_error: block.is_error, summary: summarizeToolResult(text), text };
-}
+});
 
 /**
  * Pair every `tool_result` with its `tool_use`, and report where each result
@@ -471,7 +507,7 @@ export function buildToolResultMap(messages: DisplayMessage[]): {
     if (msg.type !== 'user') continue;
     for (const block of getToolResults(msg.content as MessageContent)) {
       if (block.tool_use_id && toolUseIds.has(block.tool_use_id)) {
-        resultMap.set(block.tool_use_id, toToolResult(msg.id, block));
+        resultMap.set(block.tool_use_id, toToolResult(block, msg.id));
         resultSequenceByToolUseId.set(block.tool_use_id, msg.sequence);
       }
     }

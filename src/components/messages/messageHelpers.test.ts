@@ -19,6 +19,7 @@ import {
   getPlanContentByToolUseId,
   buildTranscriptLayout,
   collectRetractedMessages,
+  messageBubblePropsEqual,
   type SubagentLifecycle,
 } from './messageHelpers';
 import type { ContentBlock, DisplayMessage, ToolCall } from './types';
@@ -745,6 +746,16 @@ describe('buildToolResultMap', () => {
     expect(resultSequenceByToolUseId.get('b')).toBe(3);
   });
 
+  it('returns the same result objects for the same messages, and new ones for new messages', () => {
+    const call = assistant(1, [toolUse('a', 'Read')]);
+    const result = toolResultMessage(2, [toolResult('a', 'file contents')]);
+    const first = buildToolResultMap([call, result]).resultMap.get('a');
+    expect(buildToolResultMap([call, result]).resultMap.get('a')).toBe(first);
+
+    const redelivered = toolResultMessage(2, [toolResult('a', 'file contents')]);
+    expect(buildToolResultMap([call, redelivered]).resultMap.get('a')).not.toBe(first);
+  });
+
   it('pairs results from subagent calls too', () => {
     const { resultMap } = buildToolResultMap([
       assistant(1, [toolUse('child', 'Read')], 'parent-1'),
@@ -1139,5 +1150,52 @@ describe('buildTranscriptLayout retraction', () => {
       true
     );
     expect(layout.retractedMessagesByFallbackId.size).toBe(0);
+  });
+});
+
+describe('messageBubblePropsEqual', () => {
+  const call = assistant(1, [toolUse('a', 'Read'), { type: 'text', text: 'reading' }]);
+  const text = assistant(3, [{ type: 'text', text: 'done' }]);
+  const resultA = toolResultMessage(2, [toolResult('a', 'contents')]);
+  const unrelated = toolResultMessage(4, [toolResult('other', 'x')]);
+  const results = (...messages: DisplayMessage[]) =>
+    buildToolResultMap([call, text, ...messages, assistant(9, [toolUse('other', 'Bash')])])
+      .resultMap;
+  const props = (message: DisplayMessage, toolResults = results(resultA)) => ({
+    message: { id: message.id, type: message.type, content: message.content },
+    toolResults,
+  });
+
+  it('skips a bubble whose message and own results are unchanged, under a rebuilt map', () => {
+    expect(messageBubblePropsEqual(props(call), props(call, results(resultA, unrelated)))).toBe(
+      true
+    );
+    expect(messageBubblePropsEqual(props(text), props(text, results()))).toBe(true);
+  });
+
+  it("re-renders a bubble when one of its calls' results arrives", () => {
+    expect(messageBubblePropsEqual(props(call, results()), props(call, results(resultA)))).toBe(
+      false
+    );
+  });
+
+  it("re-renders a bubble when one of its calls' results is replaced", () => {
+    const resent = toolResultMessage(2, [toolResult('a', 'contents')]);
+    expect(messageBubblePropsEqual(props(call), props(call, results(resent)))).toBe(false);
+  });
+
+  it('re-renders a bubble when its message content changes, as a streamed partial does', () => {
+    const grown = assistant(1, [toolUse('a', 'Read'), { type: 'text', text: 'reading more' }]);
+    expect(
+      messageBubblePropsEqual(props(call), { ...props(call), message: props(grown).message })
+    ).toBe(false);
+  });
+
+  it('re-renders a bubble when its timestamp is added or removed', () => {
+    const withTime = {
+      ...props(text),
+      message: { ...props(text).message, createdAt: new Date(0) },
+    };
+    expect(messageBubblePropsEqual(props(text), withTime)).toBe(false);
   });
 });

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useState, use } from 'react';
+import { useCallback, useMemo, useState, use } from 'react';
 import Link from 'next/link';
 import { AuthGuard } from '@/components/AuthGuard';
 import { Header } from '@/components/Header';
@@ -20,9 +20,9 @@ import { useClaudeState } from '@/hooks/useClaudeState';
 import { useSessionStream } from '@/hooks/useSessionStream';
 import { useVoiceConfig } from '@/hooks/useVoiceConfig';
 import {
+  VoicePlaybackProvider,
   defaultPlaybackState,
   useVoicePlayback,
-  VoicePlaybackContext,
 } from '@/hooks/useVoicePlayback';
 import { useAutoRead } from '@/hooks/useAutoRead';
 import { VoiceControlPanel } from '@/components/voice/VoiceControlPanel';
@@ -113,6 +113,11 @@ function SessionView({ sessionId }: { sessionId: string }) {
     messages,
     enabled: voiceConfig.autoRead && voiceConfig.ttsEnabled,
   });
+  // Memoized: every message bubble reads this context.
+  const playbackValue = useMemo(
+    () => (voiceConfig.enabled ? { ...voicePlayback, stop: stopPlayback } : defaultPlaybackState),
+    [voiceConfig.enabled, voicePlayback, stopPlayback]
+  );
 
   // Send a prompt (also stops any playback). It goes straight to the agent
   // whatever the turn state, so the client just sends. A running session is
@@ -225,9 +230,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
   }
 
   return (
-    <VoicePlaybackContext.Provider
-      value={voiceConfig.enabled ? { ...voicePlayback, stop: stopPlayback } : defaultPlaybackState}
-    >
+    <VoicePlaybackProvider value={playbackValue}>
       <div className="flex-1 flex flex-col min-h-0">
         <SessionHeader
           session={session}
@@ -300,7 +303,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
           </>
         )}
       </div>
-    </VoicePlaybackContext.Provider>
+    </VoicePlaybackProvider>
   );
 }
 

@@ -5,7 +5,7 @@ import { useState } from 'react';
 import { cn } from '@/lib/utils';
 import { ColorBadge } from './ColorBadge';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
-import { useMessageListContext } from './MessageListContext';
+import { useMessageListTranscript } from './MessageListContext';
 import { lenient, parseToolInput } from './tool-input';
 import { todoItemSchema, type ToolCall } from './types';
 
@@ -81,7 +81,7 @@ function ChecklistIcon() {
  * Supports auto-collapse behavior for non-latest items.
  */
 export function TodoWriteDisplay({ tool }: { tool: ToolCall }) {
-  const ctx = useMessageListContext();
+  const ctx = useMessageListTranscript();
   const isLatest = ctx ? tool.id === ctx.latestTodoWriteId : false;
   // Follows isLatest (so older lists collapse as new ones arrive) until the user
   // toggles it.

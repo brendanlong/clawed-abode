@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { memo, useMemo } from 'react';
 import { OctagonX } from 'lucide-react';
 
 import { RawJsonDisplay } from './RawJsonDisplay';
@@ -11,18 +11,20 @@ import { InjectedMessageDisplay } from './InjectedMessageDisplay';
 import { TaskNotificationDisplay } from './TaskNotificationDisplay';
 import { MainMessageBubble } from './MainMessageBubble';
 import { MessageTimestamp } from './MessageTimestamp';
-import { isRecognizedMessage } from './messageHelpers';
+import { isRecognizedMessage, messageBubblePropsEqual } from './messageHelpers';
 import { isTranscriptRow } from '@/lib/transcript-display';
 import { isPartialMessageId } from '@/lib/message-cache';
-import type { ToolResultMap, MessageContent } from './types';
+import type { MessageBubbleProps, MessageContent } from './types';
 
-export function MessageBubble({
+/**
+ * One transcript message. Memoized on its own fields and its own calls' results
+ * (see `messageBubblePropsEqual`), so a transcript update re-renders only the
+ * bubbles it touches.
+ */
+export const MessageBubble = memo(function MessageBubble({
   message,
   toolResults,
-}: {
-  message: { id?: string; type: string; content: unknown; createdAt?: Date };
-  toolResults?: ToolResultMap;
-}) {
+}: MessageBubbleProps) {
   const { type } = message;
   const content = useMemo(() => (message.content || {}) as MessageContent, [message.content]);
 
@@ -109,4 +111,4 @@ export function MessageBubble({
       createdAt={message.createdAt}
     />
   );
-}
+}, messageBubblePropsEqual);
