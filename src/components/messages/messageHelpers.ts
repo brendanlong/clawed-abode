@@ -684,6 +684,11 @@ export type TranscriptRow =
   | { kind: 'message'; sequence: number; message: DisplayMessage }
   | { kind: 'taskbox'; sequence: number; toolUseId: string; tool: ToolCall };
 
+/** A row's React key: unique across both kinds of row. */
+export function transcriptRowKey(row: TranscriptRow): string {
+  return row.kind === 'message' ? row.message.id : `taskbox-${row.toolUseId}`;
+}
+
 export interface TranscriptLayout {
   resultMap: ToolResultMap;
   subagentMessagesByToolUseId: Map<string, DisplayMessage[]>;

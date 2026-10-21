@@ -18,6 +18,7 @@ import {
   getLatestTodoWriteId,
   getPlanContentByToolUseId,
   buildTranscriptLayout,
+  transcriptRowKey,
   collectRetractedMessages,
   messageBubblePropsEqual,
   type SubagentLifecycle,
@@ -1035,6 +1036,17 @@ describe('buildTranscriptLayout', () => {
     );
     expect(rowKeys(layout)).toEqual(['m1']);
     expect(layout.relocatedSubagentIds.size).toBe(0);
+  });
+});
+
+describe('transcriptRowKey', () => {
+  it('keys a message row by its id and a box row apart from any message id', () => {
+    const message = assistant(1, [{ type: 'text', text: 'hi' }]);
+    expect(transcriptRowKey({ kind: 'message', sequence: 1, message })).toBe('m1');
+    const tool: ToolCall = { name: 'Agent', id: 'm1', input: {} };
+    expect(transcriptRowKey({ kind: 'taskbox', sequence: 2, toolUseId: 'm1', tool })).toBe(
+      'taskbox-m1'
+    );
   });
 });
 
