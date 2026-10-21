@@ -8,6 +8,7 @@
  */
 
 import { z } from 'zod';
+import { memoizeByObject } from './memoize-by-object';
 
 /**
  * - `row`: renders as its own top-level transcript row (counts toward a history page).
@@ -77,18 +78,34 @@ export function isRenderableBlock(block: {
   }
 }
 
-/** The fields the classifier reads, validated once. */
-function parseContent(content: unknown) {
+interface ParsedContent {
+  subtype: string | undefined;
+  parentToolUseId: string | null;
+  /** `message.content` when it is an array of blocks, else null. */
+  blocks: z.infer<typeof blockSchema>[] | null;
+}
+
+/**
+ * The fields the classifier reads, validated once per content object: the client
+ * re-classifies its whole cached transcript on every update (each streamed
+ * partial), and the messages it keeps keep their content objects.
+ */
+function parseContent(content: unknown): ParsedContent {
+  return typeof content === 'object' && content !== null
+    ? parseObjectContent(content)
+    : validateContent(content);
+}
+
+const parseObjectContent = memoizeByObject((content: object) => validateContent(content));
+
+function validateContent(content: unknown): ParsedContent {
   const parsed = contentSchema.parse(content);
   return {
     subtype: parsed.subtype,
     parentToolUseId: parsed.parent_tool_use_id ?? null,
-    /** `message.content` when it is an array of blocks, else null. */
     blocks: parsed.message?.content ?? null,
   };
 }
-
-type ParsedContent = ReturnType<typeof parseContent>;
 
 function hasRenderableBlocks({ blocks }: ParsedContent): boolean {
   // Non-array content is handled by other display paths, so it counts.
