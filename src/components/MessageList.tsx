@@ -6,6 +6,7 @@ import { MessageBubble } from './messages/MessageBubble';
 import { NestedTranscript } from './messages/NestedTranscript';
 import { TaskDisplay } from './messages/TaskDisplay';
 import type { MessageContent, DisplayMessage } from './messages/types';
+import { KeepVisibleRowInPlace } from './messages/KeepVisibleRowInPlace';
 import { MessageListProvider } from './messages/MessageListContext';
 import { Clock, PauseCircle } from 'lucide-react';
 import { Spinner } from '@/components/ui/spinner';
@@ -20,6 +21,7 @@ import {
   isToolCallOnlyMessage,
   isOwnPromptMessage,
   buildTranscriptLayout,
+  transcriptRowKey,
   getLatestTodoWriteId,
   getPlanContentByToolUseId,
 } from './messages/messageHelpers';
@@ -72,7 +74,7 @@ export function MessageList({
   queuedMessageIds = [],
   isSessionRunning = false,
 }: MessageListProps) {
-  const { containerRef, topSentinelRef, bottomRef } = useTranscriptScroll({
+  const { containerRef, scrollerRef, topSentinelRef, bottomRef } = useTranscriptScroll({
     messages,
     hasMore,
     isLoading,
@@ -91,6 +93,8 @@ export function MessageList({
     () => buildTranscriptLayout(messages, isSessionRunning),
     [messages, isSessionRunning]
   );
+
+  const firstRowKey = rows[0] ? transcriptRowKey(rows[0]) : null;
 
   const latestTodoWriteId = useMemo(() => getLatestTodoWriteId(messages), [messages]);
 
@@ -160,35 +164,25 @@ export function MessageList({
     <div className="relative flex-1 min-h-0">
       {/* Bottom padding keeps the floating usage indicators off the newest message. */}
       <div ref={containerRef} className="h-full overflow-y-auto p-4 pb-16 sm:pb-12">
-        {/* Sentinel for triggering infinite scroll - placed before messages */}
-        {/* overflow-anchor:none prevents browser from anchoring to these elements */}
-        {/* so when new messages load above, the view stays on current messages */}
-        <div ref={topSentinelRef} className="h-1" style={{ overflowAnchor: 'none' }} />
+        {/* Loads older pages when it nears the view. */}
+        <div ref={topSentinelRef} className="h-1" />
 
-        {/* Loading slot for older pages. The slot is reserved for as long as there
-            are older pages to fetch, and only the spinner inside it toggles — the
-            height above the messages must never change while paginating. Scrolling
-            back at speed pins the container at scrollTop 0, where scroll anchoring
-            has nothing to compensate with, so mounting and unmounting this block
-            moved the whole transcript by its own height ~12 times a second.
-            The gap is therefore permanent above the topmost loaded message, which
-            costs nothing: you only see it scrolled to the top of what's loaded,
-            and that is the moment the next fetch fills it. */}
+        {/* Keeps the view on the same messages when an older page lands. */}
+        <KeepVisibleRowInPlace scrollerRef={scrollerRef} anchorKey={`${firstRowKey}:${hasMore}`} />
+
+        {/* Loading slot for older pages, reserved for as long as there are any so
+            only the spinner inside toggles: mounting the slot per fetch would push
+            the rows down at scrollTop 0 and hide the spinner as soon as it showed.
+            You only see the gap scrolled to the top of what's loaded, which is
+            when the next fetch fills it. */}
         {hasMore && (
-          <div
-            data-older-messages-loader
-            className="flex h-12 items-center justify-center"
-            style={{ overflowAnchor: 'none' }}
-          >
+          <div data-older-messages-loader className="flex h-12 items-center justify-center">
             {isLoading && <Spinner size="sm" />}
           </div>
         )}
 
         {rows.length === 0 && !isLoading && (
-          <div
-            className="text-center text-muted-foreground py-12"
-            style={{ overflowAnchor: 'none' }}
-          >
+          <div className="text-center text-muted-foreground py-12">
             No messages yet. Start a conversation with Claude!
           </div>
         )}
@@ -201,7 +195,7 @@ export function MessageList({
               const spacingClass = index === 0 ? '' : prev?.kind === 'taskbox' ? 'mt-1' : 'mt-4';
               return (
                 <div
-                  key={`taskbox-${row.toolUseId}`}
+                  key={transcriptRowKey(row)}
                   data-subagent-box={row.toolUseId}
                   className={cn('flex justify-start', spacingClass)}
                 >
@@ -225,7 +219,7 @@ export function MessageList({
 
             return (
               <div
-                key={message.id}
+                key={transcriptRowKey(row)}
                 data-message-id={message.id}
                 className={cn(
                   'flex flex-col',
@@ -277,7 +271,7 @@ export function MessageList({
           )}
         </MessageListProvider>
 
-        <div ref={bottomRef} style={{ overflowAnchor: 'none' }} />
+        <div ref={bottomRef} />
       </div>
 
       <div className="absolute bottom-3 right-3 flex flex-col items-end gap-1 sm:flex-row sm:items-center">

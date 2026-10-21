@@ -16,7 +16,9 @@ interface TranscriptScrollOptions {
  * Scroll management for the transcript: load older pages from a top sentinel,
  * scroll to the bottom on first load, stick to the bottom as messages arrive or
  * the container shrinks, and follow voice playback. Attach the returned refs to
- * the scroll container, the top sentinel, and the bottom sentinel.
+ * the scroll container, the top sentinel, and the bottom sentinel; `scrollerRef`
+ * reads the container (for `KeepVisibleRowInPlace`, which keeps the view in place
+ * when an older page lands).
  */
 export function useTranscriptScroll({
   messages,
@@ -184,5 +186,5 @@ export function useTranscriptScroll({
     }
   }, [voiceIsPlaying, scrollToBottom]);
 
-  return { containerRef: setContainer, topSentinelRef, bottomRef };
+  return { containerRef: setContainer, scrollerRef: containerRef, topSentinelRef, bottomRef };
 }
