@@ -13,6 +13,8 @@ export interface ToolResult {
   summary: ToolResultSummary;
   /** The display text, or undefined when the server elided it (fetched on expand). */
   text?: string;
+  /** Set when the input sanitizer filtered or flagged this output. */
+  sanitization?: SanitizationInfo;
 }
 
 /** tool_use_id -> its result. */

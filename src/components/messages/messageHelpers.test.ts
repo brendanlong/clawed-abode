@@ -735,6 +735,25 @@ describe('buildToolResultMap', () => {
     });
   });
 
+  it("carries the sanitizer's findings on a filtered result, inline or elided", () => {
+    const sanitization = {
+      found: ['html-comments'],
+      warnings: ['Removed a comment'],
+      removed: true,
+    };
+    const { resultMap } = buildToolResultMap([
+      assistant(1, [toolUse('a', 'WebFetch'), toolUse('b', 'WebFetch'), toolUse('c', 'Read')]),
+      toolResultMessage(2, [
+        { type: 'tool_result', tool_use_id: 'a', content: 'page', sanitization },
+        { type: 'tool_result', tool_use_id: 'b', summary: summarizeToolResult('x'), sanitization },
+        toolResult('c', 'clean'),
+      ]),
+    ]);
+    expect(resultMap.get('a')?.sanitization).toEqual(sanitization);
+    expect(resultMap.get('b')?.sanitization).toEqual(sanitization);
+    expect(resultMap.get('c')?.sanitization).toBeUndefined();
+  });
+
   it('pairs results with their calls and records the result sequence', () => {
     const { resultMap, resultSequenceByToolUseId } = buildToolResultMap([
       assistant(1, [toolUse('a', 'Read'), toolUse('b', 'Bash')]),

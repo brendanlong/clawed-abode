@@ -19,6 +19,7 @@ import { isRenderableBlock, isToolResultMessage, messageDisplay } from '@/lib/tr
 import { isPlanFile, reconstructPlansByToolUseId, type PlanEvent } from './plan-utils';
 import { summarizeToolResult, toolResultSummarySchema, toolResultText } from '@/lib/tool-result';
 import { memoizeByObject } from '@/lib/memoize-by-object';
+import { parseSanitizationInfo } from '@/lib/sanitization';
 
 /**
  * Strip XML wrapper tags from Claude Code local command output.
@@ -477,13 +478,14 @@ const EMPTY_SUMMARY = summarizeToolResult('');
  * by reference (a block belongs to one message, so the id is fixed per block).
  */
 const toToolResult = memoizeByObject((block: ContentBlock, messageId: string): ToolResult => {
+  const sanitization = parseSanitizationInfo(block.sanitization) ?? undefined;
+  const base = { messageId, is_error: block.is_error, sanitization };
   if (block.summary !== undefined) {
     const parsed = toolResultSummarySchema.safeParse(block.summary);
-    const summary = parsed.success ? parsed.data : EMPTY_SUMMARY;
-    return { messageId, is_error: block.is_error, summary };
+    return { ...base, summary: parsed.success ? parsed.data : EMPTY_SUMMARY };
   }
   const text = toolResultText(block.content);
-  return { messageId, is_error: block.is_error, summary: summarizeToolResult(text), text };
+  return { ...base, summary: summarizeToolResult(text), text };
 });
 
 /**

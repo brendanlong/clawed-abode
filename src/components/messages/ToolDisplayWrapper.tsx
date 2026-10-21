@@ -6,6 +6,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Badge } from '@/components/ui/badge';
 import { ColorBadge } from './ColorBadge';
+import { SanitizationBadge } from './SanitizationBadge';
 import { useToolResultText } from '@/hooks/useToolResultText';
 import type { ToolCall } from './types';
 
@@ -149,6 +150,12 @@ export function ToolDisplayWrapper({
             </div>
             <span className="text-muted-foreground ml-2 shrink-0">{expanded ? '−' : '+'}</span>
           </CollapsibleTrigger>
+          {/* Outside the trigger: the badge is its own button, and buttons can't nest. */}
+          {tool.result?.sanitization && (
+            <div className="px-3 pb-2">
+              <SanitizationBadge info={tool.result.sanitization} surface="tool result" />
+            </div>
+          )}
 
           <CollapsibleContent>
             <CardContent className="p-3 space-y-3 text-xs">
