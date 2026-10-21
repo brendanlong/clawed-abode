@@ -7,7 +7,7 @@ import { cn } from '@/lib/utils';
 
 import { ColorBadge } from './ColorBadge';
 import { CopyButton } from './CopyButton';
-import { useMessageListContext } from './MessageListContext';
+import { useMessageListTranscript } from './MessageListContext';
 import { formatAsJson } from './types';
 import type { MessageContent } from './types';
 
@@ -31,7 +31,7 @@ export function RefusalFallbackDisplay({
 }) {
   const getJsonText = useCallback(() => formatAsJson(content), [content]);
   const [showRetracted, setShowRetracted] = useState(false);
-  const context = useMessageListContext();
+  const context = useMessageListTranscript();
   const retracted = messageId && context ? context.renderRetractedMessages(messageId) : null;
 
   const from = content.original_model ?? 'primary model';

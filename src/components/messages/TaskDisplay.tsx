@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { MarkdownContent } from '@/components/MarkdownContent';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
 import { ToolOutputBlock } from './ToolOutputBlock';
-import { useMessageListContext } from './MessageListContext';
+import { useMessageListTranscript } from './MessageListContext';
 import { lenient, parseToolInput } from './tool-input';
 import { parseTaskOutput } from './task-output';
 import type { ToolCall } from './types';
@@ -88,7 +88,7 @@ export function TaskDisplay({
 
   // Subagent messages (grouped by this Task's tool_use id) render nested and
   // collapsed here rather than cluttering the top-level transcript (issue #312).
-  const context = useMessageListContext();
+  const context = useMessageListTranscript();
   const subagentTranscript = tool.id ? context?.renderSubagentTranscript(tool.id) : null;
 
   return (

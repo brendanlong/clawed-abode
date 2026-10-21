@@ -1,6 +1,16 @@
 'use client';
 
-import { useState, useRef, useCallback, useEffect, createContext, useContext } from 'react';
+import {
+  useState,
+  useRef,
+  useCallback,
+  useEffect,
+  useMemo,
+  createContext,
+  useContext,
+  createElement,
+  type ReactNode,
+} from 'react';
 import { z } from 'zod';
 import { getAuthToken } from '@/lib/auth-token';
 import {
@@ -32,10 +42,37 @@ export const defaultPlaybackState: VoicePlaybackState = {
   setStopHandler: () => {},
 };
 
-export const VoicePlaybackContext = createContext<VoicePlaybackState>(defaultPlaybackState);
+const VoicePlaybackContext = createContext<VoicePlaybackState>(defaultPlaybackState);
+const VoicePlaybackEnabledContext = createContext(false);
 
+/**
+ * Provides playback, plus whether it is enabled as a context of its own: the
+ * playback state changes as audio plays, and every message bubble needs only
+ * `enabled`, so bubbles don't re-render with it. Memoize `value`; a new object
+ * re-renders every reader.
+ */
+export function VoicePlaybackProvider({
+  value,
+  children,
+}: {
+  value: VoicePlaybackState;
+  children: ReactNode;
+}) {
+  return createElement(
+    VoicePlaybackEnabledContext.Provider,
+    { value: value.enabled },
+    createElement(VoicePlaybackContext.Provider, { value }, children)
+  );
+}
+
+/** The whole playback state; re-renders the caller whenever playback changes. */
 export function useVoicePlaybackContext() {
   return useContext(VoicePlaybackContext);
+}
+
+/** Whether read-aloud is available; stable while audio plays. */
+export function useVoicePlaybackEnabled(): boolean {
+  return useContext(VoicePlaybackEnabledContext);
 }
 
 const speechResponseSchema = z.union([
@@ -132,5 +169,8 @@ export function useVoicePlayback(enabled: boolean, autoRead = false): VoicePlayb
     stopHandlerRef.current = handler;
   }, []);
 
-  return { ...state, enabled, play, enqueue, pause, stop, restart, setStopHandler };
+  return useMemo(
+    () => ({ ...state, enabled, play, enqueue, pause, stop, restart, setStopHandler }),
+    [state, enabled, play, enqueue, pause, stop, restart, setStopHandler]
+  );
 }

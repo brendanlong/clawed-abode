@@ -10,6 +10,7 @@ import type { AppRouter } from '@/server/routers';
 import { projectMessageContent } from '@/lib/tool-result';
 import { MessageList } from './MessageList';
 import type { DisplayMessage } from './messages/types';
+import { VoicePlaybackProvider, defaultPlaybackState } from '@/hooks/useVoicePlayback';
 
 /** How many times each markdown text has rendered, to tell which bubbles re-rendered. */
 const markdownRenders = vi.hoisted(() => new Map<string, number>());
@@ -604,5 +605,27 @@ describe('MessageList re-rendering', () => {
     expect(renders('an older message')).toBe(1);
     expect(renders('an earlier reply')).toBe(1);
     expect(renders('running it')).toBe(1);
+  });
+
+  it('does not re-render bubbles when the voice playback value changes', () => {
+    markdownRenders.clear();
+    // A new value on every render, as playback state moves, with read-aloud on.
+    const withVoice = (messages: DisplayMessage[], currentMessageId: string | null) => (
+      <VoicePlaybackProvider
+        value={{ ...defaultPlaybackState, enabled: true, isPlaying: true, currentMessageId }}
+      >
+        {list(messages)}
+      </VoicePlaybackProvider>
+    );
+    const { rerender } = renderWithTrpc(withVoice(loaded, null));
+    expect(screen.getAllByTitle('Read aloud')).toHaveLength(2);
+
+    rerender(withVoice(loaded, 'reply'));
+    rerender(withVoice([...loaded, partial('partial one')], 'reply'));
+
+    expect(renders('an earlier reply')).toBe(1);
+    expect(renders('running it')).toBe(1);
+    // The play button still follows playback: the playing message offers Pause.
+    expect(screen.getAllByTitle('Read aloud')).toHaveLength(1);
   });
 });

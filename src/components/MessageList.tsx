@@ -135,24 +135,20 @@ export function MessageList({
   const pendingIds = useMemo(() => new Set(pendingMessageIds), [pendingMessageIds]);
   const queuedIds = useMemo(() => new Set(queuedMessageIds), [queuedMessageIds]);
 
-  const contextValue = useMemo(
+  const actions = useMemo(
+    () => ({ sessionId, loadToolResultText, onAnswerQuestion, onRespondToPlan }),
+    [sessionId, loadToolResultText, onAnswerQuestion, onRespondToPlan]
+  );
+  const transcript = useMemo(
     () => ({
-      sessionId,
-      loadToolResultText,
       latestTodoWriteId,
-      onAnswerQuestion,
-      onRespondToPlan,
       planContentByToolUseId,
       renderSubagentTranscript,
       renderRetractedMessages,
       relocatedSubagentIds,
     }),
     [
-      sessionId,
-      loadToolResultText,
       latestTodoWriteId,
-      onAnswerQuestion,
-      onRespondToPlan,
       planContentByToolUseId,
       renderSubagentTranscript,
       renderRetractedMessages,
@@ -197,7 +193,7 @@ export function MessageList({
           </div>
         )}
 
-        <MessageListProvider value={contextValue}>
+        <MessageListProvider actions={actions} transcript={transcript}>
           {rows.map((row, index) => {
             if (row.kind === 'taskbox') {
               // A relocated finished subagent box, at its finish position.
