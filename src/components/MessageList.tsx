@@ -6,7 +6,7 @@ import { MessageBubble } from './messages/MessageBubble';
 import { NestedTranscript } from './messages/NestedTranscript';
 import { TaskDisplay } from './messages/TaskDisplay';
 import type { MessageContent, DisplayMessage } from './messages/types';
-import { KeepTopRowInPlace } from './messages/KeepTopRowInPlace';
+import { KeepVisibleRowInPlace } from './messages/KeepVisibleRowInPlace';
 import { MessageListProvider } from './messages/MessageListContext';
 import { Clock, PauseCircle } from 'lucide-react';
 import { Spinner } from '@/components/ui/spinner';
@@ -168,7 +168,7 @@ export function MessageList({
         <div ref={topSentinelRef} className="h-1" />
 
         {/* Keeps the view on the same messages when an older page lands. */}
-        <KeepTopRowInPlace scrollerRef={scrollerRef} topKey={`${firstRowKey}:${hasMore}`} />
+        <KeepVisibleRowInPlace scrollerRef={scrollerRef} anchorKey={`${firstRowKey}:${hasMore}`} />
 
         {/* Loading slot for older pages, reserved for as long as there are any so
             only the spinner inside toggles: mounting the slot per fetch would push

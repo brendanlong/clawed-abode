@@ -1,5 +1,41 @@
 import { describe, expect, it } from 'vitest';
-import { scrollTopKeepingAnchor } from './scroll-anchor';
+import { firstVisibleRowIndex, scrollTopKeepingAnchor } from './scroll-anchor';
+
+describe('firstVisibleRowIndex', () => {
+  // Rows 100px tall, the first starting at 20 (the sentinel and loader above it).
+  const bottoms = Array.from({ length: 50 }, (_, i) => 20 + (i + 1) * 100);
+  const bottomAt = (i: number) => bottoms[i] ?? Infinity;
+
+  it('finds the row the view top cuts through', () => {
+    expect(firstVisibleRowIndex(bottoms.length, bottomAt, 1234)).toBe(12);
+  });
+
+  it('skips a row that ends exactly at the view top', () => {
+    expect(firstVisibleRowIndex(bottoms.length, bottomAt, 1220)).toBe(12);
+  });
+
+  it('is the first row at the very top', () => {
+    expect(firstVisibleRowIndex(bottoms.length, bottomAt, 0)).toBe(0);
+  });
+
+  it('is -1 when every row is above the view or there are none', () => {
+    expect(firstVisibleRowIndex(bottoms.length, bottomAt, 99999)).toBe(-1);
+    expect(firstVisibleRowIndex(0, bottomAt, 0)).toBe(-1);
+  });
+
+  it('measures only a logarithmic number of rows', () => {
+    const measured = new Set<number>();
+    firstVisibleRowIndex(
+      1000,
+      (i) => {
+        measured.add(i);
+        return (i + 1) * 100;
+      },
+      54321
+    );
+    expect(measured.size).toBeLessThanOrEqual(11);
+  });
+});
 
 describe('scrollTopKeepingAnchor', () => {
   it('scrolls down by the height prepended above the anchor', () => {
