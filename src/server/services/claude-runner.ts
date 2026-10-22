@@ -191,6 +191,31 @@ function dispatch(sessionId: string, state: SessionState, event: LiveEvent): Liv
   return outcome;
 }
 
+function flushPendingAttention(sessionId: string, live: LiveQuery): void {
+  const summary = live.pendingAttention;
+  if (summary === null) return;
+  live.pendingAttention = null;
+  requestAttention(sessionId, summary).catch((err) =>
+    log.error('Failed to flag session for attention', toError(err), { sessionId })
+  );
+}
+
+/**
+ * Flag the session for the user (`notify_user`). Mid-turn, the flag waits for the
+ * turn to end — or the query, if it dies on its own first — since the agent calls
+ * this just before writing the message it's notifying about. A turn the user
+ * interrupts or stops drops it.
+ */
+export async function notifyUser(sessionId: string, summary: string): Promise<{ held: boolean }> {
+  const state = sessions.get(sessionId);
+  if (state?.live && hasRealTurn(state.turn)) {
+    state.live.pendingAttention = summary;
+    return { held: true };
+  }
+  await requestAttention(sessionId, summary);
+  return { held: false };
+}
+
 /**
  * Detach a session's dead (or closing) query: reject its parked interactive tool
  * call and stop its systemd scope, reaping anything the CLI left running. Call
@@ -237,6 +262,7 @@ async function runSessionLoop(
       // Every other message, including ones skipped for persistence, since
       // `api_retry`/`task_*` drive status.
       if (dispatch(sessionId, state, { type: 'sdk_message', message }).turnEnded) {
+        flushPendingAttention(sessionId, live);
         void detectBranchAndPr(sessionId, live.workingDir);
       }
 
@@ -311,7 +337,10 @@ async function runSessionLoop(
     // Drop the live query so the next interaction re-establishes (resume). The
     // state record stays in the map (commands etc. persist); only stop/delete
     // remove it. The guard skips this when stopSession already released it.
-    if (state.live === live) void releaseQuery(sessionId, state, 'Query ended');
+    if (state.live === live) {
+      flushPendingAttention(sessionId, live);
+      void releaseQuery(sessionId, state, 'Query ended');
+    }
   }
 }
 
@@ -420,6 +449,7 @@ async function establishSessionQuery(
     settingsKey,
     claudeSessionId: null,
     pendingInput: null,
+    pendingAttention: null,
     toolSanitizations,
     pushedUuids: new Set(),
     partials: new Map(),
@@ -928,6 +958,7 @@ async function abortTurn<T>(
   }
 
   dispatch(sessionId, state, { type: 'interrupt_requested' });
+  live.pendingAttention = null;
   try {
     await beforeInterrupt?.();
     await live.query.interrupt();

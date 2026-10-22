@@ -37,6 +37,7 @@ const port = {
   createSession: vi.fn(async () => ({ id: 'new-id' })),
   stopSession: vi.fn(async () => ({ status: 'stopped' })),
   isTurnActive: vi.fn(() => false),
+  notifyUser: vi.fn(async () => ({ held: true })),
   deliverMessage: vi.fn(async () => true),
 } satisfies SessionToolsPort;
 
@@ -144,9 +145,7 @@ describe('built-in MCP server', () => {
     expect(await call(client, 'notify_user', { summary: ' PR #3 ready ' })).toMatchObject({
       isError: false,
     });
-    const row = await testPrisma.session.findUniqueOrThrow({ where: { id: self.id } });
-    expect(row.attentionSummary).toBe('PR #3 ready');
-    expect(row.attentionAt).toBeInstanceOf(Date);
+    expect(port.notifyUser).toHaveBeenCalledWith(self.id, 'PR #3 ready');
   });
 
   it('stops the calling session and tells the user why', async () => {

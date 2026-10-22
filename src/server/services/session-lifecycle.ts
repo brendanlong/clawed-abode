@@ -11,6 +11,7 @@ import {
   cleanupSession,
   deliverAppMessage,
   isClaudeRunning,
+  notifyUser,
   refreshSessionSettings,
   reviveSession,
   sendUserMessage,
@@ -271,5 +272,6 @@ export const sessionToolsPort: SessionToolsPort = {
   createSession,
   stopSession: shutDownSession,
   isTurnActive: isClaudeRunning,
+  notifyUser,
   deliverMessage: deliverAppMessage,
 };

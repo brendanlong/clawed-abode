@@ -124,6 +124,7 @@ let submitLiveToolResponse: typeof import('./claude-runner').submitLiveToolRespo
 let refreshSessionSettings: typeof import('./claude-runner').refreshSessionSettings;
 let refreshAllSessionSettings: typeof import('./claude-runner').refreshAllSessionSettings;
 let deliverAppMessage: typeof import('./claude-runner').deliverAppMessage;
+let notifyUser: typeof import('./claude-runner').notifyUser;
 let mockLoadSettings: ReturnType<
   typeof vi.mocked<typeof import('./settings-merger').loadMergedSessionSettings>
 >;
@@ -375,6 +376,7 @@ describe('claude-runner persistent streaming loop', () => {
     refreshSessionSettings = mod.refreshSessionSettings;
     refreshAllSessionSettings = mod.refreshAllSessionSettings;
     deliverAppMessage = mod.deliverAppMessage;
+    notifyUser = mod.notifyUser;
     const sm = await import('./settings-merger');
     mockLoadSettings = vi.mocked(sm.loadMergedSessionSettings);
   });
@@ -453,6 +455,89 @@ describe('claude-runner persistent streaming loop', () => {
     expect(await attentionOf()).toBeNull();
 
     stopSession(sessionId);
+  });
+
+  describe('notify_user', () => {
+    const attentionOf = async (sessionId: string) =>
+      (await testPrisma.session.findUniqueOrThrow({ where: { id: sessionId } })).attentionSummary;
+
+    /** A live session whose main agent is mid-turn, between tool calls. */
+    async function midTurnSession() {
+      const fake = makeFakeQuery();
+      _setQueryFactory(fake.factory);
+      const sessionId = await createRunningSession();
+      await sendUserMessage(sessionId, 'fix it');
+      await fake.deliver();
+      fake.emit(messageStart());
+      fake.emit(messageDelta('tool_use'));
+      fake.emit(assistant('calling a tool'));
+      await waitFor(async () => (await messagesFor(sessionId)).length >= 2);
+      return { fake, sessionId };
+    }
+
+    it('holds a mid-turn notification until the turn ends', async () => {
+      const { fake, sessionId } = await midTurnSession();
+
+      expect(await notifyUser(sessionId, 'PR ready')).toEqual({ held: true });
+      fake.emit(messageStart());
+      fake.emit(textBlockStart());
+      fake.emit(textDelta('Here is the PR'));
+      await waitFor(() => getActivePartials(sessionId).length > 0);
+      expect(await attentionOf(sessionId)).toBeNull();
+      expect(mockSseEvents.emitAttention).not.toHaveBeenCalled();
+
+      fake.emit(messageDelta('end_turn'));
+      await waitFor(async () => (await attentionOf(sessionId)) === 'PR ready');
+      expect(mockSseEvents.emitAttention).toHaveBeenCalledTimes(1);
+
+      stopSession(sessionId);
+    });
+
+    it('notifies when the query dies on its own before the turn ends', async () => {
+      const { fake, sessionId } = await midTurnSession();
+
+      await notifyUser(sessionId, 'PR ready');
+      fake.end();
+
+      await waitFor(async () => (await attentionOf(sessionId)) === 'PR ready');
+    });
+
+    it('drops the notification when the user stops the session', async () => {
+      const { sessionId } = await midTurnSession();
+
+      await notifyUser(sessionId, 'PR ready');
+      await stopSession(sessionId);
+
+      expect(await attentionOf(sessionId)).toBeNull();
+      expect(mockSseEvents.emitAttention).not.toHaveBeenCalled();
+    });
+
+    it('drops the notification when the user interrupts the turn', async () => {
+      const { fake, sessionId } = await midTurnSession();
+
+      await notifyUser(sessionId, 'PR ready');
+      await interruptClaude(sessionId);
+      fake.emit(result('error_during_execution'));
+      await waitFor(() => !isClaudeRunning(sessionId));
+
+      expect(await attentionOf(sessionId)).toBeNull();
+      expect(mockSseEvents.emitAttention).not.toHaveBeenCalled();
+
+      stopSession(sessionId);
+    });
+
+    it('notifies right away when the main agent is not generating', async () => {
+      const { fake, sessionId } = await midTurnSession();
+      fake.emit(messageStart());
+      fake.emit(messageDelta('end_turn'));
+      fake.emit(result());
+      await waitFor(() => !isClaudeRunning(sessionId));
+
+      expect(await notifyUser(sessionId, 'Subagent finished')).toEqual({ held: false });
+
+      expect(await attentionOf(sessionId)).toBe('Subagent finished');
+      stopSession(sessionId);
+    });
   });
 
   describe('branch and PR detection at turn end', () => {
