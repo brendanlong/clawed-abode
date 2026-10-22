@@ -191,6 +191,29 @@ function dispatch(sessionId: string, state: SessionState, event: LiveEvent): Liv
   return outcome;
 }
 
+function flushPendingAttention(sessionId: string, live: LiveQuery): void {
+  const summary = live.pendingAttention;
+  if (summary === null) return;
+  live.pendingAttention = null;
+  requestAttention(sessionId, summary).catch((err) =>
+    log.error('Failed to flag session for attention', toError(err), { sessionId })
+  );
+}
+
+/**
+ * Flag the session for the user (`notify_user`). Mid-turn, the flag waits for the
+ * turn to end — or the query, if it dies first — since the agent calls this just
+ * before writing the message it's notifying about.
+ */
+export async function notifyUser(sessionId: string, summary: string): Promise<void> {
+  const state = sessions.get(sessionId);
+  if (state?.live && state.turn.status.turnActive) {
+    state.live.pendingAttention = summary;
+    return;
+  }
+  await requestAttention(sessionId, summary);
+}
+
 /**
  * Detach a session's dead (or closing) query: reject its parked interactive tool
  * call and stop its systemd scope, reaping anything the CLI left running. Call
@@ -203,6 +226,7 @@ function releaseQuery(sessionId: string, state: SessionState, reason: string): P
   abortGptRuns(sessionId);
   live.pendingInput?.reject(new Error(reason));
   live.pendingInput = null;
+  flushPendingAttention(sessionId, live);
   if (!live.sessionScope) return Promise.resolve();
   const stopped = stopSessionScope(live.sessionScope);
   void persistSessionScope(sessionId, null);
@@ -237,6 +261,7 @@ async function runSessionLoop(
       // Every other message, including ones skipped for persistence, since
       // `api_retry`/`task_*` drive status.
       if (dispatch(sessionId, state, { type: 'sdk_message', message }).turnEnded) {
+        flushPendingAttention(sessionId, live);
         void detectBranchAndPr(sessionId, live.workingDir);
       }
 
@@ -420,6 +445,7 @@ async function establishSessionQuery(
     settingsKey,
     claudeSessionId: null,
     pendingInput: null,
+    pendingAttention: null,
     toolSanitizations,
     pushedUuids: new Set(),
     partials: new Map(),

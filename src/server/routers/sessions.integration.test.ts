@@ -27,6 +27,7 @@ vi.mock('../services/claude-runner', () => ({
   stopSession: mockStopSession,
   cleanupSession: mockCleanupSession,
   isClaudeRunning: vi.fn().mockReturnValue(false),
+  notifyUser: vi.fn(),
   isSessionBackgroundActive: vi.fn().mockReturnValue(false),
   refreshSessionSettings: mockRefreshSessionSettings,
   reviveSession: mockReviveSession,

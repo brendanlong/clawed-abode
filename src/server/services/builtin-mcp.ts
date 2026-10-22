@@ -70,6 +70,7 @@ export interface SessionToolsPort {
   /** Resolves to the session's status afterwards, which is unchanged if it wasn't running. */
   stopSession(sessionId: string): Promise<{ status: string }>;
   isTurnActive(sessionId: string): boolean;
+  notifyUser(sessionId: string, summary: string): Promise<void>;
   /**
    * Send a message to a session's agent on the app's behalf (not the user's),
    * only if its query is live: never one that would revive a session.
@@ -171,8 +172,8 @@ function basicTools(sessionId: string) {
       { summary: attentionSummarySchema.describe('One line saying what you have for the user') },
       ({ summary }) =>
         run(NOTIFY_USER_TOOL_NAME, async () => {
-          await requestAttention(sessionId, summary);
-          return textResult('Notified the user.');
+          await requirePort().notifyUser(sessionId, summary);
+          return textResult('The user will be notified when this turn ends.');
         }),
       { alwaysLoad: true }
     ),

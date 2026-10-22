@@ -58,6 +58,11 @@ export interface LiveQuery {
   claudeSessionId: string | null;
   pendingInput: PendingUserInput | null;
   /**
+   * A `notify_user` summary held until the main turn ends, so the user is
+   * notified once the agent's final message is written, not before it.
+   */
+  pendingAttention: string | null;
+  /**
    * Sanitizer findings from the PostToolUse hook, keyed by tool_use_id, awaiting
    * the matching tool_result message so they can be attached on persist (the
    * message comes from the SDK stream, not from us). Consumed once; a finding
