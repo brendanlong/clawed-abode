@@ -202,16 +202,18 @@ function flushPendingAttention(sessionId: string, live: LiveQuery): void {
 
 /**
  * Flag the session for the user (`notify_user`). Mid-turn, the flag waits for the
- * turn to end — or the query, if it dies first — since the agent calls this just
- * before writing the message it's notifying about.
+ * turn to end — or the query, if it dies on its own first — since the agent calls
+ * this just before writing the message it's notifying about. A turn the user
+ * interrupts or stops drops it.
  */
-export async function notifyUser(sessionId: string, summary: string): Promise<void> {
+export async function notifyUser(sessionId: string, summary: string): Promise<{ held: boolean }> {
   const state = sessions.get(sessionId);
-  if (state?.live && state.turn.status.turnActive) {
+  if (state?.live && hasRealTurn(state.turn)) {
     state.live.pendingAttention = summary;
-    return;
+    return { held: true };
   }
   await requestAttention(sessionId, summary);
+  return { held: false };
 }
 
 /**
@@ -226,7 +228,6 @@ function releaseQuery(sessionId: string, state: SessionState, reason: string): P
   abortGptRuns(sessionId);
   live.pendingInput?.reject(new Error(reason));
   live.pendingInput = null;
-  flushPendingAttention(sessionId, live);
   if (!live.sessionScope) return Promise.resolve();
   const stopped = stopSessionScope(live.sessionScope);
   void persistSessionScope(sessionId, null);
@@ -336,7 +337,10 @@ async function runSessionLoop(
     // Drop the live query so the next interaction re-establishes (resume). The
     // state record stays in the map (commands etc. persist); only stop/delete
     // remove it. The guard skips this when stopSession already released it.
-    if (state.live === live) void releaseQuery(sessionId, state, 'Query ended');
+    if (state.live === live) {
+      flushPendingAttention(sessionId, live);
+      void releaseQuery(sessionId, state, 'Query ended');
+    }
   }
 }
 
@@ -954,6 +958,7 @@ async function abortTurn<T>(
   }
 
   dispatch(sessionId, state, { type: 'interrupt_requested' });
+  live.pendingAttention = null;
   try {
     await beforeInterrupt?.();
     await live.query.interrupt();
