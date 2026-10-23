@@ -8,8 +8,15 @@
 
 import { z } from 'zod';
 
-/** Stored names (see `UploadedAttachment.storedName`) a client sends back to attach uploads to a message. */
-export const storedNamesSchema = z.array(z.string().min(1).max(255));
+/**
+ * The shape `saveUploadedFile` gives stored names: an 8-hex token, then a
+ * `sanitizeFileName` result. Matching it exactly keeps client-supplied names from
+ * ever resolving to `.`, `..`, or a path.
+ */
+const STORED_NAME_PATTERN = /^[0-9a-f]{8}-[A-Za-z0-9_-][A-Za-z0-9._-]*$/;
+
+/** Stored names a client sends back to attach uploads to a message. */
+export const storedNamesSchema = z.array(z.string().max(255).regex(STORED_NAME_PATTERN));
 
 export interface UploadedAttachment {
   /** Original file name, for display in the UI. */

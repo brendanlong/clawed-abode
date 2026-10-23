@@ -1,4 +1,4 @@
-import { mkdir, access, rm, rename, readdir, stat } from 'fs/promises';
+import { mkdir, access, rm, rename, readdir, lstat } from 'fs/promises';
 import { createWriteStream } from 'fs';
 import { Readable } from 'stream';
 import { pipeline } from 'stream/promises';
@@ -35,10 +35,11 @@ export function saveUploadedFile(
  * Stream a file uploaded for a session that hasn't been created yet into the
  * staging directory; `claimStagedUploads` moves it into the session once it exists.
  */
-export function stageUploadedFile(
+export async function stageUploadedFile(
   originalName: string,
   body: ReadableStream<Uint8Array> | null
 ): Promise<UploadedAttachment> {
+  await purgeAbandonedStagedUploads();
   return saveUpload(getUploadStagingDir(), originalName, body);
 }
 
@@ -139,7 +140,8 @@ const STAGED_UPLOAD_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 /**
  * Delete staged uploads that were never claimed (the new-session form was
  * abandoned). Age-based rather than wiping the directory, because a second
- * server on the same host (a dev instance) shares it.
+ * server on the same host (a dev instance) shares it and may be claiming or
+ * purging the same files concurrently.
  */
 export async function purgeAbandonedStagedUploads(now = Date.now()): Promise<void> {
   const dir = getUploadStagingDir();
@@ -150,8 +152,14 @@ export async function purgeAbandonedStagedUploads(now = Date.now()): Promise<voi
   await Promise.all(
     names.map(async (name) => {
       const filePath = path.join(dir, name);
-      const { mtimeMs } = await stat(filePath);
-      if (now - mtimeMs > STAGED_UPLOAD_MAX_AGE_MS) await rm(filePath, { force: true });
+      try {
+        const { mtimeMs } = await lstat(filePath);
+        if (now - mtimeMs > STAGED_UPLOAD_MAX_AGE_MS)
+          await rm(filePath, { recursive: true, force: true });
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
+        log.warn('Could not purge staged upload', { name, error: toError(err).message });
+      }
     })
   );
 }

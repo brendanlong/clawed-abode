@@ -1,4 +1,4 @@
-import { describe, it, expect, afterAll } from 'vitest';
+import { describe, it, expect, afterAll, vi } from 'vitest';
 import { rm, readFile, readdir, utimes, access } from 'fs/promises';
 import path from 'path';
 import { randomUUID as uuid } from 'node:crypto';
@@ -8,9 +8,24 @@ import {
   getSessionUploadDir,
   stageUploadedFile,
   claimStagedUploads,
-  purgeAbandonedStagedUploads,
 } from './uploads';
 import { getSessionWorkspacePath } from './worktree-manager';
+
+// The real staging dir is shared with any server on this host, so the purge must
+// not touch it. Still under ~/worktrees: claiming is a rename, which needs the
+// same filesystem as the workspaces.
+const stagingDir = await vi.hoisted(async () => {
+  const { mkdir, mkdtemp } = await import('fs/promises');
+  const { homedir } = await import('os');
+  const { join } = await import('path');
+  const root = join(homedir(), 'worktrees');
+  await mkdir(root, { recursive: true });
+  return mkdtemp(join(root, '.upload-staging-test-'));
+});
+vi.mock('./worktree-manager', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./worktree-manager')>()),
+  getUploadStagingDir: () => stagingDir,
+}));
 
 // Uploads live inside the real session workspace (~/worktrees/{sessionId}/uploads).
 // Use a unique session id per run and tear down its whole workspace afterwards.
@@ -94,21 +109,16 @@ describe('uploads service', () => {
   });
 });
 
-// The staging dir is shared with any server on this host, so these tests only
-// touch the files they create.
 describe('staged uploads', () => {
   const claimSessionId = `uploads-claim-test-${uuid()}`;
-  const stagedPaths: string[] = [];
 
   afterAll(async () => {
     await rm(getSessionWorkspacePath(claimSessionId), { recursive: true, force: true });
-    await Promise.all(stagedPaths.map((p) => rm(p, { force: true })));
+    await rm(stagingDir, { recursive: true, force: true });
   });
 
-  async function stage(name: string, body: string) {
-    const attachment = await stageUploadedFile(name, new Blob([body]).stream());
-    stagedPaths.push(attachment.path);
-    return attachment;
+  function stage(name: string, body: string) {
+    return stageUploadedFile(name, new Blob([body]).stream());
   }
 
   it('moves staged files into the session, once, so the send can resolve them', async () => {
@@ -130,13 +140,13 @@ describe('staged uploads', () => {
     expect(await readFile(outside.path, 'utf8')).toBe('s');
   });
 
-  it('purges only staged files older than a day', async () => {
+  it('purges staged files older than a day when the next file is staged', async () => {
     const fresh = await stage('fresh.txt', 'f');
     const old = await stage('old.txt', 'o');
     const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
     await utimes(old.path, twoDaysAgo, twoDaysAgo);
 
-    await purgeAbandonedStagedUploads();
+    await stage('next.txt', 'n');
 
     await expect(access(old.path)).rejects.toThrow();
     expect(await readFile(fresh.path, 'utf8')).toBe('f');

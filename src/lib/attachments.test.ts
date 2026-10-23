@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildPromptWithAttachments, sanitizeFileName } from './attachments';
+import { buildPromptWithAttachments, sanitizeFileName, storedNamesSchema } from './attachments';
 
 describe('buildPromptWithAttachments', () => {
   it('returns the trimmed prompt unchanged when there are no attachments', () => {
@@ -53,5 +53,26 @@ describe('sanitizeFileName', () => {
     const result = sanitizeFileName(`${'a'.repeat(300)}.pdf`);
     expect(result).toHaveLength(200);
     expect(result.endsWith('.pdf')).toBe(true);
+  });
+});
+
+describe('storedNamesSchema', () => {
+  it('accepts names the server stores', () => {
+    expect(storedNamesSchema.safeParse(['abcd1234-report.pdf', '0000ffff-file']).success).toBe(
+      true
+    );
+  });
+
+  it('rejects names that could resolve outside a single uploaded file', () => {
+    for (const name of [
+      '.',
+      '..',
+      'abcd1234-../x',
+      'abcd1234-a/b',
+      'abcd1234-.hidden',
+      'report.pdf',
+    ]) {
+      expect(storedNamesSchema.safeParse([name]).success).toBe(false);
+    }
   });
 });

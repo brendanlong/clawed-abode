@@ -29,7 +29,8 @@ async function uploadFile(sessionId: string | undefined, file: File): Promise<Up
 
 /**
  * Uploads files (one request each, in parallel) to the session's upload directory
- * via the `/api/upload` route, or with no session to staging for `sessions.create`. Resolves with the attachments that saved, so the
+ * via the `/api/upload` route, or with no session to staging for
+ * `sessions.create`. Resolves with the attachments that saved, so the
  * caller can hold them as pending attachments until the next message is sent;
  * any per-file failures are reported through `error` rather than discarding the
  * files that did upload.

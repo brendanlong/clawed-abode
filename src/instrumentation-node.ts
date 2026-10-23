@@ -9,7 +9,6 @@ import { env, getEnv } from '@/lib/env';
 import { createLogger, toError } from '@/lib/logger';
 import { prisma } from '@/lib/prisma';
 import { purgeInactiveAuthSessions } from '@/server/services/auth-sessions';
-import { purgeAbandonedStagedUploads } from '@/server/services/uploads';
 import { startPublicFilesServer } from '@/server/services/public-files-server';
 import {
   rateLimitPauseRunner,
@@ -47,11 +46,6 @@ export async function registerNode() {
     await purgeInactiveAuthSessions();
   } catch (err) {
     log.error('Error purging inactive auth sessions', toError(err));
-  }
-  try {
-    await purgeAbandonedStagedUploads();
-  } catch (err) {
-    log.error('Error purging abandoned staged uploads', toError(err));
   }
 
   // Before anything can revive: reap scopes a crash left behind (see
