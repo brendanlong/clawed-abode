@@ -759,6 +759,29 @@ describe('rate-limit pause', () => {
     runner.stopSession(sessionId);
   });
 
+  it('keeps a restart notice for a held session until the user withdraws queued work', async () => {
+    const fake = makeFakeQuery();
+    runner._setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+    await sendAndDeliver(fake, sessionId, 'first', { settle: false });
+    await rejectFiveHourWindow(fake);
+    await testPrisma.session.update({
+      where: { id: sessionId },
+      data: { restartNotice: 'The server restarted.' },
+    });
+    const noticeOf = async () =>
+      (await testPrisma.session.findUniqueOrThrow({ where: { id: sessionId } })).restartNotice;
+
+    await runner.reviveSession(sessionId);
+    expect(await noticeOf()).toBe('The server restarted.');
+    expect(await queuedTexts(sessionId)).toEqual([]);
+
+    await runner.interruptClaude(sessionId);
+    expect(await noticeOf()).toBeNull();
+
+    runner.stopSession(sessionId);
+  });
+
   it('restores the pause across a restart rather than releasing early', async () => {
     const fake = makeFakeQuery();
     runner._setQueryFactory(fake.factory);

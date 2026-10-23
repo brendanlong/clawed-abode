@@ -431,11 +431,12 @@ async function establishSessionQuery(
   // because establish aborts below — is harmless: the reap's stop is a no-op.
   if (sessionScope) await persistSessionScope(sessionId, sessionScope);
 
-  // If `stopSession` ran while we were loading (it deletes the map entry), abort
-  // before creating the query — otherwise we'd resurrect a torn-down session with
-  // an orphan live query. This check and the attach below are await-free, so they
-  // run atomically with respect to a synchronous stopSession.
-  if (sessions.get(sessionId) !== state) {
+  // If `stopSession` ran while we were loading (it deletes the map entry), or
+  // shutdown began, abort before creating the query — otherwise we'd resurrect a
+  // torn-down session with an orphan live query. This check and the attach below
+  // are await-free, so they run atomically with respect to a synchronous
+  // stopSession or stopAllSessions.
+  if (sessions.get(sessionId) !== state || shutdown.started) {
     // Exactly our name: a revive may already have recorded its own.
     if (sessionScope) void clearRecordedScopes([sessionScope]);
     throw new Error('Session establishment cancelled: session was stopped during establish');
@@ -1094,16 +1095,19 @@ export async function reviveSession(sessionId: string): Promise<void> {
   }
 }
 
-/** Claimed before sending, so concurrent revives deliver it once. */
+/**
+ * Claimed before sending, so concurrent revives deliver it once. A held session
+ * keeps it until the pause revives it, rather than queueing it as a prompt.
+ */
 async function sendRestartNotice(sessionId: string, notice: string): Promise<void> {
+  if (currentHold(sessionId)) return;
   const { count } = await prisma.session.updateMany({
     where: { id: sessionId, restartNotice: notice },
     data: { restartNotice: null },
   });
   if (count === 0) return;
   log.info('Telling the agent what the restart cut off', { sessionId });
-  // Not user-initiated, so a restart doesn't reshuffle the session list.
-  await sendUserMessage(sessionId, notice, [], { userInitiated: false });
+  await deliverAppMessage(sessionId, notice);
 }
 
 async function pathExists(path: string): Promise<boolean> {

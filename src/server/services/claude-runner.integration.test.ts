@@ -1407,7 +1407,9 @@ describe('claude-runner persistent streaming loop', () => {
         await sendUserMessage(sessionId, 'do the thing');
         await fake.deliver();
         fake.emit(messageStart());
-        await waitFor(() => isClaudeRunning(sessionId));
+        fake.emit(assistant('working on it'));
+        await waitFor(async () => (await messagesFor(sessionId)).length >= 2);
+        expect(getPendingMessageIds(sessionId)).toEqual([]);
 
         await stopAllSessions();
         _resetShutdown();
@@ -1421,9 +1423,23 @@ describe('claude-runner persistent streaming loop', () => {
         expect(await restartNoticeOf(sessionId)).toBeNull();
 
         stopSession(sessionId);
+        const again = makeFakeQuery();
+        const factory = vi.fn(again.factory);
+        _setQueryFactory(factory);
         await reviveSession(sessionId);
-        expect(revived.inputs).toHaveLength(1);
+        expect(factory).toHaveBeenCalledTimes(1);
+        expect(again.inputs).toHaveLength(0);
         stopSession(sessionId);
+      });
+
+      it('starts no CLI once shutdown has begun', async () => {
+        const factory = vi.fn(makeFakeQuery().factory);
+        _setQueryFactory(factory);
+        const sessionId = await createRunningSession();
+
+        await stopAllSessions();
+        await expect(sendUserMessage(sessionId, 'hello')).rejects.toThrow();
+        expect(factory).not.toHaveBeenCalled();
       });
 
       it('lists background tasks the shutdown killed', async () => {
