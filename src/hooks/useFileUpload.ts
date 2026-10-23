@@ -8,8 +8,9 @@ interface UploadResponse {
   attachment: UploadedAttachment;
 }
 
-async function uploadFile(sessionId: string, file: File): Promise<UploadedAttachment> {
-  const params = new URLSearchParams({ sessionId, name: file.name });
+async function uploadFile(sessionId: string | undefined, file: File): Promise<UploadedAttachment> {
+  const params = new URLSearchParams({ name: file.name });
+  if (sessionId) params.set('sessionId', sessionId);
   const token = getAuthToken();
   const res = await fetch(`/api/upload?${params}`, {
     method: 'POST',
@@ -28,12 +29,12 @@ async function uploadFile(sessionId: string, file: File): Promise<UploadedAttach
 
 /**
  * Uploads files (one request each, in parallel) to the session's upload directory
- * via the `/api/upload` route. Resolves with the attachments that saved, so the
+ * via the `/api/upload` route, or with no session to staging for `sessions.create`. Resolves with the attachments that saved, so the
  * caller can hold them as pending attachments until the next message is sent;
  * any per-file failures are reported through `error` rather than discarding the
  * files that did upload.
  */
-export function useFileUpload(sessionId: string) {
+export function useFileUpload(sessionId?: string) {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 

@@ -1,5 +1,6 @@
 import type { Repo } from '@/components/RepoSelector';
 import { SESSION_NAME_MAX_LENGTH, type Issue } from '@/lib/types';
+import type { UploadedAttachment } from '@/lib/attachments';
 
 export interface FormState {
   selectedRepo: Repo | null;
@@ -10,6 +11,8 @@ export interface FormState {
   nameManuallyEdited: boolean;
   initialPrompt: string;
   promptManuallyEdited: boolean;
+  /** Staged uploads to send with the initial prompt. */
+  attachments: UploadedAttachment[];
   /** Per-session model override, or null to use the repo/global/env default. */
   claudeModel: string | null;
   sessionToolsEnabled: boolean;
@@ -21,6 +24,8 @@ export type FormAction =
   | { type: 'selectIssue'; issue: Issue | null; generatedPrompt?: string }
   | { type: 'editName'; name: string }
   | { type: 'editPrompt'; prompt: string }
+  | { type: 'addAttachments'; attachments: UploadedAttachment[] }
+  | { type: 'removeAttachment'; storedName: string }
   | { type: 'editModel'; claudeModel: string | null }
   | { type: 'setSessionTools'; enabled: boolean };
 
@@ -32,6 +37,7 @@ export const initialFormState: FormState = {
   nameManuallyEdited: false,
   initialPrompt: '',
   promptManuallyEdited: false,
+  attachments: [],
   claudeModel: null,
   sessionToolsEnabled: false,
 };
@@ -42,6 +48,7 @@ export function formReducer(state: FormState, action: FormAction): FormState {
       return {
         ...initialFormState,
         selectedRepo: action.repo,
+        attachments: state.attachments,
       };
     case 'selectBranch':
       return { ...state, selectedBranch: action.branch };
@@ -69,6 +76,13 @@ export function formReducer(state: FormState, action: FormAction): FormState {
         ...state,
         initialPrompt: action.prompt,
         promptManuallyEdited: true,
+      };
+    case 'addAttachments':
+      return { ...state, attachments: [...state.attachments, ...action.attachments] };
+    case 'removeAttachment':
+      return {
+        ...state,
+        attachments: state.attachments.filter((a) => a.storedName !== action.storedName),
       };
     case 'editModel':
       return { ...state, claudeModel: action.claudeModel };

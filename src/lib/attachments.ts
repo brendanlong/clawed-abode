@@ -6,6 +6,11 @@
  * the next user message so Claude knows where to find them.
  */
 
+import { z } from 'zod';
+
+/** Stored names (see `UploadedAttachment.storedName`) a client sends back to attach uploads to a message. */
+export const storedNamesSchema = z.array(z.string().min(1).max(255));
+
 export interface UploadedAttachment {
   /** Original file name, for display in the UI. */
   name: string;

@@ -48,6 +48,11 @@ export function getSessionWorkspacePath(sessionId: string): string {
   return join(WORKTREES_DIR, sessionId);
 }
 
+/** Holds files uploaded for a session that doesn't exist yet; same filesystem as workspaces so moving in is a rename. */
+export function getUploadStagingDir(): string {
+  return join(WORKTREES_DIR, '.upload-staging');
+}
+
 /**
  * Get the working directory for a session (the repo checkout inside the workspace).
  */

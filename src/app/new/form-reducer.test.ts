@@ -34,9 +34,26 @@ const mockIssue: Issue = {
   comments: 0,
 };
 
+const attachment = { name: 'a.png', storedName: 'abcd1234-a.png', path: '/staging/abcd1234-a.png' };
+
 describe('formReducer', () => {
+  describe('attachments', () => {
+    it('appends uploaded attachments and removes one by stored name', () => {
+      const other = { ...attachment, storedName: 'ffff0000-b.txt', name: 'b.txt' };
+      const added = formReducer(initialFormState, {
+        type: 'addAttachments',
+        attachments: [attachment, other],
+      });
+      expect(added.attachments).toEqual([attachment, other]);
+      expect(
+        formReducer(added, { type: 'removeAttachment', storedName: attachment.storedName })
+          .attachments
+      ).toEqual([other]);
+    });
+  });
+
   describe('selectRepo', () => {
-    it('sets the selected repo and resets all other state', () => {
+    it('sets the selected repo and resets all other state except attachments', () => {
       const state: FormState = {
         selectedRepo: mockRepo,
         selectedBranch: 'main',
@@ -45,6 +62,7 @@ describe('formReducer', () => {
         nameManuallyEdited: true,
         initialPrompt: 'some prompt',
         promptManuallyEdited: true,
+        attachments: [attachment],
         claudeModel: 'sonnet',
         sessionToolsEnabled: true,
       };
@@ -59,6 +77,7 @@ describe('formReducer', () => {
         nameManuallyEdited: false,
         initialPrompt: '',
         promptManuallyEdited: false,
+        attachments: [attachment],
         claudeModel: null,
         sessionToolsEnabled: false,
       });
@@ -75,6 +94,7 @@ describe('formReducer', () => {
         nameManuallyEdited: true,
         initialPrompt: 'my prompt',
         promptManuallyEdited: true,
+        attachments: [],
         claudeModel: null,
         sessionToolsEnabled: false,
       };

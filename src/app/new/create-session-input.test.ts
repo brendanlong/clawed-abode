@@ -112,6 +112,18 @@ describe('buildCreateSessionInput', () => {
     });
   });
 
+  it('sends staged attachments by stored name', () => {
+    const form = withRepo(repo, {
+      attachments: [
+        { name: 'a.png', storedName: 'abcd1234-a.png', path: '/staging/abcd1234-a.png' },
+      ],
+    });
+    expect(buildCreateSessionInput(form, 'main')).toMatchObject({
+      initialAttachments: ['abcd1234-a.png'],
+    });
+    expect(buildCreateSessionInput(withRepo(repo), 'main')?.initialAttachments).toBeUndefined();
+  });
+
   it('passes the session-management choice through', () => {
     const form = withRepo(repo, { sessionToolsEnabled: true });
     expect(buildCreateSessionInput(form, 'main')).toMatchObject({ sessionToolsEnabled: true });

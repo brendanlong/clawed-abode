@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { VoiceMicButton } from '@/components/voice/VoiceMicButton';
 import { RateLimitPauseBanner } from '@/components/RateLimitPauseBanner';
+import { AttachmentChip } from '@/components/AttachmentChip';
 import { useVoiceRecording } from '@/hooks/useVoiceRecording';
 import { useFileUpload } from '@/hooks/useFileUpload';
 import { useSendWithRestore } from '@/hooks/useSendWithRestore';
@@ -337,23 +338,11 @@ export function PromptInput({
           {(attachments.length > 0 || uploadError || sendError) && (
             <div className="mb-2 flex flex-wrap items-center gap-2">
               {attachments.map((att) => (
-                <span
+                <AttachmentChip
                   key={att.storedName}
-                  className="inline-flex items-center gap-1.5 rounded-md border bg-muted px-2 py-1 text-xs"
-                >
-                  <Paperclip className="h-3 w-3 shrink-0 text-muted-foreground" />
-                  <span className="max-w-[12rem] truncate" title={att.name}>
-                    {att.name}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => removeAttachment(att.storedName)}
-                    className="text-muted-foreground hover:text-foreground"
-                    aria-label={`Remove ${att.name}`}
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                </span>
+                  attachment={att}
+                  onRemove={() => removeAttachment(att.storedName)}
+                />
               ))}
               {uploadError && (
                 <span className="inline-flex items-center gap-1.5 text-xs text-destructive">
