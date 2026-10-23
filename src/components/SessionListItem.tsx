@@ -5,7 +5,7 @@ import { BellRing } from 'lucide-react';
 import { trpc } from '@/lib/trpc';
 import { extractRepoFullName } from '@/lib/utils';
 import { deriveSessionDisplayStatus } from '@/lib/session-display-status';
-import { SessionStatusBadge } from '@/components/SessionStatusBadge';
+import { SessionStatusIcon } from '@/components/SessionStatusIcon';
 import { SessionActionButton } from '@/components/SessionActionButton';
 import { PrStatusIndicator } from '@/components/PrStatusIndicator';
 import { ActionErrorAlert } from '@/components/ActionErrorAlert';
@@ -58,9 +58,9 @@ export function SessionListItem({ session }: SessionListItemProps) {
           </Link>
         </div>
 
-        <div className="flex items-center gap-4">
+        <div className="flex shrink-0 items-center">
           {session.pullRequest && <PrStatusIndicator pullRequest={session.pullRequest} />}
-          <SessionStatusBadge
+          <SessionStatusIcon
             status={deriveSessionDisplayStatus(
               session.status,
               session.turnActive,
@@ -69,7 +69,7 @@ export function SessionListItem({ session }: SessionListItemProps) {
             )}
           />
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center">
             {session.canStart && (
               <SessionActionButton
                 action="start"
