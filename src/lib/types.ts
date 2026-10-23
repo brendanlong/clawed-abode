@@ -1,6 +1,7 @@
 // Session constants
 export const SESSION_NAME_MAX_LENGTH = 100;
 export const PROMPT_MAX_LENGTH = 100000;
+export const SESSION_SEARCH_MAX_LENGTH = 200;
 
 // GitHub Issue interface
 export interface Issue {

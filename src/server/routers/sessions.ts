@@ -15,7 +15,7 @@ import {
 } from '../services/session-lifecycle';
 import { env } from '@/lib/env';
 import { sessionNameSchema } from '@/lib/session-name';
-import { PROMPT_MAX_LENGTH } from '@/lib/types';
+import { PROMPT_MAX_LENGTH, SESSION_SEARCH_MAX_LENGTH } from '@/lib/types';
 import { toSessionView } from '@/lib/session-view';
 import type { Prisma } from '@/generated/prisma/client';
 import { keysetPage, keysetPageInputSchema } from '@/lib/keyset-page';
@@ -64,7 +64,7 @@ export const sessionsRouter = router({
     .input(
       keysetPageInputSchema.extend({
         status: sessionStatusSchema.optional(),
-        search: z.string().trim().max(200).optional(),
+        search: z.string().trim().max(SESSION_SEARCH_MAX_LENGTH).optional(),
       })
     )
     .query(async ({ input }) => {

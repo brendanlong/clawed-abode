@@ -4,11 +4,13 @@ import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Search } from 'lucide-react';
 import { Input } from '@/components/ui/input';
+import { cn } from '@/lib/utils';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { CenteredSpinner, Spinner } from '@/components/ui/spinner';
 import { SessionListItem } from '@/components/SessionListItem';
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
 import type { PagedSessions } from '@/hooks/useSessionList';
+import { SESSION_SEARCH_MAX_LENGTH } from '@/lib/types';
 
 export interface SessionListProps {
   active: PagedSessions;
@@ -19,6 +21,10 @@ export interface SessionListProps {
   onSearchChange: (search: string) => void;
   /** The lists are currently filtered by a search (which may lag `search` while typing). */
   filtered: boolean;
+}
+
+function staleClass(list: PagedSessions) {
+  return list.isStale ? 'opacity-50 transition-opacity' : undefined;
 }
 
 /** One paginated list of sessions; loads the next page as the sentinel scrolls into view. */
@@ -71,6 +77,7 @@ export function SessionList({ search, onSearchChange, ...lists }: SessionListPro
           onChange={(e) => onSearchChange(e.target.value)}
           placeholder="Search sessions"
           aria-label="Search sessions"
+          maxLength={SESSION_SEARCH_MAX_LENGTH}
           className="pl-9"
         />
       </div>
@@ -111,7 +118,7 @@ function SessionLists({
 
   return (
     <div className="space-y-4">
-      <Card>
+      <Card className={staleClass(active)}>
         <CardContent className="p-0">
           {active.sessions.length > 0 ? (
             <SessionListSection {...active} />
@@ -143,7 +150,7 @@ function SessionLists({
       )}
 
       {showArchived && !archived.isLoading && archived.sessions.length > 0 && (
-        <Card>
+        <Card className={staleClass(archived)}>
           <CardHeader className="py-3">
             <CardTitle className="text-sm font-medium text-muted-foreground">
               Archived Sessions
@@ -156,7 +163,7 @@ function SessionLists({
       )}
 
       {showArchived && !archived.isLoading && archived.sessions.length === 0 && (
-        <div className="text-center text-sm text-muted-foreground">
+        <div className={cn('text-center text-sm text-muted-foreground', staleClass(archived))}>
           {filtered ? 'No archived sessions match your search' : 'No archived sessions'}
         </div>
       )}

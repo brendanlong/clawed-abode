@@ -12,6 +12,8 @@ export type Session = inferRouterOutputs<AppRouter>['sessions']['list']['session
 export interface PagedSessions {
   sessions: Session[];
   isLoading: boolean;
+  /** Showing the previous search's results while this one loads. */
+  isStale: boolean;
   hasMore: boolean;
   isFetchingMore: boolean;
   /** The last next-page load failed. */
@@ -52,6 +54,7 @@ export function useSessionList({
     sessions: query.data?.pages.flatMap((page) => page.sessions) ?? [],
     // isPending (not isLoading) so a list that was disabled until now reads as loading, not empty.
     isLoading: query.isPending,
+    isStale: query.isPlaceholderData,
     hasMore: query.hasNextPage,
     isFetchingMore: query.isFetchingNextPage,
     loadFailed: query.isFetchNextPageError,

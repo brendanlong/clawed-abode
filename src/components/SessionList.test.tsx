@@ -47,6 +47,7 @@ function paged(sessions: Session[], overrides: Partial<PagedSessions> = {}): Pag
   return {
     sessions,
     isLoading: false,
+    isStale: false,
     hasMore: false,
     isFetchingMore: false,
     loadFailed: false,
@@ -301,6 +302,23 @@ describe('SessionList', () => {
       expect(screen.getByText(/no active sessions match/i)).toBeInTheDocument();
       expect(screen.getByText(/no archived sessions match/i)).toBeInTheDocument();
       expect(screen.getByRole('searchbox')).toHaveValue('zzz');
+    });
+
+    it('keeps the search box and a no-match message when archived sessions are hidden', () => {
+      render(
+        <SessionList
+          active={none}
+          archived={none}
+          showArchived={false}
+          onToggleArchived={vi.fn()}
+          search="zzz"
+          onSearchChange={vi.fn()}
+          filtered
+        />
+      );
+      expect(screen.queryByText('No sessions yet')).not.toBeInTheDocument();
+      expect(screen.getByText(/no active sessions match/i)).toBeInTheDocument();
+      expect(screen.getByRole('searchbox')).toBeInTheDocument();
     });
   });
 });
