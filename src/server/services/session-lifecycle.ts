@@ -19,6 +19,7 @@ import {
 } from './claude-runner';
 import { resolveAgentName } from './agent-name';
 import { clearQueuedPrompts } from './prompt-queue';
+import { claimStagedUploads } from './uploads';
 import { recomputeRateLimitHolds } from './rate-limit-pause';
 import type { SessionToolsPort } from './builtin-mcp';
 import type { SessionOverrides } from './settings-merger';
@@ -70,6 +71,7 @@ interface CreateSessionInput {
   repoFullName?: string;
   branch?: string;
   initialPrompt?: string;
+  initialAttachments?: string[];
   claudeModel?: string;
   sessionToolsEnabled?: boolean;
 }
@@ -101,7 +103,11 @@ export async function createSession(input: CreateSessionInput): Promise<Session>
     log.error('Agent name resolution failed', toError(error), { sessionId: session.id });
   });
 
-  setupSession(session.id, repo, input.initialPrompt).catch((error) => {
+  const initialMessage = {
+    prompt: input.initialPrompt?.trim() ?? '',
+    stagedAttachments: input.initialAttachments ?? [],
+  };
+  setupSession(session.id, repo, initialMessage).catch((error) => {
     log.error('Unhandled error in session setup', toError(error), { sessionId: session.id });
   });
 
@@ -111,7 +117,7 @@ export async function createSession(input: CreateSessionInput): Promise<Session>
 async function setupSession(
   sessionId: string,
   repo: { fullName: string; branch: string } | null,
-  initialPrompt: string | undefined
+  initialMessage: { prompt: string; stagedAttachments: string[] }
 ): Promise<void> {
   log.info('Starting session setup', { sessionId, repo });
 
@@ -119,6 +125,7 @@ async function setupSession(
     transitionSession(sessionId, 'setupProgress', { statusMessage });
 
   let result: TransitionResult;
+  let attachments: string[] = [];
   try {
     let repoPath = '';
     if (repo) {
@@ -135,6 +142,7 @@ async function setupSession(
       if (!result.applied) return logSetupAbandoned(sessionId, result.session);
       await createEmptyWorkspace(sessionId);
     }
+    attachments = await claimStagedUploads(sessionId, initialMessage.stagedAttachments);
 
     result = await transitionSession(sessionId, 'setupComplete', {
       repoPath,
@@ -162,9 +170,9 @@ async function setupSession(
 
   // sendUserMessage establishes the streaming query (loading settings
   // internally) and pushes the prompt.
-  if (initialPrompt?.trim()) {
+  if (initialMessage.prompt || attachments.length > 0) {
     log.info('Sending initial prompt', { sessionId });
-    sendUserMessage(sessionId, initialPrompt.trim()).catch((err) => {
+    sendUserMessage(sessionId, initialMessage.prompt, attachments).catch((err) => {
       log.error('Initial prompt failed', toError(err), { sessionId });
     });
   } else {

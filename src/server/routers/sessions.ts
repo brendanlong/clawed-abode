@@ -17,6 +17,7 @@ import { env } from '@/lib/env';
 import { sessionNameSchema } from '@/lib/session-name';
 import { PROMPT_MAX_LENGTH, SESSION_SEARCH_MAX_LENGTH } from '@/lib/types';
 import { toSessionView } from '@/lib/session-view';
+import { storedNamesSchema } from '@/lib/attachments';
 import type { Prisma } from '@/generated/prisma/client';
 import { keysetPage, keysetPageInputSchema } from '@/lib/keyset-page';
 import { sessionStatusSchema } from '@/lib/session-display-status';
@@ -50,6 +51,8 @@ export const sessionsRouter = router({
         repoFullName: repoFullNameSchema.optional(),
         branch: z.string().min(1).optional(),
         initialPrompt: z.string().max(PROMPT_MAX_LENGTH).optional(),
+        // Staged uploads (see /api/upload) sent along with the initial prompt.
+        initialAttachments: storedNamesSchema.optional(),
         claudeModel: modelSchema.optional(),
         sessionToolsEnabled: z.boolean().optional(),
       })

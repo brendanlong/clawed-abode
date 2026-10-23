@@ -98,6 +98,16 @@ describe('POST /api/upload', () => {
     expect(await readFile(attachment.path, 'utf8')).toBe('hello');
   });
 
+  it('stages the file when no session is given', async () => {
+    const res = await POST(uploadRequest({ name: 'for-new-session.md' }, 'staged'));
+    expect(res.status).toBe(200);
+
+    const { attachment } = (await res.json()) as { attachment: { name: string; path: string } };
+    expect(attachment.name).toBe('for-new-session.md');
+    expect(await readFile(attachment.path, 'utf8')).toBe('staged');
+    await rm(attachment.path);
+  });
+
   it('saves an empty file', async () => {
     const sessionId = await createSession('running');
     const res = await POST(uploadRequest({ sessionId, name: 'empty.txt' }, ''));

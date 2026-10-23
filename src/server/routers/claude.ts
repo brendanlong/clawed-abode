@@ -15,6 +15,7 @@ import {
   persistSyntheticToolResult,
 } from '../services/message-store';
 import { PROMPT_MAX_LENGTH } from '@/lib/types';
+import { storedNamesSchema } from '@/lib/attachments';
 import {
   type ToolResponse,
   summarizeToolResponse,
@@ -72,7 +73,7 @@ async function submitToolResponse(
 const messageInputSchema = z
   .object({
     prompt: z.string().max(PROMPT_MAX_LENGTH),
-    attachments: z.array(z.string().min(1).max(255)).optional(),
+    attachments: storedNamesSchema.optional(),
   })
   .refine((v) => v.prompt.trim().length > 0 || (v.attachments?.length ?? 0) > 0, {
     message: 'A prompt or at least one attachment is required',

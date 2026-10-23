@@ -1,9 +1,16 @@
+import { readFile, rm } from 'fs/promises';
 import { resetEnvCache } from '@/lib/env';
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { setupTestDb, teardownTestDb, testPrisma, clearTestDb } from '@/test/setup-test-db';
 import { createNoRepoSession, createTestSession } from '@/test/fixtures';
 
 // Mock external services that have real dependencies (git clone)
+const worktreesRoot = await vi.hoisted(async () => {
+  const { mkdtemp } = await import('fs/promises');
+  const { tmpdir } = await import('os');
+  const { join } = await import('path');
+  return mkdtemp(join(tmpdir(), 'sessions-router-test-'));
+});
 const mockCloneRepo = vi.hoisted(() => vi.fn());
 const mockCreateEmptyWorkspace = vi.hoisted(() => vi.fn());
 const mockRemoveWorkspace = vi.hoisted(() => vi.fn());
@@ -12,7 +19,8 @@ vi.mock('../services/worktree-manager', () => ({
   cloneRepo: mockCloneRepo,
   createEmptyWorkspace: mockCreateEmptyWorkspace,
   removeWorkspace: mockRemoveWorkspace,
-  getSessionWorkspacePath: vi.fn((sessionId: string) => `/worktrees/${sessionId}`),
+  getSessionWorkspacePath: vi.fn((sessionId: string) => `${worktreesRoot}/${sessionId}`),
+  getUploadStagingDir: vi.fn(() => `${worktreesRoot}/.upload-staging`),
 }));
 
 // Mock claude-runner
@@ -87,6 +95,7 @@ describe('sessionsRouter integration', () => {
 
   afterAll(async () => {
     await teardownTestDb();
+    await rm(worktreesRoot, { recursive: true, force: true });
   });
 
   beforeEach(async () => {
@@ -130,11 +139,31 @@ describe('sessionsRouter integration', () => {
       await vi.waitFor(() => {
         expect(mockSendUserMessage).toHaveBeenCalledWith(
           result.session.id,
-          'Fix the bug in issue #123'
+          'Fix the bug in issue #123',
+          []
         );
       });
       const dbSession = await testPrisma.session.findUnique({ where: { id: result.session.id } });
       expect(dbSession?.status).toBe('running');
+    });
+
+    it('should move staged attachments into the workspace and send them with the initial prompt', async () => {
+      const { stageUploadedFile, resolveUploadPaths } = await import('../services/uploads');
+      const staged = await stageUploadedFile('spec.md', new Blob(['the spec']).stream());
+
+      const caller = createCaller('auth-session-id');
+      const result = await caller.sessions.create({
+        name: 'With files',
+        initialAttachments: [staged.storedName],
+      });
+
+      await vi.waitFor(() => {
+        expect(mockSendUserMessage).toHaveBeenCalledWith(result.session.id, '', [
+          staged.storedName,
+        ]);
+      });
+      const [resolved] = await resolveUploadPaths(result.session.id, [staged.storedName]);
+      expect(await readFile(resolved, 'utf8')).toBe('the spec');
     });
 
     it('should store a per-session model override, trimmed', async () => {
@@ -471,7 +500,7 @@ describe('sessionsRouter integration', () => {
       // Opens the workspace root (not the repo subfolder) so all of the
       // session's files are visible — the repo clone plus the uploads/ sibling.
       expect(result.url).toBe(
-        `https://host.ts.net:8443/?folder=${encodeURIComponent(`/worktrees/${session.id}`)}`
+        `https://host.ts.net:8443/?folder=${encodeURIComponent(`${worktreesRoot}/${session.id}`)}`
       );
     });
 

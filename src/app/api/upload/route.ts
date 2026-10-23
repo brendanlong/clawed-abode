@@ -1,13 +1,13 @@
 import { z } from 'zod';
 import { createContext } from '@/server/trpc';
 import { prisma } from '@/lib/prisma';
-import { saveUploadedFile } from '@/server/services/uploads';
+import { saveUploadedFile, stageUploadedFile } from '@/server/services/uploads';
 import { createLogger, toError } from '@/lib/logger';
 
 const log = createLogger('upload-route');
 
 const querySchema = z.object({
-  sessionId: z.string().uuid(),
+  sessionId: z.string().uuid().optional(),
   name: z.string().min(1),
 });
 
@@ -16,6 +16,9 @@ const querySchema = z.object({
  * streams it into the session workspace where Claude can read it. Returns the
  * saved attachment; the client holds these and passes their `storedName`s to
  * `claude.send`, which prefixes their paths onto the next user message.
+ *
+ * Without a `sessionId` the file is staged for a session about to be created,
+ * and its `storedName` goes to `sessions.create` as an initial attachment.
  */
 export async function POST(request: Request): Promise<Response> {
   const ctx = await createContext({ headers: request.headers });
@@ -25,13 +28,25 @@ export async function POST(request: Request): Promise<Response> {
 
   const { searchParams } = new URL(request.url);
   const parsed = querySchema.safeParse({
-    sessionId: searchParams.get('sessionId'),
+    sessionId: searchParams.get('sessionId') ?? undefined,
     name: searchParams.get('name'),
   });
   if (!parsed.success) {
-    return Response.json({ error: 'A valid sessionId and name are required' }, { status: 400 });
+    return Response.json(
+      { error: 'A name and an optional valid sessionId are required' },
+      { status: 400 }
+    );
   }
   const { sessionId, name } = parsed.data;
+
+  if (!sessionId) {
+    try {
+      return Response.json({ attachment: await stageUploadedFile(name, request.body) });
+    } catch (err) {
+      log.error('Failed to stage upload', toError(err));
+      return Response.json({ error: 'Upload failed' }, { status: 500 });
+    }
+  }
 
   const session = await prisma.session.findUnique({
     where: { id: sessionId },

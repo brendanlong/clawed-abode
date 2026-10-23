@@ -43,6 +43,8 @@ export function buildCreateSessionInput(
     repoFullName: isNoRepo ? undefined : repo.fullName,
     branch: isNoRepo ? undefined : branch,
     initialPrompt: form.initialPrompt.trim() || undefined,
+    initialAttachments:
+      form.attachments.length > 0 ? form.attachments.map((a) => a.storedName) : undefined,
     claudeModel: form.claudeModel?.trim() || undefined,
     sessionToolsEnabled: form.sessionToolsEnabled,
   };

@@ -1,9 +1,31 @@
-import { describe, it, expect, afterAll } from 'vitest';
-import { rm, readFile, readdir } from 'fs/promises';
+import { describe, it, expect, afterAll, vi } from 'vitest';
+import { rm, readFile, readdir, utimes, access } from 'fs/promises';
 import path from 'path';
 import { randomUUID as uuid } from 'node:crypto';
-import { saveUploadedFile, resolveUploadPaths, getSessionUploadDir } from './uploads';
+import {
+  saveUploadedFile,
+  resolveUploadPaths,
+  getSessionUploadDir,
+  stageUploadedFile,
+  claimStagedUploads,
+} from './uploads';
 import { getSessionWorkspacePath } from './worktree-manager';
+
+// The real staging dir is shared with any server on this host, so the purge must
+// not touch it. Still under ~/worktrees: claiming is a rename, which needs the
+// same filesystem as the workspaces.
+const stagingDir = await vi.hoisted(async () => {
+  const { mkdir, mkdtemp } = await import('fs/promises');
+  const { homedir } = await import('os');
+  const { join } = await import('path');
+  const root = join(homedir(), 'worktrees');
+  await mkdir(root, { recursive: true });
+  return mkdtemp(join(root, '.upload-staging-test-'));
+});
+vi.mock('./worktree-manager', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./worktree-manager')>()),
+  getUploadStagingDir: () => stagingDir,
+}));
 
 // Uploads live inside the real session workspace (~/worktrees/{sessionId}/uploads).
 // Use a unique session id per run and tear down its whole workspace afterwards.
@@ -84,5 +106,49 @@ describe('uploads service', () => {
     // Even if a client tries to escape the uploads dir, basename collapses it.
     const resolved = await resolveUploadPaths(sessionId, ['../../../etc/passwd']);
     expect(resolved).toEqual([]);
+  });
+});
+
+describe('staged uploads', () => {
+  const claimSessionId = `uploads-claim-test-${uuid()}`;
+
+  afterAll(async () => {
+    await rm(getSessionWorkspacePath(claimSessionId), { recursive: true, force: true });
+    await rm(stagingDir, { recursive: true, force: true });
+  });
+
+  function stage(name: string, body: string) {
+    return stageUploadedFile(name, new Blob([body]).stream());
+  }
+
+  it('moves staged files into the session, once, so the send can resolve them', async () => {
+    const staged = await stage('screenshot.png', 'png bytes');
+
+    const claimed = await claimStagedUploads(claimSessionId, [staged.storedName, 'missing.txt']);
+    expect(claimed).toEqual([staged.storedName]);
+    const [resolved] = await resolveUploadPaths(claimSessionId, claimed);
+    expect(await readFile(resolved, 'utf8')).toBe('png bytes');
+    await expect(access(staged.path)).rejects.toThrow();
+
+    expect(await claimStagedUploads(`${claimSessionId}-other`, [staged.storedName])).toEqual([]);
+  });
+
+  it('cannot claim files from outside the staging dir', async () => {
+    const outside = await saveUploadedFile(sessionId, 'secret.txt', new Blob(['s']).stream());
+    const traversal = `../${sessionId}/uploads/${outside.storedName}`;
+    expect(await claimStagedUploads(claimSessionId, [traversal])).toEqual([]);
+    expect(await readFile(outside.path, 'utf8')).toBe('s');
+  });
+
+  it('purges staged files older than a day when the next file is staged', async () => {
+    const fresh = await stage('fresh.txt', 'f');
+    const old = await stage('old.txt', 'o');
+    const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+    await utimes(old.path, twoDaysAgo, twoDaysAgo);
+
+    await stage('next.txt', 'n');
+
+    await expect(access(old.path)).rejects.toThrow();
+    expect(await readFile(fresh.path, 'utf8')).toBe('f');
   });
 });
