@@ -73,7 +73,7 @@ export interface ReduceResult {
  * torn down (a dev server, a `persistent: true` Monitor) with no self-determined
  * end state.
  */
-const BACKGROUND_BASH_TASK_TYPE = 'local_bash';
+export const BACKGROUND_BASH_TASK_TYPE = 'local_bash';
 
 /**
  * Whether a background task should count toward the "is the agent still working?"

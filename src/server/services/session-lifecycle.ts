@@ -216,11 +216,12 @@ export async function shutDownSession(sessionId: string): Promise<Session> {
   // write, and stop has to stay the way out of that. No-op when idle.
   void stopSession(sessionId);
 
-  // Stopping also withdraws a pending rate-limit resume nudge, or Start would
-  // have the session pick the cut-short work back up on its own.
+  // Stopping also withdraws a pending rate-limit resume nudge and restart notice,
+  // or Start would have the session pick the cut-short work back up on its own.
   const { session } = await transitionSession(sessionId, 'stop', {
     status: 'stopped',
     resumeAfterRateLimit: false,
+    restartNotice: null,
   });
   return session;
 }

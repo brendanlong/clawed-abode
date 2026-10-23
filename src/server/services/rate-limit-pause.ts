@@ -327,7 +327,7 @@ async function drainSession(runner: PauseRunner, sessionId: string): Promise<voi
 /**
  * Empty a session's rate-limit queue for Stop: the prompts never ran, so their
  * bubbles go too and the text comes back for the composer. Also cancels a pending
- * "continue where you left off" nudge — the user stopping is a clear signal they
+ * "continue where you left off" nudge and restart notice — the user stopping is a clear signal they
  * don't want the session picking work back up on its own.
  */
 export async function withdrawQueuedWork(sessionId: string): Promise<CancelledPrompt[]> {
@@ -336,8 +336,11 @@ export async function withdrawQueuedWork(sessionId: string): Promise<CancelledPr
   await flagWrites.get(sessionId);
   const queued = await clearQueuedPrompts(sessionId);
   await prisma.session.updateMany({
-    where: { id: sessionId, resumeAfterRateLimit: true },
-    data: { resumeAfterRateLimit: false },
+    where: {
+      id: sessionId,
+      OR: [{ resumeAfterRateLimit: true }, { restartNotice: { not: null } }],
+    },
+    data: { resumeAfterRateLimit: false, restartNotice: null },
   });
   if (queued.length === 0) return [];
 
