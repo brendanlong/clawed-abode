@@ -15,7 +15,7 @@ import {
 } from '../services/session-lifecycle';
 import { env } from '@/lib/env';
 import { sessionNameSchema } from '@/lib/session-name';
-import { PROMPT_MAX_LENGTH } from '@/lib/types';
+import { PROMPT_MAX_LENGTH, SESSION_SEARCH_MAX_LENGTH } from '@/lib/types';
 import { toSessionView } from '@/lib/session-view';
 import type { Prisma } from '@/generated/prisma/client';
 import { keysetPage, keysetPageInputSchema } from '@/lib/keyset-page';
@@ -59,14 +59,31 @@ export const sessionsRouter = router({
   // Keyset-paginated by (lastActivityAt desc, id desc). Archived sessions are
   // excluded unless `status: 'archived'` is requested explicitly, so the home page
   // fetches the active and archived lists as two independent paginated queries.
+  // `search` is a case-insensitive substring match on name, repo, and branch.
   list: protectedProcedure
-    .input(keysetPageInputSchema.extend({ status: sessionStatusSchema.optional() }))
+    .input(
+      keysetPageInputSchema.extend({
+        status: sessionStatusSchema.optional(),
+        search: z.string().trim().max(SESSION_SEARCH_MAX_LENGTH).optional(),
+      })
+    )
     .query(async ({ input }) => {
       const page = keysetPage('lastActivityAt', input);
       const rows = await prisma.session.findMany({
         where: {
-          ...(input.status ? { status: input.status } : { status: { not: 'archived' } }),
-          ...page.where,
+          AND: [
+            input.status ? { status: input.status } : { status: { not: 'archived' } },
+            page.where,
+            input.search
+              ? {
+                  OR: [
+                    { name: { contains: input.search } },
+                    { repoUrl: { contains: input.search } },
+                    { currentBranch: { contains: input.search } },
+                  ],
+                }
+              : {},
+          ],
         },
         orderBy: page.orderBy,
         take: page.take,

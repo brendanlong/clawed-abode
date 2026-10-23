@@ -3,6 +3,7 @@
 import { useCallback, useState } from 'react';
 import { SessionList } from '@/components/SessionList';
 import { useSessionList } from '@/hooks/useSessionList';
+import { useDebounce } from '@/hooks/useDebounce';
 import { useSessionListEvent } from '@/lib/session-list-stream-context';
 
 /**
@@ -17,9 +18,12 @@ import { useSessionListEvent } from '@/lib/session-list-stream-context';
  */
 export function SessionListContainer() {
   const [showArchived, setShowArchived] = useState(false);
-  const { refetch: refetchActive, ...active } = useSessionList();
+  const [search, setSearch] = useState('');
+  const query = useDebounce(search.trim(), 250);
+  const { refetch: refetchActive, ...active } = useSessionList({ search: query });
   const { refetch: refetchArchived, ...archived } = useSessionList({
     status: 'archived',
+    search: query,
     enabled: showArchived,
   });
 
@@ -35,6 +39,9 @@ export function SessionListContainer() {
       archived={archived}
       showArchived={showArchived}
       onToggleArchived={() => setShowArchived((prev) => !prev)}
+      search={search}
+      onSearchChange={setSearch}
+      filtered={query !== ''}
     />
   );
 }
