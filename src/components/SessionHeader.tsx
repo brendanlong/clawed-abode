@@ -131,6 +131,7 @@ export function SessionHeader({
               isPending={isArchiving}
               variant="secondary"
               sessionName={session.name}
+              label="Archive"
             />
           )}
         </div>

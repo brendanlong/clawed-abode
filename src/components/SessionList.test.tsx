@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { SessionList } from './SessionList';
 import type { PagedSessions, Session } from '@/hooks/useSessionList';
 
@@ -123,10 +123,10 @@ describe('SessionList', () => {
         />
       );
       const items = screen.getAllByRole('listitem');
-      expect(items[0]).toHaveTextContent('running');
-      expect(items[1]).toHaveTextContent('stopped');
-      expect(items[2]).toHaveTextContent('waiting');
-      expect(items[3]).toHaveTextContent('background');
+      expect(within(items[0]).getByRole('img', { name: 'running' })).toBeInTheDocument();
+      expect(within(items[1]).getByRole('img', { name: 'stopped' })).toBeInTheDocument();
+      expect(within(items[2]).getByRole('img', { name: 'waiting' })).toBeInTheDocument();
+      expect(within(items[3]).getByRole('img', { name: 'background' })).toBeInTheDocument();
     });
 
     it('offers only the actions the server says apply', () => {
