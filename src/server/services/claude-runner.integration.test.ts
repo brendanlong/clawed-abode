@@ -119,6 +119,8 @@ let insertMessage: typeof import('./message-store').insertMessage;
 let reapOrphanedSessionScopes: typeof import('./claude-runner').reapOrphanedSessionScopes;
 let reviveRunningSessions: typeof import('./claude-runner').reviveRunningSessions;
 let reviveSession: typeof import('./claude-runner').reviveSession;
+let stopAllSessions: typeof import('./claude-runner').stopAllSessions;
+let _resetShutdown: typeof import('./claude-runner')._resetShutdown;
 let _setQueryFactory: typeof import('./claude-runner')._setQueryFactory;
 let submitLiveToolResponse: typeof import('./claude-runner').submitLiveToolResponse;
 let refreshSessionSettings: typeof import('./claude-runner').refreshSessionSettings;
@@ -371,6 +373,8 @@ describe('claude-runner persistent streaming loop', () => {
     reapOrphanedSessionScopes = mod.reapOrphanedSessionScopes;
     reviveRunningSessions = mod.reviveRunningSessions;
     reviveSession = mod.reviveSession;
+    stopAllSessions = mod.stopAllSessions;
+    _resetShutdown = mod._resetShutdown;
     _setQueryFactory = mod._setQueryFactory;
     submitLiveToolResponse = mod.submitLiveToolResponse;
     refreshSessionSettings = mod.refreshSessionSettings;
@@ -1388,6 +1392,60 @@ describe('claude-runner persistent streaming loop', () => {
       expect(fake.inputs).toHaveLength(0);
       expect(isClaudeRunning(running)).toBe(false);
       stopSession(running);
+    });
+
+    describe('after a graceful shutdown', () => {
+      afterEach(() => _resetShutdown());
+
+      const restartNoticeOf = async (id: string) =>
+        (await testPrisma.session.findUniqueOrThrow({ where: { id } })).restartNotice;
+
+      it('tells an agent cut off mid-turn, once, when its query is revived', async () => {
+        const fake = makeFakeQuery();
+        _setQueryFactory(fake.factory);
+        const sessionId = await createRunningSession();
+        await sendUserMessage(sessionId, 'do the thing');
+        await fake.deliver();
+        fake.emit(messageStart());
+        await waitFor(() => isClaudeRunning(sessionId));
+
+        await stopAllSessions();
+        _resetShutdown();
+        expect(await restartNoticeOf(sessionId)).toMatch(/turn was cut off/);
+
+        const revived = makeFakeQuery();
+        _setQueryFactory(revived.factory);
+        await reviveSession(sessionId);
+        await waitFor(() => revived.inputs.length >= 1);
+        expect(revived.inputs[0].message.content).toMatch(/server restarted/);
+        expect(await restartNoticeOf(sessionId)).toBeNull();
+
+        stopSession(sessionId);
+        await reviveSession(sessionId);
+        expect(revived.inputs).toHaveLength(1);
+        stopSession(sessionId);
+      });
+
+      it('lists background tasks the shutdown killed', async () => {
+        const fake = makeFakeQuery();
+        _setQueryFactory(fake.factory);
+        const sessionId = await createRunningSession();
+        await reviveSession(sessionId);
+        fake.emit(backgroundTasksChanged('task-1'));
+        await waitFor(() => getSessionBackgroundTasks(sessionId).length === 1);
+
+        await stopAllSessions();
+        expect(await restartNoticeOf(sessionId)).toContain('background work');
+      });
+
+      it('records nothing for an idle session', async () => {
+        _setQueryFactory(makeFakeQuery().factory);
+        const sessionId = await createRunningSession();
+        await reviveSession(sessionId);
+
+        await stopAllSessions();
+        expect(await restartNoticeOf(sessionId)).toBeNull();
+      });
     });
 
     it('skips a session whose workspace is gone', async () => {

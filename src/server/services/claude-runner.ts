@@ -35,6 +35,7 @@ import {
   type LiveEvent,
   type LiveOutcome,
 } from '@/lib/live-turn';
+import { restartNotice } from '@/lib/restart-notice';
 import { parseRateLimitEvent } from '@/lib/rate-limit';
 import { modelChangeNeedsRestart, usesLlmProxy } from '@/lib/llm-proxy';
 import { backgroundActive, type BackgroundTask } from '@/lib/session-status';
@@ -125,6 +126,11 @@ let queryFactory: QueryFactory = sdkQuery;
 /** Override the query factory (for tests). Pass null to restore the SDK default. */
 export function _setQueryFactory(factory: QueryFactory | null): void {
   queryFactory = factory ?? sdkQuery;
+}
+
+/** Undo stopAllSessions (for tests), which otherwise ends the process's ability to revive. */
+export function _resetShutdown(): void {
+  shutdown.started = false;
 }
 
 /**
@@ -1073,7 +1079,7 @@ export async function reviveSession(sessionId: string): Promise<void> {
   try {
     const session = await prisma.session.findUnique({
       where: { id: sessionId },
-      select: { status: true, repoPath: true },
+      select: { status: true, repoPath: true, restartNotice: true },
     });
     if (session?.status !== 'running' || currentHold(sessionId) || shutdown.started) return;
     const workingDir = getSessionWorkingDir(sessionId, session.repoPath);
@@ -1082,9 +1088,22 @@ export async function reviveSession(sessionId: string): Promise<void> {
       return;
     }
     await ensureSessionQuery(sessionId);
+    if (session.restartNotice) await sendRestartNotice(sessionId, session.restartNotice);
   } catch (err) {
     log.warn('Failed to revive session', { sessionId, error: toError(err).message });
   }
+}
+
+/** Claimed before sending, so concurrent revives deliver it once. */
+async function sendRestartNotice(sessionId: string, notice: string): Promise<void> {
+  const { count } = await prisma.session.updateMany({
+    where: { id: sessionId, restartNotice: notice },
+    data: { restartNotice: null },
+  });
+  if (count === 0) return;
+  log.info('Telling the agent what the restart cut off', { sessionId });
+  // Not user-initiated, so a restart doesn't reshuffle the session list.
+  await sendUserMessage(sessionId, notice, [], { userInitiated: false });
 }
 
 async function pathExists(path: string): Promise<boolean> {
@@ -1117,7 +1136,22 @@ export async function stopAllSessions(): Promise<void> {
   const scopes = sessionIds
     .map((id) => sessions.get(id)?.live?.sessionScope)
     .filter((s): s is string => Boolean(s));
-  await Promise.allSettled(sessionIds.map((id) => stopSession(id)));
+  // Read before stopSession tears the live state down.
+  const notices = sessionIds.flatMap((id) => {
+    const state = sessions.get(id);
+    const notice = state?.live ? restartNotice(state.turn, hasActiveGptRuns(id)) : null;
+    return notice ? [{ id, notice }] : [];
+  });
+  await Promise.allSettled([
+    ...sessionIds.map((id) => stopSession(id)),
+    ...notices.map(({ id, notice }) =>
+      prisma.session
+        .updateMany({ where: { id, status: 'running' }, data: { restartNotice: notice } })
+        .catch((err) =>
+          log.error('Failed to record restart notice', toError(err), { sessionId: id })
+        )
+    ),
+  ]);
   if (scopes.length > 0) await clearRecordedScopes(scopes);
 }
 

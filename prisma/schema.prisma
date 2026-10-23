@@ -55,6 +55,9 @@ model Session {
   // Set when a turn was cut short by a rate-limit rejection, so the session is
   // nudged to continue once the window resets. Cleared when the nudge is sent.
   resumeAfterRateLimit    Boolean  @default(false)
+  // Set at a graceful shutdown that cut off this session's turn or background work
+  // (src/lib/restart-notice.ts); sent and cleared when its query is next revived.
+  restartNotice           String?
   // Monotonic counter for atomic queued-prompt position assignment (next position to assign)
   queuedPromptSequence    Int      @default(0)
   // Usage alerts the agent opted into with set_usage_alerts: percent used at which
