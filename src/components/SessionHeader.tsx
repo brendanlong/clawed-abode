@@ -90,46 +90,48 @@ export function SessionHeader({
           </div>
         </div>
 
-        <div className="flex items-center gap-1 shrink-0">
-          {session.status !== 'archived' && (
-            <SessionSettingsButton
-              sessionId={session.id}
-              claudeModel={session.claudeModel ?? null}
-              rateLimitPauseEnabled={session.rateLimitPauseEnabled ?? null}
-              rateLimitPauseThreshold={session.rateLimitPauseThreshold ?? null}
-              sessionToolsEnabled={session.sessionToolsEnabled}
+        <div className="flex flex-col items-end gap-1 shrink-0">
+          <div className="flex items-center gap-1">
+            {session.status !== 'archived' && (
+              <SessionSettingsButton
+                sessionId={session.id}
+                claudeModel={session.claudeModel ?? null}
+                rateLimitPauseEnabled={session.rateLimitPauseEnabled ?? null}
+                rateLimitPauseThreshold={session.rateLimitPauseThreshold ?? null}
+                sessionToolsEnabled={session.sessionToolsEnabled}
+              />
+            )}
+            <OpenInEditorButton sessionId={session.id} />
+            {voiceEnabled && onToggleVoiceMode && (
+              <Button
+                variant={voiceModeActive ? 'secondary' : 'ghost'}
+                size="icon"
+                onClick={onToggleVoiceMode}
+                title={voiceModeActive ? 'Exit voice mode' : 'Enter voice mode'}
+                className="shrink-0 h-8 w-8"
+              >
+                <Mic className="h-4 w-4" />
+              </Button>
+            )}
+            {voiceEnabled && onAutoReadToggle && (
+              <VoiceAutoReadToggle autoRead={autoRead} onToggle={onAutoReadToggle} />
+            )}
+            <SessionStatusToggle
+              status={session.status}
+              onStart={session.canStart ? onStart : undefined}
+              onStop={session.canStop ? onStop : undefined}
+              isStarting={isStarting}
+              isStopping={isStopping}
             />
-          )}
-          <OpenInEditorButton sessionId={session.id} />
-          {voiceEnabled && onToggleVoiceMode && (
-            <Button
-              variant={voiceModeActive ? 'secondary' : 'ghost'}
-              size="icon"
-              onClick={onToggleVoiceMode}
-              title={voiceModeActive ? 'Exit voice mode' : 'Enter voice mode'}
-              className="shrink-0 h-8 w-8"
-            >
-              <Mic className="h-4 w-4" />
-            </Button>
-          )}
-          {voiceEnabled && onAutoReadToggle && (
-            <VoiceAutoReadToggle autoRead={autoRead} onToggle={onAutoReadToggle} />
-          )}
-          <SessionStatusToggle
-            status={session.status}
-            onStart={session.canStart ? onStart : undefined}
-            onStop={session.canStop ? onStop : undefined}
-            isStarting={isStarting}
-            isStopping={isStopping}
-          />
+          </div>
           {session.canArchive && onArchive && (
             <SessionActionButton
               action="archive"
               onClick={onArchive}
               isPending={isArchiving}
-              variant="ghost"
+              variant="secondary"
               sessionName={session.name}
-              className="h-8 w-8"
+              label="Archive"
             />
           )}
         </div>

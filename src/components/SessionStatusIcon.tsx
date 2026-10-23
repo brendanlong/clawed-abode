@@ -5,6 +5,7 @@ import {
   Archive,
   CircleAlert,
   CirclePause,
+  Hourglass,
   Loader2,
   MessageCircle,
   PowerOff,
@@ -20,7 +21,7 @@ const statusIcons: Record<SessionDisplayStatus, { icon: LucideIcon; className: s
   waiting: { icon: MessageCircle, className: 'text-muted-foreground' },
   paused: { icon: CirclePause, className: 'text-amber-500' },
   stopped: { icon: PowerOff, className: 'text-muted-foreground' },
-  creating: { icon: Loader2, className: 'animate-spin text-muted-foreground' },
+  creating: { icon: Hourglass, className: 'text-muted-foreground' },
   error: { icon: CircleAlert, className: 'text-destructive' },
   archived: { icon: Archive, className: 'text-muted-foreground' },
 };
@@ -34,7 +35,6 @@ export function SessionStatusIcon({ status }: { status: SessionDisplayStatus }) 
           <span
             role="img"
             aria-label={status}
-            tabIndex={0}
             className="inline-flex h-11 w-11 items-center justify-center rounded-md"
           >
             <Icon className={cn('h-4 w-4', className)} />
