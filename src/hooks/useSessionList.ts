@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback } from 'react';
+import { keepPreviousData } from '@tanstack/react-query';
 import { trpc } from '@/lib/trpc';
 import { LIVE_QUERY_OPTIONS } from '@/lib/live-query';
 import type { inferRouterOutputs } from '@trpc/server';
@@ -21,6 +22,7 @@ export interface PagedSessions {
 export interface UseSessionListOptions {
   /** Omit for the active (non-archived) list. */
   status?: 'archived';
+  search?: string;
   enabled?: boolean;
 }
 
@@ -31,11 +33,18 @@ export interface UseSessionListOptions {
  */
 export function useSessionList({
   status,
+  search,
   enabled = true,
 }: UseSessionListOptions = {}): PagedSessions & { refetch: () => void } {
   const query = trpc.sessions.list.useInfiniteQuery(
-    { status },
-    { getNextPageParam: (lastPage) => lastPage.nextCursor, enabled, ...LIVE_QUERY_OPTIONS }
+    { status, search },
+    {
+      getNextPageParam: (lastPage) => lastPage.nextCursor,
+      enabled,
+      // Keep showing the previous results while a new search loads, instead of a spinner.
+      placeholderData: keepPreviousData,
+      ...LIVE_QUERY_OPTIONS,
+    }
   );
   const { fetchNextPage, refetch } = query;
 

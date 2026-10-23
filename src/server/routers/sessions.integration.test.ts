@@ -325,6 +325,46 @@ describe('sessionsRouter integration', () => {
       ).toEqual(['Archived']);
     });
 
+    it('filters by a case-insensitive search over name, repo, and current branch', async () => {
+      await testPrisma.session.createMany({
+        data: [
+          { name: 'Fix Login Bug', status: 'running' },
+          { name: 'Other', status: 'running', repoUrl: 'https://github.com/owner/login-app.git' },
+          { name: 'Branchy', status: 'stopped', currentBranch: 'brendanlong/login' },
+          { name: 'Unrelated', status: 'running', currentBranch: 'main' },
+          { name: 'Archived login', status: 'archived' },
+        ],
+      });
+
+      const caller = createCaller('auth-session-id');
+      const names = async (input: { search: string; status?: 'archived' }) =>
+        (await caller.sessions.list(input)).sessions.map((s) => s.name).sort();
+      expect(await names({ search: '  LOGIN ' })).toEqual(['Branchy', 'Fix Login Bug', 'Other']);
+      expect(await names({ search: 'login', status: 'archived' })).toEqual(['Archived login']);
+      expect(await names({ search: '' })).toHaveLength(4);
+    });
+
+    it('paginates a search without skipping matches', async () => {
+      await testPrisma.session.createMany({
+        data: ['match 1', 'skip', 'match 2', 'match 3'].map((name, i) => ({
+          name,
+          status: 'running',
+          lastActivityAt: new Date(Date.UTC(2024, 0, 10 - i)),
+        })),
+      });
+
+      const caller = createCaller('auth-session-id');
+      const first = await caller.sessions.list({ search: 'match', limit: 2 });
+      const second = await caller.sessions.list({
+        search: 'match',
+        limit: 2,
+        cursor: first.nextCursor,
+      });
+      expect(first.sessions.map((s) => s.name)).toEqual(['match 1', 'match 2']);
+      expect(second.sessions.map((s) => s.name)).toEqual(['match 3']);
+      expect(second.nextCursor).toBeUndefined();
+    });
+
     it('paginates by (lastActivityAt, id) cursor without skipping ties', async () => {
       const sameInstant = new Date('2024-02-01T00:00:00Z');
       await testPrisma.session.createMany({

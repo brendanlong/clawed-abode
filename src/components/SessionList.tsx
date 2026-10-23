@@ -2,6 +2,8 @@
 
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
+import { Search } from 'lucide-react';
+import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { CenteredSpinner, Spinner } from '@/components/ui/spinner';
 import { SessionListItem } from '@/components/SessionListItem';
@@ -13,6 +15,10 @@ export interface SessionListProps {
   archived: PagedSessions;
   showArchived: boolean;
   onToggleArchived: () => void;
+  search: string;
+  onSearchChange: (search: string) => void;
+  /** The lists are currently filtered by a search (which may lag `search` while typing). */
+  filtered: boolean;
 }
 
 /** One paginated list of sessions; loads the next page as the sentinel scrolls into view. */
@@ -54,17 +60,37 @@ function SessionListSection({
  * Pure presentation component for the home page's session lists.
  * Receives data and actions as props, making it easily testable.
  */
-export function SessionList({
+export function SessionList({ search, onSearchChange, ...lists }: SessionListProps) {
+  return (
+    <div className="space-y-4">
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          type="search"
+          value={search}
+          onChange={(e) => onSearchChange(e.target.value)}
+          placeholder="Search sessions"
+          aria-label="Search sessions"
+          className="pl-9"
+        />
+      </div>
+      <SessionLists {...lists} />
+    </div>
+  );
+}
+
+function SessionLists({
   active,
   archived,
   showArchived,
   onToggleArchived,
-}: SessionListProps) {
+  filtered,
+}: Omit<SessionListProps, 'search' | 'onSearchChange'>) {
   if (active.isLoading) {
     return <CenteredSpinner />;
   }
 
-  if (active.sessions.length === 0 && !showArchived) {
+  if (active.sessions.length === 0 && !showArchived && !filtered) {
     return (
       <Card>
         <CardHeader className="text-center">
@@ -89,6 +115,10 @@ export function SessionList({
         <CardContent className="p-0">
           {active.sessions.length > 0 ? (
             <SessionListSection {...active} />
+          ) : filtered ? (
+            <div className="p-6 text-center text-muted-foreground">
+              No active sessions match your search.
+            </div>
           ) : (
             <div className="p-6 text-center text-muted-foreground">
               No active sessions.{' '}
@@ -126,7 +156,9 @@ export function SessionList({
       )}
 
       {showArchived && !archived.isLoading && archived.sessions.length === 0 && (
-        <div className="text-center text-sm text-muted-foreground">No archived sessions</div>
+        <div className="text-center text-sm text-muted-foreground">
+          {filtered ? 'No archived sessions match your search' : 'No archived sessions'}
+        </div>
       )}
     </div>
   );

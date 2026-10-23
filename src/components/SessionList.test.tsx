@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { SessionList } from './SessionList';
 import type { PagedSessions, Session } from '@/hooks/useSessionList';
 
@@ -56,6 +56,7 @@ function paged(sessions: Session[], overrides: Partial<PagedSessions> = {}): Pag
 }
 
 const none = paged([]);
+const noSearch = { search: '', onSearchChange: vi.fn(), filtered: false };
 
 describe('SessionList', () => {
   it('shows spinner while the active list loads', () => {
@@ -65,6 +66,7 @@ describe('SessionList', () => {
         archived={none}
         showArchived={false}
         onToggleArchived={vi.fn()}
+        {...noSearch}
       />
     );
     expect(document.querySelector('[class*="animate-spin"]')).toBeInTheDocument();
@@ -72,7 +74,13 @@ describe('SessionList', () => {
 
   it('shows the empty state with a New Session link when there are no sessions', () => {
     render(
-      <SessionList active={none} archived={none} showArchived={false} onToggleArchived={vi.fn()} />
+      <SessionList
+        active={none}
+        archived={none}
+        showArchived={false}
+        onToggleArchived={vi.fn()}
+        {...noSearch}
+      />
     );
     expect(screen.getByText('No sessions yet')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /new session/i })).toHaveAttribute('href', '/new');
@@ -92,6 +100,7 @@ describe('SessionList', () => {
           archived={none}
           showArchived={false}
           onToggleArchived={vi.fn()}
+          {...noSearch}
         />
       );
       const items = screen.getAllByRole('listitem');
@@ -109,6 +118,7 @@ describe('SessionList', () => {
           archived={none}
           showArchived={false}
           onToggleArchived={vi.fn()}
+          {...noSearch}
         />
       );
       const items = screen.getAllByRole('listitem');
@@ -135,6 +145,7 @@ describe('SessionList', () => {
           archived={none}
           showArchived={false}
           onToggleArchived={vi.fn()}
+          {...noSearch}
         />
       );
       expect(screen.queryByRole('button', { name: /^start$/i })).not.toBeInTheDocument();
@@ -167,6 +178,7 @@ describe('SessionList', () => {
           archived={none}
           showArchived={false}
           onToggleArchived={vi.fn()}
+          {...noSearch}
         />
       );
       expect(screen.getByLabelText(/merged/i)).toBeInTheDocument();
@@ -180,6 +192,7 @@ describe('SessionList', () => {
           archived={none}
           showArchived={false}
           onToggleArchived={vi.fn()}
+          {...noSearch}
         />
       );
       screen.getByRole('button', { name: /load more/i }).click();
@@ -191,6 +204,7 @@ describe('SessionList', () => {
           archived={none}
           showArchived={false}
           onToggleArchived={vi.fn()}
+          {...noSearch}
         />
       );
       expect(screen.queryByRole('button', { name: /load more/i })).not.toBeInTheDocument();
@@ -212,6 +226,7 @@ describe('SessionList', () => {
         archived={none}
         showArchived={false}
         onToggleArchived={vi.fn()}
+        {...noSearch}
       />
     );
     expect(screen.getByText('PR #12 ready for review')).toBeInTheDocument();
@@ -228,6 +243,7 @@ describe('SessionList', () => {
           archived={paged([session({ id: 'z', name: 'Old', status: 'archived' })])}
           showArchived
           onToggleArchived={vi.fn()}
+          {...noSearch}
         />
       );
       expect(screen.getByText('Archived Sessions')).toBeInTheDocument();
@@ -237,9 +253,54 @@ describe('SessionList', () => {
 
     it('says so when there are no archived sessions', () => {
       render(
-        <SessionList active={active} archived={none} showArchived onToggleArchived={vi.fn()} />
+        <SessionList
+          active={active}
+          archived={none}
+          showArchived
+          onToggleArchived={vi.fn()}
+          {...noSearch}
+        />
       );
       expect(screen.getByText('No archived sessions')).toBeInTheDocument();
+    });
+  });
+
+  describe('search', () => {
+    it('reports typed text', () => {
+      const onSearchChange = vi.fn();
+      render(
+        <SessionList
+          active={none}
+          archived={none}
+          showArchived={false}
+          onToggleArchived={vi.fn()}
+          search=""
+          onSearchChange={onSearchChange}
+          filtered={false}
+        />
+      );
+      fireEvent.change(screen.getByRole('searchbox', { name: /search sessions/i }), {
+        target: { value: 'login' },
+      });
+      expect(onSearchChange).toHaveBeenCalledWith('login');
+    });
+
+    it('says nothing matched instead of offering to create a first session', () => {
+      render(
+        <SessionList
+          active={none}
+          archived={none}
+          showArchived
+          onToggleArchived={vi.fn()}
+          search="zzz"
+          onSearchChange={vi.fn()}
+          filtered
+        />
+      );
+      expect(screen.queryByText('No sessions yet')).not.toBeInTheDocument();
+      expect(screen.getByText(/no active sessions match/i)).toBeInTheDocument();
+      expect(screen.getByText(/no archived sessions match/i)).toBeInTheDocument();
+      expect(screen.getByRole('searchbox')).toHaveValue('zzz');
     });
   });
 });
