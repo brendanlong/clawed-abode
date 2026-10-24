@@ -44,6 +44,7 @@ import {
 } from '@/lib/image-generation';
 import { DEFAULT_USAGE_ALERT_PERCENT, usageAlertPercentSchema } from '@/lib/usage';
 import { formatWatchedPullRequest } from '@/lib/pull-request-watch';
+import { formatAlertList } from '@/lib/security-alerts';
 import { extractRepoFullName } from '@/lib/utils';
 import { runGptAgent, type GptAgentContext } from './gpt-agent';
 import { generateImage, type ImageToolContext } from './image-generation';
@@ -56,6 +57,11 @@ import {
   unwatchPullRequest,
   watchPullRequest,
 } from './pull-request-watch';
+import {
+  setSecurityAlertWatches,
+  stopSecurityAlertWatches,
+  type RepoAlerts,
+} from './security-alert-watch';
 
 const log = createLogger('builtin-mcp');
 
@@ -154,6 +160,15 @@ async function loadSessionRepo(sessionId: string): Promise<string> {
   return extractRepoFullName(session.repoUrl);
 }
 
+function formatRepoAlerts(read: RepoAlerts): string {
+  const unread = read.failures.map((f) => `Couldn't read ${f.kind} alerts: ${f.message}`);
+  return [
+    `## ${read.repoFullName}`,
+    formatAlertList(Object.values(read.alerts).flat()),
+    ...unread,
+  ].join('\n');
+}
+
 function basicTools(sessionId: string) {
   return [
     tool(
@@ -182,7 +197,7 @@ function basicTools(sessionId: string) {
     ),
     tool(
       'stop_this_session',
-      'Last resort: stop this session’s agent, ending your work until the user restarts it (the workspace is kept). Only use it when messages keep waking you and the tool that set them up can’t turn them off (set_usage_alerts with enabled false, watch_pull_requests with [], watch_pull_request with stop), or when the user asks. Commit and push first; the user is notified with your reason.',
+      'Last resort: stop this session’s agent, ending your work until the user restarts it (the workspace is kept). Only use it when messages keep waking you and the tool that set them up can’t turn them off (set_usage_alerts with enabled false, watch_pull_requests with [], watch_pull_request or watch_security_alerts with stop), or when the user asks. Commit and push first; the user is notified with your reason.',
       {
         reason: attentionSummarySchema.describe('One line telling the user why you stopped'),
       },
@@ -264,6 +279,31 @@ function basicTools(sessionId: string) {
           if (repos.length === 0) return textResult('Stopped watching pull requests.');
           const list = open.length > 0 ? open.map(formatWatchedPullRequest).join('\n') : '(none)';
           return textResult(`Watching ${repos.join(', ')}. Open pull requests:\n\n${list}`);
+        })
+    ),
+    tool(
+      'watch_security_alerts',
+      'Watch GitHub repos’ open Dependabot, code scanning and secret scanning alerts, replacing any earlier list; set stop to end. Returns the open alerts now. While watching, you get one message every few minutes listing what changed: alerts that are new or reopened, and ones that were fixed, dismissed or resolved (including by you). Record each triage decision in GitHub (dismiss with a reason and comment, or fix in a PR) so that open means not yet triaged.',
+      {
+        repos: z
+          .array(repoFullNameSchema)
+          .min(1)
+          .max(MAX_WATCHED_REPOS)
+          .optional()
+          .describe('owner/repo names; required unless stopping'),
+        stop: z.boolean().default(false),
+      },
+      ({ repos, stop }) =>
+        run('watch_security_alerts', async () => {
+          if (stop) {
+            await stopSecurityAlertWatches(sessionId);
+            return textResult('Stopped watching security alerts.');
+          }
+          if (!repos) throw new Error('Pass repos, or stop');
+          const reads = await setSecurityAlertWatches(sessionId, repos);
+          return textResult(
+            `Watching security alerts in ${repos.join(', ')}. Open alerts:\n\n${reads.map(formatRepoAlerts).join('\n\n')}`
+          );
         })
     ),
     tool(

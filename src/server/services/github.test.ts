@@ -15,6 +15,8 @@ import {
   fetchPullRequest,
   fetchPullRequestForBranch,
   fetchRecentComments,
+  fetchOpenSecurityAlerts,
+  fetchSecurityAlert,
   GitHubApiError,
   githubFetchResponse,
   parseLinkHeader,
@@ -509,6 +511,64 @@ describe('github service', () => {
     it('throws when the comments can’t be read', async () => {
       mockFetch.mockResolvedValue(createMockResponse({ message: 'Not Found' }, 404));
       await expect(fetchRecentComments('o/r')).rejects.toThrow(GitHubApiError);
+    });
+  });
+
+  describe('security alerts', () => {
+    function secretAlert(number: number, state = 'open') {
+      return {
+        number,
+        state,
+        html_url: `https://github.com/o/r/security/secret-scanning/${number}`,
+        created_at: '2026-01-01T00:00:00Z',
+        secret_type: 'npm_token',
+        secret: 'npm_shh',
+      };
+    }
+
+    function pageResponse(items: unknown[], link: string | null) {
+      return {
+        ok: true,
+        status: 200,
+        json: vi.fn().mockResolvedValue(items),
+        headers: { get: (name: string) => (name.toLowerCase() === 'link' ? link : null) },
+      };
+    }
+
+    it('follows cursor links through every page of open alerts', async () => {
+      mockFetch
+        .mockResolvedValueOnce(
+          pageResponse(
+            [secretAlert(1)],
+            '<https://api.github.com/repositories/9/secret-scanning/alerts?state=open&per_page=100&after=abc>; rel="next"'
+          )
+        )
+        .mockResolvedValueOnce(pageResponse([secretAlert(2)], null));
+
+      const alerts = await fetchOpenSecurityAlerts('o/r', 'secret-scanning');
+
+      expect(alerts.map((a) => a.number)).toEqual([1, 2]);
+      expect(mockFetch.mock.calls.map(([url]) => url)).toEqual([
+        'https://api.github.com/repos/o/r/secret-scanning/alerts?state=open&per_page=100',
+        'https://api.github.com/repositories/9/secret-scanning/alerts?state=open&per_page=100&after=abc',
+      ]);
+    });
+
+    it('reads one alert, and null for one that no longer exists', async () => {
+      mockFetch.mockResolvedValueOnce(createMockResponse(secretAlert(3, 'resolved')));
+      expect((await fetchSecurityAlert('o/r', 'secret-scanning', 3))?.closure?.state).toBe(
+        'resolved'
+      );
+
+      mockFetch.mockResolvedValueOnce(createMockResponse({ message: 'Not Found' }, 404));
+      expect(await fetchSecurityAlert('o/r', 'secret-scanning', 4)).toBeNull();
+    });
+
+    it('throws when a kind of alert can’t be read', async () => {
+      mockFetch.mockResolvedValue(
+        createMockResponse({ message: 'Dependabot alerts are disabled for this repository.' }, 403)
+      );
+      await expect(fetchOpenSecurityAlerts('o/r', 'dependabot')).rejects.toThrow(/disabled/);
     });
   });
 });

@@ -86,6 +86,7 @@ Use a **Fine-grained Personal Access Token** for security:
    - **Issues**: Read-only (to browse issues when starting a session)
    - **Pull requests**: Read-only (for the session PR status indicator and PR watches)
    - **Checks** and **Commit statuses**: Read-only (for CI status on PRs)
+   - **Dependabot alerts**, **Code scanning alerts** and **Secret scanning alerts**: Read-only for `watch_security_alerts`; Read and write if agents should dismiss alerts
 5. Generate the token and add it to your `.env` file
 
 Public repos work even without these permissions, so a token missing **Contents**

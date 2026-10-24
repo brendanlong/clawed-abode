@@ -804,8 +804,8 @@ export const usageRunner: UsagePort = {
   },
 };
 
-/** The runner as PR watches see it; handed over at startup. */
-export const pullRequestWatchRunner: PullRequestWatchPort = {
+/** The runner as PR and security alert watches see it; handed over at startup. */
+export const watchRunner: PullRequestWatchPort = {
   hasLiveQuery: (sessionId) => !shutdown.started && !!sessions.get(sessionId)?.live,
   isTurnActive: isClaudeRunning,
   deliverMessage: deliverAppMessage,

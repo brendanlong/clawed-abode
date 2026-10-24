@@ -66,7 +66,7 @@ export function describeChecks(checks: ChecksState | null): string {
   return checks ? CHECKS_DESCRIPTIONS[checks] : 'CI status unknown';
 }
 
-/** GitHub repo names are case-insensitive; PullRequest and PullRequestWatch rows key on this. */
+/** GitHub repo names are case-insensitive; PullRequest, PullRequestWatch and SecurityAlertWatch rows key on this. */
 export function pullRequestRepoKey(repoFullName: string): string {
   return repoFullName.toLowerCase();
 }

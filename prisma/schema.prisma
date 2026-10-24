@@ -65,12 +65,13 @@ model Session {
   usageAlertFiveHour      Int?
   usageAlertWeekly        Int?
 
-  linkedPullRequest  PullRequest?         @relation(fields: [pullRequestId], references: [id], onDelete: SetNull)
-  messages           Message[]
-  queuedPrompts      QueuedPrompt[]
-  usage              SessionUsage?
-  pullRequestWatches PullRequestWatch[]
-  pullRequests       SessionPullRequest[]
+  linkedPullRequest    PullRequest?         @relation(fields: [pullRequestId], references: [id], onDelete: SetNull)
+  messages             Message[]
+  queuedPrompts        QueuedPrompt[]
+  usage                SessionUsage?
+  pullRequestWatches   PullRequestWatch[]
+  securityAlertWatches SecurityAlertWatch[]
+  pullRequests         SessionPullRequest[]
 
   @@index([lastActivityAt, id]) // sessions.list default keyset order (status != 'archived')
   @@index([status, lastActivityAt, id]) // sessions.list keyset order filtered by status
@@ -121,6 +122,18 @@ model PullRequestWatch {
   events  PullRequestWatchEvent[]
 
   @@unique([sessionId, repoFullName, number])
+}
+
+// A repo whose security alerts a session watches (src/server/services/security-alert-watch.ts).
+model SecurityAlertWatch {
+  sessionId    String
+  repoFullName String
+  openAlerts   String // JSON SecurityAlert[] (src/lib/security-alerts.ts): the open alerts the session has been told about
+  checkedAt    DateTime // When openAlerts was read; an alert older than this that wasn't in it was reopened
+
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@id([sessionId, repoFullName])
 }
 
 // One state of a PR a watch has already seen, so each is delivered once.
