@@ -1,3 +1,4 @@
+# Single home for pnpm settings (package.json "pnpm" and .npmrc are not used).
 minimumReleaseAge: 10080
 minimumReleaseAgeIgnoreMissingTime: false
 minimumReleaseAgeExclude:
@@ -14,7 +15,6 @@ minimumReleaseAgeExclude:
 packages:
   - '.'
 
-# Single home for pnpm settings (package.json "pnpm" and .npmrc are not used).
 onlyBuiltDependencies:
   - '@prisma/client'
   - '@prisma/engines'
