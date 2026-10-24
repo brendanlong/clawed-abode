@@ -107,7 +107,7 @@ const codeScanningAlertSchema = z
       name: z.string().nullish(),
       severity: z.string().nullish(),
       security_severity_level: z.string().nullish(),
-      description: z.string(),
+      description: z.string().nullish(),
     }),
     tool: z.object({ name: z.string().nullish() }),
     most_recent_instance: z
@@ -131,7 +131,7 @@ const codeScanningAlertSchema = z
         createdAt: a.created_at,
         severity: a.rule.security_severity_level ?? a.rule.severity ?? null,
         subject: `${a.tool.name ?? 'Code scanning'} ${a.rule.id ?? a.rule.name ?? 'unknown rule'}`,
-        title: a.rule.description,
+        title: a.rule.description ?? a.rule.name ?? a.rule.id ?? 'Code scanning alert',
         details: location?.path
           ? [location.start_line ? `${location.path}:${location.start_line}` : location.path]
           : [],
@@ -140,7 +140,7 @@ const codeScanningAlertSchema = z
     };
   });
 
-/** The secret itself is in the API response; it is deliberately not parsed. */
+/** Requested with `hide_secret`; never parse the secret if it's there anyway. */
 const secretScanningAlertSchema = z
   .object({
     ...alertFields,
@@ -180,66 +180,94 @@ export const securityAlertSchemas: Record<SecurityAlertKind, z.ZodType<ParsedAle
   'secret-scanning': secretScanningAlertSchema,
 };
 
-const storedAlertsSchema = z.array(
-  z.object({
-    kind: z.enum(SECURITY_ALERT_KINDS),
-    number: z.number(),
-    url: z.string(),
-    createdAt: z.string(),
-    severity: z.string().nullable(),
-    subject: z.string(),
-    title: z.string(),
-    details: z.array(z.string()),
-  })
-);
+const storedAlertSchema = z.object({
+  kind: z.enum(SECURITY_ALERT_KINDS),
+  number: z.number(),
+  url: z.string(),
+  createdAt: z.string(),
+  severity: z.string().nullable(),
+  subject: z.string(),
+  title: z.string(),
+  details: z.array(z.string()),
+});
 
-/** Decode `SecurityAlertWatch.openAlerts`; a bad value reads as empty, so its alerts are reported again. */
-export function parseStoredAlerts(json: string): SecurityAlert[] {
+const kindReadSchema = z.object({ checkedAt: z.string(), alerts: z.array(storedAlertSchema) });
+
+/** The open alerts of each kind as of when it was last read; a kind never read is absent. */
+export type AlertSnapshot = Partial<Record<SecurityAlertKind, z.infer<typeof kindReadSchema>>>;
+
+const snapshotSchema = z.partialRecord(z.enum(SECURITY_ALERT_KINDS), kindReadSchema);
+
+/** Decode `SecurityAlertWatch.alerts`; a bad value reads as never read, so its alerts are reported again. */
+export function parseSnapshot(json: string): AlertSnapshot {
   try {
-    const parsed = storedAlertsSchema.safeParse(JSON.parse(json));
-    return parsed.success ? parsed.data : [];
+    const parsed = snapshotSchema.safeParse(JSON.parse(json));
+    return parsed.success ? parsed.data : {};
   } catch {
-    return [];
+    return {};
   }
 }
 
-export function alertKey(alert: Pick<SecurityAlert, 'kind' | 'number'>): string {
+/**
+ * The snapshot after a read: kinds that were read replace what was there, and
+ * the rest keep their last read, so an unreadable kind never looks like all of
+ * its alerts closed.
+ */
+export function mergeSnapshot(
+  previous: AlertSnapshot,
+  read: Partial<Record<SecurityAlertKind, SecurityAlert[]>>,
+  checkedAt: Date
+): AlertSnapshot {
+  const merged: AlertSnapshot = { ...previous };
+  for (const kind of SECURITY_ALERT_KINDS) {
+    const alerts = read[kind];
+    if (alerts) merged[kind] = { checkedAt: checkedAt.toISOString(), alerts };
+  }
+  return merged;
+}
+
+function alertKey(alert: Pick<SecurityAlert, 'kind' | 'number'>): string {
   return `${alert.kind}:${alert.number}`;
 }
 
 /**
- * The open alerts as of now: what was read for each kind, and the previous
- * alerts of any kind that couldn't be read, so an unreadable kind never looks
- * like every alert of that kind was closed.
+ * What changed between two snapshots. An alert that appeared was opened since
+ * its kind's previous read, or reopened if it was created before then; all of a
+ * kind read for the first time are `nowReadable`. `left` are no longer open;
+ * how they closed has to be looked up.
  */
-export function currentAlerts(
-  previous: SecurityAlert[],
-  read: Partial<Record<SecurityAlertKind, SecurityAlert[]>>
-): SecurityAlert[] {
-  return SECURITY_ALERT_KINDS.flatMap(
-    (kind) => read[kind] ?? previous.filter((alert) => alert.kind === kind)
-  );
-}
-
-/**
- * What changed between two reads. An alert not in `previous` was opened since,
- * or reopened if it was created before the previous read. `left` are no longer
- * open; how they closed has to be looked up.
- */
-export function diffAlerts(
-  previous: SecurityAlert[],
-  current: SecurityAlert[],
-  previousCheckedAt: Date
-): { opened: SecurityAlert[]; reopened: SecurityAlert[]; left: SecurityAlert[] } {
-  const previousKeys = new Set(previous.map(alertKey));
-  const currentKeys = new Set(current.map(alertKey));
-  const appeared = current.filter((alert) => !previousKeys.has(alertKey(alert)));
-  const isOld = (alert: SecurityAlert) => Date.parse(alert.createdAt) < previousCheckedAt.getTime();
-  return {
-    opened: appeared.filter((alert) => !isOld(alert)),
-    reopened: appeared.filter(isOld),
-    left: previous.filter((alert) => !currentKeys.has(alertKey(alert))),
+export function diffSnapshots(
+  previous: AlertSnapshot,
+  current: AlertSnapshot
+): {
+  opened: SecurityAlert[];
+  reopened: SecurityAlert[];
+  nowReadable: SecurityAlert[];
+  left: SecurityAlert[];
+} {
+  const diff = {
+    opened: [] as SecurityAlert[],
+    reopened: [] as SecurityAlert[],
+    nowReadable: [] as SecurityAlert[],
+    left: [] as SecurityAlert[],
   };
+  for (const kind of SECURITY_ALERT_KINDS) {
+    const before = previous[kind];
+    const now = current[kind]?.alerts ?? [];
+    if (!before) {
+      diff.nowReadable.push(...now);
+      continue;
+    }
+    const beforeKeys = new Set(before.alerts.map(alertKey));
+    const nowKeys = new Set(now.map(alertKey));
+    // GitHub's timestamps are whole seconds: one in the read's own second may be newer than it.
+    const checkedAt = Math.floor(Date.parse(before.checkedAt) / 1000) * 1000;
+    for (const alert of now.filter((a) => !beforeKeys.has(alertKey(a)))) {
+      (Date.parse(alert.createdAt) < checkedAt ? diff.reopened : diff.opened).push(alert);
+    }
+    diff.left.push(...before.alerts.filter((a) => !nowKeys.has(alertKey(a))));
+  }
+  return diff;
 }
 
 const SEVERITY_ORDER = [
@@ -310,11 +338,13 @@ export interface RepoAlertChanges {
   repoFullName: string;
   opened: SecurityAlert[];
   reopened: SecurityAlert[];
+  nowReadable: SecurityAlert[];
   closed: { alert: SecurityAlert; closure: AlertClosure }[];
 }
 
 export function hasAlertChanges(changes: RepoAlertChanges): boolean {
-  return changes.opened.length + changes.reopened.length + changes.closed.length > 0;
+  const { opened, reopened, nowReadable, closed } = changes;
+  return opened.length + reopened.length + nowReadable.length + closed.length > 0;
 }
 
 /** One message for everything a poll found, across the session's repos. */
@@ -323,6 +353,9 @@ export function formatAlertChanges(repos: RepoAlertChanges[]): string {
     const parts = [`## ${repo.repoFullName}`];
     if (repo.opened.length > 0) parts.push(`New:\n${formatAlertList(repo.opened)}`);
     if (repo.reopened.length > 0) parts.push(`Reopened:\n${formatAlertList(repo.reopened)}`);
+    if (repo.nowReadable.length > 0) {
+      parts.push(`Open, and readable for the first time:\n${formatAlertList(repo.nowReadable)}`);
+    }
     if (repo.closed.length > 0) {
       const closed = formatGroups(
         repo.closed,

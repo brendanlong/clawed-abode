@@ -549,7 +549,7 @@ describe('github service', () => {
 
       expect(alerts.map((a) => a.number)).toEqual([1, 2]);
       expect(mockFetch.mock.calls.map(([url]) => url)).toEqual([
-        'https://api.github.com/repos/o/r/secret-scanning/alerts?state=open&per_page=100',
+        'https://api.github.com/repos/o/r/secret-scanning/alerts?state=open&per_page=100&hide_secret=true',
         'https://api.github.com/repositories/9/secret-scanning/alerts?state=open&per_page=100&after=abc',
       ]);
     });

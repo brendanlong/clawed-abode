@@ -128,8 +128,7 @@ model PullRequestWatch {
 model SecurityAlertWatch {
   sessionId    String
   repoFullName String
-  openAlerts   String // JSON SecurityAlert[] (src/lib/security-alerts.ts): the open alerts the session has been told about
-  checkedAt    DateTime // When openAlerts was read; an alert older than this that wasn't in it was reopened
+  alerts       String // JSON AlertSnapshot (src/lib/security-alerts.ts): the open alerts the session has been told about
 
   session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 

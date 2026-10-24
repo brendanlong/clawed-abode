@@ -205,6 +205,7 @@ interface LinkedPage<T> {
  * Every item of a list, following each page's `next` link, so it works for
  * cursor-paginated lists too. Each page is a conditional request; a 304 vouches
  * for the next link as well, since a cursor is derived from the page's items.
+ * An item that doesn't parse is logged and skipped rather than failing the list.
  */
 async function githubFetchLinkedPages<T>(
   path: string,
@@ -216,7 +217,17 @@ async function githubFetchLinkedPages<T>(
   for (let next: string | undefined = path; next;) {
     const pagePath: string = next;
     const page: LinkedPage<T> = await pageCache.fetch(pagePath, token, async (response) => ({
-      items: await parseGitHubResponse(response, z.array(itemSchema), pagePath),
+      items: (await parseGitHubResponse(response, z.array(z.unknown()), pagePath)).flatMap(
+        (raw) => {
+          const parsed = itemSchema.safeParse(raw);
+          if (parsed.success) return [parsed.data];
+          log.warn('Skipping an unexpected GitHub list item', {
+            path: pagePath,
+            error: parsed.error.message,
+          });
+          return [];
+        }
+      ),
       next: nextLinkPath(response.headers.get('link')),
     }));
     items.push(...page.items);
@@ -499,13 +510,24 @@ export async function fetchChecks(repoFullName: string, sha: string): Promise<Ch
 
 const alertPageCache = new ConditionalGetCache<LinkedPage<ParsedAlert>>(200);
 
+/** `hide_secret` keeps a leaked secret's value out of secret scanning responses. */
+function alertsPath(
+  repoFullName: string,
+  kind: SecurityAlertKind,
+  suffix: string,
+  params: string[]
+): string {
+  const query = [...params, ...(kind === 'secret-scanning' ? ['hide_secret=true'] : [])];
+  return `/repos/${repoFullName}/${kind}/alerts${suffix}${query.length > 0 ? `?${query.join('&')}` : ''}`;
+}
+
 /** A repo's open alerts of one kind. Throws when they can't be read (including when the feature is off). */
 export async function fetchOpenSecurityAlerts(
   repoFullName: string,
   kind: SecurityAlertKind
 ): Promise<SecurityAlert[]> {
   const pages = await githubFetchLinkedPages(
-    `/repos/${repoFullName}/${kind}/alerts?state=open&per_page=100`,
+    alertsPath(repoFullName, kind, '', ['state=open', 'per_page=100']),
     securityAlertSchemas[kind],
     requireToken(),
     alertPageCache
@@ -519,7 +541,7 @@ export async function fetchSecurityAlert(
   kind: SecurityAlertKind,
   number: number
 ): Promise<ParsedAlert | null> {
-  const path = `/repos/${repoFullName}/${kind}/alerts/${number}`;
+  const path = alertsPath(repoFullName, kind, `/${number}`, []);
   try {
     const response = await githubFetchResponse(path, requireToken());
     return await parseGitHubResponse(response, securityAlertSchemas[kind], path);

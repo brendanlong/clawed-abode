@@ -11,13 +11,15 @@ import { coalesce } from '@/lib/coalesce';
 import { processSingleton } from '@/lib/process-singleton';
 import { createLogger, toError } from '@/lib/logger';
 import { pullRequestRepoKey } from '@/lib/pull-request';
+import { serialQueue } from '@/lib/serial-queue';
 import {
-  currentAlerts,
-  diffAlerts,
+  diffSnapshots,
   formatAlertChanges,
   hasAlertChanges,
-  parseStoredAlerts,
+  mergeSnapshot,
+  parseSnapshot,
   SECURITY_ALERT_KINDS,
+  type AlertSnapshot,
   type RepoAlertChanges,
   type SecurityAlert,
   type SecurityAlertKind,
@@ -78,21 +80,20 @@ async function readRepo(repoKey: string): Promise<RepoAlerts> {
 interface Watch {
   sessionId: string;
   repoFullName: string;
-  openAlerts: string;
-  checkedAt: Date;
+  alerts: string;
 }
 
-/** The watch's changes, and the open alerts it will have been told about once they're delivered. */
+/** The watch's changes, and the snapshot it will have been told about once they're delivered. */
 async function changesFor(
   watch: Watch,
   read: RepoAlerts
-): Promise<{ changes: RepoAlertChanges; openAlerts: SecurityAlert[] }> {
-  const previous = parseStoredAlerts(watch.openAlerts);
-  const current = currentAlerts(previous, read.alerts);
-  const { opened, reopened, left } = diffAlerts(previous, current, watch.checkedAt);
+): Promise<{ changes: RepoAlertChanges; snapshot: AlertSnapshot }> {
+  const previous = parseSnapshot(watch.alerts);
+  const snapshot = mergeSnapshot(previous, read.alerts, read.checkedAt);
+  const { opened, reopened, nowReadable, left } = diffSnapshots(previous, snapshot);
   const closed: RepoAlertChanges['closed'] = [];
-  const stillOpen: SecurityAlert[] = [];
   for (const alert of left) {
+    let stillOpen = alert;
     try {
       const now = await fetchSecurityAlert(watch.repoFullName, alert.kind, alert.number);
       if (!now) {
@@ -100,11 +101,13 @@ async function changesFor(
           alert,
           closure: { state: 'deleted', by: null, reason: null, comment: null },
         });
-      } else if (now.closure) {
-        closed.push({ alert: now.alert, closure: now.closure });
-      } else {
-        stillOpen.push(now.alert);
+        continue;
       }
+      if (now.closure) {
+        closed.push({ alert: now.alert, closure: now.closure });
+        continue;
+      }
+      stillOpen = now.alert;
     } catch (err) {
       // Reported once it can be read.
       log.warn('Failed to read a closed security alert', {
@@ -113,32 +116,31 @@ async function changesFor(
         number: alert.number,
         error: toError(err).message,
       });
-      stillOpen.push(alert);
     }
+    snapshot[alert.kind]?.alerts.push(stillOpen);
   }
   return {
-    changes: { repoFullName: watch.repoFullName, opened, reopened, closed },
-    openAlerts: [...current, ...stillOpen],
+    changes: { repoFullName: watch.repoFullName, opened, reopened, nowReadable, closed },
+    snapshot,
   };
 }
 
-async function saveOpenAlerts(
+async function saveSnapshot(
   sessionId: string,
   repoFullName: string,
-  openAlerts: SecurityAlert[],
-  checkedAt: Date
+  snapshot: AlertSnapshot
 ): Promise<void> {
   // updateMany: the watch may have been removed meanwhile.
   await prisma.securityAlertWatch.updateMany({
     where: { sessionId, repoFullName },
-    data: { openAlerts: JSON.stringify(openAlerts), checkedAt },
+    data: { alerts: JSON.stringify(snapshot) },
   });
 }
 
 /**
- * Deliver one session's changes across its repos. The stored open alerts move
- * forward only once the message is delivered, so a session whose query went
- * away hears about them when it's back.
+ * Deliver one session's changes across its repos. The snapshot moves forward
+ * only once the message is delivered, so a session whose query went away
+ * hears about them when it's back.
  */
 async function processSession(
   sessionId: string,
@@ -150,7 +152,7 @@ async function processSession(
   for (const watch of watches) {
     const read = reads.get(watch.repoFullName);
     if (!read || Object.keys(read.alerts).length === 0) continue;
-    results.push({ watch, read, ...(await changesFor(watch, read)) });
+    results.push({ watch, ...(await changesFor(watch, read)) });
   }
   const changed = results.filter((r) => hasAlertChanges(r.changes));
   if (changed.length > 0) {
@@ -164,8 +166,8 @@ async function processSession(
     );
     if (!delivered) return;
   }
-  for (const { watch, read, openAlerts } of results) {
-    await saveOpenAlerts(sessionId, watch.repoFullName, openAlerts, read.checkedAt);
+  for (const { watch, snapshot } of results) {
+    await saveSnapshot(sessionId, watch.repoFullName, snapshot);
   }
 }
 
@@ -202,52 +204,69 @@ async function poll(): Promise<void> {
   }
 }
 
-/** Serialized, so overlapping polls can't deliver the same change twice. */
+/** Polls and tool calls take turns, so a poll can't deliver or save over what a reply just showed. */
+const exclusive = processSingleton('security-alert-watch.queue', serialQueue);
+
 const pollWatches = processSingleton('security-alert-watch.poll', () =>
-  coalesce(async () => {
-    try {
-      await poll();
-    } catch (err) {
-      log.warn('Security alert watch poll failed', { error: toError(err).message });
-    }
-  })
+  coalesce(() =>
+    exclusive(async () => {
+      try {
+        await poll();
+      } catch (err) {
+        log.warn('Security alert watch poll failed', { error: toError(err).message });
+      }
+    })
+  )
 );
 
 /**
  * Replace the session's watched repos and return each one's open alerts. What
  * the reply shows becomes what the session has been told, so changes are
- * reported from there. A repo none of whose alerts can be read fails the call
- * instead of being watched silently.
+ * reported from there; a kind that can't be read keeps what the watch last had.
+ * A repo none of whose alerts can be read fails the call instead of being
+ * watched silently.
  */
-export async function setSecurityAlertWatches(
+export function setSecurityAlertWatches(
   sessionId: string,
   repoFullNames: string[]
 ): Promise<RepoAlerts[]> {
-  const repoKeys = [...new Set(repoFullNames.map(pullRequestRepoKey))];
-  const reads = await Promise.all(repoKeys.map(readRepo));
-  for (const read of reads) {
-    if (Object.keys(read.alerts).length === 0) {
-      const reasons = read.failures.map((f) => `${f.kind}: ${f.message}`).join('; ');
-      throw new Error(`Couldn't read any security alerts for ${read.repoFullName} (${reasons})`);
+  return exclusive(async () => {
+    const repoKeys = [...new Set(repoFullNames.map(pullRequestRepoKey))];
+    const reads = await Promise.all(repoKeys.map(readRepo));
+    for (const read of reads) {
+      if (Object.keys(read.alerts).length === 0) {
+        const reasons = read.failures.map((f) => `${f.kind}: ${f.message}`).join('; ');
+        throw new Error(`Couldn't read any security alerts for ${read.repoFullName} (${reasons})`);
+      }
     }
-  }
 
-  await prisma.securityAlertWatch.deleteMany({
-    where: { sessionId, repoFullName: { notIn: repoKeys } },
+    await prisma.securityAlertWatch.deleteMany({
+      where: { sessionId, repoFullName: { notIn: repoKeys } },
+    });
+    const existing = await prisma.securityAlertWatch.findMany({
+      where: { sessionId, repoFullName: { in: repoKeys } },
+    });
+    for (const read of reads) {
+      const previous = existing.find((w) => w.repoFullName === read.repoFullName);
+      const snapshot = mergeSnapshot(
+        previous ? parseSnapshot(previous.alerts) : {},
+        read.alerts,
+        read.checkedAt
+      );
+      await prisma.securityAlertWatch.upsert({
+        where: { sessionId_repoFullName: { sessionId, repoFullName: read.repoFullName } },
+        create: { sessionId, repoFullName: read.repoFullName, alerts: JSON.stringify(snapshot) },
+        update: { alerts: JSON.stringify(snapshot) },
+      });
+    }
+    return reads;
   });
-  for (const read of reads) {
-    const openAlerts = JSON.stringify(Object.values(read.alerts).flat());
-    await prisma.$executeRaw`
-      INSERT INTO "SecurityAlertWatch" ("sessionId", "repoFullName", "openAlerts", "checkedAt")
-      VALUES (${sessionId}, ${read.repoFullName}, ${openAlerts}, ${read.checkedAt})
-      ON CONFLICT("sessionId", "repoFullName")
-      DO UPDATE SET "openAlerts" = excluded."openAlerts", "checkedAt" = excluded."checkedAt"`;
-  }
-  return reads;
 }
 
-export async function stopSecurityAlertWatches(sessionId: string): Promise<void> {
-  await prisma.securityAlertWatch.deleteMany({ where: { sessionId } });
+export function stopSecurityAlertWatches(sessionId: string): Promise<void> {
+  return exclusive(async () => {
+    await prisma.securityAlertWatch.deleteMany({ where: { sessionId } });
+  });
 }
 
 /** Test seam. */

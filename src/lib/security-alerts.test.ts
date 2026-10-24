@@ -1,11 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import {
-  currentAlerts,
-  diffAlerts,
+  diffSnapshots,
   formatAlertChanges,
   formatAlertList,
-  parseStoredAlerts,
+  mergeSnapshot,
+  parseSnapshot,
   securityAlertSchemas,
+  type AlertSnapshot,
   type SecurityAlert,
 } from './security-alerts';
 
@@ -78,6 +79,19 @@ describe('securityAlertSchemas', () => {
     });
   });
 
+  it('accepts a code scanning rule without a description', () => {
+    const { alert: parsed } = securityAlertSchemas['code-scanning'].parse({
+      number: 4,
+      state: 'open',
+      html_url: 'https://github.com/o/r/security/code-scanning/4',
+      created_at: '2026-01-02T00:00:00Z',
+      rule: { id: 'custom/rule', severity: 'warning' },
+      tool: { name: 'Semgrep' },
+      most_recent_instance: null,
+    });
+    expect(parsed.title).toContain('custom/rule');
+  });
+
   it('prefers a code scanning rule’s security severity and gives the location', () => {
     const { alert: parsed } = securityAlertSchemas['code-scanning'].parse({
       number: 3,
@@ -116,47 +130,97 @@ describe('securityAlertSchemas', () => {
   });
 });
 
-describe('parseStoredAlerts', () => {
-  it('round-trips stored alerts and reads garbage as none', () => {
-    const alerts = [alert(), alert({ number: 2, kind: 'secret-scanning', severity: null })];
-    expect(parseStoredAlerts(JSON.stringify(alerts))).toEqual(alerts);
-    expect(parseStoredAlerts('not json')).toEqual([]);
-    expect(parseStoredAlerts('[{"kind":"nope"}]')).toEqual([]);
+describe('parseSnapshot', () => {
+  it('round-trips a snapshot and reads garbage as never read', () => {
+    const snapshot: AlertSnapshot = {
+      dependabot: { checkedAt: '2026-01-01T00:00:00.000Z', alerts: [alert()] },
+      'secret-scanning': {
+        checkedAt: '2026-01-01T00:00:00.000Z',
+        alerts: [alert({ number: 2, kind: 'secret-scanning', severity: null })],
+      },
+    };
+    expect(parseSnapshot(JSON.stringify(snapshot))).toEqual(snapshot);
+    expect(parseSnapshot('not json')).toEqual({});
+    expect(parseSnapshot('{"dependabot":{"alerts":[{"kind":"nope"}]}}')).toEqual({});
   });
 });
 
-describe('currentAlerts', () => {
-  it('keeps the previous alerts of a kind that couldn’t be read', () => {
-    const dependabot = alert();
-    const code = alert({ kind: 'code-scanning', number: 5 });
+describe('mergeSnapshot', () => {
+  it('replaces the kinds that were read and keeps the last read of the rest', () => {
+    const code = {
+      checkedAt: '2026-01-01T00:00:00.000Z',
+      alerts: [alert({ kind: 'code-scanning' })],
+    };
     const fresh = alert({ number: 2 });
-    expect(currentAlerts([dependabot, code], { dependabot: [fresh] })).toEqual([fresh, code]);
+    const checkedAt = new Date('2026-02-01T00:00:00Z');
+    expect(
+      mergeSnapshot(
+        { dependabot: { checkedAt: code.checkedAt, alerts: [alert()] }, 'code-scanning': code },
+        { dependabot: [fresh] },
+        checkedAt
+      )
+    ).toEqual({
+      dependabot: { checkedAt: checkedAt.toISOString(), alerts: [fresh] },
+      'code-scanning': code,
+    });
   });
 });
 
-describe('diffAlerts', () => {
-  const checkedAt = new Date('2026-02-01T00:00:00Z');
+describe('diffSnapshots', () => {
+  const checkedAt = '2026-02-01T00:00:00.000Z';
+  const later = '2026-03-01T00:00:00.000Z';
 
-  it('separates new alerts from reopened ones by whether they predate the last read', () => {
+  it('separates new alerts from reopened ones by whether they predate their kind’s last read', () => {
     const kept = alert({ number: 1 });
     const gone = alert({ number: 2 });
     const brandNew = alert({ number: 3, createdAt: '2026-02-02T00:00:00Z' });
     const reopened = alert({ number: 4, createdAt: '2026-01-15T00:00:00Z' });
-    expect(diffAlerts([kept, gone], [kept, brandNew, reopened], checkedAt)).toEqual({
-      opened: [brandNew],
-      reopened: [reopened],
-      left: [gone],
-    });
+    expect(
+      diffSnapshots(
+        { dependabot: { checkedAt, alerts: [kept, gone] } },
+        { dependabot: { checkedAt: later, alerts: [kept, brandNew, reopened] } }
+      )
+    ).toEqual({ opened: [brandNew], reopened: [reopened], nowReadable: [], left: [gone] });
+  });
+
+  it('counts an alert created in the same second as the last read as new', () => {
+    const sameSecond = alert({ number: 5, createdAt: '2026-02-01T00:00:00Z' });
+    expect(
+      diffSnapshots(
+        { dependabot: { checkedAt: '2026-02-01T00:00:00.400Z', alerts: [] } },
+        { dependabot: { checkedAt: later, alerts: [sameSecond] } }
+      ).opened
+    ).toEqual([sameSecond]);
+  });
+
+  it('reports a kind read for the first time as now readable, not reopened', () => {
+    const old = alert({ kind: 'code-scanning', createdAt: '2025-01-01T00:00:00Z' });
+    expect(
+      diffSnapshots(
+        { dependabot: { checkedAt, alerts: [] } },
+        {
+          dependabot: { checkedAt: later, alerts: [] },
+          'code-scanning': { checkedAt: later, alerts: [old] },
+        }
+      )
+    ).toEqual({ opened: [], reopened: [], nowReadable: [old], left: [] });
   });
 
   it('tells alerts of different kinds with the same number apart', () => {
     const dependabot = alert({ number: 1 });
-    const code = alert({ kind: 'code-scanning', number: 1, createdAt: '2026-03-01T00:00:00Z' });
-    expect(diffAlerts([dependabot], [code], checkedAt)).toEqual({
-      opened: [code],
-      reopened: [],
-      left: [dependabot],
-    });
+    const code = alert({ kind: 'code-scanning', number: 1, createdAt: later });
+    expect(
+      diffSnapshots(
+        {
+          dependabot: { checkedAt, alerts: [dependabot] },
+          'code-scanning': { checkedAt, alerts: [] },
+        },
+        {
+          dependabot: { checkedAt: later, alerts: [] },
+          'code-scanning': { checkedAt: later, alerts: [code] },
+        }
+      )
+    ).toEqual({ opened: [code], reopened: [], nowReadable: [], left: [dependabot] });
   });
 });
 
@@ -178,6 +242,7 @@ describe('formatting', () => {
         repoFullName: 'o/r',
         opened: [alert({ number: 1 })],
         reopened: [],
+        nowReadable: [],
         closed: [
           {
             alert: alert({ number: 2 }),
@@ -185,7 +250,7 @@ describe('formatting', () => {
           },
         ],
       },
-      { repoFullName: 'o/quiet', opened: [], reopened: [], closed: [] },
+      { repoFullName: 'o/quiet', opened: [], reopened: [], nowReadable: [], closed: [] },
     ]);
     expect(text).toContain('o/r');
     expect(text).not.toContain('o/quiet');

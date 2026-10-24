@@ -136,7 +136,7 @@ describe('polling', () => {
   it('delivers new, reopened and closed alerts once, in one message', async () => {
     remoteAlert(1);
     remoteAlert(2);
-    remoteAlert(3);
+    remoteAlert(3, { createdAt: '2020-01-01T00:00:00Z' });
     close(3);
     const session = await createSession();
     await watch.setSecurityAlertWatches(session.id, ['o/r']);
@@ -212,5 +212,46 @@ describe('polling', () => {
     await watch._pollSecurityAlertWatches();
     expect(delivered).toHaveLength(1);
     expect(delivered[0].text).toMatch(/#1 .*fixed/);
+  });
+
+  it('reports a kind that becomes readable as such, not as reopened', async () => {
+    unreadable.add('code-scanning');
+    const session = await createSession();
+    await watch.setSecurityAlertWatches(session.id, ['o/r']);
+    remoteAlert(5, { kind: 'code-scanning', createdAt: '2020-01-01T00:00:00Z' });
+
+    unreadable.delete('code-scanning');
+    await watch._pollSecurityAlertWatches();
+
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0].text).toMatch(/readable for the first time:\n.*\n.*#5/);
+    expect(delivered[0].text).not.toContain('Reopened');
+  });
+
+  it('doesn’t let a poll in progress overwrite what a tool reply just showed', async () => {
+    remoteAlert(1);
+    const session = await createSession();
+    await watch.setSecurityAlertWatches(session.id, ['o/r']);
+
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const listOpen = vi.mocked(github.fetchOpenSecurityAlerts).getMockImplementation()!;
+    let pollReads = 3;
+    vi.mocked(github.fetchOpenSecurityAlerts).mockImplementation(async (repo, kind) => {
+      const alerts = await listOpen(repo, kind);
+      if (pollReads-- > 0) await gate;
+      return alerts;
+    });
+    const polling = watch._pollSecurityAlertWatches();
+    await vi.waitFor(() => expect(github.fetchOpenSecurityAlerts).toHaveBeenCalledTimes(6));
+    remoteAlert(2);
+    const setting = watch.setSecurityAlertWatches(session.id, ['o/r']);
+    release();
+    await polling;
+    const [reply] = await setting;
+    expect(reply.alerts.dependabot?.map((a) => a.number)).toEqual([1, 2]);
+
+    await watch._pollSecurityAlertWatches();
+    expect(delivered).toEqual([]);
   });
 });
