@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { matchesGlob } from 'node:path';
 import {
   childScopePattern,
   childScopeUnitName,
@@ -44,8 +45,7 @@ describe('child scopes', () => {
     const session = sessionScopeUnitName('sess', 'aaaa0000');
     const child = childScopeUnitName(session, 'n1');
     expect(child).toBe('clawed-session-sess-aaaa0000-child-n1.scope');
-    const matches = (unit: string) =>
-      new RegExp(`^${childScopePattern(session).replace('*', '.*')}$`).test(unit);
+    const matches = (unit: string) => matchesGlob(unit, childScopePattern(session));
     expect(matches(child)).toBe(true);
     expect(matches(session)).toBe(false);
     expect(matches(childScopeUnitName(sessionScopeUnitName('sess', 'bbbb0000'), 'n1'))).toBe(false);
