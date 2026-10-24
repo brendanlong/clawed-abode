@@ -208,7 +208,7 @@ cp scripts/litellm-config.yaml ~/.config/litellm/config.yaml
 cp scripts/litellm_chatgpt_hooks.py ~/.config/litellm/
 (umask 077; printf 'OPENAI_API_KEY=%s\nLITELLM_MASTER_KEY=sk-%s\n' "sk-your-openai-key" "$(openssl rand -hex 24)" > ~/.config/litellm/env)
 podman run --rm -it -v ~/.config/litellm/chatgpt:/chatgpt:z -e CHATGPT_TOKEN_DIR=/chatgpt --entrypoint python \
-  ghcr.io/berriai/litellm:main-stable -c 'from litellm.llms.chatgpt.authenticator import Authenticator; Authenticator().get_access_token()'
+  ghcr.io/berriai/litellm:v1.104.0@sha256:625981c83410a3ea68eb0697590a57ec1d764d634514d54fa5db0591077ee839 -c 'from litellm.llms.chatgpt.authenticator import Authenticator; Authenticator().get_access_token()'
 cp scripts/litellm.container ~/.config/containers/systemd/
 systemctl --user daemon-reload
 systemctl --user start litellm.service
