@@ -92,6 +92,7 @@ describe('built-in MCP server', () => {
       'stop_this_session',
       'watch_pull_request',
       'watch_pull_requests',
+      'watch_security_alerts',
     ]);
     expect(await names('manage')).toEqual([
       'check_usage',
@@ -105,6 +106,7 @@ describe('built-in MCP server', () => {
       'stop_this_session',
       'watch_pull_request',
       'watch_pull_requests',
+      'watch_security_alerts',
     ]);
   });
 

@@ -3,6 +3,12 @@ import { createLogger, toError } from '@/lib/logger';
 import { env } from '@/lib/env';
 import { rollUpChecks, type ChecksState, type GitHubPullRequest } from '@/lib/pull-request';
 import type { PullRequestComment } from '@/lib/pull-request-watch';
+import {
+  securityAlertSchemas,
+  type ParsedAlert,
+  type SecurityAlert,
+  type SecurityAlertKind,
+} from '@/lib/security-alerts';
 
 const log = createLogger('github');
 
@@ -180,6 +186,54 @@ export function parseLinkHeader(header: string | null): { next?: string; last?: 
   }
 
   return links;
+}
+
+/** The path and query of a Link header's `next` URL. */
+export function nextLinkPath(header: string | null): string | undefined {
+  const match = header?.match(/<([^>]+)>;\s*rel="next"/);
+  if (!match) return undefined;
+  const url = new URL(match[1]);
+  return `${url.pathname}${url.search}`;
+}
+
+interface LinkedPage<T> {
+  items: T[];
+  next: string | undefined;
+}
+
+/**
+ * Every item of a list, following each page's `next` link, so it works for
+ * cursor-paginated lists too. Each page is a conditional request; a 304 vouches
+ * for the next link as well, since a cursor is derived from the page's items.
+ * An item that doesn't parse is logged and skipped rather than failing the list.
+ */
+async function githubFetchLinkedPages<T>(
+  path: string,
+  itemSchema: z.ZodType<T>,
+  token: string,
+  pageCache: ConditionalGetCache<LinkedPage<T>>
+): Promise<T[]> {
+  const items: T[] = [];
+  for (let next: string | undefined = path; next;) {
+    const pagePath: string = next;
+    const page: LinkedPage<T> = await pageCache.fetch(pagePath, token, async (response) => ({
+      items: (await parseGitHubResponse(response, z.array(z.unknown()), pagePath)).flatMap(
+        (raw) => {
+          const parsed = itemSchema.safeParse(raw);
+          if (parsed.success) return [parsed.data];
+          log.warn('Skipping an unexpected GitHub list item', {
+            path: pagePath,
+            error: parsed.error.message,
+          });
+          return [];
+        }
+      ),
+      next: nextLinkPath(response.headers.get('link')),
+    }));
+    items.push(...page.items);
+    next = page.next;
+  }
+  return items;
 }
 
 /** Bounds {@link githubFetchAllPages}: at 100 items a page, 1000 items. */
@@ -446,6 +500,53 @@ export async function fetchChecks(repoFullName: string, sha: string): Promise<Ch
       log.debug('Checks are not readable', { repoFullName, sha, error: toError(err).message });
       return null;
     }
+    throw err;
+  }
+}
+
+// =============================================================================
+// Security alerts
+// =============================================================================
+
+const alertPageCache = new ConditionalGetCache<LinkedPage<ParsedAlert>>(200);
+
+/** `hide_secret` keeps a leaked secret's value out of secret scanning responses. */
+function alertsPath(
+  repoFullName: string,
+  kind: SecurityAlertKind,
+  suffix: string,
+  params: string[]
+): string {
+  const query = [...params, ...(kind === 'secret-scanning' ? ['hide_secret=true'] : [])];
+  return `/repos/${repoFullName}/${kind}/alerts${suffix}${query.length > 0 ? `?${query.join('&')}` : ''}`;
+}
+
+/** A repo's open alerts of one kind. Throws when they can't be read (including when the feature is off). */
+export async function fetchOpenSecurityAlerts(
+  repoFullName: string,
+  kind: SecurityAlertKind
+): Promise<SecurityAlert[]> {
+  const pages = await githubFetchLinkedPages(
+    alertsPath(repoFullName, kind, '', ['state=open', 'per_page=100']),
+    securityAlertSchemas[kind],
+    requireToken(),
+    alertPageCache
+  );
+  return pages.map((parsed) => parsed.alert);
+}
+
+/** One alert as it is now; null if it no longer exists. */
+export async function fetchSecurityAlert(
+  repoFullName: string,
+  kind: SecurityAlertKind,
+  number: number
+): Promise<ParsedAlert | null> {
+  const path = alertsPath(repoFullName, kind, `/${number}`, []);
+  try {
+    const response = await githubFetchResponse(path, requireToken());
+    return await parseGitHubResponse(response, securityAlertSchemas[kind], path);
+  } catch (err) {
+    if (err instanceof GitHubApiError && err.status === 404) return null;
     throw err;
   }
 }
