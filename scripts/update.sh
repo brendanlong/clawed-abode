@@ -40,7 +40,7 @@
     if ! grep -q 'migrate deploy' <<<"$pre" || ! grep -qF "path=$NODE_BIN " <<<"$pre" \
       || ! grep -qF "path=$NODE_BIN " <<<"$start" || ! grep -q -- '-H 127.0.0.1' <<<"$start"; then
       echo "${SERVICE_NAME} must match the README's unit. Set these in its [Service] section," >&2
-      echo "then run 'systemctl --user daemon-reload' and re-run this script:" >&2
+      echo "then run '${SYSTEMCTL[*]} daemon-reload' and re-run this script:" >&2
       echo "  ExecStartPre=$NODE_BIN node_modules/prisma/build/index.js migrate deploy" >&2
       echo "  ExecStart=$NODE_BIN node_modules/next/dist/bin/next start -H 127.0.0.1" >&2
       exit 1
