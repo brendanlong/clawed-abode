@@ -50,6 +50,26 @@
   echo "==> Installing dependencies"
   pnpm install --frozen-lockfile
 
+  # A no-op install leaves native modules built for whatever Node built them
+  # before, which breaks the server when that differs from NODE_BIN (e.g. a
+  # devEngines.runtime bump). Rebuild only on a mismatch: rebuilding rewrites
+  # the .node files the still-running server has loaded.
+  native_modules_load() {
+    "$NODE_BIN" -e "
+      const req = require('node:module').createRequire(require.resolve('@prisma/adapter-better-sqlite3'));
+      new (req('better-sqlite3'))(':memory:').close();
+      require('argon2');
+    "
+  }
+  if ! native_modules_load 2>/dev/null; then
+    echo "==> Rebuilding native modules for $("$NODE_BIN" -v)"
+    pnpm rebuild
+    if ! native_modules_load; then
+      echo "Native modules still don't load with $NODE_BIN after 'pnpm rebuild'; not restarting." >&2
+      exit 1
+    fi
+  fi
+
   echo "==> Building"
   pnpm build
 
