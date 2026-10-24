@@ -29,7 +29,7 @@ Read more: [Clawed Abode: Claude Code is Too Cloudy](https://www.brendanlong.com
 ## Prerequisites
 
 - A Linux host with systemd user services (for the session process scopes and the service unit), `sudo` for creating the user, and Git 2.31+ (clones pass credentials via `GIT_CONFIG_*`)
-- Node.js 22.22.1+; the setup below installs it via nvm
+- Node.js 22.22.1+ to run pnpm; the setup below installs it via nvm. The app itself runs on the Node that `pnpm install` downloads into `node_modules` (`devEngines.runtime` in `package.json`)
 
 ## Setup
 
@@ -122,14 +122,7 @@ Visit `http://localhost:3000` from the server itself (see [Remote Access](#remot
 
 Stop the foreground server from step 5 first (Ctrl-C); the service binds the same port.
 
-First, find the full path to your Node.js binary:
-
-```bash
-nvm which 22
-# Example output: /home/clawedabode/.nvm/versions/node/v22.22.1/bin/node
-```
-
-Create `~/.config/systemd/user/clawed-abode.service`, replacing the node path with the output of `nvm which 22`:
+Create `~/.config/systemd/user/clawed-abode.service`:
 
 ```ini
 [Unit]
@@ -139,14 +132,14 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=%h/clawed-abode
-ExecStartPre=%h/.nvm/versions/node/v22.22.1/bin/node node_modules/prisma/build/index.js migrate deploy
-ExecStart=%h/.nvm/versions/node/v22.22.1/bin/node node_modules/next/dist/bin/next start
+# The Node `pnpm install` downloaded: native modules are built for it.
+ExecStartPre=%h/clawed-abode/node_modules/node/bin/node node_modules/prisma/build/index.js migrate deploy
+# -H: listen on loopback only. Tailscale Serve is the sole ingress, so the
+# X-Forwarded-For header used for login rate limiting is always the one it sets.
+ExecStart=%h/clawed-abode/node_modules/node/bin/node node_modules/next/dist/bin/next start -H 127.0.0.1
 Restart=always
 RestartSec=5
 Environment=NODE_ENV=production
-# Listen on loopback only: Tailscale Serve is the sole ingress, so the
-# X-Forwarded-For header used for login rate limiting is always the one it sets.
-Environment=HOSTNAME=127.0.0.1
 
 [Install]
 WantedBy=default.target

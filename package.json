@@ -6,10 +6,17 @@
   "engines": {
     "node": ">=22.22.1"
   },
+  "devEngines": {
+    "runtime": {
+      "name": "node",
+      "version": "^26",
+      "onFail": "download"
+    }
+  },
   "scripts": {
     "dev": "next dev",
     "build": "NODE_ENV=production next build",
-    "start": "next start",
+    "start": "next start -H 127.0.0.1",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "typecheck": "tsc --noEmit",
