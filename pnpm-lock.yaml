@@ -4,12 +4,6 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
-overrides:
-  '@typescript-eslint/eslint-plugin': ^8.71.2
-  '@typescript-eslint/parser': ^8.71.2
-  '@typescript-eslint/utils': ^8.71.2
-  '@typescript-eslint/type-utils': ^8.71.2
-
 importers:
 
   .:
