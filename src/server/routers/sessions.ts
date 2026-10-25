@@ -26,6 +26,7 @@ import { repoFullNameSchema } from '@/lib/repo-full-name';
 import { refreshStalePullRequests } from '../services/session-branch-pr';
 import { clearAttention } from '../services/session-attention';
 import { modelSchema, nullableModelSchema } from '../services/settings-helpers';
+import { getWorkspaceDiskUsage } from '../services/disk-usage';
 
 const sessionListSelect = {
   id: true,
@@ -44,6 +45,8 @@ const sessionListSelect = {
 } satisfies Prisma.SessionSelect;
 
 export const sessionsRouter = router({
+  diskUsage: protectedProcedure.query(() => getWorkspaceDiskUsage()),
+
   create: protectedProcedure
     .input(
       z.object({

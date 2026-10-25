@@ -95,6 +95,10 @@ Voice, speed, and Voice Auto-Send are global server settings. Auto-read is a per
 
 The "Open in VS Code" button deep-links into a self-hosted [code-server](https://github.com/coder/code-server) on the session's workspace folder (`${CODE_SERVER_URL}/?folder=<workspaceDir>`, built by the pure `buildEditorUrl`, served by `sessions.getEditorUrl`). code-server owns the whole editor experience; the app only contributes the link, which opens the workspace root so uploads are visible alongside the clone. Opt-in: when `CODE_SERVER_URL` is unset (or the session is archived, its workspace gone) the server returns `null` and the button hides — the server is authoritative, the UI stays dumb. Setup is two scripts sharing [`scripts/lib-code-server.sh`](../scripts/lib-code-server.sh): [`setup-code-server.sh`](../scripts/setup-code-server.sh) (no sudo, runnable by the app account) and [`expose-code-server-tailscale.sh`](../scripts/expose-code-server-tailscale.sh) (tailnet-only, never `funnel`).
 
+## Disk Usage
+
+Settings → Storage lists how much space each workspace would free if archived ([`disk-usage.ts`](../src/server/services/disk-usage.ts)). A hardlinked file counts only if all its links are inside the workspace, because pnpm and uv hardlink their shared caches into checkouts, which made plain `du` overstate some workspaces by 100x. A scan reads every inode under `~/worktrees`, so it runs only when the tab is opened or rescanned, and nothing is stored.
+
 ## Where Things Live
 
 - [`src/server/routers/`](../src/server/routers/) — tRPC API. Procedure bases live in [`src/server/trpc.ts`](../src/server/trpc.ts): a procedure that needs the session row builds on `sessionProcedure` (loads `ctx.session` or throws NOT_FOUND) or `runningSessionProcedure` rather than repeating the lookup; ones that only read in-memory state stay on `protectedProcedure`.

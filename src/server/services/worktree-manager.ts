@@ -19,7 +19,7 @@ import {
 const log = createLogger('worktree-manager');
 
 /** Base directory for session workspaces */
-const WORKTREES_DIR = join(homedir(), 'worktrees');
+export const WORKTREES_DIR = join(homedir(), 'worktrees');
 
 function run(
   command: string,
