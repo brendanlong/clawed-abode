@@ -74,6 +74,10 @@ The schema ([`prisma/schema.prisma`](../prisma/schema.prisma)) is the source of 
 
 Opt-in (`PUBLIC_FILES_PORT` + `PUBLIC_FILES_URL`): a second HTTP server in the same process ([`public-files-server.ts`](../src/server/services/public-files-server.ts)) serves each workspace's `public/` directory (a sibling of the clone, like `uploads/`) at `/{sessionId}/…`, and the system prompt gives each session its directory and URL — so agents hand the user a stable link instead of running their own HTTP server. It is a separate port rather than an app route to give agent-written pages their own origin (see [`security.md`](security.md)). Exposed by [`scripts/expose-public-files-tailscale.sh`](../scripts/expose-public-files-tailscale.sh).
 
+### Disk Usage
+
+Settings → Storage lists how much space each workspace would free if archived ([`disk-usage.ts`](../src/server/services/disk-usage.ts)). A hardlinked file counts only if all its links are inside the workspace, because pnpm and uv hardlink their shared caches into checkouts, which made plain `du` overstate some workspaces by 100x. A scan reads every inode under `~/worktrees`, so it runs only when the tab is opened or rescanned, and nothing is stored.
+
 ### System Prompt
 
 `DEFAULT_SYSTEM_PROMPT` in [`src/lib/system-prompt.ts`](../src/lib/system-prompt.ts) — the prompt text states its own rationale: the user has no local file access (so commit/push/PR is mandatory), and every session shares one host user with the app server (so kill by PID or a `--cgroup`-scoped pattern, never by name).

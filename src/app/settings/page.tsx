@@ -7,6 +7,7 @@ import { AuthSessionsTab } from '@/components/settings/AuthSessionsTab';
 import { AppearanceTab } from '@/components/settings/AppearanceTab';
 import { AudioTab } from '@/components/settings/AudioTab';
 import { RepositoriesTab } from '@/components/settings/RepositoriesTab';
+import { StorageTab } from '@/components/settings/StorageTab';
 import { GeneralTab } from '@/components/settings/GeneralTab';
 import { McpOAuthResultBanner } from '@/components/settings/McpOAuthResultBanner';
 
@@ -29,6 +30,7 @@ export default function SettingsPage() {
                 <TabsTrigger value="audio">Audio</TabsTrigger>
                 <TabsTrigger value="repositories">Repositories</TabsTrigger>
                 <TabsTrigger value="sessions">Sessions</TabsTrigger>
+                <TabsTrigger value="storage">Storage</TabsTrigger>
               </TabsList>
 
               <TabsContent value="appearance">
@@ -49,6 +51,10 @@ export default function SettingsPage() {
 
               <TabsContent value="sessions">
                 <AuthSessionsTab />
+              </TabsContent>
+
+              <TabsContent value="storage">
+                <StorageTab />
               </TabsContent>
             </Tabs>
           </div>

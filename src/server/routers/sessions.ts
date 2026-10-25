@@ -26,6 +26,7 @@ import { repoFullNameSchema } from '@/lib/repo-full-name';
 import { refreshStalePullRequests } from '../services/session-branch-pr';
 import { clearAttention } from '../services/session-attention';
 import { modelSchema, nullableModelSchema } from '../services/settings-helpers';
+import { getWorkspaceDiskUsage } from '../services/disk-usage';
 
 const sessionListSelect = {
   id: true,
@@ -125,6 +126,8 @@ export const sessionsRouter = router({
   // on this session's worktree folder. Returns { url: null } when the editor is
   // not configured (CODE_SERVER_URL unset) or the session has no workspace on
   // disk (archived), so the UI can hide the button.
+  diskUsage: protectedProcedure.query(() => getWorkspaceDiskUsage()),
+
   getEditorUrl: sessionProcedure.query(({ ctx }) => {
     const { session } = ctx;
 
