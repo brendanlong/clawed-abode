@@ -36,8 +36,8 @@ export default defineConfig({
           name: 'component',
           globals: true,
           environment: 'jsdom',
-          // One jsdom per worker instead of per file (each file still gets a fresh VM context);
-          // building jsdom per file was nearly half the suite's time.
+          // Loads jsdom's modules once per worker rather than once per file (each file still
+          // gets its own jsdom window); re-importing them was nearly half the suite's time.
           pool: 'vmThreads',
           include: ['src/**/*.test.tsx'],
           setupFiles: ['src/test/setup-component.ts'],
