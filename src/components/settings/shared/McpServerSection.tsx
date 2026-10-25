@@ -18,6 +18,7 @@ import { SettingsListEditor, SettingsListRow, type SettingsScope } from './Setti
 import { KeyValueListEditor } from './KeyValueListEditor';
 import { McpToolFilterEditor } from './McpToolFilterEditor';
 import { trpc } from '@/lib/trpc';
+import { navigateTo } from '@/lib/navigate';
 import {
   buildMcpServerInput,
   initialMcpServerForm,
@@ -107,7 +108,7 @@ function McpServerRow({
       // The authorization server has to talk to the user's browser, so the flow is a
       // full navigation away and back through /api/mcp/oauth/callback.
       const { authorizeUrl } = await mutations.startMcpOAuth(server.name);
-      window.location.assign(authorizeUrl);
+      navigateTo(authorizeUrl);
     },
     onSuccess: (_, action) => {
       if (action === 'disconnect') onUpdate();
