@@ -75,10 +75,11 @@ describe('disk usage', () => {
   });
 
   describe('getWorkspaceDiskUsage', () => {
-    it('lists non-archived sessions largest first', async () => {
+    it('lists sessions with a workspace, largest first', async () => {
       const small = await createTestSession({ name: 'small' });
       const large = await createTestSession({ name: 'large' });
       const archived = await createTestSession({ name: 'archived', status: 'archived' });
+      await createTestSession({ name: 'failed setup', status: 'error' });
       for (const [session, kb] of [
         [small, 8],
         [large, 128],

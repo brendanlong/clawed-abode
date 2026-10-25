@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
-import { statfs } from 'node:fs/promises';
+import { once } from 'node:events';
+import { mkdir, statfs } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import { prisma } from '@/lib/prisma';
 import { createLogger } from '@/lib/logger';
@@ -11,41 +12,39 @@ const log = createLogger('disk-usage');
 /**
  * Bytes that deleting `dir` would free (see createOwnedBytesCounter). Walks with
  * `find` rather than Node's fs: over this host's worktrees it is >10x faster
- * than an lstat per entry. A missing `dir` measures 0; entries that vanish or
- * can't be read mid-walk are skipped.
+ * than an lstat per entry. Stays on `dir`'s filesystem (deleting a mount point
+ * frees nothing on the mounted one). A missing `dir` measures 0; entries that
+ * vanish or can't be read mid-walk are skipped.
  */
 export async function measureOwnedBytes(dir: string): Promise<number> {
-  const child = spawn('find', [dir, '-printf', FIND_ENTRY_FORMAT], {
+  const child = spawn('find', [dir, '-xdev', '-printf', FIND_ENTRY_FORMAT], {
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-  const exited = new Promise<number | null>((resolve, reject) => {
-    child.on('error', reject);
-    child.on('close', resolve);
-  });
+  await once(child, 'spawn');
+  const exited = once(child, 'close');
   let stderr = '';
   child.stderr.setEncoding('utf8').on('data', (chunk: string) => {
-    stderr += chunk;
+    if (stderr.length < 2000) stderr += chunk;
   });
 
   const counter = createOwnedBytesCounter();
   for await (const line of createInterface({ input: child.stdout })) {
     counter.add(line);
   }
-  const code = await exited;
+  const [code] = await exited;
   if (code !== 0) {
     log.warn('find reported errors; their entries are not counted', {
       dir,
       code,
-      stderr: stderr.slice(0, 2000),
+      stderr,
     });
   }
   return counter.bytes;
 }
 
-/** Measured on demand only: a full pass reads every inode under ~/worktrees. */
 export async function getWorkspaceDiskUsage() {
   const sessions = await prisma.session.findMany({
-    where: { status: { not: 'archived' } },
+    where: { status: { notIn: ['archived', 'error'] } },
     select: { id: true, name: true, status: true },
   });
   const measured = [];
@@ -57,6 +56,7 @@ export async function getWorkspaceDiskUsage() {
   }
   measured.sort((a, b) => b.bytes - a.bytes);
 
+  await mkdir(WORKTREES_DIR, { recursive: true });
   const fs = await statfs(WORKTREES_DIR);
   return {
     sessions: measured,

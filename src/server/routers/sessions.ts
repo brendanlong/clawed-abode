@@ -45,6 +45,8 @@ const sessionListSelect = {
 } satisfies Prisma.SessionSelect;
 
 export const sessionsRouter = router({
+  diskUsage: protectedProcedure.query(() => getWorkspaceDiskUsage()),
+
   create: protectedProcedure
     .input(
       z.object({
@@ -126,8 +128,6 @@ export const sessionsRouter = router({
   // on this session's worktree folder. Returns { url: null } when the editor is
   // not configured (CODE_SERVER_URL unset) or the session has no workspace on
   // disk (archived), so the UI can hide the button.
-  diskUsage: protectedProcedure.query(() => getWorkspaceDiskUsage()),
-
   getEditorUrl: sessionProcedure.query(({ ctx }) => {
     const { session } = ctx;
 
