@@ -18,7 +18,7 @@ Global-only and **opt-in**: null means the advisor tool isn't wired into request
 
 ## Proxied Models
 
-Non-Claude models (e.g. OpenAI's GPT-6) run through an Anthropic-compatible proxy, LiteLLM by default (`LLM_PROXY_URL`; setup in the README). A model is proxied exactly when its name has a provider prefix (`openai/gpt-6-astra`), which no Claude model name has; [`src/lib/llm-proxy.ts`](../src/lib/llm-proxy.ts). That rule, rather than "whatever the proxy lists", keeps Claude traffic off the proxy even when it's down or misconfigured: we never proxy Claude, so the subscription is never billed through a third party.
+Non-Claude models (e.g. OpenAI's GPT-6) run through an Anthropic-compatible proxy, LiteLLM by default (`LLM_PROXY_URL`; setup in [`self-hosting.md`](self-hosting.md#other-model-providers-optional)). A model is proxied exactly when its name has a provider prefix (`openai/gpt-6-astra`), which no Claude model name has; [`src/lib/llm-proxy.ts`](../src/lib/llm-proxy.ts). That rule, rather than "whatever the proxy lists", keeps Claude traffic off the proxy even when it's down or misconfigured: we never proxy Claude, so the subscription is never billed through a third party.
 
 A proxied session's CLI gets the proxy as its base URL and the proxy's key, with every Claude credential removed from its env. Claude Code resolves the `fable`/`opus`/`sonnet`/`haiku` aliases itself (subagents, session titles), and the proxy can't serve Claude, so each alias maps to a comparable model in the same family (`MODEL_FAMILIES`), or to the session's model outside a known family. Without a proxy configured, provider-prefixed models are rejected wherever a model is set. The model picker lists the proxy's `/v1/models` alongside Anthropic's.
 

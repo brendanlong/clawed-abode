@@ -1,291 +1,49 @@
 # Clawed Abode
 
-A self-hosted web application that provides mobile-friendly access to Claude Code running on your local machine with GPU support.
+Run Claude Code on your own machine and use it from your phone. Clawed Abode is a self-hosted web app: start sessions on any of your GitHub repos, check on them from anywhere, and answer when an agent needs you. Agents work directly on your hardware, GPU included.
 
 > **Note:** This is an unofficial community project and is not affiliated with, endorsed by, or supported by Anthropic. [Claude Code](https://claude.ai/code) is a product of Anthropic, but this web interface is an independent project.
 
 Read more: [Clawed Abode: Claude Code is Too Cloudy](https://www.brendanlong.com/claude-code-is-too-cloudy.html)
 
-## Features
+![The session list: each session's repo, PR and CI status, and what the agent has for you](doc/screenshots/sessions.png)
 
-- Run Claude Code sessions from any device with a web browser
-- Access local GPU resources for AI workloads
-- Persistent sessions with isolated git clones
-- Simple password-based authentication (single user)
-- Session tracking with IP addresses and login history
-- Clean session lifecycle management
-- Mobile-friendly interface
-- Voice input (browser speech recognition) and read-aloud with Kokoro TTS
+## What you can do
 
-## Security Warning
+- **Keep many agents busy at once.** Each session gets its own clone of a repo and branch, so agents never step on each other. Start one from a GitHub issue, or with no repo at all for research and one-off tasks. The session list shows each session's pull request and CI status at a glance.
+- **Use your own machine.** Agents run on your server with your installed tools, your data and your GPU, so they can train models, run long experiments or use anything Claude Code on the web can't reach.
+- **Walk away.** Sessions survive closing the tab, losing signal and server restarts. When an agent finishes or needs a decision, it tells you with a one-line summary in the session list, and a browser notification if the app is open in a tab. Answer its questions and approve or revise its plans from your phone.
+- **See what the agent did.** Every command, edit and test run is in the transcript, with diffs and output a tap away, plus how much each turn cost and how full the context window is.
+- **Talk instead of type.** Dictate prompts, and have replies read aloud in a natural voice, with lock-screen media controls.
+- **Hand over files and get some back.** Attach screenshots, PDFs or data to a prompt. Agents can publish HTML reports and plots at a stable link for you to open in the browser, and an optional VS Code button opens a session's files in a browser editor.
+- **Set it up once per repo.** Give each repo (or every session) its own environment variables, secrets, MCP servers, custom instructions and default model. Sessions can also run OpenAI GPT models through a LiteLLM proxy.
+- **Let agents work together.** Sessions can message each other, and watch pull requests and security alerts without polling GitHub.
+- **Stay within your plan.** Sessions can pause when your Claude subscription nears its usage limit and pick back up when it resets.
 
-**This application runs Claude Code in `bypassPermissions` mode**, which means Claude can execute arbitrary code, install packages, and modify files without confirmation. You should:
+![A session transcript with an expanded diff and test output](doc/screenshots/session.png)
 
-- **Run this on a dedicated machine or dedicated user account** - not your personal workstation
-- **Never run as root** - always use a dedicated unprivileged user
-- **Use a fine-grained GitHub token** scoped to only the repositories you want to expose
-- **Use Tailscale** or similar for remote access - never expose port 3000 directly to the internet
+![Clawed Abode on a phone in dark mode: the session list, and an agent reporting the results of a GPU sweep](doc/screenshots/mobile.png)
 
-## Prerequisites
+## Security
 
-- A Linux host with systemd user services (for the session process scopes and the service unit), `sudo` for creating the user, and Git 2.31+ (clones pass credentials via `GIT_CONFIG_*`)
-- Node.js 22.22.1+ to run pnpm; the setup below installs it via nvm. The app itself runs on the Node that `pnpm install` downloads into `node_modules` (`devEngines.runtime` in `package.json`)
+**Agents run in Claude Code's `bypassPermissions` mode**: they execute code, install packages and change files without asking. Sessions are separated only by convention: they share one user account and can see each other's files. So:
 
-## Setup
+- **Run it on a dedicated machine or a dedicated user account**, not your personal workstation, and never as root.
+- **Use a fine-grained GitHub token** scoped to only the repositories you want agents to reach.
+- **Reach it over [Tailscale](https://tailscale.com/)** or similar; never expose the app's port directly to the internet.
 
-### 1. Create the user
+[`doc/security.md`](doc/security.md) covers authentication, prompt-injection handling and secret redaction.
 
-```bash
-sudo useradd -m -s /bin/bash clawedabode
-# Let the user's systemd services run without a login session
-sudo loginctl enable-linger clawedabode
-sudo -u clawedabode -i
-```
+## Self-hosting
 
-### 2. Install Node.js, pnpm and Claude Code
+Clawed Abode needs a Linux machine with systemd and a Claude subscription. It runs as one Node.js process with a SQLite database, as a systemd user service, behind Tailscale Serve. Read-aloud, GPT models, the VS Code button and published files are optional and switch on when you configure them.
 
-```bash
-# Install Node.js (e.g., via nvm)
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
-source ~/.bashrc
-nvm install 22
-
-# Install pnpm
-corepack enable && corepack prepare pnpm@latest --activate
-
-# Install and authenticate Claude Code
-npm install -g @anthropic-ai/claude-code
-claude setup-token
-```
-
-### 3. Clone and configure
-
-```bash
-git clone https://github.com/brendanlong/clawed-abode.git
-cd clawed-abode
-pnpm install
-cp .env.example .env
-```
-
-Edit `.env` and set `PASSWORD_HASH`, `GITHUB_TOKEN` and `CLAUDE_CODE_OAUTH_TOKEN` as described below. The full variable list is under [Configuration](#configuration).
-
-#### Generate Claude OAuth Token
-
-Copy the token printed by `claude setup-token` in step 2 (run it again if you need to) into `.env` as `CLAUDE_CODE_OAUTH_TOKEN`.
-
-#### Generate GitHub Token
-
-Use a **Fine-grained Personal Access Token** for security:
-
-1. Go to https://github.com/settings/personal-access-tokens/new
-2. Select "Fine-grained personal access token"
-3. Under "Repository access", select "Only select repositories" and choose the repos you want to use
-4. Under "Permissions" > "Repository permissions", set:
-   - **Contents**: Read and write (for push/pull, and to list branches)
-   - **Metadata**: Read-only (automatically included)
-   - **Issues**: Read-only (to browse issues when starting a session)
-   - **Pull requests**: Read-only (for the session PR status indicator and PR watches)
-   - **Checks** and **Commit statuses**: Read-only (for CI status on PRs)
-   - **Dependabot alerts**, **Code scanning alerts** and **Secret scanning alerts**: Read-only for `watch_security_alerts`; Read and write if agents should dismiss alerts
-5. Generate the token and add it to your `.env` file
-
-Public repos work even without these permissions, so a token missing **Contents**
-only fails on private repos — where branch listing and cloning break.
-
-#### Generate Password Hash
-
-```bash
-pnpm hash-password your-secure-password
-```
-
-Add the output to your `.env` file:
-
-```bash
-PASSWORD_HASH="JGFyZ29uMmlkJHY9MTkkbT02NTUzNix0PTMscD00JC4uLg=="
-```
-
-### 4. Initialize the database
-
-```bash
-pnpm prisma migrate deploy
-```
-
-### 5. Build and start
-
-```bash
-pnpm run build
-pnpm start
-```
-
-Visit `http://localhost:3000` from the server itself (see [Remote Access](#remote-access-with-tailscale) for the URL to use from other devices).
-
-### 6. Run as a systemd service
-
-Stop the foreground server from step 5 first (Ctrl-C); the service binds the same port.
-
-Create `~/.config/systemd/user/clawed-abode.service`:
-
-```ini
-[Unit]
-Description=Clawed Abode
-After=network.target
-
-[Service]
-Type=simple
-WorkingDirectory=%h/clawed-abode
-# The Node `pnpm install` downloaded: native modules are built for it.
-ExecStartPre=%h/clawed-abode/node_modules/node/bin/node node_modules/prisma/build/index.js migrate deploy
-# -H: listen on loopback only. Tailscale Serve is the sole ingress, so the
-# X-Forwarded-For header used for login rate limiting is always the one it sets.
-ExecStart=%h/clawed-abode/node_modules/node/bin/node node_modules/next/dist/bin/next start -H 127.0.0.1
-Restart=always
-RestartSec=5
-Environment=NODE_ENV=production
-
-[Install]
-WantedBy=default.target
-```
-
-```bash
-systemctl --user daemon-reload
-systemctl --user enable --now clawed-abode.service
-```
-
-### Viewing Logs
-
-```bash
-journalctl --user -u clawed-abode.service -f
-```
-
-### Updating
-
-```bash
-./scripts/update.sh
-```
-
-This pulls the latest code, installs dependencies, rebuilds, and restarts the service, which applies database migrations in `ExecStartPre` (migrations need an exclusive lock on the database, so they can only run while the server is down). A plain `git pull` + restart is **not** enough — `next start` serves the prebuilt `.next` bundle, so without a rebuild you keep running the old code. If your service isn't named `clawed-abode.service`, set `CLAWED_ABODE_SERVICE`.
-
-### Read-aloud with local Kokoro (optional)
-
-Read-aloud needs a Kokoro speech server (see `TTS_BASE_URL` below). Hosted OpenRouter works, but its latency varies from about 1 to 10 s per request. A local [Kokoro-FastAPI](https://github.com/remsky/Kokoro-FastAPI) on the CPU synthesizes a sentence in about 0.5 s, roughly 5× faster than playback, so audio starts in under a second. We use the CPU image: the GPU is faster, but it would hold 0.4–1.3 GB of VRAM permanently to save about half a second.
-
-[`scripts/kokoro.container`](scripts/kokoro.container) runs it as a podman Quadlet user service on `127.0.0.1:8880`, started at boot. It relies on the lingering enabled in step 1. The first start pulls the image, about 3 GB.
-
-```bash
-mkdir -p ~/.config/containers/systemd
-cp scripts/kokoro.container ~/.config/containers/systemd/
-systemctl --user daemon-reload   # Quadlet generates kokoro.service; its [Install] section enables it
-systemctl --user start kokoro.service
-curl http://127.0.0.1:8880/health
-```
-
-Then add the following to `.env` and restart `clawed-abode.service`:
-
-```bash
-TTS_BASE_URL="http://127.0.0.1:8880/v1"
-TTS_MODEL="kokoro"
-TTS_MAX_CONCURRENCY=1   # one request at a time, so they don't compete for CPU cores
-```
-
-Logs: `journalctl --user -u kokoro.service`.
-
-### Other model providers (optional)
-
-Sessions can run non-Claude models, such as OpenAI's GPT-6, through a [LiteLLM](https://docs.litellm.ai/) proxy. Pick a model with a provider prefix (`openai/gpt-6-astra`) in the model picker. Claude models never go through the proxy (see [`doc/settings.md`](doc/settings.md#proxied-models)). [`scripts/litellm.container`](scripts/litellm.container) runs it as a podman Quadlet user service on `127.0.0.1:4000`, with [`scripts/litellm-config.yaml`](scripts/litellm-config.yaml) (and the hook it loads, [`scripts/litellm_chatgpt_hooks.py`](scripts/litellm_chatgpt_hooks.py)) serving the GPT-6 models a ChatGPT plan includes through the subscription and every other OpenAI model through an API key. To add another provider, add a `<provider>/*` entry to the config.
-
-Setup, including a one-time ChatGPT sign-in: allow device code login in ChatGPT's security settings, and when the `podman run` line prints a URL and code, open the URL and enter the code. Without a ChatGPT plan, skip that line and delete the subscription entries from `~/.config/litellm/config.yaml`, since those models don't work without a login. The models a subscription serves depend on the plan; one it doesn't include fails with "not supported when using Codex with a ChatGPT account", so delete its entry to use the API key for it instead.
-
-```bash
-mkdir -p ~/.config/litellm ~/.config/containers/systemd
-mkdir -p -m 700 ~/.config/litellm/chatgpt
-cp scripts/litellm-config.yaml ~/.config/litellm/config.yaml
-cp scripts/litellm_chatgpt_hooks.py ~/.config/litellm/
-(umask 077; printf 'OPENAI_API_KEY=%s\nLITELLM_MASTER_KEY=sk-%s\n' "sk-your-openai-key" "$(openssl rand -hex 24)" > ~/.config/litellm/env)
-podman run --rm -it -v ~/.config/litellm/chatgpt:/chatgpt:z -e CHATGPT_TOKEN_DIR=/chatgpt --entrypoint python \
-  ghcr.io/berriai/litellm:v1.104.0@sha256:625981c83410a3ea68eb0697590a57ec1d764d634514d54fa5db0591077ee839 -c 'from litellm.llms.chatgpt.authenticator import Authenticator; Authenticator().get_access_token()'
-cp scripts/litellm.container ~/.config/containers/systemd/
-systemctl --user daemon-reload
-systemctl --user start litellm.service
-```
-
-LiteLLM keeps the login refreshed. If it's signed out from ChatGPT, delete `~/.config/litellm/chatgpt/auth.json` (the command reuses an unexpired token without checking it), rerun the `podman run` line, and restart `litellm.service`.
-
-Don't quote values in `~/.config/litellm/env`: podman passes quotes through literally, and OpenAI rejects the key.
-
-Then add the following to `.env`, using the master key from `~/.config/litellm/env`, and restart `clawed-abode.service`:
-
-```bash
-LLM_PROXY_URL="http://127.0.0.1:4000"
-LLM_PROXY_KEY="sk-..."
-```
-
-Logs: `journalctl --user -u litellm.service`.
-
-## Remote Access with Tailscale
-
-### Tailscale Serve (within your Tailnet)
-
-```bash
-tailscale serve 3000
-```
-
-Access at `https://<machine-name>.<tailnet-name>.ts.net`
-
-### Tailscale Funnel (public internet)
-
-```bash
-tailscale funnel 3000
-```
-
-**Note:** HTTPS is required for clipboard copy and browser notifications.
-
-## Configuration
-
-### Environment Variables
-
-The schema in [`src/lib/env.ts`](src/lib/env.ts) is authoritative; it is validated once at startup and the server refuses to boot on an invalid value.
-
-| Variable                                 | Description                                                                                                                                        | Default              |
-| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- |
-| `PASSWORD_HASH`                          | Base64-encoded Argon2 hash for auth; logins fail without it                                                                                        | None                 |
-| `DATABASE_URL`                           | SQLite database path                                                                                                                               | `file:./data/dev.db` |
-| `GITHUB_TOKEN`                           | GitHub Fine-grained PAT; without it repo/branch/issue pickers and PR status are unavailable                                                        | None                 |
-| `CLAUDE_CODE_OAUTH_TOKEN`                | Claude Code OAuth token (`claude setup-token`); can instead be set in the Settings UI                                                              | None                 |
-| `CLAUDE_MODEL`                           | Default Claude model (overridable per repo/session in Settings)                                                                                    | `opus[1m]`           |
-| `SESSION_BRANCH_PREFIX`                  | Prefix for session git branches                                                                                                                    | `claude/`            |
-| `ENCRYPTION_KEY`                         | 32+ char key for encrypting secrets; required before any secret env var or MCP header can be saved                                                 | None                 |
-| `APP_URL`                                | Public URL the browser reaches this app on; used for the MCP OAuth redirect URI and the public files sign-in link                                  | Derived from request |
-| `CODE_SERVER_URL`                        | Base URL of a code-server instance; enables the "Open in VS Code" button (see `scripts/setup-code-server.sh`)                                      | None                 |
-| `PUBLIC_FILES_PORT` / `PUBLIC_FILES_URL` | Loopback port and browser URL for serving each session's `public/` directory; set both or neither (see `scripts/expose-public-files-tailscale.sh`) | None                 |
-| `TTS_BASE_URL`                           | OpenAI-compatible speech API serving Kokoro (OpenRouter or a local Kokoro-FastAPI); enables read-aloud                                             | None                 |
-| `TTS_API_KEY`                            | Bearer key for `TTS_BASE_URL`, if it needs one                                                                                                     | None                 |
-| `TTS_MODEL`                              | Model name sent to `TTS_BASE_URL` (`kokoro` for Kokoro-FastAPI)                                                                                    | `hexgrad/kokoro-82m` |
-| `TTS_MAX_CONCURRENCY`                    | Speech requests per message run at once; use `1` for a local CPU server                                                                            | `4`                  |
-| `LLM_PROXY_URL` / `LLM_PROXY_KEY`        | Anthropic-compatible proxy (LiteLLM) and its key, for provider-prefixed models like `openai/gpt-6-astra`                                           | None                 |
-| `SESSIONS_MEMORY_MAX`                    | Memory cap across all agent sessions (systemd syntax: `96G`, `85%`, `infinity`)                                                                    | `85%`                |
-| `SESSIONS_MEMORY_SWAP_MAX`               | Swap the sessions may use, in the same syntax                                                                                                      | `0`                  |
-| `SESSIONS_CPU_QUOTA`                     | CPU cap across all sessions, where `100%` is one core (e.g. `2200%` leaves 2 of 24 free)                                                           | None                 |
-| `LOG_LEVEL`                              | Minimum server log level: `debug`, `info`, `warn`, or `error`                                                                                      | `info`               |
+The [self-hosting guide](doc/self-hosting.md) walks through setup, updating, the optional services and every setting.
 
 ## Development
 
-`pnpm run dev` starts the dev server with hot reload; `pnpm test:run` runs every test suite (what CI runs). After editing `prisma/schema.prisma`, `pnpm run db:migrate` creates and applies a migration (production applies them with `prisma migrate deploy` via `scripts/update.sh`). Contributor rules and the design docs are in [`CLAUDE.md`](CLAUDE.md) and [`doc/DESIGN.md`](doc/DESIGN.md).
-
-## Troubleshooting
-
-### Claude Code authentication errors
-
-Regenerate a token with `claude setup-token` and update `CLAUDE_CODE_OAUTH_TOKEN` in `.env` or Settings.
-
-### Database errors
-
-Reset the database (this deletes all sessions and messages):
-
-```bash
-rm -rf data
-pnpm prisma migrate deploy
-```
+`pnpm run dev` starts the dev server with hot reload; `pnpm test:run` runs every test suite (what CI runs). After editing `prisma/schema.prisma`, `pnpm run db:migrate` creates and applies a migration (production applies them with `prisma migrate deploy` via `scripts/update.sh`). `pnpm readme-screenshots` regenerates the screenshots above from a throwaway demo instance (it needs `pnpm exec playwright install chromium` once). Contributor rules and the design docs are in [`CLAUDE.md`](CLAUDE.md) and [`doc/DESIGN.md`](doc/DESIGN.md).
 
 ## License
 
-MIT
+[MIT](LICENSE)

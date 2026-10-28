@@ -11,6 +11,7 @@ This file is the high-level map. Details live in reference docs, loaded on deman
 - [`settings.md`](settings.md) — settings layers, model resolution, proxied (non-Claude) models and GPT agents, secrets, MCP servers
 - [`rate-limit-pause.md`](rate-limit-pause.md) — pausing sessions on subscription usage limits and draining when the window resets
 - [`security.md`](security.md) — auth, input sanitization, and secret redaction
+- [`self-hosting.md`](self-hosting.md) — setup, updating, optional services, and environment variables
 
 ## Goals
 

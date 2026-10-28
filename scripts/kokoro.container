@@ -1,4 +1,4 @@
-# Podman Quadlet unit for local Kokoro TTS (CPU); see "Read-aloud with local Kokoro" in README.md.
+# Podman Quadlet unit for local Kokoro TTS (CPU); see "Read-aloud with local Kokoro" in doc/self-hosting.md.
 [Unit]
 Description=Kokoro-FastAPI text-to-speech (CPU)
 
