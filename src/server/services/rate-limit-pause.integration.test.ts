@@ -15,6 +15,7 @@ import { waitFor } from '@/test/wait-for';
 
 const mockSseEvents = vi.hoisted(() => ({
   emitNewMessage: vi.fn(),
+  emitTokenUsage: vi.fn(),
   emitClaudeRunning: vi.fn(),
   emitClaudeRetry: vi.fn(),
   emitBackgroundTasks: vi.fn(),

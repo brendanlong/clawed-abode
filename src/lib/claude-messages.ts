@@ -52,7 +52,7 @@ export function initSessionId(message: unknown): string | null {
 /**
  * The four message types stored in the `Message.type` DB column.
  */
-type DbMessageType = 'system' | 'user' | 'assistant' | 'result';
+export type DbMessageType = 'system' | 'user' | 'assistant' | 'result';
 
 /**
  * How a streamed SDK message should be handled by the runner.

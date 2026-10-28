@@ -13,6 +13,7 @@ import { resolveUploadPaths } from './uploads';
 import { messageUsageStatement, parseSessionUsageRow } from './session-usage';
 import { buildTokenUsageStats } from '@/lib/token-estimation';
 import { messageDisplay } from '@/lib/transcript-display';
+import type { DbMessageType } from '@/lib/claude-messages';
 import { findToolResultText, projectMessageContent } from '@/lib/tool-result';
 import type { Message } from '@/generated/prisma/client';
 
@@ -180,6 +181,46 @@ export async function hasMessagesThrough(sessionId: string, ceiling: number): Pr
   return row !== null;
 }
 
+function buildErrorContent(errorText: string): {
+  type: 'system';
+  subtype: 'error';
+  content: { type: 'text'; text: string }[];
+} {
+  return { type: 'system', subtype: 'error', content: [{ type: 'text', text: errorText }] };
+}
+
+/**
+ * Redact secrets from a message about to be stored. This covers user prompts and
+ * assistant text, which the tool-output hook never sees. If redaction fails, the
+ * message is replaced by a visible error rather than stored unredacted or
+ * dropped, so the user sees that something is missing and the session carries on.
+ * The error's own text stays in the log: it may quote the input.
+ */
+async function redactForStorage(params: {
+  sessionId: string;
+  id: string;
+  type: DbMessageType;
+  content: unknown;
+}): Promise<{ type: DbMessageType; content: unknown }> {
+  const { sessionId, id, type } = params;
+  try {
+    const { value, rules } = await redactSecretsDeep(params.content);
+    if (rules.length > 0) log.warn('Redacted secrets from message', { sessionId, id, rules });
+    return { type, content: value };
+  } catch (err) {
+    log.error('Redacting a message failed; storing an error in its place', toError(err), {
+      sessionId,
+      id,
+    });
+    return {
+      type: 'system',
+      content: buildErrorContent(
+        `A ${type} message couldn't be checked for secrets, so it wasn't saved. Details are in the server log.`
+      ),
+    };
+  }
+}
+
 /**
  * Insert a message, assigning its per-session `sequence` atomically: one autocommit
  * `UPDATE ... RETURNING` on `Session.messageSequence`, which SQLite serializes on
@@ -194,19 +235,17 @@ export async function hasMessagesThrough(sessionId: string, ceiling: number): Pr
  * session's usage totals in the same batch and emits a `message` event, then a
  * `token_usage` event if the totals moved (built from the fold's own `RETURNING`,
  * so announcing them costs no extra query).
- * Secrets in any string are redacted first, which covers user prompts and
- * assistant text that the tool-output hook never sees.
+ * Secrets in any string are redacted first (see {@link redactForStorage}).
  * Throws if the session does not exist.
  */
 export async function insertMessage(params: {
   sessionId: string;
   id: string;
-  type: 'system' | 'user' | 'assistant' | 'result';
+  type: DbMessageType;
   content: unknown;
 }): Promise<{ inserted: boolean; sequence?: number }> {
-  const { sessionId, id, type } = params;
-  const { value: content, rules } = await redactSecretsDeep(params.content);
-  if (rules.length > 0) log.warn('Redacted secrets from message', { sessionId, id, rules });
+  const { sessionId, id } = params;
+  const { type, content } = await redactForStorage(params);
   const contentJson = JSON.stringify(content);
 
   const rows = await prisma.$queryRaw<{ messageSequence: number | bigint }[]>`
@@ -233,7 +272,9 @@ export async function insertMessage(params: {
         display: messageDisplay(type, content),
       },
     });
-    const usage = messageUsageStatement(sessionId, type, content);
+    // Usage comes from the original message: a replaced result still costs money,
+    // and its numbers can't hold a secret.
+    const usage = messageUsageStatement(sessionId, params.type, params.content);
     // A batch (not interactive) transaction: a duplicate id rolls back the usage fold too.
     if (usage) {
       const [message, usageRows] = await prisma.$transaction([create, usage]);
@@ -288,13 +329,13 @@ export async function bumpSessionActivity(sessionId: string): Promise<void> {
 /** Persist a system error message for display to the user. */
 export async function createErrorMessage(sessionId: string, errorText: string): Promise<void> {
   const errorId = randomUUID();
-  const errorContent = {
-    type: 'system',
-    subtype: 'error',
-    content: [{ type: 'text', text: errorText }],
-  };
   try {
-    await insertMessage({ sessionId, id: errorId, type: 'system', content: errorContent });
+    await insertMessage({
+      sessionId,
+      id: errorId,
+      type: 'system',
+      content: buildErrorContent(errorText),
+    });
   } catch (err) {
     log.error('Failed to create error message', toError(err), { sessionId });
   }
