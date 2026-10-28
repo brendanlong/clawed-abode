@@ -2,15 +2,17 @@
 /**
  * Fills an empty database with the demo sessions the README screenshots show.
  * Run by scripts/readme-screenshots.ts with DATABASE_URL pointing at a throwaway
- * database; never point it at a real one.
+ * database under the temp dir; refuses any other.
+ *
+ * The sessions get no workspace directories, so the server doesn't start a CLI
+ * for the "running" ones: starting one would also reapply the sessions' systemd
+ * slice limits, which the real server shares.
  */
 import { randomUUID } from 'node:crypto';
-import { mkdir } from 'node:fs/promises';
-import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { prisma } from '@/lib/prisma';
 import type { PullRequestInfo } from '@/lib/pull-request';
 import { insertMessage } from '@/server/services/message-store';
-import { WORKTREES_DIR } from '@/server/services/worktree-manager';
 
 const MODEL = 'claude-opus-5-5';
 const MINUTE = 60 * 1000;
@@ -29,7 +31,7 @@ interface DemoSession {
   transcript?: { prompt: string; turns: Block[][]; costUsd: number }[];
 }
 
-function usage(output: number) {
+function usage(output: number): Record<string, number> {
   return {
     input_tokens: 4,
     cache_creation_input_tokens: 2400,
@@ -374,12 +376,14 @@ const sessions: DemoSession[] = [
 ];
 
 async function main() {
+  if (!process.env.DATABASE_URL?.startsWith(`file:${tmpdir()}/`)) {
+    throw new Error('Refusing to seed a database outside the temp dir');
+  }
   const now = Date.now();
   for (const demo of sessions) {
     const id = randomUUID();
     const repoName = demo.repo?.split('/')[1] ?? '';
     const branch = `claude/${id}`;
-    await mkdir(join(WORKTREES_DIR, id, repoName), { recursive: true });
     const pullRequest: PullRequestInfo | null = demo.pullRequest
       ? {
           ...demo.pullRequest,
@@ -399,6 +403,7 @@ async function main() {
         repoPath: repoName,
         status: demo.status,
         currentBranch: demo.repo ? branch : null,
+        // Directly rather than through pull-request-store: there is no GitHub PR to link.
         pullRequest: pullRequest && JSON.stringify(pullRequest),
         // Far enough ahead that the server never asks GitHub about these made-up PRs.
         prCheckedAt: new Date(now + 365 * 24 * 60 * MINUTE),

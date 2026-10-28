@@ -12,12 +12,13 @@ Read more: [Clawed Abode: Claude Code is Too Cloudy](https://www.brendanlong.com
 
 - **Keep many agents busy at once.** Each session gets its own clone of a repo and branch, so agents never step on each other. Start one from a GitHub issue, or with no repo at all for research and one-off tasks. The session list shows each session's pull request and CI status at a glance.
 - **Use your own machine.** Agents run on your server with your installed tools, your data and your GPU, so they can train models, run long experiments or use anything Claude Code on the web can't reach.
-- **Walk away.** Sessions keep running when you close the tab, lose signal or restart the server. When an agent finishes or needs a decision, it tells you: a notification, and a one-line summary in the session list. Answer its questions and approve or revise its plans from your phone.
+- **Walk away.** Sessions survive closing the tab, losing signal and server restarts. When an agent finishes or needs a decision, it tells you with a one-line summary in the session list, and a browser notification if the app is open in a tab. Answer its questions and approve or revise its plans from your phone.
 - **See what the agent did.** Every command, edit and test run is in the transcript, with diffs and output a tap away, plus how much each turn cost and how full the context window is.
 - **Talk instead of type.** Dictate prompts, and have replies read aloud in a natural voice, with lock-screen media controls.
 - **Hand over files and get some back.** Attach screenshots, PDFs or data to a prompt. Agents can publish HTML reports and plots at a stable link for you to open in the browser, and an optional VS Code button opens a session's files in a browser editor.
 - **Set it up once per repo.** Give each repo (or every session) its own environment variables, secrets, MCP servers, custom instructions and default model. Sessions can also run OpenAI GPT models through a LiteLLM proxy.
-- **Let agents work together.** Sessions can message each other, watch pull requests and security alerts without polling, and pause automatically when your Claude subscription is close to its usage limit, picking back up when it resets.
+- **Let agents work together.** Sessions can message each other, and watch pull requests and security alerts without polling GitHub.
+- **Stay within your plan.** Sessions can pause when your Claude subscription nears its usage limit and pick back up when it resets.
 
 ![A session transcript with an expanded diff and test output](doc/screenshots/session.png)
 
@@ -41,7 +42,7 @@ The [self-hosting guide](doc/self-hosting.md) walks through setup, updating, the
 
 ## Development
 
-`pnpm run dev` starts the dev server with hot reload; `pnpm test:run` runs every test suite (what CI runs). After editing `prisma/schema.prisma`, `pnpm run db:migrate` creates and applies a migration (production applies them with `prisma migrate deploy` via `scripts/update.sh`). `pnpm readme-screenshots` regenerates the screenshots above from a throwaway demo instance. Contributor rules and the design docs are in [`CLAUDE.md`](CLAUDE.md) and [`doc/DESIGN.md`](doc/DESIGN.md).
+`pnpm run dev` starts the dev server with hot reload; `pnpm test:run` runs every test suite (what CI runs). After editing `prisma/schema.prisma`, `pnpm run db:migrate` creates and applies a migration (production applies them with `prisma migrate deploy` via `scripts/update.sh`). `pnpm readme-screenshots` regenerates the screenshots above from a throwaway demo instance (it needs `pnpm exec playwright install chromium` once). Contributor rules and the design docs are in [`CLAUDE.md`](CLAUDE.md) and [`doc/DESIGN.md`](doc/DESIGN.md).
 
 ## License
 

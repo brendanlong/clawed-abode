@@ -2,13 +2,15 @@
 /**
  * Regenerate the README screenshots (doc/screenshots/*.png) from a throwaway
  * instance: a fresh database seeded by readme-screenshots-seed.ts, served by
- * `next dev` with HOME pointed at a temp dir so its workspaces never touch the
- * real ~/worktrees.
+ * `next dev`.
  *
  * Usage: pnpm readme-screenshots
- * Needs Playwright's Chromium (`pnpm exec playwright install chromium`).
+ * Run it from a checkout with no .env (next dev would load it, and with it the
+ * real tokens and ports) and no other dev server running. Needs Playwright's
+ * Chromium (`pnpm exec playwright install chromium`).
  */
 import { spawn, type ChildProcess } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -63,14 +65,21 @@ async function waitForServer(url: string, server: ChildProcess): Promise<void> {
   }
 }
 
-function stopServer(server: ChildProcess): Promise<void> {
-  if (server.exitCode !== null) return Promise.resolve();
-  return new Promise((resolve) => {
-    server.on('exit', () => resolve());
-    // The whole group, so the signal reaches next's own child processes; their
-    // shutdown handler stops the demo sessions' CLIs.
-    process.kill(-server.pid!, 'SIGTERM');
-  });
+function groupAlive(pid: number): boolean {
+  try {
+    process.kill(-pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Stops the server's whole process group: next's own children outlive pnpm's exit. */
+async function stopServer(server: ChildProcess): Promise<void> {
+  const { pid } = server;
+  if (pid === undefined || !groupAlive(pid)) return;
+  process.kill(-pid, 'SIGTERM');
+  while (groupAlive(pid)) await new Promise((resolve) => setTimeout(resolve, 200));
 }
 
 async function openPage(
@@ -113,7 +122,7 @@ async function save(page: Page, file: string): Promise<void> {
   console.log(`Wrote ${outputPath}`);
 }
 
-async function capture(baseUrl: string) {
+async function capture(baseUrl: string): Promise<void> {
   await mkdir(outDir, { recursive: true });
   const browser = await chromium.launch();
   try {
@@ -162,19 +171,27 @@ async function capture(baseUrl: string) {
   }
 }
 
-async function main() {
+async function main(): Promise<void> {
+  if (existsSync(path.join(root, '.env'))) {
+    throw new Error('Run this from a checkout without a .env file; next dev would load it');
+  }
   const tmp = await mkdtemp(path.join(tmpdir(), 'clawed-abode-screenshots-'));
-  const home = path.join(tmp, 'home');
-  await mkdir(home);
   const port = await freePort();
   const env: NodeJS.ProcessEnv = {
     ...process.env,
-    HOME: home,
     DATABASE_URL: `file:${path.join(tmp, 'demo.db')}`,
     PASSWORD_HASH: Buffer.from(await hashPassword(PASSWORD)).toString('base64'),
     NEXT_TELEMETRY_DISABLED: '1',
   };
   let server: ChildProcess | undefined;
+  const cleanup = async (): Promise<void> => {
+    if (server) await stopServer(server);
+    await rm(tmp, { recursive: true, force: true });
+  };
+  // The server runs in its own process group, so Ctrl-C doesn't reach it.
+  for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+    process.once(signal, () => void cleanup().finally(() => process.exit(1)));
+  }
   try {
     await run('pnpm', ['exec', 'prisma', 'migrate', 'deploy'], env);
     await run('pnpm', ['exec', 'tsx', 'scripts/readme-screenshots-seed.ts'], env);
@@ -188,8 +205,7 @@ async function main() {
     await waitForServer(`${baseUrl}/login`, server);
     await capture(baseUrl);
   } finally {
-    if (server) await stopServer(server);
-    await rm(tmp, { recursive: true, force: true });
+    await cleanup();
   }
 }
 
