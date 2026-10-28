@@ -27,6 +27,7 @@ function sessionRow(overrides: Partial<Session> = {}): Session {
     createdAt: at,
     updatedAt: at,
     lastActivityAt: at,
+    starred: false,
     messageSequence: 0,
     sessionScope: null,
     claudeModel: null,

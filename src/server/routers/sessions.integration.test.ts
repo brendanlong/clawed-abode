@@ -394,6 +394,35 @@ describe('sessionsRouter integration', () => {
       expect(second.nextCursor).toBeUndefined();
     });
 
+    it('pins starred sessions first, most recent first among them, across pages', async () => {
+      const day = (d: number) => new Date(Date.UTC(2024, 0, d));
+      await testPrisma.session.createMany({
+        data: [
+          { name: 'Newest', status: 'stopped', lastActivityAt: day(9) },
+          { name: 'Old starred', status: 'stopped', starred: true, lastActivityAt: day(1) },
+          { name: 'Middle', status: 'stopped', lastActivityAt: day(5) },
+          { name: 'New starred', status: 'stopped', starred: true, lastActivityAt: day(6) },
+          { name: 'Oldest', status: 'stopped', lastActivityAt: day(2) },
+        ],
+      });
+
+      const caller = createCaller('auth-session-id');
+      const all = await caller.sessions.list({});
+      const expected = ['New starred', 'Old starred', 'Newest', 'Middle', 'Oldest'];
+      expect(all.sessions.map((s) => s.name)).toEqual(expected);
+
+      for (const limit of [1, 2, 3]) {
+        const seen: string[] = [];
+        let cursor = undefined as (typeof all)['nextCursor'];
+        do {
+          const page = await caller.sessions.list({ limit, cursor });
+          seen.push(...page.sessions.map((s) => s.name));
+          cursor = page.nextCursor;
+        } while (cursor);
+        expect(seen).toEqual(expected);
+      }
+    });
+
     it('paginates by (lastActivityAt, id) cursor without skipping ties', async () => {
       const sameInstant = new Date('2024-02-01T00:00:00Z');
       await testPrisma.session.createMany({
@@ -408,7 +437,7 @@ describe('sessionsRouter integration', () => {
 
       const caller = createCaller('auth-session-id');
       const seen: string[] = [];
-      let cursor: { at: string; id: string } | undefined;
+      let cursor: { at: string; id: string; pinned: boolean } | undefined;
       let pages = 0;
       do {
         const page = await caller.sessions.list({ limit: 2, cursor });
@@ -818,6 +847,40 @@ describe('sessionsRouter integration', () => {
           enabled: true,
         })
       ).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+    });
+  });
+
+  describe('setStarred', () => {
+    it('stars and unstars a session without changing its activity time', async () => {
+      const session = await createNoRepoSession({ name: 'Pin me' });
+      const caller = createCaller('auth-session-id');
+      const rowOf = () => testPrisma.session.findUniqueOrThrow({ where: { id: session.id } });
+      const before = await rowOf();
+
+      await caller.sessions.setStarred({ sessionId: session.id, starred: true });
+      expect((await rowOf()).starred).toBe(true);
+      expect((await rowOf()).lastActivityAt).toEqual(before.lastActivityAt);
+
+      await caller.sessions.setStarred({ sessionId: session.id, starred: false });
+      expect((await rowOf()).starred).toBe(false);
+    });
+
+    it('rejects starring an archived session', async () => {
+      const session = await createNoRepoSession({ name: 'Archived', status: 'archived' });
+      await expect(
+        createCaller('auth-session-id').sessions.setStarred({
+          sessionId: session.id,
+          starred: true,
+        })
+      ).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+    });
+
+    it('unstars a session when it is archived', async () => {
+      const session = await createNoRepoSession({ name: 'Starred', starred: true });
+      mockRemoveWorkspace.mockResolvedValue(undefined);
+      await createCaller('auth-session-id').sessions.delete({ sessionId: session.id });
+      const row = await testPrisma.session.findUniqueOrThrow({ where: { id: session.id } });
+      expect(row.starred).toBe(false);
     });
   });
 

@@ -16,7 +16,8 @@ interface MutationOptions {
 }
 
 // Stop and archive fail, start succeeds, so tests see what the user sees either way.
-const { mutation } = vi.hoisted(() => ({
+const { mutation, setStarred } = vi.hoisted(() => ({
+  setStarred: vi.fn(),
   mutation:
     (fails: boolean) =>
     (opts: MutationOptions = {}) => ({
@@ -34,6 +35,7 @@ vi.mock('@/lib/trpc', () => ({
       start: { useMutation: mutation(false) },
       stop: { useMutation: mutation(true) },
       delete: { useMutation: mutation(true) },
+      setStarred: { useMutation: () => ({ mutate: setStarred, isPending: false }) },
     },
   },
 }));
@@ -47,6 +49,7 @@ const SESSION: Session = {
   canStart: false,
   canStop: true,
   canArchive: true,
+  canStar: true,
   statusMessage: null,
   currentBranch: null,
   pullRequest: null,
@@ -54,12 +57,30 @@ const SESSION: Session = {
   backgroundActive: false,
   rateLimitPaused: false,
   lastActivityAt: new Date('2024-01-15T10:00:00Z'),
+  starred: false,
   attentionAt: null,
   attentionSummary: null,
   createdAt: new Date('2024-01-15T09:00:00Z'),
 };
 
 describe('SessionListItem', () => {
+  it('stars an unstarred session and unstars a starred one', async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<SessionListItem session={SESSION} />);
+
+    await user.click(screen.getByRole('button', { name: 'Star' }));
+    expect(setStarred).toHaveBeenLastCalledWith({ sessionId: 's1', starred: true });
+
+    rerender(<SessionListItem session={{ ...SESSION, starred: true }} />);
+    await user.click(screen.getByRole('button', { name: 'Unstar' }));
+    expect(setStarred).toHaveBeenLastCalledWith({ sessionId: 's1', starred: false });
+  });
+
+  it('offers no star button when the session cannot be starred', () => {
+    render(<SessionListItem session={{ ...SESSION, canStar: false }} />);
+    expect(screen.queryByRole('button', { name: /star/i })).not.toBeInTheDocument();
+  });
+
   it('shows the error when stopping fails, and dismisses it', async () => {
     const user = userEvent.setup();
     render(<SessionListItem session={SESSION} />);

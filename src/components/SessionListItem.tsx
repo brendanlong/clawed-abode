@@ -27,6 +27,7 @@ export function SessionListItem({ session }: SessionListItemProps) {
   const startMutation = trpc.sessions.start.useMutation(handlersFor('start session'));
   const stopMutation = trpc.sessions.stop.useMutation(handlersFor('stop session'));
   const archiveMutation = trpc.sessions.delete.useMutation(handlersFor('archive session'));
+  const starMutation = trpc.sessions.setStarred.useMutation(handlersFor('star session'));
 
   return (
     <li
@@ -70,6 +71,17 @@ export function SessionListItem({ session }: SessionListItemProps) {
           />
 
           <div className="flex items-center">
+            {session.canStar && (
+              <SessionActionButton
+                action={session.starred ? 'unstar' : 'star'}
+                onClick={() =>
+                  starMutation.mutate({ sessionId: session.id, starred: !session.starred })
+                }
+                isPending={starMutation.isPending}
+                variant="ghost"
+                className="text-muted-foreground"
+              />
+            )}
             {session.canStart && (
               <SessionActionButton
                 action="start"

@@ -59,3 +59,49 @@ export function keysetPage<F extends string>(
     },
   };
 }
+
+const pinnedKeysetCursorSchema = keysetCursorSchema.extend({ pinned: z.boolean() });
+
+export type PinnedKeysetCursor = z.infer<typeof pinnedKeysetCursorSchema>;
+
+export const pinnedKeysetPageInputSchema = keysetPageInputSchema.extend({
+  cursor: pinnedKeysetCursorSchema.optional(),
+});
+
+type Pinned<P extends string> = { [K in P]: boolean };
+
+/**
+ * A {@link keysetPage} with pinned rows first: ordered by (<boolean pin field>
+ * desc, <timestamp field> desc, id desc), so pinned rows keep their usual order
+ * among themselves above every unpinned row.
+ */
+export function pinnedKeysetPage<P extends string, F extends string>(
+  pinField: P,
+  field: F,
+  input: { cursor?: PinnedKeysetCursor; limit: number }
+) {
+  const inner = keysetPage(field, input);
+  const pinned = (value: boolean) => ({ [pinField]: value }) as Pinned<P>;
+  const samePinLater = input.cursor && { AND: [pinned(input.cursor.pinned), inner.where] };
+  // Past a pinned cursor, every unpinned row is still to come.
+  const where = !samePinLater
+    ? {}
+    : input.cursor?.pinned
+      ? { OR: [samePinLater, pinned(false)] }
+      : samePinLater;
+  return {
+    where,
+    orderBy: [{ [pinField]: 'desc' } as { [K in P]: 'desc' }, ...inner.orderBy],
+    take: inner.take,
+    slice<T extends { id: string } & Record<F, Date> & Pinned<P>>(
+      rows: T[]
+    ): { items: T[]; nextCursor: PinnedKeysetCursor | undefined } {
+      const { items, nextCursor } = inner.slice(rows);
+      const last = items[items.length - 1];
+      return {
+        items,
+        nextCursor: nextCursor && last ? { ...nextCursor, pinned: last[pinField] } : undefined,
+      };
+    },
+  };
+}

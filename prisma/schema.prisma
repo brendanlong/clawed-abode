@@ -40,6 +40,7 @@ model Session {
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
   lastActivityAt      DateTime  @default(now()) // Bumped only on user interactions (prompt, answer); drives session-list ordering
+  starred             Boolean   @default(false) // Pinned to the top of the session list; cleared on archive
   messageSequence     Int       @default(0) // Monotonic counter for atomic message sequence assignment (next sequence to assign)
   sessionScope        String? // systemd user scope unit this session's CLI runs in; recorded so a crash-restart can reap the exact orphaned scope (null when not scoped / after clean teardown)
   claudeModel         String? // If set, overrides the repo/global/env Claude model for this session only (highest precedence)
@@ -73,8 +74,9 @@ model Session {
   securityAlertWatches SecurityAlertWatch[]
   pullRequests         SessionPullRequest[]
 
-  @@index([lastActivityAt, id]) // sessions.list default keyset order (status != 'archived')
-  @@index([status, lastActivityAt, id]) // sessions.list keyset order filtered by status
+  @@index([starred, lastActivityAt, id]) // sessions.list default keyset order (status != 'archived')
+  @@index([status, starred, lastActivityAt, id]) // sessions.list keyset order filtered by status
+  @@index([lastActivityAt, id]) // list_sessions built-in tool keyset order
   @@index([agentName]) // sessions.byAgentName: linking a message to the session that sent it
   @@index([pullRequestId]) // copying a PullRequest's info to the sessions linked to it
 }

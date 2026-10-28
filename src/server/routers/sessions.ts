@@ -9,6 +9,7 @@ import {
   archiveSession,
   createSession,
   configureSession,
+  setSessionStarred,
   shutDownSession,
   startSession,
   updateSession,
@@ -19,7 +20,7 @@ import { PROMPT_MAX_LENGTH, SESSION_SEARCH_MAX_LENGTH } from '@/lib/types';
 import { toSessionView } from '@/lib/session-view';
 import { storedNamesSchema } from '@/lib/attachments';
 import type { Prisma } from '@/generated/prisma/client';
-import { keysetPage, keysetPageInputSchema } from '@/lib/keyset-page';
+import { pinnedKeysetPage, pinnedKeysetPageInputSchema } from '@/lib/keyset-page';
 import { sessionStatusSchema } from '@/lib/session-display-status';
 import { thresholdSchema } from '@/lib/rate-limit';
 import { repoFullNameSchema } from '@/lib/repo-full-name';
@@ -39,6 +40,7 @@ const sessionListSelect = {
   pullRequest: true,
   prCheckedAt: true, // server-only; toSessionView drops it before the client sees it
   lastActivityAt: true,
+  starred: true,
   attentionAt: true,
   attentionSummary: true,
   createdAt: true,
@@ -62,19 +64,19 @@ export const sessionsRouter = router({
     )
     .mutation(async ({ input }) => ({ session: toSessionView(await createSession(input)) })),
 
-  // Keyset-paginated by (lastActivityAt desc, id desc). Archived sessions are
+  // Keyset-paginated by (starred desc, lastActivityAt desc, id desc). Archived sessions are
   // excluded unless `status: 'archived'` is requested explicitly, so the home page
   // fetches the active and archived lists as two independent paginated queries.
   // `search` is a case-insensitive substring match on name, repo, and branch.
   list: protectedProcedure
     .input(
-      keysetPageInputSchema.extend({
+      pinnedKeysetPageInputSchema.extend({
         status: sessionStatusSchema.optional(),
         search: z.string().trim().max(SESSION_SEARCH_MAX_LENGTH).optional(),
       })
     )
     .query(async ({ input }) => {
-      const page = keysetPage('lastActivityAt', input);
+      const page = pinnedKeysetPage('starred', 'lastActivityAt', input);
       const rows = await prisma.session.findMany({
         where: {
           AND: [
@@ -156,6 +158,12 @@ export const sessionsRouter = router({
       // are untouched. lastActivityAt is deliberately not bumped so renaming
       // doesn't reorder the session list.
       await updateSession(input.sessionId, { name: input.name });
+    }),
+
+  setStarred: sessionProcedure
+    .input(z.object({ starred: z.boolean() }))
+    .mutation(async ({ input }) => {
+      await setSessionStarred(input.sessionId, input.starred);
     }),
 
   /**

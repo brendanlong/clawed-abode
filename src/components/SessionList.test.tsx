@@ -17,6 +17,7 @@ vi.mock('@/lib/trpc', () => ({
       start: { useMutation: () => ({ mutate: vi.fn(), isPending: false }) },
       stop: { useMutation: () => ({ mutate: vi.fn(), isPending: false }) },
       delete: { useMutation: () => ({ mutate: vi.fn(), isPending: false }) },
+      setStarred: { useMutation: () => ({ mutate: vi.fn(), isPending: false }) },
     },
   },
 }));
@@ -29,6 +30,7 @@ function session(overrides: Partial<Session> & Pick<Session, 'id' | 'name'>): Se
     canStart: false,
     canStop: true,
     canArchive: true,
+    canStar: true,
     statusMessage: null,
     currentBranch: null,
     pullRequest: null,
@@ -36,6 +38,7 @@ function session(overrides: Partial<Session> & Pick<Session, 'id' | 'name'>): Se
     backgroundActive: false,
     rateLimitPaused: false,
     lastActivityAt: new Date('2024-01-15T10:00:00Z'),
+    starred: false,
     attentionAt: null,
     attentionSummary: null,
     createdAt: new Date('2024-01-15T09:00:00Z'),
@@ -141,6 +144,7 @@ describe('SessionList', () => {
               canStart: false,
               canStop: false,
               canArchive: true,
+              canStar: true,
             }),
           ])}
           archived={none}
