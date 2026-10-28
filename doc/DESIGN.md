@@ -47,7 +47,7 @@ Key decisions:
 - **SQLite + Prisma 7** with the Rust-free `prisma-client` generator (client generated to `src/generated/prisma/`, gitignored; imported via `@/generated/prisma/client`). Schema: [`prisma/schema.prisma`](../prisma/schema.prisma); CLI config: [`prisma.config.ts`](../prisma.config.ts). The database runs in WAL mode (set at boot) because agents read the prod DB with the `sqlite3` CLI, and in rollback-journal mode a long read blocks the server's writes until they fail with `SQLITE_BUSY`.
 - **tRPC for the API** ([`src/server/routers/`](../src/server/routers/)); **SSE for all server→client streaming**. Client→server actions are ordinary mutations, so a bidirectional transport (WebSockets) is unnecessary.
 - **Single-user password auth** behind Tailscale — see [`security.md`](security.md).
-- **Cursor-based pagination everywhere**: messages by per-session `sequence`; session and auth-session lists by a `(timestamp desc, id desc)` keyset ([`src/lib/keyset-page.ts`](../src/lib/keyset-page.ts)).
+- **Cursor-based pagination everywhere**: messages by per-session `sequence`; session and auth-session lists by a `(timestamp desc, id desc)` keyset, with starred sessions first ([`src/lib/keyset-page.ts`](../src/lib/keyset-page.ts)).
 - **Environment is validated once at boot** ([`src/lib/env.ts`](../src/lib/env.ts), called from instrumentation) so a bad variable stops startup instead of the first request that reads it.
 
 ## Data Model
@@ -55,6 +55,7 @@ Key decisions:
 The schema ([`prisma/schema.prisma`](../prisma/schema.prisma)) is the source of truth. Non-obvious semantics:
 
 - `Session.lastActivityAt` is bumped only on **user interactions** (sending a prompt, answering a question/plan) — never on assistant/background traffic or lifecycle changes — so the session list orders by where the user last acted and doesn't shuffle while other sessions generate.
+- `Session.starred` pins a session above the unstarred ones in the session list (ties ordered as usual, by `lastActivityAt`); archiving clears it and archived sessions can't be starred.
 - `Session.pullRequest` is a copy of the shared `PullRequest` row for `currentBranch`, refreshed after each turn and after git/PR tool calls, and re-polled when `prCheckedAt` ages out, so listing sessions never waits on GitHub (see [`messages-and-sse.md`](messages-and-sse.md)).
 - Deleting a session **archives** it: the workspace is removed, messages are kept and viewable read-only, and it's excluded from the session list by default.
 - "No Repository" sessions use the `__no_repo__` sentinel in `RepoSettings`.

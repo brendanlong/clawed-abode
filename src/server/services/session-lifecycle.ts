@@ -244,6 +244,7 @@ export async function archiveSession(sessionId: string): Promise<void> {
   // (restoreQueuedPrompt) either lands before the clear or sees the archive.
   const { applied } = await transitionSession(sessionId, 'archive', {
     status: 'archived',
+    starred: false,
     attentionAt: null,
     attentionSummary: null,
   });
@@ -271,6 +272,17 @@ export async function configureSession(
   // No-op if the session isn't running.
   await refreshSessionSettings(sessionId);
   return session;
+}
+
+/** Pin or unpin the session at the top of the session list. Archived sessions can't be starred. */
+export async function setSessionStarred(sessionId: string, starred: boolean): Promise<void> {
+  const { applied } = await transitionSession(sessionId, 'configure', { starred });
+  if (!applied) {
+    throw new TRPCError({
+      code: 'PRECONDITION_FAILED',
+      message: 'Cannot star an archived session',
+    });
+  }
 }
 
 /** The lifecycle as the built-in MCP server's session tools see it; handed over at startup. */

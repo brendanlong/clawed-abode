@@ -43,6 +43,7 @@ const sessionRow: Session = {
   createdAt: new Date(0),
   updatedAt: new Date(0),
   lastActivityAt: new Date(0),
+  starred: false,
   messageSequence: 0,
   sessionScope: null,
   claudeModel: null,

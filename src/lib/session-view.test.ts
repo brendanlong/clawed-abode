@@ -2,18 +2,18 @@ import { describe, it, expect } from 'vitest';
 import { toSessionView } from './session-view';
 
 const actions = (status: string) => {
-  const { canStart, canStop, canArchive } = toSessionView({ status, pullRequest: null });
-  return { canStart, canStop, canArchive };
+  const { canStart, canStop, canArchive, canStar } = toSessionView({ status, pullRequest: null });
+  return { canStart, canStop, canArchive, canStar };
 };
 
 describe('toSessionView', () => {
   it.each([
-    ['running', { canStart: false, canStop: true, canArchive: true }],
-    ['stopped', { canStart: true, canStop: false, canArchive: true }],
-    ['creating', { canStart: false, canStop: false, canArchive: true }],
-    ['error', { canStart: false, canStop: false, canArchive: true }],
-    ['archived', { canStart: false, canStop: false, canArchive: false }],
-    ['hibernating', { canStart: false, canStop: false, canArchive: false }],
+    ['running', { canStart: false, canStop: true, canArchive: true, canStar: true }],
+    ['stopped', { canStart: true, canStop: false, canArchive: true, canStar: true }],
+    ['creating', { canStart: false, canStop: false, canArchive: true, canStar: true }],
+    ['error', { canStart: false, canStop: false, canArchive: true, canStar: true }],
+    ['archived', { canStart: false, canStop: false, canArchive: false, canStar: false }],
+    ['hibernating', { canStart: false, canStop: false, canArchive: false, canStar: false }],
   ])('offers the actions the transition table allows from %s', (status, expected) => {
     expect(actions(status)).toEqual(expected);
   });
