@@ -39,3 +39,12 @@ Notes:
 - This is defense-in-depth, not a hard boundary — without a sandbox/egress firewall it catches mistakes and obvious injection, not a determined adversary.
 - The library is precision-favoring (deletion-only over a narrow payload-shaped set), so it rarely touches legitimate text.
 - The **rewrite** path's output is deliberately not truncated: Layer 2's 36-character placeholder inflates a page that is _nothing but_ `<!---->` about 5x, but comments are a rounding error in a real page's bytes. Measured across Hacker News, Wikipedia, a GitHub repo page and a 1.2MB Guardian homepage (three of the four with `html-comments` and `hidden-html` findings, so the rewrite path was live), sanitized output ran 0.99-1.00x the input and the longest message was 487 characters. Truncating tool output to defend against an input no page produces trades a real failure for a hypothetical one.
+
+## Secret Redaction
+
+API keys end up in transcripts when a tool prints an env var or config file, or a user pastes one. [`secret-redaction.ts`](../src/server/services/secret-redaction.ts) replaces each match with `[REDACTED:<rule>]` (the same format as the scrubber run over the CLI's JSONL files) at two seams:
+
+- **Tool output**, in the same `PostToolUse` walk as sanitization (two hooks both returning `updatedToolOutput` would race last-write-wins). The agent never sees the value, so the key also stays out of the API request and the CLI's transcript; the agent is told to refer to credentials by name and never to write a marker back into a file.
+- **`insertMessage`**, for user prompts and assistant text, which the hook can't see. A pasted key still reaches the model (the user may have meant the agent to use it), and so does `QueuedPrompt.content`, which is deleted once pushed. Streamed partials aren't redacted either; they live in memory only until the final message replaces them. `pnpm redact-stored-messages` redacts rows stored before this existed.
+
+Rules come from secretlint's recommended preset, keeping only provider-specific key shapes (`sk-ant-`, `ghp_`, `AKIA…`, a PEM block with a base64 body). Generic rules match too much: gitleaks' high-entropy rule matched hundreds of hashes and base64 blobs in our transcripts, and secretlint's password-in-URL rules matched almost only placeholders like `user:pass@example.com`. Redaction runs on decoded strings, never serialized JSON, so a match can't swallow half of an escape sequence.

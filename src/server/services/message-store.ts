@@ -8,6 +8,7 @@ import type { SanitizationInfo } from '@/lib/sanitization';
 import { sseEvents } from './events';
 import { clearAttention } from './session-attention';
 import { sanitizeUntrustedInput } from './input-sanitizer';
+import { redactSecretsDeep } from './secret-redaction';
 import { resolveUploadPaths } from './uploads';
 import { messageUsageStatement, parseSessionUsageRow } from './session-usage';
 import { buildTokenUsageStats } from '@/lib/token-estimation';
@@ -193,6 +194,8 @@ export async function hasMessagesThrough(sessionId: string, ceiling: number): Pr
  * session's usage totals in the same batch and emits a `message` event, then a
  * `token_usage` event if the totals moved (built from the fold's own `RETURNING`,
  * so announcing them costs no extra query).
+ * Secrets in any string are redacted first, which covers user prompts and
+ * assistant text that the tool-output hook never sees.
  * Throws if the session does not exist.
  */
 export async function insertMessage(params: {
@@ -201,7 +204,9 @@ export async function insertMessage(params: {
   type: 'system' | 'user' | 'assistant' | 'result';
   content: unknown;
 }): Promise<{ inserted: boolean; sequence?: number }> {
-  const { sessionId, id, type, content } = params;
+  const { sessionId, id, type } = params;
+  const { value: content, rules } = await redactSecretsDeep(params.content);
+  if (rules.length > 0) log.warn('Redacted secrets from message', { sessionId, id, rules });
   const contentJson = JSON.stringify(content);
 
   const rows = await prisma.$queryRaw<{ messageSequence: number | bigint }[]>`
@@ -256,6 +261,36 @@ export async function insertMessage(params: {
     }
   }
   return { inserted: true, sequence };
+}
+
+/**
+ * Redact secrets from every stored message, for rows written before
+ * `insertMessage` redacted on the way in. Walks the table in `id` order a batch
+ * at a time and rewrites only rows that changed. Returns how many it rewrote.
+ */
+export async function redactStoredMessages(batchSize = 500): Promise<number> {
+  let cursor: string | undefined;
+  let rewritten = 0;
+  for (;;) {
+    const rows = await prisma.message.findMany({
+      select: { id: true, content: true },
+      orderBy: { id: 'asc' },
+      take: batchSize,
+      ...(cursor ? { where: { id: { gt: cursor } } } : {}),
+    });
+    if (rows.length === 0) return rewritten;
+    cursor = rows[rows.length - 1].id;
+    const updates = [];
+    for (const row of rows) {
+      const { value, rules } = await redactSecretsDeep(JSON.parse(row.content));
+      if (rules.length === 0) continue;
+      updates.push(
+        prisma.message.update({ where: { id: row.id }, data: { content: JSON.stringify(value) } })
+      );
+    }
+    if (updates.length > 0) await prisma.$transaction(updates);
+    rewritten += updates.length;
+  }
 }
 
 /**
