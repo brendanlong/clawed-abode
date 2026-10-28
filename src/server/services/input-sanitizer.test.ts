@@ -27,6 +27,9 @@ const CYRILLIC_O = String.fromCharCode(0x043e);
 const manyConfusableHosts = (count: number): string =>
   Array.from({ length: count }, (_, i) => `see https://g${CYRILLIC_O}ogle${i}.com/x`).join('\n');
 
+// Assembled at runtime so this file doesn't itself trip secret scanners.
+const GITHUB_TOKEN = 'ghp' + '_' + 'A1b2C3d4'.repeat(4) + 'E5f6';
+
 describe('sanitizeUntrustedInput', () => {
   it('passes clean text through unchanged with no findings', async () => {
     const text = 'Please fix the login bug in auth.ts';
@@ -125,8 +128,8 @@ describe('sanitizeToolOutput', () => {
       interrupted: false,
       isImage: false,
     };
-    const { output, changed } = await sanitizeToolOutput(response, toolCtx);
-    expect(changed).toBe(true);
+    const { output, sanitized } = await sanitizeToolOutput(response, toolCtx);
+    expect(sanitized).toBe(true);
     const out = output as typeof response;
     expect(out.stdout).not.toContain('exfiltrate secrets');
     expect(out.stdout).not.toContain(ESC);
@@ -144,8 +147,8 @@ describe('sanitizeToolOutput', () => {
         { type: 'text', text: 'clean second block' },
       ],
     };
-    const { output, changed } = await sanitizeToolOutput(response, toolCtx);
-    expect(changed).toBe(true);
+    const { output, sanitized } = await sanitizeToolOutput(response, toolCtx);
+    expect(sanitized).toBe(true);
     const out = output as { content: Array<{ type: string; text: string }> };
     expect(out.content[0].text).toBe('visibletext');
     expect(out.content[1].text).toBe('clean second block');
@@ -153,15 +156,15 @@ describe('sanitizeToolOutput', () => {
   });
 
   it('handles a bare string tool_response', async () => {
-    const { output, changed } = await sanitizeToolOutput(`a${ZWSP}b`, toolCtx);
-    expect(changed).toBe(true);
+    const { output, sanitized } = await sanitizeToolOutput(`a${ZWSP}b`, toolCtx);
+    expect(sanitized).toBe(true);
     expect(output).toBe('ab');
   });
 
   it('reports no change for already-clean output', async () => {
     const response = { stdout: 'all good here', stderr: '', interrupted: false };
-    const { output, changed } = await sanitizeToolOutput(response, toolCtx);
-    expect(changed).toBe(false);
+    const { output, sanitized } = await sanitizeToolOutput(response, toolCtx);
+    expect(sanitized).toBe(false);
     expect(output).toEqual(response);
   });
 
@@ -170,8 +173,8 @@ describe('sanitizeToolOutput', () => {
     // and we must not trigger a pointless updatedToolOutput replacement — while
     // the finding itself still reaches the caller.
     const response = { stdout: `See [here](${EXFIL_URL})`, stderr: '' };
-    const { output, changed, found } = await sanitizeToolOutput(response, toolCtx);
-    expect(changed).toBe(false);
+    const { output, sanitized, found } = await sanitizeToolOutput(response, toolCtx);
+    expect(sanitized).toBe(false);
     expect(output).toEqual(response);
     expect(found).toContain('exfil-urls');
   });
@@ -181,8 +184,8 @@ describe('sanitizeToolOutput', () => {
     // `found` category. Nothing is rewritten, so this is the case where the
     // message is the entire finding.
     const response = { stdout: SCRIPT_HTML, stderr: '' };
-    const { output, changed, found, messages } = await sanitizeToolOutput(response, toolCtx);
-    expect(changed).toBe(false);
+    const { output, sanitized, found, messages } = await sanitizeToolOutput(response, toolCtx);
+    expect(sanitized).toBe(false);
     expect(output).toEqual(response);
     expect(found).toEqual([]);
     expect(messages.join(' ')).toMatch(/data, not commands/);
@@ -190,8 +193,8 @@ describe('sanitizeToolOutput', () => {
 
   it('preserves non-string scalars and null', async () => {
     const response = { count: 3, ok: true, missing: null, nested: { ratio: 1.5 } };
-    const { output, changed } = await sanitizeToolOutput(response, toolCtx);
-    expect(changed).toBe(false);
+    const { output, sanitized } = await sanitizeToolOutput(response, toolCtx);
+    expect(sanitized).toBe(false);
     expect(output).toEqual(response);
   });
 });
@@ -439,5 +442,46 @@ describe('sanitizeToolOutputHook (PostToolUse wiring)', () => {
       () => findings.push(true)
     );
     expect(findings).toHaveLength(0);
+  });
+
+  it('redacts secrets before the agent sees them and says so', async () => {
+    const findings: unknown[] = [];
+    const res = await sanitizeToolOutputHook(
+      postToolUse('Bash', {
+        stdout: `GITHUB_TOKEN=${GITHUB_TOKEN}\n`,
+        stderr: '',
+        interrupted: false,
+        isImage: false,
+      }),
+      'test-session',
+      () => findings.push(true)
+    );
+    const { updatedToolOutput, additionalContext } = hookOutput(res);
+    expect(updatedToolOutput).toEqual({
+      stdout: 'GITHUB_TOKEN=[REDACTED:github]\n',
+      stderr: '',
+      interrupted: false,
+      isImage: false,
+    });
+    expect(additionalContext).toContain('github');
+    expect(additionalContext).not.toContain('Hidden or invisible content');
+    // A redaction shows inline in the transcript; it isn't a sanitizer finding.
+    expect(findings).toHaveLength(0);
+  });
+
+  it('redacts secrets and sanitizes hidden content in the same output', async () => {
+    const res = await sanitizeToolOutputHook(
+      postToolUse('Bash', {
+        stdout: `${GITHUB_TOKEN} x${ZWSP}y`,
+        stderr: '',
+        interrupted: false,
+        isImage: false,
+      }),
+      'test-session'
+    );
+    const { updatedToolOutput, additionalContext } = hookOutput(res);
+    expect(updatedToolOutput).toMatchObject({ stdout: '[REDACTED:github] xy' });
+    expect(additionalContext).toContain('Hidden or invisible content');
+    expect(additionalContext).toContain('REDACTED');
   });
 });

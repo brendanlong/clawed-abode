@@ -1,7 +1,9 @@
 import { sanitize } from 'agent-sanitizer';
 import type { HookInput, HookJSONOutput } from '@anthropic-ai/claude-agent-sdk';
 import { createLogger, toError } from '@/lib/logger';
+import { mapStringLeaves } from '@/lib/map-string-leaves';
 import { buildSanitizationInfo, capFindingText, type SanitizationInfo } from '@/lib/sanitization';
+import { redactSecrets } from './secret-redaction';
 
 const log = createLogger('input-sanitizer');
 
@@ -79,65 +81,60 @@ interface SanitizeAccumulator {
   found: Set<string>;
   messages: Set<string>;
   mutated: boolean;
+  redactedRules: Set<string>;
 }
 
 /**
- * Recursively sanitize every string value inside an arbitrary JSON-ish value,
- * preserving structure. Tool results are tool-specific (a bare string, a Bash
- * `{ stdout, stderr, ... }` object, an array of `{ type: 'text', text }` blocks,
- * etc.), and the SDK only honors `updatedToolOutput` when it keeps the original
- * shape — so we replace string leaves in place rather than flattening. Object
- * keys are structural and left untouched. `messages` (deduped) carry the
- * library's operator/agent-facing text from both severity tiers (see
- * `collectMessages`), including the recovery pointer to a hex dump for stripped
- * bytes.
+ * Sanitize, then redact secrets from, one string leaf of a tool response.
+ * `messages` (deduped) carry the library's operator/agent-facing text from both
+ * severity tiers (see `collectMessages`), including the recovery pointer to a
+ * hex dump for stripped bytes.
  */
-async function sanitizeStringsDeep(value: unknown, acc: SanitizeAccumulator): Promise<unknown> {
-  if (typeof value === 'string') {
-    const result = await sanitize(value, { html: true });
-    const { cleaned, found } = result;
-    for (const category of found) acc.found.add(category);
-    for (const message of collectMessages(result)) acc.messages.add(message);
-    if (cleaned !== value) acc.mutated = true;
-    return cleaned;
-  }
-  if (Array.isArray(value)) {
-    return Promise.all(value.map((item) => sanitizeStringsDeep(item, acc)));
-  }
-  if (value !== null && typeof value === 'object') {
-    const entries = await Promise.all(
-      Object.entries(value).map(
-        async ([key, item]) => [key, await sanitizeStringsDeep(item, acc)] as const
-      )
-    );
-    return Object.fromEntries(entries);
-  }
-  return value;
+async function sanitizeLeaf(value: string, acc: SanitizeAccumulator): Promise<string> {
+  const result = await sanitize(value, { html: true });
+  const { cleaned, found } = result;
+  for (const category of found) acc.found.add(category);
+  for (const message of collectMessages(result)) acc.messages.add(message);
+  if (cleaned !== value) acc.mutated = true;
+  const redacted = await redactSecrets(cleaned);
+  for (const rule of redacted.rules) acc.redactedRules.add(rule);
+  return redacted.text;
 }
 
 /**
  * Sanitize a tool result before it is fed back to the model — the primary
  * hidden-content injection surface (web fetches, issue/PR bodies the agent
- * pulls, MCP responses, file/command output). Walks the whole `tool_response`,
- * neutralizing invisible Unicode / ANSI / hidden HTML in every string leaf while
- * keeping the structure intact.
+ * pulls, MCP responses, file/command output) and the main way secrets leak into
+ * transcripts. Walks the whole `tool_response`, neutralizing invisible Unicode /
+ * ANSI / hidden HTML and redacting secrets in every string leaf while keeping
+ * the structure intact. Tool results are tool-specific (a bare string, a Bash
+ * `{ stdout, stderr, ... }` object, an array of `{ type: 'text', text }` blocks,
+ * etc.), and the SDK only honors `updatedToolOutput` when it keeps the original
+ * shape — so string leaves are replaced in place rather than flattened.
  *
- * `changed` is true only when a string was actually rewritten; the caller uses
- * it to skip `updatedToolOutput` when nothing changed (exfil-URL detection and
- * preserved-scripting notes are advisory — they do not rewrite text, so they do
- * not set `changed`). `messages` are surfaced to the agent so it can tell what
+ * `sanitized` is true only when the sanitizer actually rewrote a string, and
+ * `redactedRules` names the secret rules that matched; the caller substitutes
+ * the output only when either did (exfil-URL detection and preserved-scripting
+ * notes are advisory — they do not rewrite text). `messages` are surfaced to the agent so it can tell what
  * the scanner saw and recover raw bytes if a task needs them.
  */
 export async function sanitizeToolOutput(
   toolResponse: unknown,
   context: SanitizeContext
-): Promise<{ output: unknown; changed: boolean; found: string[]; messages: string[] }> {
+): Promise<{
+  output: unknown;
+  sanitized: boolean;
+  redactedRules: string[];
+  found: string[];
+  messages: string[];
+}> {
   const acc: SanitizeAccumulator = {
     found: new Set<string>(),
     messages: new Set<string>(),
     mutated: false,
+    redactedRules: new Set<string>(),
   };
-  const output = await sanitizeStringsDeep(toolResponse, acc);
+  const output = await mapStringLeaves(toolResponse, (leaf) => sanitizeLeaf(leaf, acc));
   if (acc.found.size > 0) {
     log.warn('Detected hidden content in tool output', {
       ...context,
@@ -153,7 +150,19 @@ export async function sanitizeToolOutput(
       messages: [...acc.messages],
     });
   }
-  return { output, changed: acc.mutated, found: [...acc.found], messages: [...acc.messages] };
+  if (acc.redactedRules.size > 0) {
+    log.warn('Redacted secrets from tool output', {
+      ...context,
+      rules: [...acc.redactedRules],
+    });
+  }
+  return {
+    output,
+    sanitized: acc.mutated,
+    redactedRules: [...acc.redactedRules],
+    found: [...acc.found],
+    messages: [...acc.messages],
+  };
 }
 
 /**
@@ -171,6 +180,10 @@ export async function sanitizeToolOutput(
  * in its own words, since the library places its "do not fetch these" clause
  * *after* the enumeration — exactly the part a tail-truncation drops.
  */
+function buildRedactionNote(rules: string[]): string {
+  return `Secrets in this tool output (matched by: ${rules.join(', ')}) were replaced with [REDACTED:<rule>] before you saw it. Refer to credentials by environment variable or file name instead of printing them.`;
+}
+
 function buildSanitizationNote(messages: string[], removed: boolean): string {
   const intro = removed
     ? 'Hidden or invisible content was automatically removed from this tool output before you saw it; the visible text is intact.'
@@ -183,8 +196,8 @@ function buildSanitizationNote(messages: string[], removed: boolean): string {
 
 /**
  * `PostToolUse` hook handler wired into the session query (see `buildSdkOptions`
- * in sdk-options). Neutralizes hidden content in a tool result and returns the
- * SDK's `updatedToolOutput` substitution — but only when a string actually
+ * in sdk-options). Neutralizes hidden content and redacts secrets in a tool
+ * result and returns the SDK's `updatedToolOutput` substitution — but only when a string actually
  * changed, so a normal tool result passes through untouched (returns `{}`,
  * leaving the SDK to use the original output). Fails open: any error is logged
  * and `{}` returned, so sanitization can never break tool execution.
@@ -211,23 +224,27 @@ export async function sanitizeToolOutputHook(
 ): Promise<HookJSONOutput> {
   if (input.hook_event_name !== 'PostToolUse') return {};
   try {
-    const { output, changed, found, messages } = await sanitizeToolOutput(input.tool_response, {
-      sessionId,
-      source: `tool:${input.tool_name}`,
-    });
+    const { output, sanitized, redactedRules, found, messages } = await sanitizeToolOutput(
+      input.tool_response,
+      { sessionId, source: `tool:${input.tool_name}` }
+    );
     // Report findings (even advisory-only exfil-URL detections that don't rewrite
     // text) so the caller can attach them to the persisted tool_result message and
     // the UI can surface a badge on it. Keyed by tool_use_id for correlation. Null
     // for a note-tier-only finding, which carries no category: the operator gets
     // no badge where the agent still gets the sentence.
-    const info = buildSanitizationInfo(found, messages, changed);
+    const info = buildSanitizationInfo(found, messages, sanitized);
     if (info && onFindings) onFindings(input.tool_use_id, info);
-    if (!changed && messages.length === 0) return {};
+    const notes: string[] = [];
+    if (sanitized || messages.length > 0) notes.push(buildSanitizationNote(messages, sanitized));
+    if (redactedRules.length > 0) notes.push(buildRedactionNote(redactedRules));
+    if (notes.length === 0) return {};
+    const changed = sanitized || redactedRules.length > 0;
     return {
       hookSpecificOutput: {
         hookEventName: 'PostToolUse',
         ...(changed ? { updatedToolOutput: output } : {}),
-        additionalContext: buildSanitizationNote(messages, changed),
+        additionalContext: notes.join(' '),
       },
     };
   } catch (err) {
