@@ -4,6 +4,7 @@ import { createTestSession } from '@/test/fixtures';
 import { runMigrationBackfill } from '@/test/migration-backfill';
 import { messageDisplay } from '@/lib/transcript-display';
 import { projectMessageContent } from '@/lib/tool-result';
+import type { DbMessageType } from '@/lib/claude-messages';
 import { sseEvents } from './events';
 import { redactSecretsDeep } from './secret-redaction';
 
@@ -13,12 +14,10 @@ vi.mock('./secret-redaction', async (importOriginal) => {
   return { ...actual, redactSecretsDeep: vi.fn(actual.redactSecretsDeep) };
 });
 
-type MessageType = 'system' | 'user' | 'assistant' | 'result';
-
 const blocks = (...content: unknown[]) => ({ message: { content } });
 
 /** One of each shape messageDisplay distinguishes, including its edge cases. */
-const DISPLAY_FIXTURES: [MessageType, unknown][] = [
+const DISPLAY_FIXTURES: [DbMessageType, unknown][] = [
   ['user', { type: 'user', content: 'a prompt' }],
   ['user', { type: 'user', ...blocks({ type: 'text', text: 'array prompt' }) }],
   ['user', { type: 'user', subtype: 'interrupt', content: 'Interrupted' }],
@@ -149,20 +148,20 @@ describe('message-store reads', () => {
   });
 
   describe('with context and hidden messages', () => {
-    const prompt = (text: string): [MessageType, unknown] => [
+    const prompt = (text: string): [DbMessageType, unknown] => [
       'user',
       { type: 'user', content: text },
     ];
-    const call = (id: string): [MessageType, unknown] => [
+    const call = (id: string): [DbMessageType, unknown] => [
       'assistant',
       { type: 'assistant', ...blocks({ type: 'tool_use', id, name: 'Bash', input: {} }) },
     ];
-    const result = (id: string): [MessageType, unknown] => [
+    const result = (id: string): [DbMessageType, unknown] => [
       'user',
       { type: 'user', ...blocks({ type: 'tool_result', tool_use_id: id, content: 'ok' }) },
     ];
-    const init: [MessageType, unknown] = ['system', { type: 'system', subtype: 'init' }];
-    const child: [MessageType, unknown] = [
+    const init: [DbMessageType, unknown] = ['system', { type: 'system', subtype: 'init' }];
+    const child: [DbMessageType, unknown] = [
       'assistant',
       { type: 'assistant', parent_tool_use_id: 'c1', ...blocks({ type: 'text', text: 'child' }) },
     ];
@@ -313,7 +312,26 @@ describe('secret redaction', () => {
     expect(stored.display).toBe('row');
     expect(stored.content).not.toContain(GITHUB_TOKEN);
     expect(JSON.parse(stored.content)).toMatchObject({ type: 'system', subtype: 'error' });
-    expect(stored.content).toContain('scanner broke');
+    expect(sseEvents.emitNewMessage).toHaveBeenCalledWith(
+      session.id,
+      expect.objectContaining({ id: 'p1', type: 'system' })
+    );
+    expect(JSON.stringify(vi.mocked(sseEvents.emitNewMessage).mock.calls)).not.toContain(
+      GITHUB_TOKEN
+    );
+  });
+
+  it('still counts the usage of a result it could not redact', async () => {
+    const session = await createTestSession();
+    vi.mocked(redactSecretsDeep).mockRejectedValueOnce(new Error('scanner broke'));
+    const result = { type: 'result', subtype: 'success', total_cost_usd: 1.5 };
+
+    await store.insertMessage({ sessionId: session.id, id: 'r1', type: 'result', content: result });
+
+    const usage = await testPrisma.sessionUsage.findUniqueOrThrow({
+      where: { sessionId: session.id },
+    });
+    expect(usage.resultCount).toBe(1);
   });
 });
 
