@@ -1,4 +1,4 @@
-# LiteLLM config for proxied models (see "Other model providers" in README.md).
+# LiteLLM config for proxied models (see "Other model providers" in doc/self-hosting.md).
 # Each provider is a wildcard entry named "<provider>/*": the app routes models
 # with a provider prefix through the proxy and lists them from /v1/models.
 model_list:
