@@ -1,17 +1,13 @@
 'use client';
 
 import Link from 'next/link';
-import { BellRing, Star } from 'lucide-react';
+import { BellRing } from 'lucide-react';
 import { trpc } from '@/lib/trpc';
 import { extractRepoFullName } from '@/lib/utils';
 import { deriveSessionDisplayStatus } from '@/lib/session-display-status';
 import { SessionStatusIcon } from '@/components/SessionStatusIcon';
 import { SessionActionButton } from '@/components/SessionActionButton';
 import { PrStatusIndicator } from '@/components/PrStatusIndicator';
-import { Button } from '@/components/ui/button';
-import { Spinner } from '@/components/ui/spinner';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { cn } from '@/lib/utils';
 import { ActionErrorAlert } from '@/components/ActionErrorAlert';
 import { useActionError } from '@/hooks/useActionError';
 import type { Session } from '@/hooks/useSessionList';
@@ -76,12 +72,14 @@ export function SessionListItem({ session }: SessionListItemProps) {
 
           <div className="flex items-center">
             {session.canStar && (
-              <StarButton
-                starred={session.starred}
+              <SessionActionButton
+                action={session.starred ? 'unstar' : 'star'}
                 onClick={() =>
                   starMutation.mutate({ sessionId: session.id, starred: !session.starred })
                 }
                 isPending={starMutation.isPending}
+                variant="ghost"
+                className="text-muted-foreground"
               />
             )}
             {session.canStart && (
@@ -118,41 +116,5 @@ export function SessionListItem({ session }: SessionListItemProps) {
       </div>
       <ActionErrorAlert error={error} onDismiss={dismiss} className="mt-2" />
     </li>
-  );
-}
-
-function StarButton({
-  starred,
-  onClick,
-  isPending,
-}: {
-  starred: boolean;
-  onClick: () => void;
-  isPending: boolean;
-}) {
-  const label = starred ? 'Unstar' : 'Star';
-  return (
-    <TooltipProvider>
-      <Tooltip delayDuration={300}>
-        <TooltipTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={onClick}
-            disabled={isPending}
-            aria-label={label}
-            aria-pressed={starred}
-            className="h-11 w-11 text-muted-foreground"
-          >
-            {isPending ? (
-              <Spinner size="sm" />
-            ) : (
-              <Star className={cn(starred && 'text-yellow-500 fill-yellow-500')} />
-            )}
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent side="top">{label}</TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
   );
 }

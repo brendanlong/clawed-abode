@@ -280,7 +280,7 @@ export async function setSessionStarred(sessionId: string, starred: boolean): Pr
   if (!applied) {
     throw new TRPCError({
       code: 'PRECONDITION_FAILED',
-      message: 'Cannot star an archived session',
+      message: 'Cannot change the star of an archived session',
     });
   }
 }

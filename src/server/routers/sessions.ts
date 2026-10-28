@@ -160,17 +160,17 @@ export const sessionsRouter = router({
       await updateSession(input.sessionId, { name: input.name });
     }),
 
-  /**
-   * Per-session rate-limit pause overrides; null on either field inherits the
-   * global default (see resolvePausePolicy). Recomputes holds immediately so a
-   * lowered threshold parks work now rather than at the next reading.
-   */
   setStarred: sessionProcedure
     .input(z.object({ starred: z.boolean() }))
     .mutation(async ({ input }) => {
       await setSessionStarred(input.sessionId, input.starred);
     }),
 
+  /**
+   * Per-session rate-limit pause overrides; null on either field inherits the
+   * global default (see resolvePausePolicy). Recomputes holds immediately so a
+   * lowered threshold parks work now rather than at the next reading.
+   */
   setRateLimitPause: sessionProcedure
     .input(
       z.object({

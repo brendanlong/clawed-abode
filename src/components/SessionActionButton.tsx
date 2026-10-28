@@ -1,7 +1,7 @@
 'use client';
 
-import { useState } from 'react';
-import { Archive, Play, Square, type LucideIcon } from 'lucide-react';
+import { useState, type ComponentType } from 'react';
+import { Archive, Play, Square, Star } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
@@ -21,7 +21,7 @@ import { cn } from '@/lib/utils';
 type ButtonVariant = 'default' | 'secondary' | 'ghost' | 'destructive' | 'outline' | 'link';
 
 interface SessionActionButtonProps {
-  action: 'start' | 'stop' | 'archive';
+  action: 'start' | 'stop' | 'archive' | 'star' | 'unstar';
   onClick: () => void;
   isPending: boolean;
   variant?: ButtonVariant;
@@ -33,19 +33,25 @@ interface SessionActionButtonProps {
 
 const actionConfig: Record<
   SessionActionButtonProps['action'],
-  { label: string; pendingLabel: string; icon: LucideIcon }
+  { label: string; pendingLabel: string; icon: ComponentType<{ className?: string }> }
 > = {
   start: { label: 'Start', pendingLabel: 'Starting...', icon: Play },
   stop: { label: 'Stop', pendingLabel: 'Stopping...', icon: Square },
   archive: { label: 'Archive', pendingLabel: 'Archiving...', icon: Archive },
+  star: { label: 'Star', pendingLabel: 'Starring...', icon: Star },
+  unstar: { label: 'Unstar', pendingLabel: 'Unstarring...', icon: FilledStar },
 };
+
+function FilledStar({ className }: { className?: string }) {
+  return <Star className={cn('text-yellow-500 fill-yellow-500', className)} />;
+}
 
 const archiveConfirmTitle = 'Archive session?';
 const archiveConfirmDescription = (name: string) =>
   `This will archive the session "${name}" and remove its workspace. You can still view the message history in archived sessions.`;
 
 /**
- * Button for session actions (start, stop, archive): an icon button with a
+ * Button for session actions (start, stop, archive, star): an icon button with a
  * tooltip, or a text button when given a `label`. Archive asks for confirmation.
  */
 export function SessionActionButton({
