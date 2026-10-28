@@ -165,6 +165,12 @@ export async function sanitizeToolOutput(
   };
 }
 
+// The marker isn't the file's content: rewriting a file the agent read would
+// replace the real secret on disk with it.
+function buildRedactionNote(rules: string[]): string {
+  return `Secrets in this tool output (matched by: ${rules.join(', ')}) were replaced with [REDACTED:<rule>] before you saw it. The real values are unchanged wherever they came from, so never write a [REDACTED:…] marker into a file; edit around it. Refer to credentials by environment variable or file name instead of printing them.`;
+}
+
 /**
  * Build the agent-facing note delivered alongside a scanned tool result. The
  * library's messages already include the recovery pointer (inspect raw bytes
@@ -180,10 +186,6 @@ export async function sanitizeToolOutput(
  * in its own words, since the library places its "do not fetch these" clause
  * *after* the enumeration — exactly the part a tail-truncation drops.
  */
-function buildRedactionNote(rules: string[]): string {
-  return `Secrets in this tool output (matched by: ${rules.join(', ')}) were replaced with [REDACTED:<rule>] before you saw it. Refer to credentials by environment variable or file name instead of printing them.`;
-}
-
 function buildSanitizationNote(messages: string[], removed: boolean): string {
   const intro = removed
     ? 'Hidden or invisible content was automatically removed from this tool output before you saw it; the visible text is intact.'

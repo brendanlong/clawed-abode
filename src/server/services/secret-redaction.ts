@@ -1,14 +1,21 @@
 import { lintSource } from '@secretlint/core';
-import { creator as recommendedRules } from '@secretlint/secretlint-rule-preset-recommend';
+import { secretLintProfiler } from '@secretlint/profiler';
+import { rules as recommendedRules } from '@secretlint/secretlint-rule-preset-recommend';
 import type { SecretLintCoreConfig } from '@secretlint/types';
 import { mapStringLeaves } from '@/lib/map-string-leaves';
 
-// The recommended preset only matches keys with a provider-specific shape
-// (`sk-ant-`, `ghp_`, `AKIA…`, PEM blocks with a base64 body, …). Generic
-// "high-entropy string" rules flag hashes and base64 blobs, so we don't use any.
+// filter-comments lets any text containing `secretlint-disable` switch off
+// redaction for the rest of it; that's meant for source files, not tool output.
+const FILTER_COMMENTS_RULE = '@secretlint/secretlint-rule-filter-comments';
 const CONFIG: SecretLintCoreConfig = {
-  rules: [{ id: recommendedRules.meta.id, rule: recommendedRules }],
+  rules: recommendedRules
+    .filter((rule) => rule.meta.id !== FILTER_COMMENTS_RULE)
+    .map((rule) => ({ id: rule.meta.id, rule })),
 };
+// On by default, the profiler keeps a performance entry for every lint forever,
+// which ran a backfill out of heap after ~1M messages.
+secretLintProfiler.setEnabled(false);
+
 const RULE_ID_PREFIX = '@secretlint/secretlint-rule-';
 
 function shortRuleId(ruleId: string): string {
@@ -16,9 +23,8 @@ function shortRuleId(ruleId: string): string {
 }
 
 /**
- * Replace each secret in `text` with `[REDACTED:<rule-id>]` — the same marker
- * the transcript scrubber uses, so a reader can tell something was removed and
- * which rule matched. Only the matched range is replaced, never every
+ * Replace each secret in `text` with `[REDACTED:<rule-id>]`, so a reader can
+ * tell something was removed and which rule matched. Only the matched range is replaced, never every
  * occurrence of the matched string.
  */
 export async function redactSecrets(text: string): Promise<{ text: string; rules: string[] }> {
@@ -34,8 +40,8 @@ export async function redactSecrets(text: string): Promise<{ text: string; rules
   let cursor = 0;
   for (const { range, ruleId } of matches) {
     const [start, end] = range;
-    // Overlapping matches (e.g. a URL with credentials that is also a database
-    // connection string) collapse into the first marker.
+    // A match inside an earlier one (a token inside a URL with credentials) is
+    // already gone; one that only overlaps it redacts the rest.
     if (end <= cursor) continue;
     const rule = shortRuleId(ruleId);
     rules.add(rule);

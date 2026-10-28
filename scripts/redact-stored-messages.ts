@@ -1,4 +1,5 @@
 #!/usr/bin/env tsx
+import 'dotenv/config';
 import { redactStoredMessages } from '@/server/services/message-store';
 
 async function main() {

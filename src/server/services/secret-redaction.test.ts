@@ -38,6 +38,17 @@ describe('redactSecrets', () => {
       '-----BEGIN RSA PRIVATE KEY-----\nexplain the format here\n-----END RSA PRIVATE KEY-----';
     expect((await redactSecrets(text)).text).toBe(text);
   });
+
+  it('cannot be switched off by a secretlint-disable comment in the text', async () => {
+    const { text } = await redactSecrets(`# secretlint-disable\nTOKEN=${GITHUB_TOKEN}`);
+    expect(text).toBe('# secretlint-disable\nTOKEN=[REDACTED:github]');
+  });
+
+  it('redacts a URL with credentials once, including a token inside it', async () => {
+    const { text } = await redactSecrets(`see https://user:${GITHUB_TOKEN}@example.com/x`);
+    expect(text).not.toContain(GITHUB_TOKEN);
+    expect(text.match(/\[REDACTED:/g)).toHaveLength(1);
+  });
 });
 
 describe('redactSecretsDeep', () => {

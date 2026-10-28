@@ -194,9 +194,8 @@ export async function hasMessagesThrough(sessionId: string, ceiling: number): Pr
  * session's usage totals in the same batch and emits a `message` event, then a
  * `token_usage` event if the totals moved (built from the fold's own `RETURNING`,
  * so announcing them costs no extra query).
- * Secrets in any string are redacted first, so they are never stored or sent to
- * clients; this covers user prompts and assistant text, which the tool-output
- * hook never sees.
+ * Secrets in any string are redacted first, which covers user prompts and
+ * assistant text that the tool-output hook never sees.
  * Throws if the session does not exist.
  */
 export async function insertMessage(params: {
@@ -281,15 +280,16 @@ export async function redactStoredMessages(batchSize = 500): Promise<number> {
     });
     if (rows.length === 0) return rewritten;
     cursor = rows[rows.length - 1].id;
+    const updates = [];
     for (const row of rows) {
       const { value, rules } = await redactSecretsDeep(JSON.parse(row.content));
       if (rules.length === 0) continue;
-      await prisma.message.update({
-        where: { id: row.id },
-        data: { content: JSON.stringify(value) },
-      });
-      rewritten++;
+      updates.push(
+        prisma.message.update({ where: { id: row.id }, data: { content: JSON.stringify(value) } })
+      );
     }
+    if (updates.length > 0) await prisma.$transaction(updates);
+    rewritten += updates.length;
   }
 }
 
