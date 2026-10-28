@@ -27,7 +27,6 @@
     "postinstall": "prisma generate",
     "prepare": "husky",
     "hash-password": "tsx scripts/hash-password.ts",
-    "redact-stored-messages": "tsx scripts/redact-stored-messages.ts",
     "test": "vitest",
     "test:run": "vitest run",
     "test:unit": "vitest run --project unit",

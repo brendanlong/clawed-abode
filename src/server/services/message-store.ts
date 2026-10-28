@@ -264,36 +264,6 @@ export async function insertMessage(params: {
 }
 
 /**
- * Redact secrets from every stored message, for rows written before
- * `insertMessage` redacted on the way in. Walks the table in `id` order a batch
- * at a time and rewrites only rows that changed. Returns how many it rewrote.
- */
-export async function redactStoredMessages(batchSize = 500): Promise<number> {
-  let cursor: string | undefined;
-  let rewritten = 0;
-  for (;;) {
-    const rows = await prisma.message.findMany({
-      select: { id: true, content: true },
-      orderBy: { id: 'asc' },
-      take: batchSize,
-      ...(cursor ? { where: { id: { gt: cursor } } } : {}),
-    });
-    if (rows.length === 0) return rewritten;
-    cursor = rows[rows.length - 1].id;
-    const updates = [];
-    for (const row of rows) {
-      const { value, rules } = await redactSecretsDeep(JSON.parse(row.content));
-      if (rules.length === 0) continue;
-      updates.push(
-        prisma.message.update({ where: { id: row.id }, data: { content: JSON.stringify(value) } })
-      );
-    }
-    if (updates.length > 0) await prisma.$transaction(updates);
-    rewritten += updates.length;
-  }
-}
-
-/**
  * Bump the session's activity timestamp (drives session-list ordering) and clear
  * its "needs you" flag, since the user is plainly looking at it. Called only for
  * genuine user interactions — a prompt or an interactive-tool answer — never for

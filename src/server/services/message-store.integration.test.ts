@@ -290,27 +290,6 @@ describe('secret redaction', () => {
       expect.objectContaining({ id: 'p1', content: redacted })
     );
   });
-
-  it('backfills rows stored before redaction, leaving clean rows alone', async () => {
-    const session = await createTestSession();
-    const clean = { type: 'user', ...blocks({ type: 'text', text: 'nothing secret' }) };
-    const row = (id: string, sequence: number, content: unknown) => ({
-      id,
-      sessionId: session.id,
-      sequence,
-      type: 'user',
-      content: JSON.stringify(content),
-      display: 'row',
-    });
-    await testPrisma.message.createMany({
-      data: [row('m1', 0, withToken), row('m2', 1, clean), row('m3', 2, withToken)],
-    });
-
-    expect(await store.redactStoredMessages(2)).toBe(2);
-
-    const rows = await testPrisma.message.findMany({ orderBy: { sequence: 'asc' } });
-    expect(rows.map((r) => JSON.parse(r.content))).toEqual([redacted, clean, redacted]);
-  });
 });
 
 describe('markLastMessageAsInterrupted', () => {
