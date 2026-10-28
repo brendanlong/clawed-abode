@@ -44,10 +44,13 @@ describe('redactSecrets', () => {
     expect(text).toBe('# secretlint-disable\nTOKEN=[REDACTED:github]');
   });
 
-  it('redacts a URL with credentials once, including a token inside it', async () => {
-    const { text } = await redactSecrets(`see https://user:${GITHUB_TOKEN}@example.com/x`);
-    expect(text).not.toContain(GITHUB_TOKEN);
-    expect(text.match(/\[REDACTED:/g)).toHaveLength(1);
+  it('redacts a token inside a URL but leaves placeholder credentials', async () => {
+    const { text } = await redactSecrets(
+      `https://x-access-token:${GITHUB_TOKEN}@github.com/o/r and https://user:pass@example.com/cb`
+    );
+    expect(text).toBe(
+      'https://x-access-token:[REDACTED:github]@github.com/o/r and https://user:pass@example.com/cb'
+    );
   });
 });
 

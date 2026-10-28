@@ -4,12 +4,21 @@ import { rules as recommendedRules } from '@secretlint/secretlint-rule-preset-re
 import type { SecretLintCoreConfig } from '@secretlint/types';
 import { mapStringLeaves } from '@/lib/map-string-leaves';
 
-// filter-comments lets any text containing `secretlint-disable` switch off
-// redaction for the rest of it; that's meant for source files, not tool output.
-const FILTER_COMMENTS_RULE = '@secretlint/secretlint-rule-filter-comments';
+// Skipped rules:
+// - filter-comments lets any text containing `secretlint-disable` switch off
+//   redaction for the rest of it; that's meant for source files, not tool output.
+// - basicauth and database-connection-string match any URL with a password. In
+//   our stored transcripts nearly every match was a placeholder
+//   (`user:pass@example.com`, `<password>`) in URL-handling code, and the one
+//   real token inside a URL was also caught by its provider rule.
+const SKIPPED_RULES = new Set([
+  '@secretlint/secretlint-rule-filter-comments',
+  '@secretlint/secretlint-rule-basicauth',
+  '@secretlint/secretlint-rule-database-connection-string',
+]);
 const CONFIG: SecretLintCoreConfig = {
   rules: recommendedRules
-    .filter((rule) => rule.meta.id !== FILTER_COMMENTS_RULE)
+    .filter((rule) => !SKIPPED_RULES.has(rule.meta.id))
     .map((rule) => ({ id: rule.meta.id, rule })),
 };
 // On by default, the profiler keeps a performance entry for every lint forever,
@@ -40,8 +49,8 @@ export async function redactSecrets(text: string): Promise<{ text: string; rules
   let cursor = 0;
   for (const { range, ruleId } of matches) {
     const [start, end] = range;
-    // A match inside an earlier one (a token inside a URL with credentials) is
-    // already gone; one that only overlaps it redacts the rest.
+    // A match inside an earlier one is already gone; one that only overlaps it
+    // redacts the rest.
     if (end <= cursor) continue;
     const rule = shortRuleId(ruleId);
     rules.add(rule);
