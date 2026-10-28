@@ -5,8 +5,13 @@ import { runMigrationBackfill } from '@/test/migration-backfill';
 import { messageDisplay } from '@/lib/transcript-display';
 import { projectMessageContent } from '@/lib/tool-result';
 import { sseEvents } from './events';
+import { redactSecretsDeep } from './secret-redaction';
 
 vi.mock('./events', () => ({ sseEvents: { emitNewMessage: vi.fn(), emitTokenUsage: vi.fn() } }));
+vi.mock('./secret-redaction', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./secret-redaction')>();
+  return { ...actual, redactSecretsDeep: vi.fn(actual.redactSecretsDeep) };
+});
 
 type MessageType = 'system' | 'user' | 'assistant' | 'result';
 
@@ -289,6 +294,26 @@ describe('secret redaction', () => {
       session.id,
       expect.objectContaining({ id: 'p1', content: redacted })
     );
+  });
+
+  it('stores a visible error instead of the message when redaction fails', async () => {
+    const session = await createTestSession();
+    vi.mocked(redactSecretsDeep).mockRejectedValueOnce(new Error('scanner broke'));
+
+    const { inserted } = await store.insertMessage({
+      sessionId: session.id,
+      id: 'p1',
+      type: 'assistant',
+      content: { type: 'assistant', ...blocks({ type: 'text', text: `use ${GITHUB_TOKEN}` }) },
+    });
+
+    expect(inserted).toBe(true);
+    const stored = await testPrisma.message.findUniqueOrThrow({ where: { id: 'p1' } });
+    expect(stored.type).toBe('system');
+    expect(stored.display).toBe('row');
+    expect(stored.content).not.toContain(GITHUB_TOKEN);
+    expect(JSON.parse(stored.content)).toMatchObject({ type: 'system', subtype: 'error' });
+    expect(stored.content).toContain('scanner broke');
   });
 });
 

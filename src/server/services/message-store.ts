@@ -180,6 +180,44 @@ export async function hasMessagesThrough(sessionId: string, ceiling: number): Pr
   return row !== null;
 }
 
+type StoredMessageType = 'system' | 'user' | 'assistant' | 'result';
+
+function buildErrorContent(errorText: string) {
+  return { type: 'system', subtype: 'error', content: [{ type: 'text', text: errorText }] };
+}
+
+/**
+ * Redact secrets from a message about to be stored. This covers user prompts and
+ * assistant text, which the tool-output hook never sees. If redaction fails, the
+ * message is replaced by a visible error rather than stored unredacted or
+ * dropped, so the user sees that something is missing and the session carries on.
+ */
+async function redactForStorage(params: {
+  sessionId: string;
+  id: string;
+  type: StoredMessageType;
+  content: unknown;
+}): Promise<{ type: StoredMessageType; content: unknown }> {
+  const { sessionId, id, type } = params;
+  try {
+    const { value, rules } = await redactSecretsDeep(params.content);
+    if (rules.length > 0) log.warn('Redacted secrets from message', { sessionId, id, rules });
+    return { type, content: value };
+  } catch (err) {
+    const error = toError(err);
+    log.error('Redacting a message failed; storing an error in its place', error, {
+      sessionId,
+      id,
+    });
+    return {
+      type: 'system',
+      content: buildErrorContent(
+        `A ${type} message couldn't be checked for secrets, so it wasn't saved: ${error.message}`
+      ),
+    };
+  }
+}
+
 /**
  * Insert a message, assigning its per-session `sequence` atomically: one autocommit
  * `UPDATE ... RETURNING` on `Session.messageSequence`, which SQLite serializes on
@@ -194,19 +232,17 @@ export async function hasMessagesThrough(sessionId: string, ceiling: number): Pr
  * session's usage totals in the same batch and emits a `message` event, then a
  * `token_usage` event if the totals moved (built from the fold's own `RETURNING`,
  * so announcing them costs no extra query).
- * Secrets in any string are redacted first, which covers user prompts and
- * assistant text that the tool-output hook never sees.
+ * Secrets in any string are redacted first (see {@link redactForStorage}).
  * Throws if the session does not exist.
  */
 export async function insertMessage(params: {
   sessionId: string;
   id: string;
-  type: 'system' | 'user' | 'assistant' | 'result';
+  type: StoredMessageType;
   content: unknown;
 }): Promise<{ inserted: boolean; sequence?: number }> {
-  const { sessionId, id, type } = params;
-  const { value: content, rules } = await redactSecretsDeep(params.content);
-  if (rules.length > 0) log.warn('Redacted secrets from message', { sessionId, id, rules });
+  const { sessionId, id } = params;
+  const { type, content } = await redactForStorage(params);
   const contentJson = JSON.stringify(content);
 
   const rows = await prisma.$queryRaw<{ messageSequence: number | bigint }[]>`
@@ -288,13 +324,13 @@ export async function bumpSessionActivity(sessionId: string): Promise<void> {
 /** Persist a system error message for display to the user. */
 export async function createErrorMessage(sessionId: string, errorText: string): Promise<void> {
   const errorId = randomUUID();
-  const errorContent = {
-    type: 'system',
-    subtype: 'error',
-    content: [{ type: 'text', text: errorText }],
-  };
   try {
-    await insertMessage({ sessionId, id: errorId, type: 'system', content: errorContent });
+    await insertMessage({
+      sessionId,
+      id: errorId,
+      type: 'system',
+      content: buildErrorContent(errorText),
+    });
   } catch (err) {
     log.error('Failed to create error message', toError(err), { sessionId });
   }
