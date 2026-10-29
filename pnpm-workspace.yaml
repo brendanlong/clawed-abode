@@ -7,9 +7,6 @@ minimumReleaseAgeExclude:
   # 7-day quarantine. Pinned to an exact version below so an excluded auto-bump
   # can't slip in silently.
   - 'agent-sanitizer'
-  # Exact version named by an advisory (#684); delete once 7 days old
-  # (after 2026-10-29 11:39 UTC).
-  - 'body-parser@2.4.0'
 
 packages:
   - '.'
