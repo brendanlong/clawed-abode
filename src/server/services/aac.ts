@@ -7,6 +7,7 @@ import {
   Quality,
 } from 'mediabunny';
 import { registerAacEncoder } from '@mediabunny/aac-encoder';
+import { Semaphore } from '@/lib/semaphore';
 
 /**
  * Speech audio as served to the browser: AAC-LC in ADTS. ADTS is a plain run
@@ -19,6 +20,13 @@ export const AAC_CONTENT_TYPE = 'audio/aac';
 /** Plenty for mono speech: ~6 KB per second, an eighth of 24 kHz 16-bit PCM. */
 const BITRATE = 48_000;
 
+/**
+ * Encodes running at once, each with its own worker thread (~14 MB). Far
+ * faster than realtime, so a few keep up with any number of listeners.
+ */
+const MAX_CONCURRENT_ENCODES = 4;
+const encodeSlots = new Semaphore(MAX_CONCURRENT_ENCODES);
+
 let registered = false;
 
 /**
@@ -26,9 +34,23 @@ let registered = false;
  * yielding bytes as the encoder writes them. The encoder is libavcodec
  * compiled to WASM (`@mediabunny/aac-encoder`), and runs in a worker thread
  * of its own, so encoding never blocks the event loop; the worker ends with
- * the encode. Stopping iteration early stops pulling `pcm`.
+ * the encode, however the encode ends. At most {@link MAX_CONCURRENT_ENCODES}
+ * run at once; the rest wait. Stopping iteration early stops pulling `pcm`.
+ * Speech with no samples at all yields nothing.
  */
 export async function* encodeAac(
+  pcm: AsyncIterable<Float32Array>,
+  sampleRate: number
+): AsyncGenerator<Uint8Array> {
+  const release = await encodeSlots.acquire();
+  try {
+    yield* encodeWithSlot(pcm, sampleRate);
+  } finally {
+    release();
+  }
+}
+
+async function* encodeWithSlot(
   pcm: AsyncIterable<Float32Array>,
   sampleRate: number
 ): AsyncGenerator<Uint8Array> {
@@ -82,7 +104,10 @@ export async function* encodeAac(
         sample.close();
       }
     }
-    if (!stopped) await output.finalize();
+    if (stopped) return;
+    // An encoder that never got a sample has nothing to finalize (and throws if asked).
+    if (frames === 0) await output.cancel();
+    else await output.finalize();
   })().then(
     () => (finished = true),
     (error: unknown) => {
@@ -101,11 +126,13 @@ export async function* encodeAac(
       wake = null;
     }
   } finally {
-    if (!finished && !failed) {
-      // The reader stopped early: stop pulling speech now, and end the worker.
+    if (!finished) {
+      // Stopped early or failed: stop pulling speech, and cancel the output,
+      // which is what ends the encoder's worker thread (it would otherwise
+      // keep itself alive).
       stopped = true;
       void input.return?.(undefined).catch(() => {});
-      void output.cancel().catch(() => {});
+      await output.cancel().catch(() => {});
     }
   }
 }

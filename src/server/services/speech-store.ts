@@ -13,12 +13,14 @@ export interface SpeechParams {
 
 /**
  * Synthesize one chunk of text to raw 16-bit little-endian mono PCM, yielding
- * its bytes as the provider streams them. Pieces may split a sample.
+ * its bytes as the provider streams them. Pieces may split a sample. Stop
+ * (and fail) when `signal` aborts.
  */
 export type SynthesizeChunk = (
   text: string,
   voice: KokoroVoice,
-  speed: number
+  speed: number,
+  signal: AbortSignal
 ) => AsyncIterable<Uint8Array>;
 
 /**
@@ -156,14 +158,16 @@ class PendingChunk {
 async function* orderedPcm(
   params: SpeechParams,
   synthesize: SynthesizeChunk,
-  maxInFlight: number
+  maxInFlight: number,
+  signal: AbortSignal
 ): AsyncGenerator<Uint8Array> {
   const texts = splitIntoSpeechChunks(params.text);
   const pending: PendingChunk[] = [];
   let started = 0;
   const fill = () => {
     while (started < texts.length && pending.length < maxInFlight) {
-      pending.push(new PendingChunk(synthesize(texts[started++], params.voice, params.speed)));
+      const text = texts[started++];
+      pending.push(new PendingChunk(synthesize(text, params.voice, params.speed, signal)));
     }
   };
   fill();
@@ -196,13 +200,18 @@ async function synthesizeInto(
   params: SpeechParams,
   options: SpeechStoreOptions
 ): Promise<void> {
+  const requests = new AbortController();
   try {
-    const pcm = orderedPcm(params, options.synthesize, options.maxInFlight);
+    const pcm = orderedPcm(params, options.synthesize, options.maxInFlight, requests.signal);
     for await (const bytes of options.encode(pcm)) speech.push(bytes);
     speech.finish();
   } catch (err) {
     log.error('Speech synthesis failed', toError(err), { chars: params.text.length });
     speech.fail(toError(err));
+  } finally {
+    // After a failure, requests still in flight would only be thrown away.
+    // Aborting them also ends the PCM generator if it was waiting on one.
+    requests.abort();
   }
 }
 

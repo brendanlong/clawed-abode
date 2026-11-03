@@ -47,6 +47,11 @@ beforeAll(async () => {
         return;
       }
       res.writeHead(200, { 'Content-Type': 'audio/pcm' });
+      // optimized-kokoro sends nothing when it skips every sentence (e.g. an unsupported language).
+      if (body.input.includes('EMPTY')) {
+        res.end();
+        return;
+      }
       // Split mid-sample, as network reads may be.
       const pcm = pcmFor(body.input);
       res.write(pcm.subarray(0, 1001));
@@ -163,6 +168,13 @@ describe('GET /api/tts/[id]', () => {
     expect(probe.status).toBe(206);
     expect(probe.headers.get('content-range')).toBe(`bytes 0-1/${bytes.length}`);
     expect([...new Uint8Array(await probe.arrayBuffer())]).toEqual([...bytes.slice(0, 2)]);
+  });
+
+  it('serves an empty file when the provider returns no audio', async () => {
+    const url = await speakUrl('EMPTY words.');
+    const res = await fetchAudio(url);
+    expect(res.status).toBe(200);
+    expect((await res.arrayBuffer()).byteLength).toBe(0);
   });
 
   it('reuses the synthesis for a repeated request', async () => {

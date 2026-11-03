@@ -1,3 +1,4 @@
+import { readdirSync } from 'fs';
 import { describe, it, expect, vi } from 'vitest';
 import { ADTS, ALL_FORMATS, BufferSource, Input } from 'mediabunny';
 import { encodeAac } from './aac';
@@ -6,6 +7,15 @@ const RATE = 24_000;
 
 function tone(samples: number): Float32Array {
   return Float32Array.from({ length: samples }, (_, i) => 0.3 * Math.sin(i / 10));
+}
+
+/** Threads in this process; each encode runs one worker thread of its own. */
+const threads = () => readdirSync('/proc/self/task').length;
+
+async function drain(bytes: AsyncIterable<Uint8Array>): Promise<number> {
+  let length = 0;
+  for await (const piece of bytes) length += piece.length;
+  return length;
 }
 
 function concat(pieces: Uint8Array[]): Uint8Array<ArrayBuffer> {
@@ -67,5 +77,43 @@ describe('encodeAac', () => {
     }
     await vi.waitFor(() => expect(returned).toBe(true), { timeout: 1000 });
     release();
+  });
+
+  it('yields nothing for speech with no samples', async () => {
+    async function* none(): AsyncGenerator<Float32Array> {}
+    expect(await drain(encodeAac(none(), RATE))).toBe(0);
+  });
+
+  it('ends its worker thread when the speech fails partway', async () => {
+    const before = threads();
+    async function* failing(): AsyncGenerator<Float32Array> {
+      yield tone(RATE);
+      throw new Error('provider failed mid-stream');
+    }
+    for (let i = 0; i < 5; i++) {
+      await expect(drain(encodeAac(failing(), RATE))).rejects.toThrow('provider failed');
+    }
+    await vi.waitFor(() => expect(threads()).toBeLessThanOrEqual(before), { timeout: 5000 });
+  });
+
+  it('runs at most four encodes at once', async () => {
+    const before = threads();
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let started = 0;
+    async function* waiting(): AsyncGenerator<Float32Array> {
+      started++;
+      yield tone(RATE * 0.1);
+      await held;
+    }
+    const encodes = Array.from({ length: 6 }, () => drain(encodeAac(waiting(), RATE)));
+    await vi.waitFor(() => expect(started).toBe(4));
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(started).toBe(4);
+    expect(threads()).toBeLessThanOrEqual(before + 4);
+
+    release();
+    await Promise.all(encodes);
+    expect(started).toBe(6);
   });
 });

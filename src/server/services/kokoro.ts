@@ -21,7 +21,8 @@ const MAX_CHUNK_PCM_BYTES = 3 * 60 * PCM_BYTES_PER_SECOND;
 async function* synthesizePcm(
   text: string,
   voice: KokoroVoice,
-  speed: number
+  speed: number,
+  signal: AbortSignal
 ): AsyncGenerator<Uint8Array> {
   const baseUrl = env.TTS_BASE_URL;
   if (!baseUrl) throw new Error('TTS_BASE_URL is not configured');
@@ -40,7 +41,7 @@ async function* synthesizePcm(
       speed,
       response_format: 'pcm',
     }),
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    signal: AbortSignal.any([signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)]),
   });
   if (!response.ok) {
     const detail = (await response.text().catch(() => '')).slice(0, 500);
