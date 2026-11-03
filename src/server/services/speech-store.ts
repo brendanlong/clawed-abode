@@ -1,4 +1,4 @@
-import { createHash } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 import { splitIntoSpeechChunks } from '@/lib/tts';
 import type { KokoroVoice } from '@/lib/kokoro-voices';
 import { createLogger, toError } from '@/lib/logger';
@@ -22,15 +22,16 @@ export type SynthesizeChunk = (
 ) => AsyncIterable<Uint8Array>;
 
 /**
- * One message's audio as raw PCM, synthesized chunk by chunk. Readers get what
- * is buffered immediately and then follow along live, so any number of
- * requests (a replay while it's still synthesizing) share one synthesis.
+ * One message's encoded audio, synthesized chunk by chunk. Readers get what is buffered
+ * immediately and then follow along live, so any number of requests (a replay,
+ * a browser's probe-then-fetch) share one synthesis.
  */
 export class Speech {
   private readonly chunks: Uint8Array[] = [];
   private state: 'running' | 'done' | 'failed' = 'running';
   private error: Error | null = null;
   private waiters: (() => void)[] = [];
+  private whole: Uint8Array<ArrayBuffer> | null = null;
   bytes = 0;
 
   get running(): boolean {
@@ -49,6 +50,12 @@ export class Speech {
   }
 
   finish(): void {
+    this.whole = new Uint8Array(this.bytes);
+    let offset = 0;
+    for (const chunk of this.chunks) {
+      this.whole.set(chunk, offset);
+      offset += chunk.length;
+    }
     this.state = 'done';
     this.notify();
   }
@@ -63,6 +70,11 @@ export class Speech {
   async ready(): Promise<void> {
     while (this.chunks.length === 0 && this.state === 'running') await this.changed();
     if (this.chunks.length === 0 && this.error) throw this.error;
+  }
+
+  /** The whole file once synthesis is done, else null. */
+  complete(): Uint8Array<ArrayBuffer> | null {
+    return this.whole;
   }
 
   stream(): ReadableStream<Uint8Array> {
@@ -135,16 +147,17 @@ class PendingChunk {
 }
 
 /**
- * Synthesize sentence by sentence, in order, with up to `maxInFlight` requests
- * running, passing each request's audio on as it streams in. Runs to
- * completion even if every listener leaves; the result stays cached for a replay.
+ * The message's PCM, sentence by sentence in order, with up to `maxInFlight`
+ * requests running, passing each request's audio on as it streams in.
+ * Network reads can split a 16-bit sample, so an odd byte is held back until
+ * the next piece and sentences join on sample boundaries; a sentence that ends
+ * on one drops it.
  */
-async function synthesizeInto(
-  speech: Speech,
+async function* orderedPcm(
   params: SpeechParams,
   synthesize: SynthesizeChunk,
   maxInFlight: number
-): Promise<void> {
+): AsyncGenerator<Uint8Array> {
   const texts = splitIntoSpeechChunks(params.text);
   const pending: PendingChunk[] = [];
   let started = 0;
@@ -153,25 +166,17 @@ async function synthesizeInto(
       pending.push(new PendingChunk(synthesize(texts[started++], params.voice, params.speed)));
     }
   };
-  try {
-    fill();
-    while (pending.length > 0) {
-      // Network reads can split a 16-bit sample; hold an odd byte back so
-      // chunks join on sample boundaries. A chunk ending on one drops it.
-      let carry: number | null = null;
-      for await (const piece of pending[0].read()) {
-        const bytes: Uint8Array = carry === null ? piece : prepend(carry, piece);
-        const even: number = bytes.length & ~1;
-        carry = even < bytes.length ? bytes[even] : null;
-        speech.push(bytes.subarray(0, even));
-      }
-      pending.shift();
-      fill();
+  fill();
+  while (pending.length > 0) {
+    let carry: number | null = null;
+    for await (const piece of pending[0].read()) {
+      const bytes: Uint8Array = carry === null ? piece : prepend(carry, piece);
+      const even: number = bytes.length & ~1;
+      carry = even < bytes.length ? bytes[even] : null;
+      if (even > 0) yield bytes.subarray(0, even);
     }
-    speech.finish();
-  } catch (err) {
-    log.error('Speech synthesis failed', toError(err), { chars: params.text.length });
-    speech.fail(toError(err));
+    pending.shift();
+    fill();
   }
 }
 
@@ -182,16 +187,41 @@ function prepend(byte: number, bytes: Uint8Array): Uint8Array {
   return joined;
 }
 
+/**
+ * Synthesize and encode the whole message. Runs to completion even if every
+ * listener leaves; the result stays cached for a replay.
+ */
+async function synthesizeInto(
+  speech: Speech,
+  params: SpeechParams,
+  options: SpeechStoreOptions
+): Promise<void> {
+  try {
+    const pcm = orderedPcm(params, options.synthesize, options.maxInFlight);
+    for await (const bytes of options.encode(pcm)) speech.push(bytes);
+    speech.finish();
+  } catch (err) {
+    log.error('Speech synthesis failed', toError(err), { chars: params.text.length });
+    speech.fail(toError(err));
+  }
+}
+
 interface Entry {
+  key: string;
   speech: Speech;
   lastUsedAt: number;
 }
 
 export interface SpeechStoreOptions {
   synthesize: SynthesizeChunk;
+  /**
+   * Encodes the message's PCM for playback as it arrives. Pulls it as fast as
+   * it can encode, so the PCM held at once is bounded by the requests in flight.
+   */
+  encode: (pcm: AsyncIterable<Uint8Array>) => AsyncIterable<Uint8Array>;
   /** Finished audio kept for replays, oldest dropped first. Running syntheses are never dropped. */
   maxBytes: number;
-  /** How long finished audio is kept after its last use. */
+  /** How long an id stays valid after its last use. */
   ttlMs: number;
   /**
    * Requests per message kept running at once. Several hide a hosted provider's
@@ -202,49 +232,71 @@ export interface SpeechStoreOptions {
   now?: () => number;
 }
 
-/** Speech keyed by its text, voice and speed, so replays cost nothing. */
+/**
+ * Speech keyed by an unguessable id. The id is the only credential for the
+ * unauthenticated audio URL, so it is random rather than derived from the text;
+ * identical requests reuse the same entry so replays cost nothing.
+ */
 export class SpeechStore {
-  private readonly byKey = new Map<string, Entry>();
+  private readonly byId = new Map<string, Entry>();
+  private readonly idByKey = new Map<string, string>();
   private readonly now: () => number;
 
   constructor(private readonly options: SpeechStoreOptions) {
     this.now = options.now ?? Date.now;
   }
 
-  /** The cached or running speech for `params`, starting synthesis if there is none. */
-  open(params: SpeechParams): Speech {
+  open(params: SpeechParams): { id: string; speech: Speech } {
     const key = createHash('sha256')
       .update(JSON.stringify([params.voice, params.speed, params.text]))
       .digest('hex');
 
-    const existing = this.byKey.get(key);
-    let speech: Speech;
-    if (existing && !this.isExpired(existing) && !existing.speech.failed) {
-      speech = existing.speech;
-    } else {
-      speech = new Speech();
-      void synthesizeInto(speech, params, this.options.synthesize, this.options.maxInFlight);
+    const existingId = this.idByKey.get(key);
+    const existing = existingId === undefined ? undefined : this.get(existingId);
+    if (existingId !== undefined && existing && !existing.failed) {
+      return { id: existingId, speech: existing };
     }
-    // Re-inserted, so map order stays least recently used first.
-    this.byKey.delete(key);
-    this.byKey.set(key, { speech, lastUsedAt: this.now() });
-    this.evict(key);
+
+    const id = randomBytes(32).toString('base64url');
+    const speech = new Speech();
+    this.byId.set(id, { key, speech, lastUsedAt: this.now() });
+    this.idByKey.set(key, id);
+    this.evict(id);
+    void synthesizeInto(speech, params, this.options);
+    return { id, speech };
+  }
+
+  get(id: string): Speech | undefined {
+    const speech = this.touch(id);
+    this.evict(id);
     return speech;
+  }
+
+  /** Refresh a live entry's expiry and move it to the back of the eviction order. */
+  private touch(id: string): Speech | undefined {
+    const entry = this.byId.get(id);
+    if (!entry || this.isExpired(entry)) return undefined;
+    this.byId.delete(id);
+    entry.lastUsedAt = this.now();
+    this.byId.set(id, entry);
+    return entry.speech;
   }
 
   private isExpired(entry: Entry): boolean {
     return !entry.speech.running && entry.lastUsedAt < this.now() - this.options.ttlMs;
   }
 
-  /** Drop expired entries, then the least recently used until within budget, sparing `keepKey`. */
-  private evict(keepKey: string): void {
+  /** Drop expired entries, then the least recently used until within budget, sparing `keepId`. */
+  private evict(keepId: string): void {
     let total = 0;
-    for (const entry of this.byKey.values()) total += entry.speech.bytes;
-    for (const [key, entry] of this.byKey) {
-      if (key === keepKey || entry.speech.running) continue;
+    for (const entry of this.byId.values()) total += entry.speech.bytes;
+    // Map iteration is least-recently-used first.
+    for (const [id, entry] of this.byId) {
+      if (id === keepId || entry.speech.running) continue;
       if (!this.isExpired(entry) && total <= this.options.maxBytes) continue;
       total -= entry.speech.bytes;
-      this.byKey.delete(key);
+      this.byId.delete(id);
+      if (this.idByKey.get(entry.key) === id) this.idByKey.delete(entry.key);
     }
   }
 }

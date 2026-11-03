@@ -29,90 +29,10 @@ export type PlayerAudio = Pick<
   | 'removeAttribute'
   | 'addEventListener'
   | 'removeEventListener'
-  | 'disableRemotePlayback'
 >;
 
-/** One message's speech as a fragmented MP4, delivered in pieces as it is encoded. */
-export interface SpeechAudio {
-  /** MIME type (with codec) for `MediaSource.addSourceBuffer`. */
-  mimeType: string;
-  pieces: AsyncIterable<Uint8Array>;
-}
-
-/** Starts fetching `text`'s speech; stops when `signal` aborts. */
-export type OpenSpeech = (text: string, signal: AbortSignal) => Promise<SpeechAudio>;
-
-/** A media source playing on the element, and how to let go of it. */
-export interface AttachedSource {
-  source: MediaSource;
-  release: () => void;
-}
-
-/** Points the element at a new media source; null when the browser has no MSE. */
-export type AttachMediaSource = (audio: PlayerAudio) => AttachedSource | null;
-
-export const UNSUPPORTED_MESSAGE = "This browser can't play read-aloud audio";
-
-interface ManagedMediaSourceGlobal {
-  ManagedMediaSource?: typeof MediaSource;
-}
-
-/**
- * The MSE implementation to use: iPhone Safari only has `ManagedMediaSource`
- * (17.1+); everything else has `MediaSource`. Null when neither exists.
- */
-export function getMediaSourceClass(): typeof MediaSource | null {
-  if (typeof window === 'undefined') return null;
-  return (
-    (window as ManagedMediaSourceGlobal).ManagedMediaSource ??
-    (typeof MediaSource === 'undefined' ? null : MediaSource)
-  );
-}
-
-function attachMediaSource(audio: PlayerAudio): AttachedSource | null {
-  const MediaSourceClass = getMediaSourceClass();
-  if (!MediaSourceClass) return null;
-  const source = new MediaSourceClass();
-  // ManagedMediaSource won't open on an element that could AirPlay without
-  // an alternative non-MSE source.
-  audio.disableRemotePlayback = true;
-  const url = URL.createObjectURL(source);
-  audio.src = url;
-  return { source, release: () => URL.revokeObjectURL(url) };
-}
-
-function whenOpen(source: MediaSource, signal: AbortSignal): Promise<void> {
-  if (source.readyState === 'open') return Promise.resolve();
-  return new Promise((resolve) => {
-    source.addEventListener('sourceopen', () => resolve(), { once: true, signal });
-  });
-}
-
-/** Runs one SourceBuffer mutation and waits for it to finish. */
-function updateBuffer(buffer: SourceBuffer, start: () => void): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const cleanup = () => {
-      buffer.removeEventListener('updateend', onEnd);
-      buffer.removeEventListener('error', onError);
-    };
-    const onEnd = () => {
-      cleanup();
-      resolve();
-    };
-    const onError = () => {
-      cleanup();
-      reject(new Error('Failed to buffer speech audio'));
-    };
-    buffer.addEventListener('updateend', onEnd);
-    buffer.addEventListener('error', onError);
-    try {
-      start();
-    } catch (error) {
-      cleanup();
-      reject(error);
-    }
-  });
-}
+/** Resolves to a URL the audio element can stream `text` from. */
+export type RequestSpeechUrl = (text: string, signal: AbortSignal) => Promise<string>;
 
 /** 0.1 s of silent 8 kHz 8-bit mono WAV. */
 function silentWavDataUri(): string {
@@ -139,18 +59,14 @@ function silentWavDataUri(): string {
 
 /**
  * Reads messages aloud through one long-lived audio element, so the OS media
- * controls and lock screen stay attached across messages. Each message gets its
- * own Media Source Extensions stream: its fragmented MP4 is appended to one
- * `SourceBuffer` as it is encoded, so playback starts with the first sentence.
- * Auto-read queues messages.
+ * controls and lock screen stay attached across messages. Each message is a
+ * separate stream URL; auto-read queues them.
  */
 export class SpeechPlayer {
   private state: SpeechPlayerState = IDLE_SPEECH_STATE;
   private queue: SpeechItem[] = [];
   private current: SpeechItem | null = null;
-  /** The current message's media source, once its speech has started arriving. */
-  private attached: AttachedSource | null = null;
-  /** Covers the current message's request, encoding and buffering. */
+  private url: string | null = null;
   private request: AbortController | null = null;
   /** The element has played during a tap, so iOS lets it play unprompted. */
   private primed = false;
@@ -168,9 +84,8 @@ export class SpeechPlayer {
 
   constructor(
     private readonly audio: PlayerAudio,
-    private readonly openSpeech: OpenSpeech,
-    private readonly onChange: (state: SpeechPlayerState) => void,
-    private readonly attachSource: AttachMediaSource = attachMediaSource
+    private readonly requestUrl: RequestSpeechUrl,
+    private readonly onChange: (state: SpeechPlayerState) => void
   ) {
     for (const [event, handler] of this.listeners) audio.addEventListener(event, handler);
   }
@@ -181,7 +96,7 @@ export class SpeechPlayer {
 
   /**
    * Play `item` now, dropping the queue; the current message toggles pause
-   * instead. Call from a tap: the audio arrives after the tap's activation
+   * instead. Call from a tap: the audio URL arrives after the tap's activation
    * has lapsed, so the element is unlocked with silence first.
    */
   play(item: SpeechItem): void {
@@ -189,7 +104,7 @@ export class SpeechPlayer {
     if (this.current?.messageId !== item.messageId) {
       this.playSilence();
       void this.start(item);
-    } else if (!this.attached) {
+    } else if (!this.url) {
       this.stop();
     } else if (this.audio.paused) {
       this.resume();
@@ -209,12 +124,14 @@ export class SpeechPlayer {
   }
 
   resume(): void {
-    if (this.attached) void this.playAudio();
+    if (this.url) void this.playAudio();
   }
 
   /** Replay the current message; the server replays finished audio from its cache. */
   restart(): void {
-    if (this.attached && this.current) void this.start(this.current);
+    if (!this.url) return;
+    this.audio.src = this.url;
+    void this.playAudio();
   }
 
   /** Skip to the next queued message. */
@@ -274,56 +191,27 @@ export class SpeechPlayer {
       error: null,
     });
 
-    let speech: SpeechAudio;
+    let url: string;
     try {
-      speech = await this.openSpeech(item.text, request.signal);
+      url = await this.requestUrl(item.text, request.signal);
     } catch (err) {
       if (!request.signal.aborted) this.fail(err instanceof Error ? err.message : String(err));
       return;
     }
     if (this.request !== request) return;
-    const attached = this.attachSource(this.audio);
-    if (!attached) {
-      this.fail(UNSUPPORTED_MESSAGE);
-      return;
-    }
-    this.attached = attached;
-    void this.buffer(attached.source, speech, request.signal);
+    this.request = null;
+    this.url = url;
+    this.audio.src = url;
     await this.playAudio();
   }
 
-  /** Appends the speech to `source` as it arrives, then ends the stream so the element ends. */
-  private async buffer(source: MediaSource, speech: SpeechAudio, signal: AbortSignal) {
-    try {
-      await whenOpen(source, signal);
-      if (signal.aborted) return;
-      const buffer = source.addSourceBuffer(speech.mimeType);
-      buffer.mode = 'sequence';
-      let empty = true;
-      for await (const piece of speech.pieces) {
-        if (signal.aborted) return;
-        await updateBuffer(buffer, () => buffer.appendBuffer(piece as Uint8Array<ArrayBuffer>));
-        empty = false;
-      }
-      if (signal.aborted) return;
-      if (empty) {
-        // Nothing to say; an empty stream may never fire `ended`.
-        this.advance();
-        return;
-      }
-      if (source.readyState === 'open') source.endOfStream();
-    } catch (err) {
-      if (!signal.aborted) this.fail(err instanceof Error ? err.message : 'Audio playback failed');
-    }
-  }
-
   private async playAudio(): Promise<void> {
-    const attached = this.attached;
+    const url = this.url;
     try {
       await this.audio.play();
       this.primed = true;
     } catch (err) {
-      if (this.attached !== attached) return; // Superseded by another message or stop.
+      if (this.url !== url) return; // Superseded by another message or stop.
       // Autoplay refused (no tap yet on iOS): stay loaded and paused so a tap resumes.
       if (err instanceof DOMException && err.name === 'NotAllowedError') {
         this.blocked = true;
@@ -357,6 +245,7 @@ export class SpeechPlayer {
     this.request?.abort();
     this.request = null;
     this.current = null;
+    this.url = null;
     this.priming = false;
     this.blocked = false;
     this.clearAudio();
@@ -366,8 +255,6 @@ export class SpeechPlayer {
     this.audio.pause();
     this.audio.removeAttribute('src');
     this.audio.load();
-    this.attached?.release();
-    this.attached = null;
   }
 
   private ifCurrent(handler: () => void): void {

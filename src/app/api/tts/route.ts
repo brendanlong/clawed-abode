@@ -8,10 +8,11 @@ import { loadGlobalSettings } from '@/server/services/global-settings';
 const bodySchema = z.object({ text: z.string().trim().min(1).max(100_000) });
 
 /**
- * Speak `text` with the saved voice and speed, streaming raw PCM (see
- * `@/lib/pcm`) as it is synthesized; the browser encodes it for playback.
- * Repeats are served from the cache. Responds once the first chunk is ready,
- * so a provider failure arrives as a JSON error rather than a broken stream.
+ * Start (or reuse) synthesis of `text` with the saved voice and speed, and
+ * return the URL an `<audio>` element plays it from. A media element can't send
+ * the bearer header, so this authenticated POST mints the unguessable URL that
+ * serves as the GET's credential. Responds once the first chunk is ready, so a
+ * provider failure surfaces here rather than as an opaque media error.
  */
 export async function POST(request: Request): Promise<Response> {
   const ctx = await createContext({ headers: request.headers });
@@ -28,7 +29,7 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   const settings = await loadGlobalSettings();
-  const speech = getSpeechStore().open({
+  const { id, speech } = getSpeechStore().open({
     text: parsed.data.text,
     voice: resolveKokoroVoice(settings.ttsVoice),
     speed: settings.ttsSpeed ?? DEFAULT_TTS_SPEED,
@@ -40,7 +41,5 @@ export async function POST(request: Request): Promise<Response> {
     const message = err instanceof Error ? err.message : 'Speech synthesis failed';
     return Response.json({ error: message }, { status: 502 });
   }
-  return new Response(speech.stream(), {
-    headers: { 'Content-Type': 'application/octet-stream', 'Cache-Control': 'no-store' },
-  });
+  return Response.json({ url: `/api/tts/${id}` });
 }

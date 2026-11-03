@@ -1,6 +1,6 @@
 /**
- * Read-aloud audio travels from the TTS server through ours to the browser as
- * raw PCM: 16-bit little-endian mono at Kokoro's native 24 kHz.
+ * Read-aloud audio arrives from the TTS server as raw PCM: 16-bit
+ * little-endian mono at Kokoro's native 24 kHz.
  */
 export const PCM_SAMPLE_RATE = 24_000;
 export const PCM_BYTES_PER_SECOND = PCM_SAMPLE_RATE * 2;

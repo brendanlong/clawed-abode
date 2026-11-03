@@ -1,17 +1,30 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { ADTS, ALL_FORMATS, BufferSource, Input } from 'mediabunny';
 import { createServer, type Server } from 'http';
 import type { AddressInfo } from 'net';
 import { resetEnvCache } from '@/lib/env';
 import { setupTestDb, teardownTestDb, testPrisma, clearTestDb } from '@/test/setup-test-db';
 
-// The route imports @/lib/prisma at module load, so import it only after the test DB is configured.
+// The routes import @/lib/prisma at module load, so import them only after the test DB is configured.
 let POST: typeof import('./route').POST;
+let GET: typeof import('./[id]/route').GET;
 
 const TOKEN = 'tts-route-test-token';
+/** Seconds of speech the fake provider returns per character of input. */
+const SECONDS_PER_CHAR = 0.05;
 
-/** The provider's PCM for `input`: two samples, sent as a split read. */
-function pcmFor(input: string): number[] {
-  return [input.length % 256, 0, 1, 0];
+/** The provider's PCM for `input`: a tone, as 16-bit little-endian mono at 24 kHz. */
+function pcmFor(input: string): Buffer {
+  const samples = Math.round(input.length * SECONDS_PER_CHAR * 24_000);
+  const pcm = Buffer.alloc(samples * 2);
+  for (let i = 0; i < samples; i++) pcm.writeInt16LE(Math.round(8000 * Math.sin(i / 8)), i * 2);
+  return pcm;
+}
+
+async function decodedSeconds(bytes: Uint8Array<ArrayBuffer>): Promise<number> {
+  const input = new Input({ source: new BufferSource(bytes), formats: ALL_FORMATS });
+  expect(await input.getFormat()).toBe(ADTS);
+  return input.computeDuration();
 }
 
 interface ProviderRequest {
@@ -34,9 +47,10 @@ beforeAll(async () => {
         return;
       }
       res.writeHead(200, { 'Content-Type': 'audio/pcm' });
+      // Split mid-sample, as network reads may be.
       const pcm = pcmFor(body.input);
-      res.write(Buffer.from(pcm.slice(0, 1)));
-      res.end(Buffer.from(pcm.slice(1)));
+      res.write(pcm.subarray(0, 1001));
+      res.end(pcm.subarray(1001));
     });
   });
   await new Promise<void>((resolve) => provider.listen(0, '127.0.0.1', resolve));
@@ -46,6 +60,7 @@ beforeAll(async () => {
   process.env.TTS_API_KEY = 'provider-key';
   await setupTestDb();
   ({ POST } = await import('./route'));
+  ({ GET } = await import('./[id]/route'));
 });
 
 beforeEach(async () => {
@@ -78,11 +93,18 @@ function speak(body: unknown, token: string | null = TOKEN): Promise<Response> {
   );
 }
 
-async function speakPcm(text: string): Promise<number[]> {
+function fetchAudio(url: string, headers: Record<string, string> = {}): Promise<Response> {
+  const id = url.split('/').pop() ?? '';
+  return GET(new Request(`http://localhost${url}`, { headers }), {
+    params: Promise.resolve({ id }),
+  });
+}
+
+async function speakUrl(text: string): Promise<string> {
   const res = await speak({ text });
   expect(res.status).toBe(200);
-  expect(res.headers.get('content-type')).toBe('application/octet-stream');
-  return [...new Uint8Array(await res.arrayBuffer())];
+  const { url } = (await res.json()) as { url: string };
+  return url;
 }
 
 describe('POST /api/tts', () => {
@@ -95,12 +117,13 @@ describe('POST /api/tts', () => {
     expect((await speak({})).status).toBe(400);
   });
 
-  it('streams PCM synthesized with the saved voice and speed', async () => {
+  it('synthesizes PCM with the saved voice and speed', async () => {
     await testPrisma.globalSettings.create({
       data: { id: 'global', ttsVoice: 'bm_george', ttsSpeed: 1.25 },
     });
-    expect(await speakPcm('Hello there.')).toEqual(pcmFor('Hello there.'));
+    const url = await speakUrl('Hello there.');
 
+    expect(url).toMatch(/^\/api\/tts\/[A-Za-z0-9_-]{43}$/);
     expect(providerRequests).toEqual([
       {
         authorization: 'Bearer provider-key',
@@ -120,11 +143,37 @@ describe('POST /api/tts', () => {
     expect(res.status).toBe(502);
     expect(((await res.json()) as { error: string }).error).toContain('401');
   });
+});
+
+describe('GET /api/tts/[id]', () => {
+  it('serves the speech as AAC in ADTS, and ranges of it', async () => {
+    const text = 'Hello again. And once more.';
+    const url = await speakUrl(text);
+
+    const whole = await fetchAudio(url);
+    expect(whole.status).toBe(200);
+    expect(whole.headers.get('content-type')).toBe('audio/aac');
+    const bytes = new Uint8Array(await whole.arrayBuffer());
+    const spoken = ('Hello again.'.length + 'And once more.'.length) * SECONDS_PER_CHAR;
+    const seconds = await decodedSeconds(bytes);
+    expect(seconds).toBeGreaterThanOrEqual(spoken - 0.001);
+    expect(seconds).toBeLessThan(spoken + 0.1);
+
+    const probe = await fetchAudio(url, { range: 'bytes=0-1' });
+    expect(probe.status).toBe(206);
+    expect(probe.headers.get('content-range')).toBe(`bytes 0-1/${bytes.length}`);
+    expect([...new Uint8Array(await probe.arrayBuffer())]).toEqual([...bytes.slice(0, 2)]);
+  });
 
   it('reuses the synthesis for a repeated request', async () => {
-    const first = await speakPcm('Same words. Twice over.');
-    expect(await speakPcm('Same words. Twice over.')).toEqual(first);
-    expect(first).toEqual([...pcmFor('Same words.'), ...pcmFor('Twice over.')]);
-    expect(providerRequests).toHaveLength(2);
+    const first = await speakUrl('Same words.');
+    const second = await speakUrl('Same words.');
+    expect(second).toBe(first);
+    expect(providerRequests).toHaveLength(1);
+  });
+
+  it('returns 404 for unknown and malformed ids', async () => {
+    expect((await fetchAudio(`/api/tts/${'x'.repeat(43)}`)).status).toBe(404);
+    expect((await fetchAudio('/api/tts/short')).status).toBe(404);
   });
 });
