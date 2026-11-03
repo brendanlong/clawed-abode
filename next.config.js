@@ -23,7 +23,10 @@ const nextConfig = {
             key: 'Content-Security-Policy',
             value: [
               "default-src 'self'",
-              "script-src 'self' 'unsafe-inline'",
+              // wasm-unsafe-eval and blob: workers: the WASM AAC encoder read-aloud falls
+              // back to where the browser can't encode audio itself (src/lib/speech-encoding.ts).
+              "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'",
+              "worker-src 'self' blob:",
               "style-src 'self' 'unsafe-inline'",
               "img-src 'self' data: blob:",
               "font-src 'self' data:",

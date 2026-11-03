@@ -4,18 +4,14 @@ import type { AddressInfo } from 'net';
 import { resetEnvCache } from '@/lib/env';
 import { setupTestDb, teardownTestDb, testPrisma, clearTestDb } from '@/test/setup-test-db';
 
-// The routes import @/lib/prisma at module load, so import them only after the test DB is configured.
+// The route imports @/lib/prisma at module load, so import it only after the test DB is configured.
 let POST: typeof import('./route').POST;
-let GET: typeof import('./[id]/route').GET;
 
 const TOKEN = 'tts-route-test-token';
-const FRAME_HEADER = [0xff, 0xf3, 0x84, 0xc4];
 
-/** One 192-byte MP3 frame; `tag` makes it a Xing header frame. */
-function frame(fill: number, tag?: string): number[] {
-  const bytes = [...FRAME_HEADER, ...new Array<number>(188).fill(fill)];
-  if (tag) [...tag].forEach((c, i) => (bytes[13 + i] = c.charCodeAt(0)));
-  return bytes;
+/** The provider's PCM for `input`: two samples, sent as a split read. */
+function pcmFor(input: string): number[] {
+  return [input.length % 256, 0, 1, 0];
 }
 
 interface ProviderRequest {
@@ -37,8 +33,10 @@ beforeAll(async () => {
         res.writeHead(401).end('bad key');
         return;
       }
-      res.writeHead(200, { 'Content-Type': 'audio/mpeg' });
-      res.end(Buffer.from([...frame(0, 'Xing'), ...frame(body.input.length % 256)]));
+      res.writeHead(200, { 'Content-Type': 'audio/pcm' });
+      const pcm = pcmFor(body.input);
+      res.write(Buffer.from(pcm.slice(0, 1)));
+      res.end(Buffer.from(pcm.slice(1)));
     });
   });
   await new Promise<void>((resolve) => provider.listen(0, '127.0.0.1', resolve));
@@ -48,7 +46,6 @@ beforeAll(async () => {
   process.env.TTS_API_KEY = 'provider-key';
   await setupTestDb();
   ({ POST } = await import('./route'));
-  ({ GET } = await import('./[id]/route'));
 });
 
 beforeEach(async () => {
@@ -81,18 +78,11 @@ function speak(body: unknown, token: string | null = TOKEN): Promise<Response> {
   );
 }
 
-function fetchAudio(url: string, headers: Record<string, string> = {}): Promise<Response> {
-  const id = url.split('/').pop() ?? '';
-  return GET(new Request(`http://localhost${url}`, { headers }), {
-    params: Promise.resolve({ id }),
-  });
-}
-
-async function speakUrl(text: string): Promise<string> {
+async function speakPcm(text: string): Promise<number[]> {
   const res = await speak({ text });
   expect(res.status).toBe(200);
-  const { url } = (await res.json()) as { url: string };
-  return url;
+  expect(res.headers.get('content-type')).toBe('application/octet-stream');
+  return [...new Uint8Array(await res.arrayBuffer())];
 }
 
 describe('POST /api/tts', () => {
@@ -105,13 +95,12 @@ describe('POST /api/tts', () => {
     expect((await speak({})).status).toBe(400);
   });
 
-  it('synthesizes MP3 with the saved voice and speed', async () => {
+  it('streams PCM synthesized with the saved voice and speed', async () => {
     await testPrisma.globalSettings.create({
       data: { id: 'global', ttsVoice: 'bm_george', ttsSpeed: 1.25 },
     });
-    const url = await speakUrl('Hello there.');
+    expect(await speakPcm('Hello there.')).toEqual(pcmFor('Hello there.'));
 
-    expect(url).toMatch(/^\/api\/tts\/[A-Za-z0-9_-]{43}$/);
     expect(providerRequests).toEqual([
       {
         authorization: 'Bearer provider-key',
@@ -120,7 +109,7 @@ describe('POST /api/tts', () => {
           input: 'Hello there.',
           voice: 'bm_george',
           speed: 1.25,
-          response_format: 'mp3',
+          response_format: 'pcm',
         },
       },
     ]);
@@ -131,33 +120,11 @@ describe('POST /api/tts', () => {
     expect(res.status).toBe(502);
     expect(((await res.json()) as { error: string }).error).toContain('401');
   });
-});
-
-describe('GET /api/tts/[id]', () => {
-  it('serves the audio without its Xing frame, and ranges of it', async () => {
-    const url = await speakUrl('Hello again.');
-    const expected = frame('Hello again.'.length);
-
-    const whole = await fetchAudio(url);
-    expect(whole.status).toBe(200);
-    expect(whole.headers.get('content-type')).toBe('audio/mpeg');
-    expect([...new Uint8Array(await whole.arrayBuffer())]).toEqual(expected);
-
-    const probe = await fetchAudio(url, { range: 'bytes=0-1' });
-    expect(probe.status).toBe(206);
-    expect(probe.headers.get('content-range')).toBe(`bytes 0-1/${expected.length}`);
-    expect([...new Uint8Array(await probe.arrayBuffer())]).toEqual(expected.slice(0, 2));
-  });
 
   it('reuses the synthesis for a repeated request', async () => {
-    const first = await speakUrl('Same words.');
-    const second = await speakUrl('Same words.');
-    expect(second).toBe(first);
-    expect(providerRequests).toHaveLength(1);
-  });
-
-  it('returns 404 for unknown and malformed ids', async () => {
-    expect((await fetchAudio(`/api/tts/${'x'.repeat(43)}`)).status).toBe(404);
-    expect((await fetchAudio('/api/tts/short')).status).toBe(404);
+    const first = await speakPcm('Same words. Twice over.');
+    expect(await speakPcm('Same words. Twice over.')).toEqual(first);
+    expect(first).toEqual([...pcmFor('Same words.'), ...pcmFor('Twice over.')]);
+    expect(providerRequests).toHaveLength(2);
   });
 });

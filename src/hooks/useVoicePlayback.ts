@@ -13,9 +13,14 @@ import {
 } from 'react';
 import { z } from 'zod';
 import { getAuthToken } from '@/lib/auth-token';
+import { PCM_SAMPLE_RATE, pcm16ToFloat32 } from '@/lib/pcm';
+import { loadSpeechEncoder, type SpeechEncoder } from '@/lib/speech-encoding';
 import {
+  getMediaSourceClass,
   IDLE_SPEECH_STATE,
   SpeechPlayer,
+  UNSUPPORTED_MESSAGE,
+  type SpeechAudio,
   type SpeechItem,
   type SpeechPlayerState,
 } from '@/lib/speech-player';
@@ -75,13 +80,47 @@ export function useVoicePlaybackEnabled(): boolean {
   return useContext(VoicePlaybackEnabledContext);
 }
 
-const speechResponseSchema = z.union([
-  z.object({ url: z.string() }),
-  z.object({ error: z.string() }),
-]);
+const speechErrorSchema = z.object({ error: z.string() });
 
-/** Ask the server to synthesize `text`; resolves to the URL its audio streams from. */
-async function requestSpeechUrl(text: string, signal?: AbortSignal): Promise<string> {
+let encoder: Promise<SpeechEncoder | null> | null = null;
+
+/** Loaded once per page, on first use; a failure is retried next time. */
+function getEncoder(mediaSource: typeof MediaSource): Promise<SpeechEncoder | null> {
+  encoder ??= loadSpeechEncoder(mediaSource, PCM_SAMPLE_RATE).catch((err: unknown) => {
+    encoder = null;
+    throw err;
+  });
+  return encoder;
+}
+
+/** A response body's pieces; cancels the body if the reader stops early. */
+async function* readBody(body: ReadableStream<Uint8Array>): AsyncGenerator<Uint8Array> {
+  const reader = body.getReader();
+  let done = false;
+  try {
+    for (;;) {
+      const next = await reader.read();
+      if (next.done) {
+        done = true;
+        return;
+      }
+      yield next.value;
+    }
+  } finally {
+    if (!done) void reader.cancel().catch(() => {});
+  }
+}
+
+/**
+ * Ask the server to speak `text`. It streams raw PCM, which is encoded here as
+ * it arrives (the encoder loads while the server starts synthesizing).
+ */
+async function openSpeech(text: string, signal: AbortSignal): Promise<SpeechAudio> {
+  const mediaSource = getMediaSourceClass();
+  if (!mediaSource) throw new Error(UNSUPPORTED_MESSAGE);
+  // Null if it failed to load too (retried next time).
+  const loading = getEncoder(mediaSource).catch(() => null);
+
   const token = getAuthToken();
   const res = await fetch('/api/tts', {
     method: 'POST',
@@ -92,11 +131,19 @@ async function requestSpeechUrl(text: string, signal?: AbortSignal): Promise<str
     body: JSON.stringify({ text }),
     signal,
   });
-  const body = speechResponseSchema.safeParse(await res.json().catch(() => null));
-  if (res.ok && body.success && 'url' in body.data) return body.data.url;
-  throw new Error(
-    body.success && 'error' in body.data ? body.data.error : `Speech request failed (${res.status})`
-  );
+  if (!res.ok || !res.body) {
+    const body = speechErrorSchema.safeParse(await res.json().catch(() => null));
+    throw new Error(body.success ? body.data.error : `Speech request failed (${res.status})`);
+  }
+  const loaded = await loading;
+  if (!loaded) {
+    void res.body.cancel().catch(() => {});
+    throw new Error(UNSUPPORTED_MESSAGE);
+  }
+  return {
+    mimeType: loaded.mimeType,
+    pieces: loaded.encode(pcm16ToFloat32(readBody(res.body)), PCM_SAMPLE_RATE),
+  };
 }
 
 const MEDIA_TITLE_LENGTH = 80;
@@ -125,7 +172,7 @@ export function useVoicePlayback(enabled: boolean, autoRead = false): VoicePlayb
 
   useEffect(() => {
     if (!enabled) return;
-    const player = new SpeechPlayer(new Audio(), requestSpeechUrl, setState);
+    const player = new SpeechPlayer(new Audio(), openSpeech, setState);
     playerRef.current = player;
 
     const handlers: [MediaSessionAction, MediaSessionActionHandler][] = [
