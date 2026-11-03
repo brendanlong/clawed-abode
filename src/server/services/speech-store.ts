@@ -1,6 +1,5 @@
 import { createHash, randomBytes } from 'crypto';
 import { splitIntoSpeechChunks } from '@/lib/tts';
-import { stripMp3Metadata } from '@/lib/mp3';
 import type { KokoroVoice } from '@/lib/kokoro-voices';
 import { createLogger, toError } from '@/lib/logger';
 
@@ -12,15 +11,20 @@ export interface SpeechParams {
   speed: number;
 }
 
-/** Synthesize one chunk of text to a complete MP3 file. */
+/**
+ * Synthesize one chunk of text to raw 16-bit little-endian mono PCM, yielding
+ * its bytes as the provider streams them. Pieces may split a sample. Stop
+ * (and fail) when `signal` aborts.
+ */
 export type SynthesizeChunk = (
   text: string,
   voice: KokoroVoice,
-  speed: number
-) => Promise<Uint8Array>;
+  speed: number,
+  signal: AbortSignal
+) => AsyncIterable<Uint8Array>;
 
 /**
- * One message's audio, synthesized chunk by chunk. Readers get what is buffered
+ * One message's encoded audio, synthesized chunk by chunk. Readers get what is buffered
  * immediately and then follow along live, so any number of requests (a replay,
  * a browser's probe-then-fetch) share one synthesis.
  */
@@ -41,6 +45,7 @@ export class Speech {
   }
 
   push(chunk: Uint8Array): void {
+    if (chunk.length === 0) return;
     this.chunks.push(chunk);
     this.bytes += chunk.length;
     this.notify();
@@ -102,39 +107,111 @@ export class Speech {
 }
 
 /**
- * Synthesize sentence by sentence, in order, with up to `maxInFlight` requests
- * running. Runs to completion even if every listener leaves; the result stays
- * cached for a replay.
+ * One request's bytes, collected as they arrive whether or not anyone is
+ * reading yet, so requests running ahead of the one playing don't stall.
+ */
+class PendingChunk {
+  private readonly pieces: Uint8Array[] = [];
+  private done = false;
+  private error: Error | null = null;
+  private waiters: (() => void)[] = [];
+
+  constructor(source: AsyncIterable<Uint8Array>) {
+    void this.drain(source);
+  }
+
+  async *read(): AsyncGenerator<Uint8Array> {
+    let index = 0;
+    for (;;) {
+      if (index < this.pieces.length) yield this.pieces[index++];
+      else if (this.error) throw this.error;
+      else if (this.done) return;
+      else await new Promise<void>((resolve) => this.waiters.push(resolve));
+    }
+  }
+
+  private async drain(source: AsyncIterable<Uint8Array>): Promise<void> {
+    try {
+      for await (const piece of source) {
+        this.pieces.push(piece);
+        this.wake();
+      }
+      this.done = true;
+    } catch (err) {
+      this.error = toError(err);
+    }
+    this.wake();
+  }
+
+  private wake(): void {
+    for (const resolve of this.waiters.splice(0)) resolve();
+  }
+}
+
+/**
+ * The message's PCM, sentence by sentence in order, with up to `maxInFlight`
+ * requests running, passing each request's audio on as it streams in.
+ * Network reads can split a 16-bit sample, so an odd byte is held back until
+ * the next piece and sentences join on sample boundaries; a sentence that ends
+ * on one drops it.
+ */
+async function* orderedPcm(
+  params: SpeechParams,
+  synthesize: SynthesizeChunk,
+  maxInFlight: number,
+  signal: AbortSignal
+): AsyncGenerator<Uint8Array> {
+  const texts = splitIntoSpeechChunks(params.text);
+  const pending: PendingChunk[] = [];
+  let started = 0;
+  const fill = () => {
+    while (started < texts.length && pending.length < maxInFlight) {
+      const text = texts[started++];
+      pending.push(new PendingChunk(synthesize(text, params.voice, params.speed, signal)));
+    }
+  };
+  fill();
+  while (pending.length > 0) {
+    let carry: number | null = null;
+    for await (const piece of pending[0].read()) {
+      const bytes: Uint8Array = carry === null ? piece : prepend(carry, piece);
+      const even: number = bytes.length & ~1;
+      carry = even < bytes.length ? bytes[even] : null;
+      if (even > 0) yield bytes.subarray(0, even);
+    }
+    pending.shift();
+    fill();
+  }
+}
+
+function prepend(byte: number, bytes: Uint8Array): Uint8Array {
+  const joined = new Uint8Array(bytes.length + 1);
+  joined[0] = byte;
+  joined.set(bytes, 1);
+  return joined;
+}
+
+/**
+ * Synthesize and encode the whole message. Runs to completion even if every
+ * listener leaves; the result stays cached for a replay.
  */
 async function synthesizeInto(
   speech: Speech,
   params: SpeechParams,
-  synthesize: SynthesizeChunk,
-  maxInFlight: number
+  options: SpeechStoreOptions
 ): Promise<void> {
-  const texts = splitIntoSpeechChunks(params.text);
-  const pending: Promise<Uint8Array>[] = [];
-  let started = 0;
-  const fill = () => {
-    while (started < texts.length && pending.length < maxInFlight) {
-      const promise = synthesize(texts[started++], params.voice, params.speed);
-      // Awaited in order below; this only keeps a failure behind an earlier one from going unhandled.
-      promise.catch(() => {});
-      pending.push(promise);
-    }
-  };
+  const requests = new AbortController();
   try {
-    fill();
-    while (pending.length > 0) {
-      const audio = await pending[0];
-      pending.shift();
-      fill();
-      speech.push(stripMp3Metadata(audio));
-    }
+    const pcm = orderedPcm(params, options.synthesize, options.maxInFlight, requests.signal);
+    for await (const bytes of options.encode(pcm)) speech.push(bytes);
     speech.finish();
   } catch (err) {
     log.error('Speech synthesis failed', toError(err), { chars: params.text.length });
     speech.fail(toError(err));
+  } finally {
+    // After a failure, requests still in flight would only be thrown away.
+    // Aborting them also ends the PCM generator if it was waiting on one.
+    requests.abort();
   }
 }
 
@@ -146,6 +223,11 @@ interface Entry {
 
 export interface SpeechStoreOptions {
   synthesize: SynthesizeChunk;
+  /**
+   * Encodes the message's PCM for playback as it arrives. Pulls it as fast as
+   * it can encode, so the PCM held at once is bounded by the requests in flight.
+   */
+  encode: (pcm: AsyncIterable<Uint8Array>) => AsyncIterable<Uint8Array>;
   /** Finished audio kept for replays, oldest dropped first. Running syntheses are never dropped. */
   maxBytes: number;
   /** How long an id stays valid after its last use. */
@@ -189,7 +271,7 @@ export class SpeechStore {
     this.byId.set(id, { key, speech, lastUsedAt: this.now() });
     this.idByKey.set(key, id);
     this.evict(id);
-    void synthesizeInto(speech, params, this.options.synthesize, this.options.maxInFlight);
+    void synthesizeInto(speech, params, this.options);
     return { id, speech };
   }
 

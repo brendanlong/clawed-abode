@@ -1,11 +1,12 @@
 import { z } from 'zod';
 import { parseByteRange } from '@/lib/byte-range';
+import { AAC_CONTENT_TYPE } from '@/server/services/aac';
 import { getSpeechStore } from '@/server/services/kokoro';
 
 const idSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
 
 const AUDIO_HEADERS = {
-  'Content-Type': 'audio/mpeg',
+  'Content-Type': AAC_CONTENT_TYPE,
   'Cache-Control': 'no-store',
 };
 

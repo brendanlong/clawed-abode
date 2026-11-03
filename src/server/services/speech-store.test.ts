@@ -1,31 +1,68 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { KokoroVoice } from '@/lib/kokoro-voices';
-import { SpeechStore, type Speech, type SynthesizeChunk } from './speech-store';
+import {
+  SpeechStore,
+  type Speech,
+  type SpeechStoreOptions,
+  type SynthesizeChunk,
+} from './speech-store';
 
-interface PendingCall {
-  text: string;
-  resolve: (audio: Uint8Array) => void;
-  reject: (error: Error) => void;
+/** One request's response body, fed by the test. */
+class PendingCall {
+  private readonly pieces: Uint8Array[] = [];
+  private ended = false;
+  private error: Error | null = null;
+  private wake: (() => void) | null = null;
+
+  constructor(
+    readonly text: string,
+    readonly signal: AbortSignal
+  ) {}
+
+  send(...values: number[]): void {
+    this.pieces.push(new Uint8Array(values));
+    this.wake?.();
+  }
+
+  /** Send `values` and end the response. */
+  resolve(...values: number[]): void {
+    if (values.length > 0) this.send(...values);
+    this.ended = true;
+    this.wake?.();
+  }
+
+  reject(error: Error): void {
+    this.error = error;
+    this.wake?.();
+  }
+
+  async *body(): AsyncGenerator<Uint8Array> {
+    for (;;) {
+      const piece = this.pieces.shift();
+      if (piece) yield piece;
+      else if (this.error) throw this.error;
+      else if (this.ended) return;
+      else await new Promise<void>((resolve) => (this.wake = resolve));
+    }
+  }
 }
 
-/** A synthesizer whose calls stay pending until the test settles them. */
+/** A synthesizer whose responses stay open until the test settles them. */
 function controllableSynth() {
   const calls: PendingCall[] = [];
-  const synthesize = vi.fn<SynthesizeChunk>(
-    (text) =>
-      new Promise<Uint8Array>((resolve, reject) => {
-        calls.push({ text, resolve, reject });
-      })
-  );
+  const synthesize = vi.fn<SynthesizeChunk>((text, _voice, _speed, signal) => {
+    const call = new PendingCall(text, signal);
+    calls.push(call);
+    return call.body();
+  });
   return { calls, synthesize };
 }
 
-function makeStore(
-  synthesize: SynthesizeChunk,
-  overrides: { maxBytes?: number; maxInFlight?: number; now?: () => number } = {}
-) {
+function makeStore(synthesize: SynthesizeChunk, overrides: Partial<SpeechStoreOptions> = {}) {
   return new SpeechStore({
     synthesize,
+    // Byte-for-byte, so the tests see exactly the PCM that reached the encoder.
+    encode: (pcm: AsyncIterable<Uint8Array>) => pcm,
     maxBytes: 1_000_000,
     ttlMs: 60_000,
     maxInFlight: 4,
@@ -34,7 +71,6 @@ function makeStore(
 }
 
 const voice: KokoroVoice = 'af_heart';
-const bytes = (...values: number[]) => new Uint8Array(values);
 
 async function readAll(speech: Speech): Promise<number[]> {
   const out: number[] = [];
@@ -56,14 +92,15 @@ describe('SpeechStore', () => {
       voice,
       speed: 1,
     });
+    const all = readAll(speech);
 
     await vi.waitFor(() => expect(calls).toHaveLength(1));
-    calls[0].resolve(bytes(1));
+    calls[0].resolve(1, 1);
     await vi.waitFor(() => expect(calls).toHaveLength(2));
-    calls[1].resolve(bytes(2));
+    calls[1].resolve(2, 2);
     await vi.waitFor(() => expect(calls).toHaveLength(3));
-    calls[2].resolve(bytes(3));
-    await vi.waitFor(() => expect([...(speech.complete() ?? [])]).toEqual([1, 2, 3]));
+    calls[2].resolve(3, 3);
+    expect(await all).toEqual([1, 1, 2, 2, 3, 3]);
   });
 
   it('synthesizes each sentence with the voice and speed', async () => {
@@ -71,24 +108,37 @@ describe('SpeechStore', () => {
     makeStore(synthesize).open({ text: twoChunkText, voice, speed: 1.5 });
 
     await vi.waitFor(() => expect(calls).toHaveLength(2));
-    expect(synthesize).toHaveBeenNthCalledWith(1, 'First sentence.', voice, 1.5);
-    expect(synthesize).toHaveBeenNthCalledWith(2, 'Second one.', voice, 1.5);
+    expect(synthesize).toHaveBeenNthCalledWith(
+      1,
+      'First sentence.',
+      voice,
+      1.5,
+      expect.any(AbortSignal)
+    );
+    expect(synthesize).toHaveBeenNthCalledWith(
+      2,
+      'Second one.',
+      voice,
+      1.5,
+      expect.any(AbortSignal)
+    );
   });
 
   it('keeps four requests in flight, starting another as the oldest finishes', async () => {
     const { calls, synthesize } = controllableSynth();
     const text = 'One. Two. Three. Four. Five. Six.';
     const { speech } = makeStore(synthesize).open({ text, voice, speed: 1 });
+    const all = readAll(speech);
 
     await vi.waitFor(() => expect(calls).toHaveLength(4));
-    calls[1].resolve(bytes(1));
+    calls[1].resolve(1, 1);
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(calls).toHaveLength(4);
 
-    calls[0].resolve(bytes(0));
+    calls[0].resolve(0, 0);
     await vi.waitFor(() => expect(calls).toHaveLength(6));
-    calls.slice(2).forEach((call, i) => call.resolve(bytes(i + 2)));
-    await vi.waitFor(() => expect([...(speech.complete() ?? [])]).toEqual([0, 1, 2, 3, 4, 5]));
+    calls.slice(2).forEach((call, i) => call.resolve(i + 2, i + 2));
+    expect(await all).toEqual([0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5]);
   });
 
   it('streams chunks in order as they arrive, even when they finish out of order', async () => {
@@ -97,24 +147,46 @@ describe('SpeechStore', () => {
     const all = readAll(speech);
 
     await vi.waitFor(() => expect(calls).toHaveLength(2));
-    calls[1].resolve(bytes(3, 4));
-    calls[0].resolve(bytes(1, 2));
+    calls[1].resolve(3, 4);
+    calls[0].resolve(1, 2);
 
     expect(await all).toEqual([1, 2, 3, 4]);
-    expect([...(speech.complete() ?? [])]).toEqual([1, 2, 3, 4]);
+  });
+
+  it('passes on the playing request’s audio before its response ends', async () => {
+    const { calls, synthesize } = controllableSynth();
+    const { speech } = makeStore(synthesize).open({ text: 'Hi.', voice, speed: 1 });
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    calls[0].send(1, 2);
+    await speech.ready();
+    expect(speech.running).toBe(true);
+    expect(speech.bytes).toBe(2);
+  });
+
+  it('joins chunks on sample boundaries when network reads split samples', async () => {
+    const { calls, synthesize } = controllableSynth();
+    const { speech } = makeStore(synthesize).open({ text: twoChunkText, voice, speed: 1 });
+    const all = readAll(speech);
+
+    await vi.waitFor(() => expect(calls).toHaveLength(2));
+    calls[0].send(1);
+    calls[0].send(2, 3);
+    // An odd chunk's stray last byte is dropped rather than shifting every later sample.
+    calls[0].resolve(4, 9);
+    calls[1].resolve(5, 6);
+    expect(await all).toEqual([1, 2, 3, 4, 5, 6]);
   });
 
   it('replays buffered audio to a late reader and then follows along', async () => {
     const { calls, synthesize } = controllableSynth();
     const { speech } = makeStore(synthesize).open({ text: twoChunkText, voice, speed: 1 });
     await vi.waitFor(() => expect(calls).toHaveLength(2));
-    calls[0].resolve(bytes(1));
+    calls[0].resolve(1, 1);
     await speech.ready();
-    expect(speech.complete()).toBeNull();
 
     const late = readAll(speech);
-    calls[1].resolve(bytes(2));
-    expect(await late).toEqual([1, 2]);
+    calls[1].resolve(2, 2);
+    expect(await late).toEqual([1, 1, 2, 2]);
   });
 
   it('shares one synthesis between identical requests and keeps distinct ids otherwise', async () => {
@@ -132,6 +204,42 @@ describe('SpeechStore', () => {
     expect(store.get('unknown')).toBeUndefined();
   });
 
+  it('encodes the PCM as it arrives and keeps the encoded audio', async () => {
+    const { calls, synthesize } = controllableSynth();
+    const encoded: number[][] = [];
+    const encode = async function* (pcm: AsyncIterable<Uint8Array>) {
+      for await (const piece of pcm) {
+        encoded.push([...piece]);
+        yield new Uint8Array([piece.length]);
+      }
+    };
+    const { speech } = makeStore(synthesize, { encode }).open({
+      text: twoChunkText,
+      voice,
+      speed: 1,
+    });
+    await vi.waitFor(() => expect(calls).toHaveLength(2));
+    calls[0].send(1, 2, 3, 4);
+    await speech.ready();
+    expect(encoded).toEqual([[1, 2, 3, 4]]);
+    calls[0].resolve();
+    calls[1].resolve(5, 6);
+    await vi.waitFor(() => expect([...(speech.complete() ?? [])]).toEqual([4, 2]));
+    expect(speech.bytes).toBe(2);
+  });
+
+  it('fails the speech when encoding fails', async () => {
+    const { calls, synthesize } = controllableSynth();
+    const encode = async function* (pcm: AsyncIterable<Uint8Array>) {
+      for await (const piece of pcm) if (piece.length > 0) throw new Error('encoder crashed');
+      yield new Uint8Array();
+    };
+    const { speech } = makeStore(synthesize, { encode }).open({ text: 'Hi.', voice, speed: 1 });
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    calls[0].resolve(1, 2);
+    await expect(speech.ready()).rejects.toThrow('encoder crashed');
+  });
+
   it('rejects ready() when the first chunk fails, and retries on the next open', async () => {
     const { calls, synthesize } = controllableSynth();
     const store = makeStore(synthesize);
@@ -141,8 +249,7 @@ describe('SpeechStore', () => {
 
     await expect(speech.ready()).rejects.toThrow('401');
     expect(speech.failed).toBe(true);
-    const retry = store.open({ text: 'Hi.', voice, speed: 1 });
-    expect(retry.id).not.toBe(id);
+    expect(store.open({ text: 'Hi.', voice, speed: 1 }).id).not.toBe(id);
     expect(synthesize).toHaveBeenCalledTimes(2);
   });
 
@@ -150,7 +257,7 @@ describe('SpeechStore', () => {
     const { calls, synthesize } = controllableSynth();
     const { speech } = makeStore(synthesize).open({ text: twoChunkText, voice, speed: 1 });
     await vi.waitFor(() => expect(calls).toHaveLength(2));
-    calls[0].resolve(bytes(1));
+    calls[0].resolve(1, 1);
     calls[1].reject(new Error('timeout'));
 
     await expect(readAll(speech)).rejects.toThrow('timeout');
@@ -164,7 +271,7 @@ describe('SpeechStore', () => {
     const running = store.open({ text: 'Running.', voice, speed: 1 });
     const done = store.open({ text: 'Done.', voice, speed: 1 });
     await vi.waitFor(() => expect(calls).toHaveLength(2));
-    calls[1].resolve(bytes(1));
+    calls[1].resolve(1, 1);
     await vi.waitFor(() => expect(done.speech.complete()).not.toBeNull());
 
     now = 60_001;
@@ -178,13 +285,51 @@ describe('SpeechStore', () => {
     const a = store.open({ text: 'A.', voice, speed: 1 });
     const b = store.open({ text: 'B.', voice, speed: 1 });
     await vi.waitFor(() => expect(calls).toHaveLength(2));
-    calls[0].resolve(bytes(1, 1, 1));
-    calls[1].resolve(bytes(2, 2, 2));
-    await Promise.all([a.speech.ready(), b.speech.ready()]);
-    await vi.waitFor(() => expect(b.speech.complete()).not.toBeNull());
+    calls[0].resolve(1, 1);
+    calls[1].resolve(2, 2, 2, 2);
+    await vi.waitFor(() => expect(a.speech.complete() && b.speech.complete()).toBeTruthy());
 
+    // Using A again makes B the oldest, and the two exceed the budget.
     store.get(a.id);
     expect(store.get(b.id)).toBeUndefined();
     expect(store.get(a.id)).toBe(a.speech);
+  });
+
+  it('aborts the requests still in flight when one fails', async () => {
+    const { calls, synthesize } = controllableSynth();
+    const { speech } = makeStore(synthesize).open({ text: 'One. Two. Three.', voice, speed: 1 });
+    await vi.waitFor(() => expect(calls).toHaveLength(3));
+    calls[0].send(1, 1);
+    calls[0].reject(new Error('provider returned 500'));
+
+    await expect(readAll(speech)).rejects.toThrow('500');
+    expect(calls.map((call) => call.signal.aborted)).toEqual([true, true, true]);
+    expect(synthesize).toHaveBeenCalledTimes(3);
+  });
+
+  it('aborts the requests still in flight when encoding fails', async () => {
+    const { calls, synthesize } = controllableSynth();
+    const encode = async function* (pcm: AsyncIterable<Uint8Array>) {
+      for await (const piece of pcm) if (piece.length > 0) throw new Error('encoder crashed');
+      yield new Uint8Array();
+    };
+    const { speech } = makeStore(synthesize, { encode }).open({
+      text: twoChunkText,
+      voice,
+      speed: 1,
+    });
+    await vi.waitFor(() => expect(calls).toHaveLength(2));
+    calls[0].send(1, 2);
+    await expect(speech.ready()).rejects.toThrow('encoder crashed');
+    expect(calls[1].signal.aborted).toBe(true);
+  });
+
+  it('finishes empty when the provider returns no audio at all', async () => {
+    const { calls, synthesize } = controllableSynth();
+    const { speech } = makeStore(synthesize).open({ text: 'Hi.', voice, speed: 1 });
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    calls[0].resolve();
+    await expect(speech.ready()).resolves.toBeUndefined();
+    expect(speech.complete()?.length).toBe(0);
   });
 });
