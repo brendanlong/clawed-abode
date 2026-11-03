@@ -1,5 +1,9 @@
 # Single home for pnpm settings (package.json "pnpm" and .npmrc are not used).
 minimumReleaseAge: 10080
+# Fail rather than fall back to a too-new version. At a terminal pnpm instead
+# offers to add the version to minimumReleaseAgeExclude: answer no, and add an
+# exact-version exclusion by hand only after reviewing the release.
+minimumReleaseAgeStrict: true
 minimumReleaseAgeIgnoreMissingTime: false
 minimumReleaseAgeExclude:
   - '@anthropic-ai/*'
