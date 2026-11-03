@@ -1,5 +1,9 @@
 # Single home for pnpm settings (package.json "pnpm" and .npmrc are not used).
 minimumReleaseAge: 10080
+# Fail rather than fall back to a too-new version. At a terminal pnpm instead
+# offers to add the version to minimumReleaseAgeExclude: answer no, and add an
+# exact-version exclusion by hand only after reviewing the release.
+minimumReleaseAgeStrict: true
 minimumReleaseAgeIgnoreMissingTime: false
 minimumReleaseAgeExclude:
   - '@anthropic-ai/*'
@@ -11,12 +15,12 @@ minimumReleaseAgeExclude:
 packages:
   - '.'
 
-onlyBuiltDependencies:
-  - '@prisma/client'
-  - '@prisma/engines'
-  - argon2
-  - better-sqlite3
-  - esbuild
-  - prisma
-  - sharp
-  - unrs-resolver
+allowBuilds:
+  '@prisma/client': true
+  '@prisma/engines': true
+  argon2: true
+  better-sqlite3: true
+  esbuild: true
+  prisma: true
+  sharp: true
+  unrs-resolver: true
