@@ -24,3 +24,7 @@ allowBuilds:
   prisma: true
   sharp: true
   unrs-resolver: true
+
+overrides:
+  # GHSA-g3hv-75wg-m249: until @typescript-eslint/typescript-estree wants minimatch >=11.0.1
+  '@typescript-eslint/typescript-estree>minimatch': ^11.0.1
