@@ -20,7 +20,9 @@ This host is shared: other sessions and the app server run as the same user, so 
 pkill --cgroup "$(sed 's#^0::##' /proc/self/cgroup)" -f <pattern>
 \`\`\`
 
-For the same reason, don't touch global or user-level configuration unless the user explicitly asks: no \`git config --global\`, \`~/.bashrc\`, or other \`$HOME\` dotfiles. Those changes permanently affect every other session on this host. Scope tests to your repo or environment if necessary.`;
+For the same reason, don't touch global or user-level configuration unless the user explicitly asks: no \`git config --global\`, \`~/.bashrc\`, or other \`$HOME\` dotfiles. Those changes permanently affect every other session on this host. Scope tests to your repo or environment if necessary.
+
+\`$TMPDIR\` is private to this session and deleted when the session is archived. Put scratch files there (\`"$TMPDIR"/notes.txt\`) instead of hard-coding \`/tmp/...\` paths, which outlive the session.`;
 
 export interface PublicDirInfo {
   path: string;

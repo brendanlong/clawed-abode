@@ -15,6 +15,7 @@ import {
   GITHUB_CREDENTIAL_HELPER,
   githubCredentialEnv,
 } from '@/lib/git-credentials';
+import { removeSessionTmpDir } from './session-tmpdir';
 
 const log = createLogger('worktree-manager');
 
@@ -176,7 +177,10 @@ export async function removeWorkspace(sessionId: string): Promise<void> {
   log.info('Removing workspace', { sessionId, workspacePath });
 
   try {
-    await rm(workspacePath, { recursive: true, force: true });
+    await Promise.all([
+      rm(workspacePath, { recursive: true, force: true }),
+      removeSessionTmpDir(sessionId),
+    ]);
     log.info('Workspace removed', { sessionId });
   } catch (error) {
     log.error('Failed to remove workspace', toError(error), { sessionId });

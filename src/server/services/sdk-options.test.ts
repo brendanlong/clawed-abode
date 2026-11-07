@@ -16,6 +16,9 @@ vi.mock('./mcp-config-file', () => ({
   writeSessionMcpConfig: mockWriteMcp,
   removeSessionMcpConfig: mockRemoveMcp,
 }));
+vi.mock('./session-tmpdir', () => ({
+  ensureSessionTmpDir: vi.fn(async (id: string) => `/tmp/clawed-abode/${id}`),
+}));
 const mockScopeConfig = vi.hoisted(() =>
   vi.fn(async () => null as null | { launcherPath: string; claudeBin: string })
 );
@@ -225,6 +228,13 @@ describe('buildSdkOptions', () => {
     expect(options.env).not.toHaveProperty('CLAUDE_CODE_OAUTH_TOKEN');
     expect(options.model).toBe('openai/gpt-6-astra');
     expect(options.extraArgs).not.toHaveProperty('settings');
+  });
+
+  it("points the agent's TMPDIR at the session's own temp dir", async () => {
+    const { options } = await build(
+      settings({ envVars: [{ name: 'TMPDIR', value: '/somewhere-shared' }] })
+    );
+    expect(options.env).toMatchObject({ TMPDIR: '/tmp/clawed-abode/sid' });
   });
 
   it('refuses a proxied model when no proxy is configured', async () => {
