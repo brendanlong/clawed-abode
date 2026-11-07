@@ -15,6 +15,10 @@ Read the security warning in the [README](../README.md#security) first: agents r
 sudo useradd -m -s /bin/bash clawedabode
 # Let the user's systemd services run without a login session
 sudo loginctl enable-linger clawedabode
+# Each session's TMPDIR is /tmp/clawed-abode/<sessionId>, removed when the session
+# is archived. Keep systemd-tmpfiles' age-based /tmp cleanup from deleting an idle
+# session's dir out from under it, while still aging out old files inside it.
+printf 'X /tmp/clawed-abode\nX /tmp/clawed-abode/*\n' | sudo tee /etc/tmpfiles.d/clawed-abode.conf
 sudo -u clawedabode -i
 ```
 

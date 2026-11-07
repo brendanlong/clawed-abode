@@ -57,7 +57,7 @@ The schema ([`prisma/schema.prisma`](../prisma/schema.prisma)) is the source of 
 - `Session.lastActivityAt` is bumped only on **user interactions** (sending a prompt, answering a question/plan) — never on assistant/background traffic or lifecycle changes — so the session list orders by where the user last acted and doesn't shuffle while other sessions generate.
 - `Session.starred` pins a session above the unstarred ones in the session list (ties ordered as usual, by `lastActivityAt`); archiving clears it and archived sessions can't be starred.
 - `Session.pullRequest` is a copy of the shared `PullRequest` row for `currentBranch`, refreshed after each turn and after git/PR tool calls, and re-polled when `prCheckedAt` ages out, so listing sessions never waits on GitHub (see [`messages-and-sse.md`](messages-and-sse.md)).
-- Deleting a session **archives** it: the workspace is removed, messages are kept and viewable read-only, and it's excluded from the session list by default.
+- Deleting a session **archives** it: the workspace and the session's private `TMPDIR` ([`session-tmpdir.ts`](../src/server/services/session-tmpdir.ts)) are removed, messages are kept and viewable read-only, and it's excluded from the session list by default.
 - "No Repository" sessions use the `__no_repo__` sentinel in `RepoSettings`.
 
 ## Session Lifecycle

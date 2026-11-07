@@ -24,5 +24,14 @@ export default function setup(project: TestProject) {
     stdio: 'inherit',
   });
   project.provide('testDbTemplate', template);
-  return () => rmSync(dir, { recursive: true, force: true });
+
+  // Workers inherit this, so per-session temp dirs that tests create without
+  // archiving the session land here instead of the host's shared /tmp/clawed-abode.
+  const scratchTmp = mkdtempSync(join(tmpdir(), 'clawed-test-tmp-'));
+  process.env.TMPDIR = scratchTmp;
+
+  return () => {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(scratchTmp, { recursive: true, force: true });
+  };
 }

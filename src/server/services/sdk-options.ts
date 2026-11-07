@@ -30,6 +30,7 @@ import {
   getSessionScopeConfig,
   sessionScopeNonce,
 } from './session-cgroup';
+import { ensureSessionTmpDir } from './session-tmpdir';
 import type { MergedSessionSettings } from './settings-merger';
 
 const log = createLogger('sdk-options');
@@ -142,6 +143,7 @@ export async function buildSdkOptions(params: {
     isMcpToolBlocked,
   } = params;
   const agentEnv = await buildAgentEnv(settings.envVars, settings.claudeApiKey);
+  agentEnv.TMPDIR = await ensureSessionTmpDir(sessionId);
   const { builtinTools } = settings;
   if (agentName) agentEnv[AGENT_NAME_ENV] = agentName;
   const proxiedModel = usesLlmProxy(settings.claudeModel) ? settings.claudeModel : null;
