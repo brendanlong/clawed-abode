@@ -33,11 +33,12 @@ describe('ensureSessionTmpDir', () => {
     expect(await ensureSessionTmpDir('s2')).not.toBe(dir);
   });
 
-  it('refuses a shared root that others can write to', async () => {
+  it('makes a shared root we own private again if its mode was loosened', async () => {
     const root = path.dirname(getSessionTmpDir('s1'));
     await mkdir(root);
     await chmod(root, 0o777);
-    await expect(ensureSessionTmpDir('s1')).rejects.toThrow();
+    await ensureSessionTmpDir('s1');
+    expect((await stat(root)).mode & 0o777).toBe(0o700);
   });
 
   it('refuses a shared root that is a symlink', async () => {

@@ -5,7 +5,7 @@
  * that tools create in `$TMPDIR` under the ~108-byte limit.
  */
 
-import { lstat, mkdir, rm } from 'fs/promises';
+import { chmod, lstat, mkdir, rm } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
@@ -20,16 +20,18 @@ export function getSessionTmpDir(sessionId: string): string {
 /**
  * Create the session's temp dir. Runs on every query establishment, since a
  * reboot empties /tmp while the session survives. /tmp is world-writable, so
- * the shared root must be a real directory only we can write to, or another
- * user could pre-create it (or a symlink) and read or plant files in it.
+ * the shared root must be a real directory we own, or another user could
+ * pre-create it (or a symlink) and read or plant files in it. A root we own
+ * with a looser mode (e.g. recreated by a `mkdir -p "$TMPDIR"`) is tightened.
  */
 export async function ensureSessionTmpDir(sessionId: string): Promise<string> {
   const rootPath = sessionTmpRoot();
   await mkdir(rootPath, { recursive: true, mode: 0o700 });
   const root = await lstat(rootPath);
-  if (!root.isDirectory() || root.uid !== process.getuid?.() || (root.mode & 0o077) !== 0) {
-    throw new Error(`${rootPath} must be a directory owned by this user with mode 0700`);
+  if (!root.isDirectory() || root.uid !== process.getuid?.()) {
+    throw new Error(`${rootPath} must be a directory owned by this user`);
   }
+  if ((root.mode & 0o077) !== 0) await chmod(rootPath, 0o700);
   const dir = getSessionTmpDir(sessionId);
   await mkdir(dir, { recursive: true, mode: 0o700 });
   return dir;
