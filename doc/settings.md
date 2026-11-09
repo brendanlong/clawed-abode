@@ -14,7 +14,7 @@ Env vars and MCP servers are **scope-generic**: one table each, `repoSettingsId`
 
 ## Permission Mode
 
-Global-only, because a security setting that only held in some repos wouldn't be one: `auto` (default) or `bypassPermissions` ([`src/lib/permission-mode.ts`](../src/lib/permission-mode.ts)). In auto mode Claude Code's classifier approves or blocks each tool call; a block goes back to Claude with the reason, and a call it can't decide becomes a [permission request](claude-sessions.md#permission-requests). The classifier has no dry-run or shadow mode, so there is no way to see what it would have done under bypass. Applied live (`query.setPermissionMode`) to every running session as soon as it's saved; `allowDangerouslySkipPermissions` is always set so a session can switch into bypass.
+Global-only, because a security setting that only held in some repos wouldn't be one: `auto` (default) or `bypassPermissions` ([`src/lib/permission-mode.ts`](../src/lib/permission-mode.ts)). In auto mode Claude Code's classifier approves or blocks each tool call; a block goes back to Claude with the reason, and a call it can't decide becomes a [permission request](claude-sessions.md#permission-requests). Applied live (`query.setPermissionMode`) to every running session as soon as it's saved; `allowDangerouslySkipPermissions` is always set so a session can switch into bypass.
 
 ## Advisor Model
 

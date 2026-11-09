@@ -229,8 +229,8 @@ export async function notifyUser(sessionId: string, summary: string): Promise<{ 
 }
 
 /**
- * Detach a session's dead (or closing) query: reject its parked interactive tool
- * call and stop its systemd scope, reaping anything the CLI left running. Call
+ * Detach a session's dead (or closing) query: reject its parked tool calls and
+ * stop its systemd scope, reaping anything the CLI left running. Call
  * after dispatching `torn_down`. Resolves once the scope's processes are dead.
  */
 function releaseQuery(sessionId: string, state: SessionState, reason: string): Promise<void> {
@@ -588,7 +588,7 @@ async function applyLiveSettingsNow(sessionId: string, state: SessionState): Pro
     });
     settings = await loadMergedSessionSettings(sessionId, live.settingsKey, session);
   } catch (err) {
-    log.debug('applyLiveSettings: failed to load settings', {
+    log.warn('applyLiveSettings: failed to load settings', {
       sessionId,
       error: toError(err).message,
     });
@@ -1045,21 +1045,27 @@ export function isClaudeRunning(sessionId: string): boolean {
 }
 
 /**
- * Apply live settings (model / MCP servers) to a session's running query now, if
- * one exists. A no-op without a live query — the next establish picks them up.
+ * Apply live settings to a session's query now, waiting out an establishment
+ * that may have loaded its settings before the change. A no-op without a query —
+ * the next establish picks them up.
  */
 export async function refreshSessionSettings(sessionId: string): Promise<void> {
   const state = sessions.get(sessionId);
-  if (state) await applyLiveSettings(sessionId, state);
+  if (!state) return;
+  if (state.establishing) await state.establishing.catch(() => null);
+  await applyLiveSettings(sessionId, state);
 }
 
 /**
- * Apply live settings to every session with a running query, for a change that
- * shouldn't wait for each session's next send (a tightened MCP tool filter).
+ * Apply live settings to every session with a query, for a change that shouldn't
+ * wait for each session's next send (a tightened MCP tool filter, the permission
+ * mode).
  */
 export async function refreshAllSessionSettings(): Promise<void> {
   await Promise.all(
-    [...sessions].filter(([, state]) => state.live).map(([id]) => refreshSessionSettings(id))
+    [...sessions]
+      .filter(([, state]) => state.live || state.establishing)
+      .map(([id]) => refreshSessionSettings(id))
   );
 }
 

@@ -1471,6 +1471,30 @@ describe('claude-runner persistent streaming loop', () => {
       vi.mocked(getSessionWorkingDir).mockReturnValue('/tmp/spike-runner-test');
     });
 
+    it('applies a permission mode change saved while the query is still being established', async () => {
+      const fake = makeFakeQuery();
+      _setQueryFactory(fake.factory);
+      const sessionId = await createRunningSession();
+      let releaseLoad!: () => void;
+      const loaded = new Promise<void>((resolve) => (releaseLoad = resolve));
+      let loading = false;
+      mockLoadSettings.mockImplementationOnce(async () => {
+        loading = true;
+        await loaded;
+        return baseSettings;
+      });
+
+      const revived = reviveSession(sessionId);
+      await waitFor(() => loading);
+      mockLoadSettings.mockResolvedValue({ ...baseSettings, permissionMode: 'bypassPermissions' });
+      const refreshed = refreshAllSessionSettings();
+      releaseLoad();
+      await Promise.all([revived, refreshed]);
+
+      expect(fake.setPermissionMode).toHaveBeenCalledWith('bypassPermissions');
+      stopSession(sessionId);
+    });
+
     it('starts every running session without sending a prompt, leaving stopped ones alone', async () => {
       const fake = makeFakeQuery();
       const factory = vi.fn(fake.factory);
