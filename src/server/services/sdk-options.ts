@@ -9,6 +9,7 @@ import { AGENT_NAME_ENV } from '@/lib/agent-name';
 import { env } from '@/lib/env';
 import { CLAUDE_CREDENTIAL_ENV_VARS, llmProxyEnv, usesLlmProxy } from '@/lib/llm-proxy';
 import { createLogger } from '@/lib/logger';
+import type { PermissionRequest } from '@/lib/permission-request';
 import { prToolEffect } from '@/lib/pull-request';
 import type { SanitizationInfo } from '@/lib/sanitization';
 import {
@@ -35,13 +36,16 @@ import type { MergedSessionSettings } from './settings-merger';
 
 const log = createLogger('sdk-options');
 
-/** An interactive tool request (AskUserQuestion / ExitPlanMode) awaiting the user. */
-export interface UserInputRequest {
-  toolName: string;
-  /** The tool_use block id, used to match an incoming answer to this request. */
-  toolUseId: string;
-  input: Record<string, unknown>;
-}
+/**
+ * A tool call parked in `canUseTool` until the user answers it, matched to the
+ * answer by its tool_use id: an interactive tool (AskUserQuestion /
+ * ExitPlanMode), or any other call the permission mode asks about.
+ */
+export type UserInputRequest =
+  | { kind: 'interactive'; toolName: string; toolUseId: string; input: Record<string, unknown> }
+  | ({ kind: 'permission' } & PermissionRequest);
+
+const INTERACTIVE_TOOLS = new Set(['AskUserQuestion', 'ExitPlanMode']);
 
 export interface SdkOptionsResult {
   options: Options;
@@ -124,8 +128,11 @@ export async function buildSdkOptions(params: {
   settings: MergedSessionSettings;
   /** Claude Code conversation to resume, or null to start one under `sessionId`. */
   resumeId: string | null;
-  /** Answers an interactive tool call; the turn stays parked until it settles. */
-  waitForUserInput: (request: UserInputRequest) => Promise<PermissionResult>;
+  /**
+   * Parks a tool call until the user answers it; the turn stays parked until it
+   * settles. `signal` aborts when the CLI gives up on the call (e.g. an interrupt).
+   */
+  waitForUserInput: (request: UserInputRequest, signal: AbortSignal) => Promise<PermissionResult>;
   /** Records sanitizer findings for a tool result, to badge it when persisted. */
   recordSanitization: (toolUseId: string, info: SanitizationInfo) => void;
   /** Whether an MCP tool is outside its server's current allowlist. */
@@ -176,7 +183,8 @@ export async function buildSdkOptions(params: {
 
   const options: Options = {
     env: agentEnv,
-    permissionMode: 'bypassPermissions',
+    permissionMode: settings.permissionMode,
+    // Lets a live settings change switch the mode to bypassPermissions.
     allowDangerouslySkipPermissions: true,
     includePartialMessages: true,
     cwd: workingDir,
@@ -198,18 +206,26 @@ export async function buildSdkOptions(params: {
     tools: { type: 'preset', preset: 'claude_code' },
     // Echo user messages the CLI injected itself, e.g. from other sessions.
     extraArgs: { 'replay-user-messages': null },
-    canUseTool: async (
-      toolName: string,
-      input: Record<string, unknown>,
-      { toolUseID }: { toolUseID: string }
-    ): Promise<PermissionResult> => {
-      if (toolName === 'AskUserQuestion' || toolName === 'ExitPlanMode') {
-        log.info('canUseTool: Waiting for user input', { sessionId, toolName, toolUseID });
-        // No running-state toggle here: the answer UI is DB-derived (a tool_use
-        // with no tool_result), and the turn genuinely remains active while parked.
-        return await waitForUserInput({ toolName, toolUseId: toolUseID, input });
+    // No running-state toggle here: the turn genuinely remains active while parked.
+    canUseTool: async (toolName, input, request): Promise<PermissionResult> => {
+      const { toolUseID: toolUseId, signal } = request;
+      log.info('canUseTool: Waiting for user input', { sessionId, toolName, toolUseId });
+      if (INTERACTIVE_TOOLS.has(toolName)) {
+        return await waitForUserInput({ kind: 'interactive', toolName, toolUseId, input }, signal);
       }
-      return { behavior: 'allow', updatedInput: input };
+      return await waitForUserInput(
+        {
+          kind: 'permission',
+          toolUseId,
+          toolName,
+          input,
+          title: request.title ?? null,
+          description: request.description ?? null,
+          reason: request.decisionReason ?? null,
+          agentId: request.agentID ?? null,
+        },
+        signal
+      );
     },
     hooks: {
       PreToolUse: [{ hooks: [mcpToolFilterHook(isMcpToolBlocked)] }],

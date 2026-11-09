@@ -18,6 +18,7 @@ export function useClaudeState(sessionId: string) {
     trpc.claude.interrupt.useMutation();
   const { mutate: answerMutate } = trpc.claude.answerQuestion.useMutation();
   const { mutate: respondToPlanMutate } = trpc.claude.respondToPlan.useMutation();
+  const { mutateAsync: respondToPermissionAsync } = trpc.claude.respondToPermission.useMutation();
   const { mutate: stopBackgroundTaskMutate } = trpc.claude.stopBackgroundTask.useMutation();
 
   // Returns a promise that rejects if the send fails (e.g. a network blip, or the
@@ -48,6 +49,12 @@ export function useClaudeState(sessionId: string) {
       respondToPlanMutate({ sessionId, toolUseId, approve, feedback });
     },
     [sessionId, respondToPlanMutate]
+  );
+
+  const respondToPermission = useCallback(
+    (toolUseId: string, allow: boolean, feedback?: string) =>
+      respondToPermissionAsync({ sessionId, toolUseId, allow, feedback }),
+    [sessionId, respondToPermissionAsync]
   );
 
   const stopBackgroundTask = useCallback(
@@ -85,6 +92,9 @@ export function useClaudeState(sessionId: string) {
     isInterrupting,
     answerQuestion,
     respondToPlan,
+    // Tool calls the permission mode asked the user about.
+    permissionRequests: live?.permissionRequests ?? [],
+    respondToPermission,
     stopBackgroundTask,
     commands: live?.commands ?? [],
   };

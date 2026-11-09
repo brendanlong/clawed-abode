@@ -2,6 +2,7 @@ import { EventEmitter } from 'events';
 import type { Session } from '@/generated/prisma/client';
 import type { SlashCommand } from '@anthropic-ai/claude-agent-sdk';
 import type { RetryState } from '@/lib/claude-messages';
+import type { PermissionRequest } from '@/lib/permission-request';
 import type { RateLimitHold } from '@/lib/rate-limit';
 import type { TokenUsageStats } from '@/lib/token-estimation';
 import { toSessionView, type SessionView } from '@/lib/session-view';
@@ -26,6 +27,7 @@ import type { ParsedMessage } from './message-store';
  *   have never left the server (see doc/rate-limit-pause.md).
  * - `rate_limit`: this session's rate-limit hold, or null when it may work.
  * - `token_usage`: the session's token/cost stats, after a persisted message moved them.
+ * - `permissions`: tool calls waiting for the user to allow or deny them, the full set.
  */
 export type SessionStreamEvent =
   | { kind: 'message'; message: ParsedMessage }
@@ -38,7 +40,8 @@ export type SessionStreamEvent =
   | { kind: 'pending'; messageIds: string[] }
   | { kind: 'queued'; messageIds: string[] }
   | { kind: 'rate_limit'; hold: RateLimitHold | null }
-  | { kind: 'token_usage'; usage: TokenUsageStats };
+  | { kind: 'token_usage'; usage: TokenUsageStats }
+  | { kind: 'permissions'; requests: PermissionRequest[] };
 
 /**
  * Events fanned out to the global session-list channel (`sse.onSessionListEvents`),
@@ -116,6 +119,10 @@ class SSEEventEmitter {
     // `active` mirrors the busy axis (tasks with a knowable end state only) — the
     // client refetches on any event rather than reading it, but keep it truthful.
     this.emitList({ kind: 'background', sessionId, active: tasks.some(taskHasEndState) });
+  }
+
+  emitPermissionRequests(sessionId: string, requests: PermissionRequest[]): void {
+    this.emitSession(sessionId, { kind: 'permissions', requests });
   }
 
   emitPendingMessages(sessionId: string, messageIds: string[]): void {

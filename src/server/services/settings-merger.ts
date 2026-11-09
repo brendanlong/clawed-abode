@@ -16,6 +16,7 @@ import { loadGlobalSettings } from './global-settings';
 import { applyMcpOAuthHeaders } from './mcp-oauth';
 import { getSessionPublicDir } from './public-dir';
 import { resolveBuiltinTools, type BuiltinToolsLevel } from '@/lib/builtin-tools';
+import { permissionModeSchema, type AppPermissionMode } from '@/lib/permission-mode';
 import type { Session } from '@/generated/prisma/client';
 
 /** Per-repo settings with secrets decrypted, ready to merge. */
@@ -36,6 +37,7 @@ export interface ResolvedGlobalSettings {
   claudeApiKey: string | null;
   settingSources: SettingSourceFlags;
   builtinToolsEnabled: boolean;
+  permissionMode: AppPermissionMode;
   envVars: ResolvedEnvVar[];
   mcpServers: ResolvedMcpServer[];
 }
@@ -71,6 +73,7 @@ export async function loadResolvedGlobalSettings(): Promise<ResolvedGlobalSettin
     claudeApiKey: settings.claudeApiKey ? decrypt(settings.claudeApiKey) : null,
     settingSources: settingSourceFlagsFromRow(settings),
     builtinToolsEnabled: settings.builtinToolsEnabled,
+    permissionMode: permissionModeSchema.parse(settings.permissionMode),
     envVars: decryptEnvVars(envVarRows),
     mcpServers: decryptMcpServers(mcpServerRows),
   };
@@ -101,6 +104,7 @@ export interface MergedSessionSettings {
   settingSources: SettingSource[];
   /** Built-in MCP tools the session gets, or null for none. */
   builtinTools: BuiltinToolsLevel | null;
+  permissionMode: AppPermissionMode;
 }
 
 /** The per-session settings, which take precedence over the repo and global ones. */
@@ -156,6 +160,7 @@ export async function loadMergedSessionSettings(
       builtinToolsEnabled: globalSettings.builtinToolsEnabled,
       sessionToolsEnabled: session.sessionToolsEnabled,
     }),
+    permissionMode: globalSettings.permissionMode,
   };
 }
 

@@ -33,6 +33,7 @@ const mockSseEvents = vi.hoisted(() => ({
   emitCommands: vi.fn(),
   emitSessionUpdate: vi.fn(),
   emitAttention: vi.fn(),
+  emitPermissionRequests: vi.fn(),
 }));
 vi.mock('./events', () => ({ sseEvents: mockSseEvents }));
 
@@ -62,6 +63,7 @@ const baseSettings = {
   claudeApiKey: undefined,
   settingSources: ['project'] as ('user' | 'project' | 'local')[],
   builtinTools: null,
+  permissionMode: 'auto' as const,
 };
 
 // Stub the MCP config file writer so the wiring test doesn't touch the real
@@ -124,6 +126,8 @@ let stopAllSessions: typeof import('./claude-runner').stopAllSessions;
 let _resetShutdown: typeof import('./claude-runner')._resetShutdown;
 let _setQueryFactory: typeof import('./claude-runner')._setQueryFactory;
 let submitLiveToolResponse: typeof import('./claude-runner').submitLiveToolResponse;
+let respondToPermissionRequest: typeof import('./claude-runner').respondToPermissionRequest;
+let getPermissionRequests: typeof import('./claude-runner').getPermissionRequests;
 let refreshSessionSettings: typeof import('./claude-runner').refreshSessionSettings;
 let refreshAllSessionSettings: typeof import('./claude-runner').refreshAllSessionSettings;
 let deliverAppMessage: typeof import('./claude-runner').deliverAppMessage;
@@ -137,6 +141,7 @@ function makeFakeQuery() {
   const out = createPushable<SDKMessage>();
   const inputs: SDKUserMessage[] = [];
   const setModel = vi.fn(async () => {});
+  const setPermissionMode = vi.fn(async (_mode: string) => {});
   const setMcpServers = vi.fn(async () => {});
   // Records how many prompts had reached the CLI when the settings landed.
   const flagSettingsAt: number[] = [];
@@ -161,6 +166,7 @@ function makeFakeQuery() {
       supportedCommands: vi.fn(async () => []),
       stopTask,
       setModel,
+      setPermissionMode,
       setMcpServers,
       applyFlagSettings,
       cancelAsyncMessage,
@@ -194,6 +200,7 @@ function makeFakeQuery() {
     end: () => out.close(),
     inputs,
     setModel,
+    setPermissionMode,
     setMcpServers,
     applyFlagSettings,
     flagSettingsAt,
@@ -378,6 +385,8 @@ describe('claude-runner persistent streaming loop', () => {
     _resetShutdown = mod._resetShutdown;
     _setQueryFactory = mod._setQueryFactory;
     submitLiveToolResponse = mod.submitLiveToolResponse;
+    respondToPermissionRequest = mod.respondToPermissionRequest;
+    getPermissionRequests = mod.getPermissionRequests;
     refreshSessionSettings = mod.refreshSessionSettings;
     refreshAllSessionSettings = mod.refreshAllSessionSettings;
     deliverAppMessage = mod.deliverAppMessage;
@@ -460,6 +469,90 @@ describe('claude-runner persistent streaming loop', () => {
     expect(await attentionOf()).toBeNull();
 
     stopSession(sessionId);
+  });
+
+  describe('permission requests', () => {
+    async function parkingSession() {
+      const fake = makeFakeQuery();
+      let canUseTool: CanUseTool | undefined;
+      _setQueryFactory((p) => {
+        canUseTool = (p.options as { canUseTool: CanUseTool }).canUseTool;
+        return fake.factory(p);
+      });
+      const sessionId = await createRunningSession();
+      await sendUserMessage(sessionId, 'deploy it');
+      await fake.deliver();
+      const ask = (toolUseID: string, command: string, signal = new AbortController().signal) =>
+        canUseTool!(
+          'Bash',
+          { command },
+          {
+            toolUseID,
+            signal,
+            requestId: `req-${toolUseID}`,
+            title: `Claude wants to run ${command}`,
+          }
+        );
+      return { fake, sessionId, ask };
+    }
+
+    it('parks parallel requests side by side, flags the session, and resolves each with its answer', async () => {
+      const { sessionId, ask } = await parkingSession();
+      const first = ask('t1', 'git push --force');
+      const second = ask('t2', 'rm -rf build');
+
+      expect(getPermissionRequests(sessionId).map((r) => r.toolUseId)).toEqual(['t1', 't2']);
+      expect(mockSseEvents.emitPermissionRequests).toHaveBeenLastCalledWith(
+        sessionId,
+        expect.arrayContaining([expect.objectContaining({ toolUseId: 't2', toolName: 'Bash' })])
+      );
+      await waitFor(async () =>
+        (
+          (await testPrisma.session.findUniqueOrThrow({ where: { id: sessionId } }))
+            .attentionSummary ?? ''
+        ).startsWith('Permission needed')
+      );
+
+      expect(
+        await respondToPermissionRequest(sessionId, 't2', { allow: false, feedback: 'no' })
+      ).toBe(true);
+      expect(await second).toEqual({ behavior: 'deny', message: 'no' });
+      expect(await respondToPermissionRequest(sessionId, 't1', { allow: true })).toBe(true);
+      expect(await first).toEqual({
+        behavior: 'allow',
+        updatedInput: { command: 'git push --force' },
+      });
+
+      expect(getPermissionRequests(sessionId)).toEqual([]);
+      expect(mockSseEvents.emitPermissionRequests).toHaveBeenLastCalledWith(sessionId, []);
+      // Already answered: nothing left to resolve.
+      expect(await respondToPermissionRequest(sessionId, 't1', { allow: true })).toBe(false);
+      stopSession(sessionId);
+    });
+
+    it('drops a request the CLI aborts, and rejects whatever is parked when the query goes', async () => {
+      const { sessionId, ask } = await parkingSession();
+      const controller = new AbortController();
+      const aborted = ask('t1', 'sleep 100', controller.signal);
+      const orphaned = ask('t2', 'make deploy');
+
+      controller.abort();
+      await expect(aborted).rejects.toThrow();
+      expect(getPermissionRequests(sessionId).map((r) => r.toolUseId)).toEqual(['t2']);
+      expect(await respondToPermissionRequest(sessionId, 't1', { allow: true })).toBe(false);
+
+      stopSession(sessionId);
+      await expect(orphaned).rejects.toThrow();
+      expect(getPermissionRequests(sessionId)).toEqual([]);
+    });
+
+    it('applies a permission mode change live', async () => {
+      const { fake, sessionId } = await parkingSession();
+      mockLoadSettings.mockResolvedValue({ ...baseSettings, permissionMode: 'bypassPermissions' });
+      await refreshSessionSettings(sessionId);
+      expect(fake.setPermissionMode).toHaveBeenCalledWith('bypassPermissions');
+      stopSession(sessionId);
+    });
   });
 
   describe('notify_user', () => {

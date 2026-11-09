@@ -56,6 +56,7 @@ const idle: SessionStreamState['live'] = {
   queuedMessageIds: [],
   rateLimitHold: null,
   tokenUsage: buildTokenUsageStats(EMPTY_SESSION_USAGE_TOTALS),
+  permissionRequests: [],
 };
 
 const state: SessionStreamState = { session: toSessionView(sessionRow()), live: idle };
@@ -92,6 +93,15 @@ describe('applySessionStateEvent', () => {
     };
     const command = { name: 'review', description: 'Review', argumentHint: '' };
     const usage = buildTokenUsageStats({ ...EMPTY_SESSION_USAGE_TOTALS, resultCount: 1 });
+    const request = {
+      toolUseId: 't',
+      toolName: 'Bash',
+      input: { command: 'ls' },
+      title: null,
+      description: null,
+      reason: null,
+      agentId: null,
+    };
     const cases: [SessionStateEvent, Partial<SessionLiveState>][] = [
       [{ kind: 'running', running: true }, { running: true }],
       [{ kind: 'commands', commands: [command] }, { commands: [command] }],
@@ -114,6 +124,7 @@ describe('applySessionStateEvent', () => {
       [{ kind: 'queued', messageIds: ['q'] }, { queuedMessageIds: ['q'] }],
       [{ kind: 'rate_limit', hold }, { rateLimitHold: hold }],
       [{ kind: 'token_usage', usage }, { tokenUsage: usage }],
+      [{ kind: 'permissions', requests: [request] }, { permissionRequests: [request] }],
     ];
     for (const [event, patch] of cases) {
       expect(applySessionStateEvent(state, event)).toEqual({

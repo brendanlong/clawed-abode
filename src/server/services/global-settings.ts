@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/prisma';
+import { DEFAULT_PERMISSION_MODE } from '@/lib/permission-mode';
 import { DEFAULT_PAUSE_THRESHOLD } from '@/lib/rate-limit';
 import { DEFAULT_SETTING_SOURCE_FLAGS } from '@/lib/setting-sources';
 import type { GlobalSettings, Prisma } from '@/generated/prisma/client';
@@ -33,6 +34,7 @@ export const GLOBAL_SETTINGS_DEFAULTS: Readonly<GlobalSettingsValues> = Object.f
   rateLimitPauseEnabled: false,
   rateLimitPauseThreshold: DEFAULT_PAUSE_THRESHOLD,
   builtinToolsEnabled: true,
+  permissionMode: DEFAULT_PERMISSION_MODE,
 });
 
 export async function loadGlobalSettings(): Promise<Readonly<GlobalSettingsValues>> {

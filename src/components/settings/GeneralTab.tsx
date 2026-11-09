@@ -12,6 +12,7 @@ import {
 } from './global/PromptCards';
 import { SettingSourcesCard } from './global/SettingSourcesCard';
 import { BuiltinToolsCard } from './global/BuiltinToolsCard';
+import { PermissionModeCard } from './global/PermissionModeCard';
 import { RateLimitPauseCard } from './global/RateLimitPauseCard';
 import { GlobalEnvVarsCard, GlobalMcpServersCard } from './global/ScopedSettingsCards';
 
@@ -50,6 +51,7 @@ export function GeneralTab() {
       <SystemPromptAppendCard currentAppend={settings.systemPromptAppend} onUpdate={refetch} />
       <SettingSourcesCard current={settings.settingSources} onUpdate={refetch} />
       <BuiltinToolsCard builtinToolsEnabled={settings.builtinToolsEnabled} onUpdate={refetch} />
+      <PermissionModeCard permissionMode={settings.permissionMode} onUpdate={refetch} />
       <RateLimitPauseCard />
       <GlobalEnvVarsCard />
       <GlobalMcpServersCard />

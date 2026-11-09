@@ -59,6 +59,7 @@ const settings = (overrides: Partial<MergedSessionSettings> = {}): MergedSession
   claudeApiKey: undefined,
   settingSources: ['project'],
   builtinTools: null,
+  permissionMode: 'auto',
   ...overrides,
 });
 
@@ -121,7 +122,11 @@ describe('buildSdkOptions', () => {
     expect(fresh).toMatchObject({
       sessionId: 'sid',
       cwd: '/w',
+      permissionMode: 'auto',
+    });
+    expect((await build(settings({ permissionMode: 'bypassPermissions' }))).options).toMatchObject({
       permissionMode: 'bypassPermissions',
+      allowDangerouslySkipPermissions: true,
     });
     expect(fresh.resume).toBeUndefined();
     const resumed = (await build(settings(), 'post-clear-id')).options;
@@ -325,22 +330,47 @@ describe('buildSdkOptions', () => {
     expect(options.pathToClaudeCodeExecutable).toBeUndefined();
   });
 
-  it('canUseTool hands interactive tools to waitForUserInput and allows everything else', async () => {
+  it('canUseTool parks interactive tools as questions and every other call as a permission request', async () => {
     const { options } = await build(settings());
     type ToolContext = Parameters<NonNullable<typeof options.canUseTool>>[2];
-    const ctx = (toolUseID: string) =>
-      ({ toolUseID, signal: new AbortController().signal }) as unknown as ToolContext;
-    const allowed = await options.canUseTool!('Bash', { command: 'ls' }, ctx('t1'));
-    expect(allowed).toEqual({ behavior: 'allow', updatedInput: { command: 'ls' } });
-    expect(waitForUserInput).not.toHaveBeenCalled();
+    const signal = new AbortController().signal;
+    const ctx = (toolUseID: string, extra: Partial<ToolContext> = {}) =>
+      ({ toolUseID, signal, requestId: 'r', ...extra }) as ToolContext;
 
-    const answered = await options.canUseTool!('AskUserQuestion', { questions: [] }, ctx('t2'));
-    expect(waitForUserInput).toHaveBeenCalledWith({
-      toolName: 'AskUserQuestion',
-      toolUseId: 't2',
-      input: { questions: [] },
-    });
+    const answered = await options.canUseTool!('AskUserQuestion', { questions: [] }, ctx('t1'));
+    expect(waitForUserInput).toHaveBeenLastCalledWith(
+      {
+        kind: 'interactive',
+        toolName: 'AskUserQuestion',
+        toolUseId: 't1',
+        input: { questions: [] },
+      },
+      signal
+    );
     expect(answered).toEqual({ behavior: 'deny', message: 'no' });
+
+    await options.canUseTool!(
+      'Bash',
+      { command: 'git push --force' },
+      ctx('t2', {
+        title: 'Claude wants to run git push',
+        decisionReason: 'Force push',
+        agentID: 'a1',
+      })
+    );
+    expect(waitForUserInput).toHaveBeenLastCalledWith(
+      {
+        kind: 'permission',
+        toolUseId: 't2',
+        toolName: 'Bash',
+        input: { command: 'git push --force' },
+        title: 'Claude wants to run git push',
+        description: null,
+        reason: 'Force push',
+        agentId: 'a1',
+      },
+      signal
+    );
   });
 
   it('schedules a branch/PR refresh after a tool call that may change them', async () => {

@@ -145,6 +145,7 @@ export function sessionEventCoalesceKey(event: SessionStreamEvent): string | und
     case 'queued':
     case 'rate_limit':
     case 'token_usage':
+    case 'permissions':
       return event.kind;
     default:
       // Compile-time guard: a new event kind must decide whether it coalesces.

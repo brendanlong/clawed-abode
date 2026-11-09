@@ -74,6 +74,7 @@ function snapshotEvent(messages: ParsedMessage[], hasMore: boolean): SessionStre
       queuedMessageIds: [],
       rateLimitHold: null,
       tokenUsage: buildTokenUsageStats(EMPTY_SESSION_USAGE_TOTALS),
+      permissionRequests: [],
     },
     history: { after: -1, messages, hasMore, partials: [] },
   };

@@ -186,6 +186,16 @@ describe('claudeRouter integration', () => {
     });
   });
 
+  describe('respondToPermission', () => {
+    it('reports a request that is no longer pending', async () => {
+      const session = await createTestSession({ name: 'P Session' });
+      const caller = createCaller('auth-session-id');
+      await expect(
+        caller.claude.respondToPermission({ sessionId: session.id, toolUseId: 'gone', allow: true })
+      ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    });
+  });
+
   describe('answerQuestion (fallback path)', () => {
     // With no in-memory query parked, submitLiveToolResponse returns false, so
     // these exercise the resume fallback that runs when the runner is gone
