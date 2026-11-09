@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { ShieldAlert } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Textarea } from '@/components/ui/textarea';
 import {
   permissionInputPreview,
@@ -55,6 +56,16 @@ function PermissionRequestCard({
       <pre className="max-h-40 overflow-auto rounded bg-muted p-2 text-xs whitespace-pre-wrap break-all">
         {permissionInputPreview(request.input)}
       </pre>
+      <Collapsible>
+        <CollapsibleTrigger className="text-xs text-muted-foreground underline">
+          Show full input
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <pre className="mt-1 max-h-80 overflow-auto rounded bg-muted p-2 text-xs whitespace-pre-wrap break-all">
+            {JSON.stringify(request.input, null, 2)}
+          </pre>
+        </CollapsibleContent>
+      </Collapsible>
       <Textarea
         value={feedback}
         onChange={(e) => setFeedback(e.target.value)}

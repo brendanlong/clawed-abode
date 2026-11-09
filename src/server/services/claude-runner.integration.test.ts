@@ -546,6 +546,24 @@ describe('claude-runner persistent streaming loop', () => {
       expect(getPermissionRequests(sessionId)).toEqual([]);
     });
 
+    it('keeps track of a permission mode it applied even when a later live setter fails', async () => {
+      const { fake, sessionId } = await parkingSession();
+      const mcpServers = [{ name: 'x', type: 'http' as const, url: 'http://x' }];
+      fake.setMcpServers.mockRejectedValueOnce(new Error('connect failed'));
+      mockLoadSettings.mockResolvedValue({
+        ...baseSettings,
+        mcpServers,
+        permissionMode: 'bypassPermissions',
+      });
+      await refreshSessionSettings(sessionId);
+      expect(fake.setPermissionMode).toHaveBeenLastCalledWith('bypassPermissions');
+
+      mockLoadSettings.mockResolvedValue({ ...baseSettings, mcpServers, permissionMode: 'auto' });
+      await refreshSessionSettings(sessionId);
+      expect(fake.setPermissionMode).toHaveBeenLastCalledWith('auto');
+      stopSession(sessionId);
+    });
+
     it('applies a permission mode change live', async () => {
       const { fake, sessionId } = await parkingSession();
       mockLoadSettings.mockResolvedValue({ ...baseSettings, permissionMode: 'bypassPermissions' });

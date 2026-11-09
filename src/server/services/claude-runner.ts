@@ -627,6 +627,9 @@ async function applyLiveSettingsNow(sessionId: string, state: SessionState): Pro
   try {
     if (settings.permissionMode !== bound.permissionMode) {
       await live.query.setPermissionMode(settings.permissionMode);
+      // Recorded at once: a later setter failing must not leave the CLI's mode
+      // unrecorded, or switching back would look like a no-op.
+      live.boundSettings = { ...live.boundSettings, permissionMode: settings.permissionMode };
       log.info('Applied live permission mode change', { sessionId, mode: settings.permissionMode });
     }
     if (settings.claudeModel !== bound.claudeModel) {
