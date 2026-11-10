@@ -28,7 +28,7 @@ Read more: [Clawed Abode: Claude Code is Too Cloudy](https://www.brendanlong.com
 
 **Agents run in Claude Code's `bypassPermissions` mode**: they execute code, install packages and change files without asking. Sessions are separated only by convention: they share one user account and can see each other's files. So:
 
-- **Run it on a dedicated machine or a dedicated user account**, not your personal workstation, and never as root.
+- **Run it in a virtual machine**, or on a dedicated machine, never on your personal workstation and never as root. A VM keeps a malicious package or prompt-injected agent off your own account even if it finds a kernel exploit; a separate user account on the same machine doesn't. Run the app as an ordinary user in the VM, with rootless Podman rather than Docker, since the `docker` group is root. If agents need a GPU the VM can't have, give them a separate GPU sandbox (for example a gVisor container they reach over SSH) instead of running on the host.
 - **Use a fine-grained GitHub token** scoped to only the repositories you want agents to reach.
 - **Reach it over [Tailscale](https://tailscale.com/)** or similar; never expose the app's port directly to the internet.
 

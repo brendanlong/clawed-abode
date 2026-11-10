@@ -1,6 +1,6 @@
 # Self-Hosting
 
-Read the security warning in the [README](../README.md#security) first: agents run with every permission, so the machine (or at least the user account) should be dedicated to Clawed Abode.
+Read the security warning in the [README](../README.md#security) first: agents run with every permission, so run it in a virtual machine (or on a dedicated machine) set aside for Clawed Abode.
 
 ## Prerequisites
 
