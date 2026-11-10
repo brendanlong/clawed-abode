@@ -106,8 +106,10 @@ export async function runGptAgent(
         settingSources: ctx.settingSources,
         systemPrompt: { type: 'preset', preset: 'claude_code' },
         tools: { type: 'preset', preset: 'claude_code' },
-        // Nobody can answer it.
-        disallowedTools: ['AskUserQuestion', 'ExitPlanMode'],
+        // Nobody can answer the interactive tools. Without the messaging tools its
+        // findings can only come back as the result, not as messages that look
+        // like they're from an unknown session (#699).
+        disallowedTools: ['AskUserQuestion', 'ExitPlanMode', 'SendMessage', 'ListAgents'],
         persistSession: false,
         abortController,
       },

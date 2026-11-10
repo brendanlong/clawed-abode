@@ -88,6 +88,7 @@ describe('runGptAgent', () => {
       CLAWED_CLAUDE_BIN: '/claude',
     });
     expect(options.env).not.toHaveProperty('CLAUDE_CODE_OAUTH_TOKEN');
+    expect(options.disallowedTools).toEqual(expect.arrayContaining(['SendMessage', 'ListAgents']));
 
     out.push({ type: 'assistant' } as unknown as SDKMessage);
     out.push(result('two bugs'));
