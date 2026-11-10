@@ -16,6 +16,8 @@ Env vars and MCP servers are **scope-generic**: one table each, `repoSettingsId`
 
 Global-only, because a security setting that only held in some repos wouldn't be one: `auto` (default) or `bypassPermissions` ([`src/lib/permission-mode.ts`](../src/lib/permission-mode.ts)). In auto mode Claude Code's classifier approves or blocks each tool call; a block goes back to Claude with the reason, and a call it can't decide becomes a [permission request](claude-sessions.md#permission-requests). Applied live (`query.setPermissionMode`) to every running session as soon as it's saved; `allowDangerouslySkipPermissions` is always set so a session can switch into bypass.
 
+[GPT agent](#gpt-agents) runs take the mode current when they start, with `permissionPrompts: 'none'`: nobody can answer them, so a call the mode would ask about is denied. Behind the proxy the classifier's own requests go through the proxy too, so they run on the mapped GPT model, not Claude (verified: the classifier runs there, and an ask is denied).
+
 ## Advisor Model
 
 Global-only and **opt-in**: null means the advisor tool isn't wired into requests at all; setting a model enables it. `SUGGESTED_ADVISOR_MODEL` ([`src/lib/advisor.ts`](../src/lib/advisor.ts), dependency-free so server and client share it) is what an empty Enable→Save adopts — it is _not_ a resolution fallback; only the Disable button reaches the disabled state. There's no dedicated SDK option, so it's passed as an ad-hoc `--settings` source via `Options.extraArgs` (omitted entirely when disabled).
