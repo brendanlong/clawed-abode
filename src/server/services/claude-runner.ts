@@ -44,7 +44,7 @@ import type { ToolResponse } from '@/lib/tool-response';
 import type { CancelledPrompt } from '@/lib/cancelled-prompt';
 import { extractRepoFullName } from '@/lib/utils';
 import { isDefaultSessionName } from '@/lib/session-name';
-import { interactiveToolAttentionSummary } from '@/lib/session-attention';
+import { PERMISSION_DENIED_MESSAGE, type PermissionRequest } from '@/lib/permission-request';
 import { createLogger, toError } from '@/lib/logger';
 import { attachToolResultSanitizations } from '@/lib/message-sanitization';
 import { partialMessageId } from '@/lib/message-cache';
@@ -80,6 +80,12 @@ import {
 import { resolveAgentName } from './agent-name';
 import { abortGptRuns, hasActiveGptRuns } from './gpt-agent';
 import { requestAttention } from './session-attention';
+import {
+  parkUserInput,
+  permissionRequestsOf,
+  rejectAllUserInput,
+  takeUserInput,
+} from './pending-input';
 import { buildLiveMcpServersRecord, buildSdkOptions } from './sdk-options';
 import { cancelBranchPrRefresh, detectBranchAndPr } from './session-branch-pr';
 import { checkUsageAlerts, type UsagePort } from './usage';
@@ -223,8 +229,8 @@ export async function notifyUser(sessionId: string, summary: string): Promise<{ 
 }
 
 /**
- * Detach a session's dead (or closing) query: reject its parked interactive tool
- * call and stop its systemd scope, reaping anything the CLI left running. Call
+ * Detach a session's dead (or closing) query: reject its parked tool calls and
+ * stop its systemd scope, reaping anything the CLI left running. Call
  * after dispatching `torn_down`. Resolves once the scope's processes are dead.
  */
 function releaseQuery(sessionId: string, state: SessionState, reason: string): Promise<void> {
@@ -232,8 +238,7 @@ function releaseQuery(sessionId: string, state: SessionState, reason: string): P
   if (!live) return Promise.resolve();
   state.live = null;
   abortGptRuns(sessionId);
-  live.pendingInput?.reject(new Error(reason));
-  live.pendingInput = null;
+  rejectAllUserInput(sessionId, live, reason);
   if (!live.sessionScope) return Promise.resolve();
   const stopped = stopSessionScope(live.sessionScope);
   void persistSessionScope(sessionId, null);
@@ -404,20 +409,10 @@ async function establishSessionQuery(
     workingDir,
     settings,
     resumeId,
-    waitForUserInput: (request) =>
-      new Promise<PermissionResult>((resolve, reject) => {
-        if (!live || state.live !== live) {
-          return reject(new Error('Session query is not available'));
-        }
-        live.pendingInput?.reject(new Error('Superseded by another tool request'));
-        live.pendingInput = { ...request, resolve, reject };
-        const summary = interactiveToolAttentionSummary(request.toolName, request.input);
-        if (summary) {
-          requestAttention(sessionId, summary).catch((err) =>
-            log.error('Failed to flag session for attention', toError(err), { sessionId })
-          );
-        }
-      }),
+    waitForUserInput: (request, signal) =>
+      live && state.live === live
+        ? parkUserInput(sessionId, live, request, signal)
+        : Promise.reject(new Error('Session query is not available')),
     recordSanitization: (toolUseId, info) => toolSanitizations.set(toolUseId, info),
     isMcpToolBlocked: (toolId) =>
       isMcpToolBlocked(
@@ -455,7 +450,7 @@ async function establishSessionQuery(
     builtinMcpServer,
     settingsKey,
     claudeSessionId: null,
-    pendingInput: null,
+    pendingInputs: new Map(),
     pendingAttention: null,
     toolSanitizations,
     pushedUuids: new Set(),
@@ -567,8 +562,9 @@ function restartSessionQuery(
 }
 
 /**
- * Apply the settings the SDK supports changing live (model, MCP servers) to a
- * running query, so edits take effect on the next turn without a Stop→Start.
+ * Apply the settings the SDK supports changing live (permission mode, model, MCP
+ * servers) to a running query, so edits take effect on the next turn without a
+ * Stop→Start.
  * Everything else is bound at construction (doc/settings.md), except a model
  * change to or from a proxied model and a change of built-in tools (whose
  * guidance is in the system prompt), which restart an idle query and wait for
@@ -592,7 +588,7 @@ async function applyLiveSettingsNow(sessionId: string, state: SessionState): Pro
     });
     settings = await loadMergedSessionSettings(sessionId, live.settingsKey, session);
   } catch (err) {
-    log.debug('applyLiveSettings: failed to load settings', {
+    log.warn('applyLiveSettings: failed to load settings', {
       sessionId,
       error: toError(err).message,
     });
@@ -629,6 +625,13 @@ async function applyLiveSettingsNow(sessionId: string, state: SessionState): Pro
     if (toolsNeedRestart) settings = { ...settings, builtinTools: bound.builtinTools };
   }
   try {
+    if (settings.permissionMode !== bound.permissionMode) {
+      await live.query.setPermissionMode(settings.permissionMode);
+      // Recorded at once: a later setter failing must not leave the CLI's mode
+      // unrecorded, or switching back would look like a no-op.
+      live.boundSettings = { ...live.boundSettings, permissionMode: settings.permissionMode };
+      log.info('Applied live permission mode change', { sessionId, mode: settings.permissionMode });
+    }
     if (settings.claudeModel !== bound.claudeModel) {
       await live.query.setModel(settings.claudeModel);
       log.info('Applied live model change', { sessionId, model: settings.claudeModel });
@@ -839,10 +842,12 @@ export async function submitLiveToolResponse(
   const deadline = Date.now() + waitMs;
   for (;;) {
     const live = sessions.get(sessionId)?.live;
-    const pending = live?.pendingInput;
+    const pending =
+      live?.pendingInputs.get(toolUseId)?.kind === 'interactive'
+        ? takeUserInput(sessionId, live, toolUseId)
+        : null;
 
-    if (live && pending && pending.toolUseId === toolUseId) {
-      live.pendingInput = null;
+    if (pending) {
       log.info('submitLiveToolResponse: resolving live tool call', {
         sessionId,
         toolName: pending.toolName,
@@ -859,6 +864,42 @@ export async function submitLiveToolResponse(
     }
     await sleep(150);
   }
+}
+
+/**
+ * Answer a parked permission request. Unlike an interactive tool there is no
+ * fallback: once the query is gone, so is the tool call it asked about.
+ *
+ * @returns false if the request is no longer pending.
+ */
+export async function respondToPermissionRequest(
+  sessionId: string,
+  toolUseId: string,
+  decision: { allow: boolean; feedback?: string }
+): Promise<boolean> {
+  const live = sessions.get(sessionId)?.live;
+  const pending =
+    live?.pendingInputs.get(toolUseId)?.kind === 'permission'
+      ? takeUserInput(sessionId, live, toolUseId)
+      : null;
+  if (!pending) return false;
+  log.info('Answered permission request', {
+    sessionId,
+    toolName: pending.toolName,
+    allow: decision.allow,
+  });
+  pending.resolve(
+    decision.allow
+      ? { behavior: 'allow', updatedInput: pending.input }
+      : { behavior: 'deny', message: decision.feedback?.trim() || PERMISSION_DENIED_MESSAGE }
+  );
+  await bumpSessionActivity(sessionId);
+  return true;
+}
+
+/** Permission requests waiting for the user. In-memory only. */
+export function getPermissionRequests(sessionId: string): PermissionRequest[] {
+  return permissionRequestsOf(sessions.get(sessionId)?.live ?? null);
 }
 
 /** Current API-retry status for a session, or null. In-memory only. */
@@ -1007,21 +1048,27 @@ export function isClaudeRunning(sessionId: string): boolean {
 }
 
 /**
- * Apply live settings (model / MCP servers) to a session's running query now, if
- * one exists. A no-op without a live query — the next establish picks them up.
+ * Apply live settings to a session's query now, waiting out an establishment
+ * that may have loaded its settings before the change. A no-op without a query —
+ * the next establish picks them up.
  */
 export async function refreshSessionSettings(sessionId: string): Promise<void> {
   const state = sessions.get(sessionId);
-  if (state) await applyLiveSettings(sessionId, state);
+  if (!state) return;
+  if (state.establishing) await state.establishing.catch(() => null);
+  await applyLiveSettings(sessionId, state);
 }
 
 /**
- * Apply live settings to every session with a running query, for a change that
- * shouldn't wait for each session's next send (a tightened MCP tool filter).
+ * Apply live settings to every session with a query, for a change that shouldn't
+ * wait for each session's next send (a tightened MCP tool filter, the permission
+ * mode).
  */
 export async function refreshAllSessionSettings(): Promise<void> {
   await Promise.all(
-    [...sessions].filter(([, state]) => state.live).map(([id]) => refreshSessionSettings(id))
+    [...sessions]
+      .filter(([, state]) => state.live || state.establishing)
+      .map(([id]) => refreshSessionSettings(id))
   );
 }
 

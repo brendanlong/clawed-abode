@@ -51,7 +51,7 @@ Known limitation: `message_removed` is live-only — it carries no sequence, so 
 
 ## Interactive Tools (AskUserQuestion / ExitPlanMode)
 
-`canUseTool` parks a promise keyed by the SDK's `toolUseID`; every other tool auto-approves (`bypassPermissions`). The parked promise dies with the query (stop, delete, restart), but the `tool_use` block lives in the DB forever — so **the server is authoritative and the UI stays dumb**: answer controls show whenever a `tool_use` block has no matching `tool_result`, purely DB-derived, never consulting running-state. Server routing (`submitToolResponse` in [`src/server/routers/claude.ts`](../src/server/routers/claude.ts)):
+`canUseTool` parks a promise keyed by the SDK's `toolUseID` ([`pending-input.ts`](../src/server/services/pending-input.ts)); any number can park at once, since parallel subagents each can, and one the CLI aborts (an interrupt) is dropped. The parked promise dies with the query (stop, delete, restart), but the `tool_use` block lives in the DB forever — so **the server is authoritative and the UI stays dumb**: answer controls show whenever a `tool_use` block has no matching `tool_result`, purely DB-derived, never consulting running-state. Server routing (`submitToolResponse` in [`src/server/routers/claude.ts`](../src/server/routers/claude.ts)):
 
 1. **Live** — resolve the parked promise; the current turn continues (the common path; a short poll covers the answer racing the SDK's `canUseTool` call).
 2. **Fallback** — no live promise: persist a synthetic `tool_result` (pairing it so the controls disappear) and resume the session with a prompt built from the answer (`formatToolResponsePrompt`).
@@ -59,11 +59,13 @@ Known limitation: `message_removed` is live-only — it carries no sequence, so 
 
 An `ExitPlanMode` "request changes" resolves `deny` with the feedback so Claude revises in place.
 
-Known limitation: only one `pendingInput` parks at a time; a second interactive tool call supersedes (rejects) the first.
+### Permission Requests
+
+Every other call that reaches `canUseTool` is one the [permission mode](settings.md#permission-mode) asked about (in auto mode, one the classifier couldn't decide). It parks the same way, but its UI is **live-only**: the parked calls go to clients as the `permissions` stream channel and render as Allow/Deny cards above the composer, not on the transcript's tool block, which can't tell a call waiting for permission from one still running, and may be inside a collapsed subagent. There is no fallback path: once the query is gone, so is the call it asked about. A deny carries the user's optional note to Claude.
 
 ## Needs You
 
-The only notification is the agent asking for the user: the built-in `notify_user` tool ([`settings.md`](settings.md#built-in-tools)), or an AskUserQuestion / ExitPlanMode parking for an answer. Either sets `Session.attentionAt` and a one-line `attentionSummary` ([`session-attention.ts`](../src/server/services/session-attention.ts)), shown in the session list, and emits an `attention` list event that the notifier turns into a desktop notification.
+The only notification is the agent asking for the user: the built-in `notify_user` tool ([`settings.md`](settings.md#built-in-tools)), or a tool call parking for an answer or for permission. Either sets `Session.attentionAt` and a one-line `attentionSummary` ([`session-attention.ts`](../src/server/services/session-attention.ts)), shown in the session list, and emits an `attention` list event that the notifier turns into a desktop notification.
 
 **Why the agent says so, rather than the server inferring it from turn state:** a turn ending idle is ambiguous. The agent may be done, or waiting on a Monitor, a backgrounded command, or another session's reply, none of which the busy axes can see (see [Two-Axis Status](#two-axis-status)). Only the agent knows. We have it declare "I have something for you" rather than "I'm still waiting", because it says the former at the moment it writes its report. If it forgets, the user is back to scanning the list. Notifying on every idle turn end was too noisy to be useful.
 

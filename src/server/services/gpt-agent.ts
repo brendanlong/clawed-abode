@@ -21,6 +21,7 @@ import {
   SESSIONS_SLICE,
   SESSIONS_SLICE_ENV,
 } from '@/lib/session-scope';
+import { loadPermissionMode } from './global-settings';
 import { sessionScopeNonce, stopScope } from './session-cgroup';
 
 const log = createLogger('gpt-agent');
@@ -101,8 +102,11 @@ export async function runGptAgent(
         model,
         env: runEnv,
         pathToClaudeCodeExecutable: scope?.launcherPath,
-        permissionMode: 'bypassPermissions',
+        // Read per run so a change applies to the next run. Nobody can answer a
+        // prompt, so whatever the mode would ask about is denied.
+        permissionMode: await loadPermissionMode(),
         allowDangerouslySkipPermissions: true,
+        permissionPrompts: 'none',
         settingSources: ctx.settingSources,
         systemPrompt: { type: 'preset', preset: 'claude_code' },
         tools: { type: 'preset', preset: 'claude_code' },

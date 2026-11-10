@@ -7,6 +7,7 @@ import { Header } from '@/components/Header';
 import { SessionHeader } from '@/components/SessionHeader';
 import { MessageList } from '@/components/MessageList';
 import { PromptInput } from '@/components/PromptInput';
+import { PermissionRequestsPanel } from '@/components/PermissionRequestsPanel';
 import { ClaudeStatusIndicator } from '@/components/ClaudeStatusIndicator';
 import { ConnectionStatusIndicator } from '@/components/ConnectionStatusIndicator';
 import { Button } from '@/components/ui/button';
@@ -88,6 +89,8 @@ function SessionView({ sessionId }: { sessionId: string }) {
     isInterrupting,
     answerQuestion,
     respondToPlan,
+    permissionRequests,
+    respondToPermission,
     stopBackgroundTask,
     commands,
   } = useClaudeState(sessionId);
@@ -264,6 +267,8 @@ function SessionView({ sessionId }: { sessionId: string }) {
           queuedMessageIds={queuedMessageIds}
           isSessionRunning={isClaudeRunning}
         />
+
+        <PermissionRequestsPanel requests={permissionRequests} onRespond={respondToPermission} />
 
         {voiceOverlayOpen && voiceConfig.enabled ? (
           <VoiceControlPanel

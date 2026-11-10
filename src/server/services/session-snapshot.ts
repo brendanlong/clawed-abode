@@ -6,6 +6,7 @@ import type { SessionLiveState, SessionStreamState } from '@/lib/session-stream-
 import {
   getActivePartials,
   getPendingMessageIds,
+  getPermissionRequests,
   getSessionBackgroundTasks,
   getSessionRetry,
   isClaudeRunning,
@@ -46,6 +47,7 @@ async function loadLiveState(sessionId: string): Promise<SessionLiveState> {
     retry: getSessionRetry(sessionId),
     backgroundTasks: getSessionBackgroundTasks(sessionId),
     pendingMessageIds: getPendingMessageIds(sessionId),
+    permissionRequests: getPermissionRequests(sessionId),
     queuedMessageIds: queued,
     // The recompute's snapshot, the same source as the `rate_limit` channel and
     // the session list, so a snapshot can't contradict them.

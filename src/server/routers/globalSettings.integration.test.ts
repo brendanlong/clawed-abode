@@ -52,6 +52,7 @@ describe('globalSettings router', () => {
         voiceAutoSend: true,
         settingSources: { user: false, project: true, local: false },
         builtinToolsEnabled: true,
+        permissionMode: 'auto',
         defaultClaudeModel: 'opus[1m]',
         suggestedAdvisorModel: 'claude-fable-5',
         hasEnvApiKey: true,
@@ -75,6 +76,17 @@ describe('globalSettings router', () => {
       expect(result.systemPromptOverride).toBe('Custom override');
       expect(result.systemPromptOverrideEnabled).toBe(true);
       expect(result.systemPromptAppend).toBe('Custom append');
+    });
+  });
+
+  describe('permissionMode', () => {
+    it('persists a switch to bypassPermissions and rejects unknown modes', async () => {
+      const caller = createCaller();
+      await caller.globalSettings.update({ permissionMode: 'bypassPermissions' });
+      expect((await caller.globalSettings.get()).permissionMode).toBe('bypassPermissions');
+      await expect(
+        caller.globalSettings.update({ permissionMode: 'default' as 'auto' })
+      ).rejects.toThrow();
     });
   });
 

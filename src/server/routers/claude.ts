@@ -6,6 +6,7 @@ import {
   interruptClaude,
   isClaudeRunning,
   submitLiveToolResponse,
+  respondToPermissionRequest,
   stopBackgroundTask,
 } from '../services/claude-runner';
 import {
@@ -114,6 +115,28 @@ export const claudeRouter = router({
         feedback: input.feedback,
       });
       return { success: true, routed };
+    }),
+
+  respondToPermission: sessionProcedure
+    .input(
+      z.object({
+        toolUseId: z.string().min(1),
+        allow: z.boolean(),
+        feedback: z.string().max(PROMPT_MAX_LENGTH).optional(),
+      })
+    )
+    .mutation(async ({ input }) => {
+      const answered = await respondToPermissionRequest(input.sessionId, input.toolUseId, {
+        allow: input.allow,
+        feedback: input.feedback,
+      });
+      if (!answered) {
+        throw new TRPCError({
+          code: 'NOT_FOUND',
+          message: 'This permission request is no longer pending.',
+        });
+      }
+      return { success: true };
     }),
 
   interrupt: sessionProcedure.mutation(async ({ input }) => {

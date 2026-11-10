@@ -17,6 +17,8 @@ import { SUGGESTED_ADVISOR_MODEL } from '@/lib/advisor';
 import { settingSourceFlagsFromRow, settingSourceFlagsSchema } from '@/lib/setting-sources';
 import { mcpOAuthRedirectUri } from '@/lib/mcp-oauth-urls';
 import { kokoroVoiceSchema } from '@/lib/kokoro-voices';
+import { permissionModeSchema } from '@/lib/permission-mode';
+import { refreshAllSessionSettings } from '../services/claude-runner';
 
 const log = createLogger('globalSettings');
 
@@ -37,6 +39,8 @@ const globalSettingsUpdateSchema = z
     systemPromptOverrideEnabled: z.boolean(),
     /** Give agents the built-in MCP server; restarts each session's query once idle. */
     builtinToolsEnabled: z.boolean(),
+    /** Applied to every running session at once. */
+    permissionMode: permissionModeSchema,
   })
   .partial();
 
@@ -67,6 +71,7 @@ export const globalSettingsRouter = router({
       voiceAutoSend: settings.voiceAutoSend,
       settingSources: settingSourceFlagsFromRow(settings),
       builtinToolsEnabled: settings.builtinToolsEnabled,
+      permissionMode: permissionModeSchema.parse(settings.permissionMode),
       defaultClaudeModel: env.CLAUDE_MODEL,
       suggestedAdvisorModel: SUGGESTED_ADVISOR_MODEL,
       hasEnvApiKey: !!env.CLAUDE_CODE_OAUTH_TOKEN,
@@ -117,6 +122,8 @@ export const globalSettingsRouter = router({
     await patchGlobalSettings(input);
     // Field names only: the prompt append can be tens of KB.
     log.info('Updated global settings', { fields: Object.keys(input) });
+    // A security setting shouldn't wait for each session's next send.
+    if (input.permissionMode) void refreshAllSessionSettings();
     return { success: true };
   }),
 

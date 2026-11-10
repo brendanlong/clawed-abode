@@ -1,6 +1,7 @@
 import type { SlashCommand } from '@anthropic-ai/claude-agent-sdk';
 import type { Session } from '@/generated/prisma/client';
 import { assertNeverFallback, type RetryState } from './claude-messages';
+import type { PermissionRequest } from './permission-request';
 import type { RateLimitHold } from './rate-limit';
 import type { BackgroundTask } from './session-status';
 import type { SessionView } from './session-view';
@@ -24,6 +25,8 @@ export interface SessionLiveState {
   rateLimitHold: RateLimitHold | null;
   /** Token totals, cost, and context fill. */
   tokenUsage: TokenUsageStats;
+  /** Tool calls waiting for the user to allow or deny them. */
+  permissionRequests: PermissionRequest[];
 }
 
 /** The non-transcript state the per-session stream maintains on the client. */
@@ -73,6 +76,8 @@ export function applySessionStateEvent(
       return live({ rateLimitHold: event.hold });
     case 'token_usage':
       return live({ tokenUsage: event.usage });
+    case 'permissions':
+      return live({ permissionRequests: event.requests });
     default:
       // Compile-time guard: a new stream event kind must be handled here.
       return assertNeverFallback(event, state);

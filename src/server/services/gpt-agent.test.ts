@@ -19,6 +19,10 @@ vi.mock('@/lib/env', async (importOriginal) => ({
 }));
 const mockStopScope = vi.hoisted(() => vi.fn(async (_unit: string) => {}));
 vi.mock('./session-cgroup', () => ({ sessionScopeNonce: () => 'n1', stopScope: mockStopScope }));
+const mockLoadPermissionMode = vi.hoisted(() =>
+  vi.fn(async (): Promise<'auto' | 'bypassPermissions'> => 'auto')
+);
+vi.mock('./global-settings', () => ({ loadPermissionMode: mockLoadPermissionMode }));
 
 const ctx: GptAgentContext = {
   sessionId: 'sid',
@@ -89,12 +93,27 @@ describe('runGptAgent', () => {
     });
     expect(options.env).not.toHaveProperty('CLAUDE_CODE_OAUTH_TOKEN');
     expect(options.disallowedTools).toEqual(expect.arrayContaining(['SendMessage', 'ListAgents']));
+    // The global mode, with anything it would ask about denied.
+    expect(options).toMatchObject({ permissionMode: 'auto', permissionPrompts: 'none' });
 
     out.push({ type: 'assistant' } as unknown as SDKMessage);
     out.push(result('two bugs'));
     expect(await run).toEqual({ text: 'two bugs', isError: false });
     expect(hasActiveGptRuns('sid')).toBe(false);
     expect(mockStopScope).toHaveBeenCalledWith('clawed-session-sid-abc-child-n1.scope');
+  });
+
+  it('follows the permission mode current when the run starts', async () => {
+    mockLoadPermissionMode.mockResolvedValueOnce('bypassPermissions');
+    const { out, started } = fakeRun();
+    const run = runGptAgent(ctx, 'luna', 'go');
+    await vi.waitFor(() => expect(started).toHaveLength(1));
+    expect(started[0].options).toMatchObject({
+      permissionMode: 'bypassPermissions',
+      allowDangerouslySkipPermissions: true,
+    });
+    out.push(result('ok'));
+    await run;
   });
 
   it('runs unscoped when the session is', async () => {

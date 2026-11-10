@@ -370,6 +370,7 @@ model GlobalSettings {
   rateLimitPauseEnabled       Boolean  @default(false) // Default for whether sessions pause when a subscription window fills
   rateLimitPauseThreshold     Int      @default(95) // Default 5-hour-window utilization percent at which sessions pause
   builtinToolsEnabled         Boolean  @default(true) // Give agents the built-in clawed-abode MCP server (rename own session)
+  permissionMode              String   @default("auto") // Claude Code permission mode for every session: "auto" or "bypassPermissions" (src/lib/permission-mode.ts)
   createdAt                   DateTime @default(now())
   updatedAt                   DateTime @updatedAt
 }

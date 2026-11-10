@@ -12,13 +12,13 @@ import type { MergedSessionSettings } from './settings-merger';
 import type { ParsedMessage } from './message-store';
 
 /**
- * A pending interactive tool request: the `canUseTool` callback parks a promise
+ * A tool call waiting for the user: the `canUseTool` callback parks a promise
  * here and the answer mutation resolves it.
  */
-export interface PendingUserInput extends UserInputRequest {
+export type PendingUserInput = UserInputRequest & {
   resolve: (result: PermissionResult) => void;
   reject: (error: Error) => void;
-}
+};
 
 /**
  * Everything bound to one established query: created together when it is
@@ -56,7 +56,8 @@ export interface LiveQuery {
    * query (null until its first init), so only changes are written.
    */
   claudeSessionId: string | null;
-  pendingInput: PendingUserInput | null;
+  /** Tool calls parked for the user, by tool_use id (parallel subagents can each park one). */
+  pendingInputs: Map<string, PendingUserInput>;
   /**
    * A `notify_user` summary held until the main turn ends, so the user is
    * notified once the agent's final message is written, not before it.
