@@ -17,6 +17,7 @@ import {
   type CancelledPrompt,
 } from '@/lib/cancelled-prompt';
 import type { RateLimitHold } from '@/lib/rate-limit';
+import { joinSpeechText } from '@/lib/speech-transcript';
 
 interface ComposerDraft {
   text: string;
@@ -255,7 +256,7 @@ export function PromptInput({
     if (isRecording) {
       const transcript = stopRecording();
       // Append voice transcript to any text typed before recording started
-      const fullPrompt = (prompt + transcript).trim();
+      const fullPrompt = joinSpeechText(prompt, transcript).trim();
       setDraft((current) => ({ ...current, text: fullPrompt }));
 
       if (voiceAutoSend && fullPrompt && !disabled) {
@@ -393,7 +394,7 @@ export function PromptInput({
             <div className="flex-1">
               <Textarea
                 ref={textareaRef}
-                value={isRecording && interimTranscript ? prompt + interimTranscript : prompt}
+                value={isRecording ? joinSpeechText(prompt, interimTranscript) : prompt}
                 onChange={handleChange}
                 onKeyDown={handleKeyDown}
                 placeholder={
