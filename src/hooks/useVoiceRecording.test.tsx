@@ -145,6 +145,27 @@ describe('useVoiceRecording', () => {
     expect(hook.result.current.interimTranscript).toBe('first part trailing second part');
   });
 
+  it('spaces results that arrive without leading whitespace (Android Chrome)', () => {
+    const { hook, recognition } = record();
+
+    act(() =>
+      recognition.emitResults([
+        { transcript: 'first sentence', isFinal: true },
+        { transcript: 'second', isFinal: false },
+      ])
+    );
+    expect(hook.result.current.interimTranscript).toBe('first sentence second');
+
+    act(() => recognition.onend?.());
+    act(() => recognition.emitResults([{ transcript: 'after restart', isFinal: true }]));
+
+    let transcript = '';
+    act(() => {
+      transcript = hook.result.current.stopRecording();
+    });
+    expect(transcript).toBe('first sentence second after restart');
+  });
+
   it('returns the full transcript from stopRecording and resets state', () => {
     const { hook, recognition } = record();
 

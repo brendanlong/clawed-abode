@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useCallback, useEffect } from 'react';
+import { joinSpeechText } from '@/lib/speech-transcript';
 
 // Web Speech API types (not in all TS libs)
 interface SpeechRecognitionEvent extends Event {
@@ -111,15 +112,15 @@ export function useVoiceRecording() {
       for (let i = 0; i < event.results.length; i++) {
         if (event.results[i].isFinal) {
           if (skipZeroConfidenceFinals && event.results[i][0].confidence === 0) continue;
-          sessionFinals += event.results[i][0].transcript;
+          sessionFinals = joinSpeechText(sessionFinals, event.results[i][0].transcript);
         } else {
-          interim += event.results[i][0].transcript;
+          interim = joinSpeechText(interim, event.results[i][0].transcript);
         }
       }
 
       sessionFinalsRef.current = sessionFinals;
       currentInterimRef.current = interim;
-      setInterimTranscript(previousSessionsRef.current + sessionFinals + interim);
+      setInterimTranscript(joinSpeechText(previousSessionsRef.current, sessionFinals, interim));
     };
 
     recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
@@ -142,7 +143,11 @@ export function useVoiceRecording() {
         // Fold the ended session's text (including any interim residual that
         // never finalized) into the cross-session accumulator, then reset the
         // session refs — the new session starts with fresh event.results.
-        previousSessionsRef.current += sessionFinalsRef.current + currentInterimRef.current;
+        previousSessionsRef.current = joinSpeechText(
+          previousSessionsRef.current,
+          sessionFinalsRef.current,
+          currentInterimRef.current
+        );
         sessionFinalsRef.current = '';
         currentInterimRef.current = '';
         try {
@@ -175,8 +180,11 @@ export function useVoiceRecording() {
       recognition.stop();
     }
     setIsRecording(false);
-    const result =
-      previousSessionsRef.current + sessionFinalsRef.current + currentInterimRef.current;
+    const result = joinSpeechText(
+      previousSessionsRef.current,
+      sessionFinalsRef.current,
+      currentInterimRef.current
+    );
     previousSessionsRef.current = '';
     sessionFinalsRef.current = '';
     currentInterimRef.current = '';
