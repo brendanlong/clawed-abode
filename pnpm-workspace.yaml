@@ -33,3 +33,6 @@ overrides:
   # GHSA-46wx-v44x-9hh2, GHSA-4h7h-rv7c-7m2v, GHSA-4m76-xfj5-7975, GHSA-h7mg-cq63-vhpq,
   # GHSA-3gg2-335m-rxc6: until @modelcontextprotocol/sdk wants hono >=4.13.16
   '@modelcontextprotocol/sdk>hono': ^4.13.16
+  # parse5-parser-stream 8.1.0 calls parse5 8.1 APIs but declares ^8.0.0: until
+  # parse5-parser-stream wants parse5 >=8.1.0 (8.1.1 does)
+  'parse5-parser-stream>parse5': ^8.1.0
