@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/prisma';
 import { createLogger, toError } from '@/lib/logger';
 import { processSingleton } from '@/lib/process-singleton';
+import { Semaphore } from '@/lib/semaphore';
 import { extractRepoFullName } from '@/lib/utils';
 import {
   isPrSnapshotStale,
@@ -184,36 +185,24 @@ export async function linkCreatedPullRequests(
  * opening a burst of connections GitHub would answer with a secondary rate limit.
  */
 const refreshesPending = new Set<string>();
-const refreshQueue: string[] = [];
-let refreshesActive = 0;
-const MAX_CONCURRENT_REFRESHES = 4;
-
-function pumpRefreshQueue(): void {
-  while (refreshesActive < MAX_CONCURRENT_REFRESHES && refreshQueue.length > 0) {
-    const sessionId = refreshQueue.shift()!;
-    refreshesActive++;
-    void refreshSessionPr(sessionId)
-      .catch((err) => {
-        log.debug('Failed to refresh PR', { sessionId, error: toError(err).message });
-      })
-      .finally(() => {
-        refreshesActive--;
-        refreshesPending.delete(sessionId);
-        pumpRefreshQueue();
-      });
-  }
-}
+const refreshSlots = new Semaphore(4);
 
 async function refreshSessionPr(sessionId: string): Promise<void> {
-  // Re-read rather than trusting the caller's row: a turn end may have landed
-  // since it was selected, and this runs off the request that queued it.
-  const session = await prisma.session.findUnique({
-    where: { id: sessionId },
-    select: prSnapshotSelect,
-  });
-  if (!session) return;
-
-  await persistPrSnapshot(session, session.currentBranch);
+  const release = await refreshSlots.acquire();
+  try {
+    // Re-read rather than trusting the caller's row: a turn end may have landed
+    // since it was selected, and this runs off the request that queued it.
+    const session = await prisma.session.findUnique({
+      where: { id: sessionId },
+      select: prSnapshotSelect,
+    });
+    if (session) await persistPrSnapshot(session, session.currentBranch);
+  } catch (err) {
+    log.debug('Failed to refresh PR', { sessionId, error: toError(err).message });
+  } finally {
+    release();
+    refreshesPending.delete(sessionId);
+  }
 }
 
 /**
@@ -229,7 +218,6 @@ export function refreshStalePullRequests(sessions: SessionRow[]): void {
     if (refreshesPending.has(session.id)) continue;
 
     refreshesPending.add(session.id);
-    refreshQueue.push(session.id);
+    void refreshSessionPr(session.id);
   }
-  pumpRefreshQueue();
 }
