@@ -14,7 +14,7 @@ import { useSessionListEvent } from '@/lib/session-list-stream-context';
  * patching the cache because a page is one query and the event may reorder it.
  * Start/stop/delete mutations emit on that stream, so no per-mutation refetch is
  * needed. Tab-visibility and network reconnects are handled by React Query
- * (LIVE_QUERY_OPTIONS).
+ * (the refetch options in useSessionList).
  */
 export function SessionListContainer() {
   const [showArchived, setShowArchived] = useState(false);
