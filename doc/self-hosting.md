@@ -25,7 +25,10 @@ printf 'X /tmp/clawed-abode\nX /tmp/clawed-abode/*\n' | sudo tee /etc/tmpfiles.d
 # the app watches only its sessions, so mask that default.
 sudo mkdir -p /etc/systemd/system/user@.service.d
 sudo ln -sf /dev/null /etc/systemd/system/user@.service.d/10-oomd-user-service-defaults.conf
+sudo systemctl daemon-reload
 sudo apt install systemd-oomd
+# Should print ManagedOOMMemoryPressure=auto
+systemctl show user@$(id -u clawedabode).service -p ManagedOOMMemoryPressure
 sudo -u clawedabode -i
 ```
 
