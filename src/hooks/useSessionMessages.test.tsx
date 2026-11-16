@@ -56,6 +56,7 @@ const sessionRow: Session = {
   rateLimitPauseThreshold: null,
   resumeAfterRateLimit: false,
   restartNotice: null,
+  oomRevivedAt: null,
   queuedPromptSequence: 0,
   usageAlertFiveHour: null,
   usageAlertWeekly: null,

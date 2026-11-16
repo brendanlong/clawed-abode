@@ -1520,6 +1520,47 @@ describe('claude-runner persistent streaming loop', () => {
         stopSession(sessionId);
       });
 
+      it('revives only once per user interaction, leaving a session killed again down', async () => {
+        const first = makeFakeQuery();
+        _setQueryFactory(first.factory);
+        const sessionId = await createRunningSession();
+        await sendUserMessage(sessionId, 'build everything');
+        await waitFor(() => first.inputs.length > 0);
+        mockWasKilledByOomd.mockResolvedValue(true);
+        const attentionOf = async () =>
+          (await testPrisma.session.findUniqueOrThrow({ where: { id: sessionId } }))
+            .attentionSummary;
+
+        const revived = makeFakeQuery();
+        _setQueryFactory(revived.factory);
+        first.end();
+        await waitFor(() => revived.inputs.length >= 1);
+
+        // Killed again with no word from the user: stays down.
+        const unused = makeFakeQuery();
+        const unusedFactory = vi.fn(unused.factory);
+        _setQueryFactory(unusedFactory);
+        revived.end();
+        await waitFor(async () => /again/.test((await attentionOf()) ?? ''));
+        await new Promise((r) => setTimeout(r, 100));
+        expect(unusedFactory).not.toHaveBeenCalled();
+        expect(
+          (await testPrisma.session.findUniqueOrThrow({ where: { id: sessionId } })).restartNotice
+        ).toBeNull();
+
+        // The user replies, which earns the agent another automatic revive.
+        const afterReply = makeFakeQuery();
+        _setQueryFactory(afterReply.factory);
+        await sendUserMessage(sessionId, 'try with less parallelism');
+        await waitFor(() => afterReply.inputs.length > 0);
+        const revivedAgain = makeFakeQuery();
+        _setQueryFactory(revivedAgain.factory);
+        afterReply.end();
+        await waitFor(() => revivedAgain.inputs.length >= 1);
+        expect(revivedAgain.inputs[0].message.content).toMatch(/systemd-oomd killed/);
+        stopSession(sessionId);
+      });
+
       it('leaves a session that died for another reason down until the next interaction', async () => {
         const fake = makeFakeQuery();
         _setQueryFactory(fake.factory);
