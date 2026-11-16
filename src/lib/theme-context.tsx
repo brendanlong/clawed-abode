@@ -19,59 +19,38 @@ interface ThemeContextType {
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
-function systemPrefersDark(): boolean {
-  if (typeof window === 'undefined') return false;
-  return window.matchMedia('(prefers-color-scheme: dark)').matches;
-}
-
-function applyTheme(theme: Theme) {
-  if (typeof document === 'undefined') return;
-  document.documentElement.classList.toggle(DARK_CLASS, theme === 'dark');
-}
+const DARK_QUERY = '(prefers-color-scheme: dark)';
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [themePreference, setThemePreferenceState] = useState<ThemePreference>('auto');
-  const [theme, setTheme] = useState<Theme>('light');
-  const [isInitialized, setIsInitialized] = useState(false);
+  // null until read on mount: the server can't know it, and the first client
+  // render must match the server's.
+  const [systemDark, setSystemDark] = useState<boolean | null>(null);
+  const theme = resolveTheme(themePreference, systemDark ?? false);
 
-  // Initialize from localStorage
+  // Read the stored preference and follow the system theme.
   useEffect(() => {
-    // Using queueMicrotask to avoid synchronous setState in effect (React 19 lint rule)
+    const mediaQuery = window.matchMedia(DARK_QUERY);
+    // Deferred to avoid a synchronous setState in an effect (React 19 lint rule).
     queueMicrotask(() => {
-      const preference = themePreferenceSchema.parse(localStorage.getItem(THEME_STORAGE_KEY));
-      setThemePreferenceState(preference);
-
-      const resolvedTheme = resolveTheme(preference, systemPrefersDark());
-      setTheme(resolvedTheme);
-      applyTheme(resolvedTheme);
-      setIsInitialized(true);
+      setThemePreferenceState(themePreferenceSchema.parse(localStorage.getItem(THEME_STORAGE_KEY)));
+      setSystemDark(mediaQuery.matches);
     });
-  }, []);
-
-  // Listen for system theme changes when in auto mode
-  useEffect(() => {
-    if (!isInitialized) return;
-
-    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-    const handleChange = (e: MediaQueryListEvent) => {
-      if (themePreference === 'auto') {
-        const newTheme = e.matches ? 'dark' : 'light';
-        setTheme(newTheme);
-        applyTheme(newTheme);
-      }
-    };
-
+    const handleChange = (e: MediaQueryListEvent) => setSystemDark(e.matches);
     mediaQuery.addEventListener('change', handleChange);
     return () => mediaQuery.removeEventListener('change', handleChange);
-  }, [themePreference, isInitialized]);
+  }, []);
+
+  // THEME_INIT_SCRIPT set the class for first paint; take over once the stored
+  // preference has been read, so the placeholder state never un-darkens the page.
+  useEffect(() => {
+    if (systemDark === null) return;
+    document.documentElement.classList.toggle(DARK_CLASS, theme === 'dark');
+  }, [theme, systemDark]);
 
   const setThemePreference = useCallback((preference: ThemePreference) => {
     setThemePreferenceState(preference);
     localStorage.setItem(THEME_STORAGE_KEY, preference);
-
-    const resolvedTheme = resolveTheme(preference, systemPrefersDark());
-    setTheme(resolvedTheme);
-    applyTheme(resolvedTheme);
   }, []);
 
   return (
