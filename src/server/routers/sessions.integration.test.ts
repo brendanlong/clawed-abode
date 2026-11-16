@@ -42,7 +42,7 @@ vi.mock('../services/claude-runner', () => ({
   deliverAppMessage: vi.fn(),
 }));
 vi.mock('../services/rate-limit-pause', () => ({
-  isSessionRateLimitPaused: vi.fn().mockReturnValue(false),
+  currentHold: vi.fn().mockReturnValue(null),
   recomputeRateLimitHolds: vi.fn().mockResolvedValue(undefined),
 }));
 

@@ -98,11 +98,6 @@ export function currentHold(sessionId: string): RateLimitHold | null {
   return currentHolds.get(sessionId) ?? null;
 }
 
-/** Whether a session is currently paused for a rate limit (see {@link currentHold}). */
-export function isSessionRateLimitPaused(sessionId: string): boolean {
-  return currentHolds.has(sessionId);
-}
-
 /**
  * Re-evaluate every session's rate-limit hold and act on it: pause the newly held
  * and drain the newly released. Idempotent — it computes the desired state and
@@ -353,11 +348,7 @@ export async function withdrawQueuedWork(sessionId: string): Promise<CancelledPr
  * Wire up the rate-limit pause and restore its state, then kick a first recompute.
  *
  * Restoring the readings is awaited so nothing can release queued work before we
- * know whether the window is still exhausted. The recompute is deliberately NOT
- * awaited: if the window reset while the server was down it drains, which means
- * establishing queries — and a slow one must not stall startup. That drain is the
- * one place a session revives without a user interaction (doc/DESIGN.md's lazy
- * revival); the user's queued prompt is exactly the interaction, just an earlier one.
+ * know whether the window is still exhausted.
  */
 export async function initRateLimitPause(pauseRunner: PauseRunner): Promise<void> {
   runnerRef.runner = pauseRunner;

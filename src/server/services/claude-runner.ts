@@ -1,5 +1,5 @@
 /**
- * Orchestrates one long-lived streaming Claude SDK `query()` per session: lazy
+ * Orchestrates one long-lived streaming Claude SDK `query()` per session:
  * establishment with resume, the output loop that persists messages and derives
  * live status, sends, interrupts and teardown. Design and rationale live in
  * doc/claude-sessions.md; invariants in src/server/services/CLAUDE.md.
@@ -1082,8 +1082,7 @@ export function isSessionBackgroundActive(sessionId: string): boolean {
 }
 
 /**
- * Stop a session's query and clear in-memory state. Removes the session from the
- * active map (no lazy revive until the next explicit interaction). The in-memory
+ * Stop a session's query and clear in-memory state. The in-memory
  * teardown is synchronous; the returned promise resolves once the session's
  * scope (and every process in it) is gone.
  */
