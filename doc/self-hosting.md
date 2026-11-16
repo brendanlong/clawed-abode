@@ -47,7 +47,7 @@ pnpm install
 cp .env.example .env
 ```
 
-Edit `.env` and set `PASSWORD_HASH`, `GITHUB_TOKEN` and `CLAUDE_CODE_OAUTH_TOKEN` as described below. The full variable list is under [Configuration](#configuration).
+Edit `.env` and set `PASSWORD_HASH`, `GITHUB_TOKEN` and `CLAUDE_CODE_OAUTH_TOKEN` as described below. Every variable, with its default, is listed in [`.env.example`](../.env.example).
 
 #### Generate Claude OAuth Token
 
@@ -147,7 +147,7 @@ This pulls the latest code, installs dependencies, rebuilds, and restarts the se
 
 ### Read-aloud with local Kokoro (optional)
 
-Read-aloud needs a Kokoro speech server (see `TTS_BASE_URL` under [Configuration](#configuration)). Hosted OpenRouter works, but its latency varies from about 1 to 10 s per request. A local [Kokoro-FastAPI](https://github.com/remsky/Kokoro-FastAPI) on the CPU synthesizes a sentence in about 0.5 s, roughly 5× faster than playback, so audio starts in under a second. We use the CPU image: the GPU is faster, but it would hold 0.4–1.3 GB of VRAM permanently to save about half a second.
+Read-aloud needs a Kokoro speech server (see `TTS_BASE_URL` in [`.env.example`](../.env.example)). Hosted OpenRouter works, but its latency varies from about 1 to 10 s per request. A local [Kokoro-FastAPI](https://github.com/remsky/Kokoro-FastAPI) on the CPU synthesizes a sentence in about 0.5 s, roughly 5× faster than playback, so audio starts in under a second. We use the CPU image: the GPU is faster, but it would hold 0.4–1.3 GB of VRAM permanently to save about half a second.
 
 [`scripts/kokoro.container`](../scripts/kokoro.container) runs it as a podman Quadlet user service on `127.0.0.1:8880`, started at boot. It relies on the lingering enabled in step 1. The first start pulls the image, about 3 GB.
 
@@ -218,34 +218,6 @@ tailscale funnel 3000
 ```
 
 **Note:** HTTPS is required for clipboard copy and browser notifications.
-
-## Configuration
-
-### Environment Variables
-
-The schema in [`src/lib/env.ts`](../src/lib/env.ts) is authoritative; it is validated once at startup and the server refuses to boot on an invalid value.
-
-| Variable                                 | Description                                                                                                                                        | Default              |
-| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- |
-| `PASSWORD_HASH`                          | Base64-encoded Argon2 hash for auth; logins fail without it                                                                                        | None                 |
-| `DATABASE_URL`                           | SQLite database path                                                                                                                               | `file:./data/dev.db` |
-| `GITHUB_TOKEN`                           | GitHub Fine-grained PAT; without it repo/branch/issue pickers and PR status are unavailable                                                        | None                 |
-| `CLAUDE_CODE_OAUTH_TOKEN`                | Claude Code OAuth token (`claude setup-token`); can instead be set in the Settings UI                                                              | None                 |
-| `CLAUDE_MODEL`                           | Default Claude model (overridable per repo/session in Settings)                                                                                    | `opus[1m]`           |
-| `SESSION_BRANCH_PREFIX`                  | Prefix for session git branches                                                                                                                    | `claude/`            |
-| `ENCRYPTION_KEY`                         | 32+ char key for encrypting secrets; required before any secret env var or MCP header can be saved                                                 | None                 |
-| `APP_URL`                                | Public URL the browser reaches this app on; used for the MCP OAuth redirect URI and the public files sign-in link                                  | Derived from request |
-| `CODE_SERVER_URL`                        | Base URL of a code-server instance; enables the "Open in VS Code" button (see [`scripts/setup-code-server.sh`](../scripts/setup-code-server.sh))   | None                 |
-| `PUBLIC_FILES_PORT` / `PUBLIC_FILES_URL` | Loopback port and browser URL for serving each session's `public/` directory; set both or neither (see `scripts/expose-public-files-tailscale.sh`) | None                 |
-| `TTS_BASE_URL`                           | OpenAI-compatible speech API serving Kokoro as PCM (OpenRouter, Kokoro-FastAPI or optimized-kokoro); enables read-aloud                            | None                 |
-| `TTS_API_KEY`                            | Bearer key for `TTS_BASE_URL`, if it needs one                                                                                                     | None                 |
-| `TTS_MODEL`                              | Model name sent to `TTS_BASE_URL` (`kokoro` for Kokoro-FastAPI)                                                                                    | `hexgrad/kokoro-82m` |
-| `TTS_MAX_CONCURRENCY`                    | Speech requests per message run at once; use `1` for a local CPU server                                                                            | `4`                  |
-| `LLM_PROXY_URL` / `LLM_PROXY_KEY`        | Anthropic-compatible proxy (LiteLLM) and its key, for provider-prefixed models like `openai/gpt-6-astra`                                           | None                 |
-| `SESSIONS_MEMORY_MAX`                    | Memory cap across all agent sessions (systemd syntax: `96G`, `85%`, `infinity`)                                                                    | `85%`                |
-| `SESSIONS_MEMORY_SWAP_MAX`               | Swap the sessions may use, in the same syntax                                                                                                      | `0`                  |
-| `SESSIONS_CPU_QUOTA`                     | CPU cap across all sessions, where `100%` is one core (e.g. `2200%` leaves 2 of 24 free)                                                           | None                 |
-| `LOG_LEVEL`                              | Minimum server log level: `debug`, `info`, `warn`, or `error`                                                                                      | `info`               |
 
 ## Troubleshooting
 
