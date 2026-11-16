@@ -100,7 +100,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
   // there's nothing for the client to bridge here.
   const isWorking = isClaudeRunning || backgroundActive;
 
-  // Working indicator: page title, favicon, and the header logo
+  // Working indicator: page title and favicon
   useWorkingIndicator(session?.name, isWorking);
 
   useClearAttentionWhileViewing(sessionId, session?.attentionAt?.getTime() ?? null);
@@ -155,29 +155,37 @@ function SessionView({ sessionId }: { sessionId: string }) {
     />
   );
 
+  const header = <Header isWorking={isWorking} />;
+
   const connectionStatus = (
     <ConnectionStatusIndicator status={streamStatus} onReconnect={reconnectStream} />
   );
 
   if (!session && !sessionNotFound) {
     return (
-      <div className="flex-1 flex flex-col min-h-0">
-        <div className="flex-1 flex items-center justify-center">
-          <Spinner size="lg" />
+      <>
+        {header}
+        <div className="flex-1 flex flex-col min-h-0">
+          <div className="flex-1 flex items-center justify-center">
+            <Spinner size="lg" />
+          </div>
+          {connectionStatus}
         </div>
-        {connectionStatus}
-      </div>
+      </>
     );
   }
 
   if (!session) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center">
-        <p className="text-muted-foreground">Session not found</p>
-        <Button variant="link" asChild className="mt-4">
-          <Link href="/">Back to sessions</Link>
-        </Button>
-      </div>
+      <>
+        {header}
+        <div className="flex-1 flex flex-col items-center justify-center">
+          <p className="text-muted-foreground">Session not found</p>
+          <Button variant="link" asChild className="mt-4">
+            <Link href="/">Back to sessions</Link>
+          </Button>
+        </div>
+      </>
     );
   }
 
@@ -188,52 +196,56 @@ function SessionView({ sessionId }: { sessionId: string }) {
     session.status === 'archived'
   ) {
     return (
-      <div className="flex-1 flex flex-col min-h-0">
-        <SessionHeader session={session} onArchive={archive} isArchiving={isArchiving} />
-        {actionErrorAlert}
-        {session.status === 'creating' && (
-          <div className="flex-1 flex flex-col items-center justify-center gap-4">
-            <Spinner size="lg" />
-            <p className="text-muted-foreground">
-              {session.statusMessage || 'Setting up session...'}
-            </p>
-          </div>
-        )}
-        {session.status === 'error' && (
-          <div className="flex-1 flex flex-col items-center justify-center gap-4">
-            <div className="text-destructive text-lg">Setup Failed</div>
-            <p className="text-muted-foreground max-w-md text-center">
-              {session.statusMessage || 'An unknown error occurred'}
-            </p>
-            <Button variant="outline" asChild className="mt-4">
-              <Link href="/">Back to sessions</Link>
-            </Button>
-          </div>
-        )}
-        {session.status === 'archived' && (
-          <>
-            <MessageList
-              sessionId={sessionId}
-              messages={messages}
-              isLoading={messagesLoading || isFetchingMore}
-              hasMore={hasMore}
-              loadFailed={loadFailed}
-              onLoadMore={fetchMore}
-              tokenUsage={tokenUsage}
-            />
-            <div className="border-t bg-muted/50 px-4 py-3 text-center text-sm text-muted-foreground">
-              This session has been archived. You can view the message history but cannot send new
-              prompts.
+      <>
+        {header}
+        <div className="flex-1 flex flex-col min-h-0">
+          <SessionHeader session={session} onArchive={archive} isArchiving={isArchiving} />
+          {actionErrorAlert}
+          {session.status === 'creating' && (
+            <div className="flex-1 flex flex-col items-center justify-center gap-4">
+              <Spinner size="lg" />
+              <p className="text-muted-foreground">
+                {session.statusMessage || 'Setting up session...'}
+              </p>
             </div>
-          </>
-        )}
-        {connectionStatus}
-      </div>
+          )}
+          {session.status === 'error' && (
+            <div className="flex-1 flex flex-col items-center justify-center gap-4">
+              <div className="text-destructive text-lg">Setup Failed</div>
+              <p className="text-muted-foreground max-w-md text-center">
+                {session.statusMessage || 'An unknown error occurred'}
+              </p>
+              <Button variant="outline" asChild className="mt-4">
+                <Link href="/">Back to sessions</Link>
+              </Button>
+            </div>
+          )}
+          {session.status === 'archived' && (
+            <>
+              <MessageList
+                sessionId={sessionId}
+                messages={messages}
+                isLoading={messagesLoading || isFetchingMore}
+                hasMore={hasMore}
+                loadFailed={loadFailed}
+                onLoadMore={fetchMore}
+                tokenUsage={tokenUsage}
+              />
+              <div className="border-t bg-muted/50 px-4 py-3 text-center text-sm text-muted-foreground">
+                This session has been archived. You can view the message history but cannot send new
+                prompts.
+              </div>
+            </>
+          )}
+          {connectionStatus}
+        </div>
+      </>
     );
   }
 
   return (
     <VoicePlaybackProvider value={playbackValue}>
+      {header}
       <div className="flex-1 flex flex-col min-h-0">
         <SessionHeader
           session={session}
@@ -318,7 +330,6 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
   return (
     <AuthGuard>
       <div className="h-dvh bg-background flex flex-col overflow-hidden">
-        <Header />
         {/* Keyed so each session gets fresh per-session state (see useSessionStream). */}
         <SessionView key={resolvedParams.id} sessionId={resolvedParams.id} />
       </div>
