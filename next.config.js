@@ -1,8 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  // Empty turbopack config to acknowledge Turbopack is enabled by default
-  turbopack: {},
   // Stop `next dev` from writing its agent-rules block into CLAUDE.md (CLAUDE.md points at the docs instead).
   agentRules: false,
   // Exclude the data directory from production build output tracing.

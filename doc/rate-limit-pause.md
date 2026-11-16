@@ -144,5 +144,9 @@ and one weekly window (`rateLimit.getSessionUsage`): the weekly window scoped to
 session's model if the plan has one, unless the all-models window is exhausted.
 The model is the live query's, else the session's override, else the one its first
 query reported, matched to a window by family name. Proxied sessions show none.
-Without a `user:profile` credential, per-model windows are unknown, so the weekly bar is
-always the all-models window.
+Without a `user:profile` credential, only the per-model windows the event stream
+reports (Opus and Sonnet) are known.
+
+## Usage Tools
+
+The same readings feed the agents' `check_usage` and `set_usage_alerts` tools ([`usage.ts`](../src/server/services/usage.ts), pure logic in [`src/lib/usage.ts`](../src/lib/usage.ts)), so agents can pace work across the windows. **Alerts never wake an idle agent**: one goes out only while the session is working (a session the pause holds counts as idle), otherwise at its next turn and only if the window hasn't reset, so an alert is never delivered stale. Stale readings are refreshed through the SDK's **experimental** `/usage` call, the only source of extra-usage credit and of model windows beyond the events' Opus and Sonnet ones; its utilization is a percentage where the events' is a fraction, and a `claude setup-token` credential lacks the `user:profile` scope it needs, so under that auth the tools rely on the event stream alone.
