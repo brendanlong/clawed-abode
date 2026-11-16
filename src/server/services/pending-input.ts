@@ -32,7 +32,7 @@ function emitIfPermission(sessionId: string, live: LiveQuery, pending: PendingUs
 }
 
 /**
- * Park a tool call until the user answers it ({@link takeUserInput}) or the CLI
+ * Park a tool call until the user answers it ({@link answerUserInput}) or the CLI
  * gives up on it (`signal`), and flag the session for the user.
  */
 export function parkUserInput(
@@ -66,7 +66,7 @@ export function parkUserInput(
 }
 
 /** Remove a parked tool call so the caller can settle it; null if it isn't parked. */
-export function takeUserInput(
+function takeUserInput(
   sessionId: string,
   live: LiveQuery,
   toolUseId: string

@@ -348,7 +348,9 @@ export async function withdrawQueuedWork(sessionId: string): Promise<CancelledPr
  * Wire up the rate-limit pause and restore its state, then kick a first recompute.
  *
  * Restoring the readings is awaited so nothing can release queued work before we
- * know whether the window is still exhausted.
+ * know whether the window is still exhausted. The recompute is deliberately NOT
+ * awaited: if the window reset while the server was down it drains, which means
+ * establishing queries — and a slow one must not stall startup.
  */
 export async function initRateLimitPause(pauseRunner: PauseRunner): Promise<void> {
   runnerRef.runner = pauseRunner;
