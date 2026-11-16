@@ -92,13 +92,6 @@ export function RepoSelector({
   );
   const hiddenCount = total - repos.filter((r) => r.fullName !== NO_REPO_SENTINEL).length;
 
-  const isSelected = (repo: Repo) => {
-    if (repo.fullName === NO_REPO_SENTINEL) {
-      return selectedRepo?.fullName === NO_REPO_SENTINEL;
-    }
-    return selectedRepo?.id === repo.id;
-  };
-
   return (
     <div className="space-y-4">
       <div className="space-y-2">
@@ -154,7 +147,7 @@ export function RepoSelector({
                     />
                   </button>
                   <SelectableRowButton
-                    selected={isSelected(repo)}
+                    selected={selectedRepo?.fullName === repo.fullName}
                     onClick={() => onSelect(repo)}
                     className="flex items-center justify-between gap-2 py-3 pl-12 pr-4"
                   >

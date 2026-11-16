@@ -3,20 +3,18 @@
 import { useEffect, useRef, useState } from 'react';
 import { Input } from '@/components/ui/input';
 import { SESSION_NAME_MAX_LENGTH } from '@/lib/types';
-import { cn } from '@/lib/utils';
 
 interface EditableSessionNameProps {
   name: string;
   /** Omit to show the name read-only (e.g. archived sessions). */
   onRename?: (name: string) => void;
-  className?: string;
 }
 
 /**
  * Displays a session name that can be renamed inline: activate the title to
  * edit, Enter to save, Escape to cancel. Renaming never touches the session id.
  */
-export function EditableSessionName({ name, onRename, className }: EditableSessionNameProps) {
+export function EditableSessionName({ name, onRename }: EditableSessionNameProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [value, setValue] = useState(name);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -50,11 +48,6 @@ export function EditableSessionName({ name, onRename, className }: EditableSessi
     }
   };
 
-  const cancel = () => {
-    setValue(name);
-    setIsEditing(false);
-  };
-
   if (isEditing) {
     return (
       <Input
@@ -70,19 +63,19 @@ export function EditableSessionName({ name, onRename, className }: EditableSessi
           } else if (e.key === 'Escape') {
             e.preventDefault();
             refocusRef.current = true;
-            cancel();
+            setIsEditing(false);
           }
         }}
         maxLength={SESSION_NAME_MAX_LENGTH}
         aria-label="Session name"
-        className={cn('h-auto py-0.5 font-semibold', className)}
+        className="h-auto py-0.5 font-semibold"
       />
     );
   }
 
   if (!onRename) {
     return (
-      <h1 className={cn('font-semibold truncate', className)} title={name}>
+      <h1 className="font-semibold truncate" title={name}>
         {name}
       </h1>
     );
@@ -91,7 +84,7 @@ export function EditableSessionName({ name, onRename, className }: EditableSessi
   // The button lives inside the heading so the page keeps its heading while
   // renaming stays reachable by keyboard.
   return (
-    <h1 className={cn('font-semibold truncate', className)}>
+    <h1 className="font-semibold truncate">
       <button
         ref={buttonRef}
         type="button"

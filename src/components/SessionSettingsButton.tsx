@@ -16,16 +16,7 @@ import { SessionToolsSwitch } from '@/components/SessionToolsSwitch';
 import { Separator } from '@/components/ui/separator';
 import { trpc } from '@/lib/trpc';
 import { fallbackClaudeModel } from '@/lib/claude-model';
-
-interface SessionSettingsButtonProps {
-  sessionId: string;
-  /** The session's current per-session model override, or null when none is set. */
-  claudeModel: string | null;
-  /** Per-session rate-limit pause overrides; null on either field inherits the global default. */
-  rateLimitPauseEnabled: boolean | null;
-  rateLimitPauseThreshold: number | null;
-  sessionToolsEnabled: boolean;
-}
+import type { Session } from '@/generated/prisma/client';
 
 /**
  * Per-session gear button in the session header. Opens a panel of overrides that
@@ -34,12 +25,25 @@ interface SessionSettingsButtonProps {
  * resolvePausePolicy), and the session-management tools.
  */
 export function SessionSettingsButton({
-  sessionId,
-  claudeModel,
-  rateLimitPauseEnabled,
-  rateLimitPauseThreshold,
-  sessionToolsEnabled,
-}: SessionSettingsButtonProps) {
+  session,
+}: {
+  /** `claudeModel` and the rate-limit pause fields are per-session overrides; null inherits. */
+  session: Pick<
+    Session,
+    | 'id'
+    | 'claudeModel'
+    | 'rateLimitPauseEnabled'
+    | 'rateLimitPauseThreshold'
+    | 'sessionToolsEnabled'
+  >;
+}) {
+  const {
+    id: sessionId,
+    claudeModel,
+    rateLimitPauseEnabled,
+    rateLimitPauseThreshold,
+    sessionToolsEnabled,
+  } = session;
   const [open, setOpen] = useState(false);
   const { data: globalSettings } = trpc.globalSettings.get.useQuery();
 

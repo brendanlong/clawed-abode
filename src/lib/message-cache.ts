@@ -39,7 +39,7 @@ import { getParentToolUseId } from './claude-messages';
 export const HISTORY_PAGE_SIZE = 100;
 
 /** Prefix for transient streaming (partial) message ids. */
-export const PARTIAL_MESSAGE_ID_PREFIX = 'partial-';
+const PARTIAL_MESSAGE_ID_PREFIX = 'partial-';
 
 export function isPartialMessageId(id: string): boolean {
   return id.startsWith(PARTIAL_MESSAGE_ID_PREFIX);

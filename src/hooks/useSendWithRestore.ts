@@ -3,7 +3,7 @@
 import { useCallback, useState } from 'react';
 import type { CancelledPrompt } from '@/lib/cancelled-prompt';
 
-export interface SendWithRestoreOptions<D> {
+interface SendWithRestoreOptions<D> {
   /** The draft state when the composer holds nothing. */
   empty: D;
   /** Send the draft. A rejection restores it and surfaces the error. */

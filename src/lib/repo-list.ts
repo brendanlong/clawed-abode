@@ -1,7 +1,7 @@
 import { capMatches, matchesAllTerms, type CappedMatches } from './search';
 
 /** Most GitHub repos the picker renders at once. */
-export const REPO_PICKER_LIMIT = 100;
+const REPO_PICKER_LIMIT = 100;
 
 interface RepoLike {
   fullName: string;

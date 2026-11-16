@@ -40,8 +40,6 @@ export interface ContentBlock {
   text?: string;
   /** For thinking blocks */
   thinking?: string;
-  /** Continuity signature on thinking blocks */
-  signature?: string;
   id?: string;
   name?: string;
   input?: unknown;
@@ -78,12 +76,7 @@ export interface MessageContent {
   // Assistant message wrapper
   message?: AssistantMessage;
   result?: unknown;
-  // System init fields
-  model?: string;
-  claude_code_version?: string;
-  cwd?: string;
   session_id?: string;
-  tools?: string[];
   // Result fields
   total_cost_usd?: number;
   duration_ms?: number;
@@ -94,8 +87,6 @@ export interface MessageContent {
     cache_read_input_tokens?: number;
     cache_creation_input_tokens?: number;
   };
-  // Hook fields
-  hook_id?: string;
   // Interrupt flag - set when this message was interrupted by the user
   interrupted?: boolean;
   // Sanitizer findings attached to a user prompt whose text was filtered.

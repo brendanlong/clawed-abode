@@ -2,15 +2,14 @@
 
 import Link from 'next/link';
 import { useAuth } from '@/lib/auth-context';
-import { useWorkingContext } from '@/lib/working-context';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Logo } from '@/components/Logo';
 import { Settings } from 'lucide-react';
 
-export function Header() {
+/** `isWorking` animates the logo while the viewed session's agent is busy. */
+export function Header({ isWorking = false }: { isWorking?: boolean }) {
   const { isAuthenticated, logout } = useAuth();
-  const { isWorking } = useWorkingContext();
 
   return (
     <header className="bg-background border-b">

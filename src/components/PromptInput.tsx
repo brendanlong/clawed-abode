@@ -1,12 +1,14 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { Paperclip, X, Loader2 } from 'lucide-react';
+import type { SlashCommand } from '@anthropic-ai/claude-agent-sdk';
+import { X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { VoiceMicButton } from '@/components/voice/VoiceMicButton';
 import { RateLimitPauseBanner } from '@/components/RateLimitPauseBanner';
 import { AttachmentChip } from '@/components/AttachmentChip';
+import { AttachFilesButton } from '@/components/AttachFilesButton';
 import { useVoiceRecording } from '@/hooks/useVoiceRecording';
 import { useFileUpload } from '@/hooks/useFileUpload';
 import { useSendWithRestore } from '@/hooks/useSendWithRestore';
@@ -42,12 +44,6 @@ function restoreCancelledDraft(
     text: mergeCancelledText(current.text, cancelled),
     attachments: mergeCancelledAttachments(current.attachments, cancelled),
   };
-}
-
-export interface SlashCommand {
-  name: string;
-  description: string;
-  argumentHint: string;
 }
 
 interface PromptInputProps {
@@ -120,7 +116,6 @@ export function PromptInput({
   const [dismissedForPrompt, setDismissedForPrompt] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const commandsRef = useRef<HTMLDivElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const { upload, uploading, error: uploadError, clearError } = useFileUpload(sessionId);
 
   const {
@@ -164,11 +159,8 @@ export function PromptInput({
 
   const insertCommand = useCallback(
     (command: SlashCommand) => {
-      const newPrompt = `/${command.name} `;
-      setDraft((current) => ({ ...current, text: newPrompt }));
-      // Dismiss for the new prompt value (since it will have a space, filteredCommands
-      // won't match anyway, but this is defense-in-depth)
-      setDismissedForPrompt(newPrompt);
+      // The trailing space ends the command name, which closes the menu.
+      setDraft((current) => ({ ...current, text: `/${command.name} ` }));
       setSelectedIndex(0);
       textareaRef.current?.focus();
     },
@@ -188,9 +180,7 @@ export function PromptInput({
   };
 
   const handleFilesSelected = useCallback(
-    async (fileList: FileList | null) => {
-      if (!fileList || fileList.length === 0) return;
-      const files = Array.from(fileList);
+    async (files: File[]) => {
       const uploaded = await upload(files);
       setDraft((current) => ({
         ...current,
@@ -324,18 +314,6 @@ export function PromptInput({
             </div>
           )}
 
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            className="hidden"
-            onChange={(e) => {
-              void handleFilesSelected(e.currentTarget.files);
-              // Reset so selecting the same file again re-triggers onChange.
-              e.currentTarget.value = '';
-            }}
-          />
-
           {(attachments.length > 0 || uploadError || sendError) && (
             <div className="mb-2 flex flex-wrap items-center gap-2">
               {attachments.map((att) => (
@@ -375,21 +353,13 @@ export function PromptInput({
           )}
 
           <div className="flex items-end gap-2">
-            <Button
-              type="button"
+            <AttachFilesButton
               variant="ghost"
               size="icon"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={disabled || uploading}
-              title="Attach files"
-              aria-label="Attach files"
-            >
-              {uploading ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Paperclip className="h-4 w-4" />
-              )}
-            </Button>
+              onSelect={(files) => void handleFilesSelected(files)}
+              uploading={uploading}
+              disabled={disabled}
+            />
 
             <div className="flex-1">
               <Textarea

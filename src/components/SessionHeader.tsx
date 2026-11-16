@@ -10,27 +10,12 @@ import { VoiceAutoReadToggle } from '@/components/voice/VoiceAutoReadToggle';
 import { OpenInEditorButton } from '@/components/OpenInEditorButton';
 import { SessionSettingsButton } from '@/components/SessionSettingsButton';
 import { PrStatusIndicator } from '@/components/PrStatusIndicator';
-import type { PullRequestInfo } from '@/lib/pull-request';
+import type { Session } from '@/generated/prisma/client';
+import type { SessionView } from '@/lib/session-view';
 import { extractRepoFullName } from '@/lib/utils';
 
 interface SessionHeaderProps {
-  session: {
-    id: string;
-    name: string;
-    repoUrl: string | null;
-    branch: string | null;
-    status: string;
-    canStart: boolean;
-    canStop: boolean;
-    canArchive: boolean;
-    statusMessage?: string | null;
-    claudeModel?: string | null;
-    rateLimitPauseEnabled?: boolean | null;
-    rateLimitPauseThreshold?: number | null;
-    sessionToolsEnabled: boolean;
-    pullRequest?: PullRequestInfo | null;
-    agentName?: string | null;
-  };
+  session: SessionView<Session>;
   onStart?: () => void;
   onStop?: () => void;
   onArchive?: () => void;
@@ -92,15 +77,7 @@ export function SessionHeader({
 
         <div className="flex flex-col items-end gap-1 shrink-0">
           <div className="flex items-center gap-1">
-            {session.status !== 'archived' && (
-              <SessionSettingsButton
-                sessionId={session.id}
-                claudeModel={session.claudeModel ?? null}
-                rateLimitPauseEnabled={session.rateLimitPauseEnabled ?? null}
-                rateLimitPauseThreshold={session.rateLimitPauseThreshold ?? null}
-                sessionToolsEnabled={session.sessionToolsEnabled}
-              />
-            )}
+            {session.status !== 'archived' && <SessionSettingsButton session={session} />}
             <OpenInEditorButton sessionId={session.id} />
             {voiceEnabled && onToggleVoiceMode && (
               <Button

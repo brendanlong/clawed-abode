@@ -33,9 +33,10 @@ export function useClaudeState(sessionId: string) {
 
   // Stop the current turn. Resolves with any prompts the server pulled back
   // because the agent hadn't read them yet, so the caller can restore them.
-  const interrupt = useCallback(() => {
-    return interruptAsync({ sessionId });
-  }, [sessionId, interruptAsync]);
+  const interrupt = useCallback(
+    () => interruptAsync({ sessionId }).then((result) => result.cancelled),
+    [sessionId, interruptAsync]
+  );
 
   const answerQuestion = useCallback(
     (toolUseId: string, answers: Record<string, string>) => {

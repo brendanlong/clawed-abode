@@ -3,7 +3,6 @@
 import { useCallback } from 'react';
 import { keepPreviousData } from '@tanstack/react-query';
 import { trpc } from '@/lib/trpc';
-import { LIVE_QUERY_OPTIONS } from '@/lib/live-query';
 import type { inferRouterOutputs } from '@trpc/server';
 import type { AppRouter } from '@/server/routers';
 
@@ -21,7 +20,7 @@ export interface PagedSessions {
   fetchMore: () => void;
 }
 
-export interface UseSessionListOptions {
+interface UseSessionListOptions {
   /** Omit for the active (non-archived) list. */
   status?: 'archived';
   search?: string;
@@ -45,7 +44,14 @@ export function useSessionList({
       enabled,
       // Keep showing the previous results while a new search loads, instead of a spinner.
       placeholderData: keepPreviousData,
-      ...LIVE_QUERY_OPTIONS,
+      // The session-list SSE stream only signals refetches and is never replayed,
+      // and nothing maintains this cache while the list is unmounted, so every
+      // entry point refetches unconditionally (client-side navigation fires no
+      // visibilitychange; stream errors are handled by SessionListContainer).
+      // No staleTime: with all three on 'always' it would have no effect.
+      refetchOnMount: 'always',
+      refetchOnWindowFocus: 'always',
+      refetchOnReconnect: 'always',
     }
   );
   const { fetchNextPage, refetch } = query;

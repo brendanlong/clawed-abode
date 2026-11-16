@@ -41,6 +41,11 @@ function getSpeechRecognition(): SpeechRecognitionConstructor | null {
   );
 }
 
+/** False during SSR and in Firefox, which ships SpeechRecognition only behind a flag. */
+export function isSpeechRecognitionSupported(): boolean {
+  return getSpeechRecognition() !== null;
+}
+
 /**
  * Hook for managing voice recording using the Web Speech API (SpeechRecognition).
  * Uses continuous mode to keep listening through pauses in speech.
