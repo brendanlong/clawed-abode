@@ -1,5 +1,5 @@
-import { parseAuthHeader, SESSION_DURATION_MS } from '@/lib/auth';
-import { resolveAuthSessionId } from '@/server/services/auth-sessions';
+import { SESSION_DURATION_MS } from '@/lib/auth';
+import { authenticateRequest } from '@/server/trpc';
 import { publicAuthCookie } from '@/lib/public-files';
 import { env } from '@/lib/env';
 
@@ -15,13 +15,13 @@ export async function POST(request: Request): Promise<Response> {
   if (!env.PUBLIC_FILES_URL) {
     return Response.json({ error: 'Public files are not configured' }, { status: 404 });
   }
-  const token = parseAuthHeader(request.headers.get('authorization'));
-  if (!token || !(await resolveAuthSessionId(token, 'full'))) {
+  const auth = await authenticateRequest(request.headers);
+  if (!auth) {
     return Response.json({ error: 'Unauthorized' }, { status: 401 });
   }
   return new Response(null, {
     status: 204,
-    headers: { 'Set-Cookie': publicAuthCookie(token, SESSION_DURATION_MS / 1000) },
+    headers: { 'Set-Cookie': publicAuthCookie(auth.token, SESSION_DURATION_MS / 1000) },
   });
 }
 
