@@ -75,7 +75,7 @@ let pause: typeof import('./rate-limit-pause');
 let resetRateLimitState: typeof import('./rate-limit-state')._resetRateLimitState;
 let resolveSessionHold: typeof import('./rate-limit-state').resolveSessionHold;
 let rateLimitState: typeof import('./rate-limit-state');
-let GLOBAL_SETTINGS_ID: string;
+let patchGlobalSettings: typeof import('./global-settings').patchGlobalSettings;
 
 const HOUR_MS = 60 * 60 * 1000;
 const NOW = Date.UTC(2026, 8, 7, 12, 0, 0);
@@ -166,15 +166,7 @@ async function createRunningSession(
 }
 
 async function setGlobalPause(enabled: boolean, threshold = 95): Promise<void> {
-  await testPrisma.globalSettings.upsert({
-    where: { id: GLOBAL_SETTINGS_ID },
-    create: {
-      id: GLOBAL_SETTINGS_ID,
-      rateLimitPauseEnabled: enabled,
-      rateLimitPauseThreshold: threshold,
-    },
-    update: { rateLimitPauseEnabled: enabled, rateLimitPauseThreshold: threshold },
-  });
+  await patchGlobalSettings({ rateLimitPauseEnabled: enabled, rateLimitPauseThreshold: threshold });
 }
 
 const queuedTexts = (sessionId: string) =>
@@ -230,7 +222,7 @@ describe('rate-limit pause', () => {
     pause = await import('./rate-limit-pause');
     rateLimitState = await import('./rate-limit-state');
     ({ _resetRateLimitState: resetRateLimitState, resolveSessionHold } = rateLimitState);
-    GLOBAL_SETTINGS_ID = (await import('./settings-scope')).GLOBAL_SETTINGS_ID;
+    ({ patchGlobalSettings } = await import('./global-settings'));
   });
   afterAll(async () => {
     await teardownTestDb();

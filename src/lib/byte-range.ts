@@ -8,7 +8,8 @@ export interface ByteRange {
  * The single range an HTTP `Range` header asks for within `size` bytes: null
  * when the header is absent or unusable (serve the whole body), 'unsatisfiable'
  * for a well-formed range entirely past the end. Multi-range requests are
- * served whole, which the spec allows.
+ * served whole, which the spec allows. (iOS Safari won't play media without
+ * range support.)
  */
 export function parseByteRange(
   header: string | null,
@@ -19,7 +20,7 @@ export function parseByteRange(
 
   if (match[1] === '') {
     const suffix = Number(match[2]);
-    if (suffix === 0) return 'unsatisfiable';
+    if (suffix === 0 || size === 0) return 'unsatisfiable';
     return { start: Math.max(0, size - suffix), end: size - 1 };
   }
 

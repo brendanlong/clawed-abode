@@ -27,6 +27,16 @@ function emptyToUndefined(value: unknown): unknown {
   return value === '' ? undefined : value;
 }
 
+/** An optional base URL, without a trailing slash so callers can append paths. */
+const baseUrl = z.preprocess(
+  emptyToUndefined,
+  z
+    .string()
+    .url()
+    .transform((url) => url.replace(/\/+$/, ''))
+    .optional()
+);
+
 // What each variable does is documented for operators in .env.example; comments
 // here only explain validation choices.
 const envSchema = z
@@ -64,14 +74,14 @@ const envSchema = z
         .refine((url) => new URL(url).pathname === '/', 'must be an origin, with no path')
         .optional()
     ),
-    TTS_BASE_URL: z.preprocess(emptyToUndefined, z.string().url().optional()),
+    TTS_BASE_URL: baseUrl,
     TTS_API_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
     TTS_MODEL: z.preprocess(emptyToUndefined, z.string().default('hexgrad/kokoro-82m')),
     TTS_MAX_CONCURRENCY: z.preprocess(
       emptyToUndefined,
       z.coerce.number().int().min(1).max(16).default(4)
     ),
-    LLM_PROXY_URL: z.preprocess(emptyToUndefined, z.string().url().optional()),
+    LLM_PROXY_URL: baseUrl,
     LLM_PROXY_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
     SESSIONS_MEMORY_MAX: z.preprocess(emptyToUndefined, systemdMemory(1).default('85%')),
     SESSIONS_MEMORY_SWAP_MAX: z.preprocess(emptyToUndefined, systemdMemory(0).default('0')),

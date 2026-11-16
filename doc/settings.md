@@ -6,7 +6,7 @@ Env vars and MCP servers are **scope-generic**: one table each, `repoSettingsId`
 
 ## Resolution Rules
 
-- **Claude model**: session → repo → global → `CLAUDE_MODEL` env (`loadMergedSessionSettings`). The per-session override lives on `Session.claudeModel` (set at create or via `sessions.setModel`, the gear button in the session header).
+- **Claude model**: session → repo → global → `CLAUDE_MODEL` env (`loadMergedSessionSettings`). The per-session override lives on `Session.claudeModel` (set at create or via `sessions.setModel`).
 - **Env vars / MCP servers**: global entries apply everywhere; a per-repo entry with the same name wins.
 - **System prompt**: base (default, or the override if enabled) + the session's public-dir note (when public files are configured) + global append + per-repo append + the built-in tools note (when enabled), in that order. The notes describe the session rather than setting policy, so an override keeps them.
 - **Rate-limit pause**: session → global, with the two fields (on/off, threshold) resolving independently so a session can raise its threshold without restating the global on/off (`resolvePausePolicy`; there is no repo layer). Applies immediately, not at the next establishment. See [`rate-limit-pause.md`](rate-limit-pause.md).
@@ -36,7 +36,7 @@ When a proxy is configured, Claude sessions get a `gpt_agent` tool on the [built
 
 ## Image Generation
 
-When a proxy is configured, every session (proxied or not) gets a `generate_image` tool on the [built-in server](#built-in-tools) ([`image-generation.ts`](../src/server/services/image-generation.ts); model registry and pure parts in [`src/lib/image-generation.ts`](../src/lib/image-generation.ts)). Its `model` argument names an entry in `IMAGE_MODELS`, and each entry names a provider kind, so another provider is an entry plus a case in the service. The one kind today calls OpenAI's hosted `image_generation` tool through the proxy's `/v1/responses`, forced with `tool_choice`, from a cheap text model whose proxy routing decides who pays: through a ChatGPT plan, OpenAI picks the image model (ignoring the tool's `model`) and quality, and treats size as a hint. Images land in the session's public directory, so the result carries a browser link, unless the agent passes `output_path`.
+When a proxy is configured, every session (proxied or not) gets a `generate_image` tool on the [built-in server](#built-in-tools) ([`image-generation.ts`](../src/server/services/image-generation.ts); pure parts in [`src/lib/image-generation.ts`](../src/lib/image-generation.ts)). It calls OpenAI's hosted `image_generation` tool through the proxy's `/v1/responses`, forced with `tool_choice`, from a cheap text model whose proxy routing decides who pays: through a ChatGPT plan, OpenAI picks the image model (ignoring the tool's `model`) and quality, and treats size as a hint. Images land in the session's public directory, so the result carries a browser link, unless the agent passes `output_path`.
 
 ## Built-in Tools
 

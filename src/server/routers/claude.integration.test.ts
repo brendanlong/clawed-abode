@@ -98,12 +98,10 @@ describe('claudeRouter integration', () => {
       mockSendUserMessage.mockResolvedValue(undefined);
 
       const caller = createCaller('auth-session-id');
-      const result = await caller.claude.send({
+      await caller.claude.send({
         sessionId: session.id,
         prompt: 'Hello, Claude!',
       });
-
-      expect(result).toEqual({ success: true });
       expect(mockSendUserMessage).toHaveBeenCalledWith(session.id, 'Hello, Claude!', []);
     });
 
@@ -114,13 +112,11 @@ describe('claudeRouter integration', () => {
       mockSendUserMessage.mockResolvedValue(undefined);
 
       const caller = createCaller('auth-session-id');
-      const result = await caller.claude.send({
+      await caller.claude.send({
         sessionId: session.id,
         prompt: 'look',
         attachments: ['aaaa1111-a.md', 'bbbb2222-b.png'],
       });
-
-      expect(result).toEqual({ success: true });
       // Path resolution moved into the runner (lazy, at persist/flush time); the
       // router just forwards the stored names.
       expect(mockResolveUploadPaths).not.toHaveBeenCalled();
@@ -149,12 +145,11 @@ describe('claudeRouter integration', () => {
       mockSendUserMessage.mockResolvedValue(undefined);
 
       const caller = createCaller('auth-session-id');
-      const result = await caller.claude.send({
+      await caller.claude.send({
         sessionId: session.id,
         prompt: '',
         attachments: ['aaaa1111-a.md'],
       });
-      expect(result).toEqual({ success: true });
       expect(mockSendUserMessage).toHaveBeenCalledWith(session.id, '', ['aaaa1111-a.md']);
     });
 
@@ -176,12 +171,10 @@ describe('claudeRouter integration', () => {
 
       const caller = createCaller('auth-session-id');
 
-      const result = await caller.claude.send({
+      await caller.claude.send({
         sessionId: session.id,
         prompt: 'Hello!',
       });
-
-      expect(result).toEqual({ success: true });
       expect(mockSendUserMessage).toHaveBeenCalledWith(session.id, 'Hello!', []);
     });
   });
@@ -211,13 +204,11 @@ describe('claudeRouter integration', () => {
       mockSendUserMessage.mockResolvedValue(undefined);
 
       const caller = createCaller('auth-session-id');
-      const result = await caller.claude.answerQuestion({
+      await caller.claude.answerQuestion({
         sessionId: session.id,
         toolUseId: 'toolu_q1',
         answers: { 'Which approach?': 'Option A' },
       });
-
-      expect(result).toEqual({ success: true, routed: 'fallback' });
 
       // A synthetic tool_result was persisted so the UI pairs the dangling block.
       const messages = await testPrisma.message.findMany({ where: { sessionId: session.id } });
@@ -246,11 +237,9 @@ describe('claudeRouter integration', () => {
         answers: { q: 'A' },
       };
 
-      const first = await caller.claude.answerQuestion(args);
-      const second = await caller.claude.answerQuestion(args);
+      await caller.claude.answerQuestion(args);
+      await caller.claude.answerQuestion(args);
 
-      expect(first.routed).toBe('fallback');
-      expect(second.routed).toBe('already');
       expect(mockSendUserMessage).toHaveBeenCalledTimes(1);
     });
 
@@ -263,7 +252,7 @@ describe('claudeRouter integration', () => {
       mockSendUserMessage.mockResolvedValue(undefined);
 
       const caller = createCaller('auth-session-id');
-      const [a, b] = await Promise.all([
+      await Promise.all([
         caller.claude.answerQuestion({
           sessionId: session.id,
           toolUseId: 'toolu_a',
@@ -275,9 +264,6 @@ describe('claudeRouter integration', () => {
           answers: { q: 'B' },
         }),
       ]);
-
-      expect(a.routed).toBe('fallback');
-      expect(b.routed).toBe('fallback');
 
       const messages = await testPrisma.message.findMany({ where: { sessionId: session.id } });
       const toolUseIds = messages
@@ -318,14 +304,13 @@ describe('claudeRouter integration', () => {
       mockSendUserMessage.mockResolvedValue(undefined);
 
       const caller = createCaller('auth-session-id');
-      const result = await caller.claude.respondToPlan({
+      await caller.claude.respondToPlan({
         sessionId: session.id,
         toolUseId: 'toolu_plan',
         approve: false,
         feedback: 'use a queue',
       });
 
-      expect(result).toEqual({ success: true, routed: 'fallback' });
       expect(mockSendUserMessage).toHaveBeenCalledWith(
         session.id,
         expect.stringContaining('use a queue')
@@ -345,12 +330,12 @@ describe('claudeRouter integration', () => {
       const caller = createCaller('auth-session-id');
       const result = await caller.claude.interrupt({ sessionId: session.id });
 
-      expect(result).toEqual({ success: true, cancelled: [] });
+      expect(result).toEqual({ cancelled: [] });
       expect(mockInterruptClaude).toHaveBeenCalledWith(session.id);
       expect(mockMarkLastMessageAsInterrupted).toHaveBeenCalledWith(session.id);
     });
 
-    it('should return false if no process to interrupt', async () => {
+    it('does not mark anything interrupted when no turn is running', async () => {
       const session = await createTestSession({
         name: 'Idle Session',
       });
@@ -360,7 +345,7 @@ describe('claudeRouter integration', () => {
       const caller = createCaller('auth-session-id');
       const result = await caller.claude.interrupt({ sessionId: session.id });
 
-      expect(result).toEqual({ success: false, cancelled: [] });
+      expect(result).toEqual({ cancelled: [] });
       expect(mockMarkLastMessageAsInterrupted).not.toHaveBeenCalled();
     });
   });

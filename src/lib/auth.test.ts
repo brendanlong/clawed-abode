@@ -4,6 +4,7 @@ import {
   verifyPassword,
   generateSessionToken,
   parseAuthHeader,
+  bearerAuthHeader,
   loginSchema,
   SESSION_DURATION_MS,
   IDLE_TIMEOUT_MS,
@@ -66,6 +67,13 @@ describe('auth', () => {
         tokens.add(generateSessionToken());
       }
       expect(tokens.size).toBe(100);
+    });
+  });
+
+  describe('bearerAuthHeader', () => {
+    it('sends a token as a bearer credential and nothing without one', () => {
+      expect(bearerAuthHeader('k')).toEqual({ Authorization: 'Bearer k' });
+      expect(bearerAuthHeader(undefined)).toEqual({});
     });
   });
 

@@ -40,10 +40,8 @@ async function submitToolResponse(
   sessionId: string,
   toolUseId: string,
   response: ToolResponse
-): Promise<{ routed: 'live' | 'fallback' | 'already' }> {
-  if (await submitLiveToolResponse(sessionId, toolUseId, response)) {
-    return { routed: 'live' };
-  }
+): Promise<void> {
+  if (await submitLiveToolResponse(sessionId, toolUseId, response)) return;
 
   // A live promise should have been found above; if a turn is still active it
   // hasn't parked yet (or is busy with something else). Don't start a second
@@ -60,12 +58,10 @@ async function submitToolResponse(
     toolUseId,
     summarizeToolResponse(response)
   );
-  if (!wrote) {
-    return { routed: 'already' };
-  }
+  // Already answered: don't resume a second time.
+  if (!wrote) return;
 
   await sendUserMessage(sessionId, formatToolResponsePrompt(response));
-  return { routed: 'fallback' };
 }
 
 // One user message: typed text and/or previously-uploaded attachments (stored
@@ -86,18 +82,15 @@ export const claudeRouter = router({
     // into the SDK, whatever the agent is doing — the CLI interleaves it into
     // the running turn. Neither a live turn nor background tasks gate input.
     await sendUserMessage(input.sessionId, input.prompt, input.attachments ?? []);
-
-    return { success: true };
   }),
 
   answerQuestion: runningSessionProcedure
     .input(z.object({ toolUseId: z.string().min(1), answers: z.record(z.string(), z.string()) }))
     .mutation(async ({ input }) => {
-      const { routed } = await submitToolResponse(input.sessionId, input.toolUseId, {
+      await submitToolResponse(input.sessionId, input.toolUseId, {
         kind: 'questions',
         answers: input.answers,
       });
-      return { success: true, routed };
     }),
 
   respondToPlan: runningSessionProcedure
@@ -109,17 +102,17 @@ export const claudeRouter = router({
       })
     )
     .mutation(async ({ input }) => {
-      const { routed } = await submitToolResponse(input.sessionId, input.toolUseId, {
+      await submitToolResponse(input.sessionId, input.toolUseId, {
         kind: 'plan',
         approve: input.approve,
         feedback: input.feedback,
       });
-      return { success: true, routed };
     }),
 
-  respondToPermission: sessionProcedure
+  respondToPermission: protectedProcedure
     .input(
       z.object({
+        sessionId: z.string().uuid(),
         toolUseId: z.string().min(1),
         allow: z.boolean(),
         feedback: z.string().max(PROMPT_MAX_LENGTH).optional(),
@@ -136,20 +129,21 @@ export const claudeRouter = router({
           message: 'This permission request is no longer pending.',
         });
       }
-      return { success: true };
     }),
 
-  interrupt: sessionProcedure.mutation(async ({ input }) => {
-    const { interrupted, cancelled } = await interruptClaude(input.sessionId);
+  interrupt: protectedProcedure
+    .input(z.object({ sessionId: z.string().uuid() }))
+    .mutation(async ({ input }) => {
+      const { interrupted, cancelled } = await interruptClaude(input.sessionId);
 
-    if (interrupted) {
-      await markLastMessageAsInterrupted(input.sessionId);
-    }
+      if (interrupted) {
+        await markLastMessageAsInterrupted(input.sessionId);
+      }
 
-    // Prompts Stop pulled back before the agent read them. Returned so the
-    // composer can restore them rather than silently dropping the user's text.
-    return { success: interrupted, cancelled };
-  }),
+      // Prompts Stop pulled back before the agent read them. Returned so the
+      // composer can restore them rather than silently dropping the user's text.
+      return { cancelled };
+    }),
 
   // Backward pagination; the newest page arrives in the session stream's snapshot.
   getHistory: sessionProcedure
@@ -184,7 +178,6 @@ export const claudeRouter = router({
   stopBackgroundTask: protectedProcedure
     .input(z.object({ sessionId: z.string().uuid(), taskId: z.string().min(1) }))
     .mutation(async ({ input }) => {
-      const stopped = await stopBackgroundTask(input.sessionId, input.taskId);
-      return { success: stopped };
+      await stopBackgroundTask(input.sessionId, input.taskId);
     }),
 });

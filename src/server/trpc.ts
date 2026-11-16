@@ -25,6 +25,15 @@ export interface Context {
   resHeaders?: Headers;
 }
 
+/** The bearer token on a request and the full-access auth session it belongs to, or null if it has none. */
+export async function authenticateRequest(
+  headers: Headers
+): Promise<{ token: string; authSessionId: string } | null> {
+  const token = parseAuthHeader(headers.get('authorization'));
+  const authSessionId = token ? await resolveAuthSessionId(token, 'full') : null;
+  return token && authSessionId ? { token, authSessionId } : null;
+}
+
 export async function createContext(opts: {
   headers: Headers;
   resHeaders?: Headers;
@@ -34,9 +43,8 @@ export async function createContext(opts: {
     userAgent: opts.headers.get('user-agent') ?? undefined,
     appOrigin: resolveAppOrigin(env.APP_URL, originHeadersFrom(opts.headers)),
   };
-  const token = parseAuthHeader(opts.headers.get('authorization'));
   return {
-    sessionId: token ? await resolveAuthSessionId(token, 'full') : null,
+    sessionId: (await authenticateRequest(opts.headers))?.authSessionId ?? null,
     publicAuthTokens: parseCookies(opts.headers.get('cookie') ?? undefined, PUBLIC_AUTH_COOKIE),
     resHeaders: opts.resHeaders,
     ...clientInfo,

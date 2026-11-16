@@ -21,20 +21,17 @@ const GITHUB_API = 'https://api.github.com';
 /** A 304 is returned rather than thrown only when the caller asked for one with `If-None-Match`. */
 export async function githubFetchResponse(
   path: string,
-  token?: string,
+  token: string,
   extraHeaders?: Record<string, string>
 ): Promise<Response> {
-  const headers: Record<string, string> = {
-    Accept: 'application/vnd.github+json',
-    'X-GitHub-Api-Version': '2022-11-28',
-    ...extraHeaders,
-  };
-
-  if (token) {
-    headers.Authorization = `Bearer ${token}`;
-  }
-
-  const response = await fetch(`${GITHUB_API}${path}`, { headers });
+  const response = await fetch(`${GITHUB_API}${path}`, {
+    headers: {
+      Accept: 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+      Authorization: `Bearer ${token}`,
+      ...extraHeaders,
+    },
+  });
 
   const notModified = response.status === 304 && extraHeaders?.['If-None-Match'] !== undefined;
   if (!response.ok && !notModified) {
@@ -189,7 +186,7 @@ export function parseLinkHeader(header: string | null): { next?: string; last?: 
 }
 
 /** The path and query of a Link header's `next` URL. */
-export function nextLinkPath(header: string | null): string | undefined {
+function nextLinkPath(header: string | null): string | undefined {
   const match = header?.match(/<([^>]+)>;\s*rel="next"/);
   if (!match) return undefined;
   const url = new URL(match[1]);

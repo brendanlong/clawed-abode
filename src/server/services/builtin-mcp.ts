@@ -38,7 +38,6 @@ import {
 import {
   GENERATE_IMAGE_TOOL_DESCRIPTION,
   IMAGE_BACKGROUNDS,
-  IMAGE_MODEL_NAMES,
   IMAGE_SIZES,
   MAX_INPUT_IMAGES,
 } from '@/lib/image-generation';
@@ -481,7 +480,6 @@ function imageTools(ctx: ImageToolContext) {
       GENERATE_IMAGE_TOOL_DESCRIPTION,
       {
         prompt: promptSchema,
-        model: z.enum(IMAGE_MODEL_NAMES).default(IMAGE_MODEL_NAMES[0]),
         input_images: z
           .array(z.string().min(1))
           .max(MAX_INPUT_IMAGES)
@@ -498,13 +496,12 @@ function imageTools(ctx: ImageToolContext) {
           .optional()
           .describe("Where to save the image; defaults to the session's public directory"),
       },
-      ({ prompt, model, input_images, size, background, output_path }, extra) =>
+      ({ prompt, input_images, size, background, output_path }, extra) =>
         run('generate_image', async () => {
           const result = await generateImage(
             ctx,
             {
               prompt,
-              model,
               inputImages: input_images,
               size,
               background,

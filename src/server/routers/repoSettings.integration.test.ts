@@ -41,15 +41,10 @@ describe('repoSettings router', () => {
     await clearTestDb();
   });
 
-  describe('toggleFavorite', () => {
+  describe('update isFavorite', () => {
     it('should create settings and set favorite to true', async () => {
       const caller = createCaller();
-      const result = await caller.repoSettings.toggleFavorite({
-        repoFullName: testRepoName,
-        isFavorite: true,
-      });
-
-      expect(result.isFavorite).toBe(true);
+      await caller.repoSettings.update({ repoFullName: testRepoName, isFavorite: true });
 
       const settings = await testPrisma.repoSettings.findUnique({
         where: { repoFullName: testRepoName },
@@ -61,18 +56,16 @@ describe('repoSettings router', () => {
       const caller = createCaller();
 
       // First set to true
-      await caller.repoSettings.toggleFavorite({
+      await caller.repoSettings.update({
         repoFullName: testRepoName,
         isFavorite: true,
       });
 
       // Then toggle off
-      const result = await caller.repoSettings.toggleFavorite({
-        repoFullName: testRepoName,
-        isFavorite: false,
-      });
+      await caller.repoSettings.update({ repoFullName: testRepoName, isFavorite: false });
 
-      expect(result.isFavorite).toBe(false);
+      const settings = await caller.repoSettings.get({ repoFullName: testRepoName });
+      expect(settings?.isFavorite).toBe(false);
     });
   });
 
@@ -86,7 +79,7 @@ describe('repoSettings router', () => {
     it('should return favorite repos', async () => {
       const caller = createCaller();
 
-      await caller.repoSettings.toggleFavorite({
+      await caller.repoSettings.update({
         repoFullName: testRepoName,
         isFavorite: true,
       });
@@ -155,10 +148,10 @@ describe('repoSettings router', () => {
       const caller = createCaller();
       await expect(
         caller.repoSettings.deleteEnvVar({ repoFullName: 'no/such', name: 'X' })
-      ).resolves.toEqual({ success: true });
+      ).resolves.toBeUndefined();
       await expect(
         caller.repoSettings.deleteMcpServer({ repoFullName: 'no/such', name: 'x' })
-      ).resolves.toEqual({ success: true });
+      ).resolves.toBeUndefined();
       expect(await testPrisma.repoSettings.count()).toBe(0);
     });
   });
@@ -180,7 +173,7 @@ describe('repoSettings router', () => {
     it('should delete all settings for a repo', async () => {
       const caller = createCaller();
 
-      await caller.repoSettings.toggleFavorite({
+      await caller.repoSettings.update({
         repoFullName: testRepoName,
         isFavorite: true,
       });
@@ -205,7 +198,7 @@ describe('repoSettings router', () => {
     it('should list repos with settings summary', async () => {
       const caller = createCaller();
 
-      await caller.repoSettings.toggleFavorite({
+      await caller.repoSettings.update({
         repoFullName: testRepoName,
         isFavorite: true,
       });
@@ -237,12 +230,12 @@ describe('repoSettings router', () => {
     });
   });
 
-  describe('setCustomSystemPrompt', () => {
+  describe('update customSystemPrompt', () => {
     it('should set a custom system prompt', async () => {
       const caller = createCaller();
       const customPrompt = 'Always use TypeScript strict mode. Never use any type.';
 
-      await caller.repoSettings.setCustomSystemPrompt({
+      await caller.repoSettings.update({
         repoFullName: testRepoName,
         customSystemPrompt: customPrompt,
       });
@@ -255,7 +248,7 @@ describe('repoSettings router', () => {
       const caller = createCaller();
       const customPrompt = 'This is a new repo prompt.';
 
-      await caller.repoSettings.setCustomSystemPrompt({
+      await caller.repoSettings.update({
         repoFullName: 'new/repo',
         customSystemPrompt: customPrompt,
       });
@@ -268,12 +261,12 @@ describe('repoSettings router', () => {
     it('should update an existing custom system prompt', async () => {
       const caller = createCaller();
 
-      await caller.repoSettings.setCustomSystemPrompt({
+      await caller.repoSettings.update({
         repoFullName: testRepoName,
         customSystemPrompt: 'Initial prompt',
       });
 
-      await caller.repoSettings.setCustomSystemPrompt({
+      await caller.repoSettings.update({
         repoFullName: testRepoName,
         customSystemPrompt: 'Updated prompt',
       });
@@ -282,15 +275,33 @@ describe('repoSettings router', () => {
       expect(settings?.customSystemPrompt).toBe('Updated prompt');
     });
 
+    it('leaves fields it was not given untouched', async () => {
+      const caller = createCaller();
+
+      await caller.repoSettings.update({
+        repoFullName: testRepoName,
+        customSystemPrompt: 'Some prompt',
+        claudeModel: 'opus',
+      });
+      await caller.repoSettings.update({ repoFullName: testRepoName, isFavorite: true });
+
+      const settings = await caller.repoSettings.get({ repoFullName: testRepoName });
+      expect(settings).toMatchObject({
+        isFavorite: true,
+        customSystemPrompt: 'Some prompt',
+        claudeModel: 'opus',
+      });
+    });
+
     it('should clear the custom system prompt when set to null', async () => {
       const caller = createCaller();
 
-      await caller.repoSettings.setCustomSystemPrompt({
+      await caller.repoSettings.update({
         repoFullName: testRepoName,
         customSystemPrompt: 'Some prompt',
       });
 
-      await caller.repoSettings.setCustomSystemPrompt({
+      await caller.repoSettings.update({
         repoFullName: testRepoName,
         customSystemPrompt: null,
       });
@@ -303,7 +314,7 @@ describe('repoSettings router', () => {
       const caller = createCaller();
       const customPrompt = 'Custom prompt for this repo';
 
-      await caller.repoSettings.setCustomSystemPrompt({
+      await caller.repoSettings.update({
         repoFullName: testRepoName,
         customSystemPrompt: customPrompt,
       });

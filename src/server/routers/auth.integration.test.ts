@@ -222,9 +222,7 @@ describe('authRouter integration', () => {
       // Now logout using that session
       const logoutCaller = createCaller(session!.id);
       const beforeLogout = Date.now();
-      const result = await logoutCaller.auth.logout();
-
-      expect(result).toEqual({ success: true });
+      await logoutCaller.auth.logout();
 
       // Verify session was marked as revoked (not deleted)
       const revokedSession = await testPrisma.authSession.findFirst({
@@ -416,11 +414,9 @@ describe('authRouter integration', () => {
 
       const caller = createCaller(currentSession!.id);
       const beforeRevoke = Date.now();
-      const result = await caller.auth.deleteSession({
+      await caller.auth.deleteSession({
         sessionId: otherSession!.id,
       });
-
-      expect(result).toEqual({ success: true });
 
       // Both sessions should still exist in database
       const remaining = await testPrisma.authSession.findMany();

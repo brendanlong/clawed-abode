@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { createContext } from '@/server/trpc';
+import { authenticateRequest } from '@/server/trpc';
 import { env } from '@/lib/env';
 import { DEFAULT_TTS_SPEED, resolveKokoroVoice } from '@/lib/kokoro-voices';
 import { getSpeechStore } from '@/server/services/kokoro';
@@ -15,8 +15,7 @@ const bodySchema = z.object({ text: z.string().trim().min(1).max(100_000) });
  * provider failure surfaces here rather than as an opaque media error.
  */
 export async function POST(request: Request): Promise<Response> {
-  const ctx = await createContext({ headers: request.headers });
-  if (!ctx.sessionId) {
+  if (!(await authenticateRequest(request.headers))) {
     return Response.json({ error: 'Unauthorized' }, { status: 401 });
   }
   if (!env.TTS_BASE_URL) {

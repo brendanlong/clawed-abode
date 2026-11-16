@@ -432,7 +432,7 @@ describe('built-in MCP server', () => {
       expect(tools.map((t) => t.name)).toEqual(['generate_image']);
     });
 
-    it('defaults the model and options and returns where the image was saved', async () => {
+    it('defaults the options and returns where the image was saved', async () => {
       const client = await connect('s', null, null, images);
       const result = await call(client, 'generate_image', { prompt: 'a cat' });
       expect(result.isError).toBe(false);
@@ -444,7 +444,6 @@ describe('built-in MCP server', () => {
       expect(ctx).toEqual(images);
       expect(input).toEqual({
         prompt: 'a cat',
-        model: 'gpt-image',
         inputImages: [],
         size: 'auto',
         background: 'auto',

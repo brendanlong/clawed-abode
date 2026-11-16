@@ -103,6 +103,14 @@ describe('env', () => {
     expect(() => getEnv()).toThrow(new RegExp(name));
   });
 
+  it('strips trailing slashes from the TTS and LLM proxy base URLs', () => {
+    process.env.TTS_BASE_URL = 'http://localhost:8880/v1/';
+    process.env.LLM_PROXY_URL = 'http://localhost:4000//';
+    resetEnvCache();
+    expect(env.TTS_BASE_URL).toBe('http://localhost:8880/v1');
+    expect(env.LLM_PROXY_URL).toBe('http://localhost:4000');
+  });
+
   it('rejects a PUBLIC_FILES_URL with a path', () => {
     process.env.PUBLIC_FILES_PORT = '8444';
     process.env.PUBLIC_FILES_URL = 'https://host.ts.net:8444/files';

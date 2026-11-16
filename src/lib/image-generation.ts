@@ -2,26 +2,9 @@ import path from 'path';
 import { z } from 'zod';
 import { GPT_AGENT_MODELS } from './llm-proxy';
 
-/**
- * Pure parts of the generate_image built-in tool (doc/settings.md "Image
- * Generation"). Each model names a provider kind, so another provider is a new
- * entry plus a case in the service.
- */
+// Pure parts of the generate_image built-in tool (doc/settings.md "Image Generation").
 
-interface ImageModel {
-  /** OpenAI's hosted image_generation tool, called through the LLM proxy's /v1/responses. */
-  kind: 'responses-tool';
-  /** The text model that calls the tool; its routing decides who pays. */
-  proxyModel: string;
-}
-
-export const IMAGE_MODELS = {
-  // A ChatGPT plan picks the image model itself, ignoring any `model` on the tool.
-  'gpt-image': { kind: 'responses-tool', proxyModel: GPT_AGENT_MODELS.luna },
-} as const satisfies Record<string, ImageModel>;
-
-export type ImageModelName = keyof typeof IMAGE_MODELS;
-export const IMAGE_MODEL_NAMES = Object.keys(IMAGE_MODELS) as [ImageModelName, ...ImageModelName[]];
+const IMAGE_PROXY_MODEL = GPT_AGENT_MODELS.luna;
 
 export const IMAGE_SIZES = ['auto', '1024x1024', '1536x1024', '1024x1536'] as const;
 export const IMAGE_BACKGROUNDS = ['auto', 'opaque', 'transparent'] as const;
@@ -30,8 +13,7 @@ export const MAX_INPUT_IMAGES = 8;
 /** OpenAI rejects larger requests; checked before encoding so the error is clear. */
 export const MAX_INPUT_IMAGE_TOTAL_BYTES = 40 * 1024 * 1024;
 
-export const GENERATE_IMAGE_TOOL_DESCRIPTION = `Generate an image from a text prompt, or edit images by passing them as input_images. Saves the image and returns its path (and a browser link when the session has a public directory). Each call makes one image and takes a minute or so. Relative paths are relative to your working directory. Models:
-- gpt-image: OpenAI's ChatGPT Images, good at text in images, diagrams and photorealism.
+export const GENERATE_IMAGE_TOOL_DESCRIPTION = `Generate an image from a text prompt, or edit images by passing them as input_images. Saves the image and returns its path (and a browser link when the session has a public directory). Each call makes one image and takes a minute or so. Relative paths are relative to your working directory. Uses OpenAI's ChatGPT Images, good at text in images, diagrams and photorealism.
 Write a detailed prompt: subject, composition, style, and any exact text to render. Read the saved file to check the result.`;
 
 /** Mime type for an input image, by extension; null for formats the tool can't take. */
@@ -58,13 +40,12 @@ export interface ImageToolOptions {
 
 /** A Responses API request that makes the model call the image tool exactly once. */
 export function responsesImageRequest(
-  proxyModel: string,
   prompt: string,
   inputImageUrls: string[],
   options: ImageToolOptions
 ) {
   return {
-    model: proxyModel,
+    model: IMAGE_PROXY_MODEL,
     stream: true,
     instructions:
       'Call the image generation tool once with the user’s request, preserving its details.',

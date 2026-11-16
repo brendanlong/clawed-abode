@@ -24,5 +24,7 @@ describe('parseByteRange', () => {
   it('rejects ranges that start past the end', () => {
     expect(parseByteRange('bytes=100-', 100)).toBe('unsatisfiable');
     expect(parseByteRange('bytes=-0', 100)).toBe('unsatisfiable');
+    expect(parseByteRange('bytes=0-', 0)).toBe('unsatisfiable');
+    expect(parseByteRange('bytes=-10', 0)).toBe('unsatisfiable');
   });
 });

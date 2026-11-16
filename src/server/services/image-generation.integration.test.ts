@@ -45,7 +45,6 @@ let server: Server;
 let workingDir: string;
 
 const baseInput: GenerateImageInput = {
-  model: 'gpt-image',
   prompt: 'A red circle',
   inputImages: [],
   size: 'auto',
@@ -65,7 +64,7 @@ describe('generateImage', () => {
       });
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-    mockEnv.LLM_PROXY_URL = `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
+    mockEnv.LLM_PROXY_URL = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   });
 
   afterAll(async () => {

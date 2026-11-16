@@ -54,6 +54,11 @@ export function generateSessionToken(): string {
   return randomBytes(TOKEN_LENGTH).toString('hex');
 }
 
+/** Headers carrying `token` as a bearer credential; none when there's no token. */
+export function bearerAuthHeader(token: string | undefined): Record<string, string> {
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 export function parseAuthHeader(authHeader: string | null): string | null {
   if (!authHeader) return null;
   const parts = authHeader.split(' ');

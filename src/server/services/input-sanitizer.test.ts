@@ -240,6 +240,8 @@ function hookOutput(res: Awaited<ReturnType<typeof sanitizeToolOutputHook>>): {
 }
 
 describe('sanitizeToolOutputHook (PostToolUse wiring)', () => {
+  const noop = () => {};
+
   it('is transparent on normal tool output: no substitution, tools run unaffected', async () => {
     // A clean Bash result → handler returns {}, so the SDK keeps the real output.
     const res = await sanitizeToolOutputHook(
@@ -249,7 +251,8 @@ describe('sanitizeToolOutputHook (PostToolUse wiring)', () => {
         interrupted: false,
         isImage: false,
       }),
-      'test-session'
+      'test-session',
+      noop
     );
     expect(res).toEqual({});
   });
@@ -262,7 +265,8 @@ describe('sanitizeToolOutputHook (PostToolUse wiring)', () => {
         interrupted: false,
         isImage: false,
       }),
-      'test-session'
+      'test-session',
+      noop
     );
     const out = hookOutput(res).updatedToolOutput as {
       stdout: string;
@@ -290,7 +294,8 @@ describe('sanitizeToolOutputHook (PostToolUse wiring)', () => {
         interrupted: false,
         isImage: false,
       }),
-      'test-session'
+      'test-session',
+      noop
     );
     const note = hookOutput(res).additionalContext ?? '';
     // The agent is told content was removed...
@@ -304,7 +309,8 @@ describe('sanitizeToolOutputHook (PostToolUse wiring)', () => {
       postToolUse('mcp__docs__fetch', {
         content: [{ type: 'text', text: `fetched${ZWSP} page` }],
       }),
-      'test-session'
+      'test-session',
+      noop
     );
     const out = hookOutput(res).updatedToolOutput as {
       content: Array<{ type: string; text: string }>;
@@ -323,11 +329,13 @@ describe('sanitizeToolOutputHook (PostToolUse wiring)', () => {
       tool_input: {},
       tool_use_id: 'toolu_test',
     };
-    expect(await sanitizeToolOutputHook(pre, 'test-session')).toEqual({});
+    expect(await sanitizeToolOutputHook(pre, 'test-session', noop)).toEqual({});
   });
 
   it('passes through non-object tool responses without substitution', async () => {
-    expect(await sanitizeToolOutputHook(postToolUse('Read', null), 'test-session')).toEqual({});
+    expect(await sanitizeToolOutputHook(postToolUse('Read', null), 'test-session', noop)).toEqual(
+      {}
+    );
   });
 
   it('reports findings (keyed by tool_use_id) when it removes hidden content', async () => {
@@ -352,7 +360,8 @@ describe('sanitizeToolOutputHook (PostToolUse wiring)', () => {
   it('gives the agent the note for preserved scripting without substituting output', async () => {
     const res = await sanitizeToolOutputHook(
       postToolUse('WebFetch', { content: [{ type: 'text', text: SCRIPT_HTML }] }),
-      'test-session'
+      'test-session',
+      noop
     );
     const out = hookOutput(res);
     expect(out).not.toHaveProperty('updatedToolOutput');
@@ -380,7 +389,8 @@ describe('sanitizeToolOutputHook (PostToolUse wiring)', () => {
     // before this it never reached the agent at all.
     const res = await sanitizeToolOutputHook(
       postToolUse('WebFetch', { content: [{ type: 'text', text: `See [here](${EXFIL_URL})` }] }),
-      'test-session'
+      'test-session',
+      noop
     );
     const out = hookOutput(res);
     expect(out).not.toHaveProperty('updatedToolOutput');
@@ -395,7 +405,8 @@ describe('sanitizeToolOutputHook (PostToolUse wiring)', () => {
       postToolUse('WebFetch', {
         content: [{ type: 'text', text: `<script>alert(1)</script>he${ZWSP}llo` }],
       }),
-      'test-session'
+      'test-session',
+      noop
     );
     const out = hookOutput(res);
     expect(out).toHaveProperty('updatedToolOutput');
@@ -477,7 +488,8 @@ describe('sanitizeToolOutputHook (PostToolUse wiring)', () => {
         interrupted: false,
         isImage: false,
       }),
-      'test-session'
+      'test-session',
+      noop
     );
     const { updatedToolOutput, additionalContext } = hookOutput(res);
     expect(updatedToolOutput).toMatchObject({ stdout: '[REDACTED:github] xy' });

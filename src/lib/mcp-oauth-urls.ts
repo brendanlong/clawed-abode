@@ -29,7 +29,7 @@ export function protectedResourceMetadataUrls(resourceUrl: string): string[] {
 }
 
 /** The app's own OAuth callback, which must be reachable from the user's browser. */
-export const MCP_OAUTH_CALLBACK_PATH = '/api/mcp/oauth/callback';
+const MCP_OAUTH_CALLBACK_PATH = '/api/mcp/oauth/callback';
 
 export function mcpOAuthRedirectUri(appOrigin: string): string {
   return `${appOrigin.replace(/\/+$/, '')}${MCP_OAUTH_CALLBACK_PATH}`;

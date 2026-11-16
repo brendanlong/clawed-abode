@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { createContext } from '@/server/trpc';
+import { authenticateRequest } from '@/server/trpc';
 import { prisma } from '@/lib/prisma';
 import { saveUploadedFile, stageUploadedFile } from '@/server/services/uploads';
 import { createLogger, toError } from '@/lib/logger';
@@ -21,8 +21,7 @@ const querySchema = z.object({
  * and its `storedName` goes to `sessions.create` as an initial attachment.
  */
 export async function POST(request: Request): Promise<Response> {
-  const ctx = await createContext({ headers: request.headers });
-  if (!ctx.sessionId) {
+  if (!(await authenticateRequest(request.headers))) {
     return Response.json({ error: 'Unauthorized' }, { status: 401 });
   }
 

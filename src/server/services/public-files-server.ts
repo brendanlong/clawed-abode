@@ -9,7 +9,6 @@ import {
   PUBLIC_AUTH_COOKIE,
   PUBLIC_LOGIN_PATH,
   contentTypeFor,
-  parseByteRange,
   parseCookies,
   parsePublicRequestPath,
   publicAuthCookie,
@@ -17,6 +16,7 @@ import {
   renderDirectoryListing,
   safeNextPath,
 } from '@/lib/public-files';
+import { parseByteRange } from '@/lib/byte-range';
 import { createAuthSession, resolveAuthSessionId } from './auth-sessions';
 import { consumePublicLoginCode } from './public-login-codes';
 import { resolvePublicTarget } from './public-dir';

@@ -38,7 +38,6 @@ export const rateLimitRouter = router({
       });
       log.info('Set rate-limit pause defaults', input);
       await recomputeRateLimitHolds();
-      return { success: true };
     }),
 
   /** The usage bars beside a session's context indicator. */

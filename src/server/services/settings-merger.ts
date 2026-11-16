@@ -118,7 +118,7 @@ export type SessionOverrides = Pick<Session, 'claudeModel' | 'sessionToolsEnable
 export async function loadMergedSessionSettings(
   sessionId: string,
   repoFullName: string | null | undefined,
-  session: SessionOverrides = { claudeModel: null, sessionToolsEnabled: false }
+  session: SessionOverrides
 ): Promise<MergedSessionSettings> {
   const [repoSettings, globalSettings] = await Promise.all([
     repoFullName ? loadResolvedRepoSettings(repoFullName) : null,

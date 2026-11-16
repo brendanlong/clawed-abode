@@ -143,7 +143,8 @@ const STAGED_UPLOAD_MAX_AGE_MS = 24 * 60 * 60 * 1000;
  * server on the same host (a dev instance) shares it and may be claiming or
  * purging the same files concurrently.
  */
-export async function purgeAbandonedStagedUploads(now = Date.now()): Promise<void> {
+async function purgeAbandonedStagedUploads(): Promise<void> {
+  const now = Date.now();
   const dir = getUploadStagingDir();
   const names = await readdir(dir).catch((err: NodeJS.ErrnoException) => {
     if (err.code === 'ENOENT') return [];

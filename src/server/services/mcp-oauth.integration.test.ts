@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'crypto';
 import type { AddressInfo } from 'net';
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { setupTestDb, teardownTestDb, testPrisma, clearTestDb } from '@/test/setup-test-db';
+import type { SessionOverrides } from './settings-merger';
 
 vi.mock('@/lib/logger', async () => (await import('@/test/mock-logger')).mockLoggerModule());
 
@@ -10,6 +11,7 @@ let oauth: typeof import('./mcp-oauth');
 let scope: typeof import('./settings-scope');
 let crypto: typeof import('@/lib/crypto');
 
+const NO_OVERRIDES: SessionOverrides = { claudeModel: null, sessionToolsEnabled: false };
 const APP_ORIGIN = 'https://app.example.ts.net';
 const REDIRECT_URI = `${APP_ORIGIN}/api/mcp/oauth/callback`;
 
@@ -309,7 +311,7 @@ describe('MCP OAuth', () => {
     await connect();
 
     const merger = await import('./settings-merger');
-    const settings = await merger.loadMergedSessionSettings(randomUUID(), null);
+    const settings = await merger.loadMergedSessionSettings(randomUUID(), null, NO_OVERRIDES);
     expect(settings.mcpServers).toEqual([
       {
         name: 'remote',
@@ -684,7 +686,7 @@ describe('MCP OAuth', () => {
     expect(mcpServers[0].oauth).toMatchObject({ state: 'connected' });
 
     const merger = await import('./settings-merger');
-    const settings = await merger.loadMergedSessionSettings(randomUUID(), 'o/r');
+    const settings = await merger.loadMergedSessionSettings(randomUUID(), 'o/r', NO_OVERRIDES);
     expect(settings.mcpServers[0]).toMatchObject({
       headers: { Authorization: 'Bearer access-1' },
     });

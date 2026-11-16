@@ -17,17 +17,7 @@ export interface SanitizeContext {
   source: string;
 }
 
-/**
- * The library splits its human-readable findings into two severity tiers:
- * `warnings` (injection-shaped — something was hidden or removed) and `notes`
- * (reported but not alarming — usually content that was *preserved* and merely
- * described). We surface both as one list, because the tier a message lands in
- * doesn't line up with whether we report it at all: that decision keys off
- * `found`, which is severity-blind. Exfil-shaped URLs, for instance, emit an
- * `exfil-urls` category — so they get a badge and a log line — while their
- * explanation sits in `notes`. Keeping only `warnings` would badge those
- * findings with no text to explain them.
- */
+/** Both of the library's severity tiers, merged; why is in doc/security.md. */
 function collectMessages({ warnings, notes }: { warnings: string[]; notes: string[] }): string[] {
   return [...warnings, ...notes];
 }
@@ -222,7 +212,7 @@ function buildSanitizationNote(messages: string[], removed: boolean): string {
 export async function sanitizeToolOutputHook(
   input: HookInput,
   sessionId: string,
-  onFindings?: (toolUseId: string, info: SanitizationInfo) => void
+  onFindings: (toolUseId: string, info: SanitizationInfo) => void
 ): Promise<HookJSONOutput> {
   if (input.hook_event_name !== 'PostToolUse') return {};
   try {
@@ -236,7 +226,7 @@ export async function sanitizeToolOutputHook(
     // for a note-tier-only finding, which carries no category: the operator gets
     // no badge where the agent still gets the sentence.
     const info = buildSanitizationInfo(found, messages, sanitized);
-    if (info && onFindings) onFindings(input.tool_use_id, info);
+    if (info) onFindings(input.tool_use_id, info);
     const notes: string[] = [];
     if (sanitized || messages.length > 0) notes.push(buildSanitizationNote(messages, sanitized));
     if (redactedRules.length > 0) notes.push(buildRedactionNote(redactedRules));
