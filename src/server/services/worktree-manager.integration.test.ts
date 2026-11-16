@@ -78,13 +78,14 @@ describe('cloneRepo', () => {
   });
 
   it('leaves the token in neither the recorded remote nor the clone config', async () => {
-    const { workingDir } = await cloneRepo({
+    const { repoPath } = await cloneRepo({
       sessionId,
       repoFullName: 'owner/repo',
       branch: 'main',
     });
 
-    expect(workingDir).toBe(path.join(getSessionWorkspacePath(sessionId), 'repo'));
+    expect(repoPath).toBe('repo');
+    const workingDir = path.join(getSessionWorkspacePath(sessionId), repoPath);
     const config = await readFile(path.join(workingDir, '.git', 'config'), 'utf8');
     expect(config).not.toContain(TOKEN);
     expect(config).toContain(GITHUB_TOKEN_ENV);

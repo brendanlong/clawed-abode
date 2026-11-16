@@ -21,7 +21,7 @@ function listen(sessionId: string) {
 }
 
 describe('sseEvents', () => {
-  it('delivers the full session view per-session and only id/name to the list channel', () => {
+  it('delivers the full session view per-session and only the id to the list channel', () => {
     const l = listen('session-1');
 
     sseEvents.emitSessionUpdate('session-1', fakeSession);
@@ -31,7 +31,7 @@ describe('sseEvents', () => {
       kind: 'session',
       session: toSessionView(fakeSession),
     });
-    expect(l.list).toHaveBeenCalledWith({ kind: 'session', sessionId: 'session-1', name: 'Test' });
+    expect(l.list).toHaveBeenCalledWith({ kind: 'changed', sessionId: 'session-1' });
     l.unsubscribe();
   });
 
@@ -41,7 +41,7 @@ describe('sseEvents', () => {
     sseEvents.emitClaudeRunning('session-1', true);
 
     expect(l.session).toHaveBeenCalledWith({ kind: 'running', running: true });
-    expect(l.list).toHaveBeenCalledWith({ kind: 'running', sessionId: 'session-1', running: true });
+    expect(l.list).toHaveBeenCalledWith({ kind: 'changed', sessionId: 'session-1' });
     l.unsubscribe();
   });
 
@@ -97,7 +97,7 @@ describe('sseEvents', () => {
     l.unsubscribe();
   });
 
-  it('fans the full task list per-session and a lightweight active/idle signal to the list', () => {
+  it('fans the full task list per-session and a change signal to the list', () => {
     const l = listen('session-1');
 
     const tasks = [
@@ -106,34 +106,7 @@ describe('sseEvents', () => {
     ];
     sseEvents.emitBackgroundTasks('session-1', tasks);
     expect(l.session).toHaveBeenCalledWith({ kind: 'background', tasks });
-    expect(l.list).toHaveBeenCalledWith({
-      kind: 'background',
-      sessionId: 'session-1',
-      active: true,
-    });
-
-    // An empty set signals idle (drives the badge back to "waiting" even when no
-    // running edge fired — e.g. a ✕-stop or a settle with no continuation).
-    l.list.mockClear();
-    sseEvents.emitBackgroundTasks('session-1', []);
-    expect(l.list).toHaveBeenCalledWith({
-      kind: 'background',
-      sessionId: 'session-1',
-      active: false,
-    });
-
-    // A set holding only no-end-state tasks (a Bash daemon or Monitor, an ambient
-    // task) also signals idle — they don't count toward the busy axis (taskHasEndState).
-    l.list.mockClear();
-    sseEvents.emitBackgroundTasks('session-1', [
-      { taskId: 'd1', taskType: 'local_bash', description: 'dev server', ambient: false },
-      { taskId: 'a1', taskType: 'dream', description: 'housekeeping', ambient: true },
-    ]);
-    expect(l.list).toHaveBeenCalledWith({
-      kind: 'background',
-      sessionId: 'session-1',
-      active: false,
-    });
+    expect(l.list).toHaveBeenCalledWith({ kind: 'changed', sessionId: 'session-1' });
     l.unsubscribe();
   });
 

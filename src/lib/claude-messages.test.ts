@@ -6,7 +6,6 @@ import {
   getParentToolUseId,
   parseCommandLifecycle,
   parseTaskNotification,
-  isIgnoredSystemMessage,
   parseRetryState,
   formatRetryReason,
   initSessionId,
@@ -82,14 +81,6 @@ describe('claude-messages', () => {
     it('degrades unknown future types to system persistence at runtime', () => {
       expect(msg({ type: 'some_future_type' })).toEqual({ kind: 'persist', dbType: 'system' });
     });
-
-    it('skips command_lifecycle, which is delivery bookkeeping and not transcript content', () => {
-      // It is missing from SDKMessage, so without an explicit skip it would fall
-      // through to the unknown-type default above and render as a system bubble.
-      expect(msg({ type: 'command_lifecycle', command_uuid: 'c1', state: 'started' })).toEqual({
-        kind: 'skip',
-      });
-    });
   });
 
   describe('parseCommandLifecycle', () => {
@@ -118,34 +109,6 @@ describe('claude-messages', () => {
         parseCommandLifecycle({ type: 'command_lifecycle', command_uuid: '', state: 'x' })
       ).toBeNull();
       expect(parseCommandLifecycle(null)).toBeNull();
-    });
-  });
-
-  describe('isIgnoredSystemMessage', () => {
-    it('returns true for every ignored subtype', () => {
-      expect(isIgnoredSystemMessage({ type: 'system', subtype: 'thinking_tokens' })).toBe(true);
-      expect(isIgnoredSystemMessage({ type: 'system', subtype: 'task_progress' })).toBe(true);
-      expect(isIgnoredSystemMessage({ type: 'system', subtype: 'commands_changed' })).toBe(true);
-    });
-
-    it('returns true for any system message flagged skip_transcript', () => {
-      expect(
-        isIgnoredSystemMessage({ type: 'system', subtype: 'task_started', skip_transcript: true })
-      ).toBe(true);
-    });
-
-    it('returns false for system messages we render', () => {
-      expect(isIgnoredSystemMessage({ type: 'system', subtype: 'init' })).toBe(false);
-      expect(isIgnoredSystemMessage({ type: 'system', subtype: 'notification' })).toBe(false);
-      expect(isIgnoredSystemMessage({ type: 'system' })).toBe(false);
-    });
-
-    it('returns false for non-system messages and non-objects', () => {
-      expect(isIgnoredSystemMessage({ type: 'assistant' })).toBe(false);
-      expect(isIgnoredSystemMessage({ subtype: 'thinking_tokens' })).toBe(false);
-      expect(isIgnoredSystemMessage(null)).toBe(false);
-      expect(isIgnoredSystemMessage(undefined)).toBe(false);
-      expect(isIgnoredSystemMessage('thinking_tokens')).toBe(false);
     });
   });
 

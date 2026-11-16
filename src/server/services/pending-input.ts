@@ -1,8 +1,14 @@
 import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import { createLogger, toError } from '@/lib/logger';
-import { permissionAttentionSummary, type PermissionRequest } from '@/lib/permission-request';
+import {
+  PERMISSION_DENIED_MESSAGE,
+  permissionAttentionSummary,
+  type PermissionRequest,
+} from '@/lib/permission-request';
 import { interactiveToolAttentionSummary } from '@/lib/session-attention';
+import type { ToolResponse } from '@/lib/tool-response';
 import { sseEvents } from './events';
+import { bumpSessionActivity } from './message-store';
 import type { UserInputRequest } from './sdk-options';
 import { requestAttention } from './session-attention';
 import type { LiveQuery, PendingUserInput } from './session-state';
@@ -26,7 +32,7 @@ function emitIfPermission(sessionId: string, live: LiveQuery, pending: PendingUs
 }
 
 /**
- * Park a tool call until the user answers it ({@link takeUserInput}) or the CLI
+ * Park a tool call until the user answers it ({@link answerUserInput}) or the CLI
  * gives up on it (`signal`), and flag the session for the user.
  */
 export function parkUserInput(
@@ -60,7 +66,7 @@ export function parkUserInput(
 }
 
 /** Remove a parked tool call so the caller can settle it; null if it isn't parked. */
-export function takeUserInput(
+function takeUserInput(
   sessionId: string,
   live: LiveQuery,
   toolUseId: string
@@ -70,6 +76,56 @@ export function takeUserInput(
   live.pendingInputs.delete(toolUseId);
   emitIfPermission(sessionId, live, pending);
   return pending;
+}
+
+/** The user's answer to a parked tool call, by the kind of call it answers. */
+export type UserInputAnswer =
+  | { kind: 'interactive'; response: ToolResponse }
+  | { kind: 'permission'; allow: boolean; feedback?: string };
+
+/** Translate a user's answer into the SDK PermissionResult the parked call resolves to. */
+function answerResult(answer: UserInputAnswer, input: Record<string, unknown>): PermissionResult {
+  if (answer.kind === 'permission') {
+    return answer.allow
+      ? { behavior: 'allow', updatedInput: input }
+      : { behavior: 'deny', message: answer.feedback?.trim() || PERMISSION_DENIED_MESSAGE };
+  }
+  const { response } = answer;
+  if (response.kind === 'questions') {
+    return {
+      behavior: 'allow',
+      updatedInput: { questions: input.questions, answers: response.answers },
+    };
+  }
+  if (response.approve) return { behavior: 'allow', updatedInput: input };
+  return {
+    behavior: 'deny',
+    message:
+      response.feedback?.trim() || 'User rejected the plan. Please revise it before proceeding.',
+  };
+}
+
+/**
+ * Settle a parked tool call of the answer's kind with the user's answer, and
+ * record the interaction. Returns false if no such call is parked.
+ */
+export async function answerUserInput(
+  sessionId: string,
+  live: LiveQuery | null,
+  toolUseId: string,
+  answer: UserInputAnswer
+): Promise<boolean> {
+  if (!live || live.pendingInputs.get(toolUseId)?.kind !== answer.kind) return false;
+  const pending = takeUserInput(sessionId, live, toolUseId);
+  if (!pending) return false;
+  log.info('Answered parked tool call', {
+    sessionId,
+    toolName: pending.toolName,
+    kind: answer.kind,
+  });
+  pending.resolve(answerResult(answer, pending.input));
+  await bumpSessionActivity(sessionId);
+  return true;
 }
 
 /** Reject every parked tool call of a query that is going away. */
