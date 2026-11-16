@@ -186,7 +186,7 @@ export function parseLinkHeader(header: string | null): { next?: string; last?: 
 }
 
 /** The path and query of a Link header's `next` URL. */
-export function nextLinkPath(header: string | null): string | undefined {
+function nextLinkPath(header: string | null): string | undefined {
   const match = header?.match(/<([^>]+)>;\s*rel="next"/);
   if (!match) return undefined;
   const url = new URL(match[1]);

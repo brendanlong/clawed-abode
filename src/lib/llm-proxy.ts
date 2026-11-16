@@ -61,7 +61,7 @@ export const GPT_AGENT_MODELS = {
   luna: GPT_6_TIERS.haiku,
 } as const;
 
-export function proxiedModelTiers(model: string): Record<ModelTier, string> {
+function proxiedModelTiers(model: string): Record<ModelTier, string> {
   return (
     MODEL_FAMILIES.find((family) => model.startsWith(family.prefix))?.tiers ?? {
       fable: model,

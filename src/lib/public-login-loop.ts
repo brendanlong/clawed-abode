@@ -12,7 +12,7 @@ export const PUBLIC_LOGIN_RETRY_WINDOW_MS = 30 * 1000;
 const attemptSchema = z.object({ next: z.string(), at: z.number() });
 type Attempt = z.infer<typeof attemptSchema>;
 
-export function isRepeatAttempt(last: Attempt | null, next: string, now: number): boolean {
+function isRepeatAttempt(last: Attempt | null, next: string, now: number): boolean {
   return last !== null && last.next === next && now - last.at < PUBLIC_LOGIN_RETRY_WINDOW_MS;
 }
 
