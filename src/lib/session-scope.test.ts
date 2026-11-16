@@ -15,7 +15,12 @@ describe('sessionsSliceProperties', () => {
   it('assigns the memory and swap caps and the CPU quota', () => {
     expect(
       sessionsSliceProperties({ memoryMax: '85%', memorySwapMax: '0', cpuQuota: '2200%' })
-    ).toEqual(['MemoryMax=85%', 'MemorySwapMax=0', 'CPUQuota=2200%']);
+    ).toEqual([
+      'ManagedOOMMemoryPressure=kill',
+      'MemoryMax=85%',
+      'MemorySwapMax=0',
+      'CPUQuota=2200%',
+    ]);
   });
 
   it('resets the CPU quota when unset so a previously applied cap is cleared', () => {

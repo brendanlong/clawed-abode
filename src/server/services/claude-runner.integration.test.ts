@@ -91,7 +91,9 @@ vi.mock('./settings-merger', async (importOriginal) => {
 // (so buildSdkOptions sets state.sessionScope), the nonce is fixed for a
 // deterministic unit name, and stopSessionScope is a spy.
 const mockStopSessionScope = vi.hoisted(() => vi.fn(async (_unit: string) => {}));
+const mockWasKilledByOomd = vi.hoisted(() => vi.fn(async (_unit: string) => false));
 vi.mock('./session-cgroup', () => ({
+  wasKilledByOomd: mockWasKilledByOomd,
   getSessionScopeConfig: vi.fn(async () => ({
     launcherPath: '/fake/launcher.sh',
     claudeBin: '/fake/claude',
@@ -1487,6 +1489,54 @@ describe('claude-runner persistent streaming loop', () => {
       await rm(workspace, { recursive: true, force: true });
       const { getSessionWorkingDir } = await import('./worktree-manager');
       vi.mocked(getSessionWorkingDir).mockReturnValue('/tmp/spike-runner-test');
+    });
+
+    describe('when the CLI dies on its own', () => {
+      afterEach(() => mockWasKilledByOomd.mockReset().mockResolvedValue(false));
+
+      it('revives a session systemd-oomd killed and tells the agent what it lost', async () => {
+        const fake = makeFakeQuery();
+        _setQueryFactory(fake.factory);
+        const sessionId = await createRunningSession();
+        await sendUserMessage(sessionId, 'build everything');
+        await fake.deliver();
+        fake.emit(messageStart());
+        mockWasKilledByOomd.mockResolvedValue(true);
+
+        const revived = makeFakeQuery();
+        _setQueryFactory(revived.factory);
+        fake.end();
+
+        await waitFor(() => revived.inputs.length >= 1);
+        const notice = revived.inputs[0].message.content;
+        expect(notice).toMatch(/systemd-oomd killed/);
+        expect(notice).toMatch(/turn was cut off/);
+        expect(mockWasKilledByOomd).toHaveBeenCalledWith(
+          sessionScopeUnitName(sessionId, 'testnonce')
+        );
+        const row = await testPrisma.session.findUniqueOrThrow({ where: { id: sessionId } });
+        expect(row.restartNotice).toBeNull();
+        expect(row.attentionSummary).toMatch(/systemd-oomd/);
+        stopSession(sessionId);
+      });
+
+      it('leaves a session that died for another reason down until the next interaction', async () => {
+        const fake = makeFakeQuery();
+        _setQueryFactory(fake.factory);
+        const sessionId = await createRunningSession();
+        await sendUserMessage(sessionId, 'hello');
+        await waitFor(() => fake.inputs.length > 0);
+
+        const revived = makeFakeQuery();
+        const factory = vi.fn(revived.factory);
+        _setQueryFactory(factory);
+        fake.end();
+
+        await waitFor(() => mockWasKilledByOomd.mock.calls.length > 0);
+        await new Promise((r) => setTimeout(r, 50));
+        expect(factory).not.toHaveBeenCalled();
+        stopSession(sessionId);
+      });
     });
 
     it('applies a permission mode change saved while the query is still being established', async () => {

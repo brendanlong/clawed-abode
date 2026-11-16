@@ -19,6 +19,16 @@ sudo loginctl enable-linger clawedabode
 # is archived. Keep systemd-tmpfiles' age-based /tmp cleanup from deleting an idle
 # session's dir out from under it, while still aging out old files inside it.
 printf 'X /tmp/clawed-abode\nX /tmp/clawed-abode/*\n' | sudo tee /etc/tmpfiles.d/clawed-abode.conf
+# When sessions run the machine out of memory, kill the one competing hardest for
+# it instead of letting every session stall. The package's own default also watches
+# each user's whole service manager, where it could kill the app server itself;
+# the app watches only its sessions, so mask that default.
+sudo mkdir -p /etc/systemd/system/user@.service.d
+sudo ln -sf /dev/null /etc/systemd/system/user@.service.d/10-oomd-user-service-defaults.conf
+sudo systemctl daemon-reload
+sudo apt install systemd-oomd
+# Should print ManagedOOMMemoryPressure=auto
+systemctl show user@$(id -u clawedabode).service -p ManagedOOMMemoryPressure
 sudo -u clawedabode -i
 ```
 

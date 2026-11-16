@@ -39,9 +39,11 @@ export interface SessionsSliceLimits {
 /**
  * `systemctl set-property` assignments for the sessions slice. An unset CPU
  * quota is assigned empty, which clears any quota set before.
+ * `ManagedOOMMemoryPressure=kill` is a no-op on a host without systemd-oomd.
  */
 export function sessionsSliceProperties(limits: SessionsSliceLimits): string[] {
   return [
+    'ManagedOOMMemoryPressure=kill',
     `MemoryMax=${limits.memoryMax}`,
     `MemorySwapMax=${limits.memorySwapMax}`,
     `CPUQuota=${limits.cpuQuota ?? ''}`,

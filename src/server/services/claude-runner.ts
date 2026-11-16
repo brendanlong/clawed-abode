@@ -34,7 +34,7 @@ import {
   type LiveEvent,
   type LiveOutcome,
 } from '@/lib/live-turn';
-import { restartNotice } from '@/lib/restart-notice';
+import { oomKillNotice, restartNotice } from '@/lib/restart-notice';
 import { parseRateLimitEvent } from '@/lib/rate-limit';
 import { modelChangeNeedsRestart, usesLlmProxy } from '@/lib/llm-proxy';
 import { backgroundActive, type BackgroundTask } from '@/lib/session-status';
@@ -56,7 +56,7 @@ import {
   type MergedSessionSettings,
 } from './settings-merger';
 import { StreamAccumulator } from './stream-accumulator';
-import { stopSessionScope } from './session-cgroup';
+import { stopSessionScope, wasKilledByOomd } from './session-cgroup';
 import { createSessionState, type LiveQuery, type SessionState } from './session-state';
 import {
   createErrorMessage,
@@ -338,16 +338,48 @@ async function runSessionLoop(
     log.error('runSessionLoop: error', toError(err), { sessionId });
     await createErrorMessage(sessionId, `Claude query failed: ${toError(err).message}`);
   } finally {
+    const diedOnItsOwn = state.live === live;
+    // Read before teardown clears the turn and cancels GPT runs.
+    const oomNotice = diedOnItsOwn ? oomKillNotice(state.turn, hasActiveGptRuns(sessionId)) : null;
     // A restart tears its query down itself and may already have a new one live.
-    if (!state.live || state.live === live) dispatch(sessionId, state, { type: 'torn_down' });
+    if (!state.live || diedOnItsOwn) dispatch(sessionId, state, { type: 'torn_down' });
     // Drop the live query so the next interaction re-establishes (resume). The
     // state record stays in the map (commands etc. persist); only stop/delete
     // remove it. The guard skips this when stopSession already released it.
-    if (state.live === live) {
+    if (diedOnItsOwn) {
       flushPendingAttention(sessionId, live);
-      void releaseQuery(sessionId, state, 'Query ended');
+      const released = releaseQuery(sessionId, state, 'Query ended');
+      const scope = live.sessionScope;
+      if (scope && oomNotice)
+        void released.then(() => reviveAfterOomdKill(sessionId, scope, oomNotice));
     }
   }
+}
+
+/**
+ * Bring a session systemd-oomd killed straight back (running means reachable),
+ * tell its agent why, and flag it for the user, who should see an agent that
+ * keeps getting killed. The notice goes through the restart notice, so a held
+ * session hears it once the pause releases it, Stop withdraws it, and a
+ * shutdown racing this delivers it on the next boot.
+ */
+async function reviveAfterOomdKill(
+  sessionId: string,
+  scope: string,
+  notice: string
+): Promise<void> {
+  if (!(await wasKilledByOomd(scope))) return;
+  log.warn('systemd-oomd killed the session; reviving it', { sessionId, scope });
+  try {
+    await prisma.session.updateMany({
+      where: { id: sessionId, status: 'running' },
+      data: { restartNotice: notice },
+    });
+    await requestAttention(sessionId, 'systemd-oomd killed this session for using too much memory');
+  } catch (err) {
+    log.error('Failed to record the oomd kill', toError(err), { sessionId });
+  }
+  await reviveSession(sessionId);
 }
 
 /**
