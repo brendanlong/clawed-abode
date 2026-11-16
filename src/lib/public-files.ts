@@ -190,35 +190,6 @@ export function contentTypeFor(fileName: string): string {
   return CONTENT_TYPES[ext] ?? 'application/octet-stream';
 }
 
-export type ByteRange = { start: number; end: number };
-
-/**
- * Parse a single-range `Range: bytes=…` header against a file size (iOS Safari
- * won't play video without range support). Returns null to serve the whole file
- * (no header, or a form we don't support, like multiple ranges) and
- * 'unsatisfiable' for a range entirely past the end.
- */
-export function parseByteRange(
-  header: string | null,
-  size: number
-): ByteRange | 'unsatisfiable' | null {
-  const match = header?.match(/^bytes=(\d*)-(\d*)$/);
-  if (!match) return null;
-  const [, rawStart, rawEnd] = match;
-  if (rawStart === '' && rawEnd === '') return null;
-
-  if (rawStart === '') {
-    const suffix = Number(rawEnd);
-    if (suffix === 0 || size === 0) return 'unsatisfiable';
-    return { start: Math.max(0, size - suffix), end: size - 1 };
-  }
-  const start = Number(rawStart);
-  const end = rawEnd === '' ? size - 1 : Math.min(Number(rawEnd), size - 1);
-  if (start >= size) return 'unsatisfiable';
-  if (end < start) return null;
-  return { start, end };
-}
-
 export interface DirectoryEntry {
   name: string;
   isDirectory: boolean;
