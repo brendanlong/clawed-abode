@@ -146,3 +146,7 @@ The model is the live query's, else the session's override, else the one its fir
 query reported, matched to a window by family name. Proxied sessions show none.
 Without a `user:profile` credential, per-model windows are unknown, so the weekly bar is
 always the all-models window.
+
+## Usage Tools
+
+The same readings feed the agents' `check_usage` and `set_usage_alerts` tools ([`usage.ts`](../src/server/services/usage.ts), pure logic in [`src/lib/usage.ts`](../src/lib/usage.ts)), so agents can pace work across the windows. **Alerts never wake an idle agent**: one goes out only while the session is working (a session the pause holds counts as idle), otherwise at its next turn and only if the window hasn't reset, so an alert is never delivered stale. Stale readings are refreshed through the SDK's **experimental** `/usage` call, the only source of per-model weekly windows and extra-usage credit; its utilization is a percentage where the events' is a fraction, and a `claude setup-token` credential lacks the `user:profile` scope it needs, so under that auth the tools rely on the event stream alone.
