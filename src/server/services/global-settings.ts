@@ -7,7 +7,6 @@ import {
 import { DEFAULT_PAUSE_THRESHOLD } from '@/lib/rate-limit';
 import { DEFAULT_SETTING_SOURCE_FLAGS } from '@/lib/setting-sources';
 import type { GlobalSettings, Prisma } from '@/generated/prisma/client';
-import { GLOBAL_SETTINGS_ID } from './settings-scope';
 
 /** The singleton row's settings columns. */
 export type GlobalSettingsValues = Omit<GlobalSettings, 'id' | 'createdAt' | 'updatedAt'>;
@@ -15,6 +14,9 @@ export type GlobalSettingsValues = Omit<GlobalSettings, 'id' | 'createdAt' | 'up
 type GlobalSettingsPatch = Partial<
   Omit<Prisma.GlobalSettingsCreateInput, 'id' | 'createdAt' | 'updatedAt'>
 >;
+
+/** Id of the GlobalSettings singleton row. */
+const GLOBAL_SETTINGS_ID = 'global';
 
 /**
  * What every setting reads as before the row exists. Must match the schema's
