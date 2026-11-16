@@ -53,21 +53,6 @@ export const INITIAL_LIVE_STATUS: LiveStatus = {
 };
 
 /**
- * What a {@link reduceSessionMessage} step changed beyond the status itself. Only
- * the turn axis: the other channels are diffed from the client-visible view (see
- * `diffLiveView` in live-turn.ts), which relies on the background set being
- * replaced only when it changes.
- */
-interface LiveStatusChange {
-  turnActive: boolean;
-}
-
-export interface ReduceResult {
-  status: LiveStatus;
-  changed: LiveStatusChange;
-}
-
-/**
  * SDK `task_type` for a backgrounded Bash command — and for every `Monitor` watch,
  * which the CLI runs as a `local_bash` task. Either may run until the session is
  * torn down (a dev server, a `persistent: true` Monitor) with no self-determined
@@ -219,7 +204,7 @@ function parseBackgroundTaskSet(
  *   top-level background-task system events (`task_progress` etc.) — leaves retry
  *   untouched, so it can't prematurely clear a main-turn retry indicator.
  */
-export function reduceSessionMessage(prev: LiveStatus, message: SDKMessage): ReduceResult {
+export function reduceSessionMessage(prev: LiveStatus, message: SDKMessage): LiveStatus {
   let { turnActive, backgroundTasks, retry, subagentTypes } = prev;
   const topLevel = isTopLevel(message);
 
@@ -277,10 +262,5 @@ export function reduceSessionMessage(prev: LiveStatus, message: SDKMessage): Red
     }
   }
 
-  return {
-    status: { turnActive, backgroundTasks, retry, subagentTypes },
-    changed: {
-      turnActive: turnActive !== prev.turnActive,
-    },
-  };
+  return { turnActive, backgroundTasks, retry, subagentTypes };
 }
