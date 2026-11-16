@@ -14,6 +14,11 @@ export function setAuthToken(token: string): void {
   localStorage.setItem(AUTH_TOKEN_KEY, token);
 }
 
+/** The bearer `authorization` header for `token` (the stored one by default), or none. */
+export function authHeaders(token = getAuthToken()): Record<string, string> {
+  return token ? { authorization: `Bearer ${token}` } : {};
+}
+
 export function clearAuthToken(): void {
   if (typeof window === 'undefined') return;
   localStorage.removeItem(AUTH_TOKEN_KEY);

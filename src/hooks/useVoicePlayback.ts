@@ -12,7 +12,7 @@ import {
   type ReactNode,
 } from 'react';
 import { z } from 'zod';
-import { getAuthToken } from '@/lib/auth-token';
+import { authHeaders } from '@/lib/auth-token';
 import {
   IDLE_SPEECH_STATE,
   SpeechPlayer,
@@ -82,13 +82,9 @@ const speechResponseSchema = z.union([
 
 /** Ask the server to synthesize `text`; resolves to the URL its audio streams from. */
 async function requestSpeechUrl(text: string, signal?: AbortSignal): Promise<string> {
-  const token = getAuthToken();
   const res = await fetch('/api/tts', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { authorization: `Bearer ${token}` } : {}),
-    },
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify({ text }),
     signal,
   });

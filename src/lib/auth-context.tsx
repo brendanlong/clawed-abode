@@ -2,12 +2,11 @@
 
 import type { ReactNode } from 'react';
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { getAuthToken, setAuthToken, clearAuthToken } from '@/lib/auth-token';
+import { authHeaders, getAuthToken, setAuthToken, clearAuthToken } from '@/lib/auth-token';
 import { trpc } from '@/lib/trpc';
 
 interface AuthContextType {
   isAuthenticated: boolean;
-  token: string | null;
   isLoading: boolean;
   login: (token: string) => void;
   logout: () => void;
@@ -49,7 +48,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (authState.isLoading || !token) return;
     fetch('/api/auth/public-cookie', {
       method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
+      headers: authHeaders(token),
     }).catch(() => {
       // Best-effort: only public-file links depend on it.
     });
@@ -85,7 +84,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     <AuthContext.Provider
       value={{
         isAuthenticated: !!authState.token,
-        token: authState.token,
         isLoading: authState.isLoading,
         login,
         logout,

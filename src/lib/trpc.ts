@@ -7,7 +7,7 @@ import { observable } from '@trpc/server/observable';
 import { EventSourcePolyfill } from 'event-source-polyfill';
 import superjson from 'superjson';
 import type { AppRouter } from '@/server/routers';
-import { getAuthToken, clearAuthToken } from '@/lib/auth-token';
+import { authHeaders, clearAuthToken } from '@/lib/auth-token';
 
 export const trpc = createTRPCReact<AppRouter>();
 
@@ -65,13 +65,7 @@ export function createTRPCClient() {
           url: '/api/trpc',
           transformer: superjson,
           EventSource: EventSourcePolyfill,
-          eventSourceOptions: async () => {
-            const token = getAuthToken();
-            if (!token) return {};
-            return {
-              headers: { authorization: `Bearer ${token}` },
-            };
-          },
+          eventSourceOptions: async () => ({ headers: authHeaders() }),
         }),
         false: httpBatchLink({
           url: '/api/trpc',
@@ -79,10 +73,7 @@ export function createTRPCClient() {
           // results) into several requests rather than one over-long GET URL.
           maxURLLength: 2083,
           transformer: superjson,
-          headers() {
-            const token = getAuthToken();
-            return token ? { authorization: `Bearer ${token}` } : {};
-          },
+          headers: () => authHeaders(),
         }),
       }),
     ],

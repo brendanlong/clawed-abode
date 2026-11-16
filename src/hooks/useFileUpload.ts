@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useCallback } from 'react';
-import { getAuthToken } from '@/lib/auth-token';
+import { authHeaders } from '@/lib/auth-token';
 import type { UploadedAttachment } from '@/lib/attachments';
 
 interface UploadResponse {
@@ -11,10 +11,9 @@ interface UploadResponse {
 async function uploadFile(sessionId: string | undefined, file: File): Promise<UploadedAttachment> {
   const params = new URLSearchParams({ name: file.name });
   if (sessionId) params.set('sessionId', sessionId);
-  const token = getAuthToken();
   const res = await fetch(`/api/upload?${params}`, {
     method: 'POST',
-    headers: token ? { authorization: `Bearer ${token}` } : {},
+    headers: authHeaders(),
     body: file,
   });
 
