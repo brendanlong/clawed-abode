@@ -222,7 +222,7 @@ function buildSanitizationNote(messages: string[], removed: boolean): string {
 export async function sanitizeToolOutputHook(
   input: HookInput,
   sessionId: string,
-  onFindings?: (toolUseId: string, info: SanitizationInfo) => void
+  onFindings: (toolUseId: string, info: SanitizationInfo) => void
 ): Promise<HookJSONOutput> {
   if (input.hook_event_name !== 'PostToolUse') return {};
   try {
@@ -236,7 +236,7 @@ export async function sanitizeToolOutputHook(
     // for a note-tier-only finding, which carries no category: the operator gets
     // no badge where the agent still gets the sentence.
     const info = buildSanitizationInfo(found, messages, sanitized);
-    if (info && onFindings) onFindings(input.tool_use_id, info);
+    if (info) onFindings(input.tool_use_id, info);
     const notes: string[] = [];
     if (sanitized || messages.length > 0) notes.push(buildSanitizationNote(messages, sanitized));
     if (redactedRules.length > 0) notes.push(buildRedactionNote(redactedRules));
