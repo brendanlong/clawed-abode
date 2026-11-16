@@ -35,7 +35,7 @@ model Session {
   statusMessage       String? // Human-readable progress message during creation
   currentBranch       String? // Current git branch (detected after each turn)
   pullRequestId       String? // The PullRequest for currentBranch; null = none/unknown
-  pullRequest         String? // Copy of the linked PullRequest's info, written only by pull-request-store.ts so it always matches
+  pullRequest         String? // Copy of the linked PullRequest's info (doc/messages-and-sse.md)
   prCheckedAt         DateTime? // When GitHub was last asked about pullRequest, successfully or not; drives the staleness refresh (see src/lib/pull-request.ts)
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
@@ -369,7 +369,7 @@ model GlobalSettings {
   settingSourceLocal          Boolean  @default(false) // Load Claude settings from the local scope (<cwd>/.claude/settings.local.json)
   rateLimitPauseEnabled       Boolean  @default(false) // Default for whether sessions pause when a subscription window fills
   rateLimitPauseThreshold     Int      @default(95) // Default 5-hour-window utilization percent at which sessions pause
-  builtinToolsEnabled         Boolean  @default(true) // Give agents the built-in clawed-abode MCP server (rename own session)
+  builtinToolsEnabled         Boolean  @default(true) // Give agents the built-in clawed-abode MCP server (doc/settings.md "Built-in tools")
   permissionMode              String   @default("auto") // Claude Code permission mode for every session: "auto" or "bypassPermissions" (src/lib/permission-mode.ts)
   createdAt                   DateTime @default(now())
   updatedAt                   DateTime @updatedAt
