@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import type { SlashCommand } from '@anthropic-ai/claude-agent-sdk';
 import { X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -43,12 +44,6 @@ function restoreCancelledDraft(
     text: mergeCancelledText(current.text, cancelled),
     attachments: mergeCancelledAttachments(current.attachments, cancelled),
   };
-}
-
-export interface SlashCommand {
-  name: string;
-  description: string;
-  argumentHint: string;
 }
 
 interface PromptInputProps {
@@ -164,11 +159,8 @@ export function PromptInput({
 
   const insertCommand = useCallback(
     (command: SlashCommand) => {
-      const newPrompt = `/${command.name} `;
-      setDraft((current) => ({ ...current, text: newPrompt }));
-      // Dismiss for the new prompt value (since it will have a space, filteredCommands
-      // won't match anyway, but this is defense-in-depth)
-      setDismissedForPrompt(newPrompt);
+      // The trailing space ends the command name, which closes the menu.
+      setDraft((current) => ({ ...current, text: `/${command.name} ` }));
       setSelectedIndex(0);
       textareaRef.current?.focus();
     },
