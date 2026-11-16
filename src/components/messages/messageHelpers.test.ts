@@ -197,7 +197,6 @@ describe('isRecognizedMessage', () => {
   it('does not specially recognize system init messages (hidden from transcript)', () => {
     const content: MessageContent = {
       subtype: 'init',
-      model: 'claude-3',
       session_id: 'sess-1',
     };
     expect(isRecognizedMessage('system', content)).toEqual({ recognized: false });

@@ -226,8 +226,8 @@ describe('MessageBubble', () => {
         content: {
           message: {
             content: [
-              { type: 'thinking', thinking: '', signature: 'reasoning' },
-              { type: 'thinking', thinking: 'Checking the logs next.', signature: 'update' },
+              { type: 'thinking', thinking: '' },
+              { type: 'thinking', thinking: 'Checking the logs next.' },
             ],
           },
         } as MessageContent,
