@@ -27,6 +27,16 @@ function emptyToUndefined(value: unknown): unknown {
   return value === '' ? undefined : value;
 }
 
+/** An optional base URL, without a trailing slash so callers can append paths. */
+const baseUrl = z.preprocess(
+  emptyToUndefined,
+  z
+    .string()
+    .url()
+    .transform((url) => url.replace(/\/+$/, ''))
+    .optional()
+);
+
 const envSchema = z
   .object({
     DATABASE_URL: z.string().default('file:./data/dev.db'),
@@ -79,7 +89,7 @@ const envSchema = z
     ),
     // OpenAI-compatible speech API that serves Kokoro, e.g. https://openrouter.ai/api/v1
     // or a local Kokoro-FastAPI at http://localhost:8880/v1. When unset, TTS is hidden.
-    TTS_BASE_URL: z.preprocess(emptyToUndefined, z.string().url().optional()),
+    TTS_BASE_URL: baseUrl,
     TTS_API_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
     // Kokoro-FastAPI calls the model "kokoro".
     TTS_MODEL: z.preprocess(emptyToUndefined, z.string().default('hexgrad/kokoro-82m')),
@@ -90,7 +100,7 @@ const envSchema = z
     ),
     // Anthropic-compatible proxy (e.g. LiteLLM at http://localhost:4000) serving
     // provider-prefixed models like openai/gpt-6-astra; see doc/settings.md.
-    LLM_PROXY_URL: z.preprocess(emptyToUndefined, z.string().url().optional()),
+    LLM_PROXY_URL: baseUrl,
     LLM_PROXY_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
     // Collective limits on all agent sessions (see "Process Reaping" in
     // doc/claude-sessions.md), in systemd syntax.

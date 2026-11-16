@@ -1,4 +1,5 @@
 import { env } from '@/lib/env';
+import { bearerAuthHeader } from '@/lib/auth';
 import type { KokoroVoice } from '@/lib/kokoro-voices';
 import { PCM_BYTES_PER_SECOND, PCM_SAMPLE_RATE, pcm16ToFloat32 } from '@/lib/pcm';
 import { encodeAac } from './aac';
@@ -27,11 +28,11 @@ async function* synthesizePcm(
   const baseUrl = env.TTS_BASE_URL;
   if (!baseUrl) throw new Error('TTS_BASE_URL is not configured');
 
-  const response = await fetch(`${baseUrl.replace(/\/+$/, '')}/audio/speech`, {
+  const response = await fetch(`${baseUrl}/audio/speech`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      ...(env.TTS_API_KEY ? { Authorization: `Bearer ${env.TTS_API_KEY}` } : {}),
+      ...bearerAuthHeader(env.TTS_API_KEY),
     },
     // No `stream` field: Kokoro-FastAPI and optimized-kokoro stream by default.
     body: JSON.stringify({

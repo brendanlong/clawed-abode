@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod';
 import { classifyClaudeCredential } from '@/lib/claude-credential';
 import { env } from '@/lib/env';
+import { bearerAuthHeader } from '@/lib/auth';
 import { usesLlmProxy } from '@/lib/llm-proxy';
 import { createLogger, toError } from '@/lib/logger';
 import { loadClaudeCredential } from './settings-merger';
@@ -82,8 +83,8 @@ export function parseProxiedModels(body: unknown): string[] {
 async function fetchProxiedModels(): Promise<string[]> {
   if (!env.LLM_PROXY_URL) return [];
   try {
-    const response = await fetch(`${env.LLM_PROXY_URL.replace(/\/$/, '')}/v1/models`, {
-      headers: env.LLM_PROXY_KEY ? { Authorization: `Bearer ${env.LLM_PROXY_KEY}` } : {},
+    const response = await fetch(`${env.LLM_PROXY_URL}/v1/models`, {
+      headers: bearerAuthHeader(env.LLM_PROXY_KEY),
       signal: AbortSignal.timeout(10_000),
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);

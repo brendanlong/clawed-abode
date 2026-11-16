@@ -3,6 +3,7 @@ import { homedir } from 'os';
 import path from 'path';
 import { randomBytes } from 'node:crypto';
 import { env } from '@/lib/env';
+import { bearerAuthHeader } from '@/lib/auth';
 import {
   imageFileName,
   imageMimeType,
@@ -68,11 +69,11 @@ async function callResponsesImageTool(
   signal: AbortSignal
 ): Promise<GeneratedImage> {
   if (!env.LLM_PROXY_URL) throw new Error('No LLM proxy is configured');
-  const response = await fetch(`${env.LLM_PROXY_URL.replace(/\/$/, '')}/v1/responses`, {
+  const response = await fetch(`${env.LLM_PROXY_URL}/v1/responses`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      ...(env.LLM_PROXY_KEY ? { Authorization: `Bearer ${env.LLM_PROXY_KEY}` } : {}),
+      ...bearerAuthHeader(env.LLM_PROXY_KEY),
     },
     body: JSON.stringify(responsesImageRequest(input.prompt, inputImageUrls, input)),
     signal,
