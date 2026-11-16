@@ -19,6 +19,7 @@ import {
   getSessionScopeConfig,
   stopScope,
   stopSessionScope,
+  wasKilledByOomd,
 } from './session-cgroup';
 
 const execFileAsync = promisify(execFile);
@@ -310,6 +311,7 @@ describe('sessions slice limits (real systemd)', () => {
       expect(await sliceProperty(slice, 'MemoryMax')).toBe(String(100 * 1024 * 1024));
       expect(await sliceProperty(slice, 'MemorySwapMax')).toBe('0');
       expect(await sliceProperty(slice, 'CPUQuotaPerSecUSec')).toBe('1.500000s');
+      expect(await sliceProperty(slice, 'ManagedOOMMemoryPressure')).toBe('kill');
 
       const proc = spawn('bash', [launcher], {
         stdio: 'ignore',
@@ -339,6 +341,62 @@ describe('sessions slice limits (real systemd)', () => {
       await rm(dir, { recursive: true, force: true });
     }
   }, 30000);
+});
+
+describe('wasKilledByOomd (real systemd)', () => {
+  async function startScope(): Promise<{ unit: string; cgroup: string }> {
+    const unit = sessionScopeUnitName('oomd', randomBytes(4).toString('hex'));
+    spawn(
+      'systemd-run',
+      ['--user', '--scope', '--collect', '--quiet', `--unit=${unit}`, 'sleep', '300'],
+      {
+        stdio: 'ignore',
+      }
+    );
+    await waitFor(
+      () =>
+        execFileAsync('systemctl', ['--user', 'is-active', unit]).then(
+          () => true,
+          () => false
+        ),
+      10000
+    );
+    const { stdout } = await execFileAsync('systemctl', [
+      '--user',
+      'show',
+      '--property=ControlGroup',
+      '--value',
+      unit,
+    ]);
+    return { unit, cgroup: join('/sys/fs/cgroup', stdout.trim()) };
+  }
+
+  it('recognizes a scope systemd-oomd killed', async (ctx) => {
+    if (!(await userScopeAvailable())) ctx.skip('systemd user scope unavailable');
+    const { unit, cgroup } = await startScope();
+    try {
+      // What systemd-oomd does: count the kill in an xattr the manager reports
+      // on, then kill the whole cgroup.
+      await execFileAsync('python3', [
+        '-I',
+        '-c',
+        "import os, sys; os.setxattr(sys.argv[1], 'user.oomd_ooms', b'1')",
+        cgroup,
+      ]);
+      await writeFile(join(cgroup, 'cgroup.kill'), '1');
+      await stopScope(unit);
+      expect(await wasKilledByOomd(unit)).toBe(true);
+    } finally {
+      await stopScope(unit);
+    }
+  }, 20000);
+
+  it('does not mistake an ordinary stop for an oomd kill', async (ctx) => {
+    if (!(await userScopeAvailable())) ctx.skip('systemd user scope unavailable');
+    const { unit } = await startScope();
+    await stopScope(unit);
+    expect(await wasKilledByOomd(unit)).toBe(false);
+  }, 20000);
 });
 
 describe('getSessionScopeConfig', () => {

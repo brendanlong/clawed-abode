@@ -201,3 +201,35 @@ export async function stopScope(unit: string): Promise<void> {
     // reset-failed is cleanup only.
   }
 }
+
+/** Journal catalog id of the user manager's "systemd-oomd killed N process(es) in this unit". */
+const OOMD_KILL_MESSAGE_ID = 'd989611b15e44c9dbf31e3c81256e4ed';
+
+/**
+ * Whether systemd-oomd killed processes in a scope. Call after the scope has
+ * stopped: stopping waits for the manager to finish with the unit, and the
+ * manager logs the kill before that. False when the journal can't be read.
+ */
+export async function wasKilledByOomd(unit: string): Promise<boolean> {
+  try {
+    const { stdout } = await execFileAsync(
+      'journalctl',
+      [
+        '--user',
+        '--quiet',
+        '--no-pager',
+        '--output=cat',
+        `USER_UNIT=${unit}`,
+        `MESSAGE_ID=${OOMD_KILL_MESSAGE_ID}`,
+      ],
+      { timeout: 15000 }
+    );
+    return stdout.trim() !== '';
+  } catch (err) {
+    log.warn('Could not read the journal to check for a systemd-oomd kill', {
+      unit,
+      error: toError(err).message,
+    });
+    return false;
+  }
+}

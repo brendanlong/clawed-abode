@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { INITIAL_LIVE_TURN, type InFlightCommand, type LiveTurnState } from './live-turn';
-import { restartNotice } from './restart-notice';
+import { oomKillNotice, restartNotice } from './restart-notice';
 import type { BackgroundTask } from './session-status';
 
 function turnWith(
@@ -70,5 +70,21 @@ describe('restartNotice', () => {
 
   it('mentions cancelled GPT agents', () => {
     expect(restartNotice(turnWith(), true)).toMatch(/GPT agents/);
+  });
+});
+
+describe('oomKillNotice', () => {
+  it('tells even an idle agent, since everything it started was killed', () => {
+    expect(oomKillNotice(turnWith(), false)).toMatch(/systemd-oomd killed/);
+  });
+
+  it('lists the turn and background work it lost', () => {
+    const notice = oomKillNotice(
+      turnWith({ turnActive: true, tasks: [task({ description: 'run tests' })] }),
+      true
+    );
+    expect(notice).toMatch(/turn was cut off/);
+    expect(notice).toContain('run tests');
+    expect(notice).toMatch(/GPT agents/);
   });
 });
