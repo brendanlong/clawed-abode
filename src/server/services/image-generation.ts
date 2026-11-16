@@ -4,14 +4,12 @@ import path from 'path';
 import { randomBytes } from 'node:crypto';
 import { env } from '@/lib/env';
 import {
-  IMAGE_MODELS,
   imageFileName,
   imageMimeType,
   MAX_INPUT_IMAGE_TOTAL_BYTES,
   parseImageStream,
   responsesImageRequest,
   type GeneratedImage,
-  type ImageModelName,
   type ImageToolOptions,
 } from '@/lib/image-generation';
 import { createLogger } from '@/lib/logger';
@@ -28,7 +26,6 @@ export interface ImageToolContext {
 }
 
 export interface GenerateImageInput extends ImageToolOptions {
-  model: ImageModelName;
   prompt: string;
   inputImages: string[];
   /** Absolute, `~/`, or relative to the working dir; defaults to the session's public dir. */
@@ -66,7 +63,6 @@ async function inputImageDataUrls(workingDir: string, files: string[]): Promise<
 }
 
 async function callResponsesImageTool(
-  proxyModel: string,
   input: GenerateImageInput,
   inputImageUrls: string[],
   signal: AbortSignal
@@ -78,7 +74,7 @@ async function callResponsesImageTool(
       'Content-Type': 'application/json',
       ...(env.LLM_PROXY_KEY ? { Authorization: `Bearer ${env.LLM_PROXY_KEY}` } : {}),
     },
-    body: JSON.stringify(responsesImageRequest(proxyModel, input.prompt, inputImageUrls, input)),
+    body: JSON.stringify(responsesImageRequest(input.prompt, inputImageUrls, input)),
     signal,
   });
   // A few MB: the image's base64 appears in two events.
@@ -114,14 +110,8 @@ export async function generateImage(
     AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     ...(signal ? [signal] : []),
   ]);
-  const spec = IMAGE_MODELS[input.model];
-  log.info('Generating image', { sessionId: ctx.sessionId, model: input.model });
-  let image: GeneratedImage;
-  switch (spec.kind) {
-    case 'responses-tool':
-      image = await callResponsesImageTool(spec.proxyModel, input, inputImageUrls, requestSignal);
-      break;
-  }
+  log.info('Generating image', { sessionId: ctx.sessionId });
+  const image = await callResponsesImageTool(input, inputImageUrls, requestSignal);
 
   const outputPath = input.outputPath
     ? resolveAgentPath(ctx.workingDir, input.outputPath)

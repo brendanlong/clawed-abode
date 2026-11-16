@@ -45,7 +45,6 @@ let server: Server;
 let workingDir: string;
 
 const baseInput: GenerateImageInput = {
-  model: 'gpt-image',
   prompt: 'A red circle',
   inputImages: [],
   size: 'auto',

@@ -107,15 +107,10 @@ describe('parseImageStream', () => {
 
 describe('responsesImageRequest', () => {
   it('forces one image tool call with the options and input images', () => {
-    const request = responsesImageRequest(
-      'openai/gpt-6-luna',
-      'Edit this',
-      ['data:image/png;base64,AA'],
-      {
-        size: '1536x1024',
-        background: 'transparent',
-      }
-    );
+    const request = responsesImageRequest('Edit this', ['data:image/png;base64,AA'], {
+      size: '1536x1024',
+      background: 'transparent',
+    });
     expect(request).toMatchObject({
       model: 'openai/gpt-6-luna',
       stream: true,
