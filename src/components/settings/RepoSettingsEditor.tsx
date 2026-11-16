@@ -60,7 +60,7 @@ function useRepoMcpServerMutations(repoFullName: string): McpServerMutations {
 
 export function RepoSettingsEditor({ repoFullName, onClose }: RepoSettingsEditorProps) {
   const { data, isLoading, refetch } = trpc.repoSettings.get.useQuery({ repoFullName });
-  const toggleFavorite = trpc.repoSettings.update.useMutation({
+  const updateRepoSettings = trpc.repoSettings.update.useMutation({
     onSuccess: () => refetch(),
   });
   const envVarMutations = useRepoEnvVarMutations(repoFullName);
@@ -97,7 +97,7 @@ export function RepoSettingsEditor({ repoFullName, onClose }: RepoSettingsEditor
               <Switch
                 checked={data?.isFavorite ?? false}
                 onCheckedChange={(checked) =>
-                  toggleFavorite.mutate({ repoFullName, isFavorite: checked })
+                  updateRepoSettings.mutate({ repoFullName, isFavorite: checked })
                 }
               />
             </div>

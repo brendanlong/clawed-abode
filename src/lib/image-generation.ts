@@ -2,13 +2,8 @@ import path from 'path';
 import { z } from 'zod';
 import { GPT_AGENT_MODELS } from './llm-proxy';
 
-/** Pure parts of the generate_image built-in tool (doc/settings.md "Image Generation"). */
+// Pure parts of the generate_image built-in tool (doc/settings.md "Image Generation").
 
-/**
- * The text model that calls OpenAI's hosted image_generation tool through the LLM
- * proxy's /v1/responses; its routing decides who pays. A ChatGPT plan picks the
- * image model itself, ignoring any `model` on the tool.
- */
 const IMAGE_PROXY_MODEL = GPT_AGENT_MODELS.luna;
 
 export const IMAGE_SIZES = ['auto', '1024x1024', '1536x1024', '1024x1536'] as const;

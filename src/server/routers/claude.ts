@@ -178,7 +178,6 @@ export const claudeRouter = router({
   stopBackgroundTask: protectedProcedure
     .input(z.object({ sessionId: z.string().uuid(), taskId: z.string().min(1) }))
     .mutation(async ({ input }) => {
-      const stopped = await stopBackgroundTask(input.sessionId, input.taskId);
-      return { success: stopped };
+      await stopBackgroundTask(input.sessionId, input.taskId);
     }),
 });
