@@ -362,24 +362,27 @@ async function runSessionLoop(
 }
 
 /**
- * Bring a session systemd-oomd killed straight back (running means reachable)
- * and tell its agent why. Goes through the restart notice, so a held session
- * hears it once the pause releases it, and Stop withdraws it.
+ * Bring a session systemd-oomd killed straight back (running means reachable),
+ * tell its agent why, and flag it for the user, who should see an agent that
+ * keeps getting killed. The notice goes through the restart notice, so a held
+ * session hears it once the pause releases it, Stop withdraws it, and a
+ * shutdown racing this delivers it on the next boot.
  */
 async function reviveAfterOomdKill(
   sessionId: string,
   scope: string,
   notice: string
 ): Promise<void> {
-  if (shutdown.started || !(await wasKilledByOomd(scope))) return;
+  if (!(await wasKilledByOomd(scope))) return;
   log.warn('systemd-oomd killed the session; reviving it', { sessionId, scope });
   try {
     await prisma.session.updateMany({
       where: { id: sessionId, status: 'running' },
       data: { restartNotice: notice },
     });
+    await requestAttention(sessionId, 'systemd-oomd killed this session for using too much memory');
   } catch (err) {
-    log.error('Failed to record the oomd kill notice', toError(err), { sessionId });
+    log.error('Failed to record the oomd kill', toError(err), { sessionId });
   }
   await reviveSession(sessionId);
 }

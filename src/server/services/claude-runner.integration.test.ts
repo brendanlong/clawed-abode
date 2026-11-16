@@ -1514,9 +1514,9 @@ describe('claude-runner persistent streaming loop', () => {
         expect(mockWasKilledByOomd).toHaveBeenCalledWith(
           sessionScopeUnitName(sessionId, 'testnonce')
         );
-        expect(
-          (await testPrisma.session.findUniqueOrThrow({ where: { id: sessionId } })).restartNotice
-        ).toBeNull();
+        const row = await testPrisma.session.findUniqueOrThrow({ where: { id: sessionId } });
+        expect(row.restartNotice).toBeNull();
+        expect(row.attentionSummary).toMatch(/systemd-oomd/);
         stopSession(sessionId);
       });
 
