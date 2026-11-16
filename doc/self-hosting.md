@@ -30,8 +30,8 @@ curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
 source ~/.bashrc
 nvm install 22
 
-# Install pnpm
-corepack enable && corepack prepare pnpm@latest --activate
+# Install pnpm (the version pinned by packageManager in package.json)
+corepack enable
 
 # Install and authenticate Claude Code
 npm install -g @anthropic-ai/claude-code
