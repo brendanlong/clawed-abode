@@ -17,17 +17,7 @@ export interface SanitizeContext {
   source: string;
 }
 
-/**
- * The library splits its human-readable findings into two severity tiers:
- * `warnings` (injection-shaped — something was hidden or removed) and `notes`
- * (reported but not alarming — usually content that was *preserved* and merely
- * described). We surface both as one list, because the tier a message lands in
- * doesn't line up with whether we report it at all: that decision keys off
- * `found`, which is severity-blind. Exfil-shaped URLs, for instance, emit an
- * `exfil-urls` category — so they get a badge and a log line — while their
- * explanation sits in `notes`. Keeping only `warnings` would badge those
- * findings with no text to explain them.
- */
+/** Both of the library's severity tiers, merged; why is in doc/security.md. */
 function collectMessages({ warnings, notes }: { warnings: string[]; notes: string[] }): string[] {
   return [...warnings, ...notes];
 }

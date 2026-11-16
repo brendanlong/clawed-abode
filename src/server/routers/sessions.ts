@@ -126,21 +126,12 @@ export const sessionsRouter = router({
       }),
     })),
 
-  // Deep link into a self-hosted code-server (browser VS Code) instance opened
-  // on this session's worktree folder. Returns { url: null } when the editor is
-  // not configured (CODE_SERVER_URL unset) or the session has no workspace on
-  // disk (archived), so the UI can hide the button.
+  // code-server deep link; see "Remote File Editing" in doc/DESIGN.md.
   getEditorUrl: sessionProcedure.query(({ ctx }) => {
     const { session } = ctx;
-
-    // Archived sessions have their workspace removed from disk.
     if (session.status === 'archived') {
       return { url: null };
     }
-
-    // Open the session's workspace root (not just the repo checkout) so the
-    // operator sees all of the session's files — the repo clone alongside the
-    // uploads/ sibling folder.
     const workspaceDir = getSessionWorkspacePath(session.id);
     return { url: buildEditorUrl(env.CODE_SERVER_URL, workspaceDir) };
   }),
