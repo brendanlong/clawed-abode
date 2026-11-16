@@ -190,7 +190,6 @@ export const sessionsRouter = router({
   // the user is cleared once seen rather than only once answered.
   markSeen: sessionProcedure.mutation(async ({ input }) => {
     await clearAttention(input.sessionId);
-    return { success: true };
   }),
 
   setModel: sessionProcedure
@@ -212,6 +211,5 @@ export const sessionsRouter = router({
 
   delete: sessionProcedure.mutation(async ({ input }) => {
     await archiveSession(input.sessionId);
-    return { success: true };
   }),
 });

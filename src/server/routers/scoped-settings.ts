@@ -65,13 +65,11 @@ export function scopedSettingsProcedures<ScopeInput extends object>(
   return {
     setEnvVar: withScope({ envVar: envVarSchema }).mutation(async ({ input }) => {
       await upsertEnvVar(await writeScope(input), input.envVar);
-      return { success: true };
     }),
 
     deleteEnvVar: withScope({ name: envVarNameSchema }).mutation(async ({ input }) => {
       const scope = await resolveScope(scopeOf(input), 'read');
       if (scope) await deleteEnvVar(scope, input.name);
-      return { success: true };
     }),
 
     getEnvVarValue: withScope({ name: envVarNameSchema }).query(async ({ input }) => ({
@@ -80,13 +78,11 @@ export function scopedSettingsProcedures<ScopeInput extends object>(
 
     setMcpServer: withScope({ mcpServer: mcpServerSchema }).mutation(async ({ input }) => {
       await upsertMcpServer(await writeScope(input), input.mcpServer);
-      return { success: true };
     }),
 
     deleteMcpServer: withScope({ name: mcpServerNameSchema }).mutation(async ({ input }) => {
       const scope = await resolveScope(scopeOf(input), 'read');
       if (scope) await deleteMcpServer(scope, input.name);
-      return { success: true };
     }),
 
     setMcpToolFilter: withScope({
@@ -97,7 +93,6 @@ export function scopedSettingsProcedures<ScopeInput extends object>(
       // Running sessions enforce a tightened filter now rather than at their next
       // send, which may never come while an agent works on its own.
       void refreshAllSessionSettings();
-      return { success: true };
     }),
 
     validateMcpServer: withScope({ name: mcpServerNameSchema }).mutation(async ({ input }) =>
@@ -121,7 +116,6 @@ export function scopedSettingsProcedures<ScopeInput extends object>(
 
     disconnectMcpOAuth: withScope({ name: mcpServerNameSchema }).mutation(async ({ input }) => {
       await disconnectScopeMcpOAuth(await readScope(input), input.name);
-      return { success: true };
     }),
   };
 }

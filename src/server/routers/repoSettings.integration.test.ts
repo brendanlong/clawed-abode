@@ -155,10 +155,10 @@ describe('repoSettings router', () => {
       const caller = createCaller();
       await expect(
         caller.repoSettings.deleteEnvVar({ repoFullName: 'no/such', name: 'X' })
-      ).resolves.toEqual({ success: true });
+      ).resolves.toBeUndefined();
       await expect(
         caller.repoSettings.deleteMcpServer({ repoFullName: 'no/such', name: 'x' })
-      ).resolves.toEqual({ success: true });
+      ).resolves.toBeUndefined();
       expect(await testPrisma.repoSettings.count()).toBe(0);
     });
   });

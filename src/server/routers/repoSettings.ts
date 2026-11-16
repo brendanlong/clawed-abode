@@ -83,7 +83,6 @@ export const repoSettingsRouter = router({
         repoFullName: input.repoFullName,
         hasPrompt: input.customSystemPrompt !== null,
       });
-      return { success: true };
     }),
 
   /** Per-repo Claude model override; null/blank reverts to global/env. */
@@ -99,7 +98,6 @@ export const repoSettingsRouter = router({
         repoFullName: input.repoFullName,
         hasModel: input.claudeModel !== null,
       });
-      return { success: true };
     }),
 
   listFavorites: protectedProcedure.query(async () => {
@@ -140,6 +138,5 @@ export const repoSettingsRouter = router({
   delete: protectedProcedure.input(repoScopeInput).mutation(async ({ input }) => {
     await prisma.repoSettings.deleteMany({ where: { repoFullName: input.repoFullName } });
     log.info('Deleted repo settings', input);
-    return { success: true };
   }),
 });

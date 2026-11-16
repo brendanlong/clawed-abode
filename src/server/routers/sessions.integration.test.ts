@@ -903,9 +903,7 @@ describe('sessionsRouter integration', () => {
       mockRemoveWorkspace.mockResolvedValue(undefined);
 
       const caller = createCaller('auth-session-id');
-      const result = await caller.sessions.delete({ sessionId: session.id });
-
-      expect(result).toEqual({ success: true });
+      await caller.sessions.delete({ sessionId: session.id });
       expect(mockRemoveWorkspace).toHaveBeenCalledWith(session.id);
 
       // Verify session was archived (not deleted)
@@ -945,9 +943,7 @@ describe('sessionsRouter integration', () => {
       });
 
       const caller = createCaller('auth-session-id');
-      const result = await caller.sessions.delete({ sessionId: session.id });
-
-      expect(result).toEqual({ success: true });
+      await caller.sessions.delete({ sessionId: session.id });
       expect(mockRemoveWorkspace).not.toHaveBeenCalled();
     });
   });

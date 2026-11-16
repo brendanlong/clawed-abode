@@ -106,7 +106,6 @@ export const globalSettingsRouter = router({
         hasOverride: input.systemPromptOverride !== null,
         enabled: input.systemPromptOverrideEnabled,
       });
-      return { success: true };
     }),
 
   /** Global env vars and MCP servers (masked secrets): rows where repoSettingsId IS NULL. */
@@ -124,7 +123,6 @@ export const globalSettingsRouter = router({
     log.info('Updated global settings', { fields: Object.keys(input) });
     // A security setting shouldn't wait for each session's next send.
     if (input.permissionMode) void refreshAllSessionSettings();
-    return { success: true };
   }),
 
   /**
@@ -140,7 +138,6 @@ export const globalSettingsRouter = router({
         settingSourceLocal: input.local,
       });
       log.info('Set setting sources', input);
-      return { success: true };
     }),
 
   /** Claude API key (OAuth token) override, encrypted at rest; empty clears it. */
@@ -151,6 +148,5 @@ export const globalSettingsRouter = router({
       if (key) requireEncryptionForSecrets(true);
       await patchGlobalSettings({ claudeApiKey: key ? encrypt(key) : null });
       log.info(key ? 'Set Claude API key' : 'Cleared Claude API key');
-      return { success: true };
     }),
 });

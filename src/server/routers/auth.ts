@@ -112,8 +112,6 @@ export const authRouter = router({
       where: { id: ctx.sessionId },
       data: { revokedAt: new Date() },
     });
-
-    return { success: true };
   }),
 
   // Keyset-paginated by (createdAt desc, id desc); inactive sessions are included
@@ -169,7 +167,5 @@ export const authRouter = router({
       if (count === 0) {
         throw new TRPCError({ code: 'NOT_FOUND', message: 'Session not found' });
       }
-
-      return { success: true };
     }),
 });
