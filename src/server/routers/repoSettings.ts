@@ -3,18 +3,21 @@ import { router, protectedProcedure } from '../trpc';
 import { prisma } from '@/lib/prisma';
 import { createLogger } from '@/lib/logger';
 import { repoSettingsKeySchema } from '@/lib/repo-full-name';
-import {
-  formatEnvVarsForDisplay,
-  formatMcpServersForDisplay,
-  MCP_SERVER_INCLUDE,
-  nullableModelSchema,
-  nullableTextSchema,
-} from '../services/settings-helpers';
+import { nullableModelSchema, nullableTextSchema } from '../services/settings-helpers';
+import { listScopeSettings } from '../services/settings-scope';
 import { scopedSettingsProcedures, type ResolveScope } from './scoped-settings';
 
 const log = createLogger('repoSettings');
 
 const repoScopeInput = z.object({ repoFullName: repoSettingsKeySchema });
+
+const repoSettingsUpdateSchema = repoScopeInput.extend({
+  isFavorite: z.boolean().optional(),
+  /** Appended to the system prompt for this repo's sessions. */
+  customSystemPrompt: nullableTextSchema(10000).optional(),
+  /** Overrides the global Claude model. */
+  claudeModel: nullableModelSchema.optional(),
+});
 
 /** Writes create the RepoSettings row on first use; reads leave a missing repo missing. */
 const resolveRepoScope: ResolveScope<z.infer<typeof repoScopeInput>> = async (input, mode) => {
@@ -38,66 +41,27 @@ export const repoSettingsRouter = router({
   get: protectedProcedure.input(repoScopeInput).query(async ({ input }) => {
     const settings = await prisma.repoSettings.findUnique({
       where: { repoFullName: input.repoFullName },
-      include: {
-        envVars: { orderBy: { name: 'asc' } },
-        mcpServers: { orderBy: { name: 'asc' }, include: MCP_SERVER_INCLUDE },
-      },
+      select: { id: true, isFavorite: true, customSystemPrompt: true, claudeModel: true },
     });
     if (!settings) return null;
-
-    return {
-      id: settings.id,
-      repoFullName: settings.repoFullName,
-      isFavorite: settings.isFavorite,
-      customSystemPrompt: settings.customSystemPrompt,
-      claudeModel: settings.claudeModel,
-      createdAt: settings.createdAt,
-      updatedAt: settings.updatedAt,
-      envVars: formatEnvVarsForDisplay(settings.envVars),
-      mcpServers: formatMcpServersForDisplay(settings.mcpServers),
-    };
+    const { id, ...fields } = settings;
+    return { ...fields, ...(await listScopeSettings({ repoSettingsId: id })) };
   }),
 
-  toggleFavorite: protectedProcedure
-    .input(repoScopeInput.extend({ isFavorite: z.boolean() }))
-    .mutation(async ({ input }) => {
-      const settings = await prisma.repoSettings.upsert({
-        where: { repoFullName: input.repoFullName },
-        create: { repoFullName: input.repoFullName, isFavorite: input.isFavorite },
-        update: { isFavorite: input.isFavorite },
-      });
-      log.info('Toggled favorite', input);
-      return { isFavorite: settings.isFavorite };
-    }),
-
-  /** Per-repo prompt appended to the system prompt; null/blank clears it. */
-  setCustomSystemPrompt: protectedProcedure
-    .input(repoScopeInput.extend({ customSystemPrompt: nullableTextSchema(10000) }))
-    .mutation(async ({ input }) => {
+  /**
+   * Set any subset of the repo's plain settings, creating its row on first use;
+   * omitted fields are untouched. A null or blank prompt or model reverts to the global one.
+   */
+  update: protectedProcedure
+    .input(repoSettingsUpdateSchema)
+    .mutation(async ({ input: { repoFullName, ...fields } }) => {
       await prisma.repoSettings.upsert({
-        where: { repoFullName: input.repoFullName },
-        create: input,
-        update: { customSystemPrompt: input.customSystemPrompt },
+        where: { repoFullName },
+        create: { repoFullName, ...fields },
+        update: fields,
       });
-      log.info('Set custom system prompt', {
-        repoFullName: input.repoFullName,
-        hasPrompt: input.customSystemPrompt !== null,
-      });
-    }),
-
-  /** Per-repo Claude model override; null/blank reverts to global/env. */
-  setClaudeModel: protectedProcedure
-    .input(repoScopeInput.extend({ claudeModel: nullableModelSchema }))
-    .mutation(async ({ input }) => {
-      await prisma.repoSettings.upsert({
-        where: { repoFullName: input.repoFullName },
-        create: input,
-        update: { claudeModel: input.claudeModel },
-      });
-      log.info('Set repo Claude model', {
-        repoFullName: input.repoFullName,
-        hasModel: input.claudeModel !== null,
-      });
+      // Field names only: the prompt can be long.
+      log.info('Updated repo settings', { repoFullName, fields: Object.keys(fields) });
     }),
 
   listFavorites: protectedProcedure.query(async () => {

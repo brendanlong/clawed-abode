@@ -18,7 +18,7 @@ vi.mock('@/lib/trpc', () => ({
     },
     repoSettings: {
       listFavorites: { useQuery: () => ({ data: { favorites: [] } }) },
-      toggleFavorite: { useMutation: () => ({ mutate: vi.fn() }) },
+      update: { useMutation: () => ({ mutate: vi.fn() }) },
     },
     useUtils: () => ({ repoSettings: { listFavorites: { invalidate: vi.fn() } } }),
   },

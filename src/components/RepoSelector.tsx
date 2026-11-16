@@ -53,12 +53,12 @@ export function RepoSelector({
   const { data: favoritesData } = trpc.repoSettings.listFavorites.useQuery();
   const favorites = useMemo(() => new Set(favoritesData?.favorites ?? []), [favoritesData]);
 
-  const toggleFavorite = trpc.repoSettings.toggleFavorite.useMutation();
+  const updateRepoSettings = trpc.repoSettings.update.useMutation();
   const utils = trpc.useUtils();
 
   const handleToggleFavorite = (repoFullName: string) => {
     const newIsFavorite = !favorites.has(repoFullName);
-    toggleFavorite.mutate(
+    updateRepoSettings.mutate(
       { repoFullName, isFavorite: newIsFavorite },
       {
         onSuccess: () => {

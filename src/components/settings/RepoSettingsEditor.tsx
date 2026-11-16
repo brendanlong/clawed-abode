@@ -60,7 +60,7 @@ function useRepoMcpServerMutations(repoFullName: string): McpServerMutations {
 
 export function RepoSettingsEditor({ repoFullName, onClose }: RepoSettingsEditorProps) {
   const { data, isLoading, refetch } = trpc.repoSettings.get.useQuery({ repoFullName });
-  const toggleFavorite = trpc.repoSettings.toggleFavorite.useMutation({
+  const toggleFavorite = trpc.repoSettings.update.useMutation({
     onSuccess: () => refetch(),
   });
   const envVarMutations = useRepoEnvVarMutations(repoFullName);
@@ -151,7 +151,7 @@ function CustomSystemPromptSection({
   customSystemPrompt: string | null;
   onUpdate: () => void;
 }) {
-  const mutation = trpc.repoSettings.setCustomSystemPrompt.useMutation({ onSuccess: onUpdate });
+  const mutation = trpc.repoSettings.update.useMutation({ onSuccess: onUpdate });
 
   return (
     <div className="space-y-4">
@@ -187,7 +187,7 @@ function ClaudeModelSection({
   onUpdate: () => void;
 }) {
   const { data: globalSettings } = trpc.globalSettings.get.useQuery();
-  const mutation = trpc.repoSettings.setClaudeModel.useMutation({ onSuccess: onUpdate });
+  const mutation = trpc.repoSettings.update.useMutation({ onSuccess: onUpdate });
 
   return (
     <div className="space-y-4">
