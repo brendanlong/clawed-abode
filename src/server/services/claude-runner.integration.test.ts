@@ -1542,6 +1542,7 @@ describe('claude-runner persistent streaming loop', () => {
         _setQueryFactory(unusedFactory);
         revived.end();
         await waitFor(async () => /again/.test((await attentionOf()) ?? ''));
+        await new Promise((r) => setTimeout(r, 100));
         expect(unusedFactory).not.toHaveBeenCalled();
         expect(
           (await testPrisma.session.findUniqueOrThrow({ where: { id: sessionId } })).restartNotice

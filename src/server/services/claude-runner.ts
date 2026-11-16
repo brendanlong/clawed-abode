@@ -57,7 +57,7 @@ import {
 } from './settings-merger';
 import { StreamAccumulator } from './stream-accumulator';
 import { stopSessionScope, wasKilledByOomd } from './session-cgroup';
-import { claimOomdRevive } from './oom-revive';
+import { claimOomdRevive, type OomdReviveClaim } from './oom-revive';
 import { createSessionState, type LiveQuery, type SessionState } from './session-state';
 import {
   createErrorMessage,
@@ -371,20 +371,22 @@ async function reviveAfterOomdKill(
   notice: string
 ): Promise<void> {
   if (!(await wasKilledByOomd(scope))) return;
-  let revive = false;
+  let claim: OomdReviveClaim = 'not_running';
   try {
-    revive = await claimOomdRevive(sessionId, notice);
-    await requestAttention(
-      sessionId,
-      revive
-        ? 'systemd-oomd killed this session for using too much memory'
-        : 'systemd-oomd killed this session again; left down until you reply'
-    );
+    claim = await claimOomdRevive(sessionId, notice);
+    if (claim !== 'not_running') {
+      await requestAttention(
+        sessionId,
+        claim === 'revive'
+          ? 'systemd-oomd killed this session for using too much memory'
+          : 'systemd-oomd killed this session again; left down until you reply'
+      );
+    }
   } catch (err) {
     log.error('Failed to record the oomd kill', toError(err), { sessionId });
   }
-  log.warn('systemd-oomd killed the session', { sessionId, scope, revive });
-  if (revive) await reviveSession(sessionId);
+  log.warn('systemd-oomd killed the session', { sessionId, scope, claim });
+  if (claim === 'revive') await reviveSession(sessionId);
 }
 
 /**
