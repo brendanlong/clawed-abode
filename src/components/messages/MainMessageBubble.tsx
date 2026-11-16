@@ -3,7 +3,8 @@
 import { useCallback, useMemo } from 'react';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
-import { OctagonX, Loader2 } from 'lucide-react';
+import { OctagonX } from 'lucide-react';
+import { Spinner } from '@/components/ui/spinner';
 
 import { CopyButton } from './CopyButton';
 import { SanitizationBadge } from './SanitizationBadge';
@@ -96,7 +97,7 @@ export function MainMessageBubble({
       >
         {isPartial && isAssistant && (
           <div className="flex items-center gap-1.5 text-blue-600 dark:text-blue-400 text-xs mb-2">
-            <Loader2 className="h-3 w-3 animate-spin" />
+            <Spinner className="h-3 w-3 text-current" />
             <span>Streaming...</span>
           </div>
         )}

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useReducer, useRef } from 'react';
+import { useCallback, useReducer } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { AuthGuard } from '@/components/AuthGuard';
@@ -19,12 +19,13 @@ import { NO_REPO_SENTINEL } from '@/lib/repo-full-name';
 import { BranchSelector, useBranchList } from '@/components/BranchSelector';
 import { IssueSelector } from '@/components/IssueSelector';
 import { ModelCombobox } from '@/components/settings/shared/ModelCombobox';
-import { Cpu, Loader2, Paperclip } from 'lucide-react';
+import { Cpu } from 'lucide-react';
 import type { Issue } from '@/lib/types';
 import { SESSION_NAME_MAX_LENGTH } from '@/lib/types';
 import { generateIssuePrompt } from '@/lib/issue-prompt';
 import { SessionToolsSwitch } from '@/components/SessionToolsSwitch';
 import { AttachmentChip } from '@/components/AttachmentChip';
+import { AttachFilesButton } from '@/components/AttachFilesButton';
 import { useFileUpload } from '@/hooks/useFileUpload';
 import { formReducer, initialFormState } from './form-reducer';
 import {
@@ -48,11 +49,9 @@ function NewSessionForm() {
   const branch = resolveBranch(form.selectedBranch, branchList);
   const input = buildCreateSessionInput(form, branch);
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const { upload, uploading, error: uploadError } = useFileUpload();
-  const handleFilesSelected = async (fileList: FileList | null) => {
-    if (!fileList || fileList.length === 0) return;
-    dispatch({ type: 'addAttachments', attachments: await upload(Array.from(fileList)) });
+  const handleFilesSelected = async (files: File[]) => {
+    dispatch({ type: 'addAttachments', attachments: await upload(files) });
   };
 
   const createMutation = trpc.sessions.create.useMutation({
@@ -131,32 +130,15 @@ function NewSessionForm() {
               placeholder="What should Claude work on?"
               rows={6}
             />
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              className="hidden"
-              onChange={(e) => {
-                void handleFilesSelected(e.currentTarget.files);
-                // Reset so selecting the same file again re-triggers onChange.
-                e.currentTarget.value = '';
-              }}
-            />
             <div className="flex flex-wrap items-center gap-2">
-              <Button
-                type="button"
+              <AttachFilesButton
                 variant="outline"
                 size="sm"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={uploading}
+                onSelect={(files) => void handleFilesSelected(files)}
+                uploading={uploading}
               >
-                {uploading ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Paperclip className="h-4 w-4" />
-                )}
                 Attach files
-              </Button>
+              </AttachFilesButton>
               {form.attachments.map((att) => (
                 <AttachmentChip
                   key={att.storedName}
