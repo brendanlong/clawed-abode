@@ -46,7 +46,11 @@ export function AttachFilesButton({
         title="Attach files"
         aria-label="Attach files"
       >
-        {uploading ? <Spinner size="sm" /> : <Paperclip className="h-4 w-4" />}
+        {uploading ? (
+          <Spinner size="sm" className="text-current" />
+        ) : (
+          <Paperclip className="h-4 w-4" />
+        )}
         {children}
       </Button>
     </>
