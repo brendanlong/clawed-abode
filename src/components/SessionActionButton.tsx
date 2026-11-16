@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, type ComponentType } from 'react';
+import type { ComponentType } from 'react';
 import { Archive, Play, Square, Star } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
@@ -63,7 +63,6 @@ export function SessionActionButton({
   label,
   className,
 }: SessionActionButtonProps) {
-  const [dialogOpen, setDialogOpen] = useState(false);
   const config = actionConfig[action];
   const Icon = config.icon;
   const accessibleLabel = isPending ? config.pendingLabel : config.label;
@@ -100,7 +99,7 @@ export function SessionActionButton({
   if (!isArchive) return withTooltip;
 
   return (
-    <AlertDialog open={dialogOpen} onOpenChange={setDialogOpen}>
+    <AlertDialog>
       {withTooltip}
       <AlertDialogContent>
         <AlertDialogHeader>
@@ -111,14 +110,8 @@ export function SessionActionButton({
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction
-            onClick={() => {
-              onClick();
-              setDialogOpen(false);
-            }}
-          >
-            Archive
-          </AlertDialogAction>
+          {/* Radix closes the dialog on Action itself. */}
+          <AlertDialogAction onClick={onClick}>Archive</AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
