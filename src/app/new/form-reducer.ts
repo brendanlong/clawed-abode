@@ -18,7 +18,7 @@ export interface FormState {
   sessionToolsEnabled: boolean;
 }
 
-export type FormAction =
+type FormAction =
   | { type: 'selectRepo'; repo: Repo }
   | { type: 'selectBranch'; branch: string }
   | { type: 'selectIssue'; issue: Issue | null; generatedPrompt?: string }

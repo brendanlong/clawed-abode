@@ -20,7 +20,7 @@ export interface PagedSessions {
   fetchMore: () => void;
 }
 
-export interface UseSessionListOptions {
+interface UseSessionListOptions {
   /** Omit for the active (non-archived) list. */
   status?: 'archived';
   search?: string;

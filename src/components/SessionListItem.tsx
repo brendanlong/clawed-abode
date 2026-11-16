@@ -12,7 +12,7 @@ import { ActionErrorAlert } from '@/components/ActionErrorAlert';
 import { useActionError } from '@/hooks/useActionError';
 import type { Session } from '@/hooks/useSessionList';
 
-export interface SessionListItemProps {
+interface SessionListItemProps {
   session: Session;
 }
 

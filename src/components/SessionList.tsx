@@ -12,7 +12,7 @@ import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
 import type { PagedSessions } from '@/hooks/useSessionList';
 import { SESSION_SEARCH_MAX_LENGTH } from '@/lib/types';
 
-export interface SessionListProps {
+interface SessionListProps {
   active: PagedSessions;
   archived: PagedSessions;
   showArchived: boolean;

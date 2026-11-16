@@ -12,7 +12,7 @@ import {
   type PermissionRequest,
 } from '@/lib/permission-request';
 
-export type RespondToPermission = (
+type RespondToPermission = (
   toolUseId: string,
   allow: boolean,
   feedback?: string
