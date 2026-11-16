@@ -243,8 +243,10 @@ export async function completeMcpOAuthFlow(params: {
 
 /** Discard a pending authorization the user declined or abandoned at the consent screen. */
 export async function abandonMcpOAuthFlow(state: string, reason: string): Promise<void> {
-  const row = await prisma.mcpOAuth.findUnique({ where: { flowState: state } });
-  if (row) await clearFlow(row.id, reason);
+  await prisma.mcpOAuth.updateMany({
+    where: { flowState: state },
+    data: { ...CLEARED_FLOW, lastError: reason },
+  });
 }
 
 async function clearFlow(id: string, lastError: string | null): Promise<void> {
@@ -478,7 +480,7 @@ export interface OAuthStatusRow {
   lastError: string | null;
 }
 
-export function formatOAuthStatus(row: OAuthStatusRow | null | undefined): McpOAuthStatus {
+export function formatOAuthStatus(row: OAuthStatusRow | null): McpOAuthStatus {
   if (!row) {
     return {
       state: 'disconnected',
