@@ -210,14 +210,14 @@ export function reduceLiveTurn(state: LiveTurnState, event: LiveEvent): LiveOutc
 }
 
 function reduceMessage(state: LiveTurnState, message: SDKMessage): LiveOutcome {
-  const { status, changed } = reduceSessionMessage(state.status, message);
-  const turnEnded = changed.turnActive && !status.turnActive;
+  const status = reduceSessionMessage(state.status, message);
+  const turnFlipped = status.turnActive !== state.status.turnActive;
+  const turnEnded = turnFlipped && !status.turnActive;
 
   // Any real turn boundary supersedes the optimistic flag: from here on the
   // stream owns turnActive. `message_start` needs its own clause — it lands while
-  // the flag already reads true, so it moves no axis for `changed` to report.
-  const boundary =
-    changed.turnActive || isTopLevelMessageStart(message) || message.type === 'result';
+  // the flag already reads true, so it flips nothing.
+  const boundary = turnFlipped || isTopLevelMessageStart(message) || message.type === 'result';
 
   const next: LiveTurnState = {
     ...state,

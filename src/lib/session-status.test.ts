@@ -113,15 +113,14 @@ function apiRetry(attempt: number): SDKMessage {
 
 describe('reduceSessionMessage — turnActive', () => {
   it('a top-level message_start sets turnActive true', () => {
-    const { status, changed } = reduceSessionMessage(INITIAL_LIVE_STATUS, messageStart());
+    const status = reduceSessionMessage(INITIAL_LIVE_STATUS, messageStart());
     expect(status.turnActive).toBe(true);
-    expect(changed.turnActive).toBe(true);
   });
 
   it('a top-level message_delta with a terminal stop_reason ends the turn', () => {
     for (const reason of ['end_turn', 'stop_sequence', 'max_tokens', 'refusal']) {
       const active: LiveStatus = { ...INITIAL_LIVE_STATUS, turnActive: true };
-      const { status } = reduceSessionMessage(active, messageDelta(reason));
+      const status = reduceSessionMessage(active, messageDelta(reason));
       expect(status.turnActive, `stop_reason=${reason}`).toBe(false);
     }
   });
@@ -129,30 +128,26 @@ describe('reduceSessionMessage — turnActive', () => {
   it('a message_delta with a continuation stop_reason does NOT end the turn', () => {
     for (const reason of ['tool_use', 'pause_turn']) {
       const active: LiveStatus = { ...INITIAL_LIVE_STATUS, turnActive: true };
-      const { status, changed } = reduceSessionMessage(active, messageDelta(reason));
+      const status = reduceSessionMessage(active, messageDelta(reason));
       expect(status.turnActive, `stop_reason=${reason}`).toBe(true);
-      expect(changed.turnActive, `stop_reason=${reason}`).toBe(false);
     }
   });
 
   it('a subagent message_start does NOT set turnActive', () => {
-    const { status } = reduceSessionMessage(INITIAL_LIVE_STATUS, messageStart('tool_abc'));
+    const status = reduceSessionMessage(INITIAL_LIVE_STATUS, messageStart('tool_abc'));
     expect(status.turnActive).toBe(false);
   });
 
   it('a subagent message_delta(end_turn) does NOT clear the main turnActive', () => {
     const active: LiveStatus = { ...INITIAL_LIVE_STATUS, turnActive: true };
-    const { status, changed } = reduceSessionMessage(active, messageDelta('end_turn', 'tool_abc'));
+    const status = reduceSessionMessage(active, messageDelta('end_turn', 'tool_abc'));
     expect(status.turnActive).toBe(true);
-    expect(changed.turnActive).toBe(false);
   });
 
   it('a top-level result clears turnActive (safety net / interrupt)', () => {
     const active: LiveStatus = { ...INITIAL_LIVE_STATUS, turnActive: true };
-    expect(reduceSessionMessage(active, result()).status.turnActive).toBe(false);
-    expect(reduceSessionMessage(active, result('error_during_execution')).status.turnActive).toBe(
-      false
-    );
+    expect(reduceSessionMessage(active, result()).turnActive).toBe(false);
+    expect(reduceSessionMessage(active, result('error_during_execution')).turnActive).toBe(false);
   });
 
   it('the main agent ending its turn frees turnActive while a background subagent still streams', () => {
@@ -160,33 +155,32 @@ describe('reduceSessionMessage — turnActive', () => {
     // turn open (defers the result) until the child settles, but the main agent's
     // end_turn must free the composer immediately, and subagent traffic must not
     // re-activate it.
-    let s = reduceSessionMessage(INITIAL_LIVE_STATUS, messageStart()).status; // main generating
-    s = reduceSessionMessage(s, messageDelta('tool_use')).status; // launches bg agent
-    s = reduceSessionMessage(s, messageStart()).status; // main says "STARTED"
-    s = reduceSessionMessage(s, messageDelta('end_turn')).status; // main DONE
+    let s = reduceSessionMessage(INITIAL_LIVE_STATUS, messageStart()); // main generating
+    s = reduceSessionMessage(s, messageDelta('tool_use')); // launches bg agent
+    s = reduceSessionMessage(s, messageStart()); // main says "STARTED"
+    s = reduceSessionMessage(s, messageDelta('end_turn')); // main DONE
     expect(s.turnActive).toBe(false);
 
     // The background subagent keeps streaming — must NOT re-activate the main turn.
-    s = reduceSessionMessage(s, messageStart('tool_xyz')).status;
-    s = reduceSessionMessage(s, messageDelta('end_turn', 'tool_xyz')).status;
+    s = reduceSessionMessage(s, messageStart('tool_xyz'));
+    s = reduceSessionMessage(s, messageDelta('end_turn', 'tool_xyz'));
     expect(s.turnActive).toBe(false);
 
     // Later, the main agent autonomously continues → active again.
-    s = reduceSessionMessage(s, messageStart()).status;
+    s = reduceSessionMessage(s, messageStart());
     expect(s.turnActive).toBe(true);
   });
 
   it('a second init mid-stream does not change turnActive', () => {
     const active: LiveStatus = { ...INITIAL_LIVE_STATUS, turnActive: true };
-    const { status, changed } = reduceSessionMessage(active, init());
+    const status = reduceSessionMessage(active, init());
     expect(status.turnActive).toBe(true);
-    expect(changed.turnActive).toBe(false);
   });
 });
 
 describe('reduceSessionMessage — background tasks', () => {
   it('background_tasks_changed replaces the set', () => {
-    let s = reduceSessionMessage(INITIAL_LIVE_STATUS, backgroundTasksChanged('t1', 't2')).status;
+    let s = reduceSessionMessage(INITIAL_LIVE_STATUS, backgroundTasksChanged('t1', 't2'));
     expect([...s.backgroundTasks.keys()]).toEqual(['t1', 't2']);
     expect(s.backgroundTasks.get('t1')).toEqual({
       taskId: 't1',
@@ -196,15 +190,15 @@ describe('reduceSessionMessage — background tasks', () => {
       ambient: false,
     });
 
-    const { status } = reduceSessionMessage(s, backgroundTasksChanged('t2'));
+    const status = reduceSessionMessage(s, backgroundTasksChanged('t2'));
     expect(status.backgroundTasks).not.toBe(s.backgroundTasks);
     s = status;
     expect([...s.backgroundTasks.keys()]).toEqual(['t2']);
   });
 
   it('an empty payload clears the set even without task_notification edges', () => {
-    const s = reduceSessionMessage(INITIAL_LIVE_STATUS, backgroundTasksChanged('t1')).status;
-    const { status } = reduceSessionMessage(s, backgroundTasksChanged());
+    const s = reduceSessionMessage(INITIAL_LIVE_STATUS, backgroundTasksChanged('t1'));
+    const status = reduceSessionMessage(s, backgroundTasksChanged());
     expect(status.backgroundTasks.size).toBe(0);
     expect(backgroundActive(status)).toBe(false);
   });
@@ -213,22 +207,22 @@ describe('reduceSessionMessage — background tasks', () => {
     // Identity matters: the runner emits the `background` channel when the set
     // object changes.
     let r = reduceSessionMessage(INITIAL_LIVE_STATUS, taskStarted('t1'));
-    expect(r.status.backgroundTasks).toBe(INITIAL_LIVE_STATUS.backgroundTasks);
+    expect(r.backgroundTasks).toBe(INITIAL_LIVE_STATUS.backgroundTasks);
 
-    const withTask = reduceSessionMessage(INITIAL_LIVE_STATUS, backgroundTasksChanged('t1')).status;
+    const withTask = reduceSessionMessage(INITIAL_LIVE_STATUS, backgroundTasksChanged('t1'));
     r = reduceSessionMessage(withTask, taskNotification('t1'));
-    expect(r.status.backgroundTasks).toBe(withTask.backgroundTasks);
+    expect(r.backgroundTasks).toBe(withTask.backgroundTasks);
   });
 
   it('an unparseable payload leaves the set untouched', () => {
-    const s = reduceSessionMessage(INITIAL_LIVE_STATUS, backgroundTasksChanged('t1')).status;
+    const s = reduceSessionMessage(INITIAL_LIVE_STATUS, backgroundTasksChanged('t1'));
     const bad = { type: 'system', subtype: 'background_tasks_changed' } as unknown as SDKMessage;
-    const { status } = reduceSessionMessage(s, bad);
+    const status = reduceSessionMessage(s, bad);
     expect(status.backgroundTasks).toBe(s.backgroundTasks);
   });
 
   it('carries the ambient flag', () => {
-    const { status } = reduceSessionMessage(
+    const status = reduceSessionMessage(
       INITIAL_LIVE_STATUS,
       backgroundTasksChanged({ task_id: 'a1', task_type: 'dream', ambient: true })
     );
@@ -236,7 +230,7 @@ describe('reduceSessionMessage — background tasks', () => {
   });
 
   it('background activity does not affect turnActive', () => {
-    const { status } = reduceSessionMessage(INITIAL_LIVE_STATUS, backgroundTasksChanged('t1'));
+    const status = reduceSessionMessage(INITIAL_LIVE_STATUS, backgroundTasksChanged('t1'));
     expect(status.turnActive).toBe(false);
   });
 });
@@ -246,14 +240,14 @@ describe('reduceSessionMessage — subagentType from task_started', () => {
     let s = reduceSessionMessage(
       INITIAL_LIVE_STATUS,
       taskStarted('t1', { subagent_type: 'Explore' })
-    ).status;
-    s = reduceSessionMessage(s, backgroundTasksChanged('t1')).status;
+    );
+    s = reduceSessionMessage(s, backgroundTasksChanged('t1'));
     expect(s.backgroundTasks.get('t1')?.subagentType).toBe('Explore');
   });
 
   it('patches a task the level listed first', () => {
-    const s = reduceSessionMessage(INITIAL_LIVE_STATUS, backgroundTasksChanged('t1')).status;
-    const { status } = reduceSessionMessage(s, taskStarted('t1', { subagent_type: 'Explore' }));
+    const s = reduceSessionMessage(INITIAL_LIVE_STATUS, backgroundTasksChanged('t1'));
+    const status = reduceSessionMessage(s, taskStarted('t1', { subagent_type: 'Explore' }));
     expect(status.backgroundTasks.get('t1')?.subagentType).toBe('Explore');
     expect(status.backgroundTasks).not.toBe(s.backgroundTasks);
   });
@@ -262,9 +256,9 @@ describe('reduceSessionMessage — subagentType from task_started', () => {
     let s = reduceSessionMessage(
       INITIAL_LIVE_STATUS,
       taskStarted('t1', { subagent_type: 'Explore' })
-    ).status;
-    s = reduceSessionMessage(s, backgroundTasksChanged('t1')).status;
-    s = reduceSessionMessage(s, backgroundTasksChanged('t1', 't2')).status;
+    );
+    s = reduceSessionMessage(s, backgroundTasksChanged('t1'));
+    s = reduceSessionMessage(s, backgroundTasksChanged('t1', 't2'));
     expect(s.backgroundTasks.get('t1')?.subagentType).toBe('Explore');
   });
 
@@ -272,8 +266,8 @@ describe('reduceSessionMessage — subagentType from task_started', () => {
     let s = reduceSessionMessage(
       INITIAL_LIVE_STATUS,
       taskStarted('t1', { subagent_type: 'Explore' })
-    ).status;
-    s = reduceSessionMessage(s, taskNotification('t1')).status;
+    );
+    s = reduceSessionMessage(s, taskNotification('t1'));
     expect(s.subagentTypes.size).toBe(0);
   });
 
@@ -281,8 +275,8 @@ describe('reduceSessionMessage — subagentType from task_started', () => {
     let s = reduceSessionMessage(
       INITIAL_LIVE_STATUS,
       taskStarted('fg', { subagent_type: 'Explore' })
-    ).status;
-    s = reduceSessionMessage(s, backgroundTasksChanged('t2')).status;
+    );
+    s = reduceSessionMessage(s, backgroundTasksChanged('t2'));
     expect(s.subagentTypes.has('fg')).toBe(false);
   });
 });
@@ -313,7 +307,7 @@ describe('taskHasEndState', () => {
 
 describe('backgroundActive — daemon-only sets read as idle', () => {
   it('a set of only local_bash / ambient tasks is not background-active', () => {
-    const { status } = reduceSessionMessage(
+    const status = reduceSessionMessage(
       INITIAL_LIVE_STATUS,
       backgroundTasksChanged(
         { task_id: 'bash1', task_type: 'local_bash' },
@@ -327,7 +321,7 @@ describe('backgroundActive — daemon-only sets read as idle', () => {
   });
 
   it('a subagent alongside a daemon reads background-active', () => {
-    const { status } = reduceSessionMessage(
+    const status = reduceSessionMessage(
       INITIAL_LIVE_STATUS,
       backgroundTasksChanged({ task_id: 'bash1', task_type: 'local_bash' }, 'agent1')
     );
@@ -337,7 +331,7 @@ describe('backgroundActive — daemon-only sets read as idle', () => {
 
 describe('reduceSessionMessage — retry (turn-scoped clear)', () => {
   it('api_retry sets retry state', () => {
-    const { status } = reduceSessionMessage(INITIAL_LIVE_STATUS, apiRetry(2));
+    const status = reduceSessionMessage(INITIAL_LIVE_STATUS, apiRetry(2));
     expect(status.retry).toEqual({
       attempt: 2,
       maxRetries: 10,
@@ -347,19 +341,19 @@ describe('reduceSessionMessage — retry (turn-scoped clear)', () => {
   });
 
   it('a subsequent top-level message clears retry', () => {
-    const retrying = reduceSessionMessage(INITIAL_LIVE_STATUS, apiRetry(2)).status;
-    const { status } = reduceSessionMessage(retrying, assistant());
+    const retrying = reduceSessionMessage(INITIAL_LIVE_STATUS, apiRetry(2));
+    const status = reduceSessionMessage(retrying, assistant());
     expect(status.retry).toBeNull();
   });
 
   it('a subagent (background) message does NOT clear a main-turn retry', () => {
-    const retrying = reduceSessionMessage(INITIAL_LIVE_STATUS, apiRetry(2)).status;
-    const { status } = reduceSessionMessage(retrying, assistant('tool_abc'));
+    const retrying = reduceSessionMessage(INITIAL_LIVE_STATUS, apiRetry(2));
+    const status = reduceSessionMessage(retrying, assistant('tool_abc'));
     expect(status.retry).not.toBeNull();
   });
 
   it('background-task system events do NOT clear a main-turn retry', () => {
-    const retrying = reduceSessionMessage(INITIAL_LIVE_STATUS, apiRetry(2)).status;
+    const retrying = reduceSessionMessage(INITIAL_LIVE_STATUS, apiRetry(2));
     const progress = {
       type: 'system',
       subtype: 'task_progress',
@@ -373,19 +367,19 @@ describe('reduceSessionMessage — retry (turn-scoped clear)', () => {
       backgroundTasksChanged('t1'),
       taskNotification('t1'),
     ]) {
-      const { status } = reduceSessionMessage(retrying, message);
+      const status = reduceSessionMessage(retrying, message);
       expect(status.retry, message.type === 'system' ? message.subtype : '').not.toBeNull();
     }
   });
 
   it('a top-level message_start clears retry (the request recovered and is streaming)', () => {
-    const retrying = reduceSessionMessage(INITIAL_LIVE_STATUS, apiRetry(2)).status;
-    const { status } = reduceSessionMessage(retrying, messageStart());
+    const retrying = reduceSessionMessage(INITIAL_LIVE_STATUS, apiRetry(2));
+    const status = reduceSessionMessage(retrying, messageStart());
     expect(status.retry).toBeNull();
   });
 
   it('no retry change when none set and a normal message arrives', () => {
-    const { status } = reduceSessionMessage(INITIAL_LIVE_STATUS, assistant());
+    const status = reduceSessionMessage(INITIAL_LIVE_STATUS, assistant());
     expect(status.retry).toBeNull();
   });
 });

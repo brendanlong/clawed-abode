@@ -134,8 +134,7 @@ const RateLimitEventSchema = z.object({
     utilization: z.number().nullish(),
     /**
      * Every window's current usage, carried on nearly every event — undocumented,
-     * and only emitted by recent CLI versions (it first appears in production in
-     * September 2026). This is the only dependable source of a utilization
+     * and only emitted by recent CLI versions. This is the only dependable source of a utilization
      * figure: the top-level `utilization` is populated on `allowed_warning`
      * events but null on the plain `allowed` ones that are ~87% of the stream,
      * and null on rejections. Without it the threshold pause has nothing to read

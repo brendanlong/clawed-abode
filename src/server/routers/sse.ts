@@ -224,8 +224,7 @@ export const sseRouter = router({
       }
     }),
 
-  // Global stream of session changes for the home page (all sessions): session
-  // record updates plus main-agent running-state changes (running/waiting). The
+  // Global stream of session changes for the home page (all sessions). The
   // list is small and also refetched on reconnect, so we only need monotonic
   // tracked ids (seeded from lastEventId) to avoid client-side dedup dropping the
   // first event.

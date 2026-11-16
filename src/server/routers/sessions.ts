@@ -4,7 +4,7 @@ import { prisma } from '@/lib/prisma';
 import { getSessionWorkspacePath } from '../services/worktree-manager';
 import { buildEditorUrl } from '@/lib/editor-url';
 import { isClaudeRunning, isSessionBackgroundActive } from '../services/claude-runner';
-import { isSessionRateLimitPaused, recomputeRateLimitHolds } from '../services/rate-limit-pause';
+import { currentHold, recomputeRateLimitHolds } from '../services/rate-limit-pause';
 import {
   archiveSession,
   createSession,
@@ -106,7 +106,7 @@ export const sessionsRouter = router({
         ...toSessionView(session),
         turnActive: isClaudeRunning(session.id),
         backgroundActive: isSessionBackgroundActive(session.id),
-        rateLimitPaused: isSessionRateLimitPaused(session.id),
+        rateLimitPaused: currentHold(session.id) !== null,
       }));
 
       refreshStalePullRequests(items);

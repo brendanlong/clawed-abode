@@ -101,7 +101,7 @@ export function buildMcpServersRecord(
  * enforcement; the runner's deny rules only keep the tools the filter knows
  * about out of the agent's context.
  */
-export function mcpToolFilterHook(isBlocked: (toolId: string) => boolean): HookCallback {
+function mcpToolFilterHook(isBlocked: (toolId: string) => boolean): HookCallback {
   return async (input) => {
     if (input.hook_event_name !== 'PreToolUse' || !isBlocked(input.tool_name)) return {};
     return {
@@ -167,7 +167,9 @@ export async function buildSdkOptions(params: {
   // Run the CLI (and everything it spawns) in a transient systemd user scope so the
   // whole tree is reaped on teardown (doc/claude-sessions.md "Process Reaping").
   const scopeConfig = await getSessionScopeConfig();
-  const sessionScope = scopeConfig ? sessionScopeUnitName(sessionId, sessionScopeNonce()) : null;
+  const scope = scopeConfig
+    ? { ...scopeConfig, sessionScope: sessionScopeUnitName(sessionId, sessionScopeNonce()) }
+    : null;
   // A proxied session's own subagents are already GPT models.
   const gptAgents: GptAgentContext | null =
     env.LLM_PROXY_URL && !proxiedModel
@@ -176,7 +178,7 @@ export async function buildSdkOptions(params: {
           workingDir,
           settingSources: settings.settingSources,
           env: { ...agentEnv },
-          scope: scopeConfig && sessionScope ? { ...scopeConfig, sessionScope } : null,
+          scope,
         }
       : null;
   const mcpServersRecord = buildMcpServersRecord(settings.mcpServers);
@@ -293,12 +295,12 @@ export async function buildSdkOptions(params: {
     };
   }
 
-  if (!scopeConfig || !sessionScope) return { options, sessionScope: null, builtinMcpServer };
+  if (!scope) return { options, sessionScope: null, builtinMcpServer };
 
   await ensureSessionsSliceLimits();
-  options.pathToClaudeCodeExecutable = scopeConfig.launcherPath;
-  agentEnv[SESSION_SCOPE_ENV] = sessionScope;
-  agentEnv[CLAUDE_BIN_ENV] = scopeConfig.claudeBin;
+  options.pathToClaudeCodeExecutable = scope.launcherPath;
+  agentEnv[SESSION_SCOPE_ENV] = scope.sessionScope;
+  agentEnv[CLAUDE_BIN_ENV] = scope.claudeBin;
   agentEnv[SESSIONS_SLICE_ENV] = SESSIONS_SLICE;
-  return { options, sessionScope, builtinMcpServer };
+  return { options, sessionScope: scope.sessionScope, builtinMcpServer };
 }

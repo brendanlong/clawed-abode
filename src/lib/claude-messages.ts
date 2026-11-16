@@ -207,13 +207,8 @@ export function parseCommandLifecycle(message: unknown): CommandLifecycle | null
   return parsed.success ? parsed.data : null;
 }
 
-/**
- * Whether a system message should be dropped entirely (never persisted or shown).
- * Operates on loosely-typed content so it can also filter rows stored before a
- * subtype was added to the ignore list (see {@link classifyMessage} for the typed
- * SDK path).
- */
-export function isIgnoredSystemMessage(content: unknown): boolean {
+/** Whether a system message should be dropped entirely (never persisted or shown). */
+function isIgnoredSystemMessage(content: unknown): boolean {
   if (!content || typeof content !== 'object') return false;
   const obj = content as Record<string, unknown>;
   if (obj.type !== 'system') return false;
@@ -340,11 +335,6 @@ export function parseTaskNotification(text: string): TaskNotification {
  * unknown ones default to being persisted as a generic system message.
  */
 export function classifyMessage(message: SDKMessage): MessageHandling {
-  // `command_lifecycle` is emitted by the CLI but missing from `SDKMessage`, so it
-  // would otherwise fall through to the `default` branch and be persisted as a
-  // system bubble. It is pure delivery bookkeeping — never transcript content.
-  if (parseCommandLifecycle(message)) return { kind: 'skip' };
-
   switch (message.type) {
     case 'assistant':
       return { kind: 'persist', dbType: 'assistant' };
