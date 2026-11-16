@@ -140,13 +140,6 @@ function SessionView({ sessionId }: { sessionId: string }) {
     [session, sendPrompt, onPromptSent]
   );
 
-  // Interrupt the current turn. Resolves with the text of any prompts the agent
-  // hadn't read yet, which the server cancelled — the composer restores them.
-  const handleInterrupt = useCallback(
-    () => interrupt().then((result) => result.cancelled),
-    [interrupt]
-  );
-
   const actionErrorAlert = (
     <ActionErrorAlert
       error={actionError}
@@ -189,6 +182,27 @@ function SessionView({ sessionId }: { sessionId: string }) {
     );
   }
 
+  // An archived transcript is read-only: no usage meter, and pending questions
+  // and plans render without their answer controls.
+  const archived = session.status === 'archived';
+  const messageList = (
+    <MessageList
+      sessionId={sessionId}
+      messages={messages}
+      isLoading={messagesLoading || isFetchingMore}
+      hasMore={hasMore}
+      loadFailed={loadFailed}
+      onLoadMore={fetchMore}
+      tokenUsage={tokenUsage}
+      subscriptionUsage={archived ? undefined : subscriptionUsage}
+      onAnswerQuestion={archived ? undefined : answerQuestion}
+      onRespondToPlan={archived ? undefined : respondToPlan}
+      pendingMessageIds={pendingMessageIds}
+      queuedMessageIds={queuedMessageIds}
+      isSessionRunning={isClaudeRunning}
+    />
+  );
+
   // Show creation progress, error state, or archived state
   if (
     session.status === 'creating' ||
@@ -220,17 +234,9 @@ function SessionView({ sessionId }: { sessionId: string }) {
               </Button>
             </div>
           )}
-          {session.status === 'archived' && (
+          {archived && (
             <>
-              <MessageList
-                sessionId={sessionId}
-                messages={messages}
-                isLoading={messagesLoading || isFetchingMore}
-                hasMore={hasMore}
-                loadFailed={loadFailed}
-                onLoadMore={fetchMore}
-                tokenUsage={tokenUsage}
-              />
+              {messageList}
               <div className="border-t bg-muted/50 px-4 py-3 text-center text-sm text-muted-foreground">
                 This session has been archived. You can view the message history but cannot send new
                 prompts.
@@ -264,21 +270,7 @@ function SessionView({ sessionId }: { sessionId: string }) {
         />
         {actionErrorAlert}
 
-        <MessageList
-          sessionId={sessionId}
-          messages={messages}
-          isLoading={messagesLoading || isFetchingMore}
-          hasMore={hasMore}
-          loadFailed={loadFailed}
-          onLoadMore={fetchMore}
-          tokenUsage={tokenUsage}
-          subscriptionUsage={subscriptionUsage}
-          onAnswerQuestion={answerQuestion}
-          onRespondToPlan={respondToPlan}
-          pendingMessageIds={pendingMessageIds}
-          queuedMessageIds={queuedMessageIds}
-          isSessionRunning={isClaudeRunning}
-        />
+        {messageList}
 
         <PermissionRequestsPanel requests={permissionRequests} onRespond={respondToPermission} />
 
@@ -291,23 +283,24 @@ function SessionView({ sessionId }: { sessionId: string }) {
             // transcript and show an error if the send fails (issue #408).
             onSendPrompt={handleSendPrompt}
             onClose={() => setVoiceOverlayOpen(false)}
-            onInterrupt={handleInterrupt}
+            onInterrupt={interrupt}
           />
         ) : (
           <>
             {connectionStatus}
-            <ClaudeStatusIndicator
-              isRunning={isClaudeRunning}
-              retry={claudeRetry}
-              backgroundTasks={backgroundTasks}
-              backgroundActive={backgroundActive}
-              onStopBackgroundTask={stopBackgroundTask}
-              containerStatus={session.status}
-            />
+            {session.status === 'running' && (
+              <ClaudeStatusIndicator
+                isRunning={isClaudeRunning}
+                retry={claudeRetry}
+                backgroundTasks={backgroundTasks}
+                backgroundActive={backgroundActive}
+                onStopBackgroundTask={stopBackgroundTask}
+              />
+            )}
             <PromptInput
               sessionId={sessionId}
               onSubmit={handleSendPrompt}
-              onInterrupt={handleInterrupt}
+              onInterrupt={interrupt}
               isRunning={isClaudeRunning}
               isInterrupting={isInterrupting}
               disabled={session.status !== 'running'}

@@ -7,7 +7,6 @@ import type { BackgroundTask } from '@/lib/session-status';
 interface ClaudeStatusIndicatorProps {
   /** A main-agent turn is active (gates the composer). */
   isRunning: boolean;
-  containerStatus: string;
   /** Ephemeral API-retry status (rate limit / overload), or null if not retrying. */
   retry: RetryState | null;
   /** Running background tasks (indicator only; never gates input). */
@@ -75,17 +74,11 @@ function TurnStatus({
 
 export function ClaudeStatusIndicator({
   isRunning,
-  containerStatus,
   retry,
   backgroundTasks,
   backgroundActive,
   onStopBackgroundTask,
 }: ClaudeStatusIndicatorProps) {
-  // Don't show anything if the container isn't running.
-  if (containerStatus !== 'running') {
-    return null;
-  }
-
   return (
     <>
       {backgroundTasks.length > 0 && (
