@@ -10,7 +10,6 @@ import {
   query as sdkQuery,
   type Query,
   type Options,
-  type PermissionResult,
   type SDKUserMessage,
   type SDKMessage,
 } from '@anthropic-ai/claude-agent-sdk';
@@ -44,7 +43,7 @@ import type { ToolResponse } from '@/lib/tool-response';
 import type { CancelledPrompt } from '@/lib/cancelled-prompt';
 import { extractRepoFullName } from '@/lib/utils';
 import { isDefaultSessionName } from '@/lib/session-name';
-import { PERMISSION_DENIED_MESSAGE, type PermissionRequest } from '@/lib/permission-request';
+import type { PermissionRequest } from '@/lib/permission-request';
 import { createLogger, toError } from '@/lib/logger';
 import { attachToolResultSanitizations } from '@/lib/message-sanitization';
 import { partialMessageId } from '@/lib/message-cache';
@@ -81,10 +80,10 @@ import { resolveAgentName } from './agent-name';
 import { abortGptRuns, hasActiveGptRuns } from './gpt-agent';
 import { requestAttention } from './session-attention';
 import {
+  answerUserInput,
   parkUserInput,
   permissionRequestsOf,
   rejectAllUserInput,
-  takeUserInput,
 } from './pending-input';
 import { buildLiveMcpServersRecord, buildSdkOptions } from './sdk-options';
 import { cancelBranchPrRefresh, detectBranchAndPr } from './session-branch-pr';
@@ -92,28 +91,6 @@ import { checkUsageAlerts, type UsagePort } from './usage';
 import type { PullRequestWatchPort } from './pull-request-watch';
 
 const log = createLogger('claude-runner');
-
-/** Translate a user's response into the SDK PermissionResult for the live path. */
-function buildPermissionResult(
-  response: ToolResponse,
-  input: Record<string, unknown>
-): PermissionResult {
-  if (response.kind === 'questions') {
-    return {
-      behavior: 'allow',
-      updatedInput: { questions: input.questions, answers: response.answers },
-    };
-  }
-
-  if (response.approve) {
-    return { behavior: 'allow', updatedInput: input };
-  }
-  return {
-    behavior: 'deny',
-    message:
-      response.feedback?.trim() || 'User rejected the plan. Please revise it before proceeding.',
-  };
-}
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -850,19 +827,8 @@ export async function submitLiveToolResponse(
 ): Promise<boolean> {
   const deadline = Date.now() + waitMs;
   for (;;) {
-    const live = sessions.get(sessionId)?.live;
-    const pending =
-      live?.pendingInputs.get(toolUseId)?.kind === 'interactive'
-        ? takeUserInput(sessionId, live, toolUseId)
-        : null;
-
-    if (pending) {
-      log.info('submitLiveToolResponse: resolving live tool call', {
-        sessionId,
-        toolName: pending.toolName,
-      });
-      pending.resolve(buildPermissionResult(response, pending.input));
-      await bumpSessionActivity(sessionId);
+    const live = sessions.get(sessionId)?.live ?? null;
+    if (await answerUserInput(sessionId, live, toolUseId, { kind: 'interactive', response })) {
       return true;
     }
 
@@ -881,29 +847,13 @@ export async function submitLiveToolResponse(
  *
  * @returns false if the request is no longer pending.
  */
-export async function respondToPermissionRequest(
+export function respondToPermissionRequest(
   sessionId: string,
   toolUseId: string,
   decision: { allow: boolean; feedback?: string }
 ): Promise<boolean> {
-  const live = sessions.get(sessionId)?.live;
-  const pending =
-    live?.pendingInputs.get(toolUseId)?.kind === 'permission'
-      ? takeUserInput(sessionId, live, toolUseId)
-      : null;
-  if (!pending) return false;
-  log.info('Answered permission request', {
-    sessionId,
-    toolName: pending.toolName,
-    allow: decision.allow,
-  });
-  pending.resolve(
-    decision.allow
-      ? { behavior: 'allow', updatedInput: pending.input }
-      : { behavior: 'deny', message: decision.feedback?.trim() || PERMISSION_DENIED_MESSAGE }
-  );
-  await bumpSessionActivity(sessionId);
-  return true;
+  const live = sessions.get(sessionId)?.live ?? null;
+  return answerUserInput(sessionId, live, toolUseId, { kind: 'permission', ...decision });
 }
 
 /** Permission requests waiting for the user. In-memory only. */
