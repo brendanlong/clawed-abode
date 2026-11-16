@@ -59,6 +59,9 @@ model Session {
   // Set at a graceful shutdown that cut off this session's turn or background work
   // (src/lib/restart-notice.ts); sent and cleared when its query is next revived.
   restartNotice           String?
+  // When the app last revived the session after a systemd-oomd kill. Another kill
+  // before the user's next interaction (lastActivityAt) leaves it down.
+  oomRevivedAt            DateTime?
   // Monotonic counter for atomic queued-prompt position assignment (next position to assign)
   queuedPromptSequence    Int      @default(0)
   // Usage alerts the agent opted into with set_usage_alerts: percent used at which

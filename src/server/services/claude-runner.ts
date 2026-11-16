@@ -57,6 +57,7 @@ import {
 } from './settings-merger';
 import { StreamAccumulator } from './stream-accumulator';
 import { stopSessionScope, wasKilledByOomd } from './session-cgroup';
+import { claimOomdRevive } from './oom-revive';
 import { createSessionState, type LiveQuery, type SessionState } from './session-state';
 import {
   createErrorMessage,
@@ -357,11 +358,12 @@ async function runSessionLoop(
 }
 
 /**
- * Bring a session systemd-oomd killed straight back (running means reachable),
- * tell its agent why, and flag it for the user, who should see an agent that
- * keeps getting killed. The notice goes through the restart notice, so a held
- * session hears it once the pause releases it, Stop withdraws it, and a
- * shutdown racing this delivers it on the next boot.
+ * Bring a session systemd-oomd killed straight back (running means reachable)
+ * and tell its agent why, once per user interaction; a second kill before the
+ * user responds leaves it down until they do. Either way the user is flagged.
+ * The notice goes through the restart notice, so a held session hears it once
+ * the pause releases it, Stop withdraws it, and a shutdown racing this delivers
+ * it on the next boot.
  */
 async function reviveAfterOomdKill(
   sessionId: string,
@@ -369,17 +371,20 @@ async function reviveAfterOomdKill(
   notice: string
 ): Promise<void> {
   if (!(await wasKilledByOomd(scope))) return;
-  log.warn('systemd-oomd killed the session; reviving it', { sessionId, scope });
+  let revive = false;
   try {
-    await prisma.session.updateMany({
-      where: { id: sessionId, status: 'running' },
-      data: { restartNotice: notice },
-    });
-    await requestAttention(sessionId, 'systemd-oomd killed this session for using too much memory');
+    revive = await claimOomdRevive(sessionId, notice);
+    await requestAttention(
+      sessionId,
+      revive
+        ? 'systemd-oomd killed this session for using too much memory'
+        : 'systemd-oomd killed this session again; left down until you reply'
+    );
   } catch (err) {
     log.error('Failed to record the oomd kill', toError(err), { sessionId });
   }
-  await reviveSession(sessionId);
+  log.warn('systemd-oomd killed the session', { sessionId, scope, revive });
+  if (revive) await reviveSession(sessionId);
 }
 
 /**
