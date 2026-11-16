@@ -26,7 +26,7 @@ Read more: [Clawed Abode: Claude Code is Too Cloudy](https://www.brendanlong.com
 
 ## Security
 
-**Agents run in Claude Code's `bypassPermissions` mode**: they execute code, install packages and change files without asking. Sessions are separated only by convention: they share one user account and can see each other's files. So:
+**Agents execute code, install packages and change files without asking.** By default they run in Claude Code's `auto` permission mode, where a classifier rather than you approves each tool call; `bypassPermissions` is an option that approves everything. Sessions are separated only by convention: they share one user account and can see each other's files. So:
 
 - **Run it in a virtual machine**, or on a dedicated machine, never on your personal workstation and never as root. A VM keeps a malicious package or prompt-injected agent off your own account even if it finds a kernel exploit; a separate user account on the same machine doesn't. Run the app as an ordinary user in the VM, with rootless Podman rather than Docker, since the `docker` group is root. If agents need a GPU the VM can't have, give them a separate GPU sandbox (for example a gVisor container they reach over SSH) instead of running on the host.
 - **Use a fine-grained GitHub token** scoped to only the repositories you want agents to reach.
@@ -42,7 +42,7 @@ The [self-hosting guide](doc/self-hosting.md) walks through setup, updating, the
 
 ## Development
 
-`pnpm run dev` starts the dev server with hot reload; `pnpm test:run` runs every test suite (what CI runs). After editing `prisma/schema.prisma`, `pnpm run db:migrate` creates and applies a migration (production applies them with `prisma migrate deploy` via `scripts/update.sh`). `pnpm readme-screenshots` regenerates the screenshots above from a throwaway demo instance (it needs `pnpm exec playwright install chromium` once). Contributor rules and the design docs are in [`CLAUDE.md`](CLAUDE.md) and [`doc/DESIGN.md`](doc/DESIGN.md).
+`pnpm run dev` starts the dev server with hot reload; `pnpm test:run` runs every test suite (what CI runs). After editing `prisma/schema.prisma`, `pnpm run db:migrate` creates and applies a migration (in production the service unit's `ExecStartPre` applies them on each start, so `scripts/update.sh` applies them by restarting it). `pnpm readme-screenshots` regenerates the screenshots above from a throwaway demo instance (it needs `pnpm exec playwright install chromium` once). Contributor rules and the design docs are in [`CLAUDE.md`](CLAUDE.md) and [`doc/DESIGN.md`](doc/DESIGN.md).
 
 ## License
 

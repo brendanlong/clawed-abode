@@ -1,5 +1,5 @@
 /**
- * Orchestrates one long-lived streaming Claude SDK `query()` per session: lazy
+ * Orchestrates one long-lived streaming Claude SDK `query()` per session:
  * establishment with resume, the output loop that persists messages and derives
  * live status, sends, interrupts and teardown. Design and rationale live in
  * doc/claude-sessions.md; invariants in src/server/services/CLAUDE.md.
@@ -10,7 +10,6 @@ import {
   query as sdkQuery,
   type Query,
   type Options,
-  type PermissionResult,
   type SDKUserMessage,
   type SDKMessage,
 } from '@anthropic-ai/claude-agent-sdk';
@@ -44,7 +43,7 @@ import type { ToolResponse } from '@/lib/tool-response';
 import type { CancelledPrompt } from '@/lib/cancelled-prompt';
 import { extractRepoFullName } from '@/lib/utils';
 import { isDefaultSessionName } from '@/lib/session-name';
-import { PERMISSION_DENIED_MESSAGE, type PermissionRequest } from '@/lib/permission-request';
+import type { PermissionRequest } from '@/lib/permission-request';
 import { createLogger, toError } from '@/lib/logger';
 import { attachToolResultSanitizations } from '@/lib/message-sanitization';
 import { partialMessageId } from '@/lib/message-cache';
@@ -81,10 +80,10 @@ import { resolveAgentName } from './agent-name';
 import { abortGptRuns, hasActiveGptRuns } from './gpt-agent';
 import { requestAttention } from './session-attention';
 import {
+  answerUserInput,
   parkUserInput,
   permissionRequestsOf,
   rejectAllUserInput,
-  takeUserInput,
 } from './pending-input';
 import { buildLiveMcpServersRecord, buildSdkOptions } from './sdk-options';
 import { cancelBranchPrRefresh, detectBranchAndPr } from './session-branch-pr';
@@ -92,28 +91,6 @@ import { checkUsageAlerts, type UsagePort } from './usage';
 import type { PullRequestWatchPort } from './pull-request-watch';
 
 const log = createLogger('claude-runner');
-
-/** Translate a user's response into the SDK PermissionResult for the live path. */
-function buildPermissionResult(
-  response: ToolResponse,
-  input: Record<string, unknown>
-): PermissionResult {
-  if (response.kind === 'questions') {
-    return {
-      behavior: 'allow',
-      updatedInput: { questions: input.questions, answers: response.answers },
-    };
-  }
-
-  if (response.approve) {
-    return { behavior: 'allow', updatedInput: input };
-  }
-  return {
-    behavior: 'deny',
-    message:
-      response.feedback?.trim() || 'User rejected the plan. Please revise it before proceeding.',
-  };
-}
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -140,13 +117,13 @@ export function _resetShutdown(): void {
 }
 
 /**
- * Mirror a session's current systemd scope unit name onto its DB row (or clear it
- * with null on teardown), so a crash — which never runs teardown — leaves the
+ * Mirror a session's current systemd scope unit name onto its DB row (teardown
+ * clears it with {@link clearRecordedScopes}), so a crash — which never runs teardown — leaves the
  * orphaned scope name behind for {@link reapOrphanedSessionScopes}. Best-effort: a
  * failed write only risks a leaked scope after a crash, never correctness.
  * `updateMany` so a deleted session is a silent no-op.
  */
-async function persistSessionScope(sessionId: string, unit: string | null): Promise<void> {
+async function persistSessionScope(sessionId: string, unit: string): Promise<void> {
   try {
     await prisma.session.updateMany({ where: { id: sessionId }, data: { sessionScope: unit } });
   } catch (err) {
@@ -231,18 +208,36 @@ export async function notifyUser(sessionId: string, summary: string): Promise<{ 
 /**
  * Detach a session's dead (or closing) query: reject its parked tool calls and
  * stop its systemd scope, reaping anything the CLI left running. Call
- * after dispatching `torn_down`. Resolves once the scope's processes are dead.
+ * after dispatching `torn_down`. Resolves once the scope's processes are dead and
+ * its recorded name is cleared.
  */
-function releaseQuery(sessionId: string, state: SessionState, reason: string): Promise<void> {
+async function releaseQuery(sessionId: string, state: SessionState, reason: string): Promise<void> {
   const live = state.live;
-  if (!live) return Promise.resolve();
+  if (!live) return;
   state.live = null;
   abortGptRuns(sessionId);
   rejectAllUserInput(sessionId, live, reason);
-  if (!live.sessionScope) return Promise.resolve();
-  const stopped = stopSessionScope(live.sessionScope);
-  void persistSessionScope(sessionId, null);
-  return stopped;
+  if (!live.sessionScope) return;
+  await stopSessionScope(live.sessionScope);
+  // Exactly our name, and only once it's dead: a revive may already have
+  // recorded its own, and a crash before this must still find ours to reap.
+  await clearRecordedScopes([live.sessionScope]);
+}
+
+/**
+ * Tear a session's query down synchronously, so nothing can push into the closed
+ * input, then release it. Closing the query kills the launcher, but stopping the
+ * scope is what cgroup-kills the whole tree (incl. daemons the agent backgrounded).
+ */
+function closeQuery(sessionId: string, state: SessionState, reason: string): Promise<void> {
+  state.live?.input.close();
+  try {
+    state.live?.query.close();
+  } catch {
+    // ignore close errors
+  }
+  dispatch(sessionId, state, { type: 'torn_down' });
+  return releaseQuery(sessionId, state, reason);
 }
 
 /**
@@ -538,21 +533,8 @@ function beginEstablishing(
  * conversation, keeping the session's in-memory state (commands etc.). Only for
  * an idle session: the old process and everything it spawned is killed.
  */
-function restartSessionQuery(
-  sessionId: string,
-  state: SessionState,
-  live: LiveQuery
-): Promise<SessionState> {
-  // Torn down synchronously, like stopSession, so nothing can push into the
-  // closed input while the old process dies.
-  live.input.close();
-  try {
-    live.query.close();
-  } catch {
-    // ignore close errors
-  }
-  dispatch(sessionId, state, { type: 'torn_down' });
-  const stopped = releaseQuery(sessionId, state, 'Query restarting');
+function restartSessionQuery(sessionId: string, state: SessionState): Promise<SessionState> {
+  const stopped = closeQuery(sessionId, state, 'Query restarting');
   // The old CLI must be gone before a new one resumes its conversation.
   return beginEstablishing(
     sessionId,
@@ -614,7 +596,7 @@ async function applyLiveSettingsNow(sessionId: string, state: SessionState): Pro
         builtinTools: { from: bound.builtinTools, to: settings.builtinTools },
       });
       try {
-        await restartSessionQuery(sessionId, state, live);
+        await restartSessionQuery(sessionId, state);
       } catch (err) {
         log.error('Failed to restart query for a settings change', toError(err), { sessionId });
       }
@@ -741,6 +723,10 @@ export async function sendUserMessage(
   pushPreparedPrompt(sessionId, state, pushable);
 }
 
+function hasLiveQuery(sessionId: string): boolean {
+  return !shutdown.started && !!sessions.get(sessionId)?.live;
+}
+
 /**
  * Send an app-originated message (e.g. a background GPT agent's result) to a
  * session whose query is live. Dropped otherwise, so it can never revive a
@@ -748,7 +734,7 @@ export async function sendUserMessage(
  * it was sent.
  */
 export async function deliverAppMessage(sessionId: string, text: string): Promise<boolean> {
-  if (shutdown.started || !sessions.get(sessionId)?.live) {
+  if (!hasLiveQuery(sessionId)) {
     log.info('Dropped an app message for a session without a live query', { sessionId });
     return false;
   }
@@ -809,7 +795,7 @@ export const usageRunner: UsagePort = {
 
 /** The runner as PR and security alert watches see it; handed over at startup. */
 export const watchRunner: PullRequestWatchPort = {
-  hasLiveQuery: (sessionId) => !shutdown.started && !!sessions.get(sessionId)?.live,
+  hasLiveQuery,
   isTurnActive: isClaudeRunning,
   deliverMessage: deliverAppMessage,
 };
@@ -841,19 +827,8 @@ export async function submitLiveToolResponse(
 ): Promise<boolean> {
   const deadline = Date.now() + waitMs;
   for (;;) {
-    const live = sessions.get(sessionId)?.live;
-    const pending =
-      live?.pendingInputs.get(toolUseId)?.kind === 'interactive'
-        ? takeUserInput(sessionId, live, toolUseId)
-        : null;
-
-    if (pending) {
-      log.info('submitLiveToolResponse: resolving live tool call', {
-        sessionId,
-        toolName: pending.toolName,
-      });
-      pending.resolve(buildPermissionResult(response, pending.input));
-      await bumpSessionActivity(sessionId);
+    const live = sessions.get(sessionId)?.live ?? null;
+    if (await answerUserInput(sessionId, live, toolUseId, { kind: 'interactive', response })) {
       return true;
     }
 
@@ -872,29 +847,13 @@ export async function submitLiveToolResponse(
  *
  * @returns false if the request is no longer pending.
  */
-export async function respondToPermissionRequest(
+export function respondToPermissionRequest(
   sessionId: string,
   toolUseId: string,
   decision: { allow: boolean; feedback?: string }
 ): Promise<boolean> {
-  const live = sessions.get(sessionId)?.live;
-  const pending =
-    live?.pendingInputs.get(toolUseId)?.kind === 'permission'
-      ? takeUserInput(sessionId, live, toolUseId)
-      : null;
-  if (!pending) return false;
-  log.info('Answered permission request', {
-    sessionId,
-    toolName: pending.toolName,
-    allow: decision.allow,
-  });
-  pending.resolve(
-    decision.allow
-      ? { behavior: 'allow', updatedInput: pending.input }
-      : { behavior: 'deny', message: decision.feedback?.trim() || PERMISSION_DENIED_MESSAGE }
-  );
-  await bumpSessionActivity(sessionId);
-  return true;
+  const live = sessions.get(sessionId)?.live ?? null;
+  return answerUserInput(sessionId, live, toolUseId, { kind: 'permission', ...decision });
 }
 
 /** Permission requests waiting for the user. In-memory only. */
@@ -1082,8 +1041,7 @@ export function isSessionBackgroundActive(sessionId: string): boolean {
 }
 
 /**
- * Stop a session's query and clear in-memory state. Removes the session from the
- * active map (no lazy revive until the next explicit interaction). The in-memory
+ * Stop a session's query and clear in-memory state. The in-memory
  * teardown is synchronous; the returned promise resolves once the session's
  * scope (and every process in it) is gone.
  */
@@ -1091,16 +1049,7 @@ export function stopSession(sessionId: string): Promise<void> {
   const state = sessions.get(sessionId);
   if (!state) return Promise.resolve();
 
-  state.live?.input.close();
-  try {
-    state.live?.query.close();
-  } catch {
-    // ignore close errors
-  }
-  dispatch(sessionId, state, { type: 'torn_down' });
-  // Closing the query kills the launcher, but stopping the scope is what
-  // cgroup-kills the whole tree (incl. daemons the agent backgrounded).
-  const stopped = releaseQuery(sessionId, state, 'Session stopped');
+  const stopped = closeQuery(sessionId, state, 'Session stopped');
   sessions.delete(sessionId);
   return stopped;
 }
@@ -1181,12 +1130,6 @@ export async function stopAllSessions(): Promise<void> {
   if (sessionIds.length === 0) return;
 
   log.info('Stopping all active sessions for shutdown', { count: sessionIds.length });
-  // Capture scope names before stopSession clears them so the DB clear can be
-  // awaited too (stopSession's is fire-and-forget, which shutdown would exit
-  // before): a graceful restart leaves no scopes running or recorded.
-  const scopes = sessionIds
-    .map((id) => sessions.get(id)?.live?.sessionScope)
-    .filter((s): s is string => Boolean(s));
   // Read before stopSession tears the live state down.
   const notices = sessionIds.flatMap((id) => {
     const state = sessions.get(id);
@@ -1203,7 +1146,6 @@ export async function stopAllSessions(): Promise<void> {
         )
     ),
   ]);
-  if (scopes.length > 0) await clearRecordedScopes(scopes);
 }
 
 /** Null out exactly these recorded scope names. Best-effort, like persistSessionScope. */

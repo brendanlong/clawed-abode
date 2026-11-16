@@ -58,10 +58,8 @@ export function getUploadStagingDir(): string {
  * Get the working directory for a session (the repo checkout inside the workspace).
  */
 export function getSessionWorkingDir(sessionId: string, repoPath: string): string {
-  if (!repoPath) {
-    return getSessionWorkspacePath(sessionId);
-  }
-  return join(WORKTREES_DIR, sessionId, repoPath);
+  // An empty repoPath (no-repo session) is the workspace itself: join drops it.
+  return join(getSessionWorkspacePath(sessionId), repoPath);
 }
 
 export interface CloneConfig {
@@ -73,8 +71,6 @@ export interface CloneConfig {
 export interface CloneResult {
   /** Relative path to repo within workspace (e.g., "my-repo") */
   repoPath: string;
-  /** Absolute path to the cloned repo */
-  workingDir: string;
 }
 
 /**
@@ -121,7 +117,7 @@ async function ensureGithubCredentialHelper(clonePath: string): Promise<void> {
 /**
  * Clone a repository for a session.
  *
- * Creates a fresh clone at /worktrees/{sessionId}/{repoName},
+ * Creates a fresh clone at ~/worktrees/{sessionId}/{repoName},
  * configures credentials, and creates a session-specific branch.
  */
 export async function cloneRepo(config: CloneConfig): Promise<CloneResult> {
@@ -159,17 +155,13 @@ export async function cloneRepo(config: CloneConfig): Promise<CloneResult> {
 
   log.info('Repo cloned successfully', { sessionId, repoName, branch: sessionBranch });
 
-  return {
-    repoPath: repoName,
-    workingDir: clonePath,
-  };
+  return { repoPath: repoName };
 }
 
-export async function createEmptyWorkspace(sessionId: string): Promise<string> {
+export async function createEmptyWorkspace(sessionId: string): Promise<void> {
   const workspacePath = getSessionWorkspacePath(sessionId);
   log.info('Creating empty workspace', { sessionId, workspacePath });
   await mkdir(workspacePath, { recursive: true });
-  return workspacePath;
 }
 
 export async function removeWorkspace(sessionId: string): Promise<void> {

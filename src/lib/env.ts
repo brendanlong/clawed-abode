@@ -37,43 +37,30 @@ const baseUrl = z.preprocess(
     .optional()
 );
 
+// What each variable does is documented for operators in .env.example; comments
+// here only explain validation choices.
 const envSchema = z
   .object({
     DATABASE_URL: z.string().default('file:./data/dev.db'),
     GITHUB_TOKEN: z.string().optional(),
-    // Claude Code OAuth token (run `claude setup-token` to generate)
-    // Optional if configured via Settings UI instead
     CLAUDE_CODE_OAUTH_TOKEN: z.string().optional().default(''),
-    // Claude model to use (e.g., "opus", "sonnet", "claude-opus-4-5-20251101")
     CLAUDE_MODEL: z.string().default(DEFAULT_CLAUDE_MODEL),
-    // Prefix for session branches (e.g., "claude/" creates branches like "claude/{sessionId}")
     SESSION_BRANCH_PREFIX: z.string().default('claude/'),
-    // Base64-encoded Argon2 hash for authentication (generate with: pnpm hash-password <yourpassword>)
+    // Base64-encoded so the Argon2 hash's `$`s survive dotenv.
     PASSWORD_HASH: z
       .string()
       .optional()
       .transform((val) => (val ? Buffer.from(val, 'base64').toString('utf-8') : undefined)),
-    // 32+ character key for encrypting secrets (env vars, MCP API keys)
-    // Generate with: openssl rand -base64 32
     ENCRYPTION_KEY: z.string().min(32).optional(),
-    // Public base URL the browser reaches this app on (e.g. https://host.tailnet.ts.net).
-    // Used to build the OAuth redirect URI for MCP servers; when unset it is derived
-    // from the request's forwarded host/proto (see src/lib/app-origin.ts). The public
-    // files server links here to sign in; unset, it assumes its own host's default port.
+    // Unset, it is derived from the request (src/lib/app-origin.ts).
     // Validated (unlike CODE_SERVER_URL) because a typo here doesn't degrade — it
     // produces a redirect_uri the authorization server rejects.
     APP_URL: z.string().url().optional(),
-    // Base URL of a self-hosted code-server (browser VS Code) instance used to
-    // view/edit session worktrees remotely (e.g. https://host.tailnet.ts.net:8443).
-    // When unset, the "Open in VS Code" button is hidden. See scripts/setup-code-server.sh.
     // Intentionally free-form (not z.string().url()): it is operator-controlled and
     // may legitimately be a relative reverse-proxy path like "/editor".
     CODE_SERVER_URL: z.string().optional(),
-    // Serve each session's public/ directory on this loopback port, reached by the
-    // browser at PUBLIC_FILES_URL (see scripts/expose-public-files-tailscale.sh).
-    // Both or neither: the port without a URL would serve files no agent links to.
-    // The URL must use the app's hostname — the auth cookie is shared across ports,
-    // not hostnames.
+    // Both or neither (refined below): the port without a URL would serve files
+    // no agent links to.
     PUBLIC_FILES_PORT: z.preprocess(
       emptyToUndefined,
       z.coerce.number().int().min(1).max(65535).optional()
@@ -87,23 +74,15 @@ const envSchema = z
         .refine((url) => new URL(url).pathname === '/', 'must be an origin, with no path')
         .optional()
     ),
-    // OpenAI-compatible speech API that serves Kokoro, e.g. https://openrouter.ai/api/v1
-    // or a local Kokoro-FastAPI at http://localhost:8880/v1. When unset, TTS is hidden.
     TTS_BASE_URL: baseUrl,
     TTS_API_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
-    // Kokoro-FastAPI calls the model "kokoro".
     TTS_MODEL: z.preprocess(emptyToUndefined, z.string().default('hexgrad/kokoro-82m')),
-    // Speech requests per message run at once; 1 suits a local CPU server.
     TTS_MAX_CONCURRENCY: z.preprocess(
       emptyToUndefined,
       z.coerce.number().int().min(1).max(16).default(4)
     ),
-    // Anthropic-compatible proxy (e.g. LiteLLM at http://localhost:4000) serving
-    // provider-prefixed models like openai/gpt-6-astra; see doc/settings.md.
     LLM_PROXY_URL: baseUrl,
     LLM_PROXY_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
-    // Collective limits on all agent sessions (see "Process Reaping" in
-    // doc/claude-sessions.md), in systemd syntax.
     SESSIONS_MEMORY_MAX: z.preprocess(emptyToUndefined, systemdMemory(1).default('85%')),
     SESSIONS_MEMORY_SWAP_MAX: z.preprocess(emptyToUndefined, systemdMemory(0).default('0')),
     SESSIONS_CPU_QUOTA: z.preprocess(
@@ -113,7 +92,6 @@ const envSchema = z
         .refine((v) => isSystemdPercent(v, 0.01, Infinity), 'e.g. 2200% (100% is one core)')
         .optional()
     ),
-    // Minimum level the server logger writes (see src/lib/logger.ts).
     LOG_LEVEL: z.enum(LOG_LEVELS).default('info'),
   })
   .refine((e) => (e.PUBLIC_FILES_PORT === undefined) === (e.PUBLIC_FILES_URL === undefined), {

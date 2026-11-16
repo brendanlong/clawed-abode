@@ -7,7 +7,7 @@ import type { RateLimitHold } from '@/lib/rate-limit';
 import type { TokenUsageStats } from '@/lib/token-estimation';
 import { toSessionView, type SessionView } from '@/lib/session-view';
 import { processSingleton } from '@/lib/process-singleton';
-import { taskHasEndState, type BackgroundTask } from '@/lib/session-status';
+import type { BackgroundTask } from '@/lib/session-status';
 import type { ParsedMessage } from './message-store';
 
 /**
@@ -46,28 +46,19 @@ export type SessionStreamEvent =
 /**
  * Events fanned out to the global session-list channel (`sse.onSessionListEvents`),
  * so the home page can show running/background/waiting per session without a
- * subscription per row. Payloads are deliberately lightweight: the list refetches
- * `sessions.list` on any event, which carries the authoritative state.
+ * subscription per row. The list refetches `sessions.list`, which carries the
+ * authoritative state, on any event, so `changed` carries only the session id.
  *
- * - `session`: a session row changed. Only `name` rides along; the full row goes
- *   to the per-session stream.
+ * - `changed`: the session's row, turn state, background-task set, or rate-limit
+ *   hold changed.
  * - `attention`: the agent asked for the user (doc/claude-sessions.md, "Needs
- *   You"). The row change also arrives as `session`; this edge is what fires the
+ *   You"). The row change also arrives as `changed`; this edge is what fires the
  *   notification, so a stream `resync` (buffer overflow) can lose one — the list
  *   badge still shows it.
- * - `background`: the session's background-task set flipped between empty and
- *   non-empty, so the badge can flip live even when the change produces no
- *   `running` edge (the last background task settling with no main-agent
- *   continuation, or a user ✕-stopping it).
- * - `rate_limit`: the session started or stopped being paused for a subscription
- *   rate limit, so the list badge and the global paused banner can update.
  */
 export type SessionListEvent =
-  | { kind: 'session'; sessionId: string; name: string }
-  | { kind: 'running'; sessionId: string; running: boolean }
-  | { kind: 'attention'; sessionId: string; name: string; summary: string }
-  | { kind: 'background'; sessionId: string; active: boolean }
-  | { kind: 'rate_limit'; sessionId: string; paused: boolean };
+  | { kind: 'changed'; sessionId: string }
+  | { kind: 'attention'; sessionId: string; name: string; summary: string };
 
 // Global channel name for cross-session list updates (not session-scoped).
 const SESSION_LIST_EVENT = 'session-list';
@@ -85,7 +76,7 @@ class SSEEventEmitter {
 
   emitSessionUpdate(sessionId: string, row: Session): void {
     this.emitSession(sessionId, { kind: 'session', session: toSessionView(row) });
-    this.emitList({ kind: 'session', sessionId, name: row.name });
+    this.emitList({ kind: 'changed', sessionId });
   }
 
   emitNewMessage(sessionId: string, message: ParsedMessage): void {
@@ -98,7 +89,7 @@ class SSEEventEmitter {
 
   emitClaudeRunning(sessionId: string, running: boolean): void {
     this.emitSession(sessionId, { kind: 'running', running });
-    this.emitList({ kind: 'running', sessionId, running });
+    this.emitList({ kind: 'changed', sessionId });
   }
 
   /** Global-channel only — see `attention` on {@link SessionListEvent}. */
@@ -116,9 +107,7 @@ class SSEEventEmitter {
 
   emitBackgroundTasks(sessionId: string, tasks: BackgroundTask[]): void {
     this.emitSession(sessionId, { kind: 'background', tasks });
-    // `active` mirrors the busy axis (tasks with a knowable end state only) — the
-    // client refetches on any event rather than reading it, but keep it truthful.
-    this.emitList({ kind: 'background', sessionId, active: tasks.some(taskHasEndState) });
+    this.emitList({ kind: 'changed', sessionId });
   }
 
   emitPermissionRequests(sessionId: string, requests: PermissionRequest[]): void {
@@ -135,7 +124,7 @@ class SSEEventEmitter {
 
   emitRateLimitHold(sessionId: string, hold: RateLimitHold | null): void {
     this.emitSession(sessionId, { kind: 'rate_limit', hold });
-    this.emitList({ kind: 'rate_limit', sessionId, paused: hold !== null });
+    this.emitList({ kind: 'changed', sessionId });
   }
 
   emitTokenUsage(sessionId: string, usage: TokenUsageStats): void {
