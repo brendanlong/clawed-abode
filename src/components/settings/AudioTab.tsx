@@ -2,8 +2,6 @@
 
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
 import { CenteredSpinner, Spinner } from '@/components/ui/spinner';
 import { Slider } from '@/components/ui/slider';
 import {
@@ -25,6 +23,7 @@ import {
   resolveKokoroVoice,
 } from '@/lib/kokoro-voices';
 import { SettingsCard } from './shared/SettingsCard';
+import { SwitchSetting } from './shared/SwitchSetting';
 import { useUpdateGlobalSettings } from './shared/useUpdateGlobalSettings';
 
 const VOICE_GROUPS = groupKokoroVoices();
@@ -68,7 +67,7 @@ export function AudioTab() {
 
       <SettingsCard
         title="Auto-Send Voice Input"
-        description="When enabled, speech-to-text transcripts are automatically sent as prompts after recording stops. When disabled, transcripts are inserted into the input field for editing before sending. Uses the browser's built-in speech recognition (Web Speech API)."
+        description="Speech-to-text uses the browser's built-in speech recognition (Web Speech API)."
       >
         <VoiceAutoSendSection autoSend={settings?.voiceAutoSend ?? true} />
       </SettingsCard>
@@ -195,17 +194,14 @@ function VoiceAutoSendSection({ autoSend }: { autoSend: boolean }) {
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-3">
-        <Switch
-          id="voice-auto-send"
-          checked={autoSend}
-          onCheckedChange={(voiceAutoSend) => mutation.mutate({ voiceAutoSend })}
-          disabled={mutation.isPending}
-        />
-        <Label htmlFor="voice-auto-send">
-          {autoSend ? 'Auto-send enabled' : 'Auto-send disabled'}
-        </Label>
-      </div>
+      <SwitchSetting
+        id="voice-auto-send"
+        title="Send transcripts automatically"
+        description="When on, a transcript is sent as a prompt as soon as recording stops. When off, it's inserted into the input field for editing before sending."
+        checked={autoSend}
+        onCheckedChange={(voiceAutoSend) => mutation.mutate({ voiceAutoSend })}
+        disabled={mutation.isPending}
+      />
       {mutation.error && <p className="text-sm text-destructive">{mutation.error.message}</p>}
     </div>
   );
