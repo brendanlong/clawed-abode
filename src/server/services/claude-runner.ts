@@ -834,15 +834,37 @@ export const watchRunner: PullRequestWatchPort = {
   deliverMessage: deliverAppMessage,
 };
 
-/** The in-progress assistant messages' latest partials (seeds the client). */
-export function getActivePartials(sessionId: string): ParsedMessage[] {
-  return [...(sessions.get(sessionId)?.live?.partials.values() ?? [])];
+/** A session's in-memory live state (lost on restart); see {@link getLiveSessionState}. */
+export interface RunnerLiveState {
+  /** The in-progress assistant messages' latest partials. */
+  partials: ParsedMessage[];
+  /** Transcript ids of not-yet-delivered messages. */
+  pendingMessageIds: string[];
+  /** Permission requests waiting for the user. */
+  permissionRequests: PermissionRequest[];
+  /** Current API-retry status, or null. */
+  retry: RetryState | null;
+  /** Running background tasks. */
+  backgroundTasks: BackgroundTask[];
+  /**
+   * Whether a background task with a knowable end state is running. Independent
+   * of {@link isClaudeRunning}; see `taskHasEndState`.
+   */
+  backgroundActive: boolean;
 }
 
-/** Transcript ids of a session's not-yet-delivered messages (seeds the client). */
-export function getPendingMessageIds(sessionId: string): string[] {
+/** A session's live state, for seeding clients and the session list. */
+export function getLiveSessionState(sessionId: string): RunnerLiveState {
   const state = sessions.get(sessionId);
-  return state ? liveView(state.turn).pendingMessageIds : [];
+  const live = state?.live ?? null;
+  return {
+    partials: [...(live?.partials.values() ?? [])],
+    pendingMessageIds: state ? liveView(state.turn).pendingMessageIds : [],
+    permissionRequests: permissionRequestsOf(live),
+    retry: state?.turn.status.retry ?? null,
+    backgroundTasks: state ? [...state.turn.status.backgroundTasks.values()] : [],
+    backgroundActive: state ? backgroundActive(state.turn.status) : false,
+  };
 }
 
 /**
@@ -888,22 +910,6 @@ export function respondToPermissionRequest(
 ): Promise<boolean> {
   const live = sessions.get(sessionId)?.live ?? null;
   return answerUserInput(sessionId, live, toolUseId, { kind: 'permission', ...decision });
-}
-
-/** Permission requests waiting for the user. In-memory only. */
-export function getPermissionRequests(sessionId: string): PermissionRequest[] {
-  return permissionRequestsOf(sessions.get(sessionId)?.live ?? null);
-}
-
-/** Current API-retry status for a session, or null. In-memory only. */
-export function getSessionRetry(sessionId: string): RetryState | null {
-  return sessions.get(sessionId)?.turn.status.retry ?? null;
-}
-
-/** Current running background tasks for a session. In-memory only. */
-export function getSessionBackgroundTasks(sessionId: string): BackgroundTask[] {
-  const state = sessions.get(sessionId);
-  return state ? [...state.turn.status.backgroundTasks.values()] : [];
 }
 
 export interface InterruptResult {
@@ -1063,15 +1069,6 @@ export async function refreshAllSessionSettings(): Promise<void> {
       .filter(([, state]) => state.live || state.establishing)
       .map(([id]) => refreshSessionSettings(id))
   );
-}
-
-/**
- * Whether a background task with a knowable end state is running (in-memory).
- * Independent of {@link isClaudeRunning}; see `taskHasEndState`.
- */
-export function isSessionBackgroundActive(sessionId: string): boolean {
-  const state = sessions.get(sessionId);
-  return state ? backgroundActive(state.turn.status) : false;
 }
 
 /**

@@ -3,7 +3,7 @@ import { router, protectedProcedure, sessionProcedure } from '../trpc';
 import { prisma } from '@/lib/prisma';
 import { getSessionWorkspacePath } from '../services/worktree-manager';
 import { buildEditorUrl } from '@/lib/editor-url';
-import { isClaudeRunning, isSessionBackgroundActive } from '../services/claude-runner';
+import { getLiveSessionState, isClaudeRunning } from '../services/claude-runner';
 import { currentHold, recomputeRateLimitHolds } from '../services/rate-limit-pause';
 import {
   archiveSession,
@@ -105,7 +105,7 @@ export const sessionsRouter = router({
       const sessions = items.map((session) => ({
         ...toSessionView(session),
         turnActive: isClaudeRunning(session.id),
-        backgroundActive: isSessionBackgroundActive(session.id),
+        backgroundActive: getLiveSessionState(session.id).backgroundActive,
         rateLimitPaused: currentHold(session.id) !== null,
       }));
 
