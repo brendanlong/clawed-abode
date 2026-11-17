@@ -1,6 +1,6 @@
 'use client';
 
-import { Circle, CircleCheck, CircleDot, CircleHelp } from 'lucide-react';
+import { Circle, CircleCheck, CircleHelp } from 'lucide-react';
 import { z } from 'zod';
 import { useState, useMemo, useCallback } from 'react';
 import { cn } from '@/lib/utils';
@@ -174,11 +174,7 @@ export function AskUserQuestionDisplay({ tool }: { tool: ToolCall }) {
                   const wasAnswered = isAnsweredOption(option, output.text);
                   const canClick = canInteract;
                   const isChosen = isSelected || wasAnswered;
-                  const OptionIcon = !isChosen
-                    ? Circle
-                    : question.multiSelect
-                      ? CircleCheck
-                      : CircleDot;
+                  const OptionIcon = isChosen && question.multiSelect ? CircleCheck : Circle;
 
                   return (
                     <button
@@ -201,7 +197,12 @@ export function AskUserQuestionDisplay({ tool }: { tool: ToolCall }) {
                           'w-4 h-4 shrink-0 mt-0.5',
                           isChosen ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'
                         )}
-                      />
+                      >
+                        {/* A chosen radio option gets a solid dot (lucide's CircleDot is too faint). */}
+                        {isChosen && !question.multiSelect && (
+                          <circle cx="12" cy="12" r="4" fill="currentColor" />
+                        )}
+                      </OptionIcon>
                       <div className="flex-1 min-w-0">
                         <div className="font-medium text-foreground">{option.label}</div>
                         {option.description && (

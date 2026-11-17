@@ -26,8 +26,9 @@ const SETTING_SOURCE_LABELS: Record<SettingSource, { title: string; description:
 };
 
 export function SettingSourcesCard({ current }: { current: SettingSourceFlags }) {
+  const invalidateGlobalSettings = useInvalidateGlobalSettings();
   const mutation = trpc.globalSettings.setSettingSources.useMutation({
-    onSuccess: useInvalidateGlobalSettings(),
+    onSuccess: invalidateGlobalSettings,
   });
 
   return (
