@@ -5,26 +5,22 @@ import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { trpc } from '@/lib/trpc';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { SettingsCard } from '../shared/SettingsCard';
+import { useUpdateGlobalSettings } from '../shared/useUpdateGlobalSettings';
 import { EditableTextSetting } from '../shared/EditableTextSetting';
 
 export function SystemPromptOverrideCard({
   currentOverride,
   overrideEnabled,
   defaultPrompt,
-  onUpdate,
 }: {
   currentOverride: string | null;
   overrideEnabled: boolean;
   defaultPrompt: string;
-  onUpdate: () => void;
 }) {
-  const saveMutation = trpc.globalSettings.update.useMutation({ onSuccess: onUpdate });
-  const toggleMutation = trpc.globalSettings.update.useMutation({
-    onSuccess: onUpdate,
-  });
+  const saveMutation = useUpdateGlobalSettings();
+  const toggleMutation = useUpdateGlobalSettings();
 
   return (
     <SettingsCard
@@ -77,14 +73,8 @@ export function SystemPromptOverrideCard({
   );
 }
 
-export function SystemPromptAppendCard({
-  currentAppend,
-  onUpdate,
-}: {
-  currentAppend: string | null;
-  onUpdate: () => void;
-}) {
-  const mutation = trpc.globalSettings.update.useMutation({ onSuccess: onUpdate });
+export function SystemPromptAppendCard({ currentAppend }: { currentAppend: string | null }) {
+  const mutation = useUpdateGlobalSettings();
 
   return (
     <SettingsCard

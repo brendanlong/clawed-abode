@@ -18,7 +18,7 @@ import { RateLimitPauseCard } from './global/RateLimitPauseCard';
 import { GlobalEnvVarsCard, GlobalMcpServersCard } from './global/ScopedSettingsCards';
 
 export function GeneralTab() {
-  const { data: settings, error, refetch } = trpc.globalSettings.get.useQuery();
+  const { data: settings, error } = trpc.globalSettings.get.useQuery();
 
   if (error) {
     return (
@@ -34,23 +34,18 @@ export function GeneralTab() {
 
   return (
     <div className="space-y-6">
-      <ClaudeModelCard settings={settings} onUpdate={refetch} />
-      <AdvisorModelCard settings={settings} onUpdate={refetch} />
-      <ApiKeyCard
-        hasDbKey={settings.hasClaudeApiKey}
-        hasEnvKey={settings.hasEnvApiKey}
-        onUpdate={refetch}
-      />
+      <ClaudeModelCard settings={settings} />
+      <AdvisorModelCard settings={settings} />
+      <ApiKeyCard hasDbKey={settings.hasClaudeApiKey} hasEnvKey={settings.hasEnvApiKey} />
       <SystemPromptOverrideCard
         currentOverride={settings.systemPromptOverride}
         overrideEnabled={settings.systemPromptOverrideEnabled}
         defaultPrompt={DEFAULT_SYSTEM_PROMPT}
-        onUpdate={refetch}
       />
-      <SystemPromptAppendCard currentAppend={settings.systemPromptAppend} onUpdate={refetch} />
-      <SettingSourcesCard current={settings.settingSources} onUpdate={refetch} />
-      <BuiltinToolsCard builtinToolsEnabled={settings.builtinToolsEnabled} onUpdate={refetch} />
-      <PermissionModeCard permissionMode={settings.permissionMode} onUpdate={refetch} />
+      <SystemPromptAppendCard currentAppend={settings.systemPromptAppend} />
+      <SettingSourcesCard current={settings.settingSources} />
+      <BuiltinToolsCard builtinToolsEnabled={settings.builtinToolsEnabled} />
+      <PermissionModeCard permissionMode={settings.permissionMode} />
       <RateLimitPauseCard />
       <GlobalEnvVarsCard />
       <GlobalMcpServersCard />

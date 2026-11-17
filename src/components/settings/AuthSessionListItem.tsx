@@ -1,6 +1,5 @@
 'use client';
 
-import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -18,13 +17,9 @@ import { Spinner } from '@/components/ui/spinner';
 import type { inferRouterOutputs } from '@trpc/server';
 import type { AppRouter } from '@/server/routers';
 import { formatFullTimestamp } from '@/lib/message-timestamp';
+import { trpc } from '@/lib/trpc';
 
 type AuthSession = inferRouterOutputs<AppRouter>['auth']['listSessions']['sessions'][number];
-
-interface AuthSessionListItemProps {
-  session: AuthSession;
-  onRevoke: (sessionId: string) => Promise<void>;
-}
 
 function formatRelativeTime(date: Date): string {
   const now = new Date();
@@ -70,23 +65,12 @@ function parseUserAgent(userAgent: string | null): string {
   return `${browser} on ${os}`;
 }
 
-export function AuthSessionListItem({ session, onRevoke }: AuthSessionListItemProps) {
-  const [isRevoking, setIsRevoking] = useState(false);
-
-  const now = new Date();
-  const isRevoked = !!session.revokedAt;
-  const isExpired = new Date(session.effectiveExpiresAt) <= now;
-  const isIdleExpired = !isRevoked && isExpired && new Date(session.expiresAt) > now;
-  const isActive = !isRevoked && !isExpired;
-
-  const handleRevoke = async () => {
-    setIsRevoking(true);
-    try {
-      await onRevoke(session.id);
-    } finally {
-      setIsRevoking(false);
-    }
-  };
+export function AuthSessionListItem({ session }: { session: AuthSession }) {
+  const utils = trpc.useUtils();
+  const revokeMutation = trpc.auth.deleteSession.useMutation({
+    onSuccess: () => utils.auth.listSessions.invalidate(),
+  });
+  const { state } = session;
 
   return (
     <li className="px-4 py-4 hover:bg-muted/50 transition-colors">
@@ -104,17 +88,17 @@ export function AuthSessionListItem({ session, onRevoke }: AuthSessionListItemPr
                 Public files only
               </Badge>
             )}
-            {isRevoked && (
+            {state === 'revoked' && (
               <Badge variant="outline" className="text-xs text-muted-foreground">
                 Revoked
               </Badge>
             )}
-            {isIdleExpired && (
+            {state === 'idle' && (
               <Badge variant="outline" className="text-xs text-muted-foreground">
                 Idle timeout
               </Badge>
             )}
-            {isExpired && !isRevoked && !isIdleExpired && (
+            {state === 'expired' && (
               <Badge variant="outline" className="text-xs text-muted-foreground">
                 Expired
               </Badge>
@@ -124,22 +108,27 @@ export function AuthSessionListItem({ session, onRevoke }: AuthSessionListItemPr
           <div className="text-xs text-muted-foreground space-y-0.5">
             {session.ipAddress && <p>IP: {session.ipAddress}</p>}
             <p>Last active: {formatRelativeTime(session.lastActivityAt)}</p>
-            {isRevoked && session.revokedAt && (
-              <p>Revoked: {formatFullTimestamp(session.revokedAt)}</p>
+            {session.revokedAt && <p>Revoked: {formatFullTimestamp(session.revokedAt)}</p>}
+            {/* A revoked session's expiry is moot; it shows when it was revoked instead. */}
+            {state !== 'revoked' && (
+              <p>
+                {state === 'active' ? 'Expires' : 'Expired'}:{' '}
+                {formatFullTimestamp(session.effectiveExpiresAt)}
+                {state === 'idle' && ' (idle)'}
+              </p>
             )}
-            <p>
-              {isExpired ? 'Expired' : 'Expires'}: {formatFullTimestamp(session.effectiveExpiresAt)}
-              {isIdleExpired && ' (idle)'}
-            </p>
             <p>Created: {formatFullTimestamp(session.createdAt)}</p>
+            {revokeMutation.error && (
+              <p className="text-destructive">Failed to revoke: {revokeMutation.error.message}</p>
+            )}
           </div>
         </div>
 
-        {!session.isCurrent && isActive && (
+        {!session.isCurrent && state === 'active' && (
           <AlertDialog>
             <AlertDialogTrigger asChild>
-              <Button variant="outline" size="sm" disabled={isRevoking}>
-                {isRevoking ? <Spinner size="sm" /> : 'Revoke'}
+              <Button variant="outline" size="sm" disabled={revokeMutation.isPending}>
+                {revokeMutation.isPending ? <Spinner size="sm" /> : 'Revoke'}
               </Button>
             </AlertDialogTrigger>
             <AlertDialogContent>
@@ -152,7 +141,9 @@ export function AuthSessionListItem({ session, onRevoke }: AuthSessionListItemPr
               </AlertDialogHeader>
               <AlertDialogFooter>
                 <AlertDialogCancel>Cancel</AlertDialogCancel>
-                <AlertDialogAction onClick={handleRevoke}>Revoke session</AlertDialogAction>
+                <AlertDialogAction onClick={() => revokeMutation.mutate({ sessionId: session.id })}>
+                  Revoke session
+                </AlertDialogAction>
               </AlertDialogFooter>
             </AlertDialogContent>
           </AlertDialog>

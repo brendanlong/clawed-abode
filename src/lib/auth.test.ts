@@ -9,6 +9,7 @@ import {
   SESSION_DURATION_MS,
   IDLE_TIMEOUT_MS,
   effectiveExpiry,
+  authSessionState,
 } from './auth';
 
 describe('auth', () => {
@@ -147,6 +148,41 @@ describe('auth', () => {
     it('is the absolute expiry when that comes first', () => {
       const expiresAt = new Date(idleDeadline.getTime() - 1);
       expect(effectiveExpiry({ lastActivityAt, expiresAt })).toEqual(expiresAt);
+    });
+  });
+
+  describe('authSessionState', () => {
+    const now = new Date('2026-01-10T00:00:00Z');
+    const hoursAgo = (h: number) => new Date(now.getTime() - h * 60 * 60 * 1000);
+    const inHours = (h: number) => new Date(now.getTime() + h * 60 * 60 * 1000);
+
+    it('is active when neither deadline has passed', () => {
+      const session = { lastActivityAt: hoursAgo(1), expiresAt: inHours(48), revokedAt: null };
+      expect(authSessionState(session, now)).toBe('active');
+    });
+
+    it('is revoked once revoked, even if otherwise live', () => {
+      const session = {
+        lastActivityAt: hoursAgo(1),
+        expiresAt: inHours(48),
+        revokedAt: hoursAgo(0.5),
+      };
+      expect(authSessionState(session, now)).toBe('revoked');
+    });
+
+    it('is idle when the idle timeout passed before the absolute expiry', () => {
+      const session = { lastActivityAt: hoursAgo(25), expiresAt: inHours(48), revokedAt: null };
+      expect(authSessionState(session, now)).toBe('idle');
+    });
+
+    it('is expired once the absolute expiry has passed', () => {
+      const session = { lastActivityAt: hoursAgo(30), expiresAt: hoursAgo(1), revokedAt: null };
+      expect(authSessionState(session, now)).toBe('expired');
+    });
+
+    it('is expired, not active, exactly at the deadline', () => {
+      const session = { lastActivityAt: hoursAgo(1), expiresAt: now, revokedAt: null };
+      expect(authSessionState(session, now)).toBe('expired');
     });
   });
 

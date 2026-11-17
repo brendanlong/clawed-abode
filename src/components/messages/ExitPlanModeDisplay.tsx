@@ -1,9 +1,11 @@
 'use client';
 
 import { z } from 'zod';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
+import { ClipboardList } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { ColorBadge } from './ColorBadge';
+import { CopyButton } from './CopyButton';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { MarkdownContent } from '@/components/MarkdownContent';
@@ -19,56 +21,6 @@ const exitPlanModeInputSchema = z.object({
   remoteSessionUrl: lenient(z.string()),
 });
 
-function ClipboardIcon() {
-  return (
-    <svg
-      className="w-4 h-4 text-purple-600 dark:text-purple-400 shrink-0"
-      fill="none"
-      viewBox="0 0 24 24"
-      stroke="currentColor"
-      strokeWidth={1.5}
-    >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M9 12h3.75M9 15h3.75M9 18h3.75m3 .75H18a2.25 2.25 0 002.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 00-1.123-.08m-5.801 0c-.065.21-.1.433-.1.664 0 .414.336.75.75.75h4.5a.75.75 0 00.75-.75 2.25 2.25 0 00-.1-.664m-5.8 0A2.251 2.251 0 0113.5 2.25H15c1.012 0 1.867.668 2.15 1.586m-5.8 0c-.376.023-.75.05-1.124.08C9.095 4.01 8.25 4.973 8.25 6.108V8.25m0 0H4.875c-.621 0-1.125.504-1.125 1.125v11.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V9.375c0-.621-.504-1.125-1.125-1.125H8.25zM6.75 12h.008v.008H6.75V12zm0 3h.008v.008H6.75V15zm0 3h.008v.008H6.75V18z"
-      />
-    </svg>
-  );
-}
-
-function CopyIcon() {
-  return (
-    <svg
-      className="w-3.5 h-3.5"
-      fill="none"
-      viewBox="0 0 24 24"
-      stroke="currentColor"
-      strokeWidth={2}
-    >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9.75a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184"
-      />
-    </svg>
-  );
-}
-
-function CheckIcon() {
-  return (
-    <svg
-      className="w-3.5 h-3.5"
-      fill="none"
-      viewBox="0 0 24 24"
-      stroke="currentColor"
-      strokeWidth={2}
-    >
-      <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
-    </svg>
-  );
-}
-
 /**
  * Specialized display for ExitPlanMode tool calls.
  * Shows the full rendered plan content and approval status.
@@ -80,8 +32,6 @@ export function ExitPlanModeDisplay({ tool }: { tool: ToolCall }) {
   const isPending = !hasOutput;
   const toolUseId = tool.id;
   const planContent = toolUseId ? transcript?.planContentByToolUseId.get(toolUseId) : undefined;
-  const [copied, setCopied] = useState(false);
-  const copyResetTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const [showFeedback, setShowFeedback] = useState(false);
   const [feedback, setFeedback] = useState('');
 
@@ -102,24 +52,10 @@ export function ExitPlanModeDisplay({ tool }: { tool: ToolCall }) {
       onRespondToPlan(toolUseId, false, feedback.trim() || undefined);
   };
 
-  useEffect(() => () => clearTimeout(copyResetTimer.current), []);
-
-  const handleCopyPlan = useCallback(async () => {
-    if (!planContent) return;
-    try {
-      await navigator.clipboard.writeText(planContent);
-      setCopied(true);
-      clearTimeout(copyResetTimer.current);
-      copyResetTimer.current = setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // Fallback for older browsers
-    }
-  }, [planContent]);
-
   return (
     <ToolDisplayWrapper
       tool={tool}
-      icon={<ClipboardIcon />}
+      icon={<ClipboardList className="w-4 h-4 text-purple-600 dark:text-purple-400 shrink-0" />}
       title="Plan Complete"
       defaultExpanded={true}
       pendingText="Awaiting approval..."
@@ -136,15 +72,7 @@ export function ExitPlanModeDisplay({ tool }: { tool: ToolCall }) {
         <div>
           <div className="flex items-center justify-between mb-1">
             <div className="text-muted-foreground font-medium">Plan:</div>
-            <button
-              type="button"
-              onClick={handleCopyPlan}
-              className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-              title="Copy plan to clipboard"
-            >
-              {copied ? <CheckIcon /> : <CopyIcon />}
-              {copied ? 'Copied' : 'Copy'}
-            </button>
+            <CopyButton getText={() => planContent} />
           </div>
           <div className="bg-muted/50 rounded p-3 overflow-y-auto max-h-[600px]">
             <MarkdownContent content={planContent} />

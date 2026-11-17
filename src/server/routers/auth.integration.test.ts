@@ -315,6 +315,7 @@ describe('authRouter integration', () => {
       expect(current!.ipAddress).toBe('192.168.1.1');
       expect(current!.userAgent).toBe('Chrome');
       expect(current!.revokedAt).toBeNull();
+      expect(current!.state).toBe('active');
       // Verify lastActivityAt is included
       expect(current!.lastActivityAt).toBeDefined();
       expect(current!.lastActivityAt.getTime()).toBeGreaterThanOrEqual(beforeLogin);
@@ -323,6 +324,7 @@ describe('authRouter integration', () => {
       const revoked = result.sessions.find((s) => s.id === sessionToRevoke!.id);
       expect(revoked).toBeDefined();
       expect(revoked!.revokedAt).toBeDefined();
+      expect(revoked!.state).toBe('revoked');
 
       // Other sessions should not be current
       const others = result.sessions.filter((s) => s.id !== currentSession!.id);
@@ -363,6 +365,7 @@ describe('authRouter integration', () => {
       expect(listedSession.effectiveExpiresAt.getTime()).toBeLessThan(Date.now());
       // But expiresAt should still be in the future (7-day absolute hasn't passed)
       expect(listedSession.expiresAt.getTime()).toBeGreaterThan(Date.now());
+      expect(listedSession.state).toBe('idle');
     });
 
     it('paginates by (createdAt, id) cursor without skipping or repeating', async () => {

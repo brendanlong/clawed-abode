@@ -6,17 +6,10 @@ import { Input } from '@/components/ui/input';
 import { Spinner } from '@/components/ui/spinner';
 import { trpc } from '@/lib/trpc';
 import { Check, X } from 'lucide-react';
+import { useInvalidateGlobalSettings } from '../shared/useUpdateGlobalSettings';
 import { SettingsCard } from '../shared/SettingsCard';
 
-export function ApiKeyCard({
-  hasDbKey,
-  hasEnvKey,
-  onUpdate,
-}: {
-  hasDbKey: boolean;
-  hasEnvKey: boolean;
-  onUpdate: () => void;
-}) {
+export function ApiKeyCard({ hasDbKey, hasEnvKey }: { hasDbKey: boolean; hasEnvKey: boolean }) {
   return (
     <SettingsCard
       title="Claude API Key"
@@ -28,28 +21,21 @@ export function ApiKeyCard({
         </>
       }
     >
-      <ApiKeyField hasDbKey={hasDbKey} hasEnvKey={hasEnvKey} onUpdate={onUpdate} />
+      <ApiKeyField hasDbKey={hasDbKey} hasEnvKey={hasEnvKey} />
     </SettingsCard>
   );
 }
 
-function ApiKeyField({
-  hasDbKey,
-  hasEnvKey,
-  onUpdate,
-}: {
-  hasDbKey: boolean;
-  hasEnvKey: boolean;
-  onUpdate: () => void;
-}) {
+function ApiKeyField({ hasDbKey, hasEnvKey }: { hasDbKey: boolean; hasEnvKey: boolean }) {
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState('');
 
+  const invalidateGlobalSettings = useInvalidateGlobalSettings();
   const mutation = trpc.globalSettings.setClaudeApiKey.useMutation({
     onSuccess: () => {
       setIsEditing(false);
       setEditValue('');
-      onUpdate();
+      return invalidateGlobalSettings();
     },
   });
 

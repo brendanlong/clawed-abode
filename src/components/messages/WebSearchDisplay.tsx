@@ -1,5 +1,6 @@
 'use client';
 
+import { ExternalLink, Search } from 'lucide-react';
 import { z } from 'zod';
 import { ColorBadge } from './ColorBadge';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
@@ -9,38 +10,6 @@ import type { ToolCall } from './types';
 import { parseWebSearchOutput } from '@/lib/web-search-output';
 
 const webSearchInputSchema = z.object({ query: lenient(z.string()) });
-
-const SearchIcon = () => (
-  <svg
-    className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0"
-    fill="none"
-    viewBox="0 0 24 24"
-    stroke="currentColor"
-    strokeWidth={1.5}
-  >
-    <path
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"
-    />
-  </svg>
-);
-
-const ExternalLinkIcon = () => (
-  <svg
-    className="w-3 h-3 text-muted-foreground shrink-0 opacity-0 group-hover/link:opacity-100 transition-opacity"
-    fill="none"
-    viewBox="0 0 24 24"
-    stroke="currentColor"
-    strokeWidth={2}
-  >
-    <path
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"
-    />
-  </svg>
-);
 
 /**
  * Specialized display for WebSearch tool calls.
@@ -55,7 +24,7 @@ export function WebSearchDisplay({ tool }: { tool: ToolCall }) {
   return (
     <ToolDisplayWrapper
       tool={tool}
-      icon={<SearchIcon />}
+      icon={<Search className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />}
       title="WebSearch"
       pendingText="Searching..."
       subtitle={<div className="text-muted-foreground text-xs mt-1 truncate">{query}</div>}
@@ -106,7 +75,7 @@ export function WebSearchDisplay({ tool }: { tool: ToolCall }) {
                         </div>
                         <div className="text-muted-foreground truncate text-xs">{link.url}</div>
                       </div>
-                      <ExternalLinkIcon />
+                      <ExternalLink className="w-3 h-3 text-muted-foreground shrink-0 opacity-0 group-hover/link:opacity-100 transition-opacity" />
                     </a>
                   ))}
                 </div>

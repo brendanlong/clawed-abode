@@ -1,5 +1,6 @@
 'use client';
 
+import { SquareTerminal } from 'lucide-react';
 import { z } from 'zod';
 import { Badge } from '@/components/ui/badge';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
@@ -12,24 +13,6 @@ const bashInputSchema = z.object({
   description: lenient(z.string()),
   run_in_background: lenient(z.boolean()),
 });
-
-function TerminalIcon() {
-  return (
-    <svg
-      className="w-4 h-4 text-green-600 dark:text-green-400 shrink-0"
-      fill="none"
-      viewBox="0 0 24 24"
-      stroke="currentColor"
-      strokeWidth={1.5}
-    >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M6.75 7.5l3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0021 18V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v12a2.25 2.25 0 002.25 2.25z"
-      />
-    </svg>
-  );
-}
 
 /**
  * Specialized display for Bash tool calls.
@@ -44,7 +27,7 @@ export function BashDisplay({ tool }: { tool: ToolCall }) {
   return (
     <ToolDisplayWrapper
       tool={tool}
-      icon={<TerminalIcon />}
+      icon={<SquareTerminal className="w-4 h-4 text-green-600 dark:text-green-400 shrink-0" />}
       title="Bash"
       headerContent={
         isBackground ? (

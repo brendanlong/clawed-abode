@@ -4,7 +4,6 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Slider } from '@/components/ui/slider';
-import { Switch } from '@/components/ui/switch';
 import { trpc } from '@/lib/trpc';
 import { useNowTick } from '@/hooks/useNowTick';
 import {
@@ -14,6 +13,7 @@ import {
   MIN_PAUSE_THRESHOLD,
 } from '@/lib/rate-limit';
 import { SettingsCard } from '../shared/SettingsCard';
+import { SwitchSetting } from '../shared/SwitchSetting';
 
 /**
  * Global defaults for the subscription rate-limit pause, plus the live window
@@ -47,19 +47,13 @@ export function RateLimitPauseCard() {
       }
     >
       <div className="space-y-6">
-        <div className="flex items-start justify-between gap-4">
-          <div className="space-y-0.5">
-            <Label htmlFor="rate-limit-pause-enabled">Pause sessions by default</Label>
-            <p className="text-muted-foreground text-sm">
-              Applies to every session that doesn&apos;t set its own preference.
-            </p>
-          </div>
-          <Switch
-            id="rate-limit-pause-enabled"
-            checked={value.enabled}
-            onCheckedChange={(enabled) => setDraft({ ...value, enabled })}
-          />
-        </div>
+        <SwitchSetting
+          id="rate-limit-pause-enabled"
+          title="Pause sessions by default"
+          description="Applies to every session that doesn't set its own preference."
+          checked={value.enabled}
+          onCheckedChange={(enabled) => setDraft({ ...value, enabled })}
+        />
 
         <div className="space-y-2">
           <Label htmlFor="rate-limit-pause-threshold">

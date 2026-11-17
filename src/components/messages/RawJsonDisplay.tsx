@@ -5,6 +5,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { ColorBadge } from './ColorBadge';
 import { CopyButton } from './CopyButton';
+import { ToolOutputBlock } from './ToolOutputBlock';
 import { formatAsJson } from './types';
 
 /**
@@ -29,9 +30,7 @@ export function RawJsonDisplay({ content, label }: { content: unknown; label?: s
 
           <CollapsibleContent>
             <CardContent className="p-3">
-              <pre className="bg-muted p-2 rounded overflow-x-auto max-h-96 overflow-y-auto text-xs font-mono">
-                {formatAsJson(content)}
-              </pre>
+              <ToolOutputBlock output={formatAsJson(content)} preClassName="text-xs font-mono" />
             </CardContent>
           </CollapsibleContent>
         </Card>

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { screen, within } from '@testing-library/react';
+import { render } from '@/test/render';
 import userEvent from '@testing-library/user-event';
 import { SessionListItem } from './SessionListItem';
 import type { Session } from '@/hooks/useSessionList';

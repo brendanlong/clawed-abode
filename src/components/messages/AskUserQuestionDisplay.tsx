@@ -1,5 +1,6 @@
 'use client';
 
+import { Circle, CircleCheck, CircleHelp } from 'lucide-react';
 import { z } from 'zod';
 import { useState, useMemo, useCallback } from 'react';
 import { cn } from '@/lib/utils';
@@ -8,6 +9,7 @@ import { ColorBadge } from './ColorBadge';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
 import { useMessageListActions } from './MessageListContext';
 import { lenient, lenientString, parseToolInput } from './tool-input';
+import { ToolOutputBlock } from './ToolOutputBlock';
 import type { ToolCall } from './types';
 
 const questionSchema = z.object({
@@ -20,70 +22,6 @@ type Question = z.infer<typeof questionSchema>;
 type QuestionOption = Question['options'][number];
 
 const askUserQuestionInputSchema = z.object({ questions: lenient(z.array(questionSchema)) });
-
-// Question mark icon
-function QuestionIcon() {
-  return (
-    <svg
-      className="w-5 h-5 text-purple-600 dark:text-purple-400 shrink-0"
-      fill="none"
-      viewBox="0 0 24 24"
-      stroke="currentColor"
-      strokeWidth={2}
-    >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-      />
-    </svg>
-  );
-}
-
-// Checkbox icon for multi-select options
-function CheckboxIcon({ checked }: { checked?: boolean }) {
-  return (
-    <svg
-      className={cn(
-        'w-4 h-4 shrink-0 mt-0.5',
-        checked ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'
-      )}
-      fill="none"
-      viewBox="0 0 24 24"
-      stroke="currentColor"
-      strokeWidth={2}
-    >
-      {checked ? (
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-        />
-      ) : (
-        <circle cx="12" cy="12" r="9" />
-      )}
-    </svg>
-  );
-}
-
-// Radio icon for single-select options
-function RadioIcon({ selected }: { selected?: boolean }) {
-  return (
-    <svg
-      className={cn(
-        'w-4 h-4 shrink-0 mt-0.5',
-        selected ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'
-      )}
-      fill="none"
-      viewBox="0 0 24 24"
-      stroke="currentColor"
-      strokeWidth={2}
-    >
-      <circle cx="12" cy="12" r="9" />
-      {selected && <circle cx="12" cy="12" r="4" fill="currentColor" />}
-    </svg>
-  );
-}
 
 /**
  * Specialized display for AskUserQuestion tool calls.
@@ -202,7 +140,7 @@ export function AskUserQuestionDisplay({ tool }: { tool: ToolCall }) {
   return (
     <ToolDisplayWrapper
       tool={tool}
-      icon={<QuestionIcon />}
+      icon={<CircleHelp className="w-5 h-5 text-purple-600 dark:text-purple-400 shrink-0" />}
       title="AskUserQuestion"
       defaultExpanded={true}
       isPendingOverride={isPending}
@@ -235,6 +173,8 @@ export function AskUserQuestionDisplay({ tool }: { tool: ToolCall }) {
                   const isSelected = isOptionSelected(qIndex, oIndex);
                   const wasAnswered = isAnsweredOption(option, output.text);
                   const canClick = canInteract;
+                  const isChosen = isSelected || wasAnswered;
+                  const OptionIcon = isChosen && question.multiSelect ? CircleCheck : Circle;
 
                   return (
                     <button
@@ -252,11 +192,17 @@ export function AskUserQuestionDisplay({ tool }: { tool: ToolCall }) {
                         wasAnswered && 'bg-green-100 dark:bg-green-900/50 ring-1 ring-green-400'
                       )}
                     >
-                      {question.multiSelect ? (
-                        <CheckboxIcon checked={isSelected || wasAnswered} />
-                      ) : (
-                        <RadioIcon selected={isSelected || wasAnswered} />
-                      )}
+                      <OptionIcon
+                        className={cn(
+                          'w-4 h-4 shrink-0 mt-0.5',
+                          isChosen ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'
+                        )}
+                      >
+                        {/* A chosen radio option gets a solid dot (lucide's CircleDot is too faint). */}
+                        {isChosen && !question.multiSelect && (
+                          <circle cx="12" cy="12" r="4" fill="currentColor" />
+                        )}
+                      </OptionIcon>
                       <div className="flex-1 min-w-0">
                         <div className="font-medium text-foreground">{option.label}</div>
                         {option.description && (
@@ -286,17 +232,13 @@ export function AskUserQuestionDisplay({ tool }: { tool: ToolCall }) {
           {/* Show the response if answered (but not the "Answer questions?" error) */}
           {output.text !== undefined && !isWaitingForInput && (
             <div className="pt-2 border-t">
-              <div className="text-xs text-muted-foreground mb-1">Response:</div>
-              <pre
-                className={cn(
-                  'text-xs p-2 rounded overflow-x-auto',
-                  isRealError
-                    ? 'bg-red-50 dark:bg-red-950 text-red-800 dark:text-red-200'
-                    : 'bg-muted'
-                )}
-              >
-                {output.text}
-              </pre>
+              <ToolOutputBlock
+                label="Response:"
+                output={output.text}
+                isError={isRealError}
+                labelClassName="text-xs"
+                preClassName="text-xs"
+              />
             </div>
           )}
         </>

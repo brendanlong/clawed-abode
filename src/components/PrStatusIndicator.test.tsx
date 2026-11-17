@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { screen } from '@testing-library/react';
+import { render } from '@/test/render';
 import { PrStatusIndicator } from './PrStatusIndicator';
 import type { PullRequestInfo } from '@/lib/pull-request';
 

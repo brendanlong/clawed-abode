@@ -11,7 +11,7 @@ import {
   PowerOff,
   type LucideIcon,
 } from 'lucide-react';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import type { SessionDisplayStatus } from '@/lib/session-display-status';
 import { cn } from '@/lib/utils';
 
@@ -29,19 +29,17 @@ const statusIcons: Record<SessionDisplayStatus, { icon: LucideIcon; className: s
 export function SessionStatusIcon({ status }: { status: SessionDisplayStatus }) {
   const { icon: Icon, className } = statusIcons[status];
   return (
-    <TooltipProvider>
-      <Tooltip delayDuration={300}>
-        <TooltipTrigger asChild>
-          <span
-            role="img"
-            aria-label={status}
-            className="inline-flex h-11 w-11 items-center justify-center rounded-md"
-          >
-            <Icon className={cn('h-4 w-4', className)} />
-          </span>
-        </TooltipTrigger>
-        <TooltipContent side="top">{status}</TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          role="img"
+          aria-label={status}
+          className="inline-flex h-11 w-11 items-center justify-center rounded-md"
+        >
+          <Icon className={cn('h-4 w-4', className)} />
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="top">{status}</TooltipContent>
+    </Tooltip>
   );
 }
