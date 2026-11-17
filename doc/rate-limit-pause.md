@@ -144,8 +144,7 @@ and one weekly window (`rateLimit.getSessionUsage`): the weekly window scoped to
 session's model if the plan has one, unless the all-models window is exhausted.
 The model is the live query's, else the session's override, else the one its first
 query reported, matched to a window by family name. Proxied sessions show none.
-Without a `user:profile` credential, only the per-model windows the event stream
-reports (Opus and Sonnet) are known.
+Model windows beyond Opus and Sonnet need a `user:profile` credential (see below).
 
 ## Usage Tools
 

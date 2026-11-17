@@ -23,18 +23,11 @@ function collectMessages({ warnings, notes }: { warnings: string[]; notes: strin
 }
 
 /**
- * Strip hidden-content injection vectors from untrusted text before it reaches
- * the model: payload-capable invisible Unicode, ANSI escapes, and
- * human-invisible HTML (comments / hidden elements). Data-exfil-shaped URLs and
- * look-alike (confusable) host names are *detected and reported* but
- * deliberately left in place by the library, so they surface as an advisory
- * finding rather than a rewrite.
- *
- * Defense-in-depth, not a hard boundary. The library documents that it never
- * throws, but this sits on the critical path of every message send, so we fail
- * open anyway: on any unexpected error the original text passes through rather
- * than blocking the user. `sanitizeFn` is injectable so the fail-open path is
- * testable without mocking the module.
+ * Strip hidden-content injection vectors from an untrusted user prompt (what is
+ * stripped and why: doc/security.md "Input Sanitization"). Fails open even though
+ * the library documents that it never throws, since this sits on every send: on
+ * any error the original text passes through. `sanitizeFn` is injectable so the
+ * fail-open path is testable without mocking the module.
  */
 export async function sanitizeUntrustedInput(
   text: string,
@@ -92,11 +85,7 @@ async function sanitizeLeaf(value: string, acc: SanitizeAccumulator): Promise<st
 }
 
 /**
- * Sanitize a tool result before it is fed back to the model — the primary
- * hidden-content injection surface (web fetches, issue/PR bodies the agent
- * pulls, MCP responses, file/command output) and the main way secrets leak into
- * transcripts. Walks the whole `tool_response`, neutralizing invisible Unicode /
- * ANSI / hidden HTML and redacting secrets in every string leaf while keeping
+ * Sanitize and redact secrets in every string leaf of a tool result, keeping
  * the structure intact. Tool results are tool-specific (a bare string, a Bash
  * `{ stdout, stderr, ... }` object, an array of `{ type: 'text', text }` blocks,
  * etc.), and the SDK only honors `updatedToolOutput` when it keeps the original
@@ -204,7 +193,7 @@ function buildSanitizationNote(messages: string[], removed: boolean): string {
  *
  * Deliberately not gated on where the output came from, though a note-tier-only
  * message does fire on first-party file reads (measured: ~4% of this repo's own
- * source, nearly all inline `<svg>`; see `doc/security.md`). A tool-name
+ * source, nearly all inline `<svg>`). A tool-name
  * provenance heuristic would be wrong both ways — `curl` through Bash is remote,
  * a checked-in fixture is not — and one extra sentence is a smaller cost than a
  * classifier that quietly mislabels the case it exists for.

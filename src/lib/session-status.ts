@@ -1,15 +1,8 @@
 /**
- * Pure derivation of a session's live status from the SDK message stream.
- *
- * With one long-lived streaming query per session, "is Claude busy?" splits into
- * two independent axes:
- *
- *   - `turnActive`     — the MAIN agent is mid-turn generating. Gates the composer.
- *   - background tasks — `run_in_background` subagents / Monitor / backgrounded
- *                        Bash that outlive a turn. An indicator only; NEVER gates
- *                        input.
- *
- * Plus the existing ephemeral API-retry status.
+ * Pure derivation of a session's live status from the SDK message stream: the
+ * main-agent `turnActive` axis, the background-task axis, and the ephemeral
+ * API-retry status. Why "busy" is two axes: doc/claude-sessions.md "Two-Axis
+ * Status".
  *
  * A pure reducer, composed into the live-turn reducer (src/lib/live-turn.ts),
  * which also tracks delivery and interrupts.
@@ -31,7 +24,7 @@ export interface BackgroundTask {
 }
 
 export interface LiveStatus {
-  /** The main agent is mid-turn generating (gates the composer). */
+  /** The main agent is mid-turn generating. */
   turnActive: boolean;
   /** Live background tasks by `task_id` (indicator only; never gates input). */
   backgroundTasks: ReadonlyMap<string, BackgroundTask>;
@@ -183,15 +176,10 @@ function parseBackgroundTaskSet(
  * Fold one SDK message into the live status. Pure: returns the next status and
  * whether the turn axis moved.
  *
- * - `turnActive`: whether the MAIN agent is actively generating. Driven by the
- *   message STREAM, not the SDK turn `result`: a top-level `message_start` sets it
- *   true; a top-level `message_delta` whose `stop_reason` is terminal
- *   (`end_turn`/`stop_sequence`/`max_tokens`/`refusal`) sets it false. This matters
- *   because a `run_in_background` subagent keeps the parent turn open — the SDK
- *   defers the turn `result` until the child settles — but the main agent finishes
- *   generating much earlier; keying off `result` alone would wrongly show "running"
- *   for the whole background-subagent duration. A top-level `result` still clears it
- *   as a safety net (and covers an interrupt's `error_during_execution`). Subagent
+ * - `turnActive`: a top-level `message_start` sets it; a top-level `message_delta`
+ *   whose `stop_reason` is terminal (`end_turn`/`stop_sequence`/`max_tokens`/
+ *   `refusal`) clears it, and a top-level `result` clears it as a backstop (why
+ *   not `result` alone: doc/claude-sessions.md "Two-Axis Status"). Subagent
  *   (`parent_tool_use_id != null`) traffic never moves it. NOTE: the stream-driven
  *   path relies on `includePartialMessages: true` (the runner hard-enables it) so the
  *   terminal `message_delta` arrives; without partials only the `result` backstop

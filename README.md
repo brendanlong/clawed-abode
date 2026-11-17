@@ -42,7 +42,7 @@ The [self-hosting guide](doc/self-hosting.md) walks through setup, updating, the
 
 ## Development
 
-`pnpm run dev` starts the dev server with hot reload; `pnpm test:run` runs every test suite (what CI runs). After editing `prisma/schema.prisma`, `pnpm run db:migrate` creates and applies a migration (in production the service unit's `ExecStartPre` applies them on each start, so `scripts/update.sh` applies them by restarting it). `pnpm readme-screenshots` regenerates the screenshots above from a throwaway demo instance (it needs `pnpm exec playwright install chromium` once). Contributor rules and the design docs are in [`CLAUDE.md`](CLAUDE.md) and [`doc/DESIGN.md`](doc/DESIGN.md).
+`pnpm run dev` starts the dev server with hot reload; `pnpm test:run` runs every test suite (what CI runs). After editing `prisma/schema.prisma`, `pnpm run db:migrate` creates and applies a migration. `pnpm readme-screenshots` regenerates the screenshots above from a throwaway demo instance (it needs `pnpm exec playwright install chromium` once). Contributor rules and the design docs are in [`CLAUDE.md`](CLAUDE.md) and [`doc/DESIGN.md`](doc/DESIGN.md).
 
 ## License
 
