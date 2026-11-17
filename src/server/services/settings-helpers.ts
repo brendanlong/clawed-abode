@@ -71,8 +71,6 @@ const mcpOAuthConfigSchema = z.object({
   scope: z.string().max(1000).default(''),
 });
 
-export type McpOAuthConfigInput = z.infer<typeof mcpOAuthConfigSchema>;
-
 const mcpServerHttpSchema = z.object({
   name: mcpServerNameSchema,
   type: mcpHttpServerTypeSchema,
