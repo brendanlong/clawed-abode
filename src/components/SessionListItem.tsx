@@ -9,7 +9,7 @@ import { SessionStatusIcon } from '@/components/SessionStatusIcon';
 import { SessionActionButton } from '@/components/SessionActionButton';
 import { PrStatusIndicator } from '@/components/PrStatusIndicator';
 import { ActionErrorAlert } from '@/components/ActionErrorAlert';
-import { useActionError } from '@/hooks/useActionError';
+import { useSessionActions } from '@/hooks/useSessionActions';
 import type { Session } from '@/hooks/useSessionList';
 
 interface SessionListItemProps {
@@ -23,15 +23,12 @@ interface SessionListItemProps {
 export function SessionListItem({ session }: SessionListItemProps) {
   const repoName = session.repoUrl ? extractRepoFullName(session.repoUrl) : null;
 
-  const { error, dismiss, handlersFor } = useActionError();
-  const startMutation = trpc.sessions.start.useMutation(handlersFor('start session'));
-  const stopMutation = trpc.sessions.stop.useMutation(handlersFor('stop session'));
-  const archiveMutation = trpc.sessions.delete.useMutation(handlersFor('archive session'));
-  const starMutation = trpc.sessions.setStarred.useMutation(handlersFor('star session'));
+  const actions = useSessionActions(session.id);
+  const starMutation = trpc.sessions.setStarred.useMutation(actions.handlersFor('star session'));
 
   return (
     <li
-      className={`p-4 hover:bg-muted/50 transition-all ${archiveMutation.isPending ? 'opacity-50 pointer-events-none' : ''}`}
+      className={`p-4 hover:bg-muted/50 transition-all ${actions.isArchiving ? 'opacity-50 pointer-events-none' : ''}`}
     >
       <div className="flex items-center justify-between">
         <div className="flex-1 min-w-0">
@@ -85,24 +82,24 @@ export function SessionListItem({ session }: SessionListItemProps) {
             {session.canStart && (
               <SessionActionButton
                 action="start"
-                onClick={() => startMutation.mutate({ sessionId: session.id })}
-                isPending={startMutation.isPending}
+                onClick={actions.start}
+                isPending={actions.isStarting}
                 variant="ghost"
               />
             )}
             {session.canStop && (
               <SessionActionButton
                 action="stop"
-                onClick={() => stopMutation.mutate({ sessionId: session.id })}
-                isPending={stopMutation.isPending}
+                onClick={actions.stop}
+                isPending={actions.isStopping}
                 variant="ghost"
               />
             )}
             {session.canArchive && (
               <SessionActionButton
                 action="archive"
-                onClick={() => archiveMutation.mutate({ sessionId: session.id })}
-                isPending={archiveMutation.isPending}
+                onClick={actions.archive}
+                isPending={actions.isArchiving}
                 variant="ghost"
                 sessionName={session.name}
               />
@@ -114,7 +111,11 @@ export function SessionListItem({ session }: SessionListItemProps) {
       <div className="mt-2 text-xs text-muted-foreground">
         Last activity: {new Date(session.lastActivityAt).toLocaleString()}
       </div>
-      <ActionErrorAlert error={error} onDismiss={dismiss} className="mt-2" />
+      <ActionErrorAlert
+        error={actions.actionError}
+        onDismiss={actions.dismissActionError}
+        className="mt-2"
+      />
     </li>
   );
 }
