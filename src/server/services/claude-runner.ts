@@ -64,8 +64,7 @@ import {
   createErrorMessage,
   bumpSessionActivity,
   insertMessage,
-  insertPreparedMessage,
-  prepareUserMessage,
+  insertUserMessage,
   removeMessages,
   type ParsedMessage,
 } from './message-store';
@@ -723,14 +722,10 @@ export async function sendUserMessage(
   }
   if (userInitiated) await bumpSessionActivity(sessionId);
 
-  // Sanitize/resolve up front (no side effects) so a failure aborts cleanly before
-  // anything is persisted and the client keeps the just-typed text to retry.
-  const prepared = await prepareUserMessage(sessionId, prompt, attachments);
-
-  const messageId = uuid();
-  await insertPreparedMessage(sessionId, messageId, prepared);
-
-  const pushable = { messageId, content: prepared.content, text: prompt, attachments };
+  // A failure before the insert leaves nothing persisted, so the client keeps the
+  // just-typed text to retry.
+  const { messageId, content } = await insertUserMessage(sessionId, prompt, attachments);
+  const pushable = { messageId, content, text: prompt, attachments };
 
   // A hold can land during the awaits above, after the check at the top. Re-read
   // it here — synchronously, from the last recompute — because this is the same

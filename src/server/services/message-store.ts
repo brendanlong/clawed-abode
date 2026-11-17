@@ -4,7 +4,6 @@ import { prisma } from '@/lib/prisma';
 import { createLogger, toError } from '@/lib/logger';
 import { buildSyntheticToolResultContent } from '@/lib/tool-response';
 import { buildPromptWithAttachments } from '@/lib/attachments';
-import type { SanitizationInfo } from '@/lib/sanitization';
 import { sseEvents } from './events';
 import { clearAttention } from './session-attention';
 import { sanitizeUntrustedInput } from './input-sanitizer';
@@ -422,45 +421,31 @@ export async function markLastMessageAsInterrupted(sessionId: string): Promise<v
   });
 }
 
-/** A user message that has been resolved + sanitized but not yet persisted. */
-export interface PreparedMessage {
-  content: string;
-  sanitization?: SanitizationInfo;
-}
-
 /**
- * Resolve attachments, build the attachment prefix, and sanitize — with **no DB
- * writes or other side effects**, so a send that fails here leaves nothing behind
- * and the composer can restore the user's text.
+ * Persist a user message as its own transcript bubble: resolve attachments, build
+ * the attachment prefix, sanitize, then insert. Everything before the insert is
+ * free of side effects, so a send that fails there leaves nothing behind and the
+ * composer can restore the user's text.
+ *
+ * @returns the new bubble's id and the prepared text to push into the SDK.
  */
-export async function prepareUserMessage(
+export async function insertUserMessage(
   sessionId: string,
   text: string,
   attachments: string[]
-): Promise<PreparedMessage> {
+): Promise<{ messageId: string; content: string }> {
   const paths = attachments.length ? await resolveUploadPaths(sessionId, attachments) : [];
   const withAttachments = buildPromptWithAttachments(text, paths);
   const { cleaned, info } = await sanitizeUntrustedInput(withAttachments, {
     sessionId,
     source: 'user-message',
   });
-  return { content: cleaned, ...(info ? { sanitization: info } : {}) };
-}
-
-/** Persist a prepared message as its own transcript bubble under a caller-chosen id. */
-export function insertPreparedMessage(
-  sessionId: string,
-  messageId: string,
-  prepared: PreparedMessage
-) {
-  return insertMessage({
+  const messageId = randomUUID();
+  await insertMessage({
     sessionId,
     id: messageId,
     type: 'user',
-    content: {
-      type: 'user',
-      content: prepared.content,
-      ...(prepared.sanitization ? { sanitization: prepared.sanitization } : {}),
-    },
+    content: { type: 'user', content: cleaned, ...(info ? { sanitization: info } : {}) },
   });
+  return { messageId, content: cleaned };
 }
