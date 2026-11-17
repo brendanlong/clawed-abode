@@ -110,17 +110,6 @@ describe('globalSettings router', () => {
     });
   });
 
-  describe('getDefaultSystemPrompt', () => {
-    it('should return the default system prompt', async () => {
-      const caller = createCaller();
-      const result = await caller.globalSettings.getDefaultSystemPrompt();
-
-      expect(result.defaultSystemPrompt).toBeDefined();
-      expect(result.defaultSystemPrompt).toContain('commit');
-      expect(result.defaultSystemPrompt).toContain('push');
-    });
-  });
-
   describe('setSystemPromptOverride', () => {
     it('should set the system prompt override', async () => {
       const caller = createCaller();

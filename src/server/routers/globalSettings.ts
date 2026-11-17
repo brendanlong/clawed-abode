@@ -3,7 +3,6 @@ import { router, protectedProcedure } from '../trpc';
 import { encrypt } from '@/lib/crypto';
 import { createLogger } from '@/lib/logger';
 import { env } from '@/lib/env';
-import { DEFAULT_SYSTEM_PROMPT } from '@/lib/system-prompt';
 import {
   nullableModelSchema,
   nullableTextSchema,
@@ -49,11 +48,6 @@ const globalSettingsUpdateSchema = z
 const noScopeInput: z.ZodType<object, object> = z.object({});
 
 export const globalSettingsRouter = router({
-  /** The built-in default system prompt, to pre-populate the override field. */
-  getDefaultSystemPrompt: protectedProcedure.query(() => {
-    return { defaultSystemPrompt: DEFAULT_SYSTEM_PROMPT };
-  }),
-
   /** Current global settings, with defaults when the row doesn't exist yet. */
   get: protectedProcedure.query(async () => {
     const settings = await loadGlobalSettings();
