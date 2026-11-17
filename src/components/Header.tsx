@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useAuth } from '@/lib/auth-context';
 import { Button } from '@/components/ui/button';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Logo } from '@/components/Logo';
 import { Settings } from 'lucide-react';
 
@@ -19,19 +19,17 @@ export function Header({ isWorking = false }: { isWorking?: boolean }) {
             <Logo isWorking={isWorking} />
             <span className="text-xl font-bold">
               Clawed Abode
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span className="text-xs align-super cursor-help ml-0.5">*</span>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <p className="max-w-xs text-sm">
-                      This is an unofficial community project and is not affiliated with, endorsed
-                      by, or supported by Anthropic.
-                    </p>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>{' '}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="text-xs align-super cursor-help ml-0.5">*</span>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p className="max-w-xs text-sm">
+                    This is an unofficial community project and is not affiliated with, endorsed by,
+                    or supported by Anthropic.
+                  </p>
+                </TooltipContent>
+              </Tooltip>{' '}
             </span>
           </Link>
 

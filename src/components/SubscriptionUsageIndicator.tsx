@@ -1,6 +1,6 @@
 'use client';
 
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useNowTick } from '@/hooks/useNowTick';
 import { formatTimeUntil } from '@/lib/rate-limit';
 import type { SessionSubscriptionUsage, UsageBar } from '@/lib/usage';
@@ -63,19 +63,17 @@ export function SubscriptionUsageIndicator({ usage, className }: SubscriptionUsa
     .map((bar) => describeBar(bar, now));
 
   return (
-    <TooltipProvider>
-      <Tooltip delayDuration={300}>
-        <TooltipTrigger asChild>
-          <div className={cn(USAGE_PILL_CLASS, 'gap-2.5', className)}>
-            {bars.map((bar) => (
-              <MiniBar key={bar.label} bar={bar} />
-            ))}
-          </div>
-        </TooltipTrigger>
-        <TooltipContent side="top" className="whitespace-pre-line text-left">
-          {details.join('\n')}
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <div className={cn(USAGE_PILL_CLASS, 'gap-2.5', className)}>
+          {bars.map((bar) => (
+            <MiniBar key={bar.label} bar={bar} />
+          ))}
+        </div>
+      </TooltipTrigger>
+      <TooltipContent side="top" className="whitespace-pre-line text-left">
+        {details.join('\n')}
+      </TooltipContent>
+    </Tooltip>
   );
 }

@@ -4,7 +4,7 @@ import type { ComponentType } from 'react';
 import { Archive, Play, Square, Star } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -88,12 +88,10 @@ export function SessionActionButton({
   const withTooltip = label ? (
     trigger
   ) : (
-    <TooltipProvider>
-      <Tooltip delayDuration={300}>
-        <TooltipTrigger asChild>{trigger}</TooltipTrigger>
-        <TooltipContent side="top">{accessibleLabel}</TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
+    <Tooltip>
+      <TooltipTrigger asChild>{trigger}</TooltipTrigger>
+      <TooltipContent side="top">{accessibleLabel}</TooltipContent>
+    </Tooltip>
   );
 
   if (!isArchive) return withTooltip;

@@ -1,7 +1,7 @@
 'use client';
 
 import { GitPullRequest, GitPullRequestClosed, GitPullRequestDraft, GitMerge } from 'lucide-react';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import {
   describeChecks,
@@ -66,35 +66,33 @@ export function PrStatusIndicator({ pullRequest, className }: PrStatusIndicatorP
   const label = `PR #${pullRequest.number}: ${pullRequest.title} (${config.label}${dotClass ? `, ${describeChecks(pullRequest.checks)}` : ''})`;
 
   return (
-    <TooltipProvider>
-      <Tooltip delayDuration={300}>
-        <TooltipTrigger asChild>
-          <a
-            href={pullRequest.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className={cn(
-              'relative inline-flex items-center justify-center p-1 rounded-md',
-              'hover:bg-muted/50 transition-colors',
-              config.colorClass,
-              className
-            )}
-            onClick={(e) => e.stopPropagation()}
-            aria-label={label}
-          >
-            <Icon className="w-4 h-4" />
-            {dotClass && (
-              <span
-                className={cn(
-                  'absolute bottom-0.5 right-0.5 h-1.5 w-1.5 rounded-full ring-1 ring-background',
-                  dotClass
-                )}
-              />
-            )}
-          </a>
-        </TooltipTrigger>
-        <TooltipContent side="top">{label}</TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <a
+          href={pullRequest.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={cn(
+            'relative inline-flex items-center justify-center p-1 rounded-md',
+            'hover:bg-muted/50 transition-colors',
+            config.colorClass,
+            className
+          )}
+          onClick={(e) => e.stopPropagation()}
+          aria-label={label}
+        >
+          <Icon className="w-4 h-4" />
+          {dotClass && (
+            <span
+              className={cn(
+                'absolute bottom-0.5 right-0.5 h-1.5 w-1.5 rounded-full ring-1 ring-background',
+                dotClass
+              )}
+            />
+          )}
+        </a>
+      </TooltipTrigger>
+      <TooltipContent side="top">{label}</TooltipContent>
+    </Tooltip>
   );
 }

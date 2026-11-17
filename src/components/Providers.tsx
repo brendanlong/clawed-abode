@@ -8,6 +8,7 @@ import { ThemeProvider } from '@/lib/theme-context';
 import { SessionListStreamProvider } from '@/lib/session-list-stream-context';
 import { AttentionNotifier } from '@/components/AttentionNotifier';
 import { PublicLinkLogin } from '@/components/PublicLinkLogin';
+import { TooltipProvider } from '@/components/ui/tooltip';
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(() => new QueryClient());
@@ -20,9 +21,11 @@ export function Providers({ children }: { children: React.ReactNode }) {
           {/* AuthProvider calls auth.logout, so it must sit inside the tRPC and QueryClient providers */}
           <AuthProvider>
             <SessionListStreamProvider>
-              <AttentionNotifier />
-              <PublicLinkLogin />
-              {children}
+              <TooltipProvider delayDuration={300}>
+                <AttentionNotifier />
+                <PublicLinkLogin />
+                {children}
+              </TooltipProvider>
             </SessionListStreamProvider>
           </AuthProvider>
         </ThemeProvider>

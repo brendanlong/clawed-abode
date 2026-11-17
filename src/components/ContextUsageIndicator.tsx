@@ -1,6 +1,6 @@
 'use client';
 
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatTokenCount, formatPercentage, type TokenUsageStats } from '@/lib/token-estimation';
 import { cn } from '@/lib/utils';
 import { getUsageColorClass, USAGE_PILL_CLASS } from './usage-indicator-styles';
@@ -59,40 +59,38 @@ export function ContextUsageIndicator({ stats, className }: ContextUsageIndicato
         : `$${stats.totalCostUsd.toFixed(2)}`;
 
   return (
-    <TooltipProvider>
-      <Tooltip delayDuration={300}>
-        <TooltipTrigger asChild>
-          <div className={cn(USAGE_PILL_CLASS, colorClass, className)}>
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className="w-3.5 h-3.5"
-            >
-              <circle cx="12" cy="12" r="10" className="opacity-30" />
-              <circle
-                cx="12"
-                cy="12"
-                r="8"
-                strokeWidth="3"
-                pathLength={100}
-                strokeDasharray={`${stats.percentUsed} 100`}
-                transform="rotate(-90 12 12)"
-              />
-            </svg>
-            <span>
-              {formatPercentage(stats.percentUsed)} context
-              {costLabel && <span className="ml-1 opacity-70">{costLabel}</span>}
-            </span>
-          </div>
-        </TooltipTrigger>
-        <TooltipContent side="top" className="whitespace-pre-line text-left">
-          {formatTooltipContent(stats)}
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <div className={cn(USAGE_PILL_CLASS, colorClass, className)}>
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="w-3.5 h-3.5"
+          >
+            <circle cx="12" cy="12" r="10" className="opacity-30" />
+            <circle
+              cx="12"
+              cy="12"
+              r="8"
+              strokeWidth="3"
+              pathLength={100}
+              strokeDasharray={`${stats.percentUsed} 100`}
+              transform="rotate(-90 12 12)"
+            />
+          </svg>
+          <span>
+            {formatPercentage(stats.percentUsed)} context
+            {costLabel && <span className="ml-1 opacity-70">{costLabel}</span>}
+          </span>
+        </div>
+      </TooltipTrigger>
+      <TooltipContent side="top" className="whitespace-pre-line text-left">
+        {formatTooltipContent(stats)}
+      </TooltipContent>
+    </Tooltip>
   );
 }
