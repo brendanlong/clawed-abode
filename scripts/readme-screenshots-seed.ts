@@ -382,7 +382,6 @@ async function main() {
   const now = Date.now();
   for (const demo of sessions) {
     const id = randomUUID();
-    const repoName = demo.repo?.split('/')[1] ?? '';
     const branch = `claude/${id}`;
     const pullRequest: PullRequestInfo | null = demo.pullRequest
       ? {
@@ -398,9 +397,8 @@ async function main() {
       data: {
         id,
         name: demo.name,
-        repoUrl: demo.repo ? `https://github.com/${demo.repo}.git` : null,
+        repoFullName: demo.repo,
         branch: demo.repo ? 'main' : null,
-        repoPath: repoName,
         status: demo.status,
         currentBranch: demo.repo ? branch : null,
         // Directly rather than through pull-request-store: there is no GitHub PR to link.

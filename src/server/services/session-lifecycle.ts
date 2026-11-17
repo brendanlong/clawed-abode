@@ -89,7 +89,7 @@ export async function createSession(input: CreateSessionInput): Promise<Session>
   const session = await prisma.session.create({
     data: {
       name: input.name,
-      repoUrl: repo ? `https://github.com/${repo.fullName}.git` : null,
+      repoFullName: repo?.fullName ?? null,
       branch: repo?.branch ?? null,
       status: 'creating',
       statusMessage: repo ? 'Cloning repository...' : 'Creating workspace...',
@@ -127,16 +127,11 @@ async function setupSession(
   let result: TransitionResult;
   let attachments: string[] = [];
   try {
-    let repoPath = '';
     if (repo) {
       result = await setStatusMessage('Cloning repository...');
       if (!result.applied) return logSetupAbandoned(sessionId, result.session);
-      ({ repoPath } = await cloneRepo({
-        sessionId,
-        repoFullName: repo.fullName,
-        branch: repo.branch,
-      }));
-      log.info('Worktree created', { sessionId, repoPath });
+      await cloneRepo({ sessionId, repoFullName: repo.fullName, branch: repo.branch });
+      log.info('Worktree created', { sessionId });
     } else {
       result = await setStatusMessage('Creating workspace...');
       if (!result.applied) return logSetupAbandoned(sessionId, result.session);
@@ -145,7 +140,6 @@ async function setupSession(
     attachments = await claimStagedUploads(sessionId, initialMessage.stagedAttachments);
 
     result = await transitionSession(sessionId, 'setupComplete', {
-      repoPath,
       status: 'running',
       statusMessage: null,
     });

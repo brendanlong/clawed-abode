@@ -2,7 +2,6 @@ import { prisma } from '@/lib/prisma';
 import { createLogger, toError } from '@/lib/logger';
 import { processSingleton } from '@/lib/process-singleton';
 import { Semaphore } from '@/lib/semaphore';
-import { extractRepoFullName } from '@/lib/utils';
 import {
   isPrSnapshotStale,
   parsePullRequestJson,
@@ -27,7 +26,7 @@ type SnapshotRow = SessionRow & { pullRequestId: string | null };
 const prSnapshotSelect = {
   id: true,
   status: true,
-  repoUrl: true,
+  repoFullName: true,
   currentBranch: true,
   pullRequestId: true,
   pullRequest: true,
@@ -58,8 +57,8 @@ async function persistPrSnapshot(
 
   // A link belongs to one branch: never carry it over to a new one.
   let pullRequestId = branchUpdate ? null : session.pullRequestId;
-  if (session.repoUrl && branch) {
-    const repoFullName = extractRepoFullName(session.repoUrl);
+  const { repoFullName } = session;
+  if (repoFullName && branch) {
     const pr = await fetchPullRequestForBranch(repoFullName, branch);
     // undefined = lookup unavailable (no token / API error): keep what we had.
     if (pr !== undefined) {

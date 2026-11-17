@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import { SESSION_NAME_MAX_LENGTH } from './types';
-import { extractRepoFullName } from './utils';
 
 /**
  * Single-line, since agents can set names too and a name reaches other agents'
@@ -23,9 +22,8 @@ export function defaultSessionName(repoFullName: string | null, branch: string):
 
 export function isDefaultSessionName(session: {
   name: string;
-  repoUrl: string | null;
+  repoFullName: string | null;
   branch: string | null;
 }): boolean {
-  const repoFullName = session.repoUrl ? extractRepoFullName(session.repoUrl) : null;
-  return session.name === defaultSessionName(repoFullName, session.branch ?? '');
+  return session.name === defaultSessionName(session.repoFullName, session.branch ?? '');
 }

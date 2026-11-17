@@ -32,7 +32,7 @@ import { getWorkspaceDiskUsage } from '../services/disk-usage';
 const sessionListSelect = {
   id: true,
   name: true,
-  repoUrl: true,
+  repoFullName: true,
   branch: true,
   status: true,
   statusMessage: true,
@@ -86,7 +86,7 @@ export const sessionsRouter = router({
               ? {
                   OR: [
                     { name: { contains: input.search } },
-                    { repoUrl: { contains: input.search } },
+                    { repoFullName: { contains: input.search } },
                     { currentBranch: { contains: input.search } },
                   ],
                 }

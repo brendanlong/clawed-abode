@@ -358,7 +358,7 @@ function backgroundTasksChanged(...taskIds: string[]): SDKMessage {
 }
 async function createRunningSession(): Promise<string> {
   const session = await testPrisma.session.create({
-    data: { name: 'Test', repoPath: '', status: 'running' },
+    data: { name: 'Test', status: 'running' },
   });
   return session.id;
 }
@@ -698,9 +698,8 @@ describe('claude-runner persistent streaming loop', () => {
       const { id } = await testPrisma.session.create({
         data: {
           name: 'T',
-          repoPath: 'r',
           status: 'running',
-          repoUrl: 'https://github.com/o/r.git',
+          repoFullName: 'o/r',
         },
       });
 
@@ -728,9 +727,8 @@ describe('claude-runner persistent streaming loop', () => {
       const { id } = await testPrisma.session.create({
         data: {
           name: 'T',
-          repoPath: 'r',
           status: 'running',
-          repoUrl: 'https://github.com/o/r.git',
+          repoFullName: 'o/r',
           currentBranch: 'feat-a',
           pullRequest: storedInfo,
           linkedPullRequest: {
@@ -758,9 +756,8 @@ describe('claude-runner persistent streaming loop', () => {
       const { id } = await testPrisma.session.create({
         data: {
           name: 'T',
-          repoPath: 'r',
           status: 'running',
-          repoUrl: 'https://github.com/o/r.git',
+          repoFullName: 'o/r',
           currentBranch: 'feat-a',
           pullRequest: storedInfo,
           linkedPullRequest: {
@@ -862,7 +859,6 @@ describe('claude-runner persistent streaming loop', () => {
     const orphaned = await testPrisma.session.create({
       data: {
         name: 'Orphan',
-        repoPath: '',
         status: 'running',
         sessionScope: 'clawed-session-orphan-abc123.scope',
       },
@@ -1610,7 +1606,7 @@ describe('claude-runner persistent streaming loop', () => {
       _setQueryFactory(factory);
       const running = await createRunningSession();
       await testPrisma.session.create({
-        data: { name: 'Stopped', repoPath: '', status: 'stopped' },
+        data: { name: 'Stopped', status: 'stopped' },
       });
 
       await reviveRunningSessions();

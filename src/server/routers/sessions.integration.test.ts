@@ -3,6 +3,7 @@ import { resetEnvCache } from '@/lib/env';
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { setupTestDb, teardownTestDb, testPrisma, clearTestDb } from '@/test/setup-test-db';
 import { createNoRepoSession, createTestSession } from '@/test/fixtures';
+import { runMigrationBackfill } from '@/test/migration-backfill';
 
 // Mock external services that have real dependencies (git clone)
 const worktreesRoot = await vi.hoisted(async () => {
@@ -115,7 +116,7 @@ describe('sessionsRouter integration', () => {
 
       expect(result.session.name).toBe('Test Session');
       expect(result.session.status).toBe('creating');
-      expect(result.session.repoUrl).toBe('https://github.com/owner/repo.git');
+      expect(result.session.repoFullName).toBe('owner/repo');
       expect(result.session.branch).toBe('main');
 
       // Verify in database
@@ -127,7 +128,7 @@ describe('sessionsRouter integration', () => {
     });
 
     it('should send the initial prompt once the clone finishes', async () => {
-      mockCloneRepo.mockResolvedValueOnce({ repoPath: 'repo' });
+      mockCloneRepo.mockResolvedValueOnce(undefined);
       const caller = createCaller('auth-session-id');
       const result = await caller.sessions.create({
         name: 'Issue Session',
@@ -227,7 +228,7 @@ describe('sessionsRouter integration', () => {
       ).rejects.toThrow();
     });
 
-    it('should create a no-repo session with null repoUrl and branch', async () => {
+    it('should create a no-repo session with null repoFullName and branch', async () => {
       const caller = createCaller('auth-session-id');
       const result = await caller.sessions.create({
         name: 'Workspace Session',
@@ -235,7 +236,7 @@ describe('sessionsRouter integration', () => {
 
       expect(result.session.name).toBe('Workspace Session');
       expect(result.session.status).toBe('creating');
-      expect(result.session.repoUrl).toBeNull();
+      expect(result.session.repoFullName).toBeNull();
       expect(result.session.branch).toBeNull();
 
       // Verify in database
@@ -243,7 +244,7 @@ describe('sessionsRouter integration', () => {
         where: { id: result.session.id },
       });
       expect(dbSession).toBeDefined();
-      expect(dbSession!.repoUrl).toBeNull();
+      expect(dbSession!.repoFullName).toBeNull();
       expect(dbSession!.branch).toBeNull();
     });
   });
@@ -255,13 +256,13 @@ describe('sessionsRouter integration', () => {
         data: [
           {
             name: 'Session 1',
-            repoUrl: 'https://github.com/owner/repo1.git',
+            repoFullName: 'owner/repo1',
             branch: 'main',
             status: 'running',
           },
           {
             name: 'Session 2',
-            repoUrl: 'https://github.com/owner/repo2.git',
+            repoFullName: 'owner/repo2',
             branch: 'develop',
             status: 'stopped',
           },
@@ -313,19 +314,19 @@ describe('sessionsRouter integration', () => {
         data: [
           {
             name: 'Running 1',
-            repoUrl: 'https://github.com/owner/repo.git',
+            repoFullName: 'owner/repo',
             branch: 'main',
             status: 'running',
           },
           {
             name: 'Running 2',
-            repoUrl: 'https://github.com/owner/repo.git',
+            repoFullName: 'owner/repo',
             branch: 'main',
             status: 'running',
           },
           {
             name: 'Stopped 1',
-            repoUrl: 'https://github.com/owner/repo.git',
+            repoFullName: 'owner/repo',
             branch: 'main',
             status: 'stopped',
           },
@@ -358,7 +359,7 @@ describe('sessionsRouter integration', () => {
       await testPrisma.session.createMany({
         data: [
           { name: 'Fix Login Bug', status: 'running' },
-          { name: 'Other', status: 'running', repoUrl: 'https://github.com/owner/login-app.git' },
+          { name: 'Other', status: 'running', repoFullName: 'owner/login-app' },
           { name: 'Branchy', status: 'stopped', currentBranch: 'brendanlong/login' },
           { name: 'Unrelated', status: 'running', currentBranch: 'main' },
           { name: 'Archived login', status: 'archived' },
@@ -371,6 +372,49 @@ describe('sessionsRouter integration', () => {
       expect(await names({ search: '  LOGIN ' })).toEqual(['Branchy', 'Fix Login Bug', 'Other']);
       expect(await names({ search: 'login', status: 'archived' })).toEqual(['Archived login']);
       expect(await names({ search: '' })).toHaveLength(4);
+    });
+
+    it('searches the repo by its name, not its clone URL', async () => {
+      await testPrisma.session.createMany({
+        data: [
+          { name: 'Repo session', status: 'running', repoFullName: 'owner/app' },
+          { name: 'Workspace', status: 'running' },
+        ],
+      });
+
+      const caller = createCaller('auth-session-id');
+      const names = async (search: string) =>
+        (await caller.sessions.list({ search })).sessions.map((s) => s.name);
+      expect(await names('github')).toEqual([]);
+      expect(await names('https')).toEqual([]);
+      expect(await names('.git')).toEqual([]);
+      expect(await names('owner/app')).toEqual(['Repo session']);
+    });
+
+    it('migrates stored clone URLs to owner/repo', async () => {
+      const urls = [
+        'https://github.com/o/r.git',
+        'https://github.com/o/r',
+        'https://github.com/o/x.github.io.git',
+        null,
+      ];
+      const ids = await Promise.all(
+        urls.map(async (repoFullName) => {
+          const { id } = await testPrisma.session.create({
+            data: { name: 'Migrated', status: 'running', repoFullName },
+          });
+          return id;
+        })
+      );
+
+      await runMigrationBackfill('_session_repo_full_name');
+
+      const rows = await testPrisma.session.findMany({
+        where: { id: { in: ids } },
+        select: { id: true, repoFullName: true },
+      });
+      const byId = new Map(rows.map((r) => [r.id, r.repoFullName]));
+      expect(ids.map((id) => byId.get(id))).toEqual(['o/r', 'o/r', 'o/x.github.io', null]);
     });
 
     it('paginates a search without skipping matches', async () => {
@@ -520,7 +564,6 @@ describe('sessionsRouter integration', () => {
       resetEnvCache();
       const session = await createNoRepoSession({
         name: 'Test Session',
-        repoPath: 'repo',
       });
 
       const caller = createCaller('auth-session-id');
@@ -536,7 +579,6 @@ describe('sessionsRouter integration', () => {
     it('returns null when CODE_SERVER_URL is not configured', async () => {
       const session = await createNoRepoSession({
         name: 'Test Session',
-        repoPath: 'repo',
       });
 
       const caller = createCaller('auth-session-id');
@@ -550,7 +592,6 @@ describe('sessionsRouter integration', () => {
       resetEnvCache();
       const session = await createNoRepoSession({
         name: 'Archived Session',
-        repoPath: 'repo',
         status: 'archived',
       });
 
@@ -620,7 +661,7 @@ describe('sessionsRouter integration', () => {
       });
 
       const row = await testPrisma.session.findUniqueOrThrow({ where: { id: session.id } });
-      expect(row).toMatchObject({ status: 'error', repoPath: '' });
+      expect(row.status).toBe('error');
     });
 
     it('should reject starting an archived session', async () => {
@@ -1033,7 +1074,7 @@ describe('sessionsRouter integration', () => {
     it('a clone that finishes after delete leaves the session archived and cleans up', async () => {
       let finishClone!: () => void;
       mockCloneRepo.mockReturnValueOnce(
-        new Promise((resolve) => (finishClone = () => resolve({ repoPath: 'repo' })))
+        new Promise<void>((resolve) => (finishClone = () => resolve()))
       );
       mockRemoveWorkspace.mockResolvedValue(undefined);
       const caller = createCaller('auth-session-id');

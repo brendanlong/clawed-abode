@@ -49,8 +49,6 @@ export interface LiveQuery {
   appliedDenyRules: string[] | null;
   /** The built-in MCP server bound at establishment (see `SdkOptionsResult`). */
   builtinMcpServer: McpSdkServerConfigWithInstance | null;
-  /** Settings key (repoFullName or '__no_repo__') for reloading merged settings. */
-  settingsKey: string;
   /**
    * Claude Code conversation last persisted to `Session.claudeSessionId` by this
    * query (null until its first init), so only changes are written.

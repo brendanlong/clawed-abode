@@ -15,9 +15,8 @@ function sessionRow(overrides: Partial<Session> = {}): Session {
   return {
     id: 's1',
     name: 'Session',
-    repoUrl: null,
+    repoFullName: null,
     branch: null,
-    repoPath: '',
     status: 'running',
     statusMessage: null,
     currentBranch: null,

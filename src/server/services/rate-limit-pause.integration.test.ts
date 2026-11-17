@@ -160,7 +160,7 @@ async function createRunningSession(
   } = {}
 ): Promise<string> {
   const session = await testPrisma.session.create({
-    data: { name: 'Test', repoPath: '', status: 'running', ...overrides },
+    data: { name: 'Test', status: 'running', ...overrides },
   });
   return session.id;
 }

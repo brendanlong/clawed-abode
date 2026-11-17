@@ -28,9 +28,8 @@ model AuthSession {
 model Session {
   id                  String    @id @default(uuid())
   name                String
-  repoUrl             String? // null for no-repo sessions
+  repoFullName        String? // GitHub "owner/repo"; null for no-repo sessions. The clone is ~/worktrees/{sessionId}/{repo}
   branch              String? // null for no-repo sessions
-  repoPath            String    @default("") // Path to repo relative to workspace (e.g., "my-repo")
   status              String    @default("creating") // creating, running, stopped, error, archived
   statusMessage       String? // Human-readable progress message during creation
   currentBranch       String? // Current git branch (detected after each turn)

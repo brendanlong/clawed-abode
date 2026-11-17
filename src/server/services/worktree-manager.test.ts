@@ -1,6 +1,11 @@
+import { join } from 'path';
 import { describe, it, expect } from 'vitest';
 import { GITHUB_TOKEN_ENV } from '@/lib/git-credentials';
-import { buildCloneCommand } from './worktree-manager';
+import {
+  buildCloneCommand,
+  getSessionWorkingDir,
+  getSessionWorkspacePath,
+} from './worktree-manager';
 
 const TOKEN = 'ghp_test_token_value';
 
@@ -37,5 +42,17 @@ describe('buildCloneCommand', () => {
     expect(buildCloneCommand({ ...params, githubToken: undefined }).env).toEqual({
       GIT_TERMINAL_PROMPT: '0',
     });
+  });
+});
+
+describe('getSessionWorkingDir', () => {
+  it('is the workspace root for a no-repo session', () => {
+    expect(getSessionWorkingDir('session-1', null)).toBe(getSessionWorkspacePath('session-1'));
+  });
+
+  it('is the clone named after the repo inside the workspace', () => {
+    expect(getSessionWorkingDir('session-1', 'owner/my.repo')).toBe(
+      join(getSessionWorkspacePath('session-1'), 'my.repo')
+    );
   });
 });

@@ -29,8 +29,10 @@ vi.mock('../services/message-store', async (importOriginal) => {
 
 // Mock worktree-manager
 vi.mock('../services/worktree-manager', () => ({
-  getSessionWorkingDir: vi.fn((sessionId: string, repoPath: string) =>
-    repoPath ? `/worktrees/${sessionId}/${repoPath}` : `/worktrees/${sessionId}`
+  getSessionWorkingDir: vi.fn((sessionId: string, repoFullName: string | null) =>
+    repoFullName
+      ? `/worktrees/${sessionId}/${repoFullName.split('/')[1]}`
+      : `/worktrees/${sessionId}`
   ),
   getSessionWorkspacePath: vi.fn((sessionId: string) => `/worktrees/${sessionId}`),
 }));
