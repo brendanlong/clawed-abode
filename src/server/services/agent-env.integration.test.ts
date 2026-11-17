@@ -20,6 +20,17 @@ describe('getBaseEnv', () => {
     expect(baseEnv[SENTINEL]).toBeUndefined();
   });
 
+  it("passes on the server's SSH agent", async () => {
+    const saved = process.env.SSH_AUTH_SOCK;
+    process.env.SSH_AUTH_SOCK = '/run/user/1000/test-agent.sock';
+    try {
+      expect((await getBaseEnv()).SSH_AUTH_SOCK).toBe('/run/user/1000/test-agent.sock');
+    } finally {
+      if (saved === undefined) delete process.env.SSH_AUTH_SOCK;
+      else process.env.SSH_AUTH_SOCK = saved;
+    }
+  });
+
   it('caches the result and coalesces concurrent calls', async () => {
     const [first, second] = await Promise.all([getBaseEnv(), getBaseEnv()]);
     expect(first).toBe(second);
