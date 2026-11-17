@@ -24,6 +24,8 @@ const log = createLogger('globalSettings');
 /** Plain global settings, each validated on its own; see `update`. */
 const globalSettingsUpdateSchema = z
   .object({
+    /** Custom system prompt; null (or blank) clears it. */
+    systemPromptOverride: nullableTextSchema(50000),
     systemPromptAppend: nullableTextSchema(50000),
     /** Claude model override; null reverts to CLAUDE_MODEL. */
     claudeModel: nullableModelSchema,
@@ -87,21 +89,6 @@ export const globalSettingsRouter = router({
     return { models };
   }),
 
-  setSystemPromptOverride: protectedProcedure
-    .input(
-      z.object({
-        systemPromptOverride: nullableTextSchema(50000),
-        systemPromptOverrideEnabled: z.boolean(),
-      })
-    )
-    .mutation(async ({ input }) => {
-      await patchGlobalSettings(input);
-      log.info('Set system prompt override', {
-        hasOverride: input.systemPromptOverride !== null,
-        enabled: input.systemPromptOverrideEnabled,
-      });
-    }),
-
   /** Global env vars and MCP servers (masked secrets): rows where repoSettingsId IS NULL. */
   getWithSettings: protectedProcedure.query(() => listScopeSettings(GLOBAL_SCOPE)),
 
@@ -113,7 +100,7 @@ export const globalSettingsRouter = router({
    */
   update: protectedProcedure.input(globalSettingsUpdateSchema).mutation(async ({ input }) => {
     await patchGlobalSettings(input);
-    // Field names only: the prompt append can be tens of KB.
+    // Field names only: the prompt texts can be tens of KB.
     log.info('Updated global settings', { fields: Object.keys(input) });
     // A security setting shouldn't wait for each session's next send.
     if (input.permissionMode) void refreshAllSessionSettings();

@@ -21,9 +21,7 @@ export function SystemPromptOverrideCard({
   defaultPrompt: string;
   onUpdate: () => void;
 }) {
-  const saveMutation = trpc.globalSettings.setSystemPromptOverride.useMutation({
-    onSuccess: onUpdate,
-  });
+  const saveMutation = trpc.globalSettings.update.useMutation({ onSuccess: onUpdate });
   const toggleMutation = trpc.globalSettings.update.useMutation({
     onSuccess: onUpdate,
   });

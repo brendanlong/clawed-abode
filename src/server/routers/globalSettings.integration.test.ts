@@ -110,12 +110,12 @@ describe('globalSettings router', () => {
     });
   });
 
-  describe('setSystemPromptOverride', () => {
+  describe('systemPromptOverride', () => {
     it('should set the system prompt override', async () => {
       const caller = createCaller();
       const customPrompt = 'My custom system prompt override';
 
-      await caller.globalSettings.setSystemPromptOverride({
+      await caller.globalSettings.update({
         systemPromptOverride: customPrompt,
         systemPromptOverrideEnabled: true,
       });
@@ -129,13 +129,13 @@ describe('globalSettings router', () => {
       const caller = createCaller();
 
       // First set an override
-      await caller.globalSettings.setSystemPromptOverride({
+      await caller.globalSettings.update({
         systemPromptOverride: 'Some override',
         systemPromptOverrideEnabled: true,
       });
 
       // Then clear it
-      await caller.globalSettings.setSystemPromptOverride({
+      await caller.globalSettings.update({
         systemPromptOverride: null,
         systemPromptOverrideEnabled: false,
       });
@@ -148,7 +148,7 @@ describe('globalSettings router', () => {
     it('should toggle enabled while keeping the override text', async () => {
       const caller = createCaller();
 
-      await caller.globalSettings.setSystemPromptOverride({
+      await caller.globalSettings.update({
         systemPromptOverride: 'My override',
         systemPromptOverrideEnabled: true,
       });
