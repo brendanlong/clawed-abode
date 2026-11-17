@@ -95,7 +95,7 @@ Voice, speed, and Voice Auto-Send are global server settings. Auto-read is a per
 
 ## Remote File Editing
 
-The "Open in VS Code" button deep-links into a self-hosted [code-server](https://github.com/coder/code-server) on the session's workspace root, so uploads show alongside the clone ([`editor-url.ts`](../src/lib/editor-url.ts)); code-server owns the whole editor experience. Opt-in via `CODE_SERVER_URL`: when it is unset or the workspace is gone, the server returns no URL and the button hides. Setup is [`setup-code-server.sh`](../scripts/setup-code-server.sh) (no sudo) plus [`expose-code-server-tailscale.sh`](../scripts/expose-code-server-tailscale.sh) (tailnet-only, never `funnel`).
+The "Open in VS Code" button deep-links ([`editor-url.ts`](../src/lib/editor-url.ts)) into a self-hosted [code-server](https://github.com/coder/code-server) on the session's workspace root, so uploads show alongside the clone; code-server owns the whole editor experience. Opt-in via `CODE_SERVER_URL`: when it is unset or the session is archived, the server returns no URL and the button hides. Setup is [`setup-code-server.sh`](../scripts/setup-code-server.sh) (no sudo) plus [`expose-code-server-tailscale.sh`](../scripts/expose-code-server-tailscale.sh) (tailnet-only, never `funnel`).
 
 ## Disk Usage
 

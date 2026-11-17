@@ -9,9 +9,8 @@
 #
 # The service name is CODE_SERVER_SERVICE (see lib-code-server.sh). It stays on
 # the tailnet (a `serve` service, never `funnel`), the same trust boundary as the
-# app. Idempotent: safe to re-run. Requires an
-# existing Tailscale login on this host, and jq or python3 to read the tailnet's
-# DNS suffix.
+# app. Idempotent: safe to re-run. Requires an existing Tailscale login on this
+# host, and jq or python3 to read the tailnet's DNS suffix.
 #
 # NOTE: the first time a service name is advertised, a tailnet admin must approve
 # it in the admin console (https://login.tailscale.com/admin/services) before the
