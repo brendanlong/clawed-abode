@@ -8,25 +8,25 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { trpc } from '@/lib/trpc';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { SettingsCard } from '../shared/SettingsCard';
+import {
+  useInvalidateGlobalSettings,
+  useUpdateGlobalSettings,
+} from '../shared/useUpdateGlobalSettings';
 import { EditableTextSetting } from '../shared/EditableTextSetting';
 
 export function SystemPromptOverrideCard({
   currentOverride,
   overrideEnabled,
   defaultPrompt,
-  onUpdate,
 }: {
   currentOverride: string | null;
   overrideEnabled: boolean;
   defaultPrompt: string;
-  onUpdate: () => void;
 }) {
   const saveMutation = trpc.globalSettings.setSystemPromptOverride.useMutation({
-    onSuccess: onUpdate,
+    onSuccess: useInvalidateGlobalSettings(),
   });
-  const toggleMutation = trpc.globalSettings.update.useMutation({
-    onSuccess: onUpdate,
-  });
+  const toggleMutation = useUpdateGlobalSettings();
 
   return (
     <SettingsCard
@@ -79,14 +79,8 @@ export function SystemPromptOverrideCard({
   );
 }
 
-export function SystemPromptAppendCard({
-  currentAppend,
-  onUpdate,
-}: {
-  currentAppend: string | null;
-  onUpdate: () => void;
-}) {
-  const mutation = trpc.globalSettings.update.useMutation({ onSuccess: onUpdate });
+export function SystemPromptAppendCard({ currentAppend }: { currentAppend: string | null }) {
+  const mutation = useUpdateGlobalSettings();
 
   return (
     <SettingsCard

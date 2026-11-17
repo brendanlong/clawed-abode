@@ -6,6 +6,7 @@ import {
   type SettingSource,
   type SettingSourceFlags,
 } from '@/lib/setting-sources';
+import { useInvalidateGlobalSettings } from '../shared/useUpdateGlobalSettings';
 import { SettingsCard } from '../shared/SettingsCard';
 import { SwitchSetting } from '../shared/SwitchSetting';
 
@@ -24,14 +25,10 @@ const SETTING_SOURCE_LABELS: Record<SettingSource, { title: string; description:
   },
 };
 
-export function SettingSourcesCard({
-  current,
-  onUpdate,
-}: {
-  current: SettingSourceFlags;
-  onUpdate: () => void;
-}) {
-  const mutation = trpc.globalSettings.setSettingSources.useMutation({ onSuccess: onUpdate });
+export function SettingSourcesCard({ current }: { current: SettingSourceFlags }) {
+  const mutation = trpc.globalSettings.setSettingSources.useMutation({
+    onSuccess: useInvalidateGlobalSettings(),
+  });
 
   return (
     <SettingsCard

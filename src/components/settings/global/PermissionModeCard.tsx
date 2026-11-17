@@ -1,18 +1,12 @@
 'use client';
 
-import { trpc } from '@/lib/trpc';
 import type { AppPermissionMode } from '@/lib/permission-mode';
+import { useUpdateGlobalSettings } from '../shared/useUpdateGlobalSettings';
 import { SettingsCard } from '../shared/SettingsCard';
 import { SwitchSetting } from '../shared/SwitchSetting';
 
-export function PermissionModeCard({
-  permissionMode,
-  onUpdate,
-}: {
-  permissionMode: AppPermissionMode;
-  onUpdate: () => void;
-}) {
-  const mutation = trpc.globalSettings.update.useMutation({ onSuccess: onUpdate });
+export function PermissionModeCard({ permissionMode }: { permissionMode: AppPermissionMode }) {
+  const mutation = useUpdateGlobalSettings();
 
   return (
     <SettingsCard

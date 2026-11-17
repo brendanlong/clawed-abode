@@ -2,20 +2,14 @@
 
 import type { inferRouterOutputs } from '@trpc/server';
 import type { AppRouter } from '@/server/routers';
-import { trpc } from '@/lib/trpc';
+import { useUpdateGlobalSettings } from '../shared/useUpdateGlobalSettings';
 import { SettingsCard } from '../shared/SettingsCard';
 import { ModelOverrideField } from '../shared/ModelOverrideField';
 
 type GlobalSettings = inferRouterOutputs<AppRouter>['globalSettings']['get'];
 
-export function ClaudeModelCard({
-  settings,
-  onUpdate,
-}: {
-  settings: GlobalSettings;
-  onUpdate: () => void;
-}) {
-  const mutation = trpc.globalSettings.update.useMutation({ onSuccess: onUpdate });
+export function ClaudeModelCard({ settings }: { settings: GlobalSettings }) {
+  const mutation = useUpdateGlobalSettings();
 
   return (
     <SettingsCard
@@ -32,14 +26,8 @@ export function ClaudeModelCard({
   );
 }
 
-export function AdvisorModelCard({
-  settings,
-  onUpdate,
-}: {
-  settings: GlobalSettings;
-  onUpdate: () => void;
-}) {
-  const mutation = trpc.globalSettings.update.useMutation({ onSuccess: onUpdate });
+export function AdvisorModelCard({ settings }: { settings: GlobalSettings }) {
+  const mutation = useUpdateGlobalSettings();
 
   return (
     <SettingsCard

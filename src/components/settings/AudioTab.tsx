@@ -25,11 +25,12 @@ import {
   resolveKokoroVoice,
 } from '@/lib/kokoro-voices';
 import { SettingsCard } from './shared/SettingsCard';
+import { useUpdateGlobalSettings } from './shared/useUpdateGlobalSettings';
 
 const VOICE_GROUPS = groupKokoroVoices();
 
 export function AudioTab() {
-  const { data: settings, isLoading, refetch } = trpc.globalSettings.get.useQuery();
+  const { data: settings, isLoading } = trpc.globalSettings.get.useQuery();
 
   if (isLoading) {
     return <CenteredSpinner />;
@@ -43,14 +44,14 @@ export function AudioTab() {
             title="Read-Aloud Voice"
             description="The Kokoro voice used to read messages aloud."
           >
-            <TtsVoiceSection currentVoice={settings.ttsVoice} onUpdate={refetch} />
+            <TtsVoiceSection currentVoice={settings.ttsVoice} />
           </SettingsCard>
 
           <SettingsCard
             title="Read-Aloud Speed"
             description="How fast Kokoro speaks, from 0.25x to 4.0x. Default is 1.0x."
           >
-            <TtsSpeedSection currentSpeed={settings.ttsSpeed} onUpdate={refetch} />
+            <TtsSpeedSection currentSpeed={settings.ttsSpeed} />
           </SettingsCard>
         </>
       ) : (
@@ -69,7 +70,7 @@ export function AudioTab() {
         title="Auto-Send Voice Input"
         description="When enabled, speech-to-text transcripts are automatically sent as prompts after recording stops. When disabled, transcripts are inserted into the input field for editing before sending. Uses the browser's built-in speech recognition (Web Speech API)."
       >
-        <VoiceAutoSendSection autoSend={settings?.voiceAutoSend ?? true} onUpdate={refetch} />
+        <VoiceAutoSendSection autoSend={settings?.voiceAutoSend ?? true} />
       </SettingsCard>
     </div>
   );
@@ -77,14 +78,8 @@ export function AudioTab() {
 
 const TEST_TEXT = 'This is a test of the selected voice.';
 
-function TtsVoiceSection({
-  currentVoice,
-  onUpdate,
-}: {
-  currentVoice: string | null;
-  onUpdate: () => void;
-}) {
-  const mutation = trpc.globalSettings.update.useMutation({ onSuccess: onUpdate });
+function TtsVoiceSection({ currentVoice }: { currentVoice: string | null }) {
+  const mutation = useUpdateGlobalSettings();
   // The shared player, because Safari refuses play() once the tap that asked for it
   // has waited seconds for synthesis; the player unlocks its element during the tap.
   const playback = useVoicePlayback(true);
@@ -136,16 +131,10 @@ function TtsVoiceSection({
   );
 }
 
-function TtsSpeedSection({
-  currentSpeed,
-  onUpdate,
-}: {
-  currentSpeed: number | null;
-  onUpdate: () => void;
-}) {
+function TtsSpeedSection({ currentSpeed }: { currentSpeed: number | null }) {
   const [editValue, setEditValue] = useState(currentSpeed ?? DEFAULT_TTS_SPEED);
 
-  const mutation = trpc.globalSettings.update.useMutation({ onSuccess: onUpdate });
+  const mutation = useUpdateGlobalSettings();
 
   const handleChange = (value: number[]) => {
     setEditValue(value[0]);
@@ -201,8 +190,8 @@ function TtsSpeedSection({
   );
 }
 
-function VoiceAutoSendSection({ autoSend, onUpdate }: { autoSend: boolean; onUpdate: () => void }) {
-  const mutation = trpc.globalSettings.update.useMutation({ onSuccess: onUpdate });
+function VoiceAutoSendSection({ autoSend }: { autoSend: boolean }) {
+  const mutation = useUpdateGlobalSettings();
 
   return (
     <div className="space-y-3">
