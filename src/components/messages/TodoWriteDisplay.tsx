@@ -1,5 +1,6 @@
 'use client';
 
+import { Check, Circle, CircleCheck, RefreshCw } from 'lucide-react';
 import { z } from 'zod';
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
@@ -10,70 +11,6 @@ import { lenient, parseToolInput } from './tool-input';
 import { todoItemSchema, type ToolCall } from './types';
 
 const todoWriteInputSchema = z.object({ todos: lenient(z.array(todoItemSchema)) });
-
-function CheckIcon() {
-  return (
-    <svg
-      className="w-4 h-4 text-green-600 dark:text-green-400 shrink-0"
-      fill="none"
-      viewBox="0 0 24 24"
-      stroke="currentColor"
-      strokeWidth={2}
-    >
-      <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
-    </svg>
-  );
-}
-
-function SpinnerIcon() {
-  return (
-    <svg
-      className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0 animate-spin"
-      fill="none"
-      viewBox="0 0 24 24"
-      stroke="currentColor"
-      strokeWidth={2}
-    >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182M2.985 19.644l3.182-3.182"
-      />
-    </svg>
-  );
-}
-
-function CircleIcon() {
-  return (
-    <svg
-      className="w-4 h-4 text-muted-foreground shrink-0"
-      fill="none"
-      viewBox="0 0 24 24"
-      stroke="currentColor"
-      strokeWidth={2}
-    >
-      <circle cx="12" cy="12" r="9" />
-    </svg>
-  );
-}
-
-function ChecklistIcon() {
-  return (
-    <svg
-      className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0"
-      fill="none"
-      viewBox="0 0 24 24"
-      stroke="currentColor"
-      strokeWidth={1.5}
-    >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-      />
-    </svg>
-  );
-}
 
 /**
  * Specialized display for TodoWrite tool calls.
@@ -98,7 +35,7 @@ export function TodoWriteDisplay({ tool }: { tool: ToolCall }) {
   return (
     <ToolDisplayWrapper
       tool={tool}
-      icon={<ChecklistIcon />}
+      icon={<CircleCheck className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />}
       title="TodoWrite"
       expandedOverride={{ expanded, onOpenChange: setManual }}
       headerContent={
@@ -123,9 +60,15 @@ export function TodoWriteDisplay({ tool }: { tool: ToolCall }) {
               todo.status === 'in_progress' && 'bg-blue-50 dark:bg-blue-950/30'
             )}
           >
-            {todo.status === 'completed' && <CheckIcon />}
-            {todo.status === 'in_progress' && <SpinnerIcon />}
-            {todo.status === 'pending' && <CircleIcon />}
+            {todo.status === 'completed' && (
+              <Check className="w-4 h-4 text-green-600 dark:text-green-400 shrink-0" />
+            )}
+            {todo.status === 'in_progress' && (
+              <RefreshCw className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0 animate-spin" />
+            )}
+            {todo.status === 'pending' && (
+              <Circle className="w-4 h-4 text-muted-foreground shrink-0" />
+            )}
             <span
               className={cn(
                 todo.status === 'completed' && 'line-through',

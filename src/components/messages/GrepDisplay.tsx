@@ -1,5 +1,6 @@
 'use client';
 
+import { CodeXml } from 'lucide-react';
 import { z } from 'zod';
 import { useMemo } from 'react';
 import { ColorBadge } from './ColorBadge';
@@ -23,24 +24,6 @@ const grepInputSchema = z.object({
   multiline: lenient(z.boolean()),
 });
 type GrepInput = z.infer<typeof grepInputSchema>;
-
-function SearchCodeIcon() {
-  return (
-    <svg
-      className="w-4 h-4 text-purple-600 dark:text-purple-400 shrink-0"
-      fill="none"
-      viewBox="0 0 24 24"
-      stroke="currentColor"
-      strokeWidth={1.5}
-    >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M17.25 6.75L22.5 12l-5.25 5.25m-10.5 0L1.5 12l5.25-5.25m7.5-3l-4.5 16.5"
-      />
-    </svg>
-  );
-}
 
 /**
  * Build a summary of grep options for display.
@@ -75,7 +58,7 @@ export function GrepDisplay({ tool }: { tool: ToolCall }) {
   return (
     <ToolDisplayWrapper
       tool={tool}
-      icon={<SearchCodeIcon />}
+      icon={<CodeXml className="w-4 h-4 text-purple-600 dark:text-purple-400 shrink-0" />}
       title="Grep"
       pendingText="Searching..."
       subtitle={

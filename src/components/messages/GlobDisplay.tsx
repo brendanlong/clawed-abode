@@ -1,5 +1,6 @@
 'use client';
 
+import { FolderOpen } from 'lucide-react';
 import { z } from 'zod';
 import { cn } from '@/lib/utils';
 import { ColorBadge } from './ColorBadge';
@@ -53,22 +54,6 @@ function groupByDirectory(files: FileEntry[]): Map<string, FileEntry[]> {
   return groups;
 }
 
-const FolderIcon = () => (
-  <svg
-    className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0"
-    fill="none"
-    viewBox="0 0 24 24"
-    stroke="currentColor"
-    strokeWidth={1.5}
-  >
-    <path
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z"
-    />
-  </svg>
-);
-
 /**
  * Specialized display for Glob tool calls.
  * Shows a nicely formatted list of matched files organized by directory.
@@ -119,7 +104,7 @@ export function GlobDisplay({ tool }: { tool: ToolCall }) {
                       <div key={directory || '__root__'}>
                         {directory && (
                           <div className="flex items-center gap-1.5 text-muted-foreground mb-1">
-                            <FolderIcon />
+                            <FolderOpen className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
                             <span className="font-mono text-xs">{directory}/</span>
                           </div>
                         )}
