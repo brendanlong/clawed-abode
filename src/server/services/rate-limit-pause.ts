@@ -13,6 +13,7 @@ import { processSingleton } from '@/lib/process-singleton';
 import type { CancelledPrompt } from '@/lib/cancelled-prompt';
 import { createLogger, toError } from '@/lib/logger';
 import { diffHolds, type RateLimitHold } from '@/lib/rate-limit';
+import type { PushedPrompt } from '@/lib/live-turn';
 import { sseEvents } from './events';
 import { discardUnreadPrompts } from './in-flight-commands';
 import {
@@ -22,7 +23,6 @@ import {
   enqueuePrompts,
   listQueuedPrompts,
   restoreQueuedPrompt,
-  type PromptPayload,
 } from './prompt-queue';
 import {
   loadRateLimitReadings,
@@ -49,7 +49,7 @@ export interface PauseRunner {
   abortTurn<T>(
     sessionId: string,
     steps: {
-      dispose: (recalled: PromptPayload[]) => Promise<T>;
+      dispose: (recalled: PushedPrompt[]) => Promise<T>;
       beforeInterrupt: () => Promise<void>;
     }
   ): Promise<{ disposed: T; interrupted: boolean; interruptPending: boolean } | null>;
@@ -62,7 +62,7 @@ export interface PauseRunner {
    * Establish (or reuse) the session's query. The handle is bound to that query:
    * `isLive` turns false once it is gone, and `push` must then not be called.
    */
-  openQuery(sessionId: string): Promise<{ isLive(): boolean; push(prompt: PromptPayload): void }>;
+  openQuery(sessionId: string): Promise<{ isLive(): boolean; push(prompt: PushedPrompt): void }>;
   /** Bring up a released session's query so other sessions can reach it. Best-effort. */
   revive(sessionId: string): Promise<void>;
 }
@@ -192,7 +192,6 @@ async function pauseSession(
     dispose: async (recalled) => {
       if (recalled.length === 0) return 0;
       await enqueuePrompts(sessionId, recalled);
-      await emitQueuedPrompts(sessionId);
       return recalled.length;
     },
     // Flag before interrupting, not after: a Stop landing while the interrupt is
@@ -296,17 +295,18 @@ async function drainSession(runner: PauseRunner, sessionId: string): Promise<voi
       count: queued.length,
     });
     const query = await runner.openQuery(sessionId);
-    for (const prompt of queued) {
+    for (const queuedPrompt of queued) {
+      const { id: _id, position: _position, ...prompt } = queuedPrompt;
       // The query can vanish mid-drain (CLI crash, stop); leave the rest queued.
       if (!query.isLive()) break;
       // Claim before pushing: Stop can empty the queue underneath this loop, and
       // pushing a prompt it already took back would run cancelled work with no
       // bubble to show for it.
-      if (!(await claimQueuedPrompt(prompt.id))) continue;
+      if (!(await claimQueuedPrompt(queuedPrompt.id))) continue;
       // The query can also die during the claim; put the prompt back rather than
       // lose it.
       if (!query.isLive()) {
-        await restoreQueuedPrompt(sessionId, prompt);
+        await restoreQueuedPrompt(sessionId, queuedPrompt);
         break;
       }
       query.push(prompt);

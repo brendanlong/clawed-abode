@@ -19,10 +19,12 @@ vi.mock('@/lib/env', async (importOriginal) => ({
 }));
 const mockStopScope = vi.hoisted(() => vi.fn(async (_unit: string) => {}));
 vi.mock('./session-cgroup', () => ({ sessionScopeNonce: () => 'n1', stopScope: mockStopScope }));
-const mockLoadPermissionMode = vi.hoisted(() =>
-  vi.fn(async (): Promise<'auto' | 'bypassPermissions'> => 'auto')
+const mockLoadGlobalSettings = vi.hoisted(() =>
+  vi.fn(async (): Promise<{ permissionMode: 'auto' | 'bypassPermissions' }> => ({
+    permissionMode: 'auto',
+  }))
 );
-vi.mock('./global-settings', () => ({ loadPermissionMode: mockLoadPermissionMode }));
+vi.mock('./global-settings', () => ({ loadGlobalSettings: mockLoadGlobalSettings }));
 
 const ctx: GptAgentContext = {
   sessionId: 'sid',
@@ -104,7 +106,7 @@ describe('runGptAgent', () => {
   });
 
   it('follows the permission mode current when the run starts', async () => {
-    mockLoadPermissionMode.mockResolvedValueOnce('bypassPermissions');
+    mockLoadGlobalSettings.mockResolvedValueOnce({ permissionMode: 'bypassPermissions' });
     const { out, started } = fakeRun();
     const run = runGptAgent(ctx, 'luna', 'go');
     await vi.waitFor(() => expect(started).toHaveLength(1));

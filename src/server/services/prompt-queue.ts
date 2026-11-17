@@ -15,24 +15,11 @@
 
 import { z } from 'zod';
 import { prisma } from '@/lib/prisma';
+import type { PushedPrompt } from '@/lib/live-turn';
 import { sseEvents } from './events';
 
 /** A prompt waiting for the session's rate-limit hold to release. */
-export interface QueuedPrompt {
-  id: string;
-  position: number;
-  /** Id of the transcript bubble already written for this prompt. */
-  messageId: string;
-  /** Prepared (attachment-prefixed, sanitized) text to push into the SDK. */
-  content: string;
-  /** The user's original typed text, for restore-on-cancel. */
-  text: string;
-  /** Stored upload names (see /api/upload). */
-  attachments: string[];
-}
-
-/** What it takes to push a prompt whose bubble is already written. */
-export type PromptPayload = Omit<QueuedPrompt, 'id' | 'position'>;
+export type QueuedPrompt = PushedPrompt & { id: string; position: number };
 
 function toQueuedPrompt(row: {
   id: string;
@@ -58,9 +45,9 @@ const QUEUE_SELECT = {
  * Append prompts to a session's queue in order, reserving all their positions in
  * one statement and writing them in one insert — a partial write would strand the
  * remainder with no path back to the SDK (their in-flight entries are already
- * cancelled by the time this runs).
+ * cancelled by the time this runs). Emits the new queue over SSE.
  */
-export async function enqueuePrompts(sessionId: string, prompts: PromptPayload[]): Promise<void> {
+export async function enqueuePrompts(sessionId: string, prompts: PushedPrompt[]): Promise<void> {
   if (prompts.length === 0) return;
   const rows = await prisma.$queryRaw<{ queuedPromptSequence: number | bigint }[]>`
     UPDATE "Session"
@@ -83,6 +70,7 @@ export async function enqueuePrompts(sessionId: string, prompts: PromptPayload[]
       attachments: JSON.stringify(prompt.attachments),
     })),
   });
+  await emitQueuedPrompts(sessionId);
 }
 
 /** A session's queued prompts, oldest first. */

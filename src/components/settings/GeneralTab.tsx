@@ -3,6 +3,7 @@
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { CenteredSpinner } from '@/components/ui/spinner';
 import { trpc } from '@/lib/trpc';
+import { DEFAULT_SYSTEM_PROMPT } from '@/lib/system-prompt';
 import { AdvisorModelCard, ClaudeModelCard } from './global/ModelCards';
 import { ApiKeyCard } from './global/ApiKeyCard';
 import {
@@ -18,8 +19,6 @@ import { GlobalEnvVarsCard, GlobalMcpServersCard } from './global/ScopedSettings
 
 export function GeneralTab() {
   const { data: settings, error, refetch } = trpc.globalSettings.get.useQuery();
-  const { data: defaultPromptData } = trpc.globalSettings.getDefaultSystemPrompt.useQuery();
-  const defaultPrompt = defaultPromptData?.defaultSystemPrompt ?? '';
 
   if (error) {
     return (
@@ -45,7 +44,7 @@ export function GeneralTab() {
       <SystemPromptOverrideCard
         currentOverride={settings.systemPromptOverride}
         overrideEnabled={settings.systemPromptOverrideEnabled}
-        defaultPrompt={defaultPrompt}
+        defaultPrompt={DEFAULT_SYSTEM_PROMPT}
         onUpdate={refetch}
       />
       <SystemPromptAppendCard currentAppend={settings.systemPromptAppend} onUpdate={refetch} />
@@ -55,7 +54,7 @@ export function GeneralTab() {
       <RateLimitPauseCard />
       <GlobalEnvVarsCard />
       <GlobalMcpServersCard />
-      <DefaultPromptCard defaultPrompt={defaultPrompt} />
+      <DefaultPromptCard defaultPrompt={DEFAULT_SYSTEM_PROMPT} />
     </div>
   );
 }

@@ -3,14 +3,7 @@ import { toSessionView } from '@/lib/session-view';
 import { HISTORY_PAGE_SIZE, type HistorySnapshot } from '@/lib/message-cache';
 import { EMPTY_WATERMARK } from '@/lib/sse-resume';
 import type { SessionLiveState, SessionStreamState } from '@/lib/session-stream-state';
-import {
-  getActivePartials,
-  getPendingMessageIds,
-  getPermissionRequests,
-  getSessionBackgroundTasks,
-  getSessionRetry,
-  isClaudeRunning,
-} from './claude-runner';
+import { getLiveSessionState, type RunnerLiveState } from './claude-runner';
 import { queuedMessageIds } from './prompt-queue';
 import { currentHold } from './rate-limit-pause';
 import { getSessionCommands } from './session-commands';
@@ -36,18 +29,21 @@ export interface SessionSnapshot extends SessionStreamState {
  * but `queuedMessageIds` and `tokenUsage` are in-memory only (lost on restart;
  * `rateLimitHold` is recomputed from persisted readings).
  */
-async function loadLiveState(sessionId: string): Promise<SessionLiveState> {
+async function loadLiveState(
+  sessionId: string,
+  runner: RunnerLiveState
+): Promise<SessionLiveState> {
   const [queued, usageTotals] = await Promise.all([
     queuedMessageIds(sessionId),
     getSessionUsageTotals(sessionId),
   ]);
   return {
-    running: isClaudeRunning(sessionId),
+    running: runner.running,
     commands: getSessionCommands(sessionId),
-    retry: getSessionRetry(sessionId),
-    backgroundTasks: getSessionBackgroundTasks(sessionId),
-    pendingMessageIds: getPendingMessageIds(sessionId),
-    permissionRequests: getPermissionRequests(sessionId),
+    retry: runner.retry,
+    backgroundTasks: runner.backgroundTasks,
+    pendingMessageIds: runner.pendingMessageIds,
+    permissionRequests: runner.permissionRequests,
     queuedMessageIds: queued,
     // The recompute's snapshot, the same source as the `rate_limit` channel and
     // the session list, so a snapshot can't contradict them.
@@ -68,12 +64,10 @@ async function loadLiveState(sessionId: string): Promise<SessionLiveState> {
  */
 async function loadHistorySnapshot(
   sessionId: string,
-  resumeAfter: number | null
+  resumeAfter: number | null,
+  { partials, backgroundTasks }: RunnerLiveState
 ): Promise<HistorySnapshot<ParsedMessage>> {
-  const partials = getActivePartials(sessionId);
-  const runningTaskIds = getSessionBackgroundTasks(sessionId)
-    .filter(taskHasEndState)
-    .map((task) => task.taskId);
+  const runningTaskIds = backgroundTasks.filter(taskHasEndState).map((task) => task.taskId);
   const [page, spawn] = await Promise.all([
     loadHistoryPage(sessionId, null, HISTORY_PAGE_SIZE),
     loadEarliestTaskSpawnSequence(sessionId, runningTaskIds),
@@ -104,10 +98,11 @@ export async function loadSessionSnapshot(
   sessionId: string,
   resumeAfter: number | null
 ): Promise<SessionSnapshot | null> {
+  const runner = getLiveSessionState(sessionId);
   const [row, live, history] = await Promise.all([
     prisma.session.findUnique({ where: { id: sessionId } }),
-    loadLiveState(sessionId),
-    loadHistorySnapshot(sessionId, resumeAfter),
+    loadLiveState(sessionId, runner),
+    loadHistorySnapshot(sessionId, resumeAfter, runner),
   ]);
   if (!row) return null;
   // Every (re)connect is a view of the session, which is what re-arms the PR poll.

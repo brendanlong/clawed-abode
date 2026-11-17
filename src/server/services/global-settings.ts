@@ -8,8 +8,11 @@ import { DEFAULT_PAUSE_THRESHOLD } from '@/lib/rate-limit';
 import { DEFAULT_SETTING_SOURCE_FLAGS } from '@/lib/setting-sources';
 import type { GlobalSettings, Prisma } from '@/generated/prisma/client';
 
-/** The singleton row's settings columns. */
-export type GlobalSettingsValues = Omit<GlobalSettings, 'id' | 'createdAt' | 'updatedAt'>;
+/** The singleton row's settings columns, with `permissionMode` parsed. */
+export type GlobalSettingsValues = Omit<
+  GlobalSettings,
+  'id' | 'createdAt' | 'updatedAt' | 'permissionMode'
+> & { permissionMode: AppPermissionMode };
 
 type GlobalSettingsPatch = Partial<
   Omit<Prisma.GlobalSettingsCreateInput, 'id' | 'createdAt' | 'updatedAt'>
@@ -48,11 +51,8 @@ export async function loadGlobalSettings(): Promise<Readonly<GlobalSettingsValue
     where: { id: GLOBAL_SETTINGS_ID },
     omit: { id: true, createdAt: true, updatedAt: true },
   });
-  return row ?? GLOBAL_SETTINGS_DEFAULTS;
-}
-
-export async function loadPermissionMode(): Promise<AppPermissionMode> {
-  return permissionModeSchema.parse((await loadGlobalSettings()).permissionMode);
+  if (!row) return GLOBAL_SETTINGS_DEFAULTS;
+  return { ...row, permissionMode: permissionModeSchema.parse(row.permissionMode) };
 }
 
 /** Write some fields of the singleton row, creating it on first use. */

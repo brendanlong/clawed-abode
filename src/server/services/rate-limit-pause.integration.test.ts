@@ -195,7 +195,7 @@ async function sendAndDeliver(
   await waitFor(() => fake.inputs.length > pushed);
   fake.emit(commandStarted(fake.inputs[pushed].uuid!));
   fake.emit(messageStart());
-  await waitFor(() => runner.getPendingMessageIds(sessionId).length === 0);
+  await waitFor(() => runner.getLiveSessionState(sessionId).pendingMessageIds.length === 0);
   if (!settle) return;
   fake.emit({ type: 'result', subtype: 'success', session_id: 's' } as unknown as SDKMessage);
   await waitFor(() => !runner.isClaudeRunning(sessionId));
@@ -267,7 +267,7 @@ describe('rate-limit pause', () => {
     const sessionId = await createRunningSession();
 
     await runner.sendUserMessage(sessionId, 'unread');
-    expect(runner.getPendingMessageIds(sessionId)).toHaveLength(1);
+    expect(runner.getLiveSessionState(sessionId).pendingMessageIds).toHaveLength(1);
 
     await rejectFiveHourWindow(fake);
 
