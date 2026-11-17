@@ -295,17 +295,18 @@ async function drainSession(runner: PauseRunner, sessionId: string): Promise<voi
       count: queued.length,
     });
     const query = await runner.openQuery(sessionId);
-    for (const prompt of queued) {
+    for (const queuedPrompt of queued) {
+      const { id: _id, position: _position, ...prompt } = queuedPrompt;
       // The query can vanish mid-drain (CLI crash, stop); leave the rest queued.
       if (!query.isLive()) break;
       // Claim before pushing: Stop can empty the queue underneath this loop, and
       // pushing a prompt it already took back would run cancelled work with no
       // bubble to show for it.
-      if (!(await claimQueuedPrompt(prompt.id))) continue;
+      if (!(await claimQueuedPrompt(queuedPrompt.id))) continue;
       // The query can also die during the claim; put the prompt back rather than
       // lose it.
       if (!query.isLive()) {
-        await restoreQueuedPrompt(sessionId, prompt);
+        await restoreQueuedPrompt(sessionId, queuedPrompt);
         break;
       }
       query.push(prompt);

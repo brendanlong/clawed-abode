@@ -25,6 +25,7 @@ vi.mock('../services/session-branch-pr', () => ({
 // The runner holds partials only for a live SDK query, which these tests don't run.
 const { liveState, mockGetLiveSessionState } = vi.hoisted(() => {
   const liveState = (overrides: Partial<RunnerLiveState> = {}): RunnerLiveState => ({
+    running: false,
     partials: [],
     pendingMessageIds: [],
     permissionRequests: [],

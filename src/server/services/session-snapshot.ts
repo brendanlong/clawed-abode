@@ -3,7 +3,7 @@ import { toSessionView } from '@/lib/session-view';
 import { HISTORY_PAGE_SIZE, type HistorySnapshot } from '@/lib/message-cache';
 import { EMPTY_WATERMARK } from '@/lib/sse-resume';
 import type { SessionLiveState, SessionStreamState } from '@/lib/session-stream-state';
-import { getLiveSessionState, isClaudeRunning, type RunnerLiveState } from './claude-runner';
+import { getLiveSessionState, type RunnerLiveState } from './claude-runner';
 import { queuedMessageIds } from './prompt-queue';
 import { currentHold } from './rate-limit-pause';
 import { getSessionCommands } from './session-commands';
@@ -38,7 +38,7 @@ async function loadLiveState(
     getSessionUsageTotals(sessionId),
   ]);
   return {
-    running: isClaudeRunning(sessionId),
+    running: runner.running,
     commands: getSessionCommands(sessionId),
     retry: runner.retry,
     backgroundTasks: runner.backgroundTasks,

@@ -831,6 +831,8 @@ export const watchRunner: PullRequestWatchPort = {
 
 /** A session's in-memory live state (lost on restart); see {@link getLiveSessionState}. */
 export interface RunnerLiveState {
+  /** Whether the main agent's turn is active (same as {@link isClaudeRunning}). */
+  running: boolean;
   /** The in-progress assistant messages' latest partials. */
   partials: ParsedMessage[];
   /** Transcript ids of not-yet-delivered messages. */
@@ -853,6 +855,7 @@ export function getLiveSessionState(sessionId: string): RunnerLiveState {
   const state = sessions.get(sessionId);
   const live = state?.live ?? null;
   return {
+    running: state ? isRunning(state.turn) : false,
     partials: [...(live?.partials.values() ?? [])],
     pendingMessageIds: state ? liveView(state.turn).pendingMessageIds : [],
     permissionRequests: permissionRequestsOf(live),
