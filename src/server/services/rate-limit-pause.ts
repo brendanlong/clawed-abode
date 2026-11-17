@@ -13,6 +13,7 @@ import { processSingleton } from '@/lib/process-singleton';
 import type { CancelledPrompt } from '@/lib/cancelled-prompt';
 import { createLogger, toError } from '@/lib/logger';
 import { diffHolds, type RateLimitHold } from '@/lib/rate-limit';
+import type { PushedPrompt } from '@/lib/live-turn';
 import { sseEvents } from './events';
 import { discardUnreadPrompts } from './in-flight-commands';
 import {
@@ -22,7 +23,6 @@ import {
   enqueuePrompts,
   listQueuedPrompts,
   restoreQueuedPrompt,
-  type PromptPayload,
 } from './prompt-queue';
 import {
   loadRateLimitReadings,
@@ -49,7 +49,7 @@ export interface PauseRunner {
   abortTurn<T>(
     sessionId: string,
     steps: {
-      dispose: (recalled: PromptPayload[]) => Promise<T>;
+      dispose: (recalled: PushedPrompt[]) => Promise<T>;
       beforeInterrupt: () => Promise<void>;
     }
   ): Promise<{ disposed: T; interrupted: boolean; interruptPending: boolean } | null>;
@@ -62,7 +62,7 @@ export interface PauseRunner {
    * Establish (or reuse) the session's query. The handle is bound to that query:
    * `isLive` turns false once it is gone, and `push` must then not be called.
    */
-  openQuery(sessionId: string): Promise<{ isLive(): boolean; push(prompt: PromptPayload): void }>;
+  openQuery(sessionId: string): Promise<{ isLive(): boolean; push(prompt: PushedPrompt): void }>;
   /** Bring up a released session's query so other sessions can reach it. Best-effort. */
   revive(sessionId: string): Promise<void>;
 }

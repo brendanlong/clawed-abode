@@ -33,6 +33,7 @@ import {
   type InFlightCommand,
   type LiveEvent,
   type LiveOutcome,
+  type PushedPrompt,
 } from '@/lib/live-turn';
 import { oomKillNotice, restartNotice } from '@/lib/restart-notice';
 import { parseRateLimitEvent } from '@/lib/rate-limit';
@@ -69,7 +70,7 @@ import {
   type ParsedMessage,
 } from './message-store';
 import { cancelUnstartedCommands, discardUnreadPrompts } from './in-flight-commands';
-import { emitQueuedPrompts, enqueuePrompts, type PromptPayload } from './prompt-queue';
+import { emitQueuedPrompts, enqueuePrompts } from './prompt-queue';
 import { recordRateLimitReadings, resolveSessionHold } from './rate-limit-state';
 import { currentHold, withdrawQueuedWork, type PauseRunner } from './rate-limit-pause';
 import {
@@ -676,7 +677,7 @@ async function applyLiveSettingsNow(sessionId: string, state: SessionState): Pro
  * `command_lifecycle`; until then it is in flight, marked undelivered in the
  * transcript and cancellable by Stop.
  */
-function pushPreparedPrompt(sessionId: string, state: SessionState, prompt: PromptPayload): void {
+function pushPreparedPrompt(sessionId: string, state: SessionState, prompt: PushedPrompt): void {
   const live = state.live;
   if (!live || live.input.closed) throw new Error('Session query is not available');
 
@@ -685,12 +686,7 @@ function pushPreparedPrompt(sessionId: string, state: SessionState, prompt: Prom
   dispatch(sessionId, state, {
     type: 'pushed',
     commandUuid,
-    prompt: {
-      messageId: prompt.messageId,
-      text: prompt.text,
-      attachments: prompt.attachments,
-      content: prompt.content,
-    },
+    prompt,
   });
 
   live.input.push({
