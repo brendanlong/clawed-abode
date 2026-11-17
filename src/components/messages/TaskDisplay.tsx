@@ -99,12 +99,13 @@ export function TaskDisplay({
         const { text: outputText, agentId } = parseTaskOutput(output.text ?? '');
         return (
           <>
-            <div>
-              <div className="text-muted-foreground mb-1">Prompt:</div>
-              <pre className="bg-muted p-2 rounded overflow-x-auto max-h-32 overflow-y-auto whitespace-pre-wrap text-xs">
-                {prompt}
-              </pre>
-            </div>
+            <ToolOutputBlock
+              label="Prompt:"
+              output={prompt}
+              maxHeight="max-h-32"
+              wrap
+              preClassName="text-xs"
+            />
 
             {agentId && (
               <div>

@@ -86,12 +86,13 @@ export function GrepDisplay({ tool }: { tool: ToolCall }) {
           {output.text !== undefined && (
             <div>
               <div className="text-muted-foreground mb-1">Results:</div>
-              {output.isError ? (
-                <ToolOutputBlock output={output.text} isError wrap />
-              ) : output.text?.trim() ? (
-                <pre className="bg-muted rounded p-2 max-h-96 overflow-y-auto overflow-x-auto text-sm font-mono whitespace-pre-wrap break-words">
-                  {output.text}
-                </pre>
+              {output.isError || output.text?.trim() ? (
+                <ToolOutputBlock
+                  output={output.text}
+                  isError={output.isError}
+                  wrap
+                  preClassName="text-sm font-mono"
+                />
               ) : (
                 <div className="text-muted-foreground italic py-2">No matches found</div>
               )}

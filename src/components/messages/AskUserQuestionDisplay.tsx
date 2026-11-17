@@ -9,6 +9,7 @@ import { ColorBadge } from './ColorBadge';
 import { ToolDisplayWrapper } from './ToolDisplayWrapper';
 import { useMessageListActions } from './MessageListContext';
 import { lenient, lenientString, parseToolInput } from './tool-input';
+import { ToolOutputBlock } from './ToolOutputBlock';
 import type { ToolCall } from './types';
 
 const questionSchema = z.object({
@@ -230,17 +231,13 @@ export function AskUserQuestionDisplay({ tool }: { tool: ToolCall }) {
           {/* Show the response if answered (but not the "Answer questions?" error) */}
           {output.text !== undefined && !isWaitingForInput && (
             <div className="pt-2 border-t">
-              <div className="text-xs text-muted-foreground mb-1">Response:</div>
-              <pre
-                className={cn(
-                  'text-xs p-2 rounded overflow-x-auto',
-                  isRealError
-                    ? 'bg-red-50 dark:bg-red-950 text-red-800 dark:text-red-200'
-                    : 'bg-muted'
-                )}
-              >
-                {output.text}
-              </pre>
+              <ToolOutputBlock
+                label="Response:"
+                output={output.text}
+                isError={isRealError}
+                labelClassName="text-xs"
+                preClassName="text-xs"
+              />
             </div>
           )}
         </>

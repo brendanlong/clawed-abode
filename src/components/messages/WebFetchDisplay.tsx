@@ -56,12 +56,13 @@ export function WebFetchDisplay({ tool }: { tool: ToolCall }) {
             </a>
           </div>
 
-          <div>
-            <div className="text-muted-foreground mb-1">Prompt:</div>
-            <pre className="bg-muted p-2 rounded overflow-x-auto max-h-24 overflow-y-auto whitespace-pre-wrap text-xs">
-              {prompt}
-            </pre>
-          </div>
+          <ToolOutputBlock
+            label="Prompt:"
+            output={prompt}
+            maxHeight="max-h-24"
+            wrap
+            preClassName="text-xs"
+          />
 
           {output.text !== undefined && (
             <div>
