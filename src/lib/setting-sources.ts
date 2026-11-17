@@ -25,8 +25,7 @@ export interface SettingSourceFlags {
 }
 
 /**
- * Defaults matching the historical hardcoded behavior: only the project scope is
- * loaded. Enabling `user` is what turns on personal skills / global CLAUDE.md /
+ * By default only the project scope is loaded. Enabling `user` is what turns on personal skills / global CLAUDE.md /
  * hooks from the host user's home.
  */
 export const DEFAULT_SETTING_SOURCE_FLAGS: SettingSourceFlags = {

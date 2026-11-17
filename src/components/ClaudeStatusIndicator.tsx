@@ -5,7 +5,7 @@ import { formatRetryReason, type RetryState } from '@/lib/claude-messages';
 import type { BackgroundTask } from '@/lib/session-status';
 
 interface ClaudeStatusIndicatorProps {
-  /** A main-agent turn is active (gates the composer). */
+  /** A main-agent turn is active. */
   isRunning: boolean;
   /** Ephemeral API-retry status (rate limit / overload), or null if not retrying. */
   retry: RetryState | null;

@@ -10,7 +10,7 @@ import type { SessionStreamOutput } from '@/server/routers/sse';
 
 /** Every latest-value field of a session, each kept current by its own stream event. */
 export interface SessionLiveState {
-  /** A main-agent turn is active (gates the composer). */
+  /** A main-agent turn is active (shows the composer's Stop button). */
   running: boolean;
   commands: SlashCommand[];
   /** Ephemeral API-retry status (rate limit / overload). */

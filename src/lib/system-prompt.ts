@@ -34,10 +34,9 @@ function buildPublicDirNote({ path, url }: PublicDirInfo): string {
 }
 
 /**
- * Build the full system prompt from global settings and per-repo custom prompt.
- *
- * Order: base prompt (default or override) → public-dir note → global append → per-repo custom.
- * The public-dir note describes the session rather than policy, so an override keeps it.
+ * Build the system prompt from global settings and the per-repo custom prompt.
+ * The full assembly order (sdk-options appends the built-in tools note after
+ * this) is in doc/settings.md "Resolution Rules".
  */
 export function buildSystemPrompt(options: {
   publicDir?: PublicDirInfo;

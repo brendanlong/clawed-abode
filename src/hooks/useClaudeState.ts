@@ -65,8 +65,8 @@ export function useClaudeState(sessionId: string) {
     [sessionId, stopBackgroundTaskMutate]
   );
 
-  // `isRunning` means a main-agent turn is active (gates the composer). Background
-  // tasks are tracked separately and never gate input.
+  // `isRunning` means a main-agent turn is active. Neither it nor background tasks
+  // gate input: the composer is disabled only by session status.
   const isRunning = live?.running ?? false;
   // Running background tasks. These never gate input — indicator only.
   const backgroundTasks = live?.backgroundTasks ?? [];
