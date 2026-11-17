@@ -45,7 +45,7 @@ const QUEUE_SELECT = {
  * Append prompts to a session's queue in order, reserving all their positions in
  * one statement and writing them in one insert — a partial write would strand the
  * remainder with no path back to the SDK (their in-flight entries are already
- * cancelled by the time this runs).
+ * cancelled by the time this runs). Emits the new queue over SSE.
  */
 export async function enqueuePrompts(sessionId: string, prompts: PushedPrompt[]): Promise<void> {
   if (prompts.length === 0) return;
@@ -70,6 +70,7 @@ export async function enqueuePrompts(sessionId: string, prompts: PushedPrompt[])
       attachments: JSON.stringify(prompt.attachments),
     })),
   });
+  await emitQueuedPrompts(sessionId);
 }
 
 /** A session's queued prompts, oldest first. */

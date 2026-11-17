@@ -192,7 +192,6 @@ async function pauseSession(
     dispose: async (recalled) => {
       if (recalled.length === 0) return 0;
       await enqueuePrompts(sessionId, recalled);
-      await emitQueuedPrompts(sessionId);
       return recalled.length;
     },
     // Flag before interrupting, not after: a Stop landing while the interrupt is

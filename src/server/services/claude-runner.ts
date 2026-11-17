@@ -70,7 +70,7 @@ import {
   type ParsedMessage,
 } from './message-store';
 import { cancelUnstartedCommands, discardUnreadPrompts } from './in-flight-commands';
-import { emitQueuedPrompts, enqueuePrompts } from './prompt-queue';
+import { enqueuePrompts } from './prompt-queue';
 import { recordRateLimitReadings, resolveSessionHold } from './rate-limit-state';
 import { currentHold, withdrawQueuedWork, type PauseRunner } from './rate-limit-pause';
 import {
@@ -740,7 +740,6 @@ export async function sendUserMessage(
   const queuedBehind = hold ?? currentHold(sessionId);
   if (!state || queuedBehind) {
     await enqueuePrompts(sessionId, [pushable]);
-    await emitQueuedPrompts(sessionId);
     log.info('Queued prompt behind rate-limit pause', { sessionId, hold: queuedBehind });
     return;
   }
