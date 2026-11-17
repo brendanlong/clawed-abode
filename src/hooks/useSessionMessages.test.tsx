@@ -31,9 +31,8 @@ const message = (id: string, sequence: number): ParsedMessage => ({
 const sessionRow: Session = {
   id: SESSION_ID,
   name: 'Test',
-  repoUrl: null,
+  repoFullName: null,
   branch: null,
-  repoPath: '',
   status: 'running',
   statusMessage: null,
   currentBranch: null,

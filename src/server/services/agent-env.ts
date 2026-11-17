@@ -19,6 +19,8 @@ const SEED_ENV_VARS = [
   'TERM',
   'TMPDIR',
   'XDG_RUNTIME_DIR',
+  // The SSH agent the server's own environment points at.
+  'SSH_AUTH_SOCK',
 ];
 
 let cachedBaseEnv: Record<string, string> | null = null;

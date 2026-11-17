@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { NO_REPO_SENTINEL, repoFullNameSchema, repoSettingsKeySchema } from './repo-full-name';
+import {
+  NO_REPO_SENTINEL,
+  repoFullNameSchema,
+  repoNameOf,
+  repoSettingsKeySchema,
+} from './repo-full-name';
 
 describe('repoFullNameSchema', () => {
   it.each(['owner/repo', 'my-org/my.repo', 'user_corp/repo_name', 'o/.github', 'o/a..b', 'O1/R-2'])(
@@ -34,5 +39,12 @@ describe('repoSettingsKeySchema', () => {
     const result = repoSettingsKeySchema.safeParse('__other__');
     expect(result.success).toBe(false);
     expect(result.error?.issues[0].message).toContain(NO_REPO_SENTINEL);
+  });
+});
+
+describe('repoNameOf', () => {
+  it('returns the repo part, dots included', () => {
+    expect(repoNameOf('owner/repo')).toBe('repo');
+    expect(repoNameOf('brendanlong/brendanlong.github.io')).toBe('brendanlong.github.io');
   });
 });

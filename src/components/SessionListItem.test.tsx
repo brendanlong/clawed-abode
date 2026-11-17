@@ -44,7 +44,7 @@ vi.mock('@/lib/trpc', () => ({
 const SESSION: Session = {
   id: 's1',
   name: 'My Session',
-  repoUrl: 'https://github.com/user/repo.git',
+  repoFullName: 'user/repo',
   branch: 'main',
   status: 'running',
   canStart: false,

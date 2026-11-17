@@ -19,17 +19,21 @@ describe('defaultSessionName', () => {
 });
 
 describe('isDefaultSessionName', () => {
-  const repo = { repoUrl: 'https://github.com/owner/repo.git', branch: 'main' };
+  const repo = { repoFullName: 'owner/repo', branch: 'main' };
 
   it('recognizes the default for the session’s own repo and branch', () => {
     expect(isDefaultSessionName({ ...repo, name: 'repo - main' })).toBe(true);
-    expect(isDefaultSessionName({ name: 'Workspace', repoUrl: null, branch: null })).toBe(true);
+    expect(isDefaultSessionName({ name: 'Workspace', repoFullName: null, branch: null })).toBe(
+      true
+    );
   });
 
   it('treats any other name as chosen', () => {
     expect(isDefaultSessionName({ ...repo, name: 'repo - dev' })).toBe(false);
     expect(isDefaultSessionName({ ...repo, name: 'Fix login' })).toBe(false);
-    expect(isDefaultSessionName({ name: 'Workspace 2', repoUrl: null, branch: null })).toBe(false);
+    expect(isDefaultSessionName({ name: 'Workspace 2', repoFullName: null, branch: null })).toBe(
+      false
+    );
   });
 });
 

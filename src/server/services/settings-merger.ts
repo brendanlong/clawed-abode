@@ -9,6 +9,7 @@ import {
 } from '@/lib/setting-sources';
 import { env } from '@/lib/env';
 import { publicFilesUrl } from '@/lib/public-files';
+import { NO_REPO_SENTINEL } from '@/lib/repo-full-name';
 import type { ResolvedEnvVar, ResolvedMcpServer } from '@/lib/settings-types';
 import { MCP_SERVER_INCLUDE, decryptEnvVars, decryptMcpServers } from './settings-helpers';
 import { GLOBAL_SCOPE } from './settings-scope';
@@ -16,7 +17,7 @@ import { loadGlobalSettings } from './global-settings';
 import { applyMcpOAuthHeaders } from './mcp-oauth';
 import { getSessionPublicDir } from './public-dir';
 import { resolveBuiltinTools, type BuiltinToolsLevel } from '@/lib/builtin-tools';
-import { permissionModeSchema, type AppPermissionMode } from '@/lib/permission-mode';
+import type { AppPermissionMode } from '@/lib/permission-mode';
 import type { Session } from '@/generated/prisma/client';
 
 /** Per-repo settings with secrets decrypted, ready to merge. */
@@ -73,7 +74,7 @@ export async function loadResolvedGlobalSettings(): Promise<ResolvedGlobalSettin
     claudeApiKey: settings.claudeApiKey ? decrypt(settings.claudeApiKey) : null,
     settingSources: settingSourceFlagsFromRow(settings),
     builtinToolsEnabled: settings.builtinToolsEnabled,
-    permissionMode: permissionModeSchema.parse(settings.permissionMode),
+    permissionMode: settings.permissionMode,
     envVars: decryptEnvVars(envVarRows),
     mcpServers: decryptMcpServers(mcpServerRows),
   };
@@ -110,6 +111,9 @@ export interface MergedSessionSettings {
 /** The per-session settings, which take precedence over the repo and global ones. */
 export type SessionOverrides = Pick<Session, 'claudeModel' | 'sessionToolsEnabled'>;
 
+/** What of the session row the merge reads: its repo (for the repo settings) and its overrides. */
+export type SessionSettingsSource = SessionOverrides & Pick<Session, 'repoFullName'>;
+
 /**
  * Load and merge global + per-repo settings into a single object.
  * Fetches repo and global settings in parallel, builds the system prompt,
@@ -117,11 +121,10 @@ export type SessionOverrides = Pick<Session, 'claudeModel' | 'sessionToolsEnable
  */
 export async function loadMergedSessionSettings(
   sessionId: string,
-  repoFullName: string | null | undefined,
-  session: SessionOverrides
+  session: SessionSettingsSource
 ): Promise<MergedSessionSettings> {
   const [repoSettings, globalSettings] = await Promise.all([
-    repoFullName ? loadResolvedRepoSettings(repoFullName) : null,
+    loadResolvedRepoSettings(session.repoFullName ?? NO_REPO_SENTINEL),
     loadResolvedGlobalSettings(),
   ]);
 

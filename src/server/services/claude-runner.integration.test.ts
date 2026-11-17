@@ -113,12 +113,10 @@ import type { PartialAssistantMessage } from './stream-accumulator';
 // Imported dynamically in beforeAll (after setupTestDb sets DATABASE_URL), since
 // claude-runner pulls in @/lib/prisma at module load.
 let sendUserMessage: typeof import('./claude-runner').sendUserMessage;
-let getPendingMessageIds: typeof import('./claude-runner').getPendingMessageIds;
-let getActivePartials: typeof import('./claude-runner').getActivePartials;
+let getLiveSessionState: typeof import('./claude-runner').getLiveSessionState;
 let interruptClaude: typeof import('./claude-runner').interruptClaude;
 let stopSession: typeof import('./claude-runner').stopSession;
 let isClaudeRunning: typeof import('./claude-runner').isClaudeRunning;
-let getSessionBackgroundTasks: typeof import('./claude-runner').getSessionBackgroundTasks;
 let stopBackgroundTask: typeof import('./claude-runner').stopBackgroundTask;
 let insertMessage: typeof import('./message-store').insertMessage;
 let reapOrphanedSessionScopes: typeof import('./claude-runner').reapOrphanedSessionScopes;
@@ -129,7 +127,6 @@ let _resetShutdown: typeof import('./claude-runner')._resetShutdown;
 let _setQueryFactory: typeof import('./claude-runner')._setQueryFactory;
 let submitLiveToolResponse: typeof import('./claude-runner').submitLiveToolResponse;
 let respondToPermissionRequest: typeof import('./claude-runner').respondToPermissionRequest;
-let getPermissionRequests: typeof import('./claude-runner').getPermissionRequests;
 let refreshSessionSettings: typeof import('./claude-runner').refreshSessionSettings;
 let refreshAllSessionSettings: typeof import('./claude-runner').refreshAllSessionSettings;
 let deliverAppMessage: typeof import('./claude-runner').deliverAppMessage;
@@ -358,7 +355,7 @@ function backgroundTasksChanged(...taskIds: string[]): SDKMessage {
 }
 async function createRunningSession(): Promise<string> {
   const session = await testPrisma.session.create({
-    data: { name: 'Test', repoPath: '', status: 'running' },
+    data: { name: 'Test', status: 'running' },
   });
   return session.id;
 }
@@ -372,12 +369,10 @@ describe('claude-runner persistent streaming loop', () => {
     await setupTestDb();
     const mod = await import('./claude-runner');
     sendUserMessage = mod.sendUserMessage;
-    getPendingMessageIds = mod.getPendingMessageIds;
-    getActivePartials = mod.getActivePartials;
+    getLiveSessionState = mod.getLiveSessionState;
     interruptClaude = mod.interruptClaude;
     stopSession = mod.stopSession;
     isClaudeRunning = mod.isClaudeRunning;
-    getSessionBackgroundTasks = mod.getSessionBackgroundTasks;
     stopBackgroundTask = mod.stopBackgroundTask;
     insertMessage = (await import('./message-store')).insertMessage;
     reapOrphanedSessionScopes = mod.reapOrphanedSessionScopes;
@@ -388,7 +383,6 @@ describe('claude-runner persistent streaming loop', () => {
     _setQueryFactory = mod._setQueryFactory;
     submitLiveToolResponse = mod.submitLiveToolResponse;
     respondToPermissionRequest = mod.respondToPermissionRequest;
-    getPermissionRequests = mod.getPermissionRequests;
     refreshSessionSettings = mod.refreshSessionSettings;
     refreshAllSessionSettings = mod.refreshAllSessionSettings;
     deliverAppMessage = mod.deliverAppMessage;
@@ -503,7 +497,10 @@ describe('claude-runner persistent streaming loop', () => {
       const first = ask('t1', 'git push --force');
       const second = ask('t2', 'rm -rf build');
 
-      expect(getPermissionRequests(sessionId).map((r) => r.toolUseId)).toEqual(['t1', 't2']);
+      expect(getLiveSessionState(sessionId).permissionRequests.map((r) => r.toolUseId)).toEqual([
+        't1',
+        't2',
+      ]);
       expect(mockSseEvents.emitPermissionRequests).toHaveBeenLastCalledWith(
         sessionId,
         expect.arrayContaining([expect.objectContaining({ toolUseId: 't2', toolName: 'Bash' })])
@@ -525,7 +522,7 @@ describe('claude-runner persistent streaming loop', () => {
         updatedInput: { command: 'git push --force' },
       });
 
-      expect(getPermissionRequests(sessionId)).toEqual([]);
+      expect(getLiveSessionState(sessionId).permissionRequests).toEqual([]);
       expect(mockSseEvents.emitPermissionRequests).toHaveBeenLastCalledWith(sessionId, []);
       // Already answered: nothing left to resolve.
       expect(await respondToPermissionRequest(sessionId, 't1', { allow: true })).toBe(false);
@@ -540,12 +537,14 @@ describe('claude-runner persistent streaming loop', () => {
 
       controller.abort();
       await expect(aborted).rejects.toThrow();
-      expect(getPermissionRequests(sessionId).map((r) => r.toolUseId)).toEqual(['t2']);
+      expect(getLiveSessionState(sessionId).permissionRequests.map((r) => r.toolUseId)).toEqual([
+        't2',
+      ]);
       expect(await respondToPermissionRequest(sessionId, 't1', { allow: true })).toBe(false);
 
       stopSession(sessionId);
       await expect(orphaned).rejects.toThrow();
-      expect(getPermissionRequests(sessionId)).toEqual([]);
+      expect(getLiveSessionState(sessionId).permissionRequests).toEqual([]);
     });
 
     it('keeps track of a permission mode it applied even when a later live setter fails', async () => {
@@ -600,7 +599,7 @@ describe('claude-runner persistent streaming loop', () => {
       fake.emit(messageStart());
       fake.emit(textBlockStart());
       fake.emit(textDelta('Here is the PR'));
-      await waitFor(() => getActivePartials(sessionId).length > 0);
+      await waitFor(() => getLiveSessionState(sessionId).partials.length > 0);
       expect(await attentionOf(sessionId)).toBeNull();
       expect(mockSseEvents.emitAttention).not.toHaveBeenCalled();
 
@@ -698,9 +697,8 @@ describe('claude-runner persistent streaming loop', () => {
       const { id } = await testPrisma.session.create({
         data: {
           name: 'T',
-          repoPath: 'r',
           status: 'running',
-          repoUrl: 'https://github.com/o/r.git',
+          repoFullName: 'o/r',
         },
       });
 
@@ -728,9 +726,8 @@ describe('claude-runner persistent streaming loop', () => {
       const { id } = await testPrisma.session.create({
         data: {
           name: 'T',
-          repoPath: 'r',
           status: 'running',
-          repoUrl: 'https://github.com/o/r.git',
+          repoFullName: 'o/r',
           currentBranch: 'feat-a',
           pullRequest: storedInfo,
           linkedPullRequest: {
@@ -758,9 +755,8 @@ describe('claude-runner persistent streaming loop', () => {
       const { id } = await testPrisma.session.create({
         data: {
           name: 'T',
-          repoPath: 'r',
           status: 'running',
-          repoUrl: 'https://github.com/o/r.git',
+          repoFullName: 'o/r',
           currentBranch: 'feat-a',
           pullRequest: storedInfo,
           linkedPullRequest: {
@@ -862,7 +858,6 @@ describe('claude-runner persistent streaming loop', () => {
     const orphaned = await testPrisma.session.create({
       data: {
         name: 'Orphan',
-        repoPath: '',
         status: 'running',
         sessionScope: 'clawed-session-orphan-abc123.scope',
       },
@@ -922,7 +917,7 @@ describe('claude-runner persistent streaming loop', () => {
     const sessionId = await createRunningSession();
     await sendUserMessage(sessionId, 'hello');
     const activeText = () =>
-      getActivePartials(sessionId).map((m) => [
+      getLiveSessionState(sessionId).partials.map((m) => [
         m.id,
         (m.content as PartialAssistantMessage).message.content,
       ]);
@@ -933,7 +928,7 @@ describe('claude-runner persistent streaming loop', () => {
     fake.emit(messageStart('task-1'));
     fake.emit(textBlockStart('task-1'));
     fake.emit(textDelta('sub', 'task-1'));
-    await waitFor(() => getActivePartials(sessionId).length === 2);
+    await waitFor(() => getLiveSessionState(sessionId).partials.length === 2);
     expect(activeText()).toEqual([
       [partialMessageId(null), [{ type: 'text', text: 'main' }]],
       [partialMessageId('task-1'), [{ type: 'text', text: 'sub' }]],
@@ -941,12 +936,12 @@ describe('claude-runner persistent streaming loop', () => {
 
     // A complete message supersedes its own stream's partial…
     fake.emit(assistant('sub', 'task-1'));
-    await waitFor(() => getActivePartials(sessionId).length === 1);
+    await waitFor(() => getLiveSessionState(sessionId).partials.length === 1);
     expect(activeText()).toEqual([[partialMessageId(null), [{ type: 'text', text: 'main' }]]]);
 
     // …and the turn's result all of them.
     fake.emit(result());
-    await waitFor(() => getActivePartials(sessionId).length === 0);
+    await waitFor(() => getLiveSessionState(sessionId).partials.length === 0);
 
     stopSession(sessionId);
   });
@@ -998,7 +993,7 @@ describe('claude-runner persistent streaming loop', () => {
 
     await waitFor(() => !isClaudeRunning(sessionId));
     // turnActive is false, but the background task is still tracked.
-    expect(getSessionBackgroundTasks(sessionId).map((t) => t.taskId)).toEqual(['task-1']);
+    expect(getLiveSessionState(sessionId).backgroundTasks.map((t) => t.taskId)).toEqual(['task-1']);
     expect(mockSseEvents.emitBackgroundTasks).toHaveBeenCalledWith(sessionId, [
       expect.objectContaining({ taskId: 'task-1', description: 'background work' }),
     ]);
@@ -1009,7 +1004,7 @@ describe('claude-runner persistent streaming loop', () => {
     fake.emit(assistant('background job done'));
     fake.emit(result());
 
-    await waitFor(() => getSessionBackgroundTasks(sessionId).length === 0);
+    await waitFor(() => getLiveSessionState(sessionId).backgroundTasks.length === 0);
     await waitFor(async () => {
       const types = (await messagesFor(sessionId)).map((m) => m.type);
       // user, assistant, task_started(system), result, task_notification(system), assistant, result
@@ -1031,14 +1026,14 @@ describe('claude-runner persistent streaming loop', () => {
     await sendUserMessage(sessionId, 'start a background job');
     fake.emit(backgroundTasksChanged('task-1'));
     fake.emit(result());
-    await waitFor(() => getSessionBackgroundTasks(sessionId).length === 1);
+    await waitFor(() => getLiveSessionState(sessionId).backgroundTasks.length === 1);
 
     expect(await stopBackgroundTask(sessionId, 'task-1')).toBe(true);
     expect(fake.stopTask).toHaveBeenCalledWith('task-1');
 
     mockSseEvents.emitBackgroundTasks.mockClear();
     fake.emit(backgroundTasksChanged());
-    await waitFor(() => getSessionBackgroundTasks(sessionId).length === 0);
+    await waitFor(() => getLiveSessionState(sessionId).backgroundTasks.length === 0);
     expect(mockSseEvents.emitBackgroundTasks).toHaveBeenCalledWith(sessionId, []);
 
     stopSession(sessionId);
@@ -1066,12 +1061,12 @@ describe('claude-runner persistent streaming loop', () => {
 
     await sendUserMessage(sessionId, 'start a background job');
     fake.emit(backgroundTasksChanged('task-1'));
-    await waitFor(() => getSessionBackgroundTasks(sessionId).length === 1);
+    await waitFor(() => getLiveSessionState(sessionId).backgroundTasks.length === 1);
 
     // The level is per-process and a new CLI sends nothing at startup, so a stale
     // set must not survive into the next process.
     fake.end();
-    await waitFor(() => getSessionBackgroundTasks(sessionId).length === 0);
+    await waitFor(() => getLiveSessionState(sessionId).backgroundTasks.length === 0);
     expect(mockSseEvents.emitBackgroundTasks).toHaveBeenLastCalledWith(sessionId, []);
 
     stopSession(sessionId);
@@ -1610,7 +1605,7 @@ describe('claude-runner persistent streaming loop', () => {
       _setQueryFactory(factory);
       const running = await createRunningSession();
       await testPrisma.session.create({
-        data: { name: 'Stopped', repoPath: '', status: 'stopped' },
+        data: { name: 'Stopped', status: 'stopped' },
       });
 
       await reviveRunningSessions();
@@ -1636,7 +1631,7 @@ describe('claude-runner persistent streaming loop', () => {
         fake.emit(messageStart());
         fake.emit(assistant('working on it'));
         await waitFor(async () => (await messagesFor(sessionId)).length >= 2);
-        expect(getPendingMessageIds(sessionId)).toEqual([]);
+        expect(getLiveSessionState(sessionId).pendingMessageIds).toEqual([]);
 
         await stopAllSessions();
         _resetShutdown();
@@ -1675,7 +1670,7 @@ describe('claude-runner persistent streaming loop', () => {
         const sessionId = await createRunningSession();
         await reviveSession(sessionId);
         fake.emit(backgroundTasksChanged('task-1'));
-        await waitFor(() => getSessionBackgroundTasks(sessionId).length === 1);
+        await waitFor(() => getLiveSessionState(sessionId).backgroundTasks.length === 1);
 
         await stopAllSessions();
         expect(await restartNoticeOf(sessionId)).toContain('background work');
@@ -1747,7 +1742,7 @@ describe('claude-runner persistent streaming loop', () => {
     const commandUuid = fake.inputs[0].uuid!;
 
     // Pending from the moment we push: the bubble exists but the agent hasn't read it.
-    const [messageId] = getPendingMessageIds(sessionId);
+    const [messageId] = getLiveSessionState(sessionId).pendingMessageIds;
     expect(messageId).toBeDefined();
     expect(mockSseEvents.emitPendingMessages).toHaveBeenLastCalledWith(sessionId, [messageId]);
     const [persisted] = (await messagesFor(sessionId)).filter((m) => m.type === 'user');
@@ -1757,11 +1752,11 @@ describe('claude-runner persistent streaming loop', () => {
     fake.emit(commandLifecycle(commandUuid, 'queued'));
     fake.emit(messageStart());
     await waitFor(() => isClaudeRunning(sessionId));
-    expect(getPendingMessageIds(sessionId)).toEqual([messageId]);
+    expect(getLiveSessionState(sessionId).pendingMessageIds).toEqual([messageId]);
 
     // `started` means the agent is reading it now.
     fake.emit(commandLifecycle(commandUuid, 'started'));
-    await waitFor(() => getPendingMessageIds(sessionId).length === 0);
+    await waitFor(() => getLiveSessionState(sessionId).pendingMessageIds.length === 0);
     expect(mockSseEvents.emitPendingMessages).toHaveBeenLastCalledWith(sessionId, []);
 
     fake.emit(commandLifecycle(commandUuid, 'completed'));
@@ -1823,7 +1818,7 @@ describe('claude-runner persistent streaming loop', () => {
 
     await sendUserMessage(sessionId, 'never read');
     await waitFor(() => fake.inputs.length >= 2);
-    const [pendingId] = getPendingMessageIds(sessionId);
+    const [pendingId] = getLiveSessionState(sessionId).pendingMessageIds;
 
     // Stop means stop: the SDK would otherwise run the still-queued message as
     // its own turn the instant the interrupt lands.
@@ -1833,7 +1828,7 @@ describe('claude-runner persistent streaming loop', () => {
     expect(fake.cancelAsyncMessage).toHaveBeenCalledWith(fake.inputs[1].uuid);
 
     // Its bubble describes something that never happened, so it is deleted.
-    expect(getPendingMessageIds(sessionId)).toEqual([]);
+    expect(getLiveSessionState(sessionId).pendingMessageIds).toEqual([]);
     expect(mockSseEvents.emitMessageRemoved).toHaveBeenCalledWith(sessionId, pendingId);
     const userMsgs = (await messagesFor(sessionId)).filter((m) => m.type === 'user');
     expect(userMsgs.map((m) => m.id)).not.toContain(pendingId);
@@ -1850,11 +1845,11 @@ describe('claude-runner persistent streaming loop', () => {
     const sessionId = await createRunningSession();
 
     await sendUserMessage(sessionId, 'in flight');
-    await waitFor(() => getPendingMessageIds(sessionId).length === 1);
+    await waitFor(() => getLiveSessionState(sessionId).pendingMessageIds.length === 1);
 
     // A delivery in flight dies with the query; the marker must not hang forever.
     stopSession(sessionId);
-    await waitFor(() => getPendingMessageIds(sessionId).length === 0);
+    await waitFor(() => getLiveSessionState(sessionId).pendingMessageIds.length === 0);
     expect(mockSseEvents.emitPendingMessages).toHaveBeenLastCalledWith(sessionId, []);
     expect(isClaudeRunning(sessionId)).toBe(false);
   });
@@ -1887,7 +1882,7 @@ describe('claude-runner persistent streaming loop', () => {
     // and the session is idle rather than pinned "working".
     const userMsgs = (await messagesFor(sessionId)).filter((m) => m.type === 'user');
     expect(userMsgs.map((m) => JSON.parse(m.content as string).content)).toEqual(['first']);
-    expect(getPendingMessageIds(sessionId)).toEqual([]);
+    expect(getLiveSessionState(sessionId).pendingMessageIds).toEqual([]);
     expect(isClaudeRunning(sessionId)).toBe(false);
   });
 
@@ -1907,7 +1902,7 @@ describe('claude-runner persistent streaming loop', () => {
 
     // A second send whose lifecycle report never arrives.
     await sendUserMessage(sessionId, 'never reported');
-    await waitFor(() => getPendingMessageIds(sessionId).length === 1);
+    await waitFor(() => getLiveSessionState(sessionId).pendingMessageIds.length === 1);
 
     // One boundary: still held (this is the legitimate cross-turn-gap case).
     fake.emit(messageDelta('end_turn'));
@@ -1919,7 +1914,7 @@ describe('claude-runner persistent streaming loop', () => {
     fake.emit(messageDelta('end_turn'));
     fake.emit(result());
     await waitFor(() => !isClaudeRunning(sessionId));
-    expect(getPendingMessageIds(sessionId)).toEqual([]);
+    expect(getLiveSessionState(sessionId).pendingMessageIds).toEqual([]);
 
     stopSession(sessionId);
   });
@@ -1997,7 +1992,7 @@ describe('claude-runner persistent streaming loop', () => {
     await waitFor(() => fake.inputs.length >= 2);
     fake.cancelAsyncMessage.mockImplementationOnce(async (uuid: string) => {
       fake.emit(commandLifecycle(uuid, 'cancelled'));
-      await waitFor(() => getPendingMessageIds(sessionId).length === 0);
+      await waitFor(() => getLiveSessionState(sessionId).pendingMessageIds.length === 0);
       return true;
     });
 
@@ -2026,7 +2021,7 @@ describe('claude-runner persistent streaming loop', () => {
 
     await sendUserMessage(sessionId, 'read, not answered');
     await fake.deliver();
-    await waitFor(() => getPendingMessageIds(sessionId).length === 0);
+    await waitFor(() => getLiveSessionState(sessionId).pendingMessageIds.length === 0);
     expect(isClaudeRunning(sessionId)).toBe(true);
 
     const { interrupted, cancelled } = await interruptClaude(sessionId);
@@ -2152,7 +2147,7 @@ describe('claude-runner persistent streaming loop', () => {
         uuid: nextUuid(),
       } as unknown as SDKMessage);
       fakes[0].emit(result());
-      await waitFor(() => getSessionBackgroundTasks(sessionId).length === 1);
+      await waitFor(() => getLiveSessionState(sessionId).backgroundTasks.length === 1);
       await waitFor(() => !isClaudeRunning(sessionId));
 
       mockLoadSettings.mockResolvedValue({ ...baseSettings, claudeModel: ASTRA });
@@ -2160,7 +2155,7 @@ describe('claude-runner persistent streaming loop', () => {
       expect(fakes).toHaveLength(1);
 
       fakes[0].emit(backgroundTasksChanged());
-      await waitFor(() => getSessionBackgroundTasks(sessionId).length === 0);
+      await waitFor(() => getLiveSessionState(sessionId).backgroundTasks.length === 0);
       await refreshSessionSettings(sessionId);
       expect(fakes).toHaveLength(2);
 
@@ -2479,7 +2474,7 @@ describe('claude-runner persistent streaming loop', () => {
     expect(result).toBeInstanceOf(Error);
     expect(factoryCalls).toBe(0); // no query was ever created
     expect(isClaudeRunning(sessionId)).toBe(false);
-    expect(getSessionBackgroundTasks(sessionId)).toEqual([]);
+    expect(getLiveSessionState(sessionId).backgroundTasks).toEqual([]);
   });
 
   it('assigns unique contiguous sequences under concurrent inserts (no collision)', async () => {

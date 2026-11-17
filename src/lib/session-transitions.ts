@@ -16,11 +16,11 @@ export type SessionTransition =
  * this set in the same statement (never read-check-then-write), so a concurrent
  * archive can't be overwritten by a stop, start, or a setup that finishes late.
  *
- * `error` means setup failed: there is no workspace or `repoPath`, so the only
+ * `error` means setup failed: there is no workspace, so the only
  * way out is archive — starting it (directly, or via stop → start) would run
  * an agent with nothing to work in. Stop is not allowed from `creating` for the
  * same reason: setup would mark the session running once the clone finishes
- * anyway, and a stop that won would strand a session with no `repoPath`.
+ * anyway, and a stop that won would strand a session with no workspace.
  */
 export const ALLOWED_FROM: Record<SessionTransition, readonly SessionStatus[]> = {
   setupProgress: ['creating'],

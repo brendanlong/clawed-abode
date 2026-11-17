@@ -91,9 +91,7 @@ export function childScopePattern(sessionScope: string): string {
  * the app's own start-time probe — including an older systemd that rejects one
  * of the properties.
  *
- * `OOMPolicy=continue` matters once the slice's memory cap is hit: systemd's
- * default (`stop`) would tear down the OOM victim's whole scope, ending the
- * session instead of just the killed process.
+ * Why `OOMPolicy=continue`: "Process Reaping" in doc/claude-sessions.md.
  */
 export const SESSION_SCOPE_LAUNCHER = `#!/bin/bash
 args=(--user --scope --collect --quiet -p TimeoutStopSec=10 -p OOMPolicy=continue)

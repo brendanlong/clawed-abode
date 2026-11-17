@@ -3,7 +3,6 @@
 import Link from 'next/link';
 import { BellRing } from 'lucide-react';
 import { trpc } from '@/lib/trpc';
-import { extractRepoFullName } from '@/lib/utils';
 import { deriveSessionDisplayStatus } from '@/lib/session-display-status';
 import { SessionStatusIcon } from '@/components/SessionStatusIcon';
 import { SessionActionButton } from '@/components/SessionActionButton';
@@ -21,7 +20,7 @@ interface SessionListItemProps {
  * Each instance tracks its own pending start/stop/archive independently.
  */
 export function SessionListItem({ session }: SessionListItemProps) {
-  const repoName = session.repoUrl ? extractRepoFullName(session.repoUrl) : null;
+  const repoName = session.repoFullName;
 
   const actions = useSessionActions(session.id);
   const starMutation = trpc.sessions.setStarred.useMutation(actions.handlersFor('star session'));

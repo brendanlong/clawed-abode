@@ -33,6 +33,7 @@ import {
   type InFlightCommand,
   type LiveEvent,
   type LiveOutcome,
+  type PushedPrompt,
 } from '@/lib/live-turn';
 import { oomKillNotice, restartNotice } from '@/lib/restart-notice';
 import { parseRateLimitEvent } from '@/lib/rate-limit';
@@ -41,7 +42,6 @@ import { backgroundActive, type BackgroundTask } from '@/lib/session-status';
 import { createPushable } from '@/lib/pushable';
 import type { ToolResponse } from '@/lib/tool-response';
 import type { CancelledPrompt } from '@/lib/cancelled-prompt';
-import { extractRepoFullName } from '@/lib/utils';
 import { isDefaultSessionName } from '@/lib/session-name';
 import type { PermissionRequest } from '@/lib/permission-request';
 import { createLogger, toError } from '@/lib/logger';
@@ -63,13 +63,12 @@ import {
   createErrorMessage,
   bumpSessionActivity,
   insertMessage,
-  insertPreparedMessage,
-  prepareUserMessage,
+  insertUserMessage,
   removeMessages,
   type ParsedMessage,
 } from './message-store';
 import { cancelUnstartedCommands, discardUnreadPrompts } from './in-flight-commands';
-import { emitQueuedPrompts, enqueuePrompts, type PromptPayload } from './prompt-queue';
+import { enqueuePrompts } from './prompt-queue';
 import { recordRateLimitReadings, resolveSessionHold } from './rate-limit-state';
 import { currentHold, withdrawQueuedWork, type PauseRunner } from './rate-limit-pause';
 import {
@@ -403,10 +402,9 @@ async function establishSessionQuery(
     select: {
       status: true,
       name: true,
-      repoUrl: true,
+      repoFullName: true,
       branch: true,
       sessionToolsEnabled: true,
-      repoPath: true,
       claudeModel: true,
       claudeSessionId: true,
     },
@@ -420,10 +418,8 @@ async function establishSessionQuery(
     throw new Error(`Session is ${session.status}`);
   }
 
-  const repoFullName = session.repoUrl ? extractRepoFullName(session.repoUrl) : null;
-  const settingsKey = repoFullName ?? '__no_repo__';
-  const settings = await loadMergedSessionSettings(sessionId, settingsKey, session);
-  const workingDir = getSessionWorkingDir(sessionId, session.repoPath);
+  const settings = await loadMergedSessionSettings(sessionId, session);
+  const workingDir = getSessionWorkingDir(sessionId, session.repoFullName);
 
   // Only a conversation the CLI announced has a transcript to resume; app-side
   // messages alone (a rate-limit-queued first prompt, an error from a query that
@@ -482,7 +478,6 @@ async function establishSessionQuery(
     // A fresh CLI holds none.
     appliedDenyRules: [],
     builtinMcpServer,
-    settingsKey,
     claudeSessionId: null,
     pendingInputs: new Map(),
     pendingAttention: null,
@@ -605,9 +600,9 @@ async function applyLiveSettingsNow(sessionId: string, state: SessionState): Pro
     // Re-read the per-session overrides too, so changing them applies live.
     const session = await prisma.session.findUniqueOrThrow({
       where: { id: sessionId },
-      select: { claudeModel: true, sessionToolsEnabled: true },
+      select: { repoFullName: true, claudeModel: true, sessionToolsEnabled: true },
     });
-    settings = await loadMergedSessionSettings(sessionId, live.settingsKey, session);
+    settings = await loadMergedSessionSettings(sessionId, session);
   } catch (err) {
     log.warn('applyLiveSettings: failed to load settings', {
       sessionId,
@@ -676,7 +671,7 @@ async function applyLiveSettingsNow(sessionId: string, state: SessionState): Pro
  * `command_lifecycle`; until then it is in flight, marked undelivered in the
  * transcript and cancellable by Stop.
  */
-function pushPreparedPrompt(sessionId: string, state: SessionState, prompt: PromptPayload): void {
+function pushPreparedPrompt(sessionId: string, state: SessionState, prompt: PushedPrompt): void {
   const live = state.live;
   if (!live || live.input.closed) throw new Error('Session query is not available');
 
@@ -685,12 +680,7 @@ function pushPreparedPrompt(sessionId: string, state: SessionState, prompt: Prom
   dispatch(sessionId, state, {
     type: 'pushed',
     commandUuid,
-    prompt: {
-      messageId: prompt.messageId,
-      text: prompt.text,
-      attachments: prompt.attachments,
-      content: prompt.content,
-    },
+    prompt,
   });
 
   live.input.push({
@@ -727,14 +717,10 @@ export async function sendUserMessage(
   }
   if (userInitiated) await bumpSessionActivity(sessionId);
 
-  // Sanitize/resolve up front (no side effects) so a failure aborts cleanly before
-  // anything is persisted and the client keeps the just-typed text to retry.
-  const prepared = await prepareUserMessage(sessionId, prompt, attachments);
-
-  const messageId = uuid();
-  await insertPreparedMessage(sessionId, messageId, prepared);
-
-  const pushable = { messageId, content: prepared.content, text: prompt, attachments };
+  // A failure before the insert leaves nothing persisted, so the client keeps the
+  // just-typed text to retry.
+  const { messageId, content } = await insertUserMessage(sessionId, prompt, attachments);
+  const pushable = { messageId, content, text: prompt, attachments };
 
   // A hold can land during the awaits above, after the check at the top. Re-read
   // it here — synchronously, from the last recompute — because this is the same
@@ -744,7 +730,6 @@ export async function sendUserMessage(
   const queuedBehind = hold ?? currentHold(sessionId);
   if (!state || queuedBehind) {
     await enqueuePrompts(sessionId, [pushable]);
-    await emitQueuedPrompts(sessionId);
     log.info('Queued prompt behind rate-limit pause', { sessionId, hold: queuedBehind });
     return;
   }
@@ -839,15 +824,40 @@ export const watchRunner: PullRequestWatchPort = {
   deliverMessage: deliverAppMessage,
 };
 
-/** The in-progress assistant messages' latest partials (seeds the client). */
-export function getActivePartials(sessionId: string): ParsedMessage[] {
-  return [...(sessions.get(sessionId)?.live?.partials.values() ?? [])];
+/** A session's in-memory live state (lost on restart); see {@link getLiveSessionState}. */
+export interface RunnerLiveState {
+  /** Whether the main agent's turn is active (same as {@link isClaudeRunning}). */
+  running: boolean;
+  /** The in-progress assistant messages' latest partials. */
+  partials: ParsedMessage[];
+  /** Transcript ids of not-yet-delivered messages. */
+  pendingMessageIds: string[];
+  /** Permission requests waiting for the user. */
+  permissionRequests: PermissionRequest[];
+  /** Current API-retry status, or null. */
+  retry: RetryState | null;
+  /** Running background tasks. */
+  backgroundTasks: BackgroundTask[];
+  /**
+   * Whether a background task with a knowable end state is running. Independent
+   * of {@link isClaudeRunning}; see `taskHasEndState`.
+   */
+  backgroundActive: boolean;
 }
 
-/** Transcript ids of a session's not-yet-delivered messages (seeds the client). */
-export function getPendingMessageIds(sessionId: string): string[] {
+/** A session's live state, for seeding clients and the session list. */
+export function getLiveSessionState(sessionId: string): RunnerLiveState {
   const state = sessions.get(sessionId);
-  return state ? liveView(state.turn).pendingMessageIds : [];
+  const live = state?.live ?? null;
+  return {
+    running: state ? isRunning(state.turn) : false,
+    partials: [...(live?.partials.values() ?? [])],
+    pendingMessageIds: state ? liveView(state.turn).pendingMessageIds : [],
+    permissionRequests: permissionRequestsOf(live),
+    retry: state?.turn.status.retry ?? null,
+    backgroundTasks: state ? [...state.turn.status.backgroundTasks.values()] : [],
+    backgroundActive: state ? backgroundActive(state.turn.status) : false,
+  };
 }
 
 /**
@@ -893,22 +903,6 @@ export function respondToPermissionRequest(
 ): Promise<boolean> {
   const live = sessions.get(sessionId)?.live ?? null;
   return answerUserInput(sessionId, live, toolUseId, { kind: 'permission', ...decision });
-}
-
-/** Permission requests waiting for the user. In-memory only. */
-export function getPermissionRequests(sessionId: string): PermissionRequest[] {
-  return permissionRequestsOf(sessions.get(sessionId)?.live ?? null);
-}
-
-/** Current API-retry status for a session, or null. In-memory only. */
-export function getSessionRetry(sessionId: string): RetryState | null {
-  return sessions.get(sessionId)?.turn.status.retry ?? null;
-}
-
-/** Current running background tasks for a session. In-memory only. */
-export function getSessionBackgroundTasks(sessionId: string): BackgroundTask[] {
-  const state = sessions.get(sessionId);
-  return state ? [...state.turn.status.backgroundTasks.values()] : [];
 }
 
 export interface InterruptResult {
@@ -1071,15 +1065,6 @@ export async function refreshAllSessionSettings(): Promise<void> {
 }
 
 /**
- * Whether a background task with a knowable end state is running (in-memory).
- * Independent of {@link isClaudeRunning}; see `taskHasEndState`.
- */
-export function isSessionBackgroundActive(sessionId: string): boolean {
-  const state = sessions.get(sessionId);
-  return state ? backgroundActive(state.turn.status) : false;
-}
-
-/**
  * Stop a session's query and clear in-memory state. The in-memory
  * teardown is synchronous; the returned promise resolves once the session's
  * scope (and every process in it) is gone.
@@ -1115,10 +1100,10 @@ export async function reviveSession(sessionId: string): Promise<void> {
   try {
     const session = await prisma.session.findUnique({
       where: { id: sessionId },
-      select: { status: true, repoPath: true, restartNotice: true },
+      select: { status: true, repoFullName: true, restartNotice: true },
     });
     if (session?.status !== 'running' || currentHold(sessionId) || shutdown.started) return;
-    const workingDir = getSessionWorkingDir(sessionId, session.repoPath);
+    const workingDir = getSessionWorkingDir(sessionId, session.repoFullName);
     if (!(await pathExists(workingDir))) {
       log.warn('Not reviving session with no workspace', { sessionId, workingDir });
       return;

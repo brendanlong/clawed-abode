@@ -117,7 +117,7 @@ describe('isPrSnapshotStale', () => {
   const candidate = (overrides: Partial<PrRefreshCandidate> = {}): PrRefreshCandidate => ({
     id: 's1',
     status: 'running',
-    repoUrl: 'https://github.com/o/r.git',
+    repoFullName: 'o/r',
     currentBranch: 'feature',
     pullRequest: pr,
     prCheckedAt: fresh,
@@ -164,7 +164,7 @@ describe('isPrSnapshotStale', () => {
   });
 
   it('skips sessions with nothing to look up', () => {
-    expect(isPrSnapshotStale(candidate({ repoUrl: null, prCheckedAt: old }), now)).toBe(false);
+    expect(isPrSnapshotStale(candidate({ repoFullName: null, prCheckedAt: old }), now)).toBe(false);
     expect(isPrSnapshotStale(candidate({ currentBranch: null, prCheckedAt: old }), now)).toBe(
       false
     );

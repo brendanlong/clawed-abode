@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+import { randomUUID } from 'crypto';
 import { setupTestDb, teardownTestDb, testPrisma, clearTestDb } from '@/test/setup-test-db';
+import { NO_REPO_SENTINEL } from '@/lib/repo-full-name';
 
 vi.mock('@/lib/logger', async () => (await import('@/test/mock-logger')).mockLoggerModule());
 
@@ -9,6 +11,9 @@ let router: Awaited<typeof import('../trpc')>['router'];
 let loadResolvedRepoSettings: Awaited<
   typeof import('../services/settings-merger')
 >['loadResolvedRepoSettings'];
+let loadMergedSessionSettings: Awaited<
+  typeof import('../services/settings-merger')
+>['loadMergedSessionSettings'];
 
 const createCaller = () => {
   const testRouter = router({
@@ -29,8 +34,8 @@ describe('repoSettings router', () => {
     const trpcModule = await import('../trpc');
     repoSettingsRouter = repoSettingsModule.repoSettingsRouter;
     router = trpcModule.router;
-    loadResolvedRepoSettings = (await import('../services/settings-merger'))
-      .loadResolvedRepoSettings;
+    ({ loadResolvedRepoSettings, loadMergedSessionSettings } =
+      await import('../services/settings-merger'));
   });
 
   afterAll(async () => {
@@ -321,6 +326,27 @@ describe('repoSettings router', () => {
 
       const result = await loadResolvedRepoSettings(testRepoName);
       expect(result?.customSystemPrompt).toBe(customPrompt);
+    });
+
+    it('applies the No Repository settings to a no-repo session', async () => {
+      const caller = createCaller();
+      const customPrompt = 'Prompt for sessions without a repo';
+      await caller.repoSettings.update({
+        repoFullName: NO_REPO_SENTINEL,
+        customSystemPrompt: customPrompt,
+      });
+
+      const overrides = { claudeModel: null, sessionToolsEnabled: false };
+      const noRepo = await loadMergedSessionSettings(randomUUID(), {
+        ...overrides,
+        repoFullName: null,
+      });
+      expect(noRepo.systemPrompt).toContain(customPrompt);
+      const withRepo = await loadMergedSessionSettings(randomUUID(), {
+        ...overrides,
+        repoFullName: testRepoName,
+      });
+      expect(withRepo.systemPrompt).not.toContain(customPrompt);
     });
   });
 });

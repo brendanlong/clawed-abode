@@ -3,7 +3,7 @@ import { router, protectedProcedure, sessionProcedure } from '../trpc';
 import { prisma } from '@/lib/prisma';
 import { getSessionWorkspacePath } from '../services/worktree-manager';
 import { buildEditorUrl } from '@/lib/editor-url';
-import { isClaudeRunning, isSessionBackgroundActive } from '../services/claude-runner';
+import { getLiveSessionState } from '../services/claude-runner';
 import { currentHold, recomputeRateLimitHolds } from '../services/rate-limit-pause';
 import {
   archiveSession,
@@ -32,7 +32,7 @@ import { getWorkspaceDiskUsage } from '../services/disk-usage';
 const sessionListSelect = {
   id: true,
   name: true,
-  repoUrl: true,
+  repoFullName: true,
   branch: true,
   status: true,
   statusMessage: true,
@@ -86,7 +86,7 @@ export const sessionsRouter = router({
               ? {
                   OR: [
                     { name: { contains: input.search } },
-                    { repoUrl: { contains: input.search } },
+                    { repoFullName: { contains: input.search } },
                     { currentBranch: { contains: input.search } },
                   ],
                 }
@@ -102,12 +102,15 @@ export const sessionsRouter = router({
       // Attach the live status axes (in-memory lookups, no extra query) so the
       // list can distinguish "running" (main agent generating) from "background"
       // (only a subagent/background task running) from "waiting" (fully idle).
-      const sessions = items.map((session) => ({
-        ...toSessionView(session),
-        turnActive: isClaudeRunning(session.id),
-        backgroundActive: isSessionBackgroundActive(session.id),
-        rateLimitPaused: currentHold(session.id) !== null,
-      }));
+      const sessions = items.map((session) => {
+        const live = getLiveSessionState(session.id);
+        return {
+          ...toSessionView(session),
+          turnActive: live.running,
+          backgroundActive: live.backgroundActive,
+          rateLimitPaused: currentHold(session.id) !== null,
+        };
+      });
 
       refreshStalePullRequests(items);
 

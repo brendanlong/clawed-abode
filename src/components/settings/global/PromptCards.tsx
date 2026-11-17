@@ -5,13 +5,9 @@ import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { trpc } from '@/lib/trpc';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { SettingsCard } from '../shared/SettingsCard';
-import {
-  useInvalidateGlobalSettings,
-  useUpdateGlobalSettings,
-} from '../shared/useUpdateGlobalSettings';
+import { useUpdateGlobalSettings } from '../shared/useUpdateGlobalSettings';
 import { EditableTextSetting } from '../shared/EditableTextSetting';
 
 export function SystemPromptOverrideCard({
@@ -23,10 +19,7 @@ export function SystemPromptOverrideCard({
   overrideEnabled: boolean;
   defaultPrompt: string;
 }) {
-  const invalidateGlobalSettings = useInvalidateGlobalSettings();
-  const saveMutation = trpc.globalSettings.setSystemPromptOverride.useMutation({
-    onSuccess: invalidateGlobalSettings,
-  });
+  const saveMutation = useUpdateGlobalSettings();
   const toggleMutation = useUpdateGlobalSettings();
 
   return (

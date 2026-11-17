@@ -7,11 +7,9 @@ export type SessionStatus = z.infer<typeof sessionStatusSchema>;
 /**
  * Status label shown for a session in the session list and header.
  *
- * A DB status of `running` only means the session is live (workspace exists,
- * query available). Whether Claude is actually busy is two independent live axes
- * (see `session-status.ts`): `turnActive` (the main agent is mid-turn) and
- * background tasks (subagents / Monitor / backgrounded Bash that outlive a turn).
- * A live `running` session splits into:
+ * A DB status of `running` only means the session is live; whether Claude is busy
+ * is the two live axes of doc/claude-sessions.md "Two-Axis Status". A live
+ * `running` session splits into:
  *
  *   - `running`    — the main agent is mid-turn generating (regardless of any
  *                    background tasks)
@@ -21,8 +19,8 @@ export type SessionStatus = z.infer<typeof sessionStatusSchema>;
  *                    resumes on its own when the window resets
  *   - `waiting`    — the session is live and fully idle, waiting for user input
  *
- * A rate-limit pause ranks below the two busy axes: it never interrupts a turn,
- * so a session finishing one under a pause still reads as busy.
+ * A rate-limit pause ranks below the two busy axes: the pause interrupts the live
+ * turn, and the session reads as busy until that turn has actually ended.
  *
  * All other stored statuses pass through unchanged.
  */

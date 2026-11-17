@@ -25,7 +25,7 @@ vi.mock('@/lib/trpc', () => ({
 
 function session(overrides: Partial<Session> & Pick<Session, 'id' | 'name'>): Session {
   return {
-    repoUrl: 'https://github.com/user/repo.git',
+    repoFullName: 'user/repo',
     branch: 'main',
     status: 'running',
     canStart: false,

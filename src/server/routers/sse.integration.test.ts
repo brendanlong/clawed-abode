@@ -14,7 +14,7 @@ import { applySessionStateEvent, type SessionStreamState } from '@/lib/session-s
 import { formatResumeToken } from '@/lib/sse-resume';
 import { buildTokenUsageStats, EMPTY_SESSION_USAGE_TOTALS } from '@/lib/token-estimation';
 import type { ParsedMessage } from '../services/message-store';
-import type { BackgroundTask } from '@/lib/session-status';
+import type { RunnerLiveState } from '../services/claude-runner';
 import type { SessionStreamOutput } from './sse';
 
 const mockRefreshStalePullRequests = vi.hoisted(() => vi.fn());
@@ -23,12 +23,22 @@ vi.mock('../services/session-branch-pr', () => ({
 }));
 
 // The runner holds partials only for a live SDK query, which these tests don't run.
-const mockGetActivePartials = vi.hoisted(() => vi.fn((): ParsedMessage[] => []));
-const mockGetSessionBackgroundTasks = vi.hoisted(() => vi.fn((): BackgroundTask[] => []));
+const { liveState, mockGetLiveSessionState } = vi.hoisted(() => {
+  const liveState = (overrides: Partial<RunnerLiveState> = {}): RunnerLiveState => ({
+    running: false,
+    partials: [],
+    pendingMessageIds: [],
+    permissionRequests: [],
+    retry: null,
+    backgroundTasks: [],
+    backgroundActive: false,
+    ...overrides,
+  });
+  return { liveState, mockGetLiveSessionState: vi.fn(liveState) };
+});
 vi.mock('../services/claude-runner', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../services/claude-runner')>()),
-  getActivePartials: mockGetActivePartials,
-  getSessionBackgroundTasks: mockGetSessionBackgroundTasks,
+  getLiveSessionState: mockGetLiveSessionState,
 }));
 
 let sseRouter: typeof import('./sse').sseRouter;
@@ -77,7 +87,7 @@ describe('sse.onSessionEvents', () => {
   beforeEach(async () => {
     await clearTestDb();
     vi.clearAllMocks();
-    mockGetSessionBackgroundTasks.mockReturnValue([]);
+    mockGetLiveSessionState.mockImplementation(() => liveState());
   });
 
   async function open(sessionId: string, lastEventId?: string) {
@@ -306,9 +316,13 @@ describe('sse.onSessionEvents', () => {
     // Settled (or never background): just the newest page.
     expect((await snapshotIds()).ids).not.toContain('spawn');
 
-    mockGetSessionBackgroundTasks.mockReturnValue([
-      { taskId: 'task-a', taskType: 'local_agent', description: 'a', ambient: false },
-    ]);
+    mockGetLiveSessionState.mockImplementation(() =>
+      liveState({
+        backgroundTasks: [
+          { taskId: 'task-a', taskType: 'local_agent', description: 'a', ambient: false },
+        ],
+      })
+    );
     const { ids, after } = await snapshotIds();
     expect(after).toBe(0);
     expect(ids.slice(0, 2)).toEqual(['spawn', 'started']);
@@ -469,7 +483,9 @@ describe('sse.onSessionEvents', () => {
       createdAt: new Date(),
     });
     client.history = mergeMessageIntoCache(client.history, partialAt('Hel'));
-    mockGetActivePartials.mockReturnValueOnce([partialAt('Hello there')]);
+    mockGetLiveSessionState.mockReturnValueOnce(
+      liveState({ partials: [partialAt('Hello there')] })
+    );
 
     const resumed = await open(session.id, token);
     apply(client, (await resumed.next()).event);

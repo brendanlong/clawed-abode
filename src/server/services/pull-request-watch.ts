@@ -12,7 +12,6 @@ import { prisma } from '@/lib/prisma';
 import { coalesce } from '@/lib/coalesce';
 import { processSingleton } from '@/lib/process-singleton';
 import { createLogger, toError } from '@/lib/logger';
-import { extractRepoFullName } from '@/lib/utils';
 import { parsePullRequestJson, pullRequestRepoKey, type PullRequestInfo } from '@/lib/pull-request';
 import {
   formatWatchMessage,
@@ -491,12 +490,12 @@ export async function findOwnPullRequest(
 ): Promise<{ repoFullName: string; number: number }> {
   const session = await prisma.session.findUnique({
     where: { id: sessionId },
-    select: { repoUrl: true, currentBranch: true },
+    select: { repoFullName: true, currentBranch: true },
   });
-  if (!session?.repoUrl || !session.currentBranch) {
+  if (!session?.repoFullName || !session.currentBranch) {
     throw new Error('This session has no repository branch; pass repo and number');
   }
-  const repoFullName = extractRepoFullName(session.repoUrl);
+  const { repoFullName } = session;
   const pr = await fetchPullRequestForBranch(repoFullName, session.currentBranch);
   if (pr === undefined) {
     throw new Error(`Couldn't look up the PR for branch ${session.currentBranch}; pass number`);
