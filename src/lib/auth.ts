@@ -18,6 +18,21 @@ export function effectiveExpiry(session: { lastActivityAt: Date; expiresAt: Date
   return idleExpiresAt < session.expiresAt ? idleExpiresAt : session.expiresAt;
 }
 
+export type AuthSessionState = 'active' | 'revoked' | 'idle' | 'expired';
+
+/**
+ * Whether an auth session is still accepted at `now`, and if not, why: revoked,
+ * timed out from inactivity (`idle`), or past its absolute `expiresAt`.
+ */
+export function authSessionState(
+  session: { lastActivityAt: Date; expiresAt: Date; revokedAt: Date | null },
+  now: Date
+): AuthSessionState {
+  if (session.revokedAt) return 'revoked';
+  if (effectiveExpiry(session) > now) return 'active';
+  return session.expiresAt > now ? 'idle' : 'expired';
+}
+
 /**
  * `effectiveExpiry` as a query filter: sessions that are neither revoked nor past
  * it at `now`. For conditional writes that must check liveness in the same statement.

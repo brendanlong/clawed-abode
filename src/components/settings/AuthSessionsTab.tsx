@@ -17,28 +17,15 @@ export function AuthSessionsTab() {
     {},
     { getNextPageParam: (lastPage) => lastPage.nextCursor }
   );
-  const { isLoading, refetch, hasNextPage, isFetchingNextPage, fetchNextPage } = query;
+  const { isLoading, hasNextPage, isFetchingNextPage, fetchNextPage } = query;
   const sessions = query.data?.pages.flatMap((page) => page.sessions) ?? [];
-
-  const deleteMutation = trpc.auth.deleteSession.useMutation({
-    onSuccess: () => {
-      refetch();
-    },
-  });
-
-  const handleRevokeSession = async (sessionId: string) => {
-    await deleteMutation.mutateAsync({ sessionId });
-  };
 
   if (isLoading) {
     return <CenteredSpinner />;
   }
 
-  const now = new Date();
-  const isSessionActive = (s: (typeof sessions)[number]) =>
-    !s.revokedAt && new Date(s.effectiveExpiresAt) > now;
-  const activeSessions = sessions.filter(isSessionActive);
-  const inactiveSessions = sessions.filter((s) => !isSessionActive(s));
+  const activeSessions = sessions.filter((s) => s.state === 'active');
+  const inactiveSessions = sessions.filter((s) => s.state !== 'active');
 
   return (
     <div className="space-y-4">
@@ -50,11 +37,7 @@ export function AuthSessionsTab() {
           {activeSessions.length > 0 ? (
             <ul className="divide-y divide-border">
               {activeSessions.map((session) => (
-                <AuthSessionListItem
-                  key={session.id}
-                  session={session}
-                  onRevoke={handleRevokeSession}
-                />
+                <AuthSessionListItem key={session.id} session={session} />
               ))}
             </ul>
           ) : (
@@ -91,11 +74,7 @@ export function AuthSessionsTab() {
           <CardContent className="p-0">
             <ul className="divide-y divide-border">
               {inactiveSessions.map((session) => (
-                <AuthSessionListItem
-                  key={session.id}
-                  session={session}
-                  onRevoke={handleRevokeSession}
-                />
+                <AuthSessionListItem key={session.id} session={session} />
               ))}
             </ul>
           </CardContent>

@@ -5,6 +5,7 @@ import {
   verifyPassword,
   loginSchema,
   effectiveExpiry,
+  authSessionState,
   SESSION_DURATION_MS,
   authScopeSchema,
 } from '@/lib/auth';
@@ -134,12 +135,14 @@ export const authRouter = router({
       take: page.take,
     });
     const { items, nextCursor } = page.slice(rows);
+    const now = new Date();
 
     return {
       sessions: items.map((s) => ({
         ...s,
         scope: authScopeSchema.parse(s.scope),
         effectiveExpiresAt: effectiveExpiry(s),
+        state: authSessionState(s, now),
         isCurrent: s.id === ctx.sessionId,
       })),
       nextCursor,
