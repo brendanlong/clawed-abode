@@ -16,7 +16,7 @@ import { loadGlobalSettings } from './global-settings';
 import { applyMcpOAuthHeaders } from './mcp-oauth';
 import { getSessionPublicDir } from './public-dir';
 import { resolveBuiltinTools, type BuiltinToolsLevel } from '@/lib/builtin-tools';
-import { permissionModeSchema, type AppPermissionMode } from '@/lib/permission-mode';
+import type { AppPermissionMode } from '@/lib/permission-mode';
 import type { Session } from '@/generated/prisma/client';
 
 /** Per-repo settings with secrets decrypted, ready to merge. */
@@ -73,7 +73,7 @@ export async function loadResolvedGlobalSettings(): Promise<ResolvedGlobalSettin
     claudeApiKey: settings.claudeApiKey ? decrypt(settings.claudeApiKey) : null,
     settingSources: settingSourceFlagsFromRow(settings),
     builtinToolsEnabled: settings.builtinToolsEnabled,
-    permissionMode: permissionModeSchema.parse(settings.permissionMode),
+    permissionMode: settings.permissionMode,
     envVars: decryptEnvVars(envVarRows),
     mcpServers: decryptMcpServers(mcpServerRows),
   };

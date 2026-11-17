@@ -67,7 +67,7 @@ export const globalSettingsRouter = router({
       voiceAutoSend: settings.voiceAutoSend,
       settingSources: settingSourceFlagsFromRow(settings),
       builtinToolsEnabled: settings.builtinToolsEnabled,
-      permissionMode: permissionModeSchema.parse(settings.permissionMode),
+      permissionMode: settings.permissionMode,
       defaultClaudeModel: env.CLAUDE_MODEL,
       suggestedAdvisorModel: SUGGESTED_ADVISOR_MODEL,
       hasEnvApiKey: !!env.CLAUDE_CODE_OAUTH_TOKEN,
