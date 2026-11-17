@@ -3,6 +3,7 @@ import { resetEnvCache } from '@/lib/env';
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { setupTestDb, teardownTestDb, testPrisma, clearTestDb } from '@/test/setup-test-db';
 import { createNoRepoSession, createTestSession } from '@/test/fixtures';
+import { runMigrationBackfill } from '@/test/migration-backfill';
 
 // Mock external services that have real dependencies (git clone)
 const worktreesRoot = await vi.hoisted(async () => {
@@ -388,6 +389,32 @@ describe('sessionsRouter integration', () => {
       expect(await names('https')).toEqual([]);
       expect(await names('.git')).toEqual([]);
       expect(await names('owner/app')).toEqual(['Repo session']);
+    });
+
+    it('migrates stored clone URLs to owner/repo', async () => {
+      const urls = [
+        'https://github.com/o/r.git',
+        'https://github.com/o/r',
+        'https://github.com/o/x.github.io.git',
+        null,
+      ];
+      const ids = await Promise.all(
+        urls.map(async (repoFullName) => {
+          const { id } = await testPrisma.session.create({
+            data: { name: 'Migrated', status: 'running', repoFullName },
+          });
+          return id;
+        })
+      );
+
+      await runMigrationBackfill('_session_repo_full_name');
+
+      const rows = await testPrisma.session.findMany({
+        where: { id: { in: ids } },
+        select: { id: true, repoFullName: true },
+      });
+      const byId = new Map(rows.map((r) => [r.id, r.repoFullName]));
+      expect(ids.map((id) => byId.get(id))).toEqual(['o/r', 'o/r', 'o/x.github.io', null]);
     });
 
     it('paginates a search without skipping matches', async () => {

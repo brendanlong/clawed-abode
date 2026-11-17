@@ -2,12 +2,14 @@
 -- folder from it instead of storing it separately.
 ALTER TABLE "Session" RENAME COLUMN "repoUrl" TO "repoFullName";
 
-UPDATE "Session"
-SET "repoFullName" = substr("repoFullName", length('https://github.com/') + 1)
-WHERE "repoFullName" LIKE 'https://github.com/%';
-
-UPDATE "Session"
-SET "repoFullName" = substr("repoFullName", 1, length("repoFullName") - length('.git'))
-WHERE "repoFullName" LIKE '%.git';
-
 ALTER TABLE "Session" DROP COLUMN "repoPath";
+
+-- Backfill: https://github.com/{owner}/{repo}[.git] -> {owner}/{repo}. GLOB is
+-- case-sensitive (LIKE isn't), and only rows with the prefix are touched.
+UPDATE "Session"
+SET "repoFullName" = CASE
+  WHEN "repoFullName" GLOB '*.git'
+    THEN substr("repoFullName", 20, length("repoFullName") - 19 - 4)
+  ELSE substr("repoFullName", 20)
+END
+WHERE "repoFullName" GLOB 'https://github.com/*';
