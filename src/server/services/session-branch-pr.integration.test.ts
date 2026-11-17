@@ -52,9 +52,8 @@ function createSession(
   return testPrisma.session.create({
     data: {
       name: 'T',
-      repoPath: 'r',
       status: 'running',
-      repoUrl: 'https://github.com/o/r.git',
+      repoFullName: 'o/r',
       currentBranch: 'feat-a',
       ...overrides,
     },
@@ -201,7 +200,7 @@ describe('refreshStalePullRequests', () => {
 
   it('skips a session with no repo or no branch', async () => {
     const noRepo = await testPrisma.session.create({
-      data: { name: 'T', repoPath: '', status: 'running' },
+      data: { name: 'T', status: 'running' },
     });
 
     refreshStalePullRequests([await sessionRow(noRepo.id)]);
@@ -351,7 +350,7 @@ describe('detectBranchAndPr', () => {
 describe('linkCreatedPullRequests', () => {
   it('stores and links a PR the session created outside its own clone', async () => {
     const noRepo = await testPrisma.session.create({
-      data: { name: 'T', repoPath: '', status: 'running' },
+      data: { name: 'T', status: 'running' },
     });
     vi.mocked(fetchPullRequest).mockResolvedValue({ ...fetched, number: 12 });
 

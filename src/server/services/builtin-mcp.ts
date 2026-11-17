@@ -44,7 +44,6 @@ import {
 import { DEFAULT_USAGE_ALERT_PERCENT, usageAlertPercentSchema } from '@/lib/usage';
 import { formatWatchedPullRequest } from '@/lib/pull-request-watch';
 import { formatAlertList } from '@/lib/security-alerts';
-import { extractRepoFullName } from '@/lib/utils';
 import { runGptAgent, type GptAgentContext } from './gpt-agent';
 import { generateImage, type ImageToolContext } from './image-generation';
 import { loadTranscriptRows } from './message-store';
@@ -153,10 +152,10 @@ async function loadCaller(sessionId: string) {
 async function loadSessionRepo(sessionId: string): Promise<string> {
   const session = await prisma.session.findUnique({
     where: { id: sessionId },
-    select: { repoUrl: true },
+    select: { repoFullName: true },
   });
-  if (!session?.repoUrl) throw new Error('This session has no repository; pass repo');
-  return extractRepoFullName(session.repoUrl);
+  if (!session?.repoFullName) throw new Error('This session has no repository; pass repo');
+  return session.repoFullName;
 }
 
 function formatRepoAlerts(read: RepoAlerts): string {
@@ -224,7 +223,7 @@ function basicTools(sessionId: string) {
               id: true,
               name: true,
               agentName: true,
-              repoUrl: true,
+              repoFullName: true,
               currentBranch: true,
               status: true,
               lastActivityAt: true,

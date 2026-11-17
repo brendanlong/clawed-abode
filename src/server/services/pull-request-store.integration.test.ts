@@ -42,7 +42,7 @@ async function sessionPr(id: string): Promise<PullRequestInfo | null> {
 
 function createLinkedSession(pullRequestId: string | null, status = 'running') {
   return testPrisma.session.create({
-    data: { name: 'T', repoPath: 'r', status, currentBranch: 'feat-a', pullRequestId },
+    data: { name: 'T', status, currentBranch: 'feat-a', pullRequestId },
   });
 }
 

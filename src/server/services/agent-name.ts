@@ -10,7 +10,7 @@ import { classifyClaudeCredential } from '@/lib/claude-credential';
 import { createLogger, toError } from '@/lib/logger';
 import { prisma } from '@/lib/prisma';
 import { processSingleton } from '@/lib/process-singleton';
-import { extractRepoFullName } from '@/lib/utils';
+import { repoNameOf } from '@/lib/repo-full-name';
 import { sseEvents } from './events';
 import { loadClaudeCredential } from './settings-merger';
 
@@ -39,13 +39,11 @@ export function resolveAgentName(sessionId: string, initialPrompt?: string): Pro
 async function loadOrCreateAgentName(sessionId: string, initialPrompt?: string): Promise<string> {
   const session = await prisma.session.findUniqueOrThrow({
     where: { id: sessionId },
-    select: { name: true, repoUrl: true, agentName: true },
+    select: { name: true, repoFullName: true, agentName: true },
   });
   if (session.agentName) return session.agentName;
 
-  const repoName = session.repoUrl
-    ? (extractRepoFullName(session.repoUrl).split('/').pop() ?? null)
-    : null;
+  const repoName = session.repoFullName ? repoNameOf(session.repoFullName) : null;
   const base = await generateAgentNameBase({ title: session.name, repoName, initialPrompt });
   const name = buildAgentName(base, sessionId, repoName);
 

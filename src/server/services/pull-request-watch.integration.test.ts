@@ -63,7 +63,7 @@ function setRemote(...prs: GitHubPullRequest[]) {
 
 async function createManager() {
   const session = await testPrisma.session.create({
-    data: { name: 'Manager', repoPath: '', status: 'running', agentName: 'manager-1' },
+    data: { name: 'Manager', status: 'running', agentName: 'manager-1' },
   });
   live.add(session.id);
   return session;
@@ -124,7 +124,6 @@ describe('setPullRequestWatches', () => {
     const author = await testPrisma.session.create({
       data: {
         name: 'Author',
-        repoPath: 'r',
         status: 'running',
         agentName: 'author-1',
         pullRequests: { create: { pullRequestId: prId } },
@@ -520,9 +519,8 @@ describe('findOwnPullRequest', () => {
     const session = await testPrisma.session.create({
       data: {
         name: 'Author',
-        repoPath: 'r',
         status: 'running',
-        repoUrl: 'https://github.com/o/r.git',
+        repoFullName: 'o/r',
         currentBranch: 'branch-8',
       },
     });
@@ -536,9 +534,8 @@ describe('findOwnPullRequest', () => {
     const withRepo = await testPrisma.session.create({
       data: {
         name: 'A',
-        repoPath: 'r',
         status: 'running',
-        repoUrl: 'https://github.com/o/r.git',
+        repoFullName: 'o/r',
         currentBranch: 'b',
       },
     });

@@ -15,6 +15,11 @@ export const repoFullNameSchema = z.string().regex(REPO_FULL_NAME_PATTERN, {
   message: 'Invalid repository name format. Expected "owner/repo"',
 });
 
+/** The repo part of an `owner/repo`, which is also its clone's directory name. */
+export function repoNameOf(repoFullName: string): string {
+  return repoFullName.slice(repoFullName.indexOf('/') + 1);
+}
+
 /** A repo settings key: an `owner/repo`, or the No Repository sentinel. */
 export const repoSettingsKeySchema = z
   .string()

@@ -12,7 +12,6 @@ import { SessionSettingsButton } from '@/components/SessionSettingsButton';
 import { PrStatusIndicator } from '@/components/PrStatusIndicator';
 import type { Session } from '@/generated/prisma/client';
 import type { SessionView } from '@/lib/session-view';
-import { extractRepoFullName } from '@/lib/utils';
 
 interface SessionHeaderProps {
   session: SessionView<Session>;
@@ -45,7 +44,7 @@ export function SessionHeader({
   onToggleVoiceMode,
   voiceModeActive = false,
 }: SessionHeaderProps) {
-  const repoName = session.repoUrl ? extractRepoFullName(session.repoUrl) : null;
+  const repoName = session.repoFullName;
 
   return (
     <div className="border-b bg-background px-4 py-3">

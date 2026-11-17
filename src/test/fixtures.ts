@@ -6,7 +6,7 @@ export function createTestSession(overrides: Partial<Prisma.SessionCreateInput> 
   return testPrisma.session.create({
     data: {
       name: 'Test Session',
-      repoUrl: 'https://github.com/owner/repo.git',
+      repoFullName: 'owner/repo',
       branch: 'main',
       status: 'running',
       ...overrides,
@@ -16,5 +16,5 @@ export function createTestSession(overrides: Partial<Prisma.SessionCreateInput> 
 
 /** A running session with no repository (the `__no_repo__` product state). */
 export function createNoRepoSession(overrides: Partial<Prisma.SessionCreateInput> = {}) {
-  return createTestSession({ repoUrl: null, branch: null, ...overrides });
+  return createTestSession({ repoFullName: null, branch: null, ...overrides });
 }

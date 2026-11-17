@@ -125,7 +125,7 @@ export const MERGED_PR_SNAPSHOT_TTL_MS = 6 * 60 * 60 * 1000;
 export interface PrRefreshCandidate {
   id: string;
   status: string;
-  repoUrl: string | null;
+  repoFullName: string | null;
   currentBranch: string | null;
   pullRequest: PullRequestInfo | null;
   prCheckedAt: Date | null;
@@ -140,7 +140,7 @@ export interface PrRefreshCandidate {
  */
 export function isPrSnapshotStale(session: PrRefreshCandidate, now: number): boolean {
   if (session.status === 'archived') return false;
-  if (!session.repoUrl || !session.currentBranch) return false;
+  if (!session.repoFullName || !session.currentBranch) return false;
 
   const ttlMs =
     session.pullRequest?.state === 'merged' ? MERGED_PR_SNAPSHOT_TTL_MS : PR_SNAPSHOT_TTL_MS;

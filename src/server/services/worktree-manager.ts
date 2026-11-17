@@ -10,6 +10,7 @@ import { join } from 'path';
 import { homedir } from 'os';
 import { createLogger, toError } from '@/lib/logger';
 import { env } from '@/lib/env';
+import { repoNameOf } from '@/lib/repo-full-name';
 import {
   GITHUB_CREDENTIAL_CONFIG_KEY,
   GITHUB_CREDENTIAL_HELPER,
@@ -55,22 +56,18 @@ export function getUploadStagingDir(): string {
 }
 
 /**
- * Get the working directory for a session (the repo checkout inside the workspace).
+ * Get the working directory for a session: the repo's clone inside the
+ * workspace, or the workspace itself for a no-repo session.
  */
-export function getSessionWorkingDir(sessionId: string, repoPath: string): string {
-  // An empty repoPath (no-repo session) is the workspace itself: join drops it.
-  return join(getSessionWorkspacePath(sessionId), repoPath);
+export function getSessionWorkingDir(sessionId: string, repoFullName: string | null): string {
+  const workspacePath = getSessionWorkspacePath(sessionId);
+  return repoFullName ? join(workspacePath, repoNameOf(repoFullName)) : workspacePath;
 }
 
 export interface CloneConfig {
   sessionId: string;
   repoFullName: string;
   branch: string;
-}
-
-export interface CloneResult {
-  /** Relative path to repo within workspace (e.g., "my-repo") */
-  repoPath: string;
 }
 
 /**
@@ -120,11 +117,10 @@ async function ensureGithubCredentialHelper(clonePath: string): Promise<void> {
  * Creates a fresh clone at ~/worktrees/{sessionId}/{repoName},
  * configures credentials, and creates a session-specific branch.
  */
-export async function cloneRepo(config: CloneConfig): Promise<CloneResult> {
+export async function cloneRepo(config: CloneConfig): Promise<void> {
   const { sessionId, repoFullName, branch } = config;
-  const repoName = repoFullName.split('/')[1];
   const workspacePath = getSessionWorkspacePath(sessionId);
-  const clonePath = join(workspacePath, repoName);
+  const clonePath = getSessionWorkingDir(sessionId, repoFullName);
 
   log.info('Cloning repo', { sessionId, repoFullName, branch });
 
@@ -153,9 +149,7 @@ export async function cloneRepo(config: CloneConfig): Promise<CloneResult> {
   const sessionBranch = `${env.SESSION_BRANCH_PREFIX}${sessionId}`;
   await run('git', ['-C', clonePath, 'checkout', '-b', sessionBranch]);
 
-  log.info('Repo cloned successfully', { sessionId, repoName, branch: sessionBranch });
-
-  return { repoPath: repoName };
+  log.info('Repo cloned successfully', { sessionId, clonePath, branch: sessionBranch });
 }
 
 export async function createEmptyWorkspace(sessionId: string): Promise<void> {

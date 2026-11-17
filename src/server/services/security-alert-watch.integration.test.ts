@@ -43,7 +43,7 @@ function close(number: number, closure: Partial<AlertClosure> = {}) {
 
 async function createSession() {
   const session = await testPrisma.session.create({
-    data: { name: 'Triage', repoPath: '', status: 'running', agentName: 'triage-1' },
+    data: { name: 'Triage', status: 'running', agentName: 'triage-1' },
   });
   live.add(session.id);
   return session;

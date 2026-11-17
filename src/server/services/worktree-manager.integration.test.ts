@@ -7,7 +7,12 @@ import { promisify } from 'util';
 import { randomUUID as uuid } from 'node:crypto';
 import { resetEnvCache } from '@/lib/env';
 import { GITHUB_TOKEN_ENV } from '@/lib/git-credentials';
-import { cloneRepo, getSessionWorkspacePath, removeWorkspace } from './worktree-manager';
+import {
+  cloneRepo,
+  getSessionWorkingDir,
+  getSessionWorkspacePath,
+  removeWorkspace,
+} from './worktree-manager';
 
 const execFileAsync = promisify(execFile);
 
@@ -78,14 +83,14 @@ describe('cloneRepo', () => {
   });
 
   it('leaves the token in neither the recorded remote nor the clone config', async () => {
-    const { repoPath } = await cloneRepo({
+    await cloneRepo({
       sessionId,
       repoFullName: 'owner/repo',
       branch: 'main',
     });
 
-    expect(repoPath).toBe('repo');
-    const workingDir = path.join(getSessionWorkspacePath(sessionId), repoPath);
+    const workingDir = getSessionWorkingDir(sessionId, 'owner/repo');
+    expect(workingDir).toBe(path.join(getSessionWorkspacePath(sessionId), 'repo'));
     const config = await readFile(path.join(workingDir, '.git', 'config'), 'utf8');
     expect(config).not.toContain(TOKEN);
     expect(config).toContain(GITHUB_TOKEN_ENV);

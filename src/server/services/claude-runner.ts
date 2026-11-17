@@ -41,7 +41,6 @@ import { backgroundActive, type BackgroundTask } from '@/lib/session-status';
 import { createPushable } from '@/lib/pushable';
 import type { ToolResponse } from '@/lib/tool-response';
 import type { CancelledPrompt } from '@/lib/cancelled-prompt';
-import { extractRepoFullName } from '@/lib/utils';
 import { isDefaultSessionName } from '@/lib/session-name';
 import type { PermissionRequest } from '@/lib/permission-request';
 import { createLogger, toError } from '@/lib/logger';
@@ -403,10 +402,9 @@ async function establishSessionQuery(
     select: {
       status: true,
       name: true,
-      repoUrl: true,
+      repoFullName: true,
       branch: true,
       sessionToolsEnabled: true,
-      repoPath: true,
       claudeModel: true,
       claudeSessionId: true,
     },
@@ -420,10 +418,8 @@ async function establishSessionQuery(
     throw new Error(`Session is ${session.status}`);
   }
 
-  const repoFullName = session.repoUrl ? extractRepoFullName(session.repoUrl) : null;
-  const settingsKey = repoFullName ?? '__no_repo__';
-  const settings = await loadMergedSessionSettings(sessionId, settingsKey, session);
-  const workingDir = getSessionWorkingDir(sessionId, session.repoPath);
+  const settings = await loadMergedSessionSettings(sessionId, session);
+  const workingDir = getSessionWorkingDir(sessionId, session.repoFullName);
 
   // Only a conversation the CLI announced has a transcript to resume; app-side
   // messages alone (a rate-limit-queued first prompt, an error from a query that
@@ -482,7 +478,6 @@ async function establishSessionQuery(
     // A fresh CLI holds none.
     appliedDenyRules: [],
     builtinMcpServer,
-    settingsKey,
     claudeSessionId: null,
     pendingInputs: new Map(),
     pendingAttention: null,
@@ -605,9 +600,9 @@ async function applyLiveSettingsNow(sessionId: string, state: SessionState): Pro
     // Re-read the per-session overrides too, so changing them applies live.
     const session = await prisma.session.findUniqueOrThrow({
       where: { id: sessionId },
-      select: { claudeModel: true, sessionToolsEnabled: true },
+      select: { repoFullName: true, claudeModel: true, sessionToolsEnabled: true },
     });
-    settings = await loadMergedSessionSettings(sessionId, live.settingsKey, session);
+    settings = await loadMergedSessionSettings(sessionId, session);
   } catch (err) {
     log.warn('applyLiveSettings: failed to load settings', {
       sessionId,
@@ -1115,10 +1110,10 @@ export async function reviveSession(sessionId: string): Promise<void> {
   try {
     const session = await prisma.session.findUnique({
       where: { id: sessionId },
-      select: { status: true, repoPath: true, restartNotice: true },
+      select: { status: true, repoFullName: true, restartNotice: true },
     });
     if (session?.status !== 'running' || currentHold(sessionId) || shutdown.started) return;
-    const workingDir = getSessionWorkingDir(sessionId, session.repoPath);
+    const workingDir = getSessionWorkingDir(sessionId, session.repoFullName);
     if (!(await pathExists(workingDir))) {
       log.warn('Not reviving session with no workspace', { sessionId, workingDir });
       return;
