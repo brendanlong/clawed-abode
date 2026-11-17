@@ -7,11 +7,9 @@
 # membership in the tailscale group). Run setup-code-server.sh first (installs and
 # starts code-server on loopback); then run this as a user with Tailscale access.
 #
-# Exposes code-server as its own tailnet hostname (https://code.<tailnet>.ts.net)
-# via a Tailscale *service* (svc:code) — the same way the host's other services
-# (clawed, wiki, ...) each get a distinct name, rather than sharing one host and a
-# nonstandard port. It stays on the tailnet (a `serve` service, never `funnel`),
-# the same trust boundary as the app. Idempotent: safe to re-run. Requires an
+# The service name is CODE_SERVER_SERVICE (see lib-code-server.sh). It stays on
+# the tailnet (a `serve` service, never `funnel`), the same trust boundary as the
+# app. Idempotent: safe to re-run. Requires an
 # existing Tailscale login on this host, and jq or python3 to read the tailnet's
 # DNS suffix.
 #

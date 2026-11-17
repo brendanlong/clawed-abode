@@ -16,8 +16,10 @@
  * Cost is therefore aggregated by segmenting the result messages into query
  * processes and summing the final cumulative value of each segment. Segment
  * boundaries are detected by the cumulative cost decreasing: it is monotonically
- * non-decreasing within a process, so a drop means the counter reset. The fold
- * itself runs in SQL as each message is inserted (src/server/services/session-usage.ts).
+ * non-decreasing within a process, so a drop means the counter reset. A reset is
+ * masked only if a new process's first turn costs more than the entire previous
+ * process — a slight undercount, acceptable for an indicator. The fold itself
+ * runs in SQL as each message is inserted (src/server/services/session-usage.ts).
  *
  * The "context usage %" reflects how full the context window currently is, NOT
  * the total tokens consumed: it uses the most recent top-level (main-agent)

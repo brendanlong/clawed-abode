@@ -23,17 +23,11 @@ export function getSessionMcpConfigPath(sessionId: string): string {
  * Write the merged MCP server config to a **mode-0600** file in the session
  * workspace and return its path.
  *
- * The config can contain secrets — a GitHub PAT in a stdio `env`, HTTP/SSE
- * `Authorization` headers — so it must NOT be passed inline on the CLI argv
- * (`--mcp-config '<json>'`), where it would leak into journald (the scope unit's
- * ExecStart) and world-readable `/proc/<pid>/cmdline`. Passing a file path keeps
- * the secrets to same-uid/root readers — the same trust boundary as the app
- * itself. See issue #428.
+ * A file rather than inline argv because the config can contain secrets: see
+ * "Secrets" in doc/settings.md.
  *
  * The JSON shape (`{ mcpServers: ... }`) matches what the CLI's `--mcp-config`
- * expects for a file. Rewritten on every query establishment so it self-heals if
- * deleted and always reflects the current settings (which are bound at establish
- * anyway). `chmod` is explicit so the mode is guaranteed even when overwriting an
+ * expects for a file. `chmod` is explicit so the mode is guaranteed even when overwriting an
  * existing file (the `writeFile` mode is only applied at creation).
  */
 export async function writeSessionMcpConfig(

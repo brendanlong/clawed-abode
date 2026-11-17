@@ -1,18 +1,10 @@
 /**
  * Pure logic for the subscription rate-limit pause: parsing the SDK's rate-limit
- * signals into per-window readings, and deciding — per session, under that
- * session's policy — whether to hold work until the window resets.
- *
- * Readings are account-wide (one subscription, one budget); the *policy* is
- * per-session, so a low-priority session can pause at 50% of the 5-hour window
- * while an urgent one keeps running (and spends overage credits) on the same
- * readings. Rationale and the resolution order live in doc/rate-limit-pause.md.
- *
- * Everything comes from `rate_limit_event` messages on the sessions' streams.
- * Their shape was verified against the ~8.8k real events in this app's production
- * database, which is where several of the rules below come from — the SDK's
- * `SDKRateLimitInfo` type documents neither the units nor the `unifiedWindows`
- * field, so reading the type alone gets both wrong.
+ * signals into account-wide per-window readings, and deciding — per session, under
+ * that session's policy — whether to hold work until the window resets.
+ * Rationale, the resolution order, and what the real events taught us (the SDK's
+ * `SDKRateLimitInfo` type documents neither the units nor `unifiedWindows`) live
+ * in doc/rate-limit-pause.md.
  */
 
 import { z } from 'zod';
