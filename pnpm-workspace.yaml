@@ -36,3 +36,5 @@ overrides:
   # parse5-parser-stream 8.1.0 calls parse5 8.1 APIs but declares ^8.0.0: until
   # parse5-parser-stream wants parse5 >=8.1.0 (8.1.1 does)
   'parse5-parser-stream>parse5': ^8.1.0
+  # GHSA-7589-6fvf-x4pw: until @prisma/config wants effect >=3.22.1
+  '@prisma/config>effect': ^3.22.4
