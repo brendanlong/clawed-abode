@@ -25,6 +25,11 @@ describe('buildSystemPrompt', () => {
     expect(prompt).toContain('git config --global');
   });
 
+  it('explains the <unspoken> tag only when read-aloud is configured', () => {
+    expect(buildSystemPrompt({ voice: true })).toContain('<unspoken>');
+    expect(buildSystemPrompt({})).not.toContain('<unspoken>');
+  });
+
   it('should use global override when enabled', () => {
     const prompt = buildSystemPrompt({
       globalSettings: {

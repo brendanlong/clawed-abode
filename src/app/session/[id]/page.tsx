@@ -111,10 +111,11 @@ function SessionView({ sessionId }: { sessionId: string }) {
   const [voiceOverlayOpen, setVoiceOverlayOpen] = useState(false);
 
   // Auto-read: stream TTS as assistant messages arrive during a turn
+  const listening = voiceConfig.autoRead && voiceConfig.ttsEnabled;
   const { stopPlayback, onPromptSent } = useAutoRead(voicePlayback, {
     isRunning: isClaudeRunning,
     messages,
-    enabled: voiceConfig.autoRead && voiceConfig.ttsEnabled,
+    enabled: listening,
   });
   // Memoized: every message bubble reads this context.
   const playbackValue = useMemo(
@@ -134,10 +135,11 @@ function SessionView({ sessionId }: { sessionId: string }) {
       onPromptSent();
       return sendPrompt(
         prompt,
-        attachments.length ? attachments.map((a) => a.storedName) : undefined
+        attachments.length ? attachments.map((a) => a.storedName) : undefined,
+        listening
       );
     },
-    [session, sendPrompt, onPromptSent]
+    [session, sendPrompt, onPromptSent, listening]
   );
 
   const actionErrorAlert = (

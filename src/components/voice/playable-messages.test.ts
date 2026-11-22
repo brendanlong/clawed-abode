@@ -4,7 +4,7 @@ import {
   INITIAL_AUTO_READ_STATE,
   type AutoReadEvent,
   type AutoReadState,
-  extractAssistantText,
+  extractSpeechText,
   getAssistantTextMessages,
   getNewAutoReadMessages,
 } from './playable-messages';
@@ -120,10 +120,10 @@ function makeResult(id: string, sequence: number): DisplayMessage {
   };
 }
 
-describe('extractAssistantText', () => {
+describe('extractSpeechText', () => {
   it('extracts text from a message with text blocks', () => {
     const msg = makeAssistantText('a1', 1, 'Hello world');
-    expect(extractAssistantText(msg.content)).toBe('Hello world');
+    expect(extractSpeechText(msg.content)).toBe('Hello world');
   });
 
   it('concatenates multiple text blocks', () => {
@@ -142,17 +142,27 @@ describe('extractAssistantText', () => {
         },
       },
     };
-    expect(extractAssistantText(msg.content)).toBe('First part\nSecond part');
+    expect(extractSpeechText(msg.content)).toBe('First part\nSecond part');
+  });
+
+  it('speaks the plain text, not the markdown', () => {
+    const msg = makeAssistantText('a1', 1, 'See **[PR #5](https://example.com/5)**');
+    expect(extractSpeechText(msg.content)).toBe('See PR #5');
+  });
+
+  it('returns null when everything is unspoken', () => {
+    const msg = makeAssistantText('a1', 1, '<unspoken>https://example.com</unspoken>');
+    expect(extractSpeechText(msg.content)).toBeNull();
   });
 
   it('returns null for tool-use-only messages', () => {
     const msg = makeAssistantToolUse('a1', 1);
-    expect(extractAssistantText(msg.content)).toBeNull();
+    expect(extractSpeechText(msg.content)).toBeNull();
   });
 
   it('returns null for messages with only whitespace text', () => {
     const msg = makeAssistantText('a1', 1, '   \n  ');
-    expect(extractAssistantText(msg.content)).toBeNull();
+    expect(extractSpeechText(msg.content)).toBeNull();
   });
 
   it('speaks progress updates (thinking with text)', () => {
@@ -163,7 +173,7 @@ describe('extractAssistantText', () => {
       createdAt: new Date(0),
       content: { message: { content: [{ type: 'thinking', thinking: 'Building the APK.' }] } },
     };
-    expect(extractAssistantText(msg.content)).toBe('Building the APK.');
+    expect(extractSpeechText(msg.content)).toBe('Building the APK.');
   });
 
   it('returns null for messages with no content blocks', () => {
@@ -174,7 +184,7 @@ describe('extractAssistantText', () => {
       createdAt: new Date(0),
       content: { message: { content: [] } },
     };
-    expect(extractAssistantText(msg.content)).toBeNull();
+    expect(extractSpeechText(msg.content)).toBeNull();
   });
 
   it('returns null for malformed content', () => {
@@ -185,7 +195,7 @@ describe('extractAssistantText', () => {
       createdAt: new Date(0),
       content: {},
     };
-    expect(extractAssistantText(msg.content)).toBeNull();
+    expect(extractSpeechText(msg.content)).toBeNull();
   });
 });
 

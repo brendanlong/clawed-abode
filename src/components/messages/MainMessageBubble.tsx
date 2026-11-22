@@ -13,7 +13,7 @@ import { renderContent } from './ContentRenderer';
 import { useMessageListActions } from './MessageListContext';
 import { parseSanitizationInfo } from '@/lib/sanitization';
 import { MessagePlayButton } from '@/components/voice/MessagePlayButton';
-import { extractAssistantText } from '@/components/voice/playable-messages';
+import { extractSpeechText } from '@/components/voice/playable-messages';
 import { useVoicePlaybackEnabled } from '@/hooks/useVoicePlayback';
 import {
   buildToolCalls,
@@ -79,7 +79,7 @@ export function MainMessageBubble({
   const playbackEnabled = useVoicePlaybackEnabled();
   const textForPlayback = useMemo(() => {
     if (!isAssistant || isPartial || !messageId || !playbackEnabled) return null;
-    return extractAssistantText(content);
+    return extractSpeechText(content);
   }, [isAssistant, isPartial, messageId, playbackEnabled, content]);
 
   return (

@@ -8,6 +8,7 @@ import { isPartialMessageId } from '@/lib/message-cache';
 import { collectRetractedMessages, extractTextContent } from '@/components/messages/messageHelpers';
 import { isToolResultMessage } from '@/lib/transcript-display';
 import type { DisplayMessage, MessageContent } from '@/components/messages/types';
+import { markdownToSpeechText } from '@/lib/markdown';
 
 /** An assistant message with meaningful text content, ready for TTS. */
 export interface PlayableMessage {
@@ -20,13 +21,15 @@ function asContent(content: unknown): MessageContent {
 }
 
 /**
- * The concatenated text blocks of an assistant message's content, or null when
- * there is nothing to speak (tool-only, whitespace-only, or malformed content).
- * Tool calls and their results are never spoken.
+ * What to read aloud for an assistant message: its text blocks as plain text,
+ * minus `<unspoken>` parts. Null when there is nothing to speak (tool-only,
+ * entirely unspoken, or malformed content). Tool calls and their results are
+ * never spoken.
  */
-export function extractAssistantText(content: unknown): string | null {
-  const text = extractTextContent(asContent(content));
-  return text && text.trim() ? text : null;
+export function extractSpeechText(content: unknown): string | null {
+  const markdown = extractTextContent(asContent(content));
+  const text = markdown ? markdownToSpeechText(markdown).trim() : '';
+  return text || null;
 }
 
 /**
@@ -42,7 +45,7 @@ export function getAssistantTextMessages(messages: DisplayMessage[]): PlayableMe
     if (msg.type !== 'assistant' || isPartialMessageId(msg.id) || retractedIds.has(msg.id)) {
       continue;
     }
-    const text = extractAssistantText(msg.content);
+    const text = extractSpeechText(msg.content);
     if (text !== null) results.push({ id: msg.id, text });
   }
   return results;

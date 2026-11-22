@@ -104,7 +104,9 @@ describe('claudeRouter integration', () => {
         sessionId: session.id,
         prompt: 'Hello, Claude!',
       });
-      expect(mockSendUserMessage).toHaveBeenCalledWith(session.id, 'Hello, Claude!', []);
+      expect(mockSendUserMessage).toHaveBeenCalledWith(session.id, 'Hello, Claude!', [], {
+        listening: false,
+      });
     });
 
     it('passes attachment stored names through to sendUserMessage', async () => {
@@ -122,10 +124,12 @@ describe('claudeRouter integration', () => {
       // Path resolution moved into the runner (lazy, at persist/flush time); the
       // router just forwards the stored names.
       expect(mockResolveUploadPaths).not.toHaveBeenCalled();
-      expect(mockSendUserMessage).toHaveBeenCalledWith(session.id, 'look', [
-        'aaaa1111-a.md',
-        'bbbb2222-b.png',
-      ]);
+      expect(mockSendUserMessage).toHaveBeenCalledWith(
+        session.id,
+        'look',
+        ['aaaa1111-a.md', 'bbbb2222-b.png'],
+        { listening: false }
+      );
     });
 
     it('passes an empty attachment list when none are provided', async () => {
@@ -137,7 +141,7 @@ describe('claudeRouter integration', () => {
       const caller = createCaller('auth-session-id');
       await caller.claude.send({ sessionId: session.id, prompt: 'hi' });
 
-      expect(mockSendUserMessage).toHaveBeenCalledWith(session.id, 'hi', []);
+      expect(mockSendUserMessage).toHaveBeenCalledWith(session.id, 'hi', [], { listening: false });
     });
 
     it('allows a send with attachments and no prompt text', async () => {
@@ -152,7 +156,9 @@ describe('claudeRouter integration', () => {
         prompt: '',
         attachments: ['aaaa1111-a.md'],
       });
-      expect(mockSendUserMessage).toHaveBeenCalledWith(session.id, '', ['aaaa1111-a.md']);
+      expect(mockSendUserMessage).toHaveBeenCalledWith(session.id, '', ['aaaa1111-a.md'], {
+        listening: false,
+      });
     });
 
     it('rejects an empty prompt with no attachments', async () => {
@@ -177,7 +183,18 @@ describe('claudeRouter integration', () => {
         sessionId: session.id,
         prompt: 'Hello!',
       });
-      expect(mockSendUserMessage).toHaveBeenCalledWith(session.id, 'Hello!', []);
+      expect(mockSendUserMessage).toHaveBeenCalledWith(session.id, 'Hello!', [], {
+        listening: false,
+      });
+    });
+
+    it('forwards that the user is listening', async () => {
+      const session = await createNoRepoSession({ name: 'Listening', status: 'running' });
+      mockSendUserMessage.mockResolvedValue(undefined);
+
+      const caller = createCaller('auth-session-id');
+      await caller.claude.send({ sessionId: session.id, prompt: 'hi', listening: true });
+      expect(mockSendUserMessage).toHaveBeenCalledWith(session.id, 'hi', [], { listening: true });
     });
   });
 

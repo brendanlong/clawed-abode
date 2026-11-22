@@ -71,6 +71,8 @@ const messageInputSchema = z
   .object({
     prompt: z.string().max(PROMPT_MAX_LENGTH),
     attachments: storedNamesSchema.optional(),
+    /** Replies are being read aloud to the user; the agent is told so. */
+    listening: z.boolean().optional(),
   })
   .refine((v) => v.prompt.trim().length > 0 || (v.attachments?.length ?? 0) > 0, {
     message: 'A prompt or at least one attachment is required',
@@ -81,7 +83,9 @@ export const claudeRouter = router({
     // A send is always accepted while the session is running and goes straight
     // into the SDK, whatever the agent is doing — the CLI interleaves it into
     // the running turn. Neither a live turn nor background tasks gate input.
-    await sendUserMessage(input.sessionId, input.prompt, input.attachments ?? []);
+    await sendUserMessage(input.sessionId, input.prompt, input.attachments ?? [], {
+      listening: input.listening ?? false,
+    });
   }),
 
   answerQuestion: runningSessionProcedure

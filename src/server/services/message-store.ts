@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma';
 import { createLogger, toError } from '@/lib/logger';
 import { buildSyntheticToolResultContent } from '@/lib/tool-response';
 import { buildPromptWithAttachments } from '@/lib/attachments';
+import { withListeningNote } from '@/lib/voice-prompt';
 import { sseEvents } from './events';
 import { clearAttention } from './session-attention';
 import { sanitizeUntrustedInput } from './input-sanitizer';
@@ -423,20 +424,21 @@ export async function markLastMessageAsInterrupted(sessionId: string): Promise<v
 
 /**
  * Persist a user message as its own transcript bubble: resolve attachments, build
- * the attachment prefix, sanitize, then insert. Everything before the insert is
- * free of side effects, so a send that fails there leaves nothing behind and the
- * composer can restore the user's text.
+ * the attachment and listening prefixes, sanitize, then insert. Everything before
+ * the insert is free of side effects, so a send that fails there leaves nothing
+ * behind and the composer can restore the user's text.
  *
  * @returns the new bubble's id and the prepared text to push into the SDK.
  */
 export async function insertUserMessage(
   sessionId: string,
   text: string,
-  attachments: string[]
+  attachments: string[],
+  listening: boolean
 ): Promise<{ messageId: string; content: string }> {
   const paths = attachments.length ? await resolveUploadPaths(sessionId, attachments) : [];
-  const withAttachments = buildPromptWithAttachments(text, paths);
-  const { cleaned, info } = await sanitizeUntrustedInput(withAttachments, {
+  const prompt = withListeningNote(buildPromptWithAttachments(text, paths), listening);
+  const { cleaned, info } = await sanitizeUntrustedInput(prompt, {
     sessionId,
     source: 'user-message',
   });
