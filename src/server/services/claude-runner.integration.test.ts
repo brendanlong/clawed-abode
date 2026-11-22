@@ -430,6 +430,23 @@ describe('claude-runner persistent streaming loop', () => {
     stopSession(sessionId);
   });
 
+  it('tells the agent the user is listening, in both the transcript and the SDK prompt', async () => {
+    const fake = makeFakeQuery();
+    _setQueryFactory(fake.factory);
+    const sessionId = await createRunningSession();
+
+    await sendUserMessage(sessionId, 'hello', [], { listening: true });
+    await fake.deliver();
+
+    const sent = String(fake.inputs[0].message.content);
+    expect(sent).toMatch(/listening/i);
+    expect(sent.endsWith('hello')).toBe(true);
+    const [persisted] = await messagesFor(sessionId);
+    expect(JSON.stringify(persisted.content)).toMatch(/listening/i);
+
+    stopSession(sessionId);
+  });
+
   it('flags the session for the user while a question waits, and clears it once answered', async () => {
     const fake = makeFakeQuery();
     let canUseTool: CanUseTool | undefined;

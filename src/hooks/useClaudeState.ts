@@ -25,8 +25,8 @@ export function useClaudeState(sessionId: string) {
   // session no longer running), so the composer can restore the just-typed text
   // instead of losing it to the optimistic clear.
   const send = useCallback(
-    (prompt: string, attachments?: string[]) => {
-      return sendAsync({ sessionId, prompt, attachments });
+    (prompt: string, attachments: string[] | undefined, listening: boolean) => {
+      return sendAsync({ sessionId, prompt, attachments, listening });
     },
     [sessionId, sendAsync]
   );

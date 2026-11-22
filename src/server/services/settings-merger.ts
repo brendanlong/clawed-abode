@@ -135,6 +135,7 @@ export async function loadMergedSessionSettings(
           url: publicFilesUrl(env.PUBLIC_FILES_URL, sessionId),
         }
       : undefined,
+    voice: Boolean(env.TTS_BASE_URL),
     customSystemPrompt: repoSettings?.customSystemPrompt,
     globalSettings,
   });

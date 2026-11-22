@@ -707,7 +707,7 @@ export async function sendUserMessage(
   sessionId: string,
   prompt: string,
   attachments: string[] = [],
-  { userInitiated = true } = {}
+  { userInitiated = true, listening = false } = {}
 ): Promise<void> {
   const hold = await resolveSessionHold(sessionId);
   const state = hold ? null : await ensureSessionQuery(sessionId);
@@ -719,7 +719,7 @@ export async function sendUserMessage(
 
   // A failure before the insert leaves nothing persisted, so the client keeps the
   // just-typed text to retry.
-  const { messageId, content } = await insertUserMessage(sessionId, prompt, attachments);
+  const { messageId, content } = await insertUserMessage(sessionId, prompt, attachments, listening);
   const pushable = { messageId, content, text: prompt, attachments };
 
   // A hold can land during the awaits above, after the check at the top. Re-read

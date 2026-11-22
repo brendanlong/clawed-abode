@@ -93,4 +93,17 @@ describe('MarkdownContent', () => {
     const { container } = render(<MarkdownContent content="Test" className="custom-class" />);
     expect(container.firstChild).toHaveClass('markdown-content', 'custom-class');
   });
+
+  it('shows <unspoken> content as ordinary markdown without the tag', () => {
+    const { container } = render(
+      <MarkdownContent
+        content={
+          'Gist. <unspoken>See [docs](https://example.com).</unspoken>\n<unspoken>\n| a | b |\n|---|---|\n| 1 | 2 |\n</unspoken>'
+        }
+      />
+    );
+    expect(screen.getByRole('link', { name: 'docs' })).toBeInTheDocument();
+    expect(screen.getByRole('table')).toBeInTheDocument();
+    expect(container.textContent).not.toContain('unspoken');
+  });
 });

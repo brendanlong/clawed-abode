@@ -24,6 +24,8 @@ For the same reason, don't touch global or user-level configuration unless the u
 
 \`$TMPDIR\` is private to this session and deleted when the session is archived. Put scratch files there (\`"$TMPDIR"/notes.txt\`) instead of hard-coding \`/tmp/...\` paths, which outlive the session.`;
 
+import { VOICE_SYSTEM_NOTE } from './voice-prompt';
+
 export interface PublicDirInfo {
   path: string;
   url: string;
@@ -40,6 +42,8 @@ function buildPublicDirNote({ path, url }: PublicDirInfo): string {
  */
 export function buildSystemPrompt(options: {
   publicDir?: PublicDirInfo;
+  /** Read-aloud is configured, so agents should know how to write for it. */
+  voice?: boolean;
   customSystemPrompt?: string | null;
   globalSettings?: {
     systemPromptOverride: string | null;
@@ -47,7 +51,7 @@ export function buildSystemPrompt(options: {
     systemPromptAppend: string | null;
   } | null;
 }): string {
-  const { publicDir, customSystemPrompt, globalSettings } = options;
+  const { publicDir, voice, customSystemPrompt, globalSettings } = options;
 
   let basePrompt = DEFAULT_SYSTEM_PROMPT;
   if (globalSettings?.systemPromptOverrideEnabled && globalSettings.systemPromptOverride) {
@@ -58,6 +62,10 @@ export function buildSystemPrompt(options: {
 
   if (publicDir) {
     fullSystemPrompt += '\n\n' + buildPublicDirNote(publicDir);
+  }
+
+  if (voice) {
+    fullSystemPrompt += '\n\n' + VOICE_SYSTEM_NOTE;
   }
 
   if (globalSettings?.systemPromptAppend) {
