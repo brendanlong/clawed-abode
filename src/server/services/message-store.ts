@@ -424,9 +424,9 @@ export async function markLastMessageAsInterrupted(sessionId: string): Promise<v
 
 /**
  * Persist a user message as its own transcript bubble: resolve attachments, build
- * the attachment and listening prefixes, sanitize, then insert. Everything before the insert is
- * free of side effects, so a send that fails there leaves nothing behind and the
- * composer can restore the user's text.
+ * the attachment and listening prefixes, sanitize, then insert. Everything before
+ * the insert is free of side effects, so a send that fails there leaves nothing
+ * behind and the composer can restore the user's text.
  *
  * @returns the new bubble's id and the prepared text to push into the SDK.
  */

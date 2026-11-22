@@ -32,20 +32,23 @@ const UNSPOKEN_INLINE = 'unspokenInline';
 /**
  * `<unspoken>…</unspoken>` marks text for the transcript only: it renders as
  * ordinary markdown and is left out of read-aloud. A tokenizer (not a regex over
- * the source) so a literal tag inside a code span or fence stays literal. A tag
- * that opens a line and closes at the end of one is a block, so it can wrap
- * tables and lists; anywhere else it's inline. An unclosed tag runs to the end.
+ * the source) so a literal tag inside a code span or fence stays literal. An
+ * opening tag alone on its line starts a block, so it can wrap tables and lists,
+ * and an unclosed one runs to the end of the message; anywhere else the tag is
+ * inline, and an unclosed one runs to the end of its paragraph.
  */
 const unspokenTokenizers: TokenizerExtension[] = [
   {
     name: UNSPOKEN_BLOCK,
     level: 'block',
     start(src) {
-      const match = /(^|\n)<unspoken>/.exec(src);
+      const match = /(^|\n)<unspoken>[ \t]*\n/.exec(src);
       return match ? match.index + match[1].length : undefined;
     },
     tokenizer(src) {
-      const match = /^<unspoken>([\s\S]*?)(?:<\/unspoken>[ \t]*(?:\n|$)|$(?![\s\S]))/.exec(src);
+      const match = /^<unspoken>[ \t]*\n([\s\S]*?)(?:<\/unspoken>[ \t]*(?:\n|$)|$(?![\s\S]))/.exec(
+        src
+      );
       if (!match) return undefined;
       return {
         type: UNSPOKEN_BLOCK,
@@ -104,7 +107,7 @@ const plainTextRenderer: RendererObject<string, string> = {
     return this.parser.parse(tokens);
   },
   html({ text, block }) {
-    const stripped = text.replace(/<[^>]*>/g, '');
+    const stripped = text.replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]*>/g, '');
     return block ? line(stripped.trim()) : stripped;
   },
   def: () => '',
@@ -115,8 +118,14 @@ const plainTextRenderer: RendererObject<string, string> = {
   list({ items }) {
     return items.map((item) => this.listitem(item)).join('');
   },
+  // A tight item's own text is a bare text token, so it would run into a nested
+  // list's first item without its own line.
   listitem({ tokens }) {
-    return line(this.parser.parse(tokens).trim());
+    return tokens
+      .map((token) => this.parser.parse([token]).trim())
+      .filter(Boolean)
+      .map(line)
+      .join('');
   },
   checkbox: () => '',
   paragraph({ tokens }) {

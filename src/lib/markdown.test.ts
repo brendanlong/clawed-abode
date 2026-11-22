@@ -1,7 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import { markdownToSpeechText } from './markdown';
 
-const speak = (markdown: string) => markdownToSpeechText(markdown).trim();
+// Speech requests are trimmed lines (splitIntoSpeechChunks), so compare those.
+const speak = (markdown: string) =>
+  markdownToSpeechText(markdown)
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .join('\n');
 
 describe('markdownToSpeechText', () => {
   it('reads link text but not the link target', () => {
@@ -38,8 +44,30 @@ describe('markdownToSpeechText', () => {
     ).toBe('Summary.\nAfter.');
   });
 
-  it('treats an unclosed <unspoken> as running to the end', () => {
-    expect(speak('Spoken. <unspoken>not spoken')).toBe('Spoken.');
+  it('speaks what follows a tag that opens a line but closes mid-line', () => {
+    expect(speak('<unspoken>https://x.y/z</unspoken> is the link.\n\nSecond.')).toBe(
+      'is the link.\nSecond.'
+    );
+    expect(speak('Intro\n<unspoken>path</unspoken> trailing\n\nNext.')).toBe(
+      'Intro\ntrailing\nNext.'
+    );
+    expect(speak('- <unspoken>a</unspoken> item text\n- b')).toBe('item text\nb');
+  });
+
+  it('runs an unclosed inline tag to the end of its paragraph', () => {
+    expect(speak('Spoken. <unspoken>not spoken\n\nSpoken again.')).toBe('Spoken.\nSpoken again.');
+  });
+
+  it('runs an unclosed block tag to the end of the message', () => {
+    expect(speak('Spoken.\n<unspoken>\n| a |\n|---|\n| 1 |\n\nStill hidden.')).toBe('Spoken.');
+  });
+
+  it('keeps nested list items on their own lines', () => {
+    expect(speak('- a\n  - b\n  - c\n- d')).toBe('a\nb\nc\nd');
+  });
+
+  it('treats an inline <br> as a line break', () => {
+    expect(speak('one<br>two')).toBe('one\ntwo');
   });
 
   it('reads a literal tag inside code as code', () => {
