@@ -66,6 +66,14 @@ describe('markdownToSpeechText', () => {
     expect(speak('- a\n  - b\n  - c\n- d')).toBe('a\nb\nc\nd');
   });
 
+  it('leaves no tag behind in an HTML block, even one built from fragments', () => {
+    expect(speak('<div><<b>script>x</div>\n\nnext')).not.toMatch(/</);
+  });
+
+  it('speaks no inline HTML tags', () => {
+    expect(speak('a <kbd>Ctrl</kbd> b')).toBe('a Ctrl b');
+  });
+
   it('treats an inline <br> as a line break', () => {
     expect(speak('one<br>two')).toBe('one\ntwo');
   });

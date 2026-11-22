@@ -97,6 +97,16 @@ export const displayMarkdown = new Marked(BASE_OPTIONS, doubleTildeDel, {
 
 const line = (text: string) => `${text}\n`;
 
+// Repeated until stable so removing one tag can't splice a new one together.
+function textBetweenTags(html: string): string {
+  let text = html.replace(/<br\b[^>]*>/gi, '\n');
+  for (let previous = ''; previous !== text;) {
+    previous = text;
+    text = text.replace(/<[^>]*>/g, '');
+  }
+  return text;
+}
+
 // What a listener should hear: the words the transcript shows, without markdown
 // syntax or link targets. Every block ends in a line break, which ends a speech
 // request (see splitIntoSpeechChunks).
@@ -106,9 +116,9 @@ const plainTextRenderer: RendererObject<string, string> = {
   blockquote({ tokens }) {
     return this.parser.parse(tokens);
   },
+  // Inline HTML tokens are single tags; a block can hold text between its tags.
   html({ text, block }) {
-    const stripped = text.replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]*>/g, '');
-    return block ? line(stripped.trim()) : stripped;
+    return block ? line(textBetweenTags(text).trim()) : /^<br\b/i.test(text) ? '\n' : '';
   },
   def: () => '',
   heading({ tokens }) {
