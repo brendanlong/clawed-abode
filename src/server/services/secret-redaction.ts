@@ -1,6 +1,6 @@
 import { lintSource } from '@secretlint/core';
 import { secretLintProfiler } from '@secretlint/profiler';
-import { rules as recommendedRules } from '@secretlint/secretlint-rule-preset-recommend';
+import { recommendedRules } from '@secretlint/core/builtin';
 import type { SecretLintCoreConfig } from '@secretlint/types';
 import { mapStringLeaves } from '@/lib/map-string-leaves';
 
