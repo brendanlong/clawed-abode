@@ -78,9 +78,6 @@ importers:
       '@secretlint/profiler':
         specifier: 14.0.1
         version: 14.0.1
-      '@secretlint/secretlint-rule-preset-recommend':
-        specifier: ^13.1.0
-        version: 13.1.0
       '@secretlint/types':
         specifier: ^14.0.1
         version: 14.0.1
@@ -1675,11 +1672,6 @@ packages:
   '@secretlint/profiler@14.0.1':
     resolution: {integrity: sha512-BW+5m2f4dk2/lhyRwk9/Sp3Vr/DklC0CNxobTrjuodgbUH5iYChmP1sIgA13qgkGhoMPcfyVO2GbwtLQSVWFIw==}
     engines: {node: '>=22.0.0'}
-
-  '@secretlint/secretlint-rule-preset-recommend@13.1.0':
-    resolution: {integrity: sha512-dPnplMyjJYpVCJDNTjpUA8c/AfoHbWANJJJWKroK50DGGhAB4Oumzk+XinBMyMMAwgOsjU9CB9lUHXDvObMVCg==}
-    engines: {node: '>=22.0.0'}
-    deprecated: Built into secretlint v14 and later. Remove this package; the rule id still works. https://github.com/secretlint/secretlint/blob/HEAD/docs/rules/preset-recommend.md
 
   '@secretlint/types@14.0.1':
     resolution: {integrity: sha512-fCNeipppEuoq92cXdI9sAM9UGVJkMv+zH5ReGw6Epa8N+bL1UPt6oNVf8pbtjpMoTDdaqr3XBkFo3ZmlV/rHdw==}
@@ -6230,8 +6222,6 @@ snapshots:
       - supports-color
 
   '@secretlint/profiler@14.0.1': {}
-
-  '@secretlint/secretlint-rule-preset-recommend@13.1.0': {}
 
   '@secretlint/types@14.0.1': {}
 
